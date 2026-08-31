@@ -1,0 +1,6 @@
+prompt: 
+err_read_line_eof.em:1  There is no more input to read.
+
+    1 | var line = read_line("prompt: ")
+
+  read_line reached the end of the input. That happens when piped input runs out, or when you press Ctrl+D (Ctrl+Z on Windows).

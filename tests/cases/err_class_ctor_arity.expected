@@ -1,0 +1,4 @@
+
+err_class_ctor_arity.em:7  Dog takes 1 argument, but got 0.
+
+    7 | var d = Dog()

@@ -1,0 +1,6 @@
+
+err_branch_mismatch.em:1  The then branch gives String but the else branch gives Int.
+
+    1 | var x = if 1 > 0 then "a" else 5
+
+  Both branches of an if expression must produce the same type.

@@ -1,0 +1,6 @@
+
+err_shadowing.em:3  x is already declared on line 1.
+
+    3 |     var x = 2
+
+  This makes a second x; it does not change the first. To change the existing one, drop the var: x = ...

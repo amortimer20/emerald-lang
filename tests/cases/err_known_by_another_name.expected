@@ -1,0 +1,6 @@
+
+err_known_by_another_name.em:2  No method named characters on String.
+
+    2 | print(s.characters)
+
+  Emerald calls that chars.

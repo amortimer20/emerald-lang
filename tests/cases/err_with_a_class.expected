@@ -1,0 +1,6 @@
+
+err_with_a_class.em:3  Animal is a class, not a trait.
+
+    3 | class Dog with Animal {
+
+  Use 'extends Animal' to inherit from a class.

@@ -1,0 +1,11 @@
+pi        3.141592653589793
+sqrt(2)   1.4142135623730951
+2^10      1024.0
+min/max   3 9
+word      héllo 👋
+chars     7
+first     h
+reversed  👋 olléh
+split     ADA | GRACE | ALAN
+replace   ada & grace & alan
+distance  5.0

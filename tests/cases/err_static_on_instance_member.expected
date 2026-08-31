@@ -1,0 +1,6 @@
+
+err_static_on_instance_member.em:4  No class member named bark on Dog.
+
+    4 | print(Dog.bark())
+
+  bark belongs to an instance — call it on a Dog value.

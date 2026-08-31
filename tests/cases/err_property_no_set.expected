@@ -1,0 +1,6 @@
+
+err_property_no_set.em:8  area has no set, so it cannot be assigned to.
+
+    8 | c.area = 9.0
+
+  Add one:  var area: ... { get { ... } set { ... } }

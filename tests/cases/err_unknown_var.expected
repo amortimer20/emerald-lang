@@ -1,0 +1,6 @@
+
+err_unknown_var.em:2  No variable named total.
+
+    2 | print(total)
+
+  Declare it first: var total = ...

@@ -1,0 +1,6 @@
+
+err_class_member.em:5  No member named nmae on Dog.
+
+    5 | print(d.nmae)
+
+  Did you mean name?

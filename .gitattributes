@@ -1,0 +1,9 @@
+# Everything is stored and checked out with LF.
+#
+# This is not a style preference. The build and test scripts run under bash — in WSL on
+# Windows, because Smart App Control blocks the interpreter natively — and a script with
+# CRLF line endings fails there with "bash: \r: command not found". The .expected test
+# fixtures are compared byte-for-byte too, though the runner strips \r defensively.
+* text=auto eol=lf
+
+*.svg text eol=lf

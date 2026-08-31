@@ -1,0 +1,4 @@
+
+broken.em:4  count is declared Int but is given String.
+
+    4 | var count: Int = "not a number"

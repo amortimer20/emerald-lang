@@ -1,0 +1,13 @@
+{
+  // VS Code has no fallback for missing file icons — one icon theme is active and it is
+  // all-or-nothing. Catppuccin's own association setting is the escape hatch: it maps an
+  // extension to one of Catppuccin's icons. `ruby-gem` is the closest thing it ships to
+  // a gem, and it is themed to whichever flavour is active.
+  "catppuccin-icons.associations.extensions": {
+    "em": "ruby-gem"
+  },
+
+  "files.associations": {
+    "*.em": "emerald"
+  }
+}

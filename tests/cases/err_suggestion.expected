@@ -1,0 +1,6 @@
+
+err_suggestion.em:2  No method named lenght on String.
+
+    2 | print(s.lenght)
+
+  Did you mean length?

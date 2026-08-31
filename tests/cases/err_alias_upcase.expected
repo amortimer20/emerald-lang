@@ -1,0 +1,6 @@
+
+err_alias_upcase.em:2  No method named upcase on String.
+
+    2 | print(s.upcase)
+
+  Emerald calls that upper.

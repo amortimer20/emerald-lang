@@ -1,0 +1,6 @@
+
+err_random_range.em:1  random(10, 1) has no numbers to choose from.
+
+    1 | print(random(10, 1))
+
+  The first number must not be larger than the second.

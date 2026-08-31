@@ -1,0 +1,6 @@
+
+err_abstract_instantiate.em:4  Cannot create Animal — speak has no implementation.
+
+    4 | var a = Animal()
+
+  Implement it here, or create a subclass that does.

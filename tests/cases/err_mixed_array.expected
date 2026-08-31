@@ -1,0 +1,6 @@
+
+err_mixed_array.em:1  This array holds Int but item 2 is String.
+
+    1 | var mixed = [1, "two", 3]
+
+  Every item in an array has to share a type.

@@ -1,0 +1,6 @@
+
+err_abstract_toplevel.em:1  A top-level function cannot be abstract.
+
+    1 | abstract func orphan(): Int
+
+  Abstract members belong in a trait or a class.

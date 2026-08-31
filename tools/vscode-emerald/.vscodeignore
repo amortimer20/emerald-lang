@@ -1,0 +1,4 @@
+# Everything the editor does not need at runtime.
+install.sh
+*.vsix
+.vscodeignore

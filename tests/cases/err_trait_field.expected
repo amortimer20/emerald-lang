@@ -1,0 +1,6 @@
+
+err_trait_field.em:2  A trait cannot have instance variables.
+
+    2 |     var depth: Int = 0
+
+  Require one instead:  abstract func depth(): ...

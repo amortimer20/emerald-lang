@@ -1,0 +1,6 @@
+
+err_trait_unimplemented.em:6  Cannot create Fish — stamina has no implementation.
+
+    6 | var f = Fish()
+
+  Implement it here, or create a subclass that does.

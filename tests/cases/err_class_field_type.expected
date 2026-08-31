@@ -1,0 +1,4 @@
+
+err_class_field_type.em:2  age is declared Int but is given String.
+
+    2 |     var age: Int = "old"

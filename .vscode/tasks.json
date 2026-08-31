@@ -1,0 +1,60 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Default build task, so Ctrl+Shift+B runs whatever .em file you are looking at.
+      // The `emerald` command rebuilds the compiler itself when its sources changed,
+      // so there is no separate build step to remember.
+      "label": "Emerald: run this file",
+      "type": "shell",
+      "command": "wsl",
+      "args": [
+        "bash",
+        "-lc",
+        "emerald run \"$(wslpath -a '${file}')\""
+      ],
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true,
+        "focus": true
+      },
+      "problemMatcher": {
+        "owner": "emerald",
+        "fileLocation": ["relative", "${fileDirname}"],
+        "pattern": {
+          "regexp": "^(\\S+\\.em):(\\d+)\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "message": 3
+        }
+      }
+    },
+    {
+      "label": "Emerald: run tests",
+      "type": "shell",
+      "command": "wsl",
+      "args": [
+        "bash",
+        "-lc",
+        "cd \"$(wslpath -a '${workspaceFolder}')\" && bash tests/run.sh"
+      ],
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Emerald: run all examples",
+      "type": "shell",
+      "command": "wsl",
+      "args": [
+        "bash",
+        "-lc",
+        "cd \"$(wslpath -a '${workspaceFolder}')\" && bash tests/examples.sh"
+      ],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+
+err_property_no_get.em:2  Property size needs a get.
+
+    2 |     var size: Int { }
+
+  A var with a body computes its value:  var area: Float { get { ... } }
