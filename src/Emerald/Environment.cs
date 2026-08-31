@@ -39,6 +39,26 @@ public sealed class Env(Env? parent = null)
     }
 }
 
+/// <summary>An Emerald error value, as produced by <c>Error("...")</c>.</summary>
+public sealed class EmError(string message)
+{
+    public string Message => message;
+    public override string ToString() => $"<Error: {message}>";
+}
+
+/// <summary>
+/// Carries a thrown Emerald value up to the nearest <c>catch</c>. Distinct from
+/// <see cref="RuntimeError"/>, which the interpreter raises itself — but a catch handles
+/// both, so a failed <c>to_int</c> is catchable rather than only avoidable.
+/// </summary>
+public sealed class ThrownError(EmError value) : Exception(value.Message)
+{
+    public EmError Value { get; } = value;
+
+    /// <summary>Filled in as it unwinds, so an uncaught throw names a line.</summary>
+    public int Line { get; set; }
+}
+
 /// <summary>
 /// Raised by <c>exit</c>. A signal rather than <c>Environment.Exit</c>, so the CLI stays
 /// in control of how a run ends and the behaviour is testable.

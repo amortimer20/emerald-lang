@@ -76,6 +76,15 @@ public abstract record Stmt
         bool IsStatic = false) : Stmt;
     public sealed record Return(Token Keyword, Expr? Value) : Stmt;
 
+    public sealed record Throw(Token Keyword, Expr Value) : Stmt;
+
+    /// <summary>
+    /// <c>try { } catch e { }</c>. The catch name is bound to an Error inside the handler.
+    /// Untyped in v0 — catching by type needs user-declared error classes first.
+    /// </summary>
+    public sealed record TryCatch(
+        Token Keyword, List<Stmt> Body, Token CaughtName, List<Stmt> Handler) : Stmt;
+
     /// <summary>
     /// A class. <c>Members</c> holds VarDecls (fields), FuncDecls (methods), and at most
     /// one Constructor. The block-free file form (§3.3) produces the same node — only the

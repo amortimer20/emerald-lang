@@ -1,0 +1,6 @@
+
+err_try_without_catch.em:3  A try needs a catch.
+
+    3 | }
+
+  Say what to do when it fails:  catch error { ... }

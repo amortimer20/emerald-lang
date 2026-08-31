@@ -46,6 +46,11 @@ public sealed class Interpreter
             if (error.Line == 0) error.Line = _line;
             throw;
         }
+        catch (ThrownError thrown)
+        {
+            if (thrown.Line == 0) thrown.Line = _line;
+            throw;
+        }
     }
 
     // ---- statements -----------------------------------------------------
@@ -91,6 +96,14 @@ public sealed class Interpreter
 
             case Stmt.ClassDecl c:
                 env.Declare(c.Name.Lexeme, BuildClass(c, env));
+                break;
+
+            case Stmt.Throw t:
+                _line = t.Keyword.Line;
+                throw new ThrownError(AsError(Evaluate(t.Value, env), t.Keyword));
+
+            case Stmt.TryCatch tc:
+                ExecuteTryCatch(tc, env);
                 break;
 
             case Stmt.Return r:
@@ -191,6 +204,40 @@ public sealed class Interpreter
     private void ExecuteBlock(List<Stmt> body, Env env)
     {
         foreach (var stmt in body) Execute(stmt, env);
+    }
+
+    /// <summary>
+    /// <c>throw "oops"</c> is shorthand for <c>throw Error("oops")</c> — a spelling, not
+    /// a second concept, so both arrive here as one thing.
+    /// </summary>
+    private static EmError AsError(object? value, Token keyword) => value switch
+    {
+        EmError error => error,
+        string message => new EmError(message),
+        _ => throw new RuntimeError(
+            $"Cannot throw {Builtins.TypeName(value)}.",
+            "Throw an Error, or a String to be wrapped in one:  throw Error(\"...\")")
+    };
+
+    /// <summary>
+    /// Catches both a thrown Emerald value and the interpreter's own runtime errors, so a
+    /// failed <c>to_int</c> can be handled rather than merely avoided. Deliberately does
+    /// not catch <c>exit</c> or a <c>return</c> unwinding through — neither is a failure.
+    /// </summary>
+    private void ExecuteTryCatch(Stmt.TryCatch node, Env env)
+    {
+        EmError caught;
+        try
+        {
+            ExecuteBlock(node.Body, new Env(env));
+            return;
+        }
+        catch (ThrownError thrown) { caught = thrown.Value; }
+        catch (RuntimeError failure) { caught = new EmError(failure.Message); }
+
+        var handler = new Env(env);
+        handler.Declare(node.CaughtName.Lexeme, caught);
+        ExecuteBlock(node.Handler, handler);
     }
 
     // ---- classes --------------------------------------------------------

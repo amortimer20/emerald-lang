@@ -117,6 +117,16 @@
     "body": ["if ${1:value} != nothing {", "\t$0", "}"],
     "description": "Narrow a maybe to its non-null type"
   },
+  "Try / catch": {
+    "prefix": "try",
+    "body": ["try {", "\t$1", "}", "catch ${2:error} {", "\t$0", "}"],
+    "description": "Handle a failure — the catch is required"
+  },
+  "Throw": {
+    "prefix": "throw",
+    "body": ["throw \"${1:something went wrong}\""],
+    "description": "Throw an error; a String is wrapped in one"
+  },
   "Guard with unless": {
     "prefix": "guard",
     "body": ["return ${1:fallback} unless ${2:condition}"],

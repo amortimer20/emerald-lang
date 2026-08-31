@@ -45,6 +45,7 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         ["read_line"] = EmType.String,
         ["random"] = EmType.Int,
         ["exit"] = EmType.Nothing,
+        ["Error"] = new EmType.Prim("Error"),
     };
 
     private readonly Stack<EmType> _returnTypes = new();
@@ -87,9 +88,29 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
         // Functions are visible before their declaration, so a file reads top to bottom
         // without forward-declaration ceremony.
+        //
+        // A repeated name is rejected rather than silently overwriting the first. Until
+        // overloads exist (§3.2), two functions of one name is always a mistake — and a
+        // silent overwrite is the worst possible handling of it, since calls to the
+        // first one quietly go somewhere else.
+        Dictionary<string, int> declaredAt = [];
         foreach (var stmt in program)
-            if (stmt is Stmt.FuncDecl fn)
-                globals.Declare(fn.Name.Lexeme, SignatureOf(fn));
+        {
+            if (stmt is not Stmt.FuncDecl fn) continue;
+
+            if (declaredAt.TryGetValue(fn.Name.Lexeme, out int firstLine))
+            {
+                _file = fileOf?.GetValueOrDefault(stmt) ?? fileName;
+                Error(fn.Name.Line,
+                      $"{fn.Name.Lexeme} is already defined on line {firstLine}.",
+                      "Emerald has no overloading yet, so each name means one function. "
+                      + "Rename one of them.");
+                continue;
+            }
+
+            declaredAt[fn.Name.Lexeme] = fn.Name.Line;
+            globals.Declare(fn.Name.Lexeme, SignatureOf(fn));
+        }
 
         foreach (var stmt in program)
         {
@@ -290,6 +311,20 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
             case Stmt.For f: CheckFor(f, scope); break;
             case Stmt.FuncDecl fn: CheckFunc(fn, scope); break;
             case Stmt.ClassDecl c: CheckClass(c, scope); break;
+
+            case Stmt.Throw t:
+                TypeOf(t.Value, scope);
+                break;
+
+            case Stmt.TryCatch tc:
+            {
+                CheckBlock(tc.Body, new Scope(scope));
+                var handler = new Scope(scope);
+                handler.Declare(tc.CaughtName.Lexeme, new EmType.Prim("Error"),
+                                line: tc.CaughtName.Line);
+                CheckBlock(tc.Handler, handler);
+                break;
+            }
 
             case Stmt.Return r:
                 if (r.Value is not null) TypeOf(r.Value, scope);

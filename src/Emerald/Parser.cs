@@ -43,6 +43,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
             if (Check(TokenType.Constructor)) return ConstructorDeclaration();
             if (Check(TokenType.Static)) return StaticMember();
             if (Check(TokenType.Func, TokenType.Abstract)) return FunctionDeclaration();
+            if (Check(TokenType.Try)) return TryStatement();
             if (Check(TokenType.While, TokenType.Until)) return WhileStatement();
             if (Check(TokenType.Unless)) return UnlessStatement();
             if (Check(TokenType.For)) return ForStatement();
@@ -89,6 +90,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
         if (Match(TokenType.Var)) return VariableDeclaration(isConst: false);
         if (Match(TokenType.Const)) return VariableDeclaration(isConst: true);
         if (Check(TokenType.Return)) return ReturnStatement();
+        if (Check(TokenType.Throw)) return ThrowStatement();
 
         var expr = Expression();
 
@@ -252,6 +254,32 @@ public sealed class Parser(List<Token> tokens, string fileName)
     /// <c>while</c> and its negated twin <c>until</c>. Both produce a While node — the
     /// negation is applied here, so nothing downstream knows <c>until</c> exists.
     /// </summary>
+    private Stmt ThrowStatement()
+    {
+        var keyword = Advance();
+        return new Stmt.Throw(keyword, Expression());
+    }
+
+    /// <summary>
+    /// <c>try { } catch e { }</c>. The catch clause is required — a <c>try</c> that
+    /// swallows nothing does nothing, and one that swallows everything silently is worse.
+    /// Stroustrup style puts <c>catch</c> on its own line, like <c>else</c>.
+    /// </summary>
+    private Stmt TryStatement()
+    {
+        var keyword = Advance();
+        var body = Block();
+
+        if (!Match(TokenType.Catch))
+            throw Error(Peek, "A try needs a catch.",
+                        "Say what to do when it fails:  catch error { ... }");
+
+        var name = Consume(TokenType.Identifier, "Expected a name for the caught error.",
+                           "The error is bound to it inside the handler:  catch error { ... }");
+
+        return new Stmt.TryCatch(keyword, body, name, Block());
+    }
+
     private Stmt WhileStatement()
     {
         var keyword = Advance();
@@ -786,13 +814,20 @@ public sealed class Parser(List<Token> tokens, string fileName)
     /// </summary>
     private void Synchronise()
     {
+        // Must always consume at least one token. Returning without progress means the
+        // next attempt re-parses the same failing construct, fails identically, and the
+        // compiler spins — which is far worse than a poor error message.
+        int start = _current;
+
         while (!AtEnd)
         {
-            if (Previous.Type == TokenType.Newline) return;
+            if (Previous.Type == TokenType.Newline) break;
             if (Check(TokenType.Var, TokenType.Const, TokenType.Func, TokenType.If,
-                      TokenType.While, TokenType.For, TokenType.Return)) return;
+                      TokenType.While, TokenType.For, TokenType.Return, TokenType.Try)) break;
             Advance();
         }
+
+        if (_current == start && !AtEnd) Advance();
     }
 
     private static string Describe(Token token) => token.Type switch

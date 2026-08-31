@@ -1,0 +1,4 @@
+ok: 42
+rejected: "banana" is not a number
+rejected: an age of 900 is not believable
+caught a runtime error: "banana" is not a number.

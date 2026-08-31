@@ -66,6 +66,17 @@ catch (ExitSignal stop)
     // `exit` is an ordinary way for a program to finish, not an error.
     return stop.Code;
 }
+catch (ThrownError thrown)
+{
+    // An error the program threw and never caught. Reported like any other failure —
+    // a .NET stack trace reaching a student is exactly what §3.6 exists to prevent.
+    Reporter.RuntimeFailure(
+        new RuntimeError(thrown.Value.Message,
+                         "Nothing caught this. Wrap the risky part:  try { ... } catch e { ... }")
+        { Line = thrown.Line },
+        entryName, project);
+    return 70;
+}
 catch (RuntimeError error)
 {
     // Runtime diagnostics use the same voice as compile-time ones (§3.6): the subject

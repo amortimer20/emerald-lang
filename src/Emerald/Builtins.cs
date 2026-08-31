@@ -77,6 +77,10 @@ public static class Builtins
             return (long)Random.Shared.NextInt64(lo, hi + 1);
         },
 
+        // Builds an error value to throw. `throw "oops"` wraps a String in one of these
+        // automatically, so the shorthand and the long form mean the same thing.
+        ["Error"] = args => new EmError(args.Count > 0 ? Display(args[0]) : ""),
+
         // Stops the program. `exit` alone means success; `exit(1)` reports a failure.
         ["exit"] = args =>
             throw new ExitSignal(args.Count > 0 ? (int)AsInt(args[0], "exit") : 0),
@@ -137,6 +141,12 @@ public static class Builtins
             string s => StringMethod(s, name, args),
             EmRange r => RangeMethod(interpreter, r, name, args),
             EmArray a => ArrayMethod(interpreter, a, name, args),
+            EmError e => name switch
+            {
+                "message" => e.Message,
+                "to_string" => e.Message,
+                _ => throw new RuntimeError($"No method named {name} on Error.")
+            },
             bool b => BoolMethod(b, name),
 
             // .or and .value are the only things you may ask of nothing (§3.2).
@@ -367,6 +377,7 @@ public static class Builtins
         EmInstance i => $"<{i.Class.Name}>",
         EmArray a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
         EmModule m => $"<module {m.Name}>",
+        EmError e => e.Message,
         ICallable => "<function>",
         _ => value.ToString() ?? ""
     };
@@ -381,6 +392,7 @@ public static class Builtins
         EmRange => "Range",
         EmArray => "Array",
         EmModule m => m.Name,
+        EmError => "Error",
         EmClass c => $"class {c.Name}",
         EmInstance i => i.Class.Name,
         ICallable => "Function",

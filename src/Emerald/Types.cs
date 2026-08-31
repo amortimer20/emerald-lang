@@ -157,6 +157,10 @@ public static class Signatures
 
         // Bool
         [("Bool", "to_string")] = EmType.String,
+
+        // Error
+        [("Error", "message")] = EmType.String,
+        [("Error", "to_string")] = EmType.String,
     };
 
     public static bool TryLookup(EmType receiver, string method, out EmType result)

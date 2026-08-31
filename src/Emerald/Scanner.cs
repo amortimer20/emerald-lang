@@ -23,6 +23,8 @@ public sealed class Scanner(string source, string fileName)
         ["class"] = TokenType.Class,       ["trait"] = TokenType.Trait,
         ["struct"] = TokenType.Struct,     ["abstract"] = TokenType.Abstract,
         ["static"] = TokenType.Static,
+        ["throw"] = TokenType.Throw,       ["try"] = TokenType.Try,
+        ["catch"] = TokenType.Catch,
         ["extends"] = TokenType.Extends,
         ["with"] = TokenType.With,      ["constructor"] = TokenType.Constructor,
 
@@ -262,7 +264,7 @@ public sealed class Scanner(string source, string fileName)
         // A line starting with one of these continues the line above it.
         HashSet<TokenType> continues =
         [
-            TokenType.Dot, TokenType.Else, TokenType.Then,
+            TokenType.Dot, TokenType.Else, TokenType.Then, TokenType.Catch,
             TokenType.RightBrace, TokenType.RightParen, TokenType.RightBracket,
         ];
 
