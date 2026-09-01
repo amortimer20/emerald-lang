@@ -45,7 +45,7 @@ public static class Prelude
         }
 
         ## Values that can be split with /.
-        trait Divisible {
+        trait Dividable {
             abstract func divide(other)
         }
 
@@ -100,7 +100,7 @@ public static class Prelude
         [TokenType.Plus] = ("add", "Addable"),
         [TokenType.Minus] = ("subtract", "Subtractable"),
         [TokenType.Star] = ("multiply", "Multipliable"),
-        [TokenType.Slash] = ("divide", "Divisible"),
+        [TokenType.Slash] = ("divide", "Dividable"),
     };
 
     public const string EqualsMethod = "equals?";
@@ -111,6 +111,6 @@ public static class Prelude
     /// <summary>Type names the prelude owns, so a program cannot quietly redefine them.</summary>
     public static readonly HashSet<string> TypeNames =
     [
-        "Addable", "Subtractable", "Multipliable", "Divisible", "Equatable", "Ordered",
+        "Addable", "Subtractable", "Multipliable", "Dividable", "Equatable", "Ordered",
     ];
 }
