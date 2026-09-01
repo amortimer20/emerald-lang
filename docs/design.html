@@ -1,0 +1,1232 @@
+<title>Designing Emerald</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+
+<style>
+  :root {
+    --ground:      #FAFBF9;
+    --surface:     #F1F4F0;
+    --surface-2:   #E9EEE9;
+    --ink:         #16201B;
+    --ink-soft:    #3D4A44;
+    --muted:       #5F6C65;
+    --rule:        #DCE3DD;
+    --rule-soft:   #E9EEE9;
+    --accent:      #0F7B5A;
+    --accent-deep: #0B5F45;
+    --accent-wash: #E3F0EA;
+    --amber:       #8A5E0F;
+    --amber-wash:  #F5EEDC;
+
+    --sans:  "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
+    --mono:  "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    --measure: 68ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #101613;
+      --surface:     #18201C;
+      --surface-2:   #1F2823;
+      --ink:         #E4EAE5;
+      --ink-soft:    #C2CDC6;
+      --muted:       #94A29A;
+      --rule:        #28322C;
+      --rule-soft:   #1F2823;
+      --accent:      #4FD1A0;
+      --accent-deep: #6FDDB4;
+      --accent-wash: #163026;
+      --amber:       #D9A441;
+      --amber-wash:  #2A2317;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #101613;
+    --surface:     #18201C;
+    --surface-2:   #1F2823;
+    --ink:         #E4EAE5;
+    --ink-soft:    #C2CDC6;
+    --muted:       #94A29A;
+    --rule:        #28322C;
+    --rule-soft:   #1F2823;
+    --accent:      #4FD1A0;
+    --accent-deep: #6FDDB4;
+    --accent-wash: #163026;
+    --amber:       #D9A441;
+    --amber-wash:  #2A2317;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16.5px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+  }
+
+  .page {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 28px 120px;
+  }
+
+  @media (min-width: 1000px) {
+    .page {
+      grid-template-columns: 210px minmax(0, 1fr);
+      column-gap: 64px;
+      padding: 0 40px 140px;
+    }
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--rule);
+    padding: 72px 0 34px;
+    margin-bottom: 56px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    margin: 0 0 20px;
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: clamp(2.9rem, 7vw, 4.4rem);
+    line-height: 1.02;
+    letter-spacing: -0.021em;
+    margin: 0 0 22px;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-family: var(--serif);
+    font-size: clamp(1.12rem, 2.1vw, 1.34rem);
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 46ch;
+    margin: 0 0 30px;
+    text-wrap: pretty;
+  }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 26px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .meta b { color: var(--ink-soft); font-weight: 500; }
+
+  /* ---------- table of contents ---------- */
+
+  .toc { display: none; }
+
+  @media (min-width: 1000px) {
+    .toc {
+      display: block;
+      grid-column: 1;
+      align-self: start;
+      position: sticky;
+      top: 34px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.5;
+      border-right: 1px solid var(--rule-soft);
+      padding-right: 22px;
+    }
+    .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
+    .toc a {
+      color: var(--muted);
+      text-decoration: none;
+      display: grid;
+      grid-template-columns: 1.8em 1fr;
+      transition: color .14s ease;
+    }
+    .toc a:hover, .toc a:focus-visible { color: var(--accent); }
+    .toc span { color: var(--accent-deep); }
+  }
+
+  /* ---------- body column ---------- */
+
+  main { grid-column: 1 / -1; min-width: 0; }
+  @media (min-width: 1000px) { main { grid-column: 2; } }
+
+  section { margin: 0 0 76px; scroll-margin-top: 24px; }
+
+  h2 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: clamp(1.75rem, 3.4vw, 2.2rem);
+    line-height: 1.15;
+    letter-spacing: -0.014em;
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: 0.5em;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 12px;
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 1.03rem;
+    letter-spacing: -0.003em;
+    margin: 40px 0 8px;
+  }
+  h3 .ref {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.82em;
+    color: var(--accent);
+    margin-right: 0.6em;
+  }
+
+  .lede {
+    color: var(--ink-soft);
+    max-width: var(--measure);
+    margin: 0 0 34px;
+    padding-bottom: 22px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 0 0 18px; text-wrap: pretty; }
+
+  ul, ol { margin: 0 0 18px; padding-left: 1.15em; }
+  li { margin-bottom: 9px; }
+  li::marker { color: var(--accent); }
+
+  strong { font-weight: 600; color: var(--ink); }
+  em { font-style: italic; }
+
+  a { color: var(--accent-deep); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.865em;
+    background: var(--surface);
+    padding: 0.13em 0.36em;
+    border-radius: 3px;
+    color: var(--ink);
+  }
+
+  /* ---------- code blocks ---------- */
+
+  .code {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 0 0 22px;
+  }
+  .code .file {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 9px 16px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface-2);
+  }
+  .code pre {
+    margin: 0;
+    padding: 16px 18px;
+    font-family: var(--mono);
+    font-size: 13.2px;
+    line-height: 1.72;
+    color: var(--ink);
+  }
+  .c { color: var(--muted); font-style: italic; }
+  .s { color: var(--accent-deep); }
+  .k { color: var(--ink); font-weight: 600; }
+  .n { color: var(--amber); }
+
+  /* ---------- decision tables ---------- */
+
+  .tablewrap {
+    overflow-x: auto;
+    margin: 0 0 26px;
+    border-top: 1px solid var(--ink);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 560px;
+    font-size: 14.5px;
+  }
+  th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 11px 14px 11px 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: bottom;
+  }
+  td {
+    padding: 13px 14px 13px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+    color: var(--ink-soft);
+    line-height: 1.5;
+  }
+  td:first-child {
+    color: var(--ink);
+    font-weight: 500;
+    white-space: nowrap;
+    padding-right: 22px;
+  }
+  td code { font-size: 0.9em; background: none; padding: 0; color: var(--accent-deep); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* ---------- pills ---------- */
+
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    padding: 2.5px 7px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .pill.set  { background: var(--accent-wash); color: var(--accent-deep); }
+  .pill.open { background: var(--amber-wash);  color: var(--amber); }
+  .pill.defer{ background: var(--surface-2);   color: var(--muted); }
+
+  /* ---------- callout ---------- */
+
+  .note {
+    border-left: 2px solid var(--accent);
+    padding: 2px 0 2px 20px;
+    margin: 0 0 24px;
+    max-width: var(--measure);
+    color: var(--ink-soft);
+  }
+  .note p:last-child { margin-bottom: 0; }
+  .note .tag {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    margin-bottom: 7px;
+  }
+
+  /* ---------- principle list ---------- */
+
+  .principles { display: grid; gap: 0; margin: 0 0 10px; max-width: var(--measure); }
+  .principle {
+    display: grid;
+    grid-template-columns: 2.4em 1fr;
+    gap: 0 16px;
+    padding: 22px 0;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .principle:first-child { border-top: 1px solid var(--rule); }
+  .principle .idx {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--accent);
+    padding-top: 4px;
+  }
+  .principle h3 { margin: 0 0 6px; font-size: 1.06rem; }
+  .principle p { margin: 0; font-size: 15px; color: var(--ink-soft); }
+
+  /* ---------- roadmap ---------- */
+
+  .phases { display: grid; gap: 0; max-width: var(--measure); border-top: 1px solid var(--ink); }
+  .phase {
+    display: grid;
+    grid-template-columns: 6.5em 1fr;
+    gap: 0 18px;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .phase .id {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding-top: 3px;
+  }
+  .phase h3 { margin: 0 0 5px; font-size: 1.02rem; }
+  .phase p { margin: 0 0 8px; font-size: 14.6px; color: var(--ink-soft); }
+  .phase p:last-child { margin-bottom: 0; }
+  .phase .out {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+
+  @media (max-width: 560px) {
+    .principle, .phase { grid-template-columns: 1fr; gap: 6px; }
+  }
+
+  footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule);
+    padding-top: 26px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Language design document &middot; Draft 1</p>
+    <h1>Designing Emerald</h1>
+    <p class="standfirst">A statically typed, object-oriented language on .NET — built to be a student's first language and a working developer's real one.</p>
+    <div class="meta">
+      <span><b>Status</b> &nbsp;Pre-implementation</span>
+      <span><b>Target</b> &nbsp;CIL / .NET</span>
+      <span><b>Revised</b> &nbsp;29 Aug 2026</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#s1"><span>1</span> Position</a></li>
+      <li><a href="#s2"><span>2</span> Principles</a></li>
+      <li><a href="#s3"><span>3</span> Decisions</a></li>
+      <li><a href="#s4"><span>4</span> Syntax</a></li>
+      <li><a href="#s5"><span>5</span> Platform</a></li>
+      <li><a href="#s6"><span>6</span> Open</a></li>
+      <li><a href="#s7"><span>7</span> Roadmap</a></li>
+      <li><a href="#s8"><span>8</span> Learning</a></li>
+      <li><a href="#s9"><span>9</span> Grammar</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- ===== 1 ===== -->
+    <section id="s1">
+      <h2><span class="num">§ 1</span>Position</h2>
+      <p class="lede">Emerald exists because two languages the author admires each solve half the problem. Ruby is expressive but resists tooling. C# is robust but greets a fourteen-year-old with <code>public static void main</code>.</p>
+
+      <p>Emerald is a statically typed, object-oriented language compiling to CIL. It has two audiences that most languages treat as mutually exclusive:</p>
+
+      <p><strong>A student's first language.</strong> Line 1 of a file is real code. Every character on screen day one can be honestly explained day one. No ceremony deferred to a later unit, no "ignore this for now."</p>
+
+      <p><strong>A working language.</strong> Full access to .NET, real tooling, real performance, and the ability to build libraries and wrap engines — not a toy that students outgrow in a semester.</p>
+
+      <p>The bet holding these together is that the ceremony most languages impose is not load-bearing. C#'s boilerplate is not what makes C# powerful, and removing it costs nothing but familiarity.</p>
+
+      <p>There is a sharper way to state the goal, which took most of the design conversation to surface. Ruby's celebrated expressiveness was, in large part, <strong>DSL-ability</strong> — <code>has_many :comments</code> and <code>validates :email, presence: true</code> read like language features because Ruby let libraries behave like language. Rails did not feel like a framework; it felt like a dialect. That is the thing worth taking, and it is also precisely what Ruby paid for with runtime metaprogramming, and therefore with its tooling. Same feature, both sides of the ledger.</p>
+
+      <p>So Emerald is <strong>Python's small regular surface, plus Ruby's library-as-language, minus the runtime magic that made the second one expensive.</strong> Which reframes the compile-time-only constraint (§2.3): it is not a compromise accepted for tooling's sake, it is the enabling condition. A macro expands into real declarations the compiler and the LSP can see — jump-to-definition works, autocomplete works, the expansion can be inspected. <code>method_missing</code> offers none of that; it is a promise that something might exist. That difference is what makes a DSL-friendly language buildable rather than merely dynamic.</p>
+
+      <div class="note">
+        <span class="tag">Origin of the idea</span>
+        <p>The immediate motivation is teaching game development. Unity's engine model is the one the author finds clearest to teach; Unity's C# API is the part that gets in the way. GDScript reads better not because it is a better-designed language, but because it is <em>fused</em> with its engine. Emerald's thesis is that this fusion is achievable as a library plus compile-time metaprogramming — not as a bespoke engine language.</p>
+      </div>
+    </section>
+
+    <!-- ===== 2 ===== -->
+    <section id="s2">
+      <h2><span class="num">§ 2</span>Principles</h2>
+      <p class="lede">Six rules derived during design. Each one settles a class of future arguments, which is the only reason to write principles down.</p>
+
+      <div class="principles">
+        <div class="principle">
+          <div class="idx">2.1</div>
+          <div>
+            <h3>Small core, generous library</h3>
+            <p>The grammar fits on two pages; the standard library does not. Ruby's <code>upto</code> and <code>each</code> are library methods, not syntax — Ruby's <em>grammar</em> was never the large part. This is how Lua's learnability and Ruby's expressiveness stop fighting each other.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="idx">2.2</div>
+          <div>
+            <h3>A new spelling is free; a new concept is a tax</h3>
+            <p>Two ways to write a statement with identical semantics costs a student thirty seconds. Two ways to introduce a variable with different rules costs them a mental model. <code>unless</code> is welcome. C#'s <code>var</code>-alongside-<code>int</code> is not.</p>
+            <p>The sharper test, arrived at when this principle had to explain its own past decisions: <strong>can a student derive it from what they already know?</strong> <code>unless</code> <em>is</em> <code>if not</code> — one sentence and they have it, and it desugars away before the checker ever sees it. Ruby's <code>case</code>/<code>when</code> is not derivable: <code>when 5</code> matches by value, <code>when Integer</code> by class, <code>when 1..10</code> by containment, three behaviours from identical-looking syntax. That is a rule you must be taught. <code>**</code> passes because the concept comes from maths class; <code>//</code> passes because it paid for itself, letting <code>/</code> stop lying about <code>7 / 2</code>.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="idx">2.3</div>
+          <div>
+            <h3>Domain feel comes from macros, not from grammar</h3>
+            <p><code>@export</code> is not a keyword — it is a compile-time macro lowering to a .NET attribute. Domain-specific expressiveness is bought in libraries, so the core language never grows to pay for it. This is the load-bearing feature of the design.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="idx">2.4</div>
+          <div>
+            <h3>There is always a blessed default</h3>
+            <p>One formatter with no configuration. One build tool, test runner, and package manager, in the box. Alternatives may exist; they are not equal. The complaint about the Node ecosystem is not complexity — it is the absence of a default.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="idx">2.5</div>
+          <div>
+            <h3>Prefer the reversible choice</h3>
+            <p>Where a decision is close, start on the side that can be changed later. Adding an implicit lambda parameter later is backward compatible; removing one is not. Reversibility breaks ties that reasoning cannot.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="idx">2.6</div>
+          <div>
+            <h3>Warnings are pedagogy</h3>
+            <p>The compiler is the most patient teacher in the room. Diagnostics should name the practice, not just the fault — and point at the line where the mistake was made rather than where it surfaced.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 3 ===== -->
+    <section id="s3">
+      <h2><span class="num">§ 3</span>Settled decisions</h2>
+      <p class="lede">Decided during design conversation. Reasoning is compressed to the deciding argument — the thing that would have to change for the decision to change.</p>
+
+      <h3><span class="ref">3.1</span>Lexical and syntactic</h3>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Decision</th><th>Form</th><th>Deciding argument</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Block delimiters</td><td>Braces</td><td>Whitespace sensitivity forbids inline blocks, which the entire library-not-grammar thesis depends on. Python has no multi-statement lambda for exactly this reason.</td></tr>
+            <tr><td>Brace style</td><td>Stroustrup</td><td>An opening brace ends its line, a closing brace begins one, and <code>else</code> is never cuddled. One invariant covering statements and lambdas alike — which Allman could not manage, since a newline before an expression-position <code>{</code> is ambiguous. Isolates <code>} else {</code>, the line where the novice confusion actually lives.</td></tr>
+            <tr><td>Comment syntax</td><td><code>#</code> line, <code>##</code> doc, <code>#[ &hellip; ]#</code> block</td><td>Forms are distinguished by the character following the hash, never by counting hashes. Because doc content is markdown, a student typing <code>### TODO</code> out of markdown habit must not silently open a block that swallows code to end of file. Beats Ruby's <code>=begin</code>/<code>=end</code>, which is unused because it is ugly.</td></tr>
+            <tr><td>Doc comment <em>content</em></td><td>Markdown, with <code>@</code> tags for the non-inferable</td><td>Not a second syntax — this is what goes inside <code>##</code>. Javadoc's <code>@param</code> duplicates the signature and goes stale. Types come from the compiler; tags carry only what it cannot know.</td></tr>
+            <tr><td>Attributes</td><td><code>@name</code> sigil</td><td>Reads better than <code>[Brackets]</code>, and gives macros one surface. <code>@</code> uniformly means "metadata about the thing attached."</td></tr>
+            <tr><td>String interpolation</td><td><code>"#{expr}"</code>, no prefix</td><td>A required prefix fails <em>silently</em> when forgotten — the student sees literal braces and cannot tell why.</td></tr>
+            <tr><td>Boolean operators</td><td><code>not</code> <code>and</code> <code>or</code> only</td><td>Ruby's <code>and</code> and <code>&amp;&amp;</code> have different precedence, a famous footgun. One set makes the bug unrepresentable.</td></tr>
+            <tr><td>Ranges</td><td><code>1..5</code>, inclusive</td><td>Reads aloud correctly; pairs with the iterator protocol.</td></tr>
+            <tr><td><code>unless</code> and <code>until</code></td><td>Negated twins, desugared in the parser</td><td><code>unless</code> becomes <code>if not</code>, <code>until</code> becomes <code>while not</code>, so nothing downstream learns they exist. Expression-level choice, free by §2.2, and both read better than the negation they replace — <code>until countdown.zero?</code> over <code>while not countdown.zero?</code>.</td></tr>
+            <tr><td><code>unless</code> takes no <code>else</code></td><td>An error, with the fix suggested</td><td>Ruby permits it and every style guide bans it: <em>"unless x … else …"</em> is a double negative nobody parses correctly first time. Also warns on <code>unless not x</code>.</td></tr>
+            <tr><td>Modifiers guard, they do not loop</td><td><code>stmt unless cond</code> yes; <code>stmt until cond</code> no</td><td>Ruby's <code>x += 1 until done</code> makes a trailing modifier iterate, which is a different kind of thing from a guard and does not read as control flow. A statable line rather than an arbitrary omission.</td></tr>
+            <tr><td>Modifier forms</td><td><code>print(x) if cond</code>, same line only</td><td>Expression-level choice — free by §2.2. The same-line rule was implicit in the continuation rules (<code>if</code> is not among the tokens that continue a statement) and is now explicit, because otherwise a following <code>if</code> on its own line is ambiguous between a modifier and a new statement.</td></tr>
+            <tr><td>No trailing lambda in conditions</td><td>Parentheses required</td><td>Surfaced by writing the grammar (§9). <code>if x { ... }</code> is genuinely ambiguous — <code>expr { ... }</code> is the trailing-lambda form, so the block could attach to <code>x</code>. Kotlin hits this exactly and resolves it the same way: <code>if (items.any? { p =&gt; p.valid? }) { ... }</code>. Applies to <code>if</code> and <code>while</code> conditions and the <code>for</code> iterable.</td></tr>
+            <tr><td>Assignment is a statement</td><td>Never an expression</td><td>So <code>if x = 5 { }</code> is a syntax error rather than a silent bug — the classic C-family disaster where <code>=</code> is typed for <code>==</code> inside a condition, assigns, and evaluates truthy. Eliminated structurally instead of by a warning. Costs only <code>while (line = read())</code>-style idioms, which are unwanted here anyway.</td></tr>
+            <tr><td>Compound assignment</td><td><code>+=</code> <code>-=</code> <code>*=</code> <code>/=</code></td><td>Passes the §3.7 sprinkle test: removes a repetition where the variable name otherwise appears twice, which is a real source of typos. Lowers through the operator traits — <code>x += y</code> becomes <code>x = x.add(y)</code>.</td></tr>
+            <tr><td>No <code>++</code> or <code>--</code></td><td>Rejected</td><td>The pre- versus post-increment distinction exists for reasons no beginner needs, generates exam questions that test nothing useful, and makes expressions like <code>i++ + ++i</code> possible. <code>count += 1</code> is one character longer and has no subtleties. Ruby made the same call and nobody misses them.</td></tr>
+            <tr><td>No bare blocks</td><td><code>{ }</code> is never a statement</td><td>Emerald has no need for anonymous scopes, and forbidding them means a <code>{</code> following an expression is always a trailing lambda. Previously undecided; the grammar forced it.</td></tr>
+            <tr><td>Three <code>if</code> forms parse cleanly</td><td>Parse the condition, then peek</td><td><code>{</code> means statement, <code>then</code> means expression. No grammar rule needed for the corner cases — <code>if cond then x</code> without an <code>else</code> is the error a student will actually hit, and it is answered with a diagnostic (§4.4) rather than a restriction. The pattern for syntax corners in a teaching language: add a message, not a rule.</td></tr>
+            <tr><td>Conditional expression</td><td><code>if cond then a else b</code>; no ternary</td><td>Making <code>if</code> an expression yields a <em>smaller</em> language: the alternative is a statement <code>if</code> plus <code>?:</code>, which is two constructs where this is one. Ruby precedent — <code>if x then y else z end</code> is valid there, and its ternary is the C inheritance sitting awkwardly beside it.</td></tr>
+            <tr><td>Why <code>then</code>, not braces</td><td>Blocks never carry values</td><td>Rust's brace form requires blocks to yield their last expression, which is implicit return — rejected in §3.2. <code>then</code> buys the feature without touching block semantics, and its single-expression limit is a teachable boundary: multi-statement branches use the statement form. Also closes the newline-before-<code>else</code> wrinkle, since <code>{</code> versus <code>then</code> tells the parser which form it is in.</td></tr>
+            <tr><td>Parentheses</td><td>Required for arguments, optional without</td><td>The caller's whole rule: <em>if it needs information, put it in parens.</em> Decidable at every call site with no knowledge of the implementation, so a student cannot get it wrong — <code>s.upper</code> and <code>s.upper()</code> are the same call. A mechanical property/method split was drafted and rejected: it is decidable by the method's <em>author</em>, not its caller, and <code>arr.sort</code> (new array, or sorted in place?) cannot be resolved from the call site at all.</td></tr>
+            <tr><td>Bare names too, in statement position</td><td><code>exit</code> means <code>exit()</code></td><td>Found by the user: the optional-parens rule had been implemented for member access only, so <code>s.upper</code> called but <code>exit</code> silently evaluated a function and discarded it. The rule as written — <em>if it needs information, put it in parens</em> — draws no line between members and bare names, so the implementation was wrong rather than the rule. Restricted to statement position: there, naming a function and dropping it can never be intended, while in expression position a bare name may be a genuine value. Class names are excluded, so <code>Dog</code> does not silently construct one.</td></tr>
+            <tr><td>Statements that do nothing</td><td>An error</td><td>The other half of the same bug, and the more valuable half: <code>exit</code> did nothing <em>and said nothing</em>. A statement that computes a value and throws it away is nearly always a typo, so <code>total</code> or <code>a + b</code> alone is now rejected. This is the "unused expression" lint that §3.1 listed as a cost of optional parens — it needed the checker rather than the parser, which is why it could only arrive now.</td></tr>
+            <tr><td>What this does to properties</td><td>Dissolves the call-site distinction</td><td>Strengthens §3.2 rather than weakening it. A field, a computed property, and a zero-argument method become interchangeable at the call site, so promoting one to another never breaks callers. Properties remain a declaration-side feature — a <code>var</code> that computes — which is where they were always useful.</td></tr>
+            <tr><td>Why this is not Ruby's tooling trap</td><td>Paren-less <em>arguments</em> stay forbidden</td><td>What defeated Ruby's tooling was <code>foo bar baz</code> — undecidable without semantics — not optional parens on zero-argument calls. <code>print "hi"</code> is a syntax error here; arguments always take parens, so the grammar stays unambiguous. Emerald takes the ergonomic half of Ruby's syntax and leaves the unanalysable half. Highlighting is <em>easier</em> than C#'s, which looks ahead for <code>(</code> to colour calls differently; here everything after a dot is one thing.</td></tr>
+            <tr><td>Accepted cost</td><td>Side effects are invisible</td><td><code>arr.clear</code> gives no visual signal that anything changed. Mitigated by library design — keep zero-argument mutators rare and imperative-sounding — not by a language rule. Also means an "unused expression" lint needs semantics rather than syntax.</td></tr>
+            <tr><td>Member names after <code>.</code></td><td>Keywords permitted</td><td>Found by building it: <code>maybe.or(0)</code> would not parse, because <code>or</code> is an operator keyword. The position after a dot is unambiguous, so member names live in their own namespace. JavaScript made this exact change in ES5; the alternative is an escape syntax (C#'s <code>@class</code>, Kotlin's backticks) that solves the same problem more awkwardly. Benefit: adding a keyword later cannot break an existing method name. Cost, accepted knowingly: <code>x.keyword</code> is forfeited as future special syntax, so nothing reflection-shaped can be spelled the way Java spells <code>x.class</code>.</td></tr>
+            <tr><td>Why that is .NET-safe</td><td>Every C# keyword is lowercase</td><td>§3.4 emits members as PascalCase, so <code>or</code>&nbsp;&rarr;&nbsp;<code>Or</code>, <code>if</code>&nbsp;&rarr;&nbsp;<code>If</code>, <code>class</code>&nbsp;&rarr;&nbsp;<code>Class</code> — all legal C# identifiers. The collision is structurally impossible, and it falls out of a naming decision made for unrelated reasons. Caveat: VB.NET keywords <em>are</em> PascalCase, so a VB consumer would need <code>[Or]</code>. Judged marginal rather than designed around.</td></tr>
+            <tr><td>Array literals</td><td><code>[1, 2, 3]</code>, indexed <code>a[0]</code></td><td>Homogeneous: every item must share a type, so <code>[1, "two"]</code> is an error. Index positions are <code>Int</code>. Strings are deliberately not integer-indexable (§3.2), so <code>s[0]</code> is a diagnostic pointing at <code>.chars</code>.</td></tr>
+            <tr><td>Division</td><td><code>/</code> always gives a Float; <code>//</code> floors</td><td>Python 3's split, and it removes a classic trap: <code>7 / 2</code> silently gave <code>3</code> under C#/Java rules, and a student had no way to know why. Now <code>7 / 2</code> is <code>3.5</code>, matching what a calculator does, and the surprising operation gets the visibly different spelling. Diverges from C# — but a student meets that trap there anyway, and meeting it with the concept already named is better than meeting it as a mystery.</td></tr>
+            <tr><td><code>//</code> and <code>%</code> floor together</td><td>Toward negative infinity</td><td>A matched pair, so <code>a // b * b + a % b == a</code> holds. C# truncates toward zero, which makes <code>-7 % 2</code> come out <code>-1</code> and quietly breaks <code>n % 2 == 1</code> as an odd-number test. Python's rule keeps <code>n % 2</code> in {0, 1}.</td></tr>
+            <tr><td>Exponent</td><td><code>**</code>, right-associative</td><td>Binds tighter than unary minus, so <code>-2 ** 2</code> is <code>-4</code> and <code>2 ** 3 ** 2</code> is <code>2 ** 9</code> — Python and Ruby's rules, inherited whole rather than invented. Earns its place beyond looks: <code>Math.pow</code> goes through doubles and can only return a Float, where <code>2 ** 10</code> gives the Int <code>1024</code>. Overflow is reported, not wrapped. Not <code>^</code>: every programmer reads that as XOR.</td></tr>
+            <tr><td>Keyword style</td><td><code>var</code> <code>const</code> <code>func</code> <code>class</code> <code>trait</code></td><td>Recognizable abbreviations of the words they mean. <code>fun</code> spells a different English word and buys a recurring question; <code>fn</code> is an abbreviation a student must be told about; <code>function</code> is eight characters on nearly every line of a class body.</td></tr>
+            <tr><td>Statement termination</td><td>Newline; no semicolon token</td><td>Not <em>optional</em> semicolons — the token does not exist. Go permits them and then has gofmt strip them, which is two rules doing one job.</td></tr>
+            <tr><td>Line continuation</td><td>Trailing operator, comma, open bracket; or next line starts <code>.</code> <code>else</code> <code>then</code> <code>with</code></td><td>The leading-<code>.</code> rule is load-bearing: without it, multi-line method chaining breaks, and chaining is how §3.2 replaces the pipe operator.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span class="ref">3.2</span>Types and semantics</h3>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Decision</th><th>Form</th><th>Deciding argument</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Typing</td><td>Static, inferred</td><td>Inference is not a second discipline — it is one discipline with the annotation omitted. The <code>var</code> objection does not apply.</td></tr>
+            <tr><td>Everything is an object</td><td>Uniform surface, CLR representation</td><td>The requirement is that everything responds to <code>.</code> and no globals operate on receivers. That is surface uniformity, achievable while <code>Int</code> compiles to <code>System.Int32</code>. Kotlin's model.</td></tr>
+            <tr><td>The empty value</td><td><code>nothing</code></td><td>Same logic as <code>var</code> and <code>constructor</code> — a word that is its own definition. "This holds nothing" is a complete explanation. <code>null</code> carries fifty years of baggage and means nothing to a fifteen-year-old, <code>nil</code> abbreviates a Latin word, <code>none</code> reads as a quantity. Surfaced by drafting an error message, not by the decision tables.</td></tr>
+            <tr><td>Nullability</td><td>Non-nullable by default, <code>?</code> to opt in</td><td>One character, compiler-enforced, and maps onto C#'s nullable reference types for interop. Avoids teaching monads.</td></tr>
+            <tr><td>Using a nullable</td><td>Flow-sensitive narrowing</td><td>After <code>if p != nothing</code>, <code>p</code> is a <code>Player</code> inside the branch. Kotlin's smart cast, TypeScript's narrowing, C#'s nullable flow analysis. Non-negotiable — without it, non-nullable types are miserable to use. Teaches well: once you have checked, the compiler knows.</td></tr>
+            <tr><td>Fallbacks</td><td><code>.or(default)</code>, <code>.value()</code></td><td>Methods, not operators — discoverable by typing <code>.</code>, chainable, no cryptic sigil. <code>??</code> was rejected for the same reason as the ternary. Compiler intrinsics, since a null reference cannot dispatch, but indistinguishable from methods to the reader. <code>.or(x)</code> is exactly <code>if v != nothing then v else x</code>, so narrowing is the primitive and this is the convenience — §2.1 in miniature.</td></tr>
+            <tr><td>No <code>?.</code></td><td>Rejected for v1</td><td>Collides with §3.4's predicate <code>?</code>. Fails <em>silently</em> — a beginner writes <code>p?.name</code>, gets nothing, and never learns the branch did not run, which inverts §2.6. And C# needs it because its entire BCL is nullable; Emerald's own types are not, so deep nullable chains should be rare by construction. Adding it later is backward compatible (§2.5).</td></tr>
+            <tr><td>Where to stop</td><td>No <code>.map</code>, <code>.and_then</code>, <code>.filter</code></td><td>Once <code>.or()</code> exists these are easy, and they are the road to a full Option API — precisely the complexity rejected when <code>?</code> was chosen over option types. <code>.or()</code> and <code>.value()</code> earn their place by being what a beginner reaches for. Held until real demand argues otherwise.</td></tr>
+            <tr><td>Throwing and catching</td><td><code>throw</code>, <code>try { } catch e { }</code></td><td>The syntax for the row below, which had been settled for months with no way to use it. <code>catch</code> is required — a <code>try</code> that swallows nothing does nothing, and one that swallows silently is worse. Untyped in v0; catching by type needs user-declared error classes first.</td></tr>
+            <tr><td>Runtime failures are catchable</td><td>Not merely avoidable</td><td>A <code>catch</code> handles both a thrown value and the interpreter's own errors, so <code>"banana".to_int()</code> can be recovered from rather than only sidestepped with <code>to_int_maybe</code>. Deliberately does <em>not</em> catch <code>exit</code> or a <code>return</code> unwinding through: neither is a failure.</td></tr>
+            <tr><td><code>throw "oops"</code></td><td>Shorthand for <code>throw Error("oops")</code></td><td>A spelling, not a second concept, so §2.2 makes it free. Throwing anything else — an Int, an instance — is an error naming both forms.</td></tr>
+            <tr><td>Errors</td><td>Exceptions</td><td>The CLR has first-class IL support and every .NET library throws. Result types would mean wrapping every interop call — fighting the platform on its home turf.</td></tr>
+            <tr><td>Mutability</td><td><code>var</code> mutable, <code>const</code> immutable</td><td>Both words are their own definitions — a variable varies, a constant does not. <code>let</code> was considered and rejected: in math it declares a fact that holds, which is immutable semantics, so <code>let</code>-as-mutable borrows the familiarity while inverting the meaning. Does not reopen the C# objection — that was about <code>int x</code> <em>and</em> <code>var x</code> coexisting; here there is only one form.</td></tr>
+            <tr><td>Reuse model</td><td><code>trait</code>, single class inheritance</td><td>One concept covers interfaces and abstract classes: an interface is a trait implementing nothing. Lowers to CLR interfaces with default methods, a real runtime feature since .NET Core 3.0. Single inheritance is forced by the CLR and is the right answer regardless.</td></tr>
+            <tr><td>Trait state</td><td>None; traits declare what they require</td><td>CLR interfaces cannot hold fields, so traits cannot either. Treated as a feature — a trait names its dependency as an abstract member instead of stashing hidden state in you, which is how Ruby modules become unexplainable.</td></tr>
+            <tr><td>Abstractness</td><td>Inferred from unimplemented members</td><td>No separate <code>abstract class</code> declaration. Yields a teachable diagnostic — <em>"Cannot create Animal — <code>speak</code> has no implementation"</em> — rather than C#'s "you forgot to also mark the class."</td></tr>
+            <tr><td>Array literal inference</td><td>The narrowest shared type</td><td>Found by building inheritance: <code>[rex, tweety]</code> must infer <code>Array&lt;Animal&gt;</code>, not fail because a Bird is not a Dog. "First item wins" sufficed until subclasses existed, which is why the gap stayed invisible through the whole array implementation.</td></tr>
+            <tr><td><code>self</code> is not a keyword</td><td>An ordinary binding</td><td>A method's scope simply contains <code>self</code>, so <code>self.name</code> is plain member access. No AST node, no parser case, no special handling in the checker or interpreter — the feature costs one line at each call boundary and nothing anywhere else.</td></tr>
+            <tr><td>Field access</td><td><code>self.name</code> required</td><td>Applies the author's own classroom finding: students identify variables in JavaScript because <code>let</code> marks them and struggle in Python where nothing does. <code>self.</code> is that marker for state. Five characters for a distinction otherwise held in the head.</td></tr>
+            <tr><td>Visibility</td><td><code>_name</code>, compiler-enforced; one level</td><td>Zero keywords, and visible at the <em>use</em> site rather than only the declaration. Go's capitalization trick is unavailable — §3.4 already spends case on the type distinction. <code>_</code> means internal to the class and its subclasses, collapsing C#'s <code>private</code>/<code>protected</code>. Accepted cost: changing visibility is a rename. A stricter level can be added later without breaking anything (§2.5).</td></tr>
+            <tr><td>Constructor</td><td><code>constructor</code>; called as <code>Dog("Rex")</code></td><td>Frequency governs abbreviation: <code>var</code> and <code>func</code> appear on every line and are worth shortening; a constructor appears once per class, so length is nearly free and should be spent on clarity. <code>constructor</code> is the word students are taught for the concept — zero translation. <code>init</code> abbreviates jargon into more jargon; <code>initialize</code> is Ruby's but pairs with <code>Dog.new</code>, so you write one word and call another; the class name brings Java's rename hazard and a grammar special case. No <code>new</code> at the call site — construction is a call.</td></tr>
+            <tr><td>Overloads</td><td>Permitted, with defaults</td><td>Type-based dispatch is what default values cannot do, so both earn their place.</td></tr>
+            <tr><td>Redefinition</td><td>An error until overloads exist</td><td>Two functions of one name previously <em>overwrote</em> each other in silence, so calls to the first went somewhere else with no warning — the worst possible handling. Rejected now, naming the first definition's line. The row below describes the eventual behaviour; this is what happens until it exists.</td></tr>
+            <tr><td>Overload ambiguity</td><td>Rejected at declaration, not at the call</td><td>C# resolves at the call site with subtle rules, and its own guidance is to avoid mixing optional parameters with overloads — a language advising against its own feature. Overlap is decidable here (finite arity, static types), so the error lands on whoever created it: <em>"<code>greet</code> already has an overload matching this one once defaults are applied."</em></td></tr>
+            <tr><td>Properties</td><td>A <code>var</code> with a <code>get</code> / <code>set</code> body</td><td>Not a separate feature. A <code>var</code> without a body is a field; with one it computes; the call site cannot tell, so promoting a field to a property never breaks callers. C#'s <code>{ get; set; }</code> boilerplate exists only because C# keeps fields and properties distinct — collapse the distinction and the boilerplate has nothing to do.</td></tr>
+            <tr><td>Operator overloading</td><td>Via traits, lowering to named methods</td><td><code>a + b</code> calls <code>a.add(b)</code>, with <code>Addable</code> as the contract — Rust's <code>std::ops</code> model. Answers the question Python's dunders answer, using a mechanism that already exists. Operators stay discoverable by typing <code>.</code> because they are ordinary methods. Overloadable set kept small: arithmetic, <code>Equatable</code>, <code>Ordered</code>, <code>Indexable</code>.</td></tr>
+            <tr><td>Strings</td><td><code>System.String</code>; <em>no</em> integer indexing</td><td>Being <code>System.String</code> keeps interop free. Grapheme indexing would be correct but O(n) wearing O(1)'s syntax, and <code>for i in 0..s.length { s[i] }</code> is then quietly quadratic — in a TUI library, that is the whole workload. Swift hit this and removed integer indexing rather than document the trap. Iteration yields graphemes; <code>.chars</code> is one visible O(n) conversion to an O(1) array; <code>.code_units</code> and <code>.code_points</code> sit underneath.</td></tr>
+            <tr><td>Type-level members</td><td><code>static func</code>, <code>static var</code></td><td>Kept despite being the one keyword here that names a storage strategy rather than a concept. <code>shared</code> was considered — VB.NET's choice, and it states the observable truth (one variable shared by every instance, against <code>var name</code> where each gets its own) — but <code>static</code> is what students will meet in every other language, and the transfer is worth more than the accuracy. The call site needs no help either way, since §3.4 casing already separates <code>dog.speak()</code> from <code>Dog.from_shelter_id()</code>.</td></tr>
+            <tr><td>Why a keyword at all</td><td>Inference and explicit receivers both rejected</td><td>Inferring from "never touches <code>self</code>" is decidable and a trap: adding one <code>self.</code> later silently converts a type method to an instance method and breaks every caller. Python's explicit <code>self</code> parameter marks the 95% case to leave the 5% case unmarked — the wrong trade, and its most-criticized wart. The <code>_</code> trick does not transfer: private members are common and the marker is one character; type-level members are rare.</td></tr>
+            <tr><td>Modules and statics</td><td>No keyword inside a module file</td><td>A file with a <code>class</code> line is that class's body, so <code>func</code> is an instance method. A file without one is a module, which has no instances — every <code>func</code> there is static already, so the keyword would be noise and is disallowed.</td></tr>
+            <tr><td>Free functions</td><td>Permitted; become static methods on the file's class</td><td>No new mechanism — §3.3 already compiles a file to a class. <code>math_utils.em</code>'s <code>clamp</code> is <code>MathUtils.clamp</code> elsewhere, so every function has a home namespace and Emerald has no true globals. The receiver is implicit, not absent, so all-objects holds.</td></tr>
+            <tr><td>Value semantics need no implementation</td><td>Immutability makes copying unobservable</td><td>Confirmed by building it. Structs are enforced immutable — only a struct's own constructor may write its fields — and copy-on-assign was never implemented, because copying an immutable value is indistinguishable from sharing it. The row below argued this in the abstract; it turns out to be an implementation strategy, not just a teaching argument.</td></tr>
+            <tr><td>Value types</td><td><code>struct</code>, always immutable</td><td>C#'s value/reference model, minus C#'s worst footgun. Mutable structs are what make <code>transform.position.x = 5</code> fail; if they cannot be declared, that bug cannot be written. Value semantics are only <em>observable</em> under mutation, so students meet structs when they want the stack allocation and never get bitten first.</td></tr>
+            <tr><td>Iteration</td><td><code>for x in items</code> lowers to iterator protocol</td><td>Adopting .NET's <code>IEnumerable</code> makes every existing .NET collection work with <code>for</code> at zero cost.</td></tr>
+            <tr><td>Lambdas</td><td><code>x =&gt; expr</code>, plus trailing-lambda sprinkle</td><td>Trailing lambdas give Ruby's block feel for one grammar rule. Parameter names explicit for now — implicit <code>it</code> is addable later, not removable (§2.5).</td></tr>
+            <tr><td>How a lambda produces a value</td><td>One expression, or an explicit <code>return</code></td><td>Surfaced by building the interpreter: <code>items.filter { p =&gt; p.active? }</code> must yield something, but <code>{ p =&gt; return p.active? }</code> is unwritable. Resolved the same way <code>if&nbsp;/&nbsp;then</code> was — a single-expression form carries the value, so blocks never need value semantics and §3.2's explicit <code>return</code> survives. One principle applied twice rather than two unrelated rules. A block-bodied lambda whose value is used but which never returns is a checker error, not a silent nothing.</td></tr>
+            <tr><td><code>return</code> inside a lambda</td><td>Returns from the lambda</td><td>Not Ruby's non-local return, which exits the enclosing method and surprises everyone exactly once; Kotlin needed <code>return@label</code> to escape the same choice. A student reading <code>{ p =&gt; ... return x ... }</code> assumes it returns from the block in front of them, and the language should agree. Mostly moot in practice: single-expression lambdas contain no <code>return</code> at all.</td></tr>
+            <tr><td>Metaprogramming</td><td>Compile-time only</td><td>Runtime dynamism is what defeated Ruby's tooling — not expressiveness. Renouncing it keeps the LSP and costs almost nothing.</td></tr>
+            <tr><td>Conversions</td><td><code>.to_int()</code> / <code>.to_int_or(0)</code></td><td>Chaining is discoverable by typing <code>.</code>. A conversion spelled <code>Integer("42")</code> is shaped like construction but means parsing.</td></tr>
+            <tr><td>Pipelines</td><td>Method chaining; no <code>|&gt;</code></td><td>In an all-objects language the receiver <em>is</em> the pipeline. Elixir needs <code>|&gt;</code> because free functions nest inside-out; Emerald does not.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span class="ref">3.3</span>Program structure</h3>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Decision</th><th>Form</th><th>Deciding argument</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Entry point</td><td>Top-level statements, every file</td><td>Non-negotiable requirement. Stricter than C#, which permits them in one file with subtle adjacent rules — the two-disciplines smell again.</td></tr>
+            <tr><td>File semantics</td><td>A file is a module; runs top to bottom</td><td>Matches the model students already hold. Compiles to a class with a static method; the entry file's is the assembly entry point.</td></tr>
+            <tr><td>Top-level variables</td><td>Module-level, not method locals</td><td>Lets functions in a file see them without Python's <code>global</code> wart. Accepts some global-state hazard to keep the rule free of asterisks.</td></tr>
+            <tr><td><code>Kernel</code> membership</td><td><code>print read_line random exit</code></td><td><code>exit</code> was added after a real program needed it: a validation failure printed a message and then carried on, because there was no way to stop. Found by the user writing a guessing game, not by design review — which is the §3.7 admission rule working as intended.</td></tr>
+            <tr><td><code>read_line</code> at end of input</td><td>Throws, rather than returning ""</td><td>Returning an empty string surfaced later as <em>"" is not a number</em> from whatever parsed it — an error about the wrong thing, several lines from the cause. Returning <code>String?</code> would be correct but puts <code>.or("")</code> on the most-used function in a beginner's program. Throwing names what actually happened.</td></tr>
+            <tr><td>Core functions</td><td><code>Kernel</code>, callable bare or qualified</td><td><code>print(x)</code> and <code>Kernel.print(x)</code> both work, so the one un-explorable namespace becomes explorable by typing <code>Kernel.</code>.</td></tr>
+            <tr><td>Class declaration</td><td>Block-free at file level</td><td><code>class Dog extends Animal with Swimmer</code> on its own line; everything below is the body. Removes an entire nesting level from every file, which is the whole reason GDScript reads light.</td></tr>
+            <tr><td>Why not filename-as-type</td><td>Rejected</td><td>Godot's model, but it removes the type name from the file: <code>class Dog</code> greps to nothing, renaming a file silently renames a type, and the name lives somewhere other than where the reader is looking. Godot ships <code>class_name</code> for the same reason.</td></tr>
+            <tr><td>A module is a class with no instances</td><td>Confirmed by building it</td><td>A file declaring no type becomes a type named after the file, with every member static — so <code>math_utils.em</code> is reached as <code>MathUtils.clamp(...)</code>. This needed no new mechanism at all: the module story is the class story with one flag set, which is why the row below could promise "no true globals" without inventing anything.</td></tr>
+            <tr><td>Imports within a project</td><td>None required, ever</td><td>Same directory is visible unqualified; other directories are reached by path (<code>Shapes.Dog</code>) with no import statement; <code>import shapes</code> is an optional sprinkle to drop the qualification. A student never writes an import. Java and Go require one for everything, which is ceremony in the common case; C# added implicit usings because the ceremony was not earning its keep.</td></tr>
+            <tr><td>External packages</td><td><code>import raylib</code> required</td><td>A genuine dependency is worth declaring. The distinction is meaningful rather than bureaucratic: inside the project, nothing; outside it, one line.</td></tr>
+            <tr><td>Namespaces</td><td>The directory tree</td><td>Path maps straight to .NET namespace with the project as root, so <code>Shapes.Dog</code> is <code>MyGame.Shapes.Dog</code> in IL and reads correctly from C#. Nothing to keep in sync — no <code>namespace</code> line that can disagree with the folder containing it.</td></tr>
+            <tr><td>Import side effects</td><td>Structurally almost impossible</td><td>Type files (<code>class</code>/<code>trait</code>/<code>struct</code>) have no top-level statements to run, so importing one executes nothing. Only module files can, and their top-level code runs once on first member access — a CLR static constructor, so the lowering is free and Python's import-order problems do not arise.</td></tr>
+            <tr><td>Block scoping</td><td>Every block is a scope; nothing leaks</td><td>A <code>var</code> declared inside an <code>if</code> or a loop is gone afterwards. Ruby's <code>for</code> leaks its variable into the enclosing scope, which was noted as a defect back in §3.1 and is not inherited.</td></tr>
+            <tr><td>Loop variables</td><td>Fresh each iteration</td><td>Closures made inside a <code>for</code> capture 1, 2, 3 — not 3, 3, 3. The classic closure-in-a-loop bug, which JavaScript needed <code>let</code> to fix and C# changed <code>foreach</code> in version 5 to avoid. Confirmed by test, not assumed.</td></tr>
+            <tr><td>Hoisting</td><td>Functions yes, variables no</td><td>Using a <code>var</code> before its declaration is an error; functions are visible anywhere in the file. Without function hoisting, mutual recursion needs forward declarations — exactly the ceremony §3.3 exists to remove. The checker and interpreter must agree on this: they briefly did not, and the result was a program the type checker accepted and the runtime rejected.</td></tr>
+            <tr><td>Closures</td><td>Capture by reference</td><td><code>(1..4).each { n =&gt; total += n }</code> updates the outer <code>total</code>. The environment is shared, not copied.</td></tr>
+            <tr><td>Shadowing</td><td>Error within a function; fine across one</td><td>C#'s rule. <code>var x</code> inside a block when an <code>x</code> is already visible is almost always a student meaning to <em>change</em> it, so the diagnostic says exactly that rather than "already declared". Crossing a function boundary is allowed, so a local <code>count</code> is legal beside a module-level <code>count</code>, and a block parameter may shadow an outer name. An error rather than a warning: it is nearly always a bug, the fix is one word, and warnings get ignored.</td></tr>
+            <tr><td>Entry point</td><td><code>main.em</code> by convention; or named explicitly</td><td><code>emerald run</code> finds <code>main.em</code>; <code>emerald run foo.em</code> runs that file. Zero configuration for students, scripts still work.</td></tr>
+            <tr><td>A file has one of two shapes</td><td>One block-free type, or only block forms</td><td>Corrects a contradiction the grammar exposed: if a block-free body runs to end of file, a later <code>class X { }</code> is <em>nested</em>, not a sibling. Resolved toward the simpler rule — the body runs to EOF with no exceptions, so nested is what you get, and nested helper types are useful. A sibling type goes in its own file, which §3.3 already encourages, or the file uses block forms throughout. Two shapes but not two disciplines (§2.2): the same declaration with its body implied or written, exactly as top-level statements relate to an explicit <code>Main</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span class="ref">3.4</span>Naming</h3>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Kind</th><th>Casing</th><th>Note</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Types</td><td><code>PascalCase</code></td><td rowspan="3">Matching .NET buys no consistency — .NET itself uses three casings, including the camelCase locals students find hardest. Two casings, one statable rule: types are capitalized, nothing else is.</td></tr>
+            <tr><td>Functions, methods, variables, parameters</td><td><code>snake_case</code></td></tr>
+            <tr><td>Constants</td><td><code>SCREAMING_SNAKE</code></td></tr>
+            <tr><td>Predicate methods</td><td><code>?</code> suffix, enforced both ways</td><td>A method returning <code>Bool</code> must end in <code>?</code>; a method ending in <code>?</code> must return <code>Bool</code>. External members exempt. Ruby leaves this a convention, so the hint cannot be trusted; enforcing the biconditional makes <code>list.empty?</code> tell you the return type at the call site — the same move as <code>self.</code> for fields and <code>_</code> for visibility. Overloads the <code>?</code> already spent on nullability, accepted because a type annotation and a method name never occupy the same slot.</td></tr>
+            <tr><td>No <code>!</code> counterpart</td><td>Rejected</td><td>Ruby's <code>sort!</code> is the weaker convention because <code>!</code> means "the dangerous one," which is a vibe. <code>?</code> encodes an objective property of the signature, which is why one is enforceable and the other is not.</td></tr>
+            <tr><td>Predicate names in IL</td><td>Zero-arg gets <code>Is</code>; others strip</td><td>English does the work: a predicate taking no argument is an adjective and needs "is," one taking arguments is already a verb. <code>empty?</code>&nbsp;&rarr;&nbsp;<code>IsEmpty</code>, <code>even?</code>&nbsp;&rarr;&nbsp;<code>IsEven</code>, <code>contains?(x)</code>&nbsp;&rarr;&nbsp;<code>Contains</code>, <code>starts_with?(s)</code>&nbsp;&rarr;&nbsp;<code>StartsWith</code>. Always prefixing gives <code>IsContains</code>; always stripping gives <code>list.Empty()</code>, which reads as a command. A C# consumer never learns Emerald was involved.</td></tr>
+            <tr><td><code>@name("Any")</code></td><td>Override for the misses</td><td>The arity rule misses occasionally — <code>any?</code> would become <code>IsAny</code> where .NET says <code>Any()</code>. Cheap because it only affects public library APIs; internal Emerald code never sees the mangled name, and library authors want control of their public surface anyway. A defensible exception to the row below: Emerald owns both names, the mapping is one-way and deterministic, and the round-trip failure that killed read-translation cannot occur.</td></tr>
+            <tr><td>.NET interop</td><td>No translation</td><td>PascalCase .NET calls stay visible. They live inside wrapper libraries, not student code, so the cost is bounded. Auto-translation is deferred, not rejected.</td></tr>
+            <tr><td>Enforcement</td><td>Compiler warning, with one exemption</td><td>Auto-fix is out — renaming an identifier is a semantic change, not a formatting one. The warning fires on declarations you own and <em>never</em> on members overriding or implementing an external type; without that exemption every interop override in every wrapper warns forever. This is why §4.3's <code>func update()</code> is correct: the wrapper's <code>Behaviour</code> defines <code>update</code> and calls through to Unity's <code>Update</code>.</td></tr>
+            <tr><td><code>@external</code></td><td>Suppresses casing diagnostics on a type</td><td>Covers what the automatic exemption cannot: a type mirroring a foreign API <em>without</em> inheriting from it — a P/Invoke binding, a native memory layout, a DTO matching a JSON schema. No base type exists to infer from, so every member would warn forever. Applied to the type, not per member, and scoped to casing only so it cannot become a blanket silencer.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span class="ref">3.5</span>Tooling</h3>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Decision</th><th>Form</th><th>Deciding argument</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Formatter</td><td><code>emerald fmt</code>, zero configuration, on save</td><td>gofmt's innovation was removing the argument, not the formatting. Also makes the brace convention free — nobody can get it wrong, and nobody argues about it.</td></tr>
+            <tr><td>Misleading indentation</td><td>Compiler warning, not a lint</td><td>Precedent: GCC and Clang ship <code>-Wmisleading-indentation</code>, added after Apple's 2014 "goto fail" bug — a duplicated line indented as though guarded, which broke SSL validation. A configurable lint is a rule someone switches off.</td></tr>
+            <tr><td>Command set</td><td><code>new run build ship test fmt explain add</code></td><td>Eight, fitting on one screen — §2.1 applied to tooling. Compare <code>dotnet</code>, where the useful commands are buried among two dozen. <code>check</code> is the obvious ninth; withheld until compile times prove it necessary.</td></tr>
+            <tr><td>New projects</td><td>One file, no manifest</td><td><code>emerald new my_game</code> produces <code>main.em</code> and nothing else — no config, no <code>src/</code>. The line-1 principle applied to projects: a new project should be readable in full. Beginners reliably mangle scaffolding they do not yet understand, putting source in config directories and code in manifests; there is nothing here to mangle.</td></tr>
+            <tr><td>Manifest</td><td><code>emerald.toml</code>, created on first need</td><td>Appears when <code>emerald add</code> runs or a package gets named for distribution, not before. TOML over JSON (no comments) and over <code>.csproj</code> XML. Explicitly not Emerald code — Gradle went that way and build files became programs nobody can predict.</td></tr>
+            <tr><td>Templates</td><td><code>--kind tui</code>, <code>--kind raylib</code></td><td>Where the Rails opinionation lives without imposing it on hello-world. Flag rather than positional so it stays clear which word is the project name.</td></tr>
+            <tr><td>Testing</td><td><code>*_test.em</code> files, <code>@test</code> functions</td><td>Convention over configuration, in the box per §2.4. <code>assert clamp(15, 0, 10) == 10</code> must report <em>"was 15"</em> with the source text — which requires capturing argument expressions, which a function cannot do. See §6.</td></tr>
+            <tr><td><code>emerald ship</code></td><td>Single self-contained executable</td><td>A separate command because it names an intent students actually have: <em>I made a thing and want to send it to my friend.</em> .NET supports single-file publishing, so this is achievable, and most toolchains make it the hardest thing they do.</td></tr>
+            <tr><td><code>emerald explain</code></td><td>Bare invocation explains the last error</td><td>Making a stuck student transcribe <code>E0210</code> is a tax on someone already stuck. Explanations show broken code beside fixed code, not prose about the concept.</td></tr>
+            <tr><td>Checking scope</td><td>Eager, whole project</td><td>What every statically typed compiler does — Rust checks the whole crate, Go errors on unused imports, C# compiles every file. Zig is the outlier, and only because comptime makes eager analysis intractable. Speed comes from incremental caching, not from checking less. For a classroom the decisive point is §2.6: a file that is silently never checked is a diagnostic that never fires. It is also the <em>simpler build</em> — lazy checking needs reachability analysis, on-demand resolution, and memoization, which is why Zig's compiler is more complex for it. Eager is "walk everything once." Incremental caching is a later optimization; Phase 1 checks everything every time and will be instant at student-project scale.</td></tr>
+            <tr><td>Debug info</td><td>Portable PDB, from Phase 2</td><td>Without source-mapped debug info, breakpoints cannot land in <code>.em</code> files and stack traces point at IL — debugging is effectively unavailable. Well-documented format; the cost is that it has to be built alongside the emitter rather than bolted on.</td></tr>
+            <tr><td>Lowering source maps</td><td>Every lowering carries its original span</td><td>Every sprinkle is a lowering: <code>5.times { }</code> becomes a loop, <code>for x in items</code> becomes iterator calls, <code>a + b</code> becomes <code>a.add(b)</code>. A breakpoint inside <code>5.times</code> must land on the line the student wrote, not on generated loop machinery. §2.6 extended past the compiler — diagnostics point at your code, and so should the debugger.</td></tr>
+            <tr><td>Generated code</td><td>Visible, in a synthetic source document</td><td>§3.8 chose additive-only so that what you see is what runs; that argument only lands if generated declarations can be opened, read, and stepped into. C# does this for source generators, and it is much of why they are debuggable where Rails-style runtime generation is not. Hiding them would half-undo the reason additive-only was chosen.</td></tr>
+            <tr><td>REPL</td><td>Deferred, but preserved</td><td>Nearly free over a tree-walking interpreter, a real project over an IL emitter. Two cheap constraints keep the option: parse a single statement standalone, keep the environment a first-class object.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span class="ref">3.6</span>Diagnostics</h3>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Decision</th><th>Form</th><th>Deciding argument</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Voice</td><td>The subject is the program, never the programmer</td><td>"This block never closes," not "You forgot a closing brace." Same length, same information, only one assigns fault. The word <em>you</em> does not appear in diagnostics.</td></tr>
+            <tr><td>Vocabulary</td><td>No <em>fatal</em>, <em>illegal</em>, <em>invalid</em></td><td>Inherited from 1970s systems programming and never revisited. A missing brace is neither fatal nor illegal, but a fifteen-year-old reading those words correctly infers they have done something bad. Removing them costs nothing.</td></tr>
+            <tr><td>Point at the cause</td><td>Not at the symptom</td><td>An unclosed block reports the <em>opening</em> brace's line, not end-of-file. This is the entire mitigation for the cost accepted in §3.1, and the difference between a thirty-second fix and a lost class period.</td></tr>
+            <tr><td>Cascades</td><td>One error per cause; downstream suppressed</td><td>A single typo producing forty errors is the most demoralizing thing a compiler does, and is much of what makes C++ unteachable. Suppressed counts are reported: <em>"3 further errors suppressed — likely caused by this one."</em> Far easier to design in than to retrofit.</td></tr>
+            <tr><td>No aliases</td><td>One name per thing</td><td>Ruby ships <code>map</code>/<code>collect</code>, <code>find</code>/<code>detect</code>, <code>size</code>/<code>length</code>/<code>count</code> — and every Ruby style guide tells you to pick one, which is the ecosystem retrofitting the blessed default the language declined to choose (§2.4). Two names also make the API worse to explore, not better: typing <code>.</code> shows both and the reader must decide. In a classroom it means two students write different code for one thing.</td></tr>
+            <tr><td>Known by another name</td><td>A curated suggestion table</td><td>What aliases were for, done in the diagnostic instead: <code>s.characters</code> answers <em>"Emerald calls that chars"</em>, and <code>ns.collect</code> answers <em>"Emerald calls that map"</em>. Edit distance cannot do this — <code>to_integer</code> is four edits from <code>to_int</code> and <code>quit</code> shares almost nothing with <code>exit</code> — so the pairs are curated. A wrong guess now teaches the right name rather than quietly working and leaving two dialects in circulation.</td></tr>
+            <tr><td>Suggested fixes</td><td>High confidence only, phrased as suggestions</td><td><em>"did you mean <code>speak</code>?"</em> A confidently wrong suggestion is worse than none — a beginner trusts it and goes somewhere false.</td></tr>
+            <tr><td>Typos before failures</td><td>Editor code actions, not build errors</td><td>The Google Docs standard: a red squiggle does not reassure you, it quietly offers the correction and leaves. Typo-class problems should be fixable inline before they are ever a build failure, so there is no moment of failure to feel bad about.</td></tr>
+            <tr><td>Stable IDs</td><td><code>E0104</code>, with <code>emerald explain</code></td><td>Terse message for the person who knows, long form for the person who does not, neither compromised. Also makes errors searchable at 11pm. Better than a teaching-mode flag, which would be configuration (§2.4) and would split users into those who see good errors and those who do not.</td></tr>
+            <tr><td>Where the human framing lives</td><td>In <code>explain</code>, not in the error</td><td>The place to say that unclosed blocks are among the most common failures in every brace language, and that experienced programmers hit them daily. Opt-in depth: nobody pays for the sentence unless they want it, so the default message stays one line.</td></tr>
+            <tr><td>Name the concept</td><td>Always</td><td><em>"A <code>Player?</code> holds either a Player or nothing"</em> teaches the idea, not just the fix. Most compilers assume the vocabulary is already known; a teaching language cannot.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span class="ref">3.7</span>Standard library</h3>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Decision</th><th>Form</th><th>Deciding argument</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Scope</td><td>The BCL <em>is</em> the generous library</td><td>§2.1's promise is largely satisfied before a line is written. <code>DateTime</code>, <code>Regex</code>, <code>File</code>, <code>Path</code>, <code>Uri</code>, <code>HttpClient</code>, JSON — twenty years of tested, documented, fast code. Emerald exposes them rather than competing, which is F#'s posture: a small core library sitting on the BCL.</td></tr>
+            <tr><td>What Emerald writes</td><td>Collections, <code>Kernel</code>, sprinkles, wrappers</td><td>Four things: a better collection surface, <code>print</code>/<code>read_line</code>/<code>random</code>, the expressive one-liners below, and wrappers where a .NET API is genuinely awkward for a beginner. A weekend's design rather than a career's.</td></tr>
+            <tr><td>Collection core</td><td>About twenty methods</td><td><code>each map filter reject find index_of contains? any? all? empty? reduce count sum min max sort sort_by reverse first last join add remove remove_at clear</code>. What a student actually uses, scannable in one autocomplete list.</td></tr>
+            <tr><td>Methods that can miss</td><td><code>find first last min max</code> return <code>T?</code></td><td>An empty array has no first element, and <code>find</code> may match nothing. Returning a maybe rather than throwing makes the checker insist you handle it, and <code>.or(0)</code> is one call. This is the clearest everyday place the nullability design pays for itself — confirmed once arrays were built.</td></tr>
+            <tr><td>Block parameter types</td><td>Inferred from the receiver</td><td><code>numbers.map { x =&gt; ... }</code> on an <code>Array&lt;Int&gt;</code> makes <code>x</code> an <code>Int</code>, so <code>x.upper</code> is a compile error rather than a runtime surprise. Contextual typing, and the reason lambda parameters need no annotation.</td></tr>
+            <tr><td>The long tail</td><td><code>import linq</code></td><td><code>GroupBy</code>, <code>SelectMany</code>, <code>Aggregate</code>, windowing, set operations. This is how §1's two audiences stop paying for each other: a fourteen-year-old sees twenty methods, a professional writes one import and has everything.</td></tr>
+            <tr><td>Why LINQ is not merged</td><td>Extension methods not auto-imported</td><td>Not a wall against .NET — a refusal to put two overlapping APIs in one autocomplete list. <code>Select</code>-meaning-map beside <code>map</code>-meaning-map is the actual harm, and it would be worse than the <code>len()</code> duplication that started this whole line of thinking.</td></tr>
+            <tr><td>Collection naming</td><td><code>map filter reject find reduce</code></td><td>Not Ruby's <code>select</code>/<code>inject</code>. Deciding argument: <strong><code>select</code> means the opposite thing in LINQ</strong> — Ruby's filters, .NET's maps. Shipping that collision on .NET would be building a trap deliberately. These names are also what students meet in JavaScript, Python, Rust, and Swift. One place Ruby's vocabulary is simply weaker.</td></tr>
+            <tr><td>Core types</td><td><code>Array</code> (growable), <code>Dictionary</code>, <code>Set</code></td><td>One sequence type, not C#'s <code>T[]</code>/<code>List&lt;T&gt;</code> split; growable <code>Array</code> has JS precedent. <code>Dictionary</code> rather than <code>Map</code> because <strong><code>Map</code> the type collides with <code>map</code> the method</strong> — "map is a verb and a noun" is a bad thing to explain to a beginner. Length is free on type names (frequency governs abbreviation, as with <code>constructor</code>), and it matches .NET.</td></tr>
+            <tr><td><code>Math</code> is a module</td><td><code>Math.sqrt</code>, not <code>x.sqrt</code></td><td>The rule below deciding its own first real case. <code>sqrt</code> replaces no syntax — it is arithmetic, not a loop or an awkward expression — so it belongs in a module rather than on <code>Float</code>. Holds <code>pi</code>, <code>e</code>, <code>sqrt</code>, <code>pow</code>, <code>min</code>, <code>max</code>; <code>round</code>, <code>floor</code>, <code>ceil</code> and <code>abs</code> stay on the value, where they operate.</td></tr>
+            <tr><td><code>.chars</code> exists</td><td>Graphemes, as an <code>Array&lt;String&gt;</code></td><td>§3.2 ruled out integer indexing on strings and pointed at <code>.chars</code> — which had never been implemented, so the diagnostic saying "use .chars" named something that did not exist. <code>"héllo 👋".chars.count</code> is 7, and reversing keeps the emoji whole.</td></tr>
+            <tr><td>Type API vs sprinkles</td><td>Two categories, not one</td><td>Operations <em>on the value</em> — <code>abs</code>, <code>round</code>, <code>min</code>, <code>max</code>, <code>to_string</code> — are not sprinkles; they are what <code>Int</code> needs the way <code>String</code> needs <code>length</code>. Sprinkles are a separate, governed category. Conflating them is what made the earlier rule feel elastic.</td></tr>
+            <tr><td>The sprinkle test</td><td>Replaces syntax, not a function</td><td><code>5.times</code> replaces a for loop; <code>n.even?</code> replaces <code>n % 2 == 0</code>; <code>n.clamp(1,10)</code> replaces nested min/max; <code>n.between?(1,20)</code> replaces <code>n &gt;= 1 and n &lt;= 20</code>. Each removes syntax a beginner finds hard. <code>n.factorial</code> replaces nothing syntactic — it is arithmetic, and belongs in <code>Math</code>. A decidable line where "reads aloud" was a vibe.</td></tr>
+            <tr><td>Sprinkle scope</td><td>Primitives and <code>Range</code> only</td><td>Never on collections, which already carry the core twenty plus LINQ and are what students touch constantly. Ruby's <code>Enumerable</code> sprawl happened on the collection, not on <code>Integer</code> — fencing sprinkles away from the place they would do damage costs nothing.</td></tr>
+            <tr><td>Terminology</td><td>House word: <strong>sprinkles</strong></td><td>Emerald's term for syntactic sugar, and it usefully covers more than the stdlib methods below. <code>print(x) if cond</code>, trailing lambdas, and <code>if&nbsp;/&nbsp;then</code> are the same <em>kind</em> of thing as <code>5.times</code> — optional expressiveness over a core that does not need them, governed by the same test. "Desugars" is replaced by "lowers," which is the more precise verb anyway.</td></tr>
+            <tr><td>Admission</td><td>Start small, migrate as needed</td><td>Seeded from what is already justified — <code>times</code>, <code>upto</code>, <code>downto</code>, <code>even?</code>, <code>odd?</code>, <code>zero?</code>, <code>positive?</code>, <code>clamp</code>, <code>between?</code> — and grown freely while pre-1.0, since a rule that strangles early exploration is a bad rule. The evidence gate (a sprinkle must have appeared repeatedly as a hand-written workaround) applies at 1.0, when removal stops being free.</td></tr>
+            <tr><td>Why they exist at all</td><td>A dividend of all-objects</td><td><code>5.times</code> requires <code>Int</code> to have methods. §3.2's uniform surface was chosen for consistency and discoverability; the Ruby joy is downstream of it rather than in tension with it.</td></tr>
+            <tr><td>Conversions</td><td><code>to_int()</code>, <code>to_int_or(0)</code>, <code>to_int_maybe()</code></td><td>Throws, defaults, or returns <code>Int?</code>. .NET's <code>TryParse</code> pattern without the <code>out</code> parameter — the design thinking taken, expressed with a better mechanism. Named <code>_maybe</code> rather than <code>to_int?()</code> because §3.4's predicate rule is absolute: <code>?</code> means <code>Bool</code>. The enforced rule caught the collision at design time.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span class="ref">3.8</span>Metaprogramming</h3>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Decision</th><th>Form</th><th>Deciding argument</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Two features, not one</td><td>Attributes ≠ macros</td><td>Settles the old "attribute responsibilities" question. Of four harvested demands, <em>three</em> generate no code at all — <code>@export</code> attaches a .NET attribute, <code>@external</code> suppresses a diagnostic, <code>@name</code> overrides emitted metadata. Only <code>assert</code> is a macro. They were never one mechanism.</td></tr>
+            <tr><td>Attributes</td><td>Fixed vocabulary, v1</td><td><code>@export</code>, <code>@test</code>, <code>@external</code>, <code>@name</code>. Declarative, compiler-known, no user extension initially. Ships early because they are needed early, and each is roughly ten lines rather than a subsystem.</td></tr>
+            <tr><td>Macros, v1</td><td>Function-like, expression position</td><td>Covers <code>assert</code>, which is the only harvested demand that needs real code generation. Crucially it needs no way to add members to a type, so the whole <code>partial</code>-class question does not arise yet.</td></tr>
+            <tr><td>Additive only</td><td>Never transformative</td><td>Transformative macros are how Rails became unexplainable — <code>has_many</code> generates methods you cannot find. Additive keeps four commitments intact at once: the LSP indexes real declarations (§2.3), PDB line mapping stays unambiguous (§5.4), errors in your code point at your code (§2.6), and the source you read is the source that runs. C# restricted source generators this way deliberately and has held the line.</td></tr>
+            <tr><td>Hygiene</td><td>Required</td><td>An unhygienic collision produces <em>no diagnostic at all</em> — correct-looking code, clean compile, wrong answer. §2.6 has nothing to say because there is nothing to say, and a beginner cannot debug an invisible variable collision. Solved since 1980s Scheme; not research. Nearly free at v1 scope: an expression macro introducing no user-visible bindings needs only compiler-generated temporaries with unspeakable names.</td></tr>
+            <tr><td>Deferred tier</td><td>Attribute macros that add members</td><td>Where the hard parts arrive together: a <code>partial</code> mechanism (or generation into a trait), full syntax-context hygiene, and phase ordering against name resolution. Genuinely difficult — and genuinely later.</td></tr>
+            <tr><td>Accepted loss</td><td>No <code>@memoize</code>, <code>@timed</code>, <code>@retry</code></td><td>Body-wrapping macros require rewriting code you wrote, which additive-only forbids. Rust has them; Emerald will not. Partly mitigated by higher-order functions at runtime and by generating a new function beside the original — but a real loss, recorded as one.</td></tr>
+            <tr><td>Where DSL feel comes from</td><td>Mostly not macros</td><td>A refinement of §2.3. What makes the Unity sample read like GDScript is the block-free class line, trailing lambdas, inference, <code>func</code>, and snake_case — settled language features. The only metaprogramming is <code>@export</code>, an attribute alias. The load is distributed across work already done, which is why the hard tier can arrive late without stranding the thesis.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== 4 ===== -->
+    <section id="s4">
+      <h2><span class="num">§ 4</span>Syntax sketch</h2>
+      <p class="lede">Not a specification — a target. These are the programs a first-week student should be able to read completely, with every character honestly explainable.</p>
+
+      <div class="code">
+        <div class="file">mad_lib.em</div>
+<pre><span class="c"># Mad Libs</span>
+
+print(<span class="s">"MAD LIBS"</span>)
+print(<span class="s">"--------"</span>)
+
+<span class="k">var</span> name      = read_line(<span class="s">"Enter a name: "</span>)
+<span class="k">var</span> noun      = read_line(<span class="s">"Enter a noun: "</span>)
+<span class="k">var</span> verb      = read_line(<span class="s">"Enter a verb ending in -ing: "</span>)
+<span class="k">var</span> adjective = read_line(<span class="s">"Enter an adjective: "</span>)
+<span class="k">var</span> number    = read_line(<span class="s">"Enter a number: "</span>)
+
+print(<span class="s">""</span>)
+print(<span class="s">"One day, #{name} found a #{adjective} #{noun}."</span>)
+print(<span class="s">"It had been #{verb} for #{number} years straight."</span>)
+print(<span class="s">"Nobody knew why. #{name} decided not to ask."</span>)</pre>
+      </div>
+
+      <div class="code">
+        <div class="file">guessing_game.em</div>
+<pre><span class="c"># Number guessing game</span>
+
+<span class="k">const</span> MAX = <span class="n">100</span>
+
+<span class="k">var</span> secret  = random(<span class="n">1</span>, MAX)
+<span class="k">var</span> guesses = <span class="n">0</span>
+<span class="k">var</span> done    = <span class="k">false</span>
+
+print(<span class="s">"I'm thinking of a number between 1 and #{MAX}."</span>)
+
+<span class="k">while not</span> done {
+    <span class="k">var</span> guess = read_line(<span class="s">"Your guess: "</span>).to_int_or(<span class="n">0</span>)
+    guesses += <span class="n">1</span>
+
+    <span class="k">if</span> guess &lt; secret {
+        print(<span class="s">"Too low."</span>)
+    }
+    <span class="k">else if</span> guess &gt; secret {
+        print(<span class="s">"Too high."</span>)
+    }
+    <span class="k">else</span> {
+        print(<span class="s">"You got it in #{guesses} guesses!"</span>)
+        done = <span class="k">true</span>
+    }
+}</pre>
+      </div>
+
+      <h3><span class="ref">4.1</span>One mechanism, three spellings</h3>
+      <p>All three compile to the same iterator protocol. Teach the first; the others need no new concept. This is §2.1 and §2.2 made concrete.</p>
+      <div class="code">
+<pre><span class="k">for</span> i <span class="k">in</span> <span class="n">1</span>..<span class="n">5</span> {
+    print(i)
+}
+
+(<span class="n">1</span>..<span class="n">5</span>).each { i =&gt; print(i) }
+
+<span class="n">1</span>.upto(<span class="n">5</span>) { i =&gt; print(i) }</pre>
+      </div>
+
+      <p>The same economy in conditionals. <code>if</code> is an expression, so there is no ternary to learn and no declare-then-assign dance — and construction is a plain call, with no <code>new</code>.</p>
+      <div class="code">
+<pre><span class="k">var</span> status = <span class="k">if</span> score &gt;= <span class="n">90</span> <span class="k">then</span> <span class="s">"A"</span> <span class="k">else</span> <span class="s">"B"</span>
+
+<span class="k">var</span> grade = <span class="k">if</span> score &gt;= <span class="n">90</span> <span class="k">then</span> <span class="s">"A"</span>
+            <span class="k">else if</span> score &gt;= <span class="n">80</span> <span class="k">then</span> <span class="s">"B"</span>
+            <span class="k">else</span> <span class="s">"C"</span>
+
+<span class="k">var</span> rex = Dog(<span class="s">"Rex"</span>)</pre>
+      </div>
+
+      <p>And the expressive one-liners — each one replacing arithmetic or a loop with something that reads aloud. These exist only because everything is an object: <code>5.times</code> requires <code>Int</code> to have methods.</p>
+      <div class="code">
+<pre><span class="n">5</span>.times { print(<span class="s">"hi"</span>) }
+<span class="n">1</span>.upto(<span class="n">10</span>) { i =&gt; print(i) }
+<span class="n">10</span>.downto(<span class="n">1</span>) { i =&gt; print(i) }
+
+<span class="n">7</span>.even?          <span class="c"># false — beats n % 2 == 0</span>
+<span class="n">7</span>.between?(<span class="n">1</span>, <span class="n">10</span>)  <span class="c"># true</span>
+<span class="n">42</span>.clamp(<span class="n">1</span>, <span class="n">10</span>)    <span class="c"># 10</span>
+
+<span class="k">var</span> names = players
+    .filter { p =&gt; p.active? }
+    .map { p =&gt; p.name }
+    .join(<span class="s">", "</span>)</pre>
+      </div>
+
+      <h3><span class="ref">4.2</span>The object model</h3>
+      <p>Traits carry implementation and state requirements; classes inherit one base and mix in any number of traits. An interface is not a separate feature — it is a trait that implements nothing.</p>
+      <div class="code">
+        <div class="file">animal.em</div>
+<pre><span class="k">class</span> Animal
+
+<span class="k">var</span> name: String
+<span class="k">var</span> _chip_id: Int              <span class="c"># internal, enforced</span>
+
+<span class="k">constructor</span>(name: String) {
+    self.name = name
+}
+
+<span class="k">abstract func</span> speak(): String
+
+<span class="k">func</span> introduce(): String {
+    <span class="k">return</span> <span class="s">"#{self.name} says #{self.speak()}"</span>
+}</pre>
+      </div>
+      <div class="code">
+        <div class="file">swimmer.em</div>
+<pre><span class="k">trait</span> Swimmer
+
+<span class="k">abstract func</span> stamina(): Int   <span class="c"># the trait requires this of you</span>
+
+<span class="k">func</span> swim() {                   <span class="c"># the trait provides this to you</span>
+    print(<span class="s">"Swimming for #{self.stamina()} minutes."</span>)
+}</pre>
+      </div>
+      <div class="code">
+        <div class="file">dog.em</div>
+<pre><span class="k">class</span> Dog <span class="k">extends</span> Animal <span class="k">with</span> Swimmer
+
+<span class="k">static var</span> total_count = <span class="n">0</span>    <span class="c"># one, shared by every dog</span>
+
+<span class="k">static func</span> from_shelter_id(id: Int): Dog {
+    <span class="k">return</span> Dog(lookup_name(id))
+}
+
+<span class="k">func</span> speak(): String {
+    <span class="k">return</span> <span class="s">"Woof"</span>
+}
+
+<span class="k">func</span> stamina(): Int {
+    <span class="k">return</span> <span class="n">30</span>
+}</pre>
+      </div>
+
+      <p>Properties are not a separate construct — a <code>var</code> with a <code>get</code> body computes, one without is a field, and callers cannot tell which. Operators are ordinary methods reached through a trait.</p>
+      <div class="code">
+        <div class="file">circle.em</div>
+<pre><span class="k">class</span> Circle
+
+<span class="k">var</span> radius: Float
+
+<span class="k">var</span> area: Float {
+    <span class="k">get</span> { <span class="k">return</span> PI * self.radius * self.radius }
+}</pre>
+      </div>
+      <div class="code">
+        <div class="file">vector3.em</div>
+<pre><span class="k">struct</span> Vector3 <span class="k">with</span> Addable
+
+<span class="k">var</span> x: Float
+<span class="k">var</span> y: Float
+<span class="k">var</span> z: Float
+
+<span class="c"># a + b lowers to a.add(b)</span>
+<span class="k">func</span> add(other: Vector3): Vector3 {
+    <span class="k">return</span> Vector3(self.x + other.x, self.y + other.y, self.z + other.z)
+}</pre>
+      </div>
+
+      <h3><span class="ref">4.3</span>The Unity target</h3>
+      <p>What the design is ultimately aimed at. Left is Unity's C# today; right is the same behaviour with Emerald's decisions plus a wrapper library. Nothing on the right requires a feature not already settled above.</p>
+      <div class="code">
+        <div class="file">player_controller.em</div>
+<pre><span class="k">class</span> PlayerController <span class="k">extends</span> Behaviour
+
+<span class="c">@export</span> <span class="k">var</span> speed = <span class="n">5.0</span>
+
+<span class="k">func</span> update() {
+    <span class="k">var</span> h = input.axis(<span class="s">"horizontal"</span>)
+    transform.translate(Vector3.right * h * speed * time.delta)
+}</pre>
+      </div>
+      <p>Against C#'s version: no <code>using</code>, no <code>public</code>, no braces around the class body and so no nesting level, no <code>[SerializeField] private float</code>, and no unexplained <code>void</code>. The type is still named where a reader will look for it. <code>@export</code> is a macro, not a keyword — §2.3 doing the work it exists to do.</p>
+
+      <h3><span class="ref">4.4</span>Diagnostics</h3>
+      <p>§2.6 made warnings a design surface rather than an afterthought, so these are specification, not illustration. Note that no message contains the word <em>you</em>, and none uses <em>fatal</em>, <em>illegal</em>, or <em>invalid</em>.</p>
+      <div class="code">
+        <div class="file">The cost accepted in §3.1, mitigated</div>
+<pre>dog.em:4  This block never closes.
+
+  4 | func speak(): String {
+    |                      <span class="c">^ opened here</span>
+
+  <span class="c">The file ends before a matching } appears.
+  Try: emerald explain E0104</span></pre>
+      </div>
+      <div class="code">
+        <div class="file">Where a student first meets the type system</div>
+<pre>player.em:12  find_player might not find anything.
+
+ 12 | print(find_player(id).name)
+    |       <span class="c">^^^^^^^^^^^^^^^ this is Player?, not Player</span>
+
+  <span class="c">A Player? holds either a Player or nothing, so .name may not exist.
+  Check it first:</span>
+
+      <span class="k">var</span> p = find_player(id)
+      <span class="k">if</span> p != <span class="k">nothing</span> {
+          print(p.name)
+      }
+
+  <span class="c">Try: emerald explain E0210</span></pre>
+      </div>
+      <div class="code">
+        <div class="file">The spell-checker standard</div>
+<pre>dog.em:7  No method named speek on Dog.
+
+  7 |     rex.speek()
+    |         <span class="c">^^^^^ did you mean speak?</span></pre>
+      </div>
+      <div class="code">
+        <div class="file">A syntax corner answered by a message, not a rule</div>
+<pre>game.em:8  An if/then expression needs an else.
+
+  8 | if score &gt; <span class="n">90</span> <span class="k">then</span> print(<span class="s">"high"</span>)
+    |                <span class="c">^^^^ every branch must produce a value</span>
+
+  <span class="c">For a conditional statement, use the block form:</span>
+
+      <span class="k">if</span> score &gt; <span class="n">90</span> {
+          print(<span class="s">"high"</span>)
+      }</pre>
+      </div>
+      <p>Mixing the two <code>if</code> forms is the error a student will actually hit. The grammar could have forbidden it with an extra rule; a diagnostic is cheaper and teaches more. That is the pattern for syntax corners here — add a message, not a restriction.</p>
+    </section>
+
+    <!-- ===== 5 ===== -->
+    <section id="s5">
+      <h2><span class="num">§ 5</span>Platform constraints</h2>
+      <p class="lede">Targeting CIL buys generics, exceptions, garbage collection, and the entire BCL. It also imposes requirements that are not negotiable, and are cheaper to design around now than to discover later.</p>
+
+      <h3><span class="ref">5.1</span>The runtime must be AOT-friendly</h3>
+      <p>Most Unity build targets convert IL to C++ ahead of time via IL2CPP, which forbids runtime code generation. Emerald's runtime must therefore be fully static — no <code>Reflection.Emit</code>, no runtime dynamism. This costs nothing, because §3.2 already renounced runtime metaprogramming, but it converts a preference into a hard requirement.</p>
+
+      <h3><span class="ref">5.2</span>Subclassing .NET types is the litmus test</h3>
+      <p>An Emerald class must be able to inherit a C# class and override its virtual methods with correct IL, such that the C# side calls back into Emerald. <code>extends Behaviour</code> is exactly this. It is the single most important interop capability, and the right first target once a CIL backend exists — if it works, most of the roadmap is reachable.</p>
+
+      <h3><span class="ref">5.3</span>Generics: consuming is mandatory, declaring is not</h3>
+      <p>Touching .NET at all means calling <code>List&lt;T&gt;</code>, <code>Dictionary&lt;K,V&gt;</code>, and <code>Task&lt;T&gt;</code>. Letting <em>users</em> declare generic types can be deferred for years — Go managed a decade by reserving generics for the compiler. The CLR reifies generics rather than erasing them, so the implementation is inherited from the platform rather than built.</p>
+
+      <h3><span class="ref">5.4</span>Unity integration — verified feasible</h3>
+      <p>Unity compiles C# in <code>Assets/</code> with its own toolchain, so Emerald cannot be a script language there. The path is precompiled assemblies, and it is documented rather than folklore: a managed DLL dropped into <code>Assets</code> gets a foldout in the Project window revealing its classes, and <code>MonoBehaviour</code> subclasses can be dragged onto GameObjects exactly like ordinary scripts. Compiling against the Unity API means referencing Unity's own DLLs from the editor install. Target framework is <strong>.NET Standard 2.1</strong> for Unity 6 today — but see the CoreCLR note below, which supersedes this. Documented gotcha: a <code>.dll</code> sharing a filename with an <code>.asmdef</code> hides its MonoBehaviours from Add Component.</p>
+
+      <p><strong>IL2CPP's restrictions land exactly where §5.1 predicted.</strong> <code>System.Reflection.Emit</code> is deliberately unimplemented; also unsupported are <code>dynamic</code>, runtime generic construction via <code>Activator.CreateInstance</code> with <code>MakeGenericType</code>, generic virtual functions not inferable at compile time, and code reachable only through reflection, which stripping may remove.</p>
+
+      <p>The nuance that matters: <strong>merely referencing Reflection.Emit fails the build, used or not.</strong> That splits the architecture cleanly — the <em>compiler</em> may use it freely, since it runs at build time and is never shipped (Mono.Cecil is the better choice anyway and sidesteps the question); the <em>runtime library</em> inside the DLL must not reference it at all.</p>
+
+      <div class="note">
+        <span class="tag">The design had already paid for this</span>
+        <p>No runtime metaprogramming, compile-time expansion only, static dispatch, traits lowering to interface default methods rather than runtime-constructed generics — every one of those was chosen for tooling or teachability, and every one is what IL2CPP requires. Nothing was spent on Unity compatibility that had not already been spent.</p>
+        <p><strong>And IL2CPP is a shipping concern, not a teaching one.</strong> Desktop builds can use a JIT backend when the restricted features are needed; IL2CPP is required for iOS, WebGL, and consoles. A classroom building Windows executables is unconstrained by any of the above.</p>
+      </div>
+
+      <p><strong>CoreCLR changes the target, not the blocker.</strong> Unity is replacing the scripting runtime through 2026 — 6.7 LTS ships an experimental CoreCLR desktop player, 6.8 drops Mono entirely, bringing the .NET 10 BCL and C# 14. This does not affect the compilation pipeline, so the precompiled-assembly path remains the path. But it means the JIT escape hatch above will be CoreCLR rather than Mono — <em>more</em> capable, since <code>Reflection.Emit</code> works under a JIT runtime.</p>
+
+      <p>It also settles the target framework question. Emerald will not have a CIL backend for years, and CoreCLR becomes Unity's foundation in 6.8, so the timelines align: <strong>design for modern .NET and skip netstandard2.1</strong> rather than carrying compatibility baggage for a world that is ending. One to watch, not to plan on: the migration moves assembly loading to <code>AssemblyLoadContext</code>, the mechanism behind unloading and hot reload in modern .NET. If that reaches plugin assemblies, the reload problem below softens considerably.</p>
+
+      <p><strong>What remains is ergonomics, not capability.</strong> No hot reload — rebuild the DLL and wait for Unity's reimport, which is still a real regression from edit-save-play and the biggest classroom risk. No editor integration: no "Create&nbsp;&gt;&nbsp;Emerald Script", no double-click-to-open. And debugging requires <strong>portable PDB emission</strong> so breakpoints map to <code>.em</code> files — well-documented but real work, without which stack traces point at IL and debugging is effectively unavailable.</p>
+
+      <p>Godot 4 supports .NET and likely makes the assembly path smoother still. The objection to Godot is conceptual — nodes versus GameObjects — and a wrapper is exactly what resolves a conceptual objection. The door remains open.</p>
+    </section>
+
+    <!-- ===== 6 ===== -->
+    <section id="s6">
+      <h2><span class="num">§ 6</span>Open questions</h2>
+      <p class="lede">Not yet decided. Ordered roughly by how much each constrains everything downstream.</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Question</th><th>State</th><th>Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Enums</td><td><span class="pill open">Open</span></td><td>Emerald has none, and a GUI wrapper (§7, Phase 4) is made of them — alignment, dock, orientation, colour. Passing strings loses all checking, which is the one thing the type system exists for. Expected to be the first thing the GUI work demands, and the §3.7 admission rule says wait for exactly that rather than guessing the shape now.</td></tr>
+            <tr><td><code>Dictionary</code></td><td><span class="pill open">Open</span></td><td>§3.7 named it one of three core types and it was never built. Option bags and widget lookup both want it, and so does any program keeping counts. Needs the same one-built-in-generic treatment <code>Array&lt;T&gt;</code> got (§5.3) — <code>Dictionary&lt;K,V&gt;</code>, compiler-owned, not user-declarable.</td></tr>
+            <tr><td><code>case</code> / <code>when</code></td><td><span class="pill defer">Deferred</span></td><td>Rejected for now on §2.2's sharpened test. Ruby's version turns on <code>===</code> dispatch, where <code>when 5</code>, <code>when Integer</code>, and <code>when 1..10</code> match by three different rules that identical syntax does not reveal — a concept that must be taught rather than derived. It buys one real thing: naming the subject once instead of repeating it through an <code>else if</code> chain. Modest, against a genuinely new construct. Also premature by §2.3 — if macros arrive, matching may not need to be grammar at all, and spending syntax on it now quietly concedes that bet. <strong>What would reverse this:</strong> real Emerald code where long <code>else if</code> chains repeatedly read badly. If it earns its place, the narrow form — an expression matching only on equality and range containment, no class patterns — not Ruby's.</td></tr>
+            <tr><td>Primary constructors</td><td><span class="pill defer">Deferred</span></td><td>Kotlin and C# 12 both ship a shorthand <em>alongside</em> a constructor block. Two forms for one job is the §2.2 tax, and one form is the reversible starting point (§2.5).</td></tr>
+            <tr><td>Member-adding macros</td><td><span class="pill defer">Deferred</span></td><td>All that remains of the macro question once §3.8 split it in two. Needs a <code>partial</code> mechanism (or generation into a trait), full syntax-context hygiene, and a phase order against name resolution — the hard parts, arriving together. No harvested demand requires it yet; §3.8's v1 tier covers everything asked for so far. One constraint is already known: expansion-into-declarations keeps §3.5's eager checking tractable where Zig-style compile-time type computation would not, which is precisely why Zig checks lazily.</td></tr>
+            <tr><td>Type-level visibility</td><td><span class="pill defer">Deferred</span></td><td>A directory is one namespace and everything in it sees everything else — right for a class project or a Unity <code>Scripts/</code> folder, unproven at a hundred files. There is currently no way to mark a type an implementation detail of its folder; C# uses <code>internal</code>, and <code>_</code> only covers members. Deferred deliberately rather than guessed at, per §2.5 — adding a visibility level later breaks nothing.</td></tr>
+            <tr><td>Size of the seeded sprinkle set</td><td><span class="pill defer">Deferred</span></td><td>The <em>policy</em> is settled in §3.7 — the syntax-replacement test, primitives-only scope, and evidence-based admission. What a corpus still adjudicates is narrower: whether the nine seeded sprinkles are the right nine, and specific marginal candidates. Not a gap in the design.</td></tr>
+            <tr><td>This document, in the repo</td><td><span class="pill defer">Deferred</span></td><td>The implementation is on GitHub; this specification is not, so a link to it resolves for nobody else. §3's reasoning is most of the project's value — a decision list without its arguments is far less useful, and would invite re-litigating settled questions. Worth exporting as markdown if the repo ever has an audience.</td></tr>
+            <tr><td>A licence</td><td><span class="pill defer">Deferred</span></td><td>The editor extension's <code>package.json</code> already claims MIT, which is currently a claim with nothing behind it. Needs a real <code>LICENSE</code> before the repo is shared with students or colleagues.</td></tr>
+            <tr><td>Concurrency</td><td><span class="pill defer">Deferred</span></td><td>.NET's <code>async</code> is contagious; adopting it is a large commitment. Not needed for the teaching case.</td></tr>
+            <tr><td>Package manager</td><td><span class="pill defer">Deferred</span></td><td>Required eventually by §2.4, but not before there is a language.</td></tr>
+            <tr><td>Engine target</td><td><span class="pill defer">Deferred</span></td><td>Unity vs Godot. No longer blocked — §5.4 verified Unity feasible. Now a judgment call about workflow friction (no hot reload, no editor integration) rather than a technical unknown.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== 7 ===== -->
+    <section id="s7">
+      <h2><span class="num">§ 7</span>Implementation roadmap</h2>
+      <p class="lede">Sequenced so that each phase produces something usable, and so that the parts most likely to be invalidated by external constraints come last.</p>
+
+      <div class="phases">
+        <div class="phase">
+          <div class="id">Phase 0</div>
+          <div>
+            <h3>Learn the craft</h3>
+            <p>Work through <em>Crafting Interpreters</em>. The front half — scanning, parsing, AST, resolution — is identical regardless of backend, and transfers completely. The back half teaches stack-based bytecode execution, which is what CIL is.</p>
+            <p class="out">Outcome — vocabulary and a working mental model</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="id">Phase 1</div>
+          <div>
+            <h3>Tree-walking interpreter in C#</h3>
+            <p>Runs real Emerald programs within weeks rather than years. This phase is where the language's semantics actually get decided — designing IL emission before knowing the semantics is the classic way to stall.</p>
+            <p class="out">Outcome — a running language, and a REPL almost for free</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="id">Phase 2</div>
+          <div>
+            <h3>CIL backend</h3>
+            <p>Swap the backend once the language is known. First milestone is §5.2 — an Emerald class subclassing a C# class correctly. Mono.Cecil is preferable to <code>Reflection.Emit</code>: it writes assemblies to disk and keeps the shipped runtime clear of a namespace IL2CPP rejects on sight (§5.4). Target modern .NET, not netstandard2.1 — Unity's CoreCLR migration lands well before this phase does. Portable PDB emission belongs here too, or debugging never works.</p>
+            <p class="out">Outcome — real assemblies, real .NET interop, working breakpoints</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="id">Phase 3</div>
+          <div>
+            <h3>Tooling</h3>
+            <p>Formatter first — it is the smallest piece and the one §2.4 depends on most. Then the LSP, which the no-runtime-metaprogramming decision makes tractable.</p>
+            <p class="out">Outcome — <code>emerald fmt</code>, then editor support</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="id">Phase 4</div>
+          <div>
+            <h3>Libraries</h3>
+            <p>A Spectre.Console-flavoured TUI library first: pure managed code, no native interop, and writable <em>in</em> Emerald — which makes it a dogfooding test, not just a demo. Then a small 2D framework over Raylib or MonoGame, which stays entirely under the author's control. Unity after that, because it is the only part someone else's toolchain can invalidate.</p>
+
+            <p><strong>Then a GUI wrapper</strong> — a Tkinter or PySimpleGUI analogue rather than a WinUI or WPF replacement. Over <strong>Avalonia</strong>: cross-platform, already admired, and — the practical reason — it runs on Linux, which matters while the WSL workaround stands. Not WinForms, which is genuinely the closest thing .NET has to Tkinter but is Windows-only and a dead end.</p>
+
+            <p>Two things to steal, one to avoid. Take <strong>PySimpleGUI's polled event loop</strong> — <code>while window.open? { var event = window.next_event() ... }</code> is a <code>while</code> loop, which a student already understands, where Tkinter's callbacks demand event-driven thinking. Take <strong>block-based layout</strong>, which trailing lambdas already provide with no new syntax. Avoid rebuilding a widget toolkit; wrap one.</p>
+
+            <div class="note">
+              <span class="tag">Why this order, beyond difficulty</span>
+              <p>The TUI is a <em>rehearsal</em> for the GUI: the same problems — layout, widgets, an event loop, a declarative block API — at a fraction of the surface and with no toolkit to learn. Whatever it teaches about making blocks read well transfers directly.</p>
+              <p>And a GUI is arguably the strongest test of §2.3 available. Nested layout is the classic DSL case; if <code>Window("Guessing Game") { label(...) button(...) { ... } }</code> reads well, the claim that libraries can feel like language stops being a promise. The TUI proves it in one dimension, a GUI in two.</p>
+              <p>Known collision: a Windows GUI launched from WSL needs WSLg or an X server. Avalonia-on-Linux works under WSLg, but this is another reason to resolve the Smart App Control block properly rather than routing around it indefinitely (§5.4).</p>
+            </div>
+
+            <p class="out">Outcome — TUI &rarr; 2D framework &rarr; engine wrapper &rarr; GUI</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 8 ===== -->
+    <section id="s8">
+      <h2><span class="num">§ 8</span>Learning path</h2>
+      <p class="lede">The project's stated second purpose is to become a better programmer. That makes some inefficient choices correct.</p>
+
+      <p><strong>Build the interpreter by hand.</strong> It is the phase that teaches the most per hour, and skipping it to reach a "real" compiler faster would forfeit the point of the exercise.</p>
+
+      <p><strong>Compile-time metaprogramming deserves study time now.</strong> §2.3 makes it load-bearing rather than optional. Rust's macro system and C#'s source generators are the two nearest reference implementations, and it is the least-specified part of the design.</p>
+
+      <p><strong>Learn to read IL before writing it.</strong> Inspecting what the C# compiler emits for a class, a property, and a virtual override is the fastest route into Phase 2 — and it is reading, not building, so it can start any time.</p>
+
+      <div class="note">
+        <span class="tag">On scope</span>
+        <p>Every phase before 4 produces something that works and teaches something durable. If the project stops after Phase 1, the outcome is a working language, a REPL, and a genuine understanding of how languages are built. That is a good outcome, not a failed one — worth writing down before the ambition of Phase 4 makes it feel otherwise.</p>
+      </div>
+    </section>
+
+    <!-- ===== 9 ===== -->
+    <section id="s9">
+      <h2><span class="num">§ 9</span>Grammar</h2>
+      <p class="lede">The artifact between a decision list and a parser. Writing it was how three conflicts surfaced — the modifier-<code>if</code> line rule, the trailing-lambda ambiguity in conditions, and the block-free class contradiction. All three are now settled in §3 and reflected below.</p>
+
+      <div class="code">
+        <div class="file">Emerald — core grammar</div>
+<pre>file            = block_free_file | block_file
+block_free_file = type_header NEWLINE { member }
+block_file      = { { attribute } declaration }
+
+type_header     = ( <span class="s">"class"</span> | <span class="s">"trait"</span> | <span class="s">"struct"</span> ) Ident
+                  [ <span class="s">"extends"</span> Type ] [ <span class="s">"with"</span> Type { <span class="s">","</span> Type } ]
+
+declaration     = type_block | member
+type_block      = type_header <span class="s">"{"</span> { { attribute } member } <span class="s">"}"</span>
+
+member          = func_decl | var_decl | const_decl | ctor_decl | type_block
+func_decl       = [ <span class="s">"static"</span> ] [ <span class="s">"abstract"</span> ] <span class="s">"func"</span> method_name
+                  <span class="s">"("</span> [ params ] <span class="s">")"</span> [ <span class="s">":"</span> Type ] [ block ]
+method_name     = Ident [ <span class="s">"?"</span> ]
+var_decl        = [ <span class="s">"static"</span> ] <span class="s">"var"</span> Ident [ <span class="s">":"</span> Type ]
+                  [ <span class="s">"="</span> expr | property_body ]
+property_body   = <span class="s">"{"</span> [ <span class="s">"get"</span> block ] [ <span class="s">"set"</span> block ] <span class="s">"}"</span>
+const_decl      = [ <span class="s">"static"</span> ] <span class="s">"const"</span> Ident [ <span class="s">":"</span> Type ] <span class="s">"="</span> expr
+ctor_decl       = <span class="s">"constructor"</span> <span class="s">"("</span> [ params ] <span class="s">")"</span> block
+
+statement       = simple_stmt [ <span class="s">"if"</span> cond ]   <span class="c">-- modifier: same line only</span>
+                | if_stmt | while_stmt | for_stmt
+simple_stmt     = var_decl | const_decl | <span class="s">"return"</span> [ expr ]
+                | <span class="s">"throw"</span> expr
+                | assignment | expr
+assignment      = postfix assign_op expr   <span class="c">-- statement, never an expression</span>
+assign_op       = <span class="s">"="</span> | <span class="s">"+="</span> | <span class="s">"-="</span> | <span class="s">"*="</span> | <span class="s">"/="</span>
+if_stmt         = <span class="s">"if"</span> cond block
+                  { <span class="s">"else"</span> <span class="s">"if"</span> cond block } [ <span class="s">"else"</span> block ]
+while_stmt      = ( <span class="s">"while"</span> | <span class="s">"until"</span> ) cond block
+try_stmt        = <span class="s">"try"</span> block <span class="s">"catch"</span> Ident block   <span class="c">-- catch is required</span>
+for_stmt        = <span class="s">"for"</span> Ident <span class="s">"in"</span> cond block
+block           = <span class="s">"{"</span> { statement } <span class="s">"}"</span>   <span class="c">-- never a statement itself</span>
+
+cond            = expr                    <span class="c">-- no bare trailing lambda</span>
+
+expr            = if_expr | or_expr
+if_expr         = <span class="s">"if"</span> expr <span class="s">"then"</span> expr <span class="s">"else"</span> expr
+or_expr         = and_expr { <span class="s">"or"</span> and_expr }
+and_expr        = not_expr { <span class="s">"and"</span> not_expr }
+not_expr        = [ <span class="s">"not"</span> ] comparison
+comparison      = range [ ( <span class="s">"=="</span> | <span class="s">"!="</span> | <span class="s">"&lt;"</span> | <span class="s">"&gt;"</span>
+                          | <span class="s">"&lt;="</span> | <span class="s">"&gt;="</span> ) range ]
+range           = additive [ <span class="s">".."</span> additive ]
+additive        = multiplicative { ( <span class="s">"+"</span> | <span class="s">"-"</span> ) multiplicative }
+multiplicative  = unary { ( <span class="s">"*"</span> | <span class="s">"/"</span> | <span class="s">"//"</span> | <span class="s">"%"</span> ) unary }
+unary           = <span class="s">"-"</span> unary | power
+power           = postfix [ <span class="s">"**"</span> unary ]   <span class="c">-- right-associative</span>
+postfix         = primary { <span class="s">"."</span> member_name [ args ] [ lambda ]
+                          | args [ lambda ]
+                          | <span class="s">"["</span> expr <span class="s">"]"</span> }
+member_name     = Ident | Keyword   <span class="c">-- keywords are legal after '.'</span>
+primary         = literal | Ident | Type | array | <span class="s">"("</span> expr <span class="s">")"</span> | lambda
+array           = <span class="s">"["</span> [ expr { <span class="s">","</span> expr } ] <span class="s">"]"</span>
+
+lambda          = <span class="s">"{"</span> [ params <span class="s">"=&gt;"</span> ] { statement } <span class="s">"}"</span>
+args            = <span class="s">"("</span> [ expr { <span class="s">","</span> expr } ] <span class="s">")"</span>
+params          = param { <span class="s">","</span> param }
+param           = Ident [ <span class="s">":"</span> Type ] [ <span class="s">"="</span> expr ]
+attribute       = <span class="s">"@"</span> Ident [ <span class="s">"("</span> literal { <span class="s">","</span> literal } <span class="s">")"</span> ]</pre>
+      </div>
+
+      <h3><span class="ref">9.1</span>What the three annotations carry</h3>
+      <p><strong><code>statement = simple_stmt [ "if" cond ]</code>, same line only.</strong> A newline before <code>if</code> starts a new statement, because <code>if</code> is not among the tokens that continue one (§3.1). Without this, a following <code>if</code> is ambiguous between a modifier and a fresh statement.</p>
+      <p><strong><code>cond</code> forbids a bare trailing lambda.</strong> Otherwise <code>if x { ... }</code> could attach the block to <code>x</code> as a trailing lambda rather than opening the if-statement's body. Kotlin resolves this identically.</p>
+      <p><strong><code>block</code> is never a statement.</strong> With no anonymous scopes, a <code>{</code> after an expression is unambiguously a trailing lambda.</p>
+      <p><strong><code>assignment</code> is a statement, not an expression.</strong> It cannot appear inside <code>cond</code>, so <code>if x = 5 { }</code> fails to parse rather than silently assigning — the C-family <code>=</code>-for-<code>==</code> bug removed structurally rather than warned about. The left side is <code>postfix</code>, which covers <code>x</code>, <code>self.name</code>, <code>dog.score</code>, and <code>list[0]</code>.</p>
+      <p>Note also that <code>if_stmt</code> and <code>if_expr</code> are distinguished only by what follows the condition — <code>{</code> or <code>then</code>. A recursive-descent parser reads the condition, then peeks. No lookahead beyond one token past the condition is required.</p>
+    </section>
+
+  </main>
+
+  <footer>
+    Emerald &middot; Design document, draft 1 &middot; Decisions in §3 are settled; §6 is not
+  </footer>
+
+</div>
