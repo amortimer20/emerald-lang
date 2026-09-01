@@ -1,0 +1,6 @@
+
+operators_compare_returns.em:7  Card.compare returns String, but ordering reads an Int.
+
+    7 | print("#{Card(1) < Card(2)}")
+
+  Negative if self sorts first, zero if the two sort alike, positive if self sorts after.

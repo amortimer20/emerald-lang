@@ -129,8 +129,8 @@ public sealed class Interpreter
 
                 object? updated = Evaluate(a.Value, env);
                 if (a.Op.Type != TokenType.Assign)
-                    updated = Arithmetic(owner.Statics[field.Name.Lexeme],
-                                         CompoundOp(a.Op.Type), updated, a.Op);
+                    updated = Operate(owner.Statics[field.Name.Lexeme],
+                                     CompoundOp(a.Op.Type), updated, a.Op);
 
                 owner.Statics[field.Name.Lexeme] = updated;
                 return;
@@ -144,7 +144,7 @@ public sealed class Interpreter
             if (a.Op.Type != TokenType.Assign)
             {
                 instance.Fields.TryGetValue(field.Name.Lexeme, out object? current);
-                newValue = Arithmetic(current, CompoundOp(a.Op.Type), newValue, a.Op);
+                newValue = Operate(current, CompoundOp(a.Op.Type), newValue, a.Op);
             }
             SetField(instance, field.Name, newValue);
             return;
@@ -160,7 +160,7 @@ public sealed class Interpreter
             if (!env.TryGet(target.Name.Lexeme, out object? current))
                 throw Unknown(target.Name);
 
-            value = Arithmetic(current, CompoundOp(a.Op.Type), value, a.Op);
+            value = Operate(current, CompoundOp(a.Op.Type), value, a.Op);
         }
 
         if (!env.TryAssign(target.Name.Lexeme, value)) throw Unknown(target.Name);
@@ -547,13 +547,86 @@ public sealed class Interpreter
 
         return b.Op.Type switch
         {
-            TokenType.Equal => AreEqual(left, right),
-            TokenType.NotEqual => !AreEqual(left, right),
+            TokenType.Equal => Same(left, right),
+            TokenType.NotEqual => !Same(left, right),
             TokenType.Less or TokenType.Greater or TokenType.LessEqual or TokenType.GreaterEqual
-                => Compare(left, right, b.Op),
-            _ => Arithmetic(left, b.Op.Type, right, b.Op)
+                => Ordering(left, right, b.Op),
+            _ => Operate(left, b.Op.Type, right, b.Op)
         };
     }
+
+    /// <summary>
+    /// An arithmetic operator, dispatched to a method when the left side is a user type
+    /// (§3.2). Everything else falls through to the built-in numeric behaviour.
+    ///
+    /// This has to be an instance method — calling a user's <c>add</c> needs the
+    /// interpreter — which is why <see cref="Arithmetic"/> stays static behind it.
+    /// </summary>
+    private object? Operate(object? left, TokenType op, object? right, Token token)
+    {
+        if (left is not EmInstance instance || !Prelude.Operators.TryGetValue(op, out var entry))
+            return Arithmetic(left, op, right, token);
+
+        var method = instance.Class.FindMethod(entry.Method);
+        if (method is null)
+            throw new RuntimeError(
+                $"{instance.Class.Name} does not define {token.Lexeme}.",
+                $"Operators are methods here. Mix in {entry.Trait} and define {entry.Method}.");
+
+        return CallMethod(method, instance, instance.Class.Closure, [right]);
+    }
+
+    /// <summary>
+    /// <c>==</c>. A type that mixes in Equatable says what sameness means; one that does
+    /// not is compared by identity. <c>!=</c> is always the negation of this, so the two
+    /// can never be made to disagree.
+    /// </summary>
+    private bool Same(object? left, object? right)
+    {
+        if (left is EmInstance instance
+            && instance.Class.FindMethod(Prelude.EqualsMethod) is { } method)
+            return Truthy(CallMethod(method, instance, instance.Class.Closure, [right]));
+
+        return AreEqual(left, right);
+    }
+
+    /// <summary>
+    /// <c>&lt;</c>, <c>&gt;</c>, <c>&lt;=</c>, <c>&gt;=</c> — all four read the sign of one
+    /// number, so a type implements Ordered once and gets the set.
+    /// </summary>
+    private bool Ordering(object? left, object? right, Token op)
+    {
+        if (left is EmInstance instance)
+        {
+            var method = instance.Class.FindMethod(Prelude.CompareMethod)
+                ?? throw new RuntimeError(
+                    $"{instance.Class.Name} cannot be ordered with {op.Lexeme}.",
+                    $"Mix in {Prelude.OrderedTrait} and define {Prelude.CompareMethod}.");
+
+            object? verdict = CallMethod(method, instance, instance.Class.Closure, [right]);
+            if (verdict is not long sign)
+                throw new RuntimeError(
+                    $"{instance.Class.Name}.{Prelude.CompareMethod} gave back "
+                    + $"{Builtins.TypeName(verdict)}, but ordering reads an Int.");
+
+            return SignSatisfies(sign, op);
+        }
+
+        // Strings order lexicographically, by ordinal so the result never depends on the
+        // machine's locale — the same program must sort the same way everywhere.
+        if (left is string a && right is string b)
+            return SignSatisfies(string.CompareOrdinal(a, b), op);
+
+        return Compare(left, right, op);
+    }
+
+    private static bool SignSatisfies(long sign, Token op) => op.Type switch
+    {
+        TokenType.Less => sign < 0,
+        TokenType.Greater => sign > 0,
+        TokenType.LessEqual => sign <= 0,
+        _ => sign >= 0
+    };
 
     /// <summary><c>and</c> and <c>or</c> short-circuit, so they cannot go through Binary.</summary>
     private object? EvaluateLogical(Expr.Logical l, Env env)

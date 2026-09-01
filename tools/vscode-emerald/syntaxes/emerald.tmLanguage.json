@@ -191,7 +191,7 @@
       "patterns": [
         {
           "name": "support.class.builtin.emerald",
-          "match": "(?<!\\.)\\b(Math|Int|Float|String|Bool|Range|Array|Nothing)\\b"
+          "match": "(?<!\\.)\\b(Math|Int|Float|String|Bool|Range|Array|Nothing|Error|Addable|Subtractable|Multipliable|Divisible|Equatable|Ordered)\\b"
         },
         {
           "name": "entity.name.type.emerald",

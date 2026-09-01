@@ -38,6 +38,15 @@ public sealed class Project(string entryPath)
         List<Stmt> program = [];
         List<Stmt> entryStatements = [];
 
+        // The operator traits are ordinary trait declarations that happen to ship with the
+        // compiler, so they are simply the first thing in the program.
+        _sources[Prelude.FileName] = Prelude.Lines;
+        foreach (var stmt in Prelude.Parse())
+        {
+            FileOf[stmt] = Prelude.FileName;
+            program.Add(stmt);
+        }
+
         foreach (string path in Directory
                      .EnumerateFiles(Root, "*.em", SearchOption.AllDirectories)
                      .OrderBy(p => p, StringComparer.Ordinal))

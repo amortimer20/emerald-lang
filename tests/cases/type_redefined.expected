@@ -1,0 +1,6 @@
+
+type_redefined.em:6  Dog is already defined on line 1.
+
+    6 | class Dog {
+
+  Each type name means one type. Rename one of them.

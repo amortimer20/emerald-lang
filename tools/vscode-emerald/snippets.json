@@ -132,6 +132,33 @@
     "body": ["return ${1:fallback} unless ${2:condition}"],
     "description": "A guard clause — modifiers guard, they do not loop"
   },
+  "Addable": {
+    "prefix": "addable",
+    "body": [
+      "func add(other: ${1:Self}): ${1:Self} {",
+      "\treturn $0",
+      "}"
+    ],
+    "description": "a + b — requires 'with Addable'"
+  },
+  "Equatable": {
+    "prefix": "equatable",
+    "body": [
+      "func equals?(other: ${1:Self}): Bool {",
+      "\treturn self.${2:field} == other.${2:field}",
+      "}"
+    ],
+    "description": "a == b, and a != b as its negation — requires 'with Equatable'"
+  },
+  "Ordered": {
+    "prefix": "ordered",
+    "body": [
+      "func compare(other: ${1:Self}): Int {",
+      "\treturn self.${2:field} - other.${2:field}",
+      "}"
+    ],
+    "description": "<, >, <=, >= all read this — negative, zero, or positive"
+  },
   "Doc comment": {
     "prefix": "doc",
     "body": ["## $0"],

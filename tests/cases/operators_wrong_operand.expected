@@ -1,0 +1,6 @@
+
+operators_wrong_operand.em:8  + cannot take Int on the right of Point.
+
+    8 | print("#{a + 5}")
+
+  Point.add expects Point.

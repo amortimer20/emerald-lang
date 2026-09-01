@@ -74,12 +74,44 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
         // Classes are registered by name first, so they can reference each other in any
         // order — including a base declared below its subclass.
+        //
+        // A repeated type name is rejected for the same reason a repeated function name
+        // is: the second declaration used to overwrite the first in silence, so every
+        // reference quietly meant the later one. The operator traits make this reachable
+        // without a second file — `trait Addable` in a program would otherwise replace the
+        // built-in one and break `+` in ways that point nowhere near the cause.
+        Dictionary<string, Stmt.ClassDecl> declaringType = [];
         foreach (var stmt in program)
-            if (stmt is Stmt.ClassDecl c)
-                _classes[c.Name.Lexeme] = new ClassInfo(c.Name.Lexeme);
+        {
+            if (stmt is not Stmt.ClassDecl c) continue;
+            string name = c.Name.Lexeme;
 
+            if (_classes.ContainsKey(name))
+            {
+                _file = fileOf?.GetValueOrDefault(stmt) ?? fileName;
+
+                // A prelude trait has a line number, but it is a line in a file the
+                // programmer has never seen, so pointing at it would be worse than useless.
+                if (Prelude.TypeNames.Contains(name))
+                    Error(c.Name.Line,
+                          $"{name} is one of the built-in operator traits.",
+                          "It is what gives a type its operator. Pick another name for this one.");
+                else
+                    Error(c.Name.Line,
+                          $"{name} is already defined on line {declaringType[name].Name.Line}.",
+                          "Each type name means one type. Rename one of them.");
+
+                continue;
+            }
+
+            _classes[name] = new ClassInfo(name);
+            declaringType[name] = c;
+        }
+
+        // Only the winning declaration describes its type. Letting a rejected duplicate
+        // describe it too would merge two types' members into one.
         foreach (var stmt in program)
-            if (stmt is Stmt.ClassDecl c)
+            if (stmt is Stmt.ClassDecl c && ReferenceEquals(declaringType[c.Name.Lexeme], c))
                 DescribeClass(c);
 
         // A class name in expression position is its constructor.
@@ -426,14 +458,14 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         // proved non-null is treated as non-null. This is the pass Kotlin calls a smart
         // cast, and it is what makes non-nullable types usable rather than tiresome.
         var thenScope = new Scope(scope);
-        foreach (var (name, type) in Refinements(i.Condition, whenTrue: true))
+        foreach (var (name, type) in Refinements(i.Condition, whenTrue: true, scope))
             thenScope.Declare(name, type);
         CheckBlock(i.Then, thenScope);
 
         if (i.Else is null) return;
 
         var elseScope = new Scope(scope);
-        foreach (var (name, type) in Refinements(i.Condition, whenTrue: false))
+        foreach (var (name, type) in Refinements(i.Condition, whenTrue: false, scope))
             elseScope.Declare(name, type);
         CheckBlock(i.Else, elseScope);
     }
@@ -509,32 +541,39 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
     /// actually writes — <c>x != nothing</c>, <c>x == nothing</c>, and those joined by
     /// <c>and</c>. Anything more elaborate simply narrows nothing, which is safe.
     /// </summary>
-    private static Dictionary<string, EmType> Refinements(Expr condition, bool whenTrue)
+    private static Dictionary<string, EmType> Refinements(Expr condition, bool whenTrue, Scope scope)
     {
         Dictionary<string, EmType> result = [];
-        Collect(condition, whenTrue, result);
+        Collect(condition, whenTrue, result, scope);
         return result;
 
-        static void Collect(Expr expr, bool whenTrue, Dictionary<string, EmType> into)
+        static void Collect(
+            Expr expr, bool whenTrue, Dictionary<string, EmType> into, Scope scope)
         {
             switch (expr)
             {
                 case Expr.Grouping g:
-                    Collect(g.Inner, whenTrue, into);
+                    Collect(g.Inner, whenTrue, into, scope);
                     break;
 
                 // `a and b` proves both when true.
                 case Expr.Logical { Op.Type: TokenType.And } l when whenTrue:
-                    Collect(l.Left, true, into);
-                    Collect(l.Right, true, into);
+                    Collect(l.Left, true, into, scope);
+                    Collect(l.Right, true, into, scope);
                     break;
 
                 case Expr.Unary { Op.Type: TokenType.Not } u:
-                    Collect(u.Right, !whenTrue, into);
+                    Collect(u.Right, !whenTrue, into, scope);
                     break;
 
+                // Narrowing strips the ?, rather than widening to "could be anything".
+                // Both let `maybe.length` through, which is all v0 originally needed — but
+                // only the stripped type still knows it is a Weight, and an operator has to
+                // find `add` on it. Any is the fallback for a name that is somehow not in
+                // scope; the surrounding code will have reported that already.
                 case Expr.Binary b when IsNothingTest(b, out var name, out bool isNotEqual):
-                    if (isNotEqual == whenTrue) into[name] = EmType.Any;
+                    if (isNotEqual == whenTrue)
+                        into[name] = scope.Find(name)?.Type.Stripped ?? EmType.Any;
                     break;
             }
         }
@@ -631,14 +670,49 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
         switch (b.Op.Type)
         {
+            // == stays permitted on everything. It has to: narrowing is built on
+            // `x != nothing` type-checking whatever x is. A class that mixes in Equatable
+            // decides what sameness means; one that does not compares identity.
             case TokenType.Equal or TokenType.NotEqual:
+                if (left is EmType.Obj) OperatorCall(b, left, right, Prelude.EqualsMethod);
                 return EmType.Bool;
 
             case TokenType.Less or TokenType.Greater
                  or TokenType.LessEqual or TokenType.GreaterEqual:
+                // Strings order lexicographically — the one comparison a beginner reaches
+                // for that has nothing to do with arithmetic.
+                if (left.Equals(EmType.String) && right.Equals(EmType.String))
+                    return EmType.Bool;
+
+                if (left is EmType.Obj)
+                {
+                    var result =
+                        OperatorCall(b, left, right, Prelude.CompareMethod, Prelude.OrderedTrait);
+
+                    // All four operators read the sign of one number, so a compare that
+                    // hands back anything else makes every one of them wrong at once.
+                    if (result is not EmType.Unknown && !EmType.Int.Accepts(result))
+                        Error(b.Op.Line,
+                              $"{left.Show()}.{Prelude.CompareMethod} returns "
+                              + $"{result.Show()}, but ordering reads an Int.",
+                              "Negative if self sorts first, zero if the two sort alike, "
+                              + "positive if self sorts after.");
+
+                    return EmType.Bool;
+                }
+
                 if (!IsNumeric(left) || !IsNumeric(right))
                     Error(b.Op.Line, $"Cannot compare {left.Show()} with {right.Show()}.");
                 return EmType.Bool;
+
+            // An arithmetic operator on a user type is a method call. This is checked
+            // before string concatenation, so `point + "x"` is an error against
+            // Point.add rather than quietly becoming text.
+            case var op when left is EmType.Obj && Prelude.Operators.ContainsKey(op):
+            {
+                var (method, trait) = Prelude.Operators[op];
+                return OperatorCall(b, left, right, method, trait);
+            }
 
             case TokenType.Plus when left.Equals(EmType.String) || right.Equals(EmType.String):
                 return EmType.String;
@@ -669,6 +743,48 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         }
     }
 
+    /// <summary>
+    /// An operator applied to a user type, resolved to the method it lowers to (§3.2).
+    ///
+    /// <paramref name="trait"/> is null only for <c>==</c>, where a missing method is not
+    /// an error — a type that has not said what sameness means is compared by identity.
+    /// Every other operator has to be earned by mixing in its trait.
+    /// </summary>
+    private EmType OperatorCall(
+        Expr.Binary b, EmType left, EmType right, string method, string? trait = null)
+    {
+        var info = ((EmType.Obj)left).Info;
+        var fn = info.FindMethod(method);
+
+        if (fn is null)
+        {
+            if (trait is null) return EmType.Bool;
+
+            string kind = info.Kind switch
+            {
+                TypeKind.Struct => "struct",
+                TypeKind.Trait => "trait",
+                _ => "class",
+            };
+
+            Error(b.Op.Line,
+                  $"{left.Show()} does not define {b.Op.Lexeme}.",
+                  $"Operators are methods here. Mix in {trait} and define {method}:  "
+                  + $"{kind} {left.Show()} with {trait}");
+            return EmType.Any;
+        }
+
+        // The operand goes to the method as its argument, so the method's own parameter
+        // type is what rejects `money + 5`. The trait cannot do this itself — it has no
+        // way to say "the same type as whatever implements me".
+        if (fn.Params.Count == 1 && !fn.Params[0].Accepts(right))
+            Error(b.Op.Line,
+                  $"{b.Op.Lexeme} cannot take {right.Show()} on the right of {left.Show()}.",
+                  $"{left.Show()}.{method} expects {fn.Params[0].Show()}.");
+
+        return fn.Return;
+    }
+
     private EmType LogicalType(Expr.Logical l, Scope scope)
     {
         Expect(TypeOf(l.Left, scope), EmType.Bool, l.Left, l.Op.Lexeme);
@@ -676,7 +792,7 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         // The right side of `and` sees what the left side proved.
         var inner = new Scope(scope);
         if (l.Op.Type == TokenType.And)
-            foreach (var (name, type) in Refinements(l.Left, whenTrue: true))
+            foreach (var (name, type) in Refinements(l.Left, whenTrue: true, scope))
                 inner.Declare(name, type);
 
         Expect(TypeOf(l.Right, inner), EmType.Bool, l.Right, l.Op.Lexeme);
@@ -688,9 +804,9 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         Expect(TypeOf(i.Condition, scope), EmType.Bool, i.Condition, "an if condition");
 
         var thenScope = new Scope(scope);
-        foreach (var (name, type) in Refinements(i.Condition, true)) thenScope.Declare(name, type);
+        foreach (var (name, type) in Refinements(i.Condition, true, scope)) thenScope.Declare(name, type);
         var elseScope = new Scope(scope);
-        foreach (var (name, type) in Refinements(i.Condition, false)) elseScope.Declare(name, type);
+        foreach (var (name, type) in Refinements(i.Condition, false, scope)) elseScope.Declare(name, type);
 
         var a = TypeOf(i.Then, thenScope);
         var b = TypeOf(i.Else, elseScope);
