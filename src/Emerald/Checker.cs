@@ -141,7 +141,9 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
         // A class name in expression position is its constructor.
         foreach (var (name, info) in _classes)
-            globals.Declare(name, new EmType.Func(info.ConstructorParams, new EmType.Obj(info)));
+            globals.Declare(name,
+                            new EmType.Func(info.ConstructorParams, new EmType.Obj(info),
+                                            info.ConstructorRequired));
 
         // Functions are visible before their declaration, so a file reads top to bottom
         // without forward-declaration ceremony.
@@ -177,7 +179,21 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
     }
 
     private EmType.Func SignatureOf(Stmt.FuncDecl fn) =>
-        new([.. fn.Params.Select(p => Resolve(p.Type))], Resolve(fn.ReturnType));
+        new([.. fn.Params.Select(p => Resolve(p.Type))],
+            Resolve(fn.ReturnType),
+            RequiredCount(fn.Params));
+
+    /// <summary>
+    /// How many arguments a caller must supply: everything up to the first parameter with
+    /// a default. Parameters after that one are separately required to have defaults too,
+    /// so this is a prefix count rather than a tally.
+    /// </summary>
+    private static int RequiredCount(List<Param> parameters)
+    {
+        int i = 0;
+        while (i < parameters.Count && parameters[i].Default is null) i++;
+        return i;
+    }
 
     /// <summary>
     /// Records a class's shape before any body is checked, so methods can refer to fields
@@ -245,6 +261,7 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
                 case Stmt.ConstructorDecl ctor:
                     info.HasConstructor = true;
                     info.ConstructorParams = [.. ctor.Params.Select(p => Resolve(p.Type))];
+                    info.ConstructorRequired = RequiredCount(ctor.Params);
                     break;
             }
         }
@@ -552,12 +569,54 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
                       $"Parameter {p.Name.Lexeme} needs a type.",
                       "Types are inferred inside a body but written at its edges: "
                       + $"{what}({p.Name.Lexeme}: Int) ...");
+
+            CheckDefault(p, inner);
             inner.Declare(p.Name.Lexeme, Resolve(p.Type), line: p.Name.Line);
         }
+
+        CheckDefaultsComeLast(parameters);
 
         _returnTypes.Push(EmType.Any);
         CheckBlock(body, inner);
         _returnTypes.Pop();
+    }
+
+    /// <summary>
+    /// A default's value must fit the parameter it belongs to. Checked in the scope built
+    /// so far — before the parameter itself is declared — so a default may refer to a
+    /// parameter to its left but not to itself.
+    /// </summary>
+    private void CheckDefault(Param p, Scope soFar)
+    {
+        if (p.Default is null) return;
+
+        var declared = Resolve(p.Type);
+        var actual = TypeOf(p.Default, soFar);
+
+        if (!declared.Accepts(actual))
+            Error(p.Name.Line,
+                  $"{p.Name.Lexeme} is declared {declared.Show()} "
+                  + $"but its default is {actual.Show()}.",
+                  Widening(declared, actual));
+    }
+
+    /// <summary>
+    /// Once a parameter has a default, every parameter after it must have one too.
+    /// Otherwise there is no way to supply the later argument without the earlier — the
+    /// caller has only positions to work with, and skipping one is not a position.
+    /// </summary>
+    private void CheckDefaultsComeLast(List<Param> parameters)
+    {
+        int firstDefault = parameters.FindIndex(p => p.Default is not null);
+        if (firstDefault < 0) return;
+
+        foreach (var p in parameters.Skip(firstDefault).Where(p => p.Default is null))
+            Error(p.Name.Line,
+                  $"{p.Name.Lexeme} has no default, but {parameters[firstDefault].Name.Lexeme} "
+                  + "before it does.",
+                  "Arguments are matched by position, so a parameter after a defaulted one "
+                  + $"could never be given a value. Move {p.Name.Lexeme} earlier, or give it "
+                  + "a default too.");
     }
 
     // ---- statements -----------------------------------------------------
@@ -855,8 +914,12 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
                       $"Parameter {p.Name.Lexeme} needs a type.",
                       "Types are inferred inside a function but written at its edges: "
                       + $"func {fn.Name.Lexeme}({p.Name.Lexeme}: Int) ...");
+
+            CheckDefault(p, inner);
             inner.Declare(p.Name.Lexeme, Resolve(p.Type), line: p.Name.Line);
         }
+
+        CheckDefaultsComeLast(fn.Params);
 
         _returnTypes.Push(EmType.Any);
         int enclosingLoops = _loopDepth;
@@ -1316,11 +1379,17 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         bool isKernel = c.Callee is Expr.Variable v && Kernel.ContainsKey(v.Name.Lexeme);
         int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
 
-        if (!isKernel && supplied != fn.Params.Count)
+        if (!isKernel && (supplied < fn.LeastArgs || supplied > fn.Params.Count))
         {
             string what = c.Callee is Expr.Variable named ? named.Name.Lexeme : "This";
-            Error(LineOf(c.Callee),
-                  $"{what} takes {Count(fn.Params.Count, "argument")}, but got {supplied}.");
+
+            // With defaults there is a range rather than a number, and saying "takes 3"
+            // when two would have done sends the reader to add an argument they do not need.
+            string wanted = fn.LeastArgs == fn.Params.Count
+                ? Count(fn.Params.Count, "argument")
+                : $"between {fn.LeastArgs} and {Count(fn.Params.Count, "argument")}";
+
+            Error(LineOf(c.Callee), $"{what} takes {wanted}, but got {supplied}.");
         }
 
         return fn.Return;

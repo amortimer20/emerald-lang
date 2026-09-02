@@ -1,0 +1,4 @@
+
+default_params_too_few.em:2  trio takes between 2 and 3 arguments, but got 1.
+
+    2 | print(trio(1))

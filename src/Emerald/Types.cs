@@ -11,7 +11,15 @@ public abstract record EmType
     /// <summary>T? — either a T or nothing (§3.2).</summary>
     public sealed record Maybe(EmType Inner) : EmType;
 
-    public sealed record Func(List<EmType> Params, EmType Return) : EmType;
+    /// <summary>
+    /// <paramref name="Required"/> is how many arguments a caller must supply; anything
+    /// beyond it has a default. Left at its maximum by every construction site that has
+    /// no defaults to describe, so "all of them" needs no ceremony.
+    /// </summary>
+    public sealed record Func(List<EmType> Params, EmType Return, int Required = int.MaxValue) : EmType
+    {
+        public int LeastArgs => Math.Min(Required, Params.Count);
+    }
 
     /// <summary>
     /// Array&lt;T&gt; — the one generic type in v0. Users cannot declare generics; the
@@ -289,6 +297,10 @@ public sealed class ClassInfo(string name)
     public HashSet<string> ReadOnlyProperties { get; } = [];
     public Dictionary<string, EmType.Func> Methods { get; } = [];
     public List<EmType> ConstructorParams { get; set; } = [];
+
+    /// <summary>How many of them a caller must supply — see <see cref="EmType.Func"/>.</summary>
+    public int ConstructorRequired { get; set; } = int.MaxValue;
+
     public bool HasConstructor { get; set; }
 
     /// <summary>A class is usable as its base and as any trait it mixes in.</summary>

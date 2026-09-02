@@ -1,0 +1,6 @@
+
+default_params_order.em:1  name has no default, but greeting before it does.
+
+    1 | func greet(greeting: String = "Hello", name: String): String {
+
+  Arguments are matched by position, so a parameter after a defaulted one could never be given a value. Move name earlier, or give it a default too.

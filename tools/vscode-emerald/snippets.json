@@ -42,6 +42,11 @@
     "body": ["func ${1:name}(${2}): ${3:Int} {", "\t$0", "}"],
     "description": "A function"
   },
+  "Function with a default": {
+    "prefix": "funcdef",
+    "body": ["func ${1:name}(${2:value}: ${3:Int}, ${4:option}: ${5:String} = ${6:\"...\"}): ${7:Int} {", "\t$0", "}"],
+    "description": "Defaults come last; each is evaluated per call"
+  },
   "Property": {
     "prefix": "prop",
     "body": ["var ${1:name}: ${2:Int} {", "\tget { return $0 }", "}"],

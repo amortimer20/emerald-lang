@@ -418,14 +418,9 @@ public sealed class Interpreter
         var constructor = cls.Constructor;
         if (constructor is not null)
         {
-            if (args.Count != constructor.Params.Count)
-                throw new RuntimeError(
-                    $"{cls.Name} takes {constructor.Params.Count} argument(s), got {args.Count}.");
-
             var scope = new Env(cls.Closure);
             scope.Declare("self", instance);
-            for (int i = 0; i < constructor.Params.Count; i++)
-                scope.Declare(constructor.Params[i].Name.Lexeme, args[i]);
+            BindParameters(constructor.Params, args, scope, cls.Name);
 
             try { ExecuteBlock(constructor.Body, scope); }
             catch (ReturnSignal) { /* an early return from a constructor is allowed */ }
@@ -461,18 +456,41 @@ public sealed class Interpreter
     public object? CallMethod(
         Stmt.FuncDecl method, EmInstance receiver, Env closure, List<object?> args)
     {
-        if (args.Count != method.Params.Count)
-            throw new RuntimeError(
-                $"{method.Name.Lexeme} takes {method.Params.Count} argument(s), got {args.Count}.");
-
         var scope = new Env(closure);
         scope.Declare("self", receiver);
-        for (int i = 0; i < method.Params.Count; i++)
-            scope.Declare(method.Params[i].Name.Lexeme, args[i]);
+        BindParameters(method.Params, args, scope, method.Name.Lexeme);
 
         try { ExecuteBlock(method.Body, scope); }
         catch (ReturnSignal r) { return r.Value; }
         return null;
+    }
+
+    /// <summary>
+    /// Binds arguments to parameters, filling anything the caller left off from its
+    /// default (§3.2).
+    ///
+    /// Defaults are evaluated <em>per call</em>, not once at declaration. Python evaluates
+    /// once, which is why <c>def f(x=[])</c> shares one list between every call that omits
+    /// it — a bug so well known it has a name, in a place a beginner has no reason to
+    /// look. Evaluating here also costs nothing and means a default may refer to a
+    /// parameter to its left, since those are already in this scope.
+    /// </summary>
+    private void BindParameters(
+        List<Param> parameters, List<object?> args, Env scope, string what)
+    {
+        int least = parameters.TakeWhile(p => p.Default is null).Count();
+
+        if (args.Count < least || args.Count > parameters.Count)
+        {
+            string wanted = least == parameters.Count
+                ? $"{parameters.Count} argument(s)"
+                : $"between {least} and {parameters.Count} argument(s)";
+            throw new RuntimeError($"{what} takes {wanted}, got {args.Count}.");
+        }
+
+        for (int i = 0; i < parameters.Count; i++)
+            scope.Declare(parameters[i].Name.Lexeme,
+                          i < args.Count ? args[i] : Evaluate(parameters[i].Default!, scope));
     }
 
     /// <summary>
@@ -512,14 +530,9 @@ public sealed class Interpreter
 
         if (cls.FindStaticMethod(name.Lexeme) is { } method)
         {
-            if (args.Count != method.Params.Count)
-                throw new RuntimeError(
-                    $"{name.Lexeme} takes {method.Params.Count} argument(s), got {args.Count}.");
-
             var scope = new Env(cls.Closure);
             scope.Declare("Self", cls);
-            for (int i = 0; i < method.Params.Count; i++)
-                scope.Declare(method.Params[i].Name.Lexeme, args[i]);
+            BindParameters(method.Params, args, scope, name.Lexeme);
 
             try { ExecuteBlock(method.Body!, scope); }
             catch (ReturnSignal r) { return r.Value; }
@@ -962,13 +975,8 @@ public sealed class Interpreter
     {
         public object? Call(Interpreter interpreter, List<object?> args)
         {
-            if (args.Count != parameters.Count)
-                throw new RuntimeError(
-                    $"{name} takes {parameters.Count} argument(s), got {args.Count}.");
-
             var scope = new Env(closure);
-            for (int i = 0; i < parameters.Count; i++)
-                scope.Declare(parameters[i].Name.Lexeme, args[i]);
+            interpreter.BindParameters(parameters, args, scope, name);
 
             try { interpreter.ExecuteBlock(body, scope); }
             catch (ReturnSignal r) { return r.Value; }
