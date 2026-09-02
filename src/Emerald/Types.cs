@@ -262,6 +262,30 @@ public sealed class ClassInfo(string name)
 
     /// <summary>Fields declared with a get body. Indistinguishable to callers.</summary>
     public HashSet<string> PropertyNames { get; } = [];
+
+    /// <summary>
+    /// Fields given a value where they are declared. Those run before the constructor, so
+    /// the constructor owes them nothing.
+    /// </summary>
+    public HashSet<string> InitialisedFields { get; } = [];
+
+    /// <summary>
+    /// Fields that hold nothing unless a constructor puts something there — the whole
+    /// inheritance chain, because only one constructor runs (the most derived), so it is
+    /// responsible for the base's fields too.
+    ///
+    /// A nullable field is excluded: <c>nothing</c> is a legal value for it, which is
+    /// exactly what declaring it <c>T?</c> means. An unannotated one is excluded because
+    /// its type is Unknown, and Unknown is where the checker stays quiet by policy.
+    /// </summary>
+    public IEnumerable<(string Name, EmType Type)> FieldsNeedingAValue() =>
+        (Base?.FieldsNeedingAValue() ?? [])
+            .Concat(Fields
+                .Where(f => !InitialisedFields.Contains(f.Key)
+                            && !PropertyNames.Contains(f.Key)
+                            && f.Value is not EmType.Unknown
+                            && !f.Value.IsMaybe)
+                .Select(f => (f.Key, f.Value)));
     public HashSet<string> ReadOnlyProperties { get; } = [];
     public Dictionary<string, EmType.Func> Methods { get; } = [];
     public List<EmType> ConstructorParams { get; set; } = [];

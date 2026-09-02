@@ -1,0 +1,7 @@
+
+field_early_return.em:5  This constructor leaves name without a value.
+
+    5 |     constructor(ok?: Bool) {
+
+  Assign it here:  self.name = ...
+  Only assignments written directly in the constructor count — a helper method cannot be seen to have done it.

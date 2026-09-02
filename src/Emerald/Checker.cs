@@ -68,6 +68,14 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
     private readonly Dictionary<string, ClassInfo> _classes = [];
 
+    /// <summary>
+    /// Type declarations rejected as duplicates. They are still walked as statements, and
+    /// without this each one is checked against the <em>winning</em> type of the same name —
+    /// so a second `class Dog` reports that its constructor fails to assign the first
+    /// Dog's fields. A cascade, which §3.6 forbids.
+    /// </summary>
+    private readonly HashSet<Stmt> _rejectedTypes = new(ReferenceEqualityComparer.Instance);
+
     /// <summary>Which type is being checked, and whether inside its constructor — the
     /// only place a struct may write its own fields.</summary>
     private ClassInfo? _currentType;
@@ -117,6 +125,7 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
                           $"{name} is already defined on line {declaringType[name].Name.Line}.",
                           "Each type name means one type. Rename one of them.");
 
+                _rejectedTypes.Add(c);
                 continue;
             }
 
@@ -214,6 +223,8 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
                     if (field.IsStatic) info.StaticFields[field.Name.Lexeme] = fieldType;
                     else info.Fields[field.Name.Lexeme] = fieldType;
 
+                    if (field.Init is not null) info.InitialisedFields.Add(field.Name.Lexeme);
+
                     if (field.Getter is not null)
                     {
                         info.PropertyNames.Add(field.Name.Lexeme);
@@ -262,6 +273,10 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
     private void CheckClass(Stmt.ClassDecl decl, Scope scope)
     {
+        // Already reported as a duplicate. Checking its body against the type that won
+        // the name produces errors about the wrong class entirely.
+        if (_rejectedTypes.Contains(decl)) return;
+
         var info = _classes[decl.Name.Lexeme];
         var previousType = _currentType;
         _currentType = info;
@@ -318,7 +333,195 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
             }
         }
 
+        CheckFieldsGetValues(decl, info);
+
         _currentType = previousType;
+    }
+
+    // ---- definite assignment --------------------------------------------
+
+    /// <summary>
+    /// Every non-nullable field must hold something by the time a constructor finishes.
+    ///
+    /// Without this, <c>class Tag { var name: String }</c> builds and leaves
+    /// <c>name</c> holding <c>nothing</c> while the checker goes on insisting it is a
+    /// <c>String</c> — the one promise §3.2 makes, broken in silence, and the failure
+    /// surfacing later at whatever line first calls a method on it. Which is precisely
+    /// the null-reference experience non-nullable types exist to abolish.
+    /// </summary>
+    private void CheckFieldsGetValues(Stmt.ClassDecl decl, ClassInfo info)
+    {
+        // A trait holds no state, and an abstract class is never instantiated directly —
+        // whichever concrete class extends it answers for the fields.
+        if (decl.Kind == TypeKind.Trait || info.Missing().Any()) return;
+
+        var constructor = decl.Members.OfType<Stmt.ConstructorDecl>().FirstOrDefault();
+
+        // A struct with no constructor of its own gets the implicit one, which fills
+        // every field by definition (§3.2).
+        if (constructor is null && decl.Kind == TypeKind.Struct && info.Base is null) return;
+
+        if (constructor is null)
+        {
+            // With no constructor here, the one that runs is the base's, and it cannot
+            // know about fields this class added below it. Fields inherited from the base
+            // are the base's own problem, and were reported when it was checked.
+            List<string> ownFields =
+                [.. info.Fields
+                       .Where(f => !info.InitialisedFields.Contains(f.Key)
+                                   && !info.PropertyNames.Contains(f.Key)
+                                   && f.Value is not EmType.Unknown
+                                   && !f.Value.IsMaybe)
+                       .Select(f => f.Key)];
+
+            if (ownFields.Count == 0) return;
+
+            Error(decl.Name.Line,
+                  $"{decl.Name.Lexeme} has no constructor, so "
+                  + $"{Join(ownFields)} would never be given a value.",
+                  $"Add one:  constructor({ownFields[0]}: ...) {{ self.{ownFields[0]} = {ownFields[0]} }}"
+                  + "\n  Or give the field a value where it is declared, or declare it "
+                  + "nullable with ? if it may genuinely be missing.");
+            return;
+        }
+
+        var flow = AssignedBy(constructor.Body, []);
+
+        // Every way out of the constructor that produces an object: each `return`, plus
+        // running off the end. A `throw` is not one — it abandons the object, so nothing
+        // ever observes its fields.
+        List<HashSet<string>> exits = [.. flow.Exits];
+        if (flow.Completes) exits.Add(flow.Assigned);
+
+        // No exit at all means every path throws, and no instance escapes to be examined.
+        HashSet<string> guaranteed = exits.Count == 0
+            ? [.. info.FieldsNeedingAValue().Select(f => f.Name)]
+            : [.. exits.Aggregate((a, b) => [.. a.Intersect(b)])];
+
+        List<string> missed =
+            [.. info.FieldsNeedingAValue()
+                   .Where(f => !guaranteed.Contains(f.Name))
+                   .Select(f => f.Name)];
+
+        if (missed.Count == 0) return;
+
+        Error(constructor.Keyword.Line,
+              $"This constructor leaves {Join(missed)} without a value.",
+              $"Assign it here:  self.{missed[0]} = ...\n"
+              + "  Only assignments written directly in the constructor count — a helper "
+              + "method cannot be seen to have done it.");
+    }
+
+    private static string Join(List<string> names) =>
+        names.Count == 1 ? names[0]
+            : string.Join(", ", names.Take(names.Count - 1)) + " and " + names[^1];
+
+    /// <summary>
+    /// The result of walking a statement list: what is assigned if control reaches the
+    /// end, whether it can reach the end at all, and what was assigned at each
+    /// <c>return</c> along the way.
+    ///
+    /// <c>Exits</c> is the half that is easy to leave out, and doing so is wrong in the
+    /// dangerous direction. <c>return unless ok?</c> ahead of the assignments looks
+    /// harmless to an analysis that only inspects the end of the body — the path that
+    /// reaches the end did assign everything. The path that returned early did not, and it
+    /// still handed back a constructed object.
+    /// </summary>
+    private sealed record Flow(HashSet<string> Assigned, bool Completes, List<HashSet<string>> Exits);
+
+    /// <summary>
+    /// Which <c>self.</c> fields are assigned along each way out of this body.
+    /// Deliberately conservative: a loop may run zero times and a <c>try</c> may fail
+    /// partway, so neither promises anything on its own. Being wrong in this direction
+    /// costs a diagnostic the programmer can satisfy; being wrong in the other direction
+    /// is the hole this exists to close.
+    /// </summary>
+    private static Flow AssignedBy(List<Stmt> body, HashSet<string> incoming)
+    {
+        HashSet<string> assigned = [.. incoming];
+        List<HashSet<string>> exits = [];
+
+        foreach (var stmt in body)
+        {
+            switch (stmt)
+            {
+                // Only a plain `=` counts. `self.n += 1` reads the field first, so it is
+                // a use of an unset value rather than a way to give it one.
+                case Stmt.Assign { Op.Type: TokenType.Assign } a
+                    when a.Target is Expr.Get { Target: Expr.Variable { Name.Lexeme: "self" } } g:
+                    assigned.Add(g.Name.Lexeme);
+                    break;
+
+                case Stmt.Return:
+                    exits.Add([.. assigned]);
+                    return new Flow(assigned, false, exits);
+
+                // A throw abandons the object rather than returning it, so its fields are
+                // never observed and it is not an exit that owes them anything.
+                case Stmt.Throw:
+                    return new Flow(assigned, false, exits);
+
+                case Stmt.If i:
+                {
+                    var then = AssignedBy(i.Then, assigned);
+                    exits.AddRange(then.Exits);
+
+                    // No else: reaching the next statement may mean the condition was
+                    // false, so the branch guarantees nothing.
+                    if (i.Else is null) break;
+
+                    var otherwise = AssignedBy(i.Else, assigned);
+                    exits.AddRange(otherwise.Exits);
+
+                    if (!then.Completes && !otherwise.Completes)
+                        return new Flow(assigned, false, exits);
+
+                    // A branch that cannot complete cannot be the one we arrived by, so
+                    // the other branch's guarantees stand alone.
+                    assigned =
+                        !then.Completes ? otherwise.Assigned
+                        : !otherwise.Completes ? then.Assigned
+                        : [.. then.Assigned.Intersect(otherwise.Assigned)];
+                    break;
+                }
+
+                case Stmt.TryCatch t:
+                {
+                    var tried = AssignedBy(t.Body, assigned);
+                    var caught = AssignedBy(t.Handler, assigned);
+                    exits.AddRange(tried.Exits);
+                    exits.AddRange(caught.Exits);
+
+                    if (!tried.Completes && !caught.Completes)
+                        return new Flow(assigned, false, exits);
+
+                    // The try body can fail at any point, so only what the handler also
+                    // guarantees survives.
+                    assigned =
+                        !tried.Completes ? caught.Assigned
+                        : !caught.Completes ? tried.Assigned
+                        : [.. tried.Assigned.Intersect(caught.Assigned)];
+                    break;
+                }
+
+                // A loop body may run zero times, so nothing it assigns is guaranteed —
+                // but a return inside it is still a way out, and still owes the fields.
+                case Stmt.While w:
+                    exits.AddRange(AssignedBy(w.Body, assigned).Exits);
+                    break;
+
+                case Stmt.For f:
+                    exits.AddRange(AssignedBy(f.Body, assigned).Exits);
+                    break;
+
+                // Neither leaves the constructor; both only end a turn of a loop, and a
+                // loop contributes nothing either way.
+                case Stmt.Break or Stmt.Continue:
+                    return new Flow(assigned, false, exits);
+            }
+        }
+
+        return new Flow(assigned, true, exits);
     }
 
     /// <summary>

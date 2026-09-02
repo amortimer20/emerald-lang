@@ -1,0 +1,7 @@
+
+field_no_constructor.em:1  Tag has no constructor, so name would never be given a value.
+
+    1 | class Tag {
+
+  Add one:  constructor(name: ...) { self.name = name }
+  Or give the field a value where it is declared, or declare it nullable with ? if it may genuinely be missing.

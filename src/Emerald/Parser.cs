@@ -156,8 +156,32 @@ public sealed class Parser(List<Token> tokens, string fileName)
     private Stmt ReturnStatement()
     {
         var keyword = Advance();
-        Expr? value = EndsStatement() ? null : Expression();
+        Expr? value = EndsStatement() || StartsGuardModifier() ? null : Expression();
         return new Stmt.Return(keyword, value);
+    }
+
+    /// <summary>
+    /// Whether what follows a valueless <c>return</c> is its guard rather than its value.
+    ///
+    /// <c>unless</c> is never an expression, so it is always the guard. <c>if</c> is
+    /// genuinely ambiguous — <c>return if ready? then 1 else 0</c> returns an
+    /// if-expression, while <c>return if done?</c> returns nothing under a guard — and the
+    /// two are told apart the same way §9 tells if-statements from if-expressions: by
+    /// whether a <c>then</c> turns up before the line ends.
+    /// </summary>
+    private bool StartsGuardModifier()
+    {
+        if (Check(TokenType.Unless)) return true;
+        if (!Check(TokenType.If)) return false;
+
+        for (int i = _current + 1; i < tokens.Count; i++)
+        {
+            if (tokens[i].Type == TokenType.Then) return false;
+            if (tokens[i].Type is TokenType.Newline or TokenType.Eof or TokenType.RightBrace)
+                return true;
+        }
+
+        return true;
     }
 
     /// <summary>

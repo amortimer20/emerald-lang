@@ -1,0 +1,7 @@
+
+field_loop_not_enough.em:5  This constructor leaves name without a value.
+
+    5 |     constructor(n: Int) {
+
+  Assign it here:  self.name = ...
+  Only assignments written directly in the constructor count — a helper method cannot be seen to have done it.
