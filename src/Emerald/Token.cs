@@ -14,7 +14,7 @@ public enum TokenType
     // Punctuation
     LeftParen, RightParen, LeftBrace, RightBrace,
     LeftBracket, RightBracket,
-    Comma, Colon, Dot, DotDot, Arrow, At,
+    Comma, Colon, Dot, DotDot, Arrow, At, Question,
 
     // Operators
     Plus, Minus, Star, Slash, Percent, StarStar, SlashSlash,

@@ -1,0 +1,4 @@
+
+argument_type_wrong.em:3  double expects Int as its first argument, but this is String.
+
+    3 | print(double("not a number"))

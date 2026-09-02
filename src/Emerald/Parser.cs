@@ -774,7 +774,24 @@ public sealed class Parser(List<Token> tokens, string fileName)
         if (name.Lexeme.EndsWith('?'))
             return new TypeRef(name with { Lexeme = name.Lexeme[..^1] }, Nullable: true);
 
-        return new TypeRef(name, Nullable: false);
+        // Array<String>. One type argument, because Array is the only generic there is —
+        // §5.3 makes the parameterised containers compiler-owned, so this grammar is for
+        // consuming them, never for declaring one.
+        //
+        // Nesting works without special handling: Array<Array<Int>> closes with two
+        // Greater tokens, since Emerald has no shift operators to confuse them with.
+        TypeRef? element = null;
+        if (Match(TokenType.Less))
+        {
+            element = ParseTypeRef();
+            Consume(TokenType.Greater, $"Expected '>' to close {name.Lexeme}<...>.");
+        }
+
+        // A '?' after the closing '>' cannot have been folded into an identifier, so it
+        // arrives as its own token: Array<Int>?
+        bool nullable = Match(TokenType.Question);
+
+        return new TypeRef(name, nullable, element);
     }
 
     private List<Param> ParameterList()

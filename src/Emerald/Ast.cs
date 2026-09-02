@@ -12,11 +12,11 @@ public sealed record Diagnostic(
     Severity Severity = Severity.Error);
 
 /// <summary>
-/// A parsed type annotation. v0 records these and does nothing with them — the type
-/// checker is a separate pass over this same tree, and it cannot be written until the
-/// tree exists. Parsing them now means adding the checker later changes no syntax.
+/// A written type. <c>Element</c> is the type argument of a generic — only
+/// <c>Array<T></c> for now, since §5.3 makes the parameterised containers
+/// compiler-owned and users cannot declare their own.
 /// </summary>
-public sealed record TypeRef(Token Name, bool Nullable);
+public sealed record TypeRef(Token Name, bool Nullable, TypeRef? Element = null);
 
 public sealed record Param(Token Name, TypeRef? Type, Expr? Default);
 

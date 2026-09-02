@@ -76,6 +76,11 @@ public sealed class Scanner(string source, string fileName)
             case ':': Add(TokenType.Colon, ":"); break;
             case '@': Add(TokenType.At, "@"); break;
 
+            // A '?' glued to an identifier is folded into it by ScanIdentifier — that is how
+            // predicate names and String? both work. One standing alone can only be the
+            // nullable marker after a closing '>', as in Array<Int>?.
+            case '?': Add(TokenType.Question, "?"); break;
+
             case '.':
                 Add(Match('.') ? TokenType.DotDot : TokenType.Dot, Match2());
                 break;

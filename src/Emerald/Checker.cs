@@ -1369,7 +1369,7 @@ public sealed class Checker(
             return MemberType(receiver, get.Name, scope);
         }
 
-        foreach (var arg in c.Args) TypeOf(arg, scope);
+        List<EmType> given = [.. c.Args.Select(arg => TypeOf(arg, scope))];
         if (c.Trailing is not null) TypeOf(c.Trailing, scope);
 
         // Constructing a type: reject traits and anything with unimplemented members.
@@ -1411,10 +1411,43 @@ public sealed class Checker(
                 : $"between {fn.LeastArgs} and {Count(fn.Params.Count, "argument")}";
 
             Error(LineOf(c.Callee), $"{what} takes {wanted}, but got {supplied}.");
+            return fn.Return;
+        }
+
+        // What each argument must be. Until now the checker counted arguments and never
+        // looked at them, so every parameter annotation was decorative: double("hello")
+        // type-checked and failed inside the function body, pointing at the function's own
+        // line rather than the call — §3.6's symptom-not-cause failure, from the compiler.
+        //
+        // Only positions the caller actually wrote. A defaulted parameter left off was
+        // checked where the default was declared.
+        if (!isKernel)
+        {
+            for (int i = 0; i < given.Count && i < fn.Params.Count; i++)
+            {
+                if (fn.Params[i].Accepts(given[i])) continue;
+
+                string what = c.Callee is Expr.Variable named ? named.Name.Lexeme : "This";
+                Error(LineOf(c.Args[i]) is var line && line > 0 ? line : LineOf(c.Callee),
+                      $"{what} expects {fn.Params[i].Show()} "
+                      + $"{Ordinal(i)}, but this is {given[i].Show()}.",
+                      Widening(fn.Params[i], given[i]));
+            }
         }
 
         return fn.Return;
     }
+
+    /// <summary>"as its first argument" — a position a reader can find without counting
+    /// commas from zero.</summary>
+    private static string Ordinal(int index) => index switch
+    {
+        0 => "as its first argument",
+        1 => "as its second argument",
+        2 => "as its third argument",
+        3 => "as its fourth argument",
+        _ => $"as argument {index + 1}"
+    };
 
     // ---- helpers --------------------------------------------------------
 
@@ -1558,6 +1591,30 @@ public sealed class Checker(
     {
         if (annotation is null) return EmType.Any;
 
+        // Array is the one generic a program may write down (§5.3). It must say what it
+        // holds: the checker has always been able to represent Array<String>, and only the
+        // annotation grammar could not spell it — which meant a named function could not
+        // take an array at all, since parameters must be annotated.
+        if (annotation.Name.Lexeme == "Array")
+        {
+            if (annotation.Element is null)
+            {
+                Error(annotation.Name.Line,
+                      "Array needs to say what it holds.",
+                      "Write the element type in angle brackets:  Array<String>");
+                return EmType.Any;
+            }
+
+            var arrayType = new EmType.Arr(Resolve(annotation.Element));
+            return annotation.Nullable ? EmType.Nullable(arrayType) : arrayType;
+        }
+
+        if (annotation.Element is not null)
+            Error(annotation.Name.Line,
+                  $"{annotation.Name.Lexeme} does not take a type argument.",
+                  "Array is the only generic type in Emerald, and it is built in — "
+                  + "a program cannot declare its own.");
+
         EmType baseType = annotation.Name.Lexeme switch
         {
             "Int" => EmType.Int,
@@ -1577,7 +1634,7 @@ public sealed class Checker(
     private EmType Unknown(int line, string name)
     {
         Error(line, $"No type named {name}.",
-              "v0 knows Int, Float, String, Bool, Range, and Nothing.");
+              "Emerald knows Int, Float, String, Bool, Range, Array<...>, and Nothing.");
         return EmType.Any;
     }
 

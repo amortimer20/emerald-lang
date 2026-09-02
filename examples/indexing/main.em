@@ -14,10 +14,10 @@ print("after writing: #{scores.join(", ")}")
 # A user type opts in. `at` gives reading; adding `set_at` gives writing, exactly the
 # way a var with only a get body is read-only until a set body is added.
 class Board with Indexable {
-    var squares = ["."]
+    var squares: Array<String>
 
     constructor(size: Int) {
-        self.squares.clear()
+        self.squares = []
         size.times { self.squares.add(".") }
     }
 
@@ -45,7 +45,7 @@ print("board:         #{board.to_string()}")
 
 # Leave set_at out and the type is read-only — `menu[0] = "x"` would not compile.
 class Menu with Indexable {
-    var items = ["new game", "load", "quit"]
+    var items: Array<String> = ["new game", "load", "quit"]
 
     func at(position: Int): String {
         return self.items[position]
