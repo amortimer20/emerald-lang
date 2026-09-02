@@ -83,8 +83,18 @@ public sealed class Interpreter
 
             case Stmt.While w:
                 while (Truthy(Evaluate(w.Condition, env)))
-                    ExecuteBlock(w.Body, new Env(env));
+                {
+                    try { ExecuteBlock(w.Body, new Env(env)); }
+                    catch (BreakSignal) { break; }
+                    catch (ContinueSignal) { continue; }
+                }
                 break;
+
+            case Stmt.Break:
+                throw new BreakSignal();
+
+            case Stmt.Continue:
+                throw new ContinueSignal();
 
             case Stmt.For f:
                 ExecuteFor(f, env);
@@ -249,16 +259,34 @@ public sealed class Interpreter
     {
         _line = f.Variable.Line;
         object? iterable = Evaluate(f.Iterable, env);
-        if (iterable is not EmRange range)
-            throw new RuntimeError(
-                $"Cannot loop over {Builtins.TypeName(iterable)}.",
-                "v0 can loop over a range, like: for i in 1..5 { ... }");
 
-        foreach (long i in range)
+        // The three things a loop can walk. A string yields its characters as graphemes,
+        // matching .chars — an emoji is one turn of the loop, not two.
+        IEnumerable<object?> items = iterable switch
         {
+            EmRange range => range.Select(i => (object?)i),
+            EmArray array => array.Items,
+            string text => Builtins.CharactersOf(text),
+            _ => throw new RuntimeError(
+                $"Cannot loop over {Builtins.TypeName(iterable)}.",
+                "Loop over a range (1..5), an array, or a string."),
+        };
+
+        // An array copied before walking it, so `for x in xs { xs.add(...) }` terminates
+        // rather than growing under the loop. A student writing that has made a mistake,
+        // but hanging is a far worse way to learn it than a loop that simply ends.
+        if (iterable is EmArray) items = [.. items];
+
+        foreach (object? item in items)
+        {
+            // A fresh scope each turn (§3.3), so a closure made inside the body captures
+            // that turn's value rather than sharing one variable with every other turn.
             var scope = new Env(env);
-            scope.Declare(f.Variable.Lexeme, i);
-            ExecuteBlock(f.Body, scope);
+            scope.Declare(f.Variable.Lexeme, item);
+
+            try { ExecuteBlock(f.Body, scope); }
+            catch (BreakSignal) { break; }
+            catch (ContinueSignal) { continue; }
         }
     }
 
@@ -914,6 +942,14 @@ public sealed class Interpreter
     {
         public object? Value { get; } = value;
     }
+
+    /// <summary>
+    /// <c>break</c> and <c>continue</c>, carried the same way <c>return</c> is. The
+    /// checker has already refused either one outside a loop, and refused either one
+    /// crossing a function boundary, so nothing here can escape past its loop.
+    /// </summary>
+    private sealed class BreakSignal : Exception;
+    private sealed class ContinueSignal : Exception;
 
     private sealed class NativeFunction(string name, Func<List<object?>, object?> fn) : ICallable
     {

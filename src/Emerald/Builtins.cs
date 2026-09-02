@@ -400,6 +400,14 @@ public static class Builtins
     };
 
     /// <summary>
+    /// A string's characters, for <c>for c in text</c>. The same graphemes
+    /// <c>.chars</c> gives, so walking a string and indexing its <c>.chars</c> array can
+    /// never disagree about what a character is.
+    /// </summary>
+    public static IEnumerable<object?> CharactersOf(string value) =>
+        Graphemes(value).Cast<object?>();
+
+    /// <summary>
     /// Splits into grapheme clusters, so an emoji or an accented letter counts as one
     /// character rather than the two or more UTF-16 units it occupies.
     /// </summary>

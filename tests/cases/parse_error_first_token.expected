@@ -1,0 +1,4 @@
+
+parse_error_first_token.em:1  Expected a value, found '@'.
+
+    1 | @export

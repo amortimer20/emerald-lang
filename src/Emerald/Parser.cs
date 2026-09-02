@@ -92,6 +92,11 @@ public sealed class Parser(List<Token> tokens, string fileName)
         if (Check(TokenType.Return)) return ReturnStatement();
         if (Check(TokenType.Throw)) return ThrowStatement();
 
+        // Simple statements, so they pick up the guard modifier for free and
+        // `break if found` reads the way `return x unless ok` already does.
+        if (Check(TokenType.Break)) return new Stmt.Break(Advance());
+        if (Check(TokenType.Continue)) return new Stmt.Continue(Advance());
+
         var expr = Expression();
 
         if (Check(TokenType.Assign, TokenType.PlusAssign, TokenType.MinusAssign,
@@ -821,7 +826,11 @@ public sealed class Parser(List<Token> tokens, string fileName)
 
         while (!AtEnd)
         {
-            if (Previous.Type == TokenType.Newline) break;
+            // _current is 0 when the very first token of a file fails to parse, and there
+            // is no previous token to inspect. Reading one crashed the compiler with a
+            // .NET stack trace — the exact thing §3.6 exists to prevent — for any file
+            // starting with something unparseable, `@export` among them.
+            if (_current > 0 && Previous.Type == TokenType.Newline) break;
             if (Check(TokenType.Var, TokenType.Const, TokenType.Func, TokenType.If,
                       TokenType.While, TokenType.For, TokenType.Return, TokenType.Try)) break;
             Advance();

@@ -115,7 +115,7 @@
       "patterns": [
         {
           "name": "keyword.control.emerald",
-          "match": "(?<!\\.)\\b(if|then|else|unless|while|until|for|in|return|throw|try|catch)\\b"
+          "match": "(?<!\\.)\\b(if|then|else|unless|while|until|for|in|return|throw|try|catch|break|continue)\\b"
         },
         {
           "name": "storage.type.emerald",

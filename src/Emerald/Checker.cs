@@ -50,6 +50,22 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
     private readonly Stack<EmType> _returnTypes = new();
 
+    /// <summary>
+    /// How many loops enclose the statement being checked. Reset across a function
+    /// boundary, so `items.each { x => break }` is rejected: the block is a function, and
+    /// break cannot leave one. Ruby allows it and the result is a control-flow construct
+    /// whose behaviour depends on whether the enclosing call happens to yield.
+    /// </summary>
+    private int _loopDepth;
+
+    /// <summary>
+    /// Loops enclosing this function from outside it. Lets the diagnostic tell apart
+    /// "there is no loop here" from "the loop is out there, but a block is a function and
+    /// break cannot leave one" — a distinction a student writing `items.each { x => break }`
+    /// badly needs, because the loop is right there on the screen.
+    /// </summary>
+    private int _hiddenLoops;
+
     private readonly Dictionary<string, ClassInfo> _classes = [];
 
     /// <summary>Which type is being checked, and whether inside its constructor — the
@@ -354,8 +370,13 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
             case Stmt.While w:
                 Expect(TypeOf(w.Condition, scope), EmType.Bool, w.Condition, "a while condition");
+                _loopDepth++;
                 CheckBlock(w.Body, new Scope(scope));
+                _loopDepth--;
                 break;
+
+            case Stmt.Break b: CheckLoopJump(b.Keyword, "break"); break;
+            case Stmt.Continue c2: CheckLoopJump(c2.Keyword, "continue"); break;
 
             case Stmt.For f: CheckFor(f, scope); break;
             case Stmt.FuncDecl fn: CheckFunc(fn, scope); break;
@@ -481,6 +502,25 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
     /// <c>set_at</c>, which is the setter half of Indexable — present means writable,
     /// absent means read-only, exactly as a property's <c>set</c> body works.
     /// </summary>
+    /// <summary>
+    /// <c>break</c> and <c>continue</c> need a loop, and one in the same function. The
+    /// second case gets its own message because the loop is usually visible on screen,
+    /// two lines up, and "there is no loop here" would read as the compiler being wrong.
+    /// </summary>
+    private void CheckLoopJump(Token keyword, string word)
+    {
+        if (_loopDepth > 0) return;
+
+        if (_hiddenLoops > 0)
+            Error(keyword.Line,
+                  $"{word} cannot leave a block.",
+                  $"The loop around this one is outside the block, and a block is a "
+                  + $"function — {word} only affects a loop written in the same function. "
+                  + "A plain for loop over the same items can use it.");
+        else
+            Error(keyword.Line, $"{word} can only appear inside a loop.");
+    }
+
     private void CheckIndexAssign(Stmt.Assign a, Expr.Index index, Scope scope)
     {
         var target = TypeOf(index.Target, scope);
@@ -548,15 +588,49 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
     private void CheckFor(Stmt.For f, Scope scope)
     {
         var iterable = TypeOf(f.Iterable, scope);
-        if (iterable is not EmType.Unknown && !iterable.Equals(EmType.Range))
-            Error(f.Variable.Line,
-                  $"Cannot loop over {iterable.Show()}.",
-                  "v0 can loop over a range, like: for i in 1..5 { ... }");
+
+        // What the loop variable holds is decided by what is being walked over. There is
+        // no Iterable trait yet — a user type cannot be looped over, and the diagnostic
+        // says so plainly rather than pretending the shape exists.
+        EmType element;
+        switch (iterable)
+        {
+            case EmType.Unknown:
+                element = EmType.Any;
+                break;
+
+            case EmType.Arr array:
+                element = array.Element;
+                break;
+
+            case EmType.Prim { Name: "Range" }:
+                element = EmType.Int;
+                break;
+
+            // A string yields its characters, each itself a String — §3.2 rules out
+            // integer indexing, so walking it is how you reach them.
+            case EmType.Prim { Name: "String" }:
+                element = EmType.String;
+                break;
+
+            default:
+                Error(f.Variable.Line,
+                      $"Cannot loop over {iterable.Show()}.",
+                      iterable is EmType.Obj
+                          ? "A range, an array, and a string can be looped over. "
+                            + "For anything else, expose an array from it."
+                          : "Loop over a range (1..5), an array, or a string.");
+                element = EmType.Any;
+                break;
+        }
 
         var body = new Scope(scope);
         CheckShadowing(f.Variable, scope);
-        body.Declare(f.Variable.Lexeme, EmType.Int, line: f.Variable.Line);
+        body.Declare(f.Variable.Lexeme, element, line: f.Variable.Line);
+
+        _loopDepth++;
         CheckBlock(f.Body, body);
+        _loopDepth--;
     }
 
     private void CheckFunc(Stmt.FuncDecl fn, Scope scope)
@@ -582,7 +656,12 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         }
 
         _returnTypes.Push(EmType.Any);
+        int enclosingLoops = _loopDepth;
+        _hiddenLoops += enclosingLoops;
+        _loopDepth = 0;
         CheckBlock(fn.Body, inner);
+        _loopDepth = enclosingLoops;
+        _hiddenLoops -= enclosingLoops;
         _returnTypes.Pop();
     }
 
@@ -908,7 +987,12 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
             return new EmType.Func([.. l.Params.Select(_ => EmType.Any)], TypeOf(only.Expression, inner));
 
         _returnTypes.Push(EmType.Any);
+        int enclosingLoops = _loopDepth;
+        _hiddenLoops += enclosingLoops;
+        _loopDepth = 0;
         CheckBlock(l.Body, inner);
+        _loopDepth = enclosingLoops;
+        _hiddenLoops -= enclosingLoops;
         _returnTypes.Pop();
         return new EmType.Func([.. l.Params.Select(_ => EmType.Any)], EmType.Any);
     }

@@ -76,6 +76,13 @@ public abstract record Stmt
         bool IsStatic = false) : Stmt;
     public sealed record Return(Token Keyword, Expr? Value) : Stmt;
 
+    /// <summary>
+    /// Leaving a loop early, and skipping to its next turn. Both carry their keyword
+    /// token only — there is no labelled form, so there is nothing else to record.
+    /// </summary>
+    public sealed record Break(Token Keyword) : Stmt;
+    public sealed record Continue(Token Keyword) : Stmt;
+
     public sealed record Throw(Token Keyword, Expr Value) : Stmt;
 
     /// <summary>

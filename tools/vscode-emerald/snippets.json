@@ -87,6 +87,21 @@
     "body": ["for ${1:i} in ${2:1}..${3:5} {", "\t$0", "}"],
     "description": "A range loop"
   },
+  "For over a collection": {
+    "prefix": "forin",
+    "body": ["for ${1:item} in ${2:items} {", "\t$0", "}"],
+    "description": "Walk an array or a string"
+  },
+  "Break with a guard": {
+    "prefix": "break",
+    "body": ["break if ${1:condition}"],
+    "description": "Leave the loop — break cannot leave a block"
+  },
+  "Continue with a guard": {
+    "prefix": "continue",
+    "body": ["continue if ${1:condition}"],
+    "description": "Skip to the next turn of the loop"
+  },
   "While": {
     "prefix": "while",
     "body": ["while ${1:condition} {", "\t$0", "}"],

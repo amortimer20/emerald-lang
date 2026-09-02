@@ -1,0 +1,4 @@
+
+break_outside_loop.em:2  break can only appear inside a loop.
+
+    2 | break
