@@ -58,11 +58,16 @@ function activate(context) {
         const range = new vscode.Range(line, 0, line, Number.MAX_SAFE_INTEGER);
 
         const message = item.hint ? `${item.message}\n\n${item.hint}` : item.message;
-        const diagnostic = new vscode.Diagnostic(
-          range,
-          message,
-          vscode.DiagnosticSeverity.Error
-        );
+
+        // A warning is not a failure, and colouring it like one would undo the point of
+        // having the distinction. Older builds of the compiler send no severity at all,
+        // so an absent field means error.
+        const severity =
+          item.severity === "warning"
+            ? vscode.DiagnosticSeverity.Warning
+            : vscode.DiagnosticSeverity.Error;
+
+        const diagnostic = new vscode.Diagnostic(range, message, severity);
         diagnostic.source = "emerald";
         byFile.get(file).push(diagnostic);
       }

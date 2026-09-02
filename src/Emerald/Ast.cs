@@ -1,6 +1,15 @@
 namespace Emerald;
 
-public sealed record Diagnostic(string File, int Line, string Message, string? Hint = null);
+/// <summary>
+/// An error stops the program; a warning does not. §2.6 makes warnings a design surface
+/// rather than an afterthought — the compiler is the most patient teacher in the room —
+/// which is only possible once a diagnostic can be something other than fatal.
+/// </summary>
+public enum Severity { Error, Warning }
+
+public sealed record Diagnostic(
+    string File, int Line, string Message, string? Hint = null,
+    Severity Severity = Severity.Error);
 
 /// <summary>
 /// A parsed type annotation. v0 records these and does nothing with them — the type

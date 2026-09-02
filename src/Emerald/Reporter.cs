@@ -6,33 +6,49 @@ namespace Emerald;
 /// </summary>
 public static class Reporter
 {
+    public static bool HasErrors(List<Diagnostic> problems) =>
+        problems.Any(d => d.Severity == Severity.Error);
+
     /// <summary>
-    /// One error per cause: report the first and count the rest. A terminal is read top
-    /// to bottom, so a wall of cascading errors buries the one that matters.
+    /// Warnings first, then the errors — every warning, but only the first error.
+    ///
+    /// The asymmetry is the point. Cascade suppression exists because one typo producing
+    /// forty errors buries the one that matters (§3.6), and that reasoning is about
+    /// <em>errors</em>: they descend from one another, so the later ones are usually
+    /// noise. Warnings are independent findings about separate lines, and suppressing
+    /// them would hide teaching the compiler had already done.
     /// </summary>
     public static void Report(List<Diagnostic> problems, Project project)
     {
-        if (problems.Count == 0) return;
-        var first = problems[0];
+        foreach (var warning in problems.Where(d => d.Severity == Severity.Warning))
+            Write(warning, project, "warning: ");
 
-        Console.Error.WriteLine();
-        Console.Error.WriteLine($"{first.File}:{first.Line}  {first.Message}");
-        Quote(project.LinesOf(first.File), first.Line);
+        var errors = problems.Where(d => d.Severity == Severity.Error).ToList();
+        if (errors.Count == 0) return;
 
-        if (first.Hint is not null)
-        {
-            Console.Error.WriteLine();
-            Console.Error.WriteLine($"  {first.Hint}");
-        }
+        Write(errors[0], project, "");
 
-        if (problems.Count > 1)
+        if (errors.Count > 1)
         {
             Console.Error.WriteLine();
             Console.Error.WriteLine(
-                $"  {problems.Count - 1} further error(s) suppressed — likely caused by this one.");
+                $"  {errors.Count - 1} further error(s) suppressed — likely caused by this one.");
         }
 
         Console.Error.WriteLine();
+    }
+
+    private static void Write(Diagnostic d, Project project, string label)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"{d.File}:{d.Line}  {label}{d.Message}");
+        Quote(project.LinesOf(d.File), d.Line);
+
+        if (d.Hint is not null)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"  {d.Hint}");
+        }
     }
 
     public static void RuntimeFailure(RuntimeError error, string fileName, Project project)

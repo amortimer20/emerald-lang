@@ -1,0 +1,7 @@
+
+warn_misleading_indentation.em:7  warning: This line is indented further than the one above it, but it is not inside anything.
+
+    7 |     print("not guarded")
+
+  Everything in one block lines up. An indented line that is not nested reads as though it were guarded by the block above, which is how Apple's 2014 SSL bug went unnoticed.
+not guarded

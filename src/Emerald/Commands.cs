@@ -32,7 +32,7 @@ public static class Commands
 
         if (problems.Count == 0)
         {
-            var checker = new Checker(Path.GetFileName(path), project.FileOf);
+            var checker = new Checker(Path.GetFileName(path), project.FileOf, project.LinesOf);
             checker.Check(program);
             problems = checker.Diagnostics;
         }
@@ -47,6 +47,10 @@ public static class Commands
                     line = d.Line,
                     message = d.Message,
                     hint = d.Hint,
+
+                    // The editor needs this to pick a squiggle colour, and lowercase
+                    // because that is what every editor protocol already expects.
+                    severity = d.Severity.ToString().ToLowerInvariant(),
                 }),
             }));
             return 0;
@@ -59,6 +63,15 @@ public static class Commands
         }
 
         Reporter.Report(problems, project);
+
+        // Warnings alone are not a failure — `emerald check` on a warned-about file
+        // should still say the file is fit to run, because it is.
+        if (!Reporter.HasErrors(problems))
+        {
+            Console.WriteLine($"{Path.GetFileName(path)} — no errors.");
+            return 0;
+        }
+
         return 65;
     }
 

@@ -8,7 +8,10 @@ namespace Emerald;
 /// Notably it also catches things the interpreter could only find at runtime — unknown
 /// variables, const reassignment, calling a method on a value that might be nothing.
 /// </summary>
-public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? fileOf = null)
+public sealed class Checker(
+    string fileName,
+    IReadOnlyDictionary<Stmt, string>? fileOf = null,
+    Func<string, string[]>? sourceOf = null)
 {
     public List<Diagnostic> Diagnostics { get; } = [];
 
@@ -171,6 +174,11 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
             globals.Declare(fn.Name.Lexeme, SignatureOf(fn));
         }
 
+        // Top-level statements are a block too, grouped per file — a project of many
+        // files has many top levels, and comparing across them is meaningless.
+        foreach (var perFile in program.GroupBy(s => fileOf?.GetValueOrDefault(s) ?? fileName))
+            CheckIndentation([.. perFile], perFile.Key);
+
         foreach (var stmt in program)
         {
             _file = fileOf?.GetValueOrDefault(stmt) ?? fileName;
@@ -298,6 +306,8 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         var previousType = _currentType;
         _currentType = info;
 
+        CheckCasing(decl.Name, "type");
+
         // `self` is an ordinary binding, which is why `self.name` needs no special node.
         var body = new Scope(scope, functionBoundary: true);
         body.Declare("self", new EmType.Obj(info));
@@ -307,10 +317,13 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
             switch (member)
             {
                 case Stmt.VarDecl { Getter: not null } property:
+                    CheckCasing(property.Name, "property", property.IsConst);
                     CheckProperty(property, info, body);
                     break;
 
                 case Stmt.VarDecl field:
+                    CheckCasing(field.Name, "instance variable", field.IsConst);
+
                     // Traits carry no state (§3.2): a CLR interface cannot hold fields, so
                     // a trait names what it needs as an abstract member instead of hiding
                     // storage in you — which is how Ruby's modules become unexplainable.
@@ -333,6 +346,8 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
                     break;
 
                 case Stmt.FuncDecl method:
+                    CheckCasing(method.Name, "method");
+                    CheckPredicateName(method);
                     if (method.Body is not null)
                         CheckCallable(method.Params, method.Body, body, method.Name.Lexeme);
                     break;
@@ -570,6 +585,7 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
                       "Types are inferred inside a body but written at its edges: "
                       + $"{what}({p.Name.Lexeme}: Int) ...");
 
+            CheckCasing(p.Name, "parameter");
             CheckDefault(p, inner);
             inner.Declare(p.Name.Lexeme, Resolve(p.Type), line: p.Name.Line);
         }
@@ -701,6 +717,7 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
                   Widening(declared, inferred));
 
         CheckShadowing(v.Name, scope);
+        CheckCasing(v.Name, "variable", v.IsConst);
         scope.Declare(v.Name.Lexeme, declared, v.IsConst, v.Name.Line);
     }
 
@@ -898,6 +915,8 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
     private void CheckFunc(Stmt.FuncDecl fn, Scope scope)
     {
         scope.Declare(fn.Name.Lexeme, SignatureOf(fn));
+        CheckCasing(fn.Name, "function");
+        CheckPredicateName(fn);
 
         if (fn.Body is null)
         {
@@ -915,6 +934,7 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
                       "Types are inferred inside a function but written at its edges: "
                       + $"func {fn.Name.Lexeme}({p.Name.Lexeme}: Int) ...");
 
+            CheckCasing(p.Name, "parameter");
             CheckDefault(p, inner);
             inner.Declare(p.Name.Lexeme, Resolve(p.Type), line: p.Name.Line);
         }
@@ -933,6 +953,7 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
     private void CheckBlock(List<Stmt> body, Scope scope)
     {
+        CheckIndentation(body, _file);
         foreach (var stmt in body) CheckStmt(stmt, scope);
     }
 
@@ -1370,7 +1391,7 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
         if (callee is not EmType.Func fn)
         {
-            Error(LineOf(c.Callee), $"{callee.Show()} is not something you can call.");
+            Error(LineOf(c.Callee), $"{callee.Show()} cannot be called.");
             return EmType.Any;
         }
 
@@ -1620,6 +1641,168 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         Expr.Grouping g => LineOf(g.Inner),
         _ => 0
     };
+
+    /// <summary>Where a statement begins, for the indentation check. Zero means the shape
+    /// carries no usable token, and the statement is simply skipped.</summary>
+    private static int LineOf(Stmt stmt) => stmt switch
+    {
+        Stmt.VarDecl v => v.Name.Line,
+        Stmt.Assign a => a.Op.Line,
+        Stmt.ExprStmt e => LineOf(e.Expression),
+        Stmt.If i => LineOf(i.Condition),
+        Stmt.While w => LineOf(w.Condition),
+        Stmt.For f => f.Variable.Line,
+        Stmt.FuncDecl fn => fn.Name.Line,
+        Stmt.ClassDecl c => c.Name.Line,
+        Stmt.ConstructorDecl c => c.Keyword.Line,
+        Stmt.Return r => r.Keyword.Line,
+        Stmt.Throw t => t.Keyword.Line,
+        Stmt.TryCatch t => t.Keyword.Line,
+        Stmt.Break b => b.Keyword.Line,
+        Stmt.Continue c => c.Keyword.Line,
+        _ => 0
+    };
+
+    // ---- misleading indentation (§3.5) ----------------------------------
+
+    /// <summary>
+    /// Statements in one block share one indentation. A statement indented more deeply
+    /// than the statement above it, without being inside anything, reads as though it were
+    /// nested — the shape of Apple's 2014 "goto fail", where a duplicated line indented as
+    /// though guarded silently broke SSL certificate validation.
+    ///
+    /// Emerald's mandatory braces already make that exact bug unrepresentable. What
+    /// remains is its cousin: a line sitting outside a block it appears to be inside,
+    /// after the block has closed. A warning rather than a lint because §3.5 is explicit
+    /// that a configurable lint is a rule somebody switches off.
+    ///
+    /// Only the first drift in a run is reported. A whole block indented by one extra
+    /// space is one mistake, and forty warnings about it is the cascade §3.6 forbids.
+    /// </summary>
+    private void CheckIndentation(List<Stmt> statements, string file)
+    {
+        var lines = sourceOf?.Invoke(file);
+        if (lines is null || lines.Length == 0) return;
+
+        int baseline = -1;
+
+        foreach (var stmt in statements)
+        {
+            int line = LineOf(stmt);
+            if (line <= 0 || line > lines.Length) continue;
+
+            string text = lines[line - 1];
+            if (text.Trim().Length == 0) continue;
+
+            int indent = text.Length - text.TrimStart().Length;
+
+            if (baseline < 0) { baseline = indent; continue; }
+            if (indent <= baseline) { baseline = indent; continue; }
+
+            string previous = _file;
+            _file = file;
+            Warn(line,
+                 "This line is indented further than the one above it, "
+                 + "but it is not inside anything.",
+                 "Everything in one block lines up. An indented line that is not nested "
+                 + "reads as though it were guarded by the block above, which is how "
+                 + "Apple's 2014 SSL bug went unnoticed.");
+            _file = previous;
+
+            baseline = indent;
+        }
+    }
+
+    // ---- naming (§3.4) --------------------------------------------------
+
+    /// <summary>
+    /// Two casings, one statable rule: types are capitalised, nothing else is. Warnings
+    /// rather than errors, because renaming is a semantic change and a compiler that
+    /// refuses to run over a style disagreement is a compiler people route around.
+    ///
+    /// The §3.4 exemption for members overriding an external type is not implemented and
+    /// costs nothing yet: there is no interop, so no external type exists to override.
+    /// <c>@external</c> needs attributes, which do not parse.
+    /// </summary>
+    private void CheckCasing(Token name, string kind, bool isConst = false)
+    {
+        string text = name.Lexeme;
+
+        // A predicate's trailing ? is part of its name, not a casing violation.
+        string bare = text.TrimEnd('?');
+        if (bare.Length == 0) return;
+
+        if (kind == "type")
+        {
+            if (!char.IsUpper(bare[0]) || bare.Contains('_'))
+                Warn(name.Line,
+                     $"Type names are written in PascalCase, so {text} reads as something else.",
+                     $"Rename it to {ToPascal(bare)}. Types are capitalised; nothing else is.");
+            return;
+        }
+
+        if (isConst)
+        {
+            if (bare.Any(char.IsLower))
+                Warn(name.Line,
+                     $"Constants are written in SCREAMING_SNAKE_CASE, so {text} reads as a variable.",
+                     $"Rename it to {ToScreaming(bare)}.");
+            return;
+        }
+
+        if (bare.Any(char.IsUpper))
+            Warn(name.Line,
+                 $"{Article(kind)} {kind} is written in snake_case, so {text} reads as a type.",
+                 $"Rename it to {ToSnake(bare)}. Capitalised names mean types in Emerald.");
+    }
+
+    /// <summary>
+    /// A method returning Bool must end in <c>?</c>, and one ending in <c>?</c> must
+    /// return Bool (§3.4). Ruby leaves this a convention, so the hint cannot be trusted;
+    /// enforcing both directions makes <c>list.empty?</c> state its return type at the
+    /// call site.
+    /// </summary>
+    private void CheckPredicateName(Stmt.FuncDecl fn)
+    {
+        // An unannotated return type says nothing either way; guessing from the body
+        // would make the rule fire on functions that never claimed to be predicates.
+        if (fn.ReturnType is null) return;
+
+        bool asksQuestion = fn.Name.Lexeme.EndsWith('?');
+        bool answersOne = Resolve(fn.ReturnType).Equals(EmType.Bool);
+
+        if (answersOne && !asksQuestion)
+            Warn(fn.Name.Line,
+                 $"{fn.Name.Lexeme} returns Bool, so its name ends in ? — {fn.Name.Lexeme}?",
+                 "A name ending in ? means the answer is yes or no, and the reader learns "
+                 + "the return type without looking the method up.");
+
+        if (asksQuestion && !answersOne)
+            Warn(fn.Name.Line,
+                 $"{fn.Name.Lexeme} ends in ?, so it is expected to return Bool, "
+                 + $"not {Resolve(fn.ReturnType).Show()}.",
+                 "The ? is a promise about the answer. Drop it, or return Bool.");
+    }
+
+    private static string ToSnake(string name)
+    {
+        var result = new System.Text.StringBuilder();
+        for (int i = 0; i < name.Length; i++)
+        {
+            if (char.IsUpper(name[i]) && i > 0 && name[i - 1] != '_') result.Append('_');
+            result.Append(char.ToLowerInvariant(name[i]));
+        }
+        return result.ToString();
+    }
+
+    private static string ToScreaming(string name) => ToSnake(name).ToUpperInvariant();
+
+    private static string ToPascal(string name) =>
+        string.Concat(name.Split('_', StringSplitOptions.RemoveEmptyEntries)
+                          .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+
+    private void Warn(int line, string message, string? hint = null) =>
+        Diagnostics.Add(new Diagnostic(_file, line, message, hint, Severity.Warning));
 
     private void Error(int line, string message, string? hint = null) =>
         Diagnostics.Add(new Diagnostic(_file, line, message, hint));

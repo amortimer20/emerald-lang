@@ -45,15 +45,18 @@ var problems = project.Diagnostics;
 // §3.6 says one error per cause.
 if (problems.Count == 0)
 {
-    var checker = new Checker(entryName, project.FileOf);
+    var checker = new Checker(entryName, project.FileOf, project.LinesOf);
     checker.Check(program);
     problems = checker.Diagnostics;
 }
 
+// Warnings are printed and then stepped over. A warning that stopped the program would
+// be an error wearing a softer word, and §2.6 wants the compiler teaching while the
+// program still runs — otherwise every lesson arrives as an interruption.
 if (problems.Count > 0)
 {
     Reporter.Report(problems, project);
-    return 65;
+    if (Reporter.HasErrors(problems)) return 65;
 }
 
 try

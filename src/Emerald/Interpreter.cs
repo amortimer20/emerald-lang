@@ -798,7 +798,7 @@ public sealed class Interpreter
 
         object? callee = Evaluate(c.Callee, env);
         if (callee is not ICallable callable)
-            throw new RuntimeError($"{Builtins.TypeName(callee)} is not something you can call.");
+            throw new RuntimeError($"{Builtins.TypeName(callee)} cannot be called.");
 
         return callable.Call(this, args);
     }
@@ -935,7 +935,7 @@ public sealed class Interpreter
         {
             throw new RuntimeError(
                 $"{baseValue} ** {exponent} is too large to hold in an Int.",
-                "Use Floats if you need a number this big:  "
+                "Floats hold numbers this large:  "
                 + $"{baseValue}.to_float ** {exponent}");
         }
 
