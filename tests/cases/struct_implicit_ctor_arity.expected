@@ -1,0 +1,4 @@
+
+struct_implicit_ctor_arity.em:6  Point takes 2 arguments, but got 1.
+
+    6 | print(Point(1).x)

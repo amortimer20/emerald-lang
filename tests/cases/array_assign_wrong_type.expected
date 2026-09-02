@@ -1,0 +1,4 @@
+
+array_assign_wrong_type.em:2  This array holds Int, but this gives it String.
+
+    2 | a[0] = "hello"

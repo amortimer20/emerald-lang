@@ -150,6 +150,12 @@ public sealed class Interpreter
             return;
         }
 
+        if (a.Target is Expr.Index index)
+        {
+            ExecuteIndexAssign(a, index, env);
+            return;
+        }
+
         if (a.Target is not Expr.Variable target)
             throw new RuntimeError("Only a variable or a member can be assigned to.");
 
@@ -164,6 +170,61 @@ public sealed class Interpreter
         }
 
         if (!env.TryAssign(target.Name.Lexeme, value)) throw Unknown(target.Name);
+    }
+
+    /// <summary>
+    /// <c>a[i] = value</c>, and the compound forms. An array writes in place; a user type
+    /// writes through <c>set_at</c>, the setter half of Indexable.
+    /// </summary>
+    private void ExecuteIndexAssign(Stmt.Assign a, Expr.Index index, Env env)
+    {
+        object? target = Evaluate(index.Target, env);
+        object? position = Evaluate(index.Position, env);
+        object? value = Evaluate(a.Value, env);
+
+        if (target is EmInstance instance)
+        {
+            var setAt = instance.Class.FindMethod(Prelude.SetAtMethod)
+                ?? throw new RuntimeError(
+                    $"{instance.Class.Name} cannot be written to by position.",
+                    $"Define {Prelude.SetAtMethod}(index, value) to allow "
+                    + $"{instance.Class.Name}[i] = value.");
+
+            // A compound assignment reads through at(), combines, then writes back — so
+            // `grid[0] += 1` needs both halves of the trait, not just the setter.
+            if (a.Op.Type != TokenType.Assign)
+            {
+                var at = instance.Class.FindMethod(Prelude.AtMethod)
+                    ?? throw new RuntimeError(
+                        $"{instance.Class.Name} cannot be read by position.",
+                        $"{a.Op.Lexeme} has to read the old value before it can write a new one.");
+
+                object? current = CallMethod(at, instance, instance.Class.Closure, [position]);
+                value = Operate(current, CompoundOp(a.Op.Type), value, a.Op);
+            }
+
+            CallMethod(setAt, instance, instance.Class.Closure, [position, value]);
+            return;
+        }
+
+        if (position is not long i)
+            throw new RuntimeError(
+                $"An index must be an Int, got {Builtins.TypeName(position)}.");
+
+        if (target is not EmArray array)
+            throw new RuntimeError($"Cannot index {Builtins.TypeName(target)}.");
+
+        if (i < 0 || i >= array.Items.Count)
+            throw new RuntimeError(
+                $"Index {i} is outside this array, which holds {array.Items.Count} item(s).",
+                array.Items.Count == 0
+                    ? "The array is empty."
+                    : $"Valid positions run from 0 to {array.Items.Count - 1}.");
+
+        if (a.Op.Type != TokenType.Assign)
+            value = Operate(array.Items[(int)i], CompoundOp(a.Op.Type), value, a.Op);
+
+        array.Items[(int)i] = value;
     }
 
     /// <summary>
@@ -341,6 +402,24 @@ public sealed class Interpreter
             try { ExecuteBlock(constructor.Body, scope); }
             catch (ReturnSignal) { /* an early return from a constructor is allowed */ }
         }
+        else if (cls.Kind == TypeKind.Struct)
+        {
+            // The implicit constructor (§3.2): a struct's fields, positionally, in
+            // declaration order. Mirrors the checker's ConstructorParams exactly — if these
+            // two ever disagree, the checker accepts calls the runtime then rejects.
+            List<Stmt.VarDecl> fields = [.. cls.AllFields()];
+
+            if (args.Count != fields.Count)
+                throw new RuntimeError(
+                    $"{cls.Name} takes {fields.Count} argument(s), got {args.Count}.",
+                    fields.Count == 0
+                        ? null
+                        : $"Its fields are {string.Join(", ", fields.Select(f => f.Name.Lexeme))}, "
+                          + "and they are filled in that order.");
+
+            for (int i = 0; i < fields.Count; i++)
+                instance.Fields[fields[i].Name.Lexeme] = args[i];
+        }
         else if (args.Count > 0)
         {
             throw new RuntimeError(
@@ -492,6 +571,19 @@ public sealed class Interpreter
         _line = ix.Bracket.Line;
         object? target = Evaluate(ix.Target, env);
         object? position = Evaluate(ix.Position, env);
+
+        // A user type indexes through Indexable. Checked before the Int requirement,
+        // because at() decides for itself what an index is — a Grid may want a String key
+        // even though arrays never will.
+        if (target is EmInstance instance)
+        {
+            var at = instance.Class.FindMethod(Prelude.AtMethod)
+                ?? throw new RuntimeError(
+                    $"{instance.Class.Name} cannot be indexed with [].",
+                    $"Mix in {Prelude.IndexableTrait} and define {Prelude.AtMethod}.");
+
+            return CallMethod(at, instance, instance.Class.Closure, [position]);
+        }
 
         if (position is not long i)
             throw new RuntimeError(

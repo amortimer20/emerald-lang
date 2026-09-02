@@ -1,0 +1,6 @@
+
+indexable_missing.em:6  Box cannot be indexed with [].
+
+    6 | print("#{Box(1)[0]}")
+
+  Mix in Indexable and define at:  class Box with Indexable

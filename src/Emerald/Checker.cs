@@ -225,6 +225,23 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
         // A class with no constructor of its own inherits its base's, matching EmClass.
         if (!info.HasConstructor && info.Base is not null)
             info.ConstructorParams = info.Base.ConstructorParams;
+
+        // A struct with no constructor gets one from its fields, in declaration order
+        // (§3.2). Close to mandatory rather than a convenience: a struct is immutable, so
+        // without a constructor there is no moment at which its fields could ever be given
+        // values, and the type is unusable. The design document's own Vector3 sample
+        // assumed this and did not compile.
+        //
+        // Every stored field is a parameter, including one with an initialiser. The
+        // alternative — an initialised field drops out of the parameter list — reads well
+        // until someone adds an initialiser to an existing field and silently changes the
+        // arity of every call. When default parameter values land, a field's initialiser
+        // should become that parameter's default, which fixes this additively.
+        if (!info.HasConstructor && info.Base is null && decl.Kind == TypeKind.Struct)
+            info.ConstructorParams =
+                [.. decl.Members.OfType<Stmt.VarDecl>()
+                       .Where(f => !f.IsStatic && f.Getter is null)
+                       .Select(f => Resolve(f.Type))];
     }
 
     private void CheckClass(Stmt.ClassDecl decl, Scope scope)
@@ -424,6 +441,15 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
             return;
         }
 
+        // a[i] = value. This was accepted by the checker and then refused by the
+        // interpreter — the target was typed and the result thrown away, so nothing ever
+        // asked whether it could be written to.
+        if (a.Target is Expr.Index index)
+        {
+            CheckIndexAssign(a, index, scope);
+            return;
+        }
+
         if (a.Target is not Expr.Variable target)
         {
             TypeOf(a.Target, scope);
@@ -448,6 +474,55 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
             Error(a.Op.Line,
                   $"{target.Name.Lexeme} holds {binding.Type.Show()}, but this gives it {value.Show()}.",
                   Widening(binding.Type, value));
+    }
+
+    /// <summary>
+    /// <c>a[i] = value</c>. An array writes its element type; a user type writes through
+    /// <c>set_at</c>, which is the setter half of Indexable — present means writable,
+    /// absent means read-only, exactly as a property's <c>set</c> body works.
+    /// </summary>
+    private void CheckIndexAssign(Stmt.Assign a, Expr.Index index, Scope scope)
+    {
+        var target = TypeOf(index.Target, scope);
+        Expect(TypeOf(index.Position, scope), EmType.Int, index.Position, "an index");
+        var value = TypeOf(a.Value, scope);
+
+        // A compound assignment combines the old element with the new value, so what
+        // finally lands is the operator's result rather than the right-hand side. Typing
+        // that properly needs the operator machinery; until then it is left alone rather
+        // than checked wrongly.
+        bool compound = a.Op.Type != TokenType.Assign;
+
+        switch (target)
+        {
+            case EmType.Unknown:
+                return;
+
+            case EmType.Arr array:
+                if (!compound && !array.Element.Accepts(value))
+                    Error(a.Op.Line,
+                          $"This array holds {array.Element.Show()}, "
+                          + $"but this gives it {value.Show()}.",
+                          Widening(array.Element, value));
+                return;
+
+            case EmType.Obj obj:
+                if (obj.Info.FindMethod(Prelude.SetAtMethod) is null)
+                    Error(a.Op.Line,
+                          obj.Info.FindMethod(Prelude.AtMethod) is null
+                              ? $"{target.Show()} cannot be indexed with []."
+                              : $"{target.Show()} can be read by position, but not written to.",
+                          $"Define {Prelude.SetAtMethod}(index, value) to allow "
+                          + $"{target.Show()}[i] = value.");
+                return;
+
+            default:
+                Error(index.Bracket.Line, $"Cannot index {target.Show()}.",
+                      target.Equals(EmType.String)
+                          ? "Emerald strings are not integer-indexed. Use .chars to get characters."
+                          : null);
+                return;
+        }
     }
 
     private void CheckIf(Stmt.If i, Scope scope)
@@ -1025,6 +1100,19 @@ public sealed class Checker(string fileName, IReadOnlyDictionary<Stmt, string>? 
 
         if (target is EmType.Arr array) return array.Element;
         if (target is EmType.Unknown) return EmType.Any;
+
+        // A user type reaches a[i] through Indexable, the same way + goes through Addable.
+        if (target is EmType.Obj obj)
+        {
+            var at = obj.Info.FindMethod(Prelude.AtMethod);
+            if (at is not null) return at.Return;
+
+            Error(ix.Bracket.Line,
+                  $"{target.Show()} cannot be indexed with [].",
+                  $"Mix in {Prelude.IndexableTrait} and define {Prelude.AtMethod}:  "
+                  + $"class {target.Show()} with {Prelude.IndexableTrait}");
+            return EmType.Any;
+        }
 
         Error(ix.Bracket.Line, $"Cannot index {target.Show()}.",
               target.Equals(EmType.String)

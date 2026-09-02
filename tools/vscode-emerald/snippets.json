@@ -159,6 +159,19 @@
     ],
     "description": "<, >, <=, >= all read this — negative, zero, or positive"
   },
+  "Indexable": {
+    "prefix": "indexable",
+    "body": [
+      "func at(index: Int): ${1:String} {",
+      "\treturn self.${2:items}[index]",
+      "}",
+      "",
+      "func set_at(index: Int, value: ${1:String}) {",
+      "\tself.${2:items}[index] = value",
+      "}"
+    ],
+    "description": "a[i] and a[i] = v — omit set_at for a read-only collection"
+  },
   "Doc comment": {
     "prefix": "doc",
     "body": ["## $0"],

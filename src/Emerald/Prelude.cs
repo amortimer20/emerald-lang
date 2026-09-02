@@ -65,6 +65,16 @@ public static class Prelude
         trait Ordered {
             abstract func compare(other): Int
         }
+
+        ## Values that can be reached by position with a[i].
+        ##
+        ## at is required and gives reading. Writing — a[i] = value — is enabled by also
+        ## defining set_at(index, value), the same way a var with only a get body is
+        ## read-only until a set body is added. A collection that should not be written
+        ## to simply leaves set_at out.
+        trait Indexable {
+            abstract func at(index)
+        }
         """;
 
     /// <summary>The prelude's source split into lines, so a diagnostic can quote it.</summary>
@@ -108,9 +118,14 @@ public static class Prelude
     public const string CompareMethod = "compare";
     public const string OrderedTrait = "Ordered";
 
+    public const string AtMethod = "at";
+    public const string SetAtMethod = "set_at";
+    public const string IndexableTrait = "Indexable";
+
     /// <summary>Type names the prelude owns, so a program cannot quietly redefine them.</summary>
     public static readonly HashSet<string> TypeNames =
     [
         "Addable", "Subtractable", "Multipliable", "Dividable", "Equatable", "Ordered",
+        "Indexable",
     ];
 }

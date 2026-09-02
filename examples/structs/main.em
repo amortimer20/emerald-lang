@@ -5,11 +5,9 @@ struct Vector3 {
     var y: Float
     var z: Float
 
-    constructor(x: Float, y: Float, z: Float) {
-        self.x = x
-        self.y = y
-        self.z = z
-    }
+    # No constructor written. A struct is immutable, so its fields could never be
+    # given values without one — the compiler supplies it from the fields above, in
+    # the order they are declared: Vector3(x, y, z).
 
     var length_squared: Float {
         get { return self.x * self.x + self.y * self.y + self.z * self.z }
