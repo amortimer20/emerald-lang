@@ -1,8 +1,0 @@
-
-err_redefined_function.em:2  area is already defined on line 1.
-
-    2 | func area(w: Int, h: Int): Int { return w * h }
-
-  Emerald has no overloading yet, so each name means one function. Rename one of them.
-
-  1 further error(s) suppressed — likely caused by this one.

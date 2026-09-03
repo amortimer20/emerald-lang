@@ -42,6 +42,13 @@ public abstract record EmType
     /// </summary>
     public sealed record SetOf(EmType Element) : EmType;
 
+    /// <summary>
+    /// Two or more functions of one name (§3.2). A call picks the one whose parameters
+    /// accept what it was handed; §3.2 makes overlap an error at the <em>declaration</em>,
+    /// so at most one can ever match and there is no call-site resolution to teach.
+    /// </summary>
+    public sealed record Overloads(List<Func> Alternatives) : EmType;
+
     /// <summary>An instance of a user-declared class.</summary>
     public sealed record Obj(ClassInfo Info) : EmType;
 
@@ -77,6 +84,7 @@ public abstract record EmType
         SetOf t => $"Set<{t.Element.Show()}>",
         Obj o => o.Info.Name,
         Func => "Function",
+        Overloads => "Function",
         _ => "?"
     };
 
@@ -92,6 +100,14 @@ public abstract record EmType
         Maybe m => m.Inner.Head,
         _ => "?"
     };
+
+    /// <summary>
+    /// Whether two parameter types could both accept one argument. §3.2 rejects an
+    /// overload that overlaps an existing one, and this is what overlap means: not that
+    /// the types are equal, but that no argument could tell them apart. <c>Int</c> and
+    /// <c>Float</c> overlap because an Int widens; <c>Int</c> and <c>String</c> do not.
+    /// </summary>
+    public bool Overlaps(EmType other) => Accepts(other) || other.Accepts(this);
 
     /// <summary>
     /// Can a value of <paramref name="from"/> be used where <c>this</c> is wanted?

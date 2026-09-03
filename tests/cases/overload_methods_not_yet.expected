@@ -1,0 +1,6 @@
+
+overload_methods_not_yet.em:4  Greeter already has a member named hi.
+
+    4 |     func hi(n: Int): String { return "hi ##{n}" }
+
+  Two functions may share a name when their parameters differ, but two methods may not yet. Rename one of them.

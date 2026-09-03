@@ -178,28 +178,40 @@ public sealed class Checker(
         // Functions are visible before their declaration, so a file reads top to bottom
         // without forward-declaration ceremony.
         //
-        // A repeated name is rejected rather than silently overwriting the first. Until
-        // overloads exist (§3.2), two functions of one name is always a mistake — and a
-        // silent overwrite is the worst possible handling of it, since calls to the
-        // first one quietly go somewhere else.
-        Dictionary<string, int> declaredAt = [];
+        // Several functions may share a name, distinguished by what they take (§3.2).
+        // Overlap is rejected here rather than at the call: overlap is decidable — finite
+        // arity, static types — so the error belongs to whoever wrote the second one, and
+        // a call never has to resolve between two candidates that could both match.
+        Dictionary<string, List<(EmType.Func Signature, int Line)>> overloads = [];
+
         foreach (var stmt in program)
         {
             if (stmt is not Stmt.FuncDecl fn) continue;
 
-            if (declaredAt.TryGetValue(fn.Name.Lexeme, out int firstLine))
+            var signature = SignatureOf(fn);
+            if (!overloads.TryGetValue(fn.Name.Lexeme, out var existing))
+                overloads[fn.Name.Lexeme] = existing = [];
+
+            var clash = existing.FirstOrDefault(e => Indistinguishable(e.Signature, signature));
+            if (clash.Signature is not null)
             {
                 _file = fileOf?.GetValueOrDefault(stmt) ?? fileName;
                 Error(fn.Name.Line,
-                      $"{fn.Name.Lexeme} is already defined on line {firstLine}.",
-                      "Emerald has no overloading yet, so each name means one function. "
-                      + "Rename one of them.");
+                      $"{fn.Name.Lexeme} already has an overload matching this one, "
+                      + $"on line {clash.Line}.",
+                      "Two of one name have to be told apart by what they take. "
+                      + "No argument could choose between these.");
                 continue;
             }
 
-            declaredAt[fn.Name.Lexeme] = fn.Name.Line;
-            globals.Declare(fn.Name.Lexeme, SignatureOf(fn));
+            existing.Add((signature, fn.Name.Line));
         }
+
+        foreach (var (name, alternatives) in overloads)
+            globals.Declare(name,
+                            alternatives.Count == 1
+                                ? alternatives[0].Signature
+                                : new EmType.Overloads([.. alternatives.Select(a => a.Signature)]));
 
         // Top-level statements are a block too, grouped per file — a project of many
         // files has many top levels, and comparing across them is meaningless.
@@ -211,6 +223,42 @@ public sealed class Checker(
             _file = fileOf?.GetValueOrDefault(stmt) ?? fileName;
             CheckStmt(stmt, globals);
         }
+    }
+
+    /// <summary>
+    /// Whether no call could tell two signatures apart — §3.2's overlap.
+    ///
+    /// Defaults are applied first, which is why the rule is stated over an arity
+    /// <em>range</em>: <c>f(a: Int)</c> and <c>f(a: Int, b: Int = 0)</c> both answer a
+    /// one-argument call, and C#'s own guidance is to avoid exactly that pairing. Here it
+    /// is simply refused.
+    /// </summary>
+    private static bool Fits(EmType.Func candidate, int supplied, List<EmType> given)
+    {
+        if (supplied < candidate.LeastArgs || supplied > candidate.Params.Count) return false;
+
+        for (int i = 0; i < given.Count && i < candidate.Params.Count; i++)
+            if (!candidate.Params[i].Accepts(given[i])) return false;
+
+        return true;
+    }
+
+    private static bool Indistinguishable(EmType.Func a, EmType.Func b)
+    {
+        for (int arity = Math.Max(a.LeastArgs, b.LeastArgs);
+             arity <= Math.Min(a.Params.Count, b.Params.Count);
+             arity++)
+        {
+            // At this arity both are callable. They are told apart only if some position
+            // holds types no single argument could satisfy at once.
+            bool separable = false;
+            for (int i = 0; i < arity; i++)
+                if (!a.Params[i].Overlaps(b.Params[i])) { separable = true; break; }
+
+            if (!separable) return true;
+        }
+
+        return false;
     }
 
     private EmType.Func SignatureOf(Stmt.FuncDecl fn) =>
@@ -285,13 +333,30 @@ public sealed class Checker(
                 }
 
                 case Stmt.FuncDecl method:
-                    if (method.IsStatic) info.StaticMethods[method.Name.Lexeme] = SignatureOf(method);
-                    else
+                {
+                    // Overloading is on functions, not yet on methods (§3.2) — a method
+                    // table holds one signature per name, and the trait and operator
+                    // machinery reads it that way. Until that changes, a repeat has to be
+                    // an error: it used to overwrite in silence, so calls to the first went
+                    // somewhere else, which is the handling §3.2 calls the worst possible.
+                    var table = method.IsStatic ? info.StaticMethods : info.Methods;
+
+                    if (table.ContainsKey(method.Name.Lexeme))
                     {
-                        info.Methods[method.Name.Lexeme] = SignatureOf(method);
-                        if (method.Body is null) info.AbstractNames.Add(method.Name.Lexeme);
+                        Error(method.Name.Line,
+                              $"{decl.Name.Lexeme} already has "
+                              + $"{(method.IsStatic ? "a type-level" : "a")} member "
+                              + $"named {method.Name.Lexeme}.",
+                              "Two functions may share a name when their parameters differ, "
+                              + "but two methods may not yet. Rename one of them.");
+                        break;
                     }
+
+                    table[method.Name.Lexeme] = SignatureOf(method);
+                    if (!method.IsStatic && method.Body is null)
+                        info.AbstractNames.Add(method.Name.Lexeme);
                     break;
+                }
 
                 case Stmt.ConstructorDecl ctor:
                     info.HasConstructor = true;
@@ -1032,7 +1097,12 @@ public sealed class Checker(
 
     private void CheckFunc(Stmt.FuncDecl fn, Scope scope)
     {
-        scope.Declare(fn.Name.Lexeme, SignatureOf(fn));
+        // Declaring it makes a nested function visible to its own body, which is what
+        // recursion needs. But a top-level name already carries its overload set by now,
+        // and redeclaring would replace the set with whichever version is being checked —
+        // so every call would resolve against the last one declared.
+        if (scope.Find(fn.Name.Lexeme)?.Type is not EmType.Overloads)
+            scope.Declare(fn.Name.Lexeme, SignatureOf(fn));
         CheckAttributes(fn.Attributes, "function");
         CheckCasing(fn.Name, "function");
         CheckPredicateName(fn);
@@ -1601,6 +1671,26 @@ public sealed class Checker(
 
         var callee = TypeOf(c.Callee, scope);
         if (callee is EmType.Unknown) return EmType.Any;
+
+        if (callee is EmType.Overloads alternatives)
+        {
+            string overloaded = c.Callee is Expr.Variable which ? which.Name.Lexeme : "This";
+            int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
+
+            // At most one can match: §3.2 refused any pair a call could not tell apart, so
+            // there is no "best match" rule here and none to explain to anyone.
+            var chosen = alternatives.Alternatives.FirstOrDefault(f => Fits(f, supplied, given));
+            if (chosen is not null) return chosen.Return;
+
+            Error(LineOf(c.Callee),
+                  $"No version of {overloaded} takes "
+                  + (given.Count == 0
+                        ? "no arguments."
+                        : $"({string.Join(", ", given.Select(t => t.Show()))})."),
+                  "It has " + string.Join(", and ", alternatives.Alternatives.Select(
+                      f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".");
+            return EmType.Any;
+        }
 
         if (callee is not EmType.Func fn)
         {

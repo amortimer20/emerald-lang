@@ -34,12 +34,13 @@ public sealed class Interpreter
             // Functions are declared before anything runs, matching the checker, so a
             // file reads top to bottom without forward declarations and mutual recursion
             // works. Without this the checker accepts programs the runtime then rejects.
-            foreach (var stmt in program)
-                if (stmt is Stmt.FuncDecl fn)
-                    _globals.Declare(fn.Name.Lexeme,
-                                     new EmFunction(fn.Name.Lexeme, fn.Params, fn.Body, _globals));
+            DeclareFunctions(program);
 
-            foreach (var stmt in program) Execute(stmt, _globals);
+            // Function declarations are skipped here: DeclareFunctions has already put
+            // them in, gathered into overload sets. Executing them again would declare
+            // each on its own and replace the set with whichever came last.
+            foreach (var stmt in program)
+                if (stmt is not Stmt.FuncDecl) Execute(stmt, _globals);
         }
         catch (RuntimeError error)
         {
@@ -63,10 +64,7 @@ public sealed class Interpreter
     /// </summary>
     public void LoadDeclarations(List<Stmt> program)
     {
-        foreach (var stmt in program)
-            if (stmt is Stmt.FuncDecl fn)
-                _globals.Declare(fn.Name.Lexeme,
-                                 new EmFunction(fn.Name.Lexeme, fn.Params, fn.Body, _globals));
+        DeclareFunctions(program);
 
         foreach (var stmt in program)
             if (stmt is Stmt.ClassDecl or Stmt.VarDecl)
@@ -87,6 +85,37 @@ public sealed class Interpreter
             throw new RuntimeError($"No type named {owner}.");
 
         return GetStatic(cls, new Token(TokenType.Identifier, name, null, 0), []);
+    }
+
+    /// <summary>
+    /// Hoists every top-level function, gathering same-named ones into one overload set
+    /// (§3.2). Declared before anything runs so a file reads top to bottom and mutual
+    /// recursion works — and so the checker and the runtime agree about what exists.
+    /// </summary>
+    private void DeclareFunctions(List<Stmt> program)
+    {
+        Dictionary<string, EmOverloads> sets = [];
+
+        foreach (var stmt in program)
+        {
+            if (stmt is not Stmt.FuncDecl fn) continue;
+            var built = new EmFunction(fn.Name.Lexeme, fn.Params, fn.Body, _globals);
+
+            if (sets.TryGetValue(fn.Name.Lexeme, out var set)) { set.Add(built); continue; }
+
+            if (_globals.TryGet(fn.Name.Lexeme, out object? already)
+                && already is EmFunction first)
+            {
+                var combined = new EmOverloads(fn.Name.Lexeme);
+                combined.Add(first);
+                combined.Add(built);
+                sets[fn.Name.Lexeme] = combined;
+                _globals.Declare(fn.Name.Lexeme, combined);
+                continue;
+            }
+
+            _globals.Declare(fn.Name.Lexeme, built);
+        }
     }
 
     // ---- statements -----------------------------------------------------
@@ -1047,6 +1076,44 @@ public sealed class Interpreter
     /// Only <c>false</c> and <c>nothing</c> are falsy. Notably 0 and "" are not — a
     /// number is not a disguised boolean, which is a lie C-family languages tell.
     /// </summary>
+    /// <summary>
+    /// Whether a value could have been declared as this type. Used only to choose between
+    /// overloads, where the checker has already guaranteed at most one can match — so this
+    /// answers "is this one of them", never "which is best".
+    /// </summary>
+    private static bool Matches(TypeRef declared, object? value)
+    {
+        string name = declared.Name.Lexeme;
+
+        if (value is null) return declared.Nullable || name == "Nothing";
+
+        return name switch
+        {
+            "Int" => value is long,
+
+            // An Int is usable where a Float is wanted, the same widening Accepts allows.
+            "Float" => value is double or long,
+
+            "String" => value is string,
+            "Bool" => value is bool,
+            "Range" => value is EmRange,
+            "List" => value is EmList,
+            "Dictionary" => value is EmDict,
+            "Set" => value is EmSet,
+            "Nothing" => false,
+
+            _ => value switch
+            {
+                EmInstance instance => IsA(instance.Class, name),
+                EmEnumValue enumValue => enumValue.Type == name,
+                _ => false,
+            },
+        };
+    }
+
+    private static bool IsA(EmClass? cls, string name) =>
+        cls is not null && (cls.Name == name || IsA(cls.Super, name));
+
     private static bool Truthy(object? value) => value switch
     {
         null => false,
@@ -1103,6 +1170,35 @@ public sealed class Interpreter
 
     // ---- callables ------------------------------------------------------
 
+    /// <summary>
+    /// Several functions of one name (§3.2). The checker has already refused any pair a
+    /// call could not tell apart, so picking the first that fits is not a "best match"
+    /// rule — at most one can ever fit.
+    ///
+    /// Dispatch happens here, on the values, rather than being resolved by the checker and
+    /// recorded: the tree has nowhere to carry a resolution, and a side table threaded
+    /// from the checker to the interpreter would be a second place for the two to
+    /// disagree about what a call means.
+    /// </summary>
+    private sealed class EmOverloads(string name) : ICallable
+    {
+        private readonly List<EmFunction> _alternatives = [];
+
+        public void Add(EmFunction fn) => _alternatives.Add(fn);
+
+        public object? Call(Interpreter interpreter, List<object?> args)
+        {
+            foreach (var candidate in _alternatives)
+                if (candidate.Fits(args)) return candidate.Call(interpreter, args);
+
+            throw new RuntimeError(
+                $"No version of {name} takes these arguments.",
+                $"It has {_alternatives.Count} versions, and none of them matches.");
+        }
+
+        public override string ToString() => $"<func {name}, {_alternatives.Count} versions>";
+    }
+
     internal sealed class ReturnSignal(object? value) : Exception
     {
         public object? Value { get; } = value;
@@ -1125,6 +1221,24 @@ public sealed class Interpreter
     private sealed class EmFunction(
         string name, List<Param> parameters, List<Stmt> body, Env closure) : ICallable
     {
+        public List<Param> Parameters => parameters;
+
+        /// <summary>
+        /// Whether this version can take these values. Arity first, since it settles most
+        /// of them; then the declared type of each position against what actually arrived.
+        /// </summary>
+        public bool Fits(List<object?> args)
+        {
+            int least = parameters.TakeWhile(p => p.Default is null).Count();
+            if (args.Count < least || args.Count > parameters.Count) return false;
+
+            for (int i = 0; i < args.Count; i++)
+                if (parameters[i].Type is { } declared && !Matches(declared, args[i]))
+                    return false;
+
+            return true;
+        }
+
         public object? Call(Interpreter interpreter, List<object?> args)
         {
             var scope = new Env(closure);
