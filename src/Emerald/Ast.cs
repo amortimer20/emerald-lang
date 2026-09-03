@@ -121,6 +121,16 @@ public abstract record Stmt
     public sealed record Throw(Token Keyword, Expr Value) : Stmt;
 
     /// <summary>
+    /// <c>assert total == 10</c>. A statement rather than a call, so it needs no
+    /// parentheses — the same shape as <c>throw</c>, and what §3.5 already wrote.
+    ///
+    /// It is the one construct that reads its own argument as <em>source</em> rather than
+    /// as a value: a function receives <c>false</c> and can say nothing else, which is why
+    /// §3.8 filed this as the only real macro demand.
+    /// </summary>
+    public sealed record Assert(Token Keyword, Expr Condition) : Stmt;
+
+    /// <summary>
     /// <c>try { } catch e { }</c>. The catch name is bound to an Error inside the handler.
     /// Untyped in v0 — catching by type needs user-declared error classes first.
     /// </summary>

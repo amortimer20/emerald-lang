@@ -377,5 +377,12 @@
       "}"
     ],
     "description": "Same thing, one value per line"
+  },
+  "Assert": {
+    "prefix": "assert",
+    "body": [
+      "assert ${1:actual} == ${2:expected}"
+    ],
+    "description": "Reports the expression and both sides when it does not hold"
   }
 }

@@ -80,10 +80,8 @@ public static class Commands
     /// Convention over configuration, in the box: nothing to register and nothing to
     /// configure, so a test is written by naming a file and marking a function.
     ///
-    /// A test fails by returning false or by throwing. §3.5 wants
-    /// <c>assert clamp(15, 0, 10) == 10</c> to report "was 15" with the source text, which
-    /// needs a macro to capture the expression — until then a test says whether it passed
-    /// and not why, which is honest and much less useful.
+    /// A test fails by returning false or by throwing — and `assert` throws, carrying the
+    /// expression it was given rather than only the false it produced (§3.5).
     /// </summary>
     public static int Test(string[] args)
     {
@@ -170,7 +168,7 @@ public static class Commands
                 if (result is false)
                 {
                     Console.WriteLine($"  FAIL  {label}");
-                    Console.WriteLine($"        returned false");
+                    Detail("returned false");
                     failed++;
                 }
                 else Console.WriteLine($"  ok    {label}");
@@ -178,13 +176,13 @@ public static class Commands
             catch (ThrownError thrown)
             {
                 Console.WriteLine($"  FAIL  {label}");
-                Console.WriteLine($"        {thrown.Value.Message}");
+                Detail(thrown.Value.Message);
                 failed++;
             }
             catch (RuntimeError error)
             {
                 Console.WriteLine($"  FAIL  {label}");
-                Console.WriteLine($"        {error.Message}");
+                Detail(error.Message);
                 failed++;
             }
         }
@@ -195,6 +193,17 @@ public static class Commands
             : $"{Count(tests.Count, "test")}, {failed} failing.");
 
         return failed == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Indents every line of a failure, not only the first. An assertion's message runs to
+    /// three lines, and leaving the continuations at the left margin made the detail look
+    /// like it belonged to something else.
+    /// </summary>
+    private static void Detail(string message)
+    {
+        foreach (var line in message.Replace("\r\n", "\n").Split('\n'))
+            Console.WriteLine($"        {line.TrimStart()}");
     }
 
     private static bool HasTestAttribute(Stmt.FuncDecl fn) =>

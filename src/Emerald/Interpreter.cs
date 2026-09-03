@@ -152,6 +152,10 @@ public sealed class Interpreter
                 _line = t.Keyword.Line;
                 throw new ThrownError(AsError(Evaluate(t.Value, env), t.Keyword));
 
+            case Stmt.Assert a:
+                ExecuteAssert(a, env);
+                break;
+
             case Stmt.TryCatch tc:
                 ExecuteTryCatch(tc, env);
                 break;
@@ -305,6 +309,55 @@ public sealed class Interpreter
         {
             callable.Call(this, []);
         }
+    }
+
+    /// <summary>
+    /// <c>assert total == 10</c>.
+    ///
+    /// The point of it is the failure message. §3.5 wants
+    /// <c>assert clamp(15, 0, 10) == 10</c> to report "was 15", which needs the
+    /// <em>expression</em> and not only the <c>false</c> it produced — the reason §3.8
+    /// filed assert as a macro. Reading the tree here gets the same answer with no macro
+    /// system, and the cost is that assert is compiler-known rather than something a
+    /// library could have written.
+    /// </summary>
+    private void ExecuteAssert(Stmt.Assert statement, Env env)
+    {
+        _line = statement.Keyword.Line;
+
+        // A comparison is unpacked so both sides can be reported. Each is evaluated once:
+        // running them again to print them would repeat any effect they had, and an
+        // assertion that changes the program while explaining itself is worse than none.
+        if (statement.Condition is Expr.Binary
+            {
+                Op.Type: TokenType.Equal or TokenType.NotEqual or TokenType.Less
+                         or TokenType.Greater or TokenType.LessEqual or TokenType.GreaterEqual
+            } comparison)
+        {
+            object? left = Evaluate(comparison.Left, env);
+            object? right = Evaluate(comparison.Right, env);
+
+            bool held = comparison.Op.Type switch
+            {
+                TokenType.Equal => Same(left, right),
+                TokenType.NotEqual => !Same(left, right),
+                _ => Ordering(left, right, comparison.Op),
+            };
+
+            if (held) return;
+
+            throw new ThrownError(new EmError(
+                $"Assertion failed:  {Source.Of(statement.Condition)}"
+                + $"\n    left  was {Builtins.Display(left)}"
+                + $"\n    right was {Builtins.Display(right)}"))
+            { Line = statement.Keyword.Line, FromAssertion = true };
+        }
+
+        if (Truthy(Evaluate(statement.Condition, env))) return;
+
+        throw new ThrownError(
+            new EmError($"Assertion failed:  {Source.Of(statement.Condition)}"))
+        { Line = statement.Keyword.Line, FromAssertion = true };
     }
 
     private void ExecuteFor(Stmt.For f, Env env)

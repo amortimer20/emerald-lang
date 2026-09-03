@@ -737,6 +737,11 @@ public sealed class Checker(
                 TypeOf(t.Value, scope);
                 break;
 
+            case Stmt.Assert a:
+                Expect(TypeOf(a.Condition, scope), EmType.Bool, a.Condition, "assert",
+                       a.Keyword.Line);
+                break;
+
             case Stmt.TryCatch tc:
             {
                 CheckBlock(tc.Body, new Scope(scope));
@@ -2170,10 +2175,14 @@ public sealed class Checker(
         return EmType.Any;
     }
 
-    private void Expect(EmType actual, EmType wanted, Expr where, string context)
+    /// <summary>
+    /// <paramref name="fallback"/> is used when the expression carries no token to point
+    /// at — a bare literal has none, and reporting line 0 points at nothing at all.
+    /// </summary>
+    private void Expect(EmType actual, EmType wanted, Expr where, string context, int fallback = 0)
     {
         if (actual is EmType.Unknown || wanted.Accepts(actual)) return;
-        Error(LineOf(where),
+        Error(LineOf(where) is var line && line > 0 ? line : fallback,
               $"{context} needs {wanted.Show()}, but this is {actual.Show()}.",
               actual.IsMaybe ? "Check it against nothing first." : null);
     }
@@ -2246,6 +2255,7 @@ public sealed class Checker(
         Stmt.ConstructorDecl c => c.Keyword.Line,
         Stmt.Return r => r.Keyword.Line,
         Stmt.Throw t => t.Keyword.Line,
+        Stmt.Assert a => a.Keyword.Line,
         Stmt.TryCatch t => t.Keyword.Line,
         Stmt.Break b => b.Keyword.Line,
         Stmt.Continue c => c.Keyword.Line,

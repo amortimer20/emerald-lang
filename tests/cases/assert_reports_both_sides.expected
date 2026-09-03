@@ -1,0 +1,8 @@
+
+assert_reports_both_sides.em:7  Assertion failed:  clamp(15, 0, 10) == 10
+    left  was 15
+    right was 10
+
+    7 | assert clamp(15, 0, 10) == 10
+
+  An assertion states what the program guarantees. One that does not hold means the program is wrong, not that it needs catching.

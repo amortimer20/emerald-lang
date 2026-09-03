@@ -1,0 +1,6 @@
+
+assert_not_a_comparison.em:3  Assertion failed:  names.empty?
+
+    3 | assert names.empty?
+
+  An assertion states what the program guarantees. One that does not hold means the program is wrong, not that it needs catching.

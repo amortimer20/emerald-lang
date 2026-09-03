@@ -83,8 +83,16 @@ catch (ThrownError thrown)
     // An error the program threw and never caught. Reported like any other failure —
     // a .NET stack trace reaching a student is exactly what §3.6 exists to prevent.
     Reporter.RuntimeFailure(
-        new RuntimeError(thrown.Value.Message,
-                         "Nothing caught this. Wrap the risky part:  try { ... } catch e { ... }")
+        new RuntimeError(
+            thrown.Value.Message,
+
+            // An assertion is thrown like anything else, so a catch and a test runner both
+            // see it — but telling someone to wrap a failed assertion in a try would be
+            // advice to hide the thing it was written to reveal.
+            thrown.FromAssertion
+                ? "An assertion states what the program guarantees. One that does not hold "
+                  + "means the program is wrong, not that it needs catching."
+                : "Nothing caught this. Wrap the risky part:  try { ... } catch e { ... }")
         { Line = thrown.Line },
         entryName, project);
     return 70;

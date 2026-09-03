@@ -145,6 +145,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
         if (Match(TokenType.Const)) return VariableDeclaration(isConst: true);
         if (Check(TokenType.Return)) return ReturnStatement();
         if (Check(TokenType.Throw)) return ThrowStatement();
+        if (Check(TokenType.Assert)) return new Stmt.Assert(Advance(), Expression());
 
         // Simple statements, so they pick up the guard modifier for free and
         // `break if found` reads the way `return x unless ok` already does.

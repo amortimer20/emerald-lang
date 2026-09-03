@@ -27,6 +27,7 @@ public sealed class Scanner(string source, string fileName)
         ["throw"] = TokenType.Throw,       ["try"] = TokenType.Try,
         ["catch"] = TokenType.Catch,
         ["break"] = TokenType.Break,      ["continue"] = TokenType.Continue,
+        ["assert"] = TokenType.Assert,
         ["extends"] = TokenType.Extends,
         ["with"] = TokenType.With,      ["constructor"] = TokenType.Constructor,
 

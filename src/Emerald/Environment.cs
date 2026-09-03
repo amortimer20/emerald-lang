@@ -55,6 +55,14 @@ public sealed class ThrownError(EmError value) : Exception(value.Message)
 {
     public EmError Value { get; } = value;
 
+    /// <summary>
+    /// Whether a failed <c>assert</c> raised this. It is thrown like any other error so
+    /// a test runner and a catch both see it, but what to tell the reader differs: an
+    /// assertion that did not hold means the program is wrong, and suggesting they wrap
+    /// it in a try would be advice to hide it.
+    /// </summary>
+    public bool FromAssertion { get; init; }
+
     /// <summary>Filled in as it unwinds, so an uncaught throw names a line.</summary>
     public int Line { get; set; }
 }

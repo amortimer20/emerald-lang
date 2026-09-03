@@ -1,0 +1,4 @@
+
+assert_needs_a_bool.em:1  assert needs Bool, but this is Int.
+
+    1 | assert 42
