@@ -1,0 +1,4 @@
+
+method_call_block_not_taken.em:9  Box.show takes 0 arguments, but got 1.
+
+    9 | Box(1).show { x => x }

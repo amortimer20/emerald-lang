@@ -1,0 +1,4 @@
+
+method_call_static_wrong.em:7  Dog.stray expects String as its first argument, but this is Int.
+
+    7 | print(Dog.stray(99).name)

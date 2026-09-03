@@ -1,0 +1,4 @@
+
+method_call_too_many.em:7  Dog.rename takes 1 argument, but got 3.
+
+    7 | Dog("rex").rename("a", "b", "c")

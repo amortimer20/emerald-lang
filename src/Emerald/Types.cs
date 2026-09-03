@@ -334,6 +334,11 @@ public sealed class ClassInfo(string name)
     public IEnumerable<string> Missing() =>
         Required().Distinct().Where(n => !Provides(n));
 
+    /// <summary>The signature, not just the return type — a call site needs the parameters
+    /// to check what it was handed.</summary>
+    public EmType.Func? FindStaticMethod(string wanted) =>
+        StaticMethods.TryGetValue(wanted, out var m) ? m : Base?.FindStaticMethod(wanted);
+
     public EmType? FindStatic(string wanted) =>
         StaticFields.TryGetValue(wanted, out var f) ? f
             : StaticMethods.TryGetValue(wanted, out var m) ? m.Return

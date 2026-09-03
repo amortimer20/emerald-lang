@@ -1356,16 +1356,36 @@ public sealed class Checker(
             // Static call: Dog.from_shelter_id(42)
             if (StaticOf(get.Target, get.Name) is { } staticResult)
             {
-                foreach (var arg in c.Args) TypeOf(arg, scope);
+                List<EmType> staticArgs = [.. c.Args.Select(arg => TypeOf(arg, scope))];
                 if (c.Trailing is not null) TypeOf(c.Trailing, scope);
+
+                if (get.Target is Expr.Variable owner
+                    && _classes.TryGetValue(owner.Name.Lexeme, out var ownerInfo)
+                    && ownerInfo.FindStaticMethod(get.Name.Lexeme) is { } staticMethod)
+                {
+                    return CheckArguments(staticMethod, c, staticArgs,
+                                          $"{ownerInfo.Name}.{get.Name.Lexeme}", get.Name.Line);
+                }
+
                 return staticResult;
             }
 
             var receiver = TypeOf(get.Target, scope);
             if (receiver is EmType.Lst list) return ListCallType(list, c, get.Name, scope);
 
-            foreach (var arg in c.Args) TypeOf(arg, scope);
+            List<EmType> args = [.. c.Args.Select(arg => TypeOf(arg, scope))];
             if (c.Trailing is not null) TypeOf(c.Trailing, scope);
+
+            // A user-declared method carries real parameter types. A built-in one lives in
+            // the return-type table, which records what it gives back and not what it
+            // takes, so there is nothing there to check a call against.
+            if (receiver is EmType.Obj obj
+                && obj.Info.FindMethod(get.Name.Lexeme) is { } method)
+            {
+                return CheckArguments(method, c, args,
+                                      $"{obj.Info.Name}.{get.Name.Lexeme}", get.Name.Line);
+            }
+
             return MemberType(receiver, get.Name, scope);
         }
 
@@ -1397,42 +1417,48 @@ public sealed class Checker(
 
         // Kernel functions are declared with a single Any parameter and skipped, since
         // v0's signatures cannot express read_line's optional prompt.
-        bool isKernel = c.Callee is Expr.Variable v && Kernel.ContainsKey(v.Name.Lexeme);
+        if (c.Callee is Expr.Variable v && Kernel.ContainsKey(v.Name.Lexeme)) return fn.Return;
+
+        string name = c.Callee is Expr.Variable named ? named.Name.Lexeme : "This";
+        return CheckArguments(fn, c, given, name, LineOf(c.Callee));
+    }
+
+    /// <summary>
+    /// How many arguments a call may pass, and what each one must be.
+    ///
+    /// Shared by every call shape on purpose. Free functions were checked here and methods
+    /// were not, because the two resolved through different code paths and only one of them
+    /// had ever counted anything — so <c>dog.rename("a", "b", "c")</c> sailed past the
+    /// checker while <c>rename("a", "b", "c")</c> did not. One routine means a method's
+    /// diagnostic cannot drift from a function's, and cannot go missing.
+    /// </summary>
+    private EmType CheckArguments(
+        EmType.Func fn, Expr.Call c, List<EmType> given, string what, int line)
+    {
         int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
 
-        if (!isKernel && (supplied < fn.LeastArgs || supplied > fn.Params.Count))
+        if (supplied < fn.LeastArgs || supplied > fn.Params.Count)
         {
-            string what = c.Callee is Expr.Variable named ? named.Name.Lexeme : "This";
-
             // With defaults there is a range rather than a number, and saying "takes 3"
             // when two would have done sends the reader to add an argument they do not need.
             string wanted = fn.LeastArgs == fn.Params.Count
                 ? Count(fn.Params.Count, "argument")
                 : $"between {fn.LeastArgs} and {Count(fn.Params.Count, "argument")}";
 
-            Error(LineOf(c.Callee), $"{what} takes {wanted}, but got {supplied}.");
+            Error(line, $"{what} takes {wanted}, but got {supplied}.");
             return fn.Return;
         }
 
-        // What each argument must be. Until now the checker counted arguments and never
-        // looked at them, so every parameter annotation was decorative: double("hello")
-        // type-checked and failed inside the function body, pointing at the function's own
-        // line rather than the call — §3.6's symptom-not-cause failure, from the compiler.
-        //
         // Only positions the caller actually wrote. A defaulted parameter left off was
         // checked where the default was declared.
-        if (!isKernel)
+        for (int i = 0; i < given.Count && i < fn.Params.Count; i++)
         {
-            for (int i = 0; i < given.Count && i < fn.Params.Count; i++)
-            {
-                if (fn.Params[i].Accepts(given[i])) continue;
+            if (fn.Params[i].Accepts(given[i])) continue;
 
-                string what = c.Callee is Expr.Variable named ? named.Name.Lexeme : "This";
-                Error(LineOf(c.Args[i]) is var line && line > 0 ? line : LineOf(c.Callee),
-                      $"{what} expects {fn.Params[i].Show()} "
-                      + $"{Ordinal(i)}, but this is {given[i].Show()}.",
-                      Widening(fn.Params[i], given[i]));
-            }
+            Error(LineOf(c.Args[i]) is var at && at > 0 ? at : line,
+                  $"{what} expects {fn.Params[i].Show()} "
+                  + $"{Ordinal(i)}, but this is {given[i].Show()}.",
+                  Widening(fn.Params[i], given[i]));
         }
 
         return fn.Return;
