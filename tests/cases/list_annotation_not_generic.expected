@@ -3,4 +3,4 @@ list_annotation_not_generic.em:1  Int does not take type arguments.
 
     1 | var n: Int<String> = 5
 
-  List and Dictionary are the only generic types in Emerald, and both are built in — a program cannot declare its own.
+  List, Dictionary and Set are the only generic types in Emerald, and all three are built in — a program cannot declare its own.

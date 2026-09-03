@@ -324,6 +324,26 @@ public static class Explanations
             well:  counts[word] = counts[word].or(0) + 1
             """),
 
+        ["set-type"] = new(
+            "Making a set",
+            """
+            var seen: Set = []
+            """,
+            """
+            var vowels = ["a", "e", "i", "o", "u"].to_set
+            var seen: Set<String> = [].to_set
+
+            print(vowels.contains?("e"))
+            """,
+            """
+            A set has no literal of its own. The braces other languages use for one are
+            a block and a trailing lambda here, and the bracket already belongs to lists —
+            so a set is written as a list and converted with .to_set.
+
+            It has to say what it holds, the same way a list does. Members are Int, Float,
+            String, or Bool: finding a value again needs hashing.
+            """),
+
         ["argument-type"] = new(
             "Passing the wrong kind of value",
             """

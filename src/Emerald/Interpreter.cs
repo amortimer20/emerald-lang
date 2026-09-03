@@ -314,6 +314,7 @@ public sealed class Interpreter
         {
             EmRange range => range.Select(i => (object?)i),
             EmList list => list.Items,
+            EmSet set => set.Members,
             string text => Builtins.CharactersOf(text),
             _ => throw new RuntimeError(
                 $"Cannot loop over {Builtins.TypeName(iterable)}.",

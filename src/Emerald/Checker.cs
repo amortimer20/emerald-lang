@@ -927,6 +927,12 @@ public sealed class Checker(
                 element = EmType.Int;
                 break;
 
+            // A set holds one kind of thing, so unlike a dictionary there is no question
+            // about which half of it the loop variable gets.
+            case EmType.SetOf set:
+                element = set.Element;
+                break;
+
             // A string yields its characters, each itself a String — §3.2 rules out
             // integer indexing, so walking it is how you reach them.
             case EmType.Prim { Name: "String" }:
@@ -1364,6 +1370,7 @@ public sealed class Checker(
             return ListMemberType(list, name, EmType.Any, EmType.Any);
 
         if (receiver is EmType.Dict dict) return DictMemberType(dict, name, null, scope);
+        if (receiver is EmType.SetOf set) return SetMemberType(set, name, null, scope);
 
         // .or and .value are the two things you are *supposed* to ask of a maybe, so they
         // have to be reachable before the guard below rejects everything else (§3.2).
@@ -1427,6 +1434,7 @@ public sealed class Checker(
             var receiver = TypeOf(get.Target, scope);
             if (receiver is EmType.Lst list) return ListCallType(list, c, get.Name, scope);
             if (receiver is EmType.Dict dict) return DictMemberType(dict, get.Name, c, scope);
+            if (receiver is EmType.SetOf set) return SetMemberType(set, get.Name, c, scope);
 
             List<EmType> args = [.. c.Args.Select(arg => TypeOf(arg, scope))];
             if (c.Trailing is not null) TypeOf(c.Trailing, scope);
@@ -1617,16 +1625,19 @@ public sealed class Checker(
     /// Allowing it would compare by identity instead, so two equal-looking keys would miss
     /// each other: a wrong answer with no diagnostic, which is the worst kind.
     /// </summary>
-    private void CheckKeyType(EmType key, int line)
+    private void CheckKeyType(EmType key, int line, string role = "key")
     {
         if (key is EmType.Unknown) return;
         if (key.Equals(EmType.Int) || key.Equals(EmType.Float)
             || key.Equals(EmType.String) || key.Equals(EmType.Bool)) return;
 
         Error(line,
-              $"A dictionary cannot be keyed by {key.Show()}.",
-              "Keys are Int, Float, String, or Bool. Looking one up needs hashing, and "
-              + "a type's own equals? is not something the lookup can consult yet.");
+              role == "key"
+                  ? $"A dictionary cannot be keyed by {key.Show()}."
+                  : $"A set cannot hold {key.Show()}.",
+              $"{(role == "key" ? "Keys" : "Members")} are Int, Float, String, or Bool. "
+              + "Finding a value again needs hashing, and a type's own equals? is not "
+              + "something the lookup can consult yet.");
     }
 
     /// <summary>
@@ -1686,9 +1697,17 @@ public sealed class Checker(
         }
 
         Error(ix.Bracket.Line, $"Cannot index {target.Show()}.",
-              target.Equals(EmType.String)
-                  ? "Emerald strings are not integer-indexed. Use .chars to get characters."
-                  : null);
+              target switch
+              {
+                  EmType.Prim { Name: "String" } =>
+                      "Emerald strings are not integer-indexed. Use .chars to get characters.",
+
+                  // A set has no positions — membership is the question it answers.
+                  EmType.SetOf => "A set has no order to index into. Ask whether it holds "
+                                  + "something with .contains?, or take .to_list first.",
+
+                  _ => null,
+              });
         return EmType.Any;
     }
 
@@ -1701,11 +1720,77 @@ public sealed class Checker(
     /// What a dictionary method gives back. Like the list methods, these depend on the key
     /// and value types, so they are computed rather than looked up in a table.
     /// </summary>
+    private EmType SetMemberType(EmType.SetOf set, Token name, Expr.Call? call, Scope scope)
+    {
+        if (call is not null)
+        {
+            List<EmType> given = [.. call.Args.Select(arg => TypeOf(arg, scope))];
+
+            // These take a member; those take another set of the same kind. Checked here
+            // rather than in the shared call machinery, because a built-in container's
+            // methods have no signature table to check against.
+            var wanted = name.Lexeme switch
+            {
+                "add" or "remove" or "contains?" => set.Element,
+                "union" or "intersect" or "difference" or "subset_of?" => set,
+                _ => null,
+            };
+
+            if (wanted is not null && given.Count > 0 && !wanted.Accepts(given[0]))
+                Error(name.Line,
+                      $"{name.Lexeme} on {set.Show()} takes {wanted.Show()}, "
+                      + $"but this is {given[0].Show()}.",
+                      Widening(wanted, given[0]));
+
+            if (call.Trailing is { } block && name.Lexeme == "each")
+            {
+                var inner = new Scope(scope, functionBoundary: true);
+                if (block.Params.Count > 0)
+                    inner.Declare(block.Params[0].Name.Lexeme, set.Element);
+
+                _returnTypes.Push(EmType.Any);
+                CheckBlock(block.Body, inner);
+                _returnTypes.Pop();
+            }
+            else if (call.Trailing is not null) TypeOf(call.Trailing, scope);
+        }
+
+        return name.Lexeme switch
+        {
+            "count" => EmType.Int,
+            "empty?" or "contains?" or "subset_of?" => EmType.Bool,
+            "to_list" => new EmType.Lst(set.Element),
+            "union" or "intersect" or "difference" => set,
+            "add" or "remove" or "clear" or "each" => EmType.Nothing,
+
+            _ => NoSuchMember(name, set.Show(), Signatures.SetMethods),
+        };
+    }
+
     private EmType DictMemberType(EmType.Dict dict, Token name, Expr.Call? call, Scope scope)
     {
         if (call is not null)
         {
-            foreach (var arg in call.Args) TypeOf(arg, scope);
+            List<EmType> given = [.. call.Args.Select(arg => TypeOf(arg, scope))];
+
+            var wanted = name.Lexeme switch
+            {
+                "has_key?" or "get" or "remove" or "set" => dict.Key,
+                "has_value?" => dict.Value,
+                _ => null,
+            };
+
+            if (wanted is not null && given.Count > 0 && !wanted.Accepts(given[0]))
+                Error(name.Line,
+                      $"{name.Lexeme} on {dict.Show()} takes {wanted.Show()}, "
+                      + $"but this is {given[0].Show()}.",
+                      Widening(wanted, given[0]));
+
+            if (name.Lexeme == "set" && given.Count > 1 && !dict.Value.Accepts(given[1]))
+                Error(name.Line,
+                      $"This dictionary holds {dict.Value.Show()}, "
+                      + $"but this gives it {given[1].Show()}.",
+                      Widening(dict.Value, given[1]));
 
             // each { key, value => ... } — the block's parameters come from the
             // dictionary, which is the same contextual typing a list block gets.
@@ -1740,6 +1825,13 @@ public sealed class Checker(
 
             _ => Unknown(name, dict),
         };
+    }
+
+    private EmType NoSuchMember(Token name, string on, IEnumerable<string> candidates)
+    {
+        Error(name.Line, $"No method named {name.Lexeme} on {on}.",
+              Suggest(name.Lexeme, candidates));
+        return EmType.Any;
     }
 
     private EmType Unknown(Token name, EmType.Dict dict)
@@ -1798,8 +1890,23 @@ public sealed class Checker(
             "contains?" or "any?" or "all?" or "empty?" => EmType.Bool,
             "join" => EmType.String,
             "reduce" => firstArg,
+
+            // A set has no literal of its own — the braces Python uses are a block and a
+            // trailing lambda here, and the bracket is already a list's. So a list is how
+            // one is written, and .to_set is the visible step between them.
+            "to_set" => Setify(list, name),
             _ => EmType.Nothing,
         };
+    }
+
+    /// <summary>
+    /// <c>list.to_set</c>. The members must be hashable for the same reason a
+    /// dictionary's keys must be, so the check is the same one.
+    /// </summary>
+    private EmType Setify(EmType.Lst list, Token name)
+    {
+        CheckKeyType(list.Element, name.Line, "member");
+        return new EmType.SetOf(list.Element);
     }
 
     private static bool IsNumeric(EmType t) =>
@@ -1852,11 +1959,31 @@ public sealed class Checker(
             return annotation.Nullable ? EmType.Nullable(dictType) : dictType;
         }
 
+        if (annotation.Name.Lexeme == "Set")
+        {
+            if (given is null || given.Count != 1)
+            {
+                Error(annotation.Name.Line,
+                      given is null
+                          ? "Set needs to say what it holds."
+                          : $"Set takes one type, not {given.Count}.",
+                      "Write the member type in angle brackets:  Set<String>",
+                      topic: "set-type");
+                return EmType.Any;
+            }
+
+            var member = Resolve(given[0]);
+            CheckKeyType(member, annotation.Name.Line, "member");
+
+            var setType = new EmType.SetOf(member);
+            return annotation.Nullable ? EmType.Nullable(setType) : setType;
+        }
+
         if (given is not null)
             Error(annotation.Name.Line,
                   $"{annotation.Name.Lexeme} does not take type arguments.",
-                  "List and Dictionary are the only generic types in Emerald, and both "
-                  + "are built in — a program cannot declare its own.");
+                  "List, Dictionary and Set are the only generic types in Emerald, and all "
+                  + "three are built in — a program cannot declare its own.");
 
         EmType baseType = annotation.Name.Lexeme switch
         {

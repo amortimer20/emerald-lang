@@ -346,5 +346,19 @@
       "}"
     ],
     "description": "Counting — a lookup gives back a maybe, so .or(0) starts it"
+  },
+  "Set": {
+    "prefix": "set",
+    "body": [
+      "var ${1:seen}: Set<${2:String}> = [].to_set"
+    ],
+    "description": "An empty set — a set is a list converted, since braces are blocks here"
+  },
+  "Set from values": {
+    "prefix": "setof",
+    "body": [
+      "var ${1:vowels} = [${2:\"a\", \"e\"}].to_set"
+    ],
+    "description": "A set written as a list and converted"
   }
 }

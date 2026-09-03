@@ -35,6 +35,13 @@ public abstract record EmType
     /// </summary>
     public sealed record Dict(EmType Key, EmType Value) : EmType;
 
+    /// <summary>
+    /// Set&lt;T&gt; — the third core container (§3.7). Built from a list with
+    /// <c>.to_set</c> rather than having a literal of its own: the braces Python uses are
+    /// a block and a trailing lambda here, and the bracket is already a list's.
+    /// </summary>
+    public sealed record SetOf(EmType Element) : EmType;
+
     /// <summary>An instance of a user-declared class.</summary>
     public sealed record Obj(ClassInfo Info) : EmType;
 
@@ -67,6 +74,7 @@ public abstract record EmType
         Maybe m => m.Inner.Show() + "?",
         Lst a => $"List<{a.Element.Show()}>",
         Dict d => $"Dictionary<{d.Key.Show()}, {d.Value.Show()}>",
+        SetOf t => $"Set<{t.Element.Show()}>",
         Obj o => o.Info.Name,
         Func => "Function",
         _ => "?"
@@ -78,6 +86,7 @@ public abstract record EmType
         Prim p => p.Name,
         Lst => "List",
         Dict => "Dictionary",
+        SetOf => "Set",
         Obj o => o.Info.Name,
         Func => "Function",
         Maybe m => m.Inner.Head,
@@ -107,6 +116,8 @@ public abstract record EmType
 
         if (this is Dict a2 && from is Dict b2)
             return a2.Key.Accepts(b2.Key) && a2.Value.Accepts(b2.Value);
+
+        if (this is SetOf s1 && from is SetOf s2) return s1.Element.Accepts(s2.Element);
 
         // A subclass is usable wherever its base is wanted.
         if (this is Obj want && from is Obj got) return got.Info.IsSubclassOf(want.Info);
@@ -195,6 +206,7 @@ public static class Signatures
     {
         EmType.Lst => ListMethods,
         EmType.Dict => DictMethods,
+        EmType.SetOf => SetMethods,
         _ => Returns.Keys.Where(k => k.Item1 == receiver.Head).Select(k => k.Item2),
     };
 
@@ -206,6 +218,16 @@ public static class Signatures
     /// What a dictionary can be asked. Deliberately not <c>contains?</c>: on a list that
     /// question has one meaning, and on a dictionary it has two — so the name says which.
     /// </summary>
+    /// <summary>
+    /// What a set can be asked. <c>contains?</c> is unambiguous here where it was not on a
+    /// dictionary — a set holds one kind of thing, so there is only one question to ask.
+    /// </summary>
+    public static readonly string[] SetMethods =
+    [
+        "count", "empty?", "contains?", "add", "remove", "clear",
+        "to_list", "each", "union", "intersect", "difference", "subset_of?",
+    ];
+
     public static readonly string[] DictMethods =
     [
         "count", "empty?", "has_key?", "has_value?", "keys", "values",
@@ -217,7 +239,7 @@ public static class Signatures
         "each", "map", "filter", "reject", "find", "index_of", "contains?",
         "any?", "all?", "empty?", "reduce", "count", "sum", "min", "max",
         "sort", "sort_by", "reverse", "first", "last", "join",
-        "add", "remove", "remove_at", "clear",
+        "add", "remove", "remove_at", "clear", "to_set",
     ];
 
     /// <summary>Methods whose last argument is a block taking one element.</summary>

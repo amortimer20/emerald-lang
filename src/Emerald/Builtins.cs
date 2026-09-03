@@ -52,6 +52,42 @@ public sealed class EmDict
 }
 
 /// <summary>
+/// A set, in insertion order — for the same reason a dictionary keeps one. Order is not
+/// part of what a set <em>means</em>, which is exactly why it must not be allowed to vary
+/// between runs: a difference with no cause is unattributable.
+/// </summary>
+public sealed class EmSet
+{
+    private readonly HashSet<object> _members = [];
+    private readonly List<object> _order = [];
+
+    public int Count => _order.Count;
+    public IReadOnlyList<object> Members => _order;
+
+    public bool Has(object value) => _members.Contains(value);
+
+    public void Add(object value)
+    {
+        if (_members.Add(value)) _order.Add(value);
+    }
+
+    public void Remove(object value)
+    {
+        if (_members.Remove(value)) _order.RemoveAll(m => Equals(m, value));
+    }
+
+    public void Clear() { _members.Clear(); _order.Clear(); }
+
+    public static EmSet Of(IEnumerable<object?> values)
+    {
+        var set = new EmSet();
+        foreach (var value in values)
+            set.Add(value ?? throw new RuntimeError("nothing cannot be a set member."));
+        return set;
+    }
+}
+
+/// <summary>
 /// A built-in namespace of free functions, reached as <c>Math.sqrt(2.0)</c>. Distinct
 /// from a user module (a file with no class line) only in being written in C#.
 /// </summary>
@@ -179,6 +215,7 @@ public static class Builtins
             EmRange r => RangeMethod(interpreter, r, name, args),
             EmList a => ListMethod(interpreter, a, name, args),
             EmDict d => DictMethod(interpreter, d, name, args),
+            EmSet t => SetMethod(interpreter, t, name, args),
             EmError e => name switch
             {
                 "message" => e.Message,
@@ -198,6 +235,49 @@ public static class Builtins
 
             _ => throw new RuntimeError($"No method named {name} on {TypeName(target)}.")
         };
+
+    // ---- Set ------------------------------------------------------------
+
+    private static object? SetMethod(
+        Interpreter interp, EmSet set, string name, List<object?> args)
+    {
+        switch (name)
+        {
+            case "count": return (long)set.Count;
+            case "empty?": return set.Count == 0;
+            case "contains?": return args[0] is { } v && set.Has(v);
+            case "to_list": return new EmList([.. set.Members]);
+            case "clear": set.Clear(); return null;
+
+            case "add":
+                set.Add(args[0] ?? throw new RuntimeError("nothing cannot be a set member."));
+                return null;
+
+            case "remove":
+                if (args[0] is { } gone) set.Remove(gone);
+                return null;
+
+            case "union": return EmSet.Of(set.Members.Concat(Other(args).Members));
+            case "intersect": return EmSet.Of(set.Members.Where(Other(args).Has));
+            case "difference": return EmSet.Of(set.Members.Where(m => !Other(args).Has(m)));
+            case "subset_of?": return set.Members.All(Other(args).Has);
+
+            case "each":
+            {
+                var block = args.LastOrDefault() as ICallable
+                    ?? throw new RuntimeError("each needs a block, like { item => ... }.");
+
+                foreach (var member in set.Members.ToList()) block.Call(interp, [member]);
+                return null;
+            }
+        }
+
+        throw new RuntimeError($"No method named {name} on Set.");
+    }
+
+    private static EmSet Other(List<object?> args) =>
+        args.FirstOrDefault() as EmSet
+        ?? throw new RuntimeError("This takes another Set.");
 
     // ---- Dictionary -----------------------------------------------------
 
@@ -299,6 +379,10 @@ public static class Builtins
             "remove" => Mutate(items, () => items.Remove(args[0])),
             "remove_at" => Mutate(items, () => items.RemoveAt((int)AsInt(args[0], "remove_at"))),
             "clear" => Mutate(items, items.Clear),
+
+            // A set is written as a list and converted, since the braces a set
+            // literal would want are a block and a trailing lambda here.
+            "to_set" => EmSet.Of(items),
 
             _ => throw new RuntimeError($"No method named {name} on List.")
         };
@@ -464,6 +548,7 @@ public static class Builtins
         EmClass c => $"<class {c.Name}>",
         EmInstance i => $"<{i.Class.Name}>",
         EmList a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
+        EmSet t => "{" + string.Join(", ", t.Members.Select(Display)) + "}",
         EmDict d => d.Count == 0 ? "[:]"
             : "[" + string.Join(", ", d.Keys.Select(k => $"{Display(k)}: {Display(d.Get(k))}")) + "]",
         EmModule m => $"<module {m.Name}>",
@@ -482,6 +567,7 @@ public static class Builtins
         EmRange => "Range",
         EmList => "List",
         EmDict => "Dictionary",
+        EmSet => "Set",
         EmModule m => m.Name,
         EmError => "Error",
         EmClass c => $"class {c.Name}",
