@@ -130,76 +130,120 @@ public abstract record EmType
 }
 
 /// <summary>
-/// Return types for the built-in methods. v0 checks what a method <em>gives back</em>
-/// but not what it takes — enough for inference and narrowing to work, and honest about
-/// being partial. A full signature table arrives with the real standard library.
+/// What the built-in methods take and give back.
+///
+/// This was a table of return types alone, which meant the checker knew what
+/// <c>"hi".replace(...)</c> produced and nothing about what it wanted — so
+/// <c>"hello".replace("l")</c>, missing an argument, passed. The language checked the
+/// code you wrote and not the code it shipped, which is the inconsistency a student meets
+/// first: their own mistakes are caught and the standard library's are not.
 /// </summary>
 public static class Signatures
 {
-    private static readonly Dictionary<(string, string), EmType> Returns = new()
+    /// <summary>
+    /// <paramref name="Takes"/> is the arguments written in the parentheses. A block is
+    /// counted separately, since <c>5.times { }</c> passes one and it is not an argument
+    /// in the sense the parentheses mean.
+    /// </summary>
+    public sealed record Signature(EmType Returns, EmType[] Takes, bool WantsBlock = false)
+    {
+        public Signature(EmType returns) : this(returns, []) { }
+    }
+
+    private static readonly EmType Int = EmType.Int;
+    private static readonly EmType Float = EmType.Float;
+    private static readonly EmType Str = EmType.String;
+    private static readonly EmType Bool = EmType.Bool;
+    private static readonly EmType Void = EmType.Nothing;
+
+    private static readonly Dictionary<(string, string), Signature> Table = new()
     {
         // Int
-        [("Int", "times")] = EmType.Nothing,   [("Int", "upto")] = EmType.Nothing,
-        [("Int", "downto")] = EmType.Nothing,  [("Int", "even?")] = EmType.Bool,
-        [("Int", "odd?")] = EmType.Bool,       [("Int", "zero?")] = EmType.Bool,
-        [("Int", "positive?")] = EmType.Bool,  [("Int", "negative?")] = EmType.Bool,
-        [("Int", "between?")] = EmType.Bool,   [("Int", "clamp")] = EmType.Int,
-        [("Int", "abs")] = EmType.Int,         [("Int", "to_string")] = EmType.String,
-        [("Int", "to_float")] = EmType.Float,
+        [("Int", "times")] = new(Void, [], WantsBlock: true),
+        [("Int", "upto")] = new(Void, [Int], WantsBlock: true),
+        [("Int", "downto")] = new(Void, [Int], WantsBlock: true),
+        [("Int", "even?")] = new(Bool),        [("Int", "odd?")] = new(Bool),
+        [("Int", "zero?")] = new(Bool),        [("Int", "positive?")] = new(Bool),
+        [("Int", "negative?")] = new(Bool),
+        [("Int", "between?")] = new(Bool, [Int, Int]),
+        [("Int", "clamp")] = new(Int, [Int, Int]),
+        [("Int", "abs")] = new(Int),           [("Int", "to_string")] = new(Str),
+        [("Int", "to_float")] = new(Float),
 
         // Float
-        [("Float", "round")] = EmType.Int,     [("Float", "floor")] = EmType.Int,
-        [("Float", "ceil")] = EmType.Int,      [("Float", "abs")] = EmType.Float,
-        [("Float", "zero?")] = EmType.Bool,    [("Float", "positive?")] = EmType.Bool,
-        [("Float", "negative?")] = EmType.Bool,
-        [("Float", "to_string")] = EmType.String, [("Float", "to_int")] = EmType.Int,
+        [("Float", "round")] = new(Int),       [("Float", "floor")] = new(Int),
+        [("Float", "ceil")] = new(Int),        [("Float", "abs")] = new(Float),
+        [("Float", "zero?")] = new(Bool),      [("Float", "positive?")] = new(Bool),
+        [("Float", "negative?")] = new(Bool),
+        [("Float", "to_string")] = new(Str),   [("Float", "to_int")] = new(Int),
 
         // String
-        [("String", "length")] = EmType.Int,   [("String", "empty?")] = EmType.Bool,
-        [("String", "upper")] = EmType.String, [("String", "lower")] = EmType.String,
-        [("String", "reverse")] = EmType.String, [("String", "trim")] = EmType.String,
-        [("String", "contains?")] = EmType.Bool,
-        [("String", "starts_with?")] = EmType.Bool,
-        [("String", "ends_with?")] = EmType.Bool,
-        [("String", "to_int")] = EmType.Int,
-        [("String", "to_int_or")] = EmType.Int,
-        [("String", "to_string")] = EmType.String,
+        [("String", "length")] = new(Int),     [("String", "empty?")] = new(Bool),
+        [("String", "upper")] = new(Str),      [("String", "lower")] = new(Str),
+        [("String", "reverse")] = new(Str),    [("String", "trim")] = new(Str),
+        [("String", "contains?")] = new(Bool, [Str]),
+        [("String", "starts_with?")] = new(Bool, [Str]),
+        [("String", "ends_with?")] = new(Bool, [Str]),
+        [("String", "to_int")] = new(Int),
+        [("String", "to_int_or")] = new(Int, [Int]),
+        [("String", "to_string")] = new(Str),
 
         // The one that makes narrowing worth having.
-        [("String", "to_int_maybe")] = EmType.Nullable(EmType.Int),
-        [("String", "to_float")] = EmType.Float,
-        [("String", "to_float_or")] = EmType.Float,
-        [("String", "to_float_maybe")] = EmType.Nullable(EmType.Float),
+        [("String", "to_int_maybe")] = new(EmType.Nullable(EmType.Int)),
+        [("String", "to_float")] = new(Float),
+        [("String", "to_float_or")] = new(Float, [Float]),
+        [("String", "to_float_maybe")] = new(EmType.Nullable(EmType.Float)),
 
         // §3.2 promised these when it ruled out integer indexing on strings.
-        [("String", "chars")] = new EmType.Lst(EmType.String),
-        [("String", "split")] = new EmType.Lst(EmType.String),
-        [("String", "replace")] = EmType.String,
+        [("String", "chars")] = new(new EmType.Lst(EmType.String)),
+        [("String", "split")] = new(new EmType.Lst(EmType.String), [Str]),
+        [("String", "replace")] = new(Str, [Str, Str]),
 
         // Math — free functions that replace no syntax, so §3.7 sends them to a module.
-        [("Math", "pi")] = EmType.Float,      [("Math", "e")] = EmType.Float,
-        [("Math", "sqrt")] = EmType.Float,    [("Math", "pow")] = EmType.Float,
-        [("Math", "min")] = EmType.Any,       [("Math", "max")] = EmType.Any,
+        [("Math", "pi")] = new(Float),         [("Math", "e")] = new(Float),
+        [("Math", "sqrt")] = new(Float, [Float]),
+        [("Math", "pow")] = new(Float, [Float, Float]),
+
+        // min and max keep Int in, Int out, so their result cannot be pinned here.
+        [("Math", "min")] = new(EmType.Any, [EmType.Any, EmType.Any]),
+        [("Math", "max")] = new(EmType.Any, [EmType.Any, EmType.Any]),
 
         // Range
-        [("Range", "each")] = EmType.Nothing,  [("Range", "count")] = EmType.Int,
-        [("Range", "contains?")] = EmType.Bool,
-        [("Range", "first")] = EmType.Int,     [("Range", "last")] = EmType.Int,
+        [("Range", "each")] = new(Void, [], WantsBlock: true),
+        [("Range", "count")] = new(Int),
+        [("Range", "contains?")] = new(Bool, [Int]),
+        [("Range", "first")] = new(Int),       [("Range", "last")] = new(Int),
 
         // Bool
-        [("Bool", "to_string")] = EmType.String,
+        [("Bool", "to_string")] = new(Str),
 
         // Error
-        [("Error", "message")] = EmType.String,
-        [("Error", "to_string")] = EmType.String,
+        [("Error", "message")] = new(Str),
+        [("Error", "to_string")] = new(Str),
     };
 
     public static bool TryLookup(EmType receiver, string method, out EmType result)
     {
         result = EmType.Any;
         if (receiver is EmType.Unknown) return true;
-        return Returns.TryGetValue((receiver.Head, method), out result!);
+        if (!Table.TryGetValue((receiver.Head, method), out var signature)) return false;
+
+        result = signature.Returns;
+        return true;
     }
+
+    public static Signature? SignatureOf(EmType receiver, string method) =>
+        Table.GetValueOrDefault((receiver.Head, method));
+
+    /// <summary>
+    /// Every built-in type that has a method of this name. Lets an unknown <em>global</em>
+    /// name be answered with the method it probably meant — <c>round(x)</c> written by
+    /// someone whose last language had it as a function, where here it is
+    /// <c>x.round</c>. Without this the diagnostic says "declare it first", which sends
+    /// them somewhere false (§3.6).
+    /// </summary>
+    public static IEnumerable<string> TypesWithMethod(string name) =>
+        Table.Keys.Where(k => k.Item2 == name).Select(k => k.Item1).Distinct();
 
     /// <summary>Method names on this type, for "did you mean" suggestions (§3.6).</summary>
     public static IEnumerable<string> MethodsOn(EmType receiver) => receiver switch
@@ -207,7 +251,7 @@ public static class Signatures
         EmType.Lst => ListMethods,
         EmType.Dict => DictMethods,
         EmType.SetOf => SetMethods,
-        _ => Returns.Keys.Where(k => k.Item1 == receiver.Head).Select(k => k.Item2),
+        _ => Table.Keys.Where(k => k.Item1 == receiver.Head).Select(k => k.Item2),
     };
 
     /// <summary>

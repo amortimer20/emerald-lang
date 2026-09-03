@@ -1,0 +1,4 @@
+
+builtin_unwanted_block.em:1  String.upper does not take a block.
+
+    1 | print("hi".upper { x => x })

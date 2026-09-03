@@ -1,0 +1,6 @@
+
+builtin_too_few_arguments.em:1  String.replace takes 2 arguments, but got 1.
+
+    1 | print("hello".replace("l"))
+
+  It wants String, String.

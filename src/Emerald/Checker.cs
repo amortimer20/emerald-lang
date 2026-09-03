@@ -1194,9 +1194,32 @@ public sealed class Checker(
         var binding = scope.Find(v.Name.Lexeme);
         if (binding is not null) return binding.Type;
 
-        Error(v.Name.Line, $"No variable named {v.Name.Lexeme}.",
-              $"Declare it first: var {v.Name.Lexeme} = ...");
+        Error(v.Name.Line, $"No variable named {v.Name.Lexeme}.", MistakenForAFunction(v.Name));
         return EmType.Any;
+    }
+
+    /// <summary>
+    /// A name that is unknown as a global but known as a method — <c>round(x)</c> from
+    /// someone whose last language had it as a function, where here it is <c>x.round</c>.
+    /// A common enough beginner mistake that "declare it first" is worse than nothing: it
+    /// is confidently wrong, and §3.6 says that sends a beginner somewhere false.
+    /// </summary>
+    private string MistakenForAFunction(Token name)
+    {
+        // Every owner, from both sources. Naming only the first is worse than naming none:
+        // `count(items)` answered with "Range has one" is true and points away from the
+        // list the reader is actually holding.
+        List<string> owners = [.. Signatures.TypesWithMethod(name.Lexeme)];
+
+        if (Signatures.ListMethods.Contains(name.Lexeme)) owners.Add("List");
+        if (Signatures.DictMethods.Contains(name.Lexeme)) owners.Add("Dictionary");
+        if (Signatures.SetMethods.Contains(name.Lexeme)) owners.Add("Set");
+
+        if (owners.Count == 0) return $"Declare it first: var {name.Lexeme} = ...";
+
+        return $"{name.Lexeme} is a method here, not a function — reach it with a dot:  "
+               + $"value.{name.Lexeme}\n"
+               + $"  {Join(owners)} {(owners.Count == 1 ? "has" : "have")} one.";
     }
 
     private EmType RangeType(Expr.RangeExpr r, Scope scope)
@@ -1475,6 +1498,23 @@ public sealed class Checker(
             return EmType.Any;
         }
 
+        // A bare name is a zero-argument call (§3.1), so a method that needs a block was
+        // reached without one — it would run nothing, silently. The same shape as bare
+        // `exit` doing nothing, which was a real bug once.
+        if (Signatures.SignatureOf(receiver, name.Lexeme) is { } signature
+            && (signature.WantsBlock || signature.Takes.Length > 0))
+        {
+            Error(name.Line,
+                  signature.WantsBlock
+                      ? $"{receiver.Show()}.{name.Lexeme} needs a block."
+                      : $"{receiver.Show()}.{name.Lexeme} takes "
+                        + $"{Count(signature.Takes.Length, "argument")}, but got none.",
+                  signature.WantsBlock
+                      ? $"Write what to do each time:  {name.Lexeme} {{ i => ... }}"
+                      : $"It wants {string.Join(", ", signature.Takes.Select(t => t.Show()))}.");
+            return signature.Returns;
+        }
+
         if (Signatures.TryLookup(receiver, name.Lexeme, out var result)) return result;
 
         Error(name.Line, $"No method named {name.Lexeme} on {receiver.Show()}.",
@@ -1524,6 +1564,11 @@ public sealed class Checker(
                                       $"{obj.Info.Name}.{get.Name.Lexeme}", get.Name.Line);
             }
 
+            // A built-in has a signature now too, so the standard library is checked the
+            // same way the program is.
+            if (Signatures.SignatureOf(receiver, get.Name.Lexeme) is { } builtin)
+                return CheckBuiltinCall(builtin, c, args, receiver, get.Name);
+
             return MemberType(receiver, get.Name, scope);
         }
 
@@ -1564,6 +1609,43 @@ public sealed class Checker(
 
         string name = c.Callee is Expr.Variable named ? named.Name.Lexeme : "This";
         return CheckArguments(fn, c, given, name, LineOf(c.Callee));
+    }
+
+    /// <summary>
+    /// A call to a built-in method. Separate from <see cref="CheckArguments"/> because a
+    /// block is not an argument in the sense the parentheses mean — <c>5.times { }</c>
+    /// passes none and one — so the two counts have to be kept apart.
+    /// </summary>
+    private EmType CheckBuiltinCall(
+        Signatures.Signature signature, Expr.Call c, List<EmType> given,
+        EmType receiver, Token name)
+    {
+        string what = $"{receiver.Show()}.{name.Lexeme}";
+
+        if (given.Count != signature.Takes.Length)
+            Error(name.Line,
+                  $"{what} takes {Count(signature.Takes.Length, "argument")}, "
+                  + $"but got {given.Count}.",
+                  signature.Takes.Length == 0
+                      ? null
+                      : $"It wants {string.Join(", ", signature.Takes.Select(t => t.Show()))}.");
+        else
+            for (int i = 0; i < given.Count; i++)
+                if (!signature.Takes[i].Accepts(given[i]))
+                    Error(LineOf(c.Args[i]) is var at && at > 0 ? at : name.Line,
+                          $"{what} expects {signature.Takes[i].Show()} "
+                          + $"{Ordinal(i)}, but this is {given[i].Show()}.",
+                          Widening(signature.Takes[i], given[i]));
+
+        if (signature.WantsBlock && c.Trailing is null)
+            Error(name.Line,
+                  $"{what} needs a block.",
+                  $"Write what to do each time:  {name.Lexeme} {{ i => ... }}");
+
+        if (!signature.WantsBlock && c.Trailing is not null)
+            Error(name.Line, $"{what} does not take a block.");
+
+        return signature.Returns;
     }
 
     /// <summary>

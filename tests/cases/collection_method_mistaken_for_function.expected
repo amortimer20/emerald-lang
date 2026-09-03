@@ -1,0 +1,7 @@
+
+collection_method_mistaken_for_function.em:2  No variable named count.
+
+    2 | print(count(names))
+
+  count is a method here, not a function — reach it with a dot:  value.count
+  Range, List, Dictionary and Set have one.
