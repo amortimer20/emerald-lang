@@ -1805,7 +1805,7 @@ public sealed class Checker(
     ///
     /// The §3.4 exemption for members overriding an external type is not implemented and
     /// costs nothing yet: there is no interop, so no external type exists to override.
-    /// <c>@external</c> needs attributes, which do not parse.
+    /// <c>@mirrors</c> needs attributes, which do not parse.
     /// </summary>
     private void CheckCasing(Token name, string kind, bool isConst = false)
     {
