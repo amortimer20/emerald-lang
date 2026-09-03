@@ -56,6 +56,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
     {
         if (Check(TokenType.Class, TokenType.Trait, TokenType.Struct))
             return TypeDeclaration();
+        if (Check(TokenType.Enum)) return EnumDeclaration();
         if (Check(TokenType.Constructor)) return ConstructorDeclaration();
         if (Check(TokenType.Static)) return StaticMember();
         if (Check(TokenType.Func, TokenType.Abstract)) return FunctionDeclaration();
@@ -104,6 +105,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
         Stmt.VarDecl v => v with { Attributes = attributes },
         Stmt.FuncDecl f => f with { Attributes = attributes },
         Stmt.ClassDecl c => c with { Attributes = attributes },
+        Stmt.EnumDecl e => e with { Attributes = attributes },
         _ => throw Error(attributes[0].Name,
                          $"@{attributes[0].Name.Lexeme} has nothing to describe here.",
                          "An attribute goes before a var, a func, or a type declaration."),
@@ -234,6 +236,38 @@ public sealed class Parser(List<Token> tokens, string fileName)
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// <c>enum Colour { RED, GREEN, BLUE }</c>.
+    ///
+    /// Comma-separated rather than newline-separated, because the body is a list of names
+    /// and not a sequence of statements — the same shape as <c>with A, B</c> and
+    /// <c>f(x, y)</c>. One rule that reads on one line or many, since newlines around the
+    /// commas are skipped.
+    /// </summary>
+    private Stmt EnumDeclaration()
+    {
+        Advance();
+        var name = Consume(TokenType.Identifier, "Expected a name after 'enum'.");
+
+        Consume(TokenType.LeftBrace, $"Expected '{{' to open {name.Lexeme}'s body.");
+        SkipNewlines();
+
+        List<Token> members = [];
+        if (!Check(TokenType.RightBrace))
+        {
+            do
+            {
+                SkipNewlines();
+                members.Add(Consume(TokenType.Identifier, "Expected a name for an enum value."));
+                SkipNewlines();
+            }
+            while (Match(TokenType.Comma));
+        }
+
+        Consume(TokenType.RightBrace, $"This {name.Lexeme} body is never closed.");
+        return new Stmt.EnumDecl(name, members);
     }
 
     /// <summary>

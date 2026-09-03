@@ -144,6 +144,10 @@ public sealed class Interpreter
                 env.Declare(c.Name.Lexeme, BuildClass(c, env));
                 break;
 
+            case Stmt.EnumDecl e:
+                env.Declare(e.Name.Lexeme, BuildEnum(e, env));
+                break;
+
             case Stmt.Throw t:
                 _line = t.Keyword.Line;
                 throw new ThrownError(AsError(Evaluate(t.Value, env), t.Keyword));
@@ -442,12 +446,35 @@ public sealed class Interpreter
         return built;
     }
 
+    /// <summary>
+    /// An enum is an EmClass whose statics are its values, so <c>Colour.RED</c> resolves
+    /// through the same static lookup a class uses and nothing downstream needs to know
+    /// the difference. <c>values</c> is added alongside, because asking an enum for its
+    /// members is the one thing you cannot write yourself.
+    /// </summary>
+    private static EmClass BuildEnum(Stmt.EnumDecl decl, Env env)
+    {
+        var built = new EmClass(decl.Name.Lexeme, TypeKind.Enum, null, [], [], null, [], env);
+
+        for (int i = 0; i < decl.Members.Count; i++)
+            built.Statics[decl.Members[i].Lexeme] =
+                new EmEnumValue(decl.Name.Lexeme, decl.Members[i].Lexeme, i);
+
+        built.Statics["values"] = new EmList([.. built.Statics.Values]);
+        return built;
+    }
+
     public object Instantiate(EmClass cls, List<object?> args)
     {
         if (cls.Kind == TypeKind.Trait)
             throw new RuntimeError(
                 $"{cls.Name} is a trait, so it cannot be created directly.",
                 $"Traits are mixed into a class:  class Dog with {cls.Name}");
+
+        if (cls.Kind == TypeKind.Enum)
+            throw new RuntimeError(
+                $"{cls.Name} is an enum, so it has only the values it declares.",
+                $"Use one of them:  {cls.Name}.{cls.Statics.Keys.FirstOrDefault() ?? "FIRST"}");
 
         if (cls.Unimplemented.Count > 0)
             throw new RuntimeError(

@@ -1,0 +1,4 @@
+
+enum_unknown_value.em:2  No class member named PURPLE on Colour.
+
+    2 | print(Colour.PURPLE)

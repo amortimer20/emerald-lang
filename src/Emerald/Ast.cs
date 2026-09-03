@@ -139,10 +139,19 @@ public abstract record Stmt
 
     public sealed record ConstructorDecl(
         Token Keyword, List<Param> Params, List<Stmt> Body) : Stmt;
+
+    /// <summary>
+    /// <c>enum Colour { RED, GREEN, BLUE }</c> — a closed set of named values, and
+    /// nothing else. No payloads: §6 harvested the demand as alignment, dock, orientation
+    /// and colour, all of which are plain names, and a tagged union is a different feature
+    /// wearing the same keyword.
+    /// </summary>
+    public sealed record EnumDecl(
+        Token Name, List<Token> Members, List<Attr>? Attributes = null) : Stmt;
 }
 
 /// <summary>
 /// Class, trait, and struct share one node — they differ in what they may contain and
 /// how they are used, not in how they are written or parsed.
 /// </summary>
-public enum TypeKind { Class, Trait, Struct }
+public enum TypeKind { Class, Trait, Struct, Enum }

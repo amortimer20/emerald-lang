@@ -216,6 +216,12 @@ public static class Builtins
             EmList a => ListMethod(interpreter, a, name, args),
             EmDict d => DictMethod(interpreter, d, name, args),
             EmSet t => SetMethod(interpreter, t, name, args),
+            EmEnumValue v => name switch
+            {
+                "name" => v.Name,
+                "to_string" => v.ToString(),
+                _ => throw new RuntimeError($"No method named {name} on {v.Type}.")
+            },
             EmError e => name switch
             {
                 "message" => e.Message,
@@ -548,6 +554,7 @@ public static class Builtins
         EmClass c => $"<class {c.Name}>",
         EmInstance i => $"<{i.Class.Name}>",
         EmList a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
+        EmEnumValue v => v.ToString(),
         EmSet t => "{" + string.Join(", ", t.Members.Select(Display)) + "}",
         EmDict d => d.Count == 0 ? "[:]"
             : "[" + string.Join(", ", d.Keys.Select(k => $"{Display(k)}: {Display(d.Get(k))}")) + "]",
@@ -568,6 +575,7 @@ public static class Builtins
         EmList => "List",
         EmDict => "Dictionary",
         EmSet => "Set",
+        EmEnumValue v => v.Type,
         EmModule m => m.Name,
         EmError => "Error",
         EmClass c => $"class {c.Name}",

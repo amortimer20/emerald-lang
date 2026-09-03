@@ -60,6 +60,19 @@ public sealed class EmClass(
     public override string ToString() => $"<class {name}>";
 }
 
+/// <summary>
+/// One value of an enum. Carries its type and its name, which is all a closed set of
+/// names needs — no payload, because §6 harvested the demand as alignment, dock,
+/// orientation and colour, and every one of those is a plain name.
+///
+/// A record, so <c>==</c> compares the two fields and two references to Colour.RED are
+/// equal without anything being written to make them so.
+/// </summary>
+public sealed record EmEnumValue(string Type, string Name, int Ordinal)
+{
+    public override string ToString() => $"{Type}.{Name}";
+}
+
 public sealed class EmInstance(EmClass cls)
 {
     public EmClass Class => cls;

@@ -22,6 +22,7 @@ public sealed class Scanner(string source, string fileName)
 
         ["class"] = TokenType.Class,       ["trait"] = TokenType.Trait,
         ["struct"] = TokenType.Struct,     ["abstract"] = TokenType.Abstract,
+        ["enum"] = TokenType.Enum,
         ["static"] = TokenType.Static,
         ["throw"] = TokenType.Throw,       ["try"] = TokenType.Try,
         ["catch"] = TokenType.Catch,

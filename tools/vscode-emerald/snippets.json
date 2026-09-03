@@ -360,5 +360,22 @@
       "var ${1:vowels} = [${2:\"a\", \"e\"}].to_set"
     ],
     "description": "A set written as a list and converted"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name} { ${2:FIRST}, ${3:SECOND} }"
+    ],
+    "description": "A closed set of names — values take constant casing"
+  },
+  "Enum, multi-line": {
+    "prefix": "enumlines",
+    "body": [
+      "enum ${1:Name} {",
+      "\t${2:FIRST},",
+      "\t${3:SECOND}",
+      "}"
+    ],
+    "description": "Same thing, one value per line"
   }
 }

@@ -1,0 +1,4 @@
+
+enum_duplicate_value.em:1  Colour already has a value named RED.
+
+    1 | enum Colour { RED, GREEN, RED }

@@ -136,6 +136,33 @@ public sealed class Checker(
             declaringType[name] = c;
         }
 
+        // An enum is a ClassInfo with a different Kind, so type annotations, Obj values
+        // and Colour.RED all resolve through the machinery classes already use. What it
+        // is *not* allowed to do is enforced where those differences matter.
+        foreach (var stmt in program)
+        {
+            if (stmt is not Stmt.EnumDecl e) continue;
+            string name = e.Name.Lexeme;
+
+            if (_classes.ContainsKey(name))
+            {
+                _file = fileOf?.GetValueOrDefault(stmt) ?? fileName;
+                Error(e.Name.Line, $"{name} is already defined.",
+                      "Each type name means one type. Rename one of them.");
+                continue;
+            }
+
+            var info = new ClassInfo(name) { Kind = TypeKind.Enum };
+            _classes[name] = info;
+
+            foreach (var member in e.Members)
+                info.StaticFields[member.Lexeme] = new EmType.Obj(info);
+
+            // Asking an enum for its own members is the one thing a program cannot write
+            // for itself, so it is supplied rather than left to be hand-maintained.
+            info.StaticFields["values"] = new EmType.Lst(new EmType.Obj(info));
+        }
+
         // Only the winning declaration describes its type. Letting a rejected duplicate
         // describe it too would merge two types' members into one.
         foreach (var stmt in program)
@@ -294,6 +321,37 @@ public sealed class Checker(
                 [.. decl.Members.OfType<Stmt.VarDecl>()
                        .Where(f => !f.IsStatic && f.Getter is null)
                        .Select(f => Resolve(f.Type))];
+    }
+
+    /// <summary>
+    /// An enum's values are constants of its own type, so §3.4's constant casing applies
+    /// to them — <c>Colour.RED</c>, not <c>Colour.red</c>. That needs no new rule.
+    /// </summary>
+    private void CheckEnum(Stmt.EnumDecl decl)
+    {
+        CheckAttributes(decl.Attributes, "type");
+        CheckCasing(decl.Name, "type");
+
+        if (decl.Members.Count == 0)
+            Error(decl.Name.Line,
+                  $"{decl.Name.Lexeme} has no values.",
+                  "An enum is a closed set of names, and an empty one names nothing:  "
+                  + $"enum {decl.Name.Lexeme} {{ FIRST, SECOND }}");
+
+        HashSet<string> seen = [];
+        foreach (var member in decl.Members)
+        {
+            if (!seen.Add(member.Lexeme))
+                Error(member.Line,
+                      $"{decl.Name.Lexeme} already has a value named {member.Lexeme}.");
+
+            if (member.Lexeme == "values")
+                Error(member.Line,
+                      $"{decl.Name.Lexeme} cannot have a value named values.",
+                      $"{decl.Name.Lexeme}.values is how you ask an enum for all of them.");
+
+            CheckCasing(member, "enum value", isConst: true);
+        }
     }
 
     private void CheckClass(Stmt.ClassDecl decl, Scope scope)
@@ -673,6 +731,7 @@ public sealed class Checker(
             case Stmt.For f: CheckFor(f, scope); break;
             case Stmt.FuncDecl fn: CheckFunc(fn, scope); break;
             case Stmt.ClassDecl c: CheckClass(c, scope); break;
+            case Stmt.EnumDecl e: CheckEnum(e); break;
 
             case Stmt.Throw t:
                 TypeOf(t.Value, scope);
@@ -1389,6 +1448,22 @@ public sealed class Checker(
             return EmType.Any;
         }
 
+        // An enum value carries a name and nothing else. Checked before the class path,
+        // since an enum has no fields or methods of its own to find.
+        if (receiver is EmType.Obj { Info.Kind: TypeKind.Enum } enumValue)
+        {
+            if (name.Lexeme is "name" or "to_string") return EmType.String;
+
+            Error(name.Line,
+                  $"No member named {name.Lexeme} on {enumValue.Info.Name}.",
+                  enumValue.Info.StaticFields.ContainsKey(name.Lexeme)
+                      ? $"{name.Lexeme} is one of {enumValue.Info.Name}'s values — "
+                        + $"reach it on the type:  {enumValue.Info.Name}.{name.Lexeme}"
+                      : "An enum value has .name, and compares with == against another "
+                        + "of its own values.");
+            return EmType.Any;
+        }
+
         // A user class: fields and methods, walking the base chain exactly as EmClass does.
         if (receiver is EmType.Obj obj)
         {
@@ -1459,7 +1534,12 @@ public sealed class Checker(
         if (c.Callee is Expr.Variable typeName
             && _classes.TryGetValue(typeName.Name.Lexeme, out var target))
         {
-            if (target.Kind == TypeKind.Trait)
+            if (target.Kind == TypeKind.Enum)
+                Error(typeName.Name.Line,
+                      $"{target.Name} is an enum, so it has only the values it declares.",
+                      $"Use one of them:  {target.Name}."
+                      + $"{target.StaticFields.Keys.FirstOrDefault(k => k != "values") ?? "FIRST"}");
+            else if (target.Kind == TypeKind.Trait)
                 Error(typeName.Name.Line,
                       $"{target.Name} is a trait, so it cannot be created directly.",
                       $"Traits are mixed into a class:  class Dog with {target.Name}");

@@ -1,0 +1,6 @@
+
+enum_value_on_value.em:2  No member named RED on Colour.
+
+    2 | print(Colour.RED.RED)
+
+  RED is one of Colour's values — reach it on the type:  Colour.RED

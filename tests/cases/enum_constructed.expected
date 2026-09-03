@@ -1,0 +1,6 @@
+
+enum_constructed.em:2  Colour is an enum, so it has only the values it declares.
+
+    2 | var c = Colour()
+
+  Use one of them:  Colour.RED
