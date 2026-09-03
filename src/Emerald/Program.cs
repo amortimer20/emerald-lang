@@ -11,9 +11,12 @@ if (args.Length == 0)
           emerald new <name>        start a project
           emerald run <file.em>     run a program
           emerald check <file.em>   look for problems without running
+          emerald test [path]       run every @test function
           emerald fmt [path]        format code, one way, no settings
           emerald explain           explain the last error
           emerald <file.em>         same as run
+
+          build, ship, add          named, and not buildable yet — try one to see why
 
         Every .em file beside the entry file is part of the project — no imports needed.
         """);
@@ -22,8 +25,10 @@ if (args.Length == 0)
 
 if (args[0] == "new") return Commands.New(args[1..]);
 if (args[0] == "check") return Commands.Check(args[1..]);
+if (args[0] == "test") return Commands.Test(args[1..]);
 if (args[0] == "fmt") return Commands.Fmt(args[1..]);
 if (args[0] == "explain") return Explanations.Run(args[1..]);
+if (args[0] is "build" or "ship" or "add") return Commands.NotYet(args[0]);
 
 string path = args[0] == "run" ? args.ElementAtOrDefault(1) ?? "" : args[0];
 

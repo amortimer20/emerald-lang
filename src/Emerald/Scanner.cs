@@ -178,9 +178,17 @@ public sealed class Scanner(string source, string fileName)
             {
                 raw.Append(Advance() switch
                 {
-                    'n' => '\n', 't' => '\t', '"' => '"',
-                    '\\' => '\\', '#' => '#',
-                    var other => other
+                    'n' => "\n", 't' => "\t", '"' => "\"",
+                    '\\' => "\\\\",
+
+                    // These two stay escaped. Interpolation is split later, in the parser,
+                    // and by then a bare # is indistinguishable from one written \# to mean
+                    // a literal — which is why \#{name} used to interpolate anyway. The
+                    // backslash before a backslash survives for the same reason: it is what
+                    // stops "\\#{n}" from being read as an escaped hash.
+                    '#' => "\\#",
+
+                    var other => other.ToString()
                 });
                 continue;
             }

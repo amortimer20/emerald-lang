@@ -80,9 +80,10 @@ BLESS=1 ./tests/run.sh      # rewrite .expected files from current output
 ./tests/newcheck.sh         # emerald new
 ./tests/fmtcheck.sh         # emerald fmt — a file afterwards, not a program's output
 ./tests/explaincheck.sh     # emerald explain, and the topic an error leaves behind
+./tests/testcheck.sh        # emerald test, and the commands that are not built yet
 ```
 
-The last four test *commands* rather than programs, which is why they are not golden
+The last five test *commands* rather than programs, which is why they are not golden
 cases: what they produce is a rewritten file, an exit code, or a state file.
 
 Golden tests: each `tests/cases/*.em` runs and its combined output is diffed against a

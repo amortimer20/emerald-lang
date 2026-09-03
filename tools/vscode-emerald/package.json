@@ -2,7 +2,7 @@
   "name": "emerald",
   "displayName": "Emerald",
   "description": "Syntax highlighting, snippets, and inline diagnostics for the Emerald language",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "publisher": "emerald-lang",
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },

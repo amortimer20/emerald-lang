@@ -1,0 +1,7 @@
+
+interpolation_empty.em:3  This #{ } has nothing in it.
+
+    3 | print("nothing here: #{}")
+
+  Put a value between the braces:  "hello #{name}"
+  For a literal one, escape the hash:  \#{ }

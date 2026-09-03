@@ -1,0 +1,6 @@
+value:            5
+literal:          #{n}
+escaped slash:    \ done
+slash then value: \5
+hash alone:       # and # and #fff
+dollar is free:   ${HOME} and ${x}

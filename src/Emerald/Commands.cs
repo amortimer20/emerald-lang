@@ -76,6 +76,160 @@ public static class Commands
     }
 
     /// <summary>
+    /// <c>emerald test</c> — <c>*_test.em</c> files and <c>@test</c> functions (§3.5).
+    /// Convention over configuration, in the box: nothing to register and nothing to
+    /// configure, so a test is written by naming a file and marking a function.
+    ///
+    /// A test fails by returning false or by throwing. §3.5 wants
+    /// <c>assert clamp(15, 0, 10) == 10</c> to report "was 15" with the source text, which
+    /// needs a macro to capture the expression — until then a test says whether it passed
+    /// and not why, which is honest and much less useful.
+    /// </summary>
+    public static int Test(string[] args)
+    {
+        string path = args.FirstOrDefault(a => !a.StartsWith('-')) ?? ".";
+
+        if (!Directory.Exists(path))
+        {
+            Console.Error.WriteLine($"No directory named {path}.");
+            return 66;
+        }
+
+        var testFiles = Directory.EnumerateFiles(path, "*_test.em", SearchOption.AllDirectories)
+                                 .OrderBy(p => p, StringComparer.Ordinal)
+                                 .ToList();
+
+        if (testFiles.Count == 0)
+        {
+            Console.WriteLine($"No *_test.em files under {path}.");
+            Console.WriteLine();
+            Console.WriteLine("  A test is a file named something_test.em with @test functions in it.");
+            return 0;
+        }
+
+        // A directory is a project (§3.3), so loading any file in it loads the rest —
+        // including whatever the tests are testing.
+        string entry = File.Exists(Path.Combine(path, "main.em"))
+            ? Path.Combine(path, "main.em")
+            : testFiles[0];
+
+        var project = new Project(entry);
+        var program = project.Load();
+        var problems = project.Diagnostics;
+
+        if (problems.Count == 0)
+        {
+            var checker = new Checker(Path.GetFileName(entry), project.FileOf, project.LinesOf);
+            checker.Check(program);
+            problems = checker.Diagnostics;
+        }
+
+        if (problems.Count > 0)
+        {
+            Reporter.Report(problems, project);
+            if (Reporter.HasErrors(problems)) return 65;
+        }
+
+        // A test in a file that declares no type became a static method on a class named
+        // after the file (§3.3), so both shapes have to be looked for.
+        List<(string? Owner, string Name)> tests = [];
+        foreach (var stmt in program)
+        {
+            if (stmt is Stmt.FuncDecl fn && HasTestAttribute(fn))
+                tests.Add((null, fn.Name.Lexeme));
+            else if (stmt is Stmt.ClassDecl type)
+                foreach (var member in type.Members.OfType<Stmt.FuncDecl>().Where(HasTestAttribute))
+                    tests.Add((type.Name.Lexeme, member.Name.Lexeme));
+        }
+
+        if (tests.Count == 0)
+        {
+            Console.WriteLine($"Found {testFiles.Count} test file(s), but no @test functions in them.");
+            Console.WriteLine();
+            Console.WriteLine("  Mark one:  @test");
+            Console.WriteLine("             func it_adds?(): Bool { return 1 + 1 == 2 }");
+            return 0;
+        }
+
+        var interpreter = new Interpreter();
+        interpreter.LoadDeclarations(program);
+
+        int failed = 0;
+        Console.WriteLine();
+
+        foreach (var (owner, name) in tests)
+        {
+            string label = owner is null ? name : $"{owner}.{name}";
+
+            try
+            {
+                object? result = interpreter.CallNamed(owner, name);
+
+                // Returning nothing is a pass: a test that only throws on failure is a
+                // perfectly good test, and demanding `return true` would be ceremony.
+                if (result is false)
+                {
+                    Console.WriteLine($"  FAIL  {label}");
+                    Console.WriteLine($"        returned false");
+                    failed++;
+                }
+                else Console.WriteLine($"  ok    {label}");
+            }
+            catch (ThrownError thrown)
+            {
+                Console.WriteLine($"  FAIL  {label}");
+                Console.WriteLine($"        {thrown.Value.Message}");
+                failed++;
+            }
+            catch (RuntimeError error)
+            {
+                Console.WriteLine($"  FAIL  {label}");
+                Console.WriteLine($"        {error.Message}");
+                failed++;
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(failed == 0
+            ? $"{Count(tests.Count, "test")}, all passing."
+            : $"{Count(tests.Count, "test")}, {failed} failing.");
+
+        return failed == 0 ? 0 : 1;
+    }
+
+    private static bool HasTestAttribute(Stmt.FuncDecl fn) =>
+        fn.Attributes?.Any(a => a.Name.Lexeme == "test") ?? false;
+
+    private static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n} {noun}s";
+
+    /// <summary>
+    /// <c>build</c>, <c>ship</c>, and <c>add</c> (§3.5) — named, specified, and not
+    /// buildable yet, each for a concrete reason rather than for want of time.
+    ///
+    /// Reported rather than left as "unknown command", because where a command sits on the
+    /// roadmap is useful information and a shrug is not. §2.6's argument about diagnostics
+    /// applies to the tool as much as to the compiler.
+    /// </summary>
+    public static int NotYet(string command)
+    {
+        var (needs, instead) = command switch
+        {
+            "build" => ("a CIL backend — this compiler interprets rather than emits",
+                        "emerald run main.em      runs it through the interpreter"),
+            "ship" => ("a CIL backend, then .NET single-file publishing",
+                       "emerald run main.em      runs it through the interpreter"),
+            _ => ("a package registry to fetch from, and emerald.toml to record it in",
+                  "every .em file beside yours is already part of the project — "
+                  + "nothing to add for code you wrote"),
+        };
+
+        Console.Error.WriteLine($"emerald {command} needs {needs}.");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"  {instead}");
+        return 69;
+    }
+
+    /// <summary>
     /// <c>emerald fmt</c> — zero configuration, by design (§3.5). gofmt's innovation was
     /// removing the argument, not the formatting, so there is nothing here to set.
     ///

@@ -53,6 +53,42 @@ public sealed class Interpreter
         }
     }
 
+    /// <summary>
+    /// Declares everything a program defines without running what it <em>does</em>.
+    ///
+    /// <c>emerald test</c> needs the functions and types a test calls, but must not run
+    /// main.em's own work: a test run that printed the program's output and then blocked
+    /// waiting for its input would be unusable. So declarations run — functions, types,
+    /// and module-level variables a test may rely on — and statements do not.
+    /// </summary>
+    public void LoadDeclarations(List<Stmt> program)
+    {
+        foreach (var stmt in program)
+            if (stmt is Stmt.FuncDecl fn)
+                _globals.Declare(fn.Name.Lexeme,
+                                 new EmFunction(fn.Name.Lexeme, fn.Params, fn.Body, _globals));
+
+        foreach (var stmt in program)
+            if (stmt is Stmt.ClassDecl or Stmt.VarDecl)
+                Execute(stmt, _globals);
+    }
+
+    /// <summary>Calls a nullary function, or a static method when an owner is named.</summary>
+    public object? CallNamed(string? owner, string name)
+    {
+        if (owner is null)
+        {
+            if (!_globals.TryGet(name, out object? found) || found is not ICallable callable)
+                throw new RuntimeError($"No function named {name}.");
+            return callable.Call(this, []);
+        }
+
+        if (!_globals.TryGet(owner, out object? type) || type is not EmClass cls)
+            throw new RuntimeError($"No type named {owner}.");
+
+        return GetStatic(cls, new Token(TokenType.Identifier, name, null, 0), []);
+    }
+
     // ---- statements -----------------------------------------------------
 
     private void Execute(Stmt stmt, Env env)

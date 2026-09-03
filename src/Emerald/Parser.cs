@@ -740,13 +740,22 @@ public sealed class Parser(List<Token> tokens, string fileName)
     private Expr StringExpression(Token token)
     {
         string raw = (string)token.Literal!;
-        if (!raw.Contains("#{")) return new Expr.Literal(raw);
+        if (!raw.Contains("#{") && !raw.Contains('\\')) return new Expr.Literal(raw);
 
         List<Expr> parts = [];
         var literal = new StringBuilder();
 
         for (int i = 0; i < raw.Length; i++)
         {
+            // The scanner leaves \# and \\ escaped so this loop can tell an interpolation
+            // from a hash the programmer asked for. Undone here, where it has been read.
+            if (raw[i] == '\\' && i + 1 < raw.Length && raw[i + 1] is '#' or '\\')
+            {
+                literal.Append(raw[i + 1]);
+                i++;
+                continue;
+            }
+
             if (raw[i] == '#' && i + 1 < raw.Length && raw[i + 1] == '{')
             {
                 if (literal.Length > 0)
@@ -777,6 +786,17 @@ public sealed class Parser(List<Token> tokens, string fileName)
                 {
                     Error(token, "This #{ } is never closed.");
                     break;
+                }
+
+                // An empty hole used to reach the fragment parser, which reported
+                // "Could not read ''" — true, and no help at all about what was wanted.
+                if (raw[start..j].Trim().Length == 0)
+                {
+                    Error(token, "This #{ } has nothing in it.",
+                          "Put a value between the braces:  \"hello #{name}\""
+                          + "\n  For a literal one, escape the hash:  \\#{ }");
+                    i = j;
+                    continue;
                 }
 
                 parts.Add(ParseFragment(raw[start..j], token.Line));
