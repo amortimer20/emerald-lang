@@ -4,3 +4,6 @@ obj/
 
 # packaged editor extension
 *.vsix
+
+# Scratch scripts used to make bulk edits; never part of the build.
+.*.py
