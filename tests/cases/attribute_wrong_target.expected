@@ -1,0 +1,6 @@
+
+attribute_wrong_target.em:1  @export belongs on a variable, not on a function.
+
+    1 | @export
+
+  It makes a field visible to the editor in a Unity-style host.

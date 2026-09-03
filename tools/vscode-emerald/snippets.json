@@ -1,17 +1,29 @@
 {
   "Class": {
     "prefix": "class",
-    "body": ["class ${1:Name} {", "\t$0", "}"],
+    "body": [
+      "class ${1:Name} {",
+      "\t$0",
+      "}"
+    ],
     "description": "A class with a braced body"
   },
   "Class (block-free file)": {
     "prefix": "classfile",
-    "body": ["class ${1:Name}", "", "$0"],
+    "body": [
+      "class ${1:Name}",
+      "",
+      "$0"
+    ],
     "description": "The whole file is the class body — one type per file"
   },
   "Class extending a base": {
     "prefix": "classextends",
-    "body": ["class ${1:Name} extends ${2:Base} {", "\t$0", "}"],
+    "body": [
+      "class ${1:Name} extends ${2:Base} {",
+      "\t$0",
+      "}"
+    ],
     "description": "A subclass"
   },
   "Trait": {
@@ -29,27 +41,49 @@
   },
   "Struct": {
     "prefix": "struct",
-    "body": ["struct ${1:Name} {", "\tvar ${2:x}: ${3:Float}", "", "\t$0", "}"],
+    "body": [
+      "struct ${1:Name} {",
+      "\tvar ${2:x}: ${3:Float}",
+      "",
+      "\t$0",
+      "}"
+    ],
     "description": "An immutable value type"
   },
   "Constructor": {
     "prefix": "constructor",
-    "body": ["constructor(${1:name}: ${2:String}) {", "\tself.$1 = $1", "}"],
+    "body": [
+      "constructor(${1:name}: ${2:String}) {",
+      "\tself.$1 = $1",
+      "}"
+    ],
     "description": "A constructor assigning its parameter to a field"
   },
   "Function": {
     "prefix": "func",
-    "body": ["func ${1:name}(${2}): ${3:Int} {", "\t$0", "}"],
+    "body": [
+      "func ${1:name}(${2}): ${3:Int} {",
+      "\t$0",
+      "}"
+    ],
     "description": "A function"
   },
   "Function with a default": {
     "prefix": "funcdef",
-    "body": ["func ${1:name}(${2:value}: ${3:Int}, ${4:option}: ${5:String} = ${6:\"...\"}): ${7:Int} {", "\t$0", "}"],
+    "body": [
+      "func ${1:name}(${2:value}: ${3:Int}, ${4:option}: ${5:String} = ${6:\"...\"}): ${7:Int} {",
+      "\t$0",
+      "}"
+    ],
     "description": "Defaults come last; each is evaluated per call"
   },
   "Property": {
     "prefix": "prop",
-    "body": ["var ${1:name}: ${2:Int} {", "\tget { return $0 }", "}"],
+    "body": [
+      "var ${1:name}: ${2:Int} {",
+      "\tget { return $0 }",
+      "}"
+    ],
     "description": "A computed property"
   },
   "Property with setter": {
@@ -64,92 +98,152 @@
   },
   "If": {
     "prefix": "if",
-    "body": ["if ${1:condition} {", "\t$0", "}"],
+    "body": [
+      "if ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
     "description": "A conditional statement"
   },
   "If / else": {
     "prefix": "ifelse",
-    "body": ["if ${1:condition} {", "\t$2", "}", "else {", "\t$0", "}"],
+    "body": [
+      "if ${1:condition} {",
+      "\t$2",
+      "}",
+      "else {",
+      "\t$0",
+      "}"
+    ],
     "description": "Stroustrup braces: else on its own line"
   },
   "If expression": {
     "prefix": "ifthen",
-    "body": ["if ${1:condition} then ${2:a} else ${3:b}"],
+    "body": [
+      "if ${1:condition} then ${2:a} else ${3:b}"
+    ],
     "description": "The expression form — else is required"
   },
   "Unless": {
     "prefix": "unless",
-    "body": ["unless ${1:condition} {", "\t$0", "}"],
+    "body": [
+      "unless ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
     "description": "if not — deliberately takes no else"
   },
   "Until": {
     "prefix": "until",
-    "body": ["until ${1:condition} {", "\t$0", "}"],
+    "body": [
+      "until ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
     "description": "while not"
   },
   "For over a range": {
     "prefix": "for",
-    "body": ["for ${1:i} in ${2:1}..${3:5} {", "\t$0", "}"],
+    "body": [
+      "for ${1:i} in ${2:1}..${3:5} {",
+      "\t$0",
+      "}"
+    ],
     "description": "A range loop"
   },
   "For over a collection": {
     "prefix": "forin",
-    "body": ["for ${1:item} in ${2:items} {", "\t$0", "}"],
+    "body": [
+      "for ${1:item} in ${2:items} {",
+      "\t$0",
+      "}"
+    ],
     "description": "Walk an array or a string"
   },
   "Break with a guard": {
     "prefix": "break",
-    "body": ["break if ${1:condition}"],
+    "body": [
+      "break if ${1:condition}"
+    ],
     "description": "Leave the loop — break cannot leave a block"
   },
   "Continue with a guard": {
     "prefix": "continue",
-    "body": ["continue if ${1:condition}"],
+    "body": [
+      "continue if ${1:condition}"
+    ],
     "description": "Skip to the next turn of the loop"
   },
   "While": {
     "prefix": "while",
-    "body": ["while ${1:condition} {", "\t$0", "}"],
+    "body": [
+      "while ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
     "description": "A while loop"
   },
   "Each": {
     "prefix": "each",
-    "body": ["${1:items}.each { ${2:item} => $0 }"],
+    "body": [
+      "${1:items}.each { ${2:item} => $0 }"
+    ],
     "description": "Iterate with a trailing block"
   },
   "Map": {
     "prefix": "map",
-    "body": ["${1:items}.map { ${2:item} => $0 }"],
+    "body": [
+      "${1:items}.map { ${2:item} => $0 }"
+    ],
     "description": "Transform each element"
   },
   "Filter": {
     "prefix": "filter",
-    "body": ["${1:items}.filter { ${2:item} => $0 }"],
+    "body": [
+      "${1:items}.filter { ${2:item} => $0 }"
+    ],
     "description": "Keep the elements that match"
   },
   "Times": {
     "prefix": "times",
-    "body": ["${1:5}.times { $0 }"],
+    "body": [
+      "${1:5}.times { $0 }"
+    ],
     "description": "Repeat a block"
   },
   "Check for nothing": {
     "prefix": "ifnothing",
-    "body": ["if ${1:value} != nothing {", "\t$0", "}"],
+    "body": [
+      "if ${1:value} != nothing {",
+      "\t$0",
+      "}"
+    ],
     "description": "Narrow a maybe to its non-null type"
   },
   "Try / catch": {
     "prefix": "try",
-    "body": ["try {", "\t$1", "}", "catch ${2:error} {", "\t$0", "}"],
+    "body": [
+      "try {",
+      "\t$1",
+      "}",
+      "catch ${2:error} {",
+      "\t$0",
+      "}"
+    ],
     "description": "Handle a failure — the catch is required"
   },
   "Throw": {
     "prefix": "throw",
-    "body": ["throw \"${1:something went wrong}\""],
+    "body": [
+      "throw \"${1:something went wrong}\""
+    ],
     "description": "Throw an error; a String is wrapped in one"
   },
   "Guard with unless": {
     "prefix": "guard",
-    "body": ["return ${1:fallback} unless ${2:condition}"],
+    "body": [
+      "return ${1:fallback} unless ${2:condition}"
+    ],
     "description": "A guard clause — modifiers guard, they do not loop"
   },
   "Addable": {
@@ -194,12 +288,46 @@
   },
   "Doc comment": {
     "prefix": "doc",
-    "body": ["## $0"],
+    "body": [
+      "## $0"
+    ],
     "description": "A documentation comment"
   },
   "Block comment": {
     "prefix": "comment",
-    "body": ["#[", "$0", "]#"],
+    "body": [
+      "#[",
+      "$0",
+      "]#"
+    ],
     "description": "A block comment"
+  },
+  "Mirrors a foreign API": {
+    "prefix": "mirrors",
+    "body": [
+      "@mirrors",
+      "class ${1:Name} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Casing warnings off for a type whose names came from elsewhere"
+  },
+  "Export a field": {
+    "prefix": "export",
+    "body": [
+      "@export",
+      "var ${1:speed} = ${2:5.0}"
+    ],
+    "description": "Show this field in a Unity-style editor"
+  },
+  "Test function": {
+    "prefix": "test",
+    "body": [
+      "@test",
+      "func ${1:name}?(): Bool {",
+      "\treturn $0",
+      "}"
+    ],
+    "description": "Mark a function for the test runner"
   }
 }

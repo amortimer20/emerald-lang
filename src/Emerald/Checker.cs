@@ -306,6 +306,14 @@ public sealed class Checker(
         var previousType = _currentType;
         _currentType = info;
 
+        CheckAttributes(decl.Attributes, "type");
+
+        // @mirrors covers the whole type, not each member: a foreign API is mirrored
+        // wholesale or not at all, and marking every member would be the ceremony §3.4
+        // introduced the attribute to avoid.
+        bool wasMirroring = _mirroring;
+        _mirroring = Carries(decl.Attributes, "mirrors");
+
         CheckCasing(decl.Name, "type");
 
         // `self` is an ordinary binding, which is why `self.name` needs no special node.
@@ -317,11 +325,13 @@ public sealed class Checker(
             switch (member)
             {
                 case Stmt.VarDecl { Getter: not null } property:
+                    CheckAttributes(property.Attributes, "variable");
                     CheckCasing(property.Name, "property", property.IsConst);
                     CheckProperty(property, info, body);
                     break;
 
                 case Stmt.VarDecl field:
+                    CheckAttributes(field.Attributes, "variable");
                     CheckCasing(field.Name, "instance variable", field.IsConst);
 
                     // Traits carry no state (§3.2): a CLR interface cannot hold fields, so
@@ -346,6 +356,7 @@ public sealed class Checker(
                     break;
 
                 case Stmt.FuncDecl method:
+                    CheckAttributes(method.Attributes, "function");
                     CheckCasing(method.Name, "method");
                     CheckPredicateName(method);
                     if (method.Body is not null)
@@ -367,6 +378,7 @@ public sealed class Checker(
 
         CheckFieldsGetValues(decl, info);
 
+        _mirroring = wasMirroring;
         _currentType = previousType;
     }
 
@@ -716,6 +728,7 @@ public sealed class Checker(
                   $"{v.Name.Lexeme} is declared {declared.Show()} but is given {inferred.Show()}.",
                   Widening(declared, inferred));
 
+        CheckAttributes(v.Attributes, "variable");
         CheckShadowing(v.Name, scope);
         CheckCasing(v.Name, "variable", v.IsConst);
         scope.Declare(v.Name.Lexeme, declared, v.IsConst, v.Name.Line);
@@ -915,6 +928,7 @@ public sealed class Checker(
     private void CheckFunc(Stmt.FuncDecl fn, Scope scope)
     {
         scope.Declare(fn.Name.Lexeme, SignatureOf(fn));
+        CheckAttributes(fn.Attributes, "function");
         CheckCasing(fn.Name, "function");
         CheckPredicateName(fn);
 
@@ -1796,6 +1810,79 @@ public sealed class Checker(
         }
     }
 
+    // ---- attributes (§3.8) ----------------------------------------------
+
+    /// <summary>
+    /// The whole vocabulary. Fixed and compiler-known: a program cannot invent one, which
+    /// is what makes an unknown name an error a beginner can act on rather than a silently
+    /// ignored line (§3.8).
+    ///
+    /// Three of the four generate no code and have no effect yet — they describe things
+    /// for a backend that does not exist. They are checked now anyway, because an
+    /// attribute that is accepted and ignored teaches that it works.
+    /// </summary>
+    private static readonly Dictionary<string, (string On, bool Takes, string Does)> KnownAttributes =
+        new()
+        {
+            ["export"] = ("variable", false, "makes a field visible to the editor in a Unity-style host"),
+            ["test"] = ("function", false, "marks a function to be run by the test runner"),
+            ["mirrors"] = ("type", false, "says this type follows a foreign API's shape"),
+            ["name"] = ("function", true, "overrides the name this is emitted under"),
+        };
+
+    /// <summary>
+    /// Whether the type being checked carries <c>@mirrors</c>. Its members take a foreign
+    /// API's names, which are not the programmer's to choose, so §3.4's casing rule has
+    /// nothing to say about them.
+    /// </summary>
+    private bool _mirroring;
+
+    private void CheckAttributes(List<Attr>? attributes, string target)
+    {
+        if (attributes is null) return;
+
+        foreach (var attribute in attributes)
+        {
+            string name = attribute.Name.Lexeme;
+
+            if (!KnownAttributes.TryGetValue(name, out var known))
+            {
+                Error(attribute.Name.Line,
+                      $"There is no attribute named @{name}.",
+                      Suggest(name, KnownAttributes.Keys.Select(k => "@" + k))
+                      ?? "Emerald knows @export, @test, @mirrors, and @name. "
+                         + "The set is fixed — a program cannot add to it.");
+                continue;
+            }
+
+            if (known.On != target)
+                Error(attribute.Name.Line,
+                      $"@{name} belongs on a {known.On}, not on a {target}.",
+                      $"It {known.Does}.");
+
+            if (known.Takes && attribute.Argument is null)
+                Error(attribute.Name.Line,
+                      $"@{name} needs an argument.",
+                      $"""It {known.Does}:  @{name}("Any")""");
+
+            if (!known.Takes && attribute.Argument is not null)
+                Error(attribute.Name.Line,
+                      $"@{name} takes no argument.",
+                      $"It {known.Does}, and needs nothing else to say so.");
+
+            // @name's argument becomes an identifier in emitted metadata, so it has to be
+            // known at compile time — a computed one could not be written into the assembly.
+            if (known.Takes && attribute.Argument is not null
+                && attribute.Argument is not Expr.Literal { Value: string })
+                Error(attribute.Name.Line,
+                      $"@{name} needs a plain text name.",
+                      $"""Write it as a string:  @{name}("Any")""");
+        }
+    }
+
+    private static bool Carries(List<Attr>? attributes, string name) =>
+        attributes?.Any(a => a.Name.Lexeme == name) ?? false;
+
     // ---- naming (§3.4) --------------------------------------------------
 
     /// <summary>
@@ -1809,6 +1896,10 @@ public sealed class Checker(
     /// </summary>
     private void CheckCasing(Token name, string kind, bool isConst = false)
     {
+        // A mirrored type takes a foreign API's names, which the programmer did not choose
+        // and cannot change. Enforcing a convention nobody can comply with is noise.
+        if (_mirroring) return;
+
         string text = name.Lexeme;
 
         // A predicate's trailing ? is part of its name, not a casing violation.

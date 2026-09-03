@@ -38,17 +38,12 @@ public sealed class Parser(List<Token> tokens, string fileName)
     {
         try
         {
-            if (Check(TokenType.Class, TokenType.Trait, TokenType.Struct))
-                return TypeDeclaration();
-            if (Check(TokenType.Constructor)) return ConstructorDeclaration();
-            if (Check(TokenType.Static)) return StaticMember();
-            if (Check(TokenType.Func, TokenType.Abstract)) return FunctionDeclaration();
-            if (Check(TokenType.Try)) return TryStatement();
-            if (Check(TokenType.While, TokenType.Until)) return WhileStatement();
-            if (Check(TokenType.Unless)) return UnlessStatement();
-            if (Check(TokenType.For)) return ForStatement();
-            if (Check(TokenType.If)) return IfStatementOrExpression();
-            return Modifiable(SimpleStatement());
+            // Attributes are collected here rather than inside each declaration form,
+            // because class members are parsed through this same method — so one place
+            // covers members, top-level statements, and block-free class bodies alike.
+            var attributes = Attributes();
+            var stmt = Declaration();
+            return attributes.Count == 0 ? stmt : Decorate(attributes, stmt);
         }
         catch (ParseError)
         {
@@ -56,6 +51,63 @@ public sealed class Parser(List<Token> tokens, string fileName)
             return null;
         }
     }
+
+    private Stmt Declaration()
+    {
+        if (Check(TokenType.Class, TokenType.Trait, TokenType.Struct))
+            return TypeDeclaration();
+        if (Check(TokenType.Constructor)) return ConstructorDeclaration();
+        if (Check(TokenType.Static)) return StaticMember();
+        if (Check(TokenType.Func, TokenType.Abstract)) return FunctionDeclaration();
+        if (Check(TokenType.Try)) return TryStatement();
+        if (Check(TokenType.While, TokenType.Until)) return WhileStatement();
+        if (Check(TokenType.Unless)) return UnlessStatement();
+        if (Check(TokenType.For)) return ForStatement();
+        if (Check(TokenType.If)) return IfStatementOrExpression();
+        return Modifiable(SimpleStatement());
+    }
+
+    /// <summary>
+    /// <c>@export</c> and <c>@name("Any")</c>, stacked one per line before the thing they
+    /// describe. The vocabulary is fixed and compiler-known (§3.8), so which names are
+    /// legal is the checker's business — this only reads the shape.
+    /// </summary>
+    private List<Attr> Attributes()
+    {
+        List<Attr> found = [];
+
+        while (Match(TokenType.At))
+        {
+            var name = Consume(TokenType.Identifier, "Expected an attribute name after '@'.");
+
+            Expr? argument = null;
+            if (Match(TokenType.LeftParen))
+            {
+                argument = Expression();
+                Consume(TokenType.RightParen, $"Expected ')' after @{name.Lexeme}'s argument.");
+            }
+
+            found.Add(new Attr(name, argument));
+            SkipNewlines();
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// An attribute describes a declaration. Anything else — a loop, a call, an
+    /// assignment — has no metadata to carry, so attaching one is a mistake worth naming
+    /// rather than quietly dropping.
+    /// </summary>
+    private Stmt Decorate(List<Attr> attributes, Stmt stmt) => stmt switch
+    {
+        Stmt.VarDecl v => v with { Attributes = attributes },
+        Stmt.FuncDecl f => f with { Attributes = attributes },
+        Stmt.ClassDecl c => c with { Attributes = attributes },
+        _ => throw Error(attributes[0].Name,
+                         $"@{attributes[0].Name.Lexeme} has nothing to describe here.",
+                         "An attribute goes before a var, a func, or a type declaration."),
+    };
 
     /// <summary>
     /// Wraps a simple statement in its modifier-<c>if</c>, if one follows. No same-line

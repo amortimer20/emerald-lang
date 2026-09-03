@@ -1,0 +1,2 @@
+@export
+print("hello")

@@ -1,0 +1,6 @@
+
+attribute_argument_not_literal.em:4  @name needs a plain text name.
+
+    4 | @name(chosen)
+
+  Write it as a string:  @name("Any")

@@ -20,6 +20,14 @@ public sealed record TypeRef(Token Name, bool Nullable, TypeRef? Element = null)
 
 public sealed record Param(Token Name, TypeRef? Type, Expr? Default);
 
+/// <summary>
+/// <c>@export</c>, <c>@name("Any")</c> — declarative, compiler-known, and generating no
+/// code (§3.8). Named Attr rather than Attribute because .NET's implicit usings already
+/// bring System.Attribute into scope, and two things called Attribute in one file is a
+/// puzzle nobody needs to solve twice.
+/// </summary>
+public sealed record Attr(Token Name, Expr? Argument);
+
 // ---- expressions --------------------------------------------------------
 
 public abstract record Expr
@@ -66,7 +74,8 @@ public abstract record Stmt
     public sealed record VarDecl(
         Token Name, TypeRef? Type, Expr? Init, bool IsConst,
         bool IsStatic = false,
-        List<Stmt>? Getter = null, List<Stmt>? Setter = null) : Stmt;
+        List<Stmt>? Getter = null, List<Stmt>? Setter = null,
+        List<Attr>? Attributes = null) : Stmt;
 
     /// <summary>Assignment is a statement, never an expression (§3.1) — so
     /// <c>if x = 5 { }</c> cannot parse, and the =/== bug is unrepresentable.</summary>
@@ -82,7 +91,7 @@ public abstract record Stmt
     /// <summary>A null <c>Body</c> means abstract: required, not provided (§3.2).</summary>
     public sealed record FuncDecl(
         Token Name, List<Param> Params, TypeRef? ReturnType, List<Stmt>? Body,
-        bool IsStatic = false) : Stmt;
+        bool IsStatic = false, List<Attr>? Attributes = null) : Stmt;
     public sealed record Return(Token Keyword, Expr? Value) : Stmt;
 
     /// <summary>
@@ -108,7 +117,8 @@ public abstract record Stmt
     /// </summary>
     public sealed record ClassDecl(
         TypeKind Kind, Token Name, Token? BaseName,
-        List<Token> Traits, List<Stmt> Members) : Stmt;
+        List<Token> Traits, List<Stmt> Members,
+        List<Attr>? Attributes = null) : Stmt;
 
     public sealed record ConstructorDecl(
         Token Keyword, List<Param> Params, List<Stmt> Body) : Stmt;

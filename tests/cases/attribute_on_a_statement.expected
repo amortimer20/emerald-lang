@@ -1,0 +1,6 @@
+
+attribute_on_a_statement.em:1  @export has nothing to describe here.
+
+    1 | @export
+
+  An attribute goes before a var, a func, or a type declaration.
