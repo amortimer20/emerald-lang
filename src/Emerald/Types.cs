@@ -28,6 +28,13 @@ public abstract record EmType
     /// </summary>
     public sealed record Lst(EmType Element) : EmType;
 
+    /// <summary>
+    /// Dictionary&lt;K, V&gt; — the second compiler-owned container (§3.7). Looking one up
+    /// gives back <c>V?</c> rather than throwing, because a missing key is the ordinary
+    /// case for a lookup, where a missing list position is a bug.
+    /// </summary>
+    public sealed record Dict(EmType Key, EmType Value) : EmType;
+
     /// <summary>An instance of a user-declared class.</summary>
     public sealed record Obj(ClassInfo Info) : EmType;
 
@@ -59,6 +66,7 @@ public abstract record EmType
         Prim p => p.Name,
         Maybe m => m.Inner.Show() + "?",
         Lst a => $"List<{a.Element.Show()}>",
+        Dict d => $"Dictionary<{d.Key.Show()}, {d.Value.Show()}>",
         Obj o => o.Info.Name,
         Func => "Function",
         _ => "?"
@@ -69,6 +77,7 @@ public abstract record EmType
     {
         Prim p => p.Name,
         Lst => "List",
+        Dict => "Dictionary",
         Obj o => o.Info.Name,
         Func => "Function",
         Maybe m => m.Inner.Head,
@@ -95,6 +104,9 @@ public abstract record EmType
         if (Equals(Float) && from.Equals(Int)) return true;
 
         if (this is Lst x && from is Lst y) return x.Element.Accepts(y.Element);
+
+        if (this is Dict a2 && from is Dict b2)
+            return a2.Key.Accepts(b2.Key) && a2.Value.Accepts(b2.Value);
 
         // A subclass is usable wherever its base is wanted.
         if (this is Obj want && from is Obj got) return got.Info.IsSubclassOf(want.Info);
@@ -179,15 +191,27 @@ public static class Signatures
     }
 
     /// <summary>Method names on this type, for "did you mean" suggestions (§3.6).</summary>
-    public static IEnumerable<string> MethodsOn(EmType receiver) =>
-        receiver is EmType.Lst
-            ? ListMethods
-            : Returns.Keys.Where(k => k.Item1 == receiver.Head).Select(k => k.Item2);
+    public static IEnumerable<string> MethodsOn(EmType receiver) => receiver switch
+    {
+        EmType.Lst => ListMethods,
+        EmType.Dict => DictMethods,
+        _ => Returns.Keys.Where(k => k.Item1 == receiver.Head).Select(k => k.Item2),
+    };
 
     /// <summary>
     /// The core twenty (§3.7). Return types depend on the element type, so unlike the
     /// table above these are resolved in the checker rather than looked up.
     /// </summary>
+    /// <summary>
+    /// What a dictionary can be asked. Deliberately not <c>contains?</c>: on a list that
+    /// question has one meaning, and on a dictionary it has two — so the name says which.
+    /// </summary>
+    public static readonly string[] DictMethods =
+    [
+        "count", "empty?", "has_key?", "has_value?", "keys", "values",
+        "get", "set", "remove", "clear", "each",
+    ];
+
     public static readonly string[] ListMethods =
     [
         "each", "map", "filter", "reject", "find", "index_of", "contains?",

@@ -228,6 +228,18 @@ public sealed class Interpreter
         object? position = Evaluate(index.Position, env);
         object? value = Evaluate(a.Value, env);
 
+        if (target is EmDict dict)
+        {
+            object key = position
+                ?? throw new RuntimeError("nothing cannot be a dictionary key.");
+
+            if (a.Op.Type != TokenType.Assign)
+                value = Operate(dict.Get(key), CompoundOp(a.Op.Type), value, a.Op);
+
+            dict.Set(key, value);
+            return;
+        }
+
         if (target is EmInstance instance)
         {
             var setAt = instance.Class.FindMethod(Prelude.SetAtMethod)
@@ -617,6 +629,7 @@ public sealed class Interpreter
         Expr.Interpolation s => Interpolate(s, env),
         Expr.RangeExpr r => MakeRange(r, env),
         Expr.ListLiteral a => new EmList([.. a.Items.Select(item => Evaluate(item, env))]),
+        Expr.DictLiteral d => MakeDict(d, env),
         Expr.Index ix => EvaluateIndex(ix, env),
         Expr.Unary u => EvaluateUnary(u, env),
         Expr.Binary b => EvaluateBinary(b, env),
@@ -649,6 +662,13 @@ public sealed class Interpreter
         object? target = Evaluate(ix.Target, env);
         object? position = Evaluate(ix.Position, env);
 
+        // A dictionary decides for itself what a key is, so it comes before the Int
+        // requirement. Missing gives nothing, which is what makes d[k].or(0) the idiom.
+        if (target is EmDict dict)
+            return position is null
+                ? throw new RuntimeError("nothing cannot be a dictionary key.")
+                : dict.Get(position);
+
         // A user type indexes through Indexable. Checked before the Int requirement,
         // because at() decides for itself what an index is — a Grid may want a String key
         // even though lists never will.
@@ -677,6 +697,21 @@ public sealed class Interpreter
                     : $"Valid positions run from 0 to {list.Items.Count - 1}.");
 
         return list.Items[(int)i];
+    }
+
+    private EmDict MakeDict(Expr.DictLiteral literal, Env env)
+    {
+        _line = literal.Bracket.Line;
+        var dict = new EmDict();
+
+        foreach (var entry in literal.Entries)
+        {
+            object? key = Evaluate(entry.Key, env)
+                ?? throw new RuntimeError("nothing cannot be a dictionary key.");
+            dict.Set(key, Evaluate(entry.Value, env));
+        }
+
+        return dict;
     }
 
     private object? MakeRange(Expr.RangeExpr r, Env env)

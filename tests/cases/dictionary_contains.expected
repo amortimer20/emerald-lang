@@ -1,0 +1,6 @@
+
+dictionary_contains.em:3  No method named contains? on Dictionary<String, Int>.
+
+    3 | print(ages.contains?("ada"))
+
+  A dictionary can be asked about either half:  has_key? or has_value?

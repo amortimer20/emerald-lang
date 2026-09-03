@@ -329,5 +329,22 @@
       "}"
     ],
     "description": "Mark a function for the test runner"
+  },
+  "Dictionary": {
+    "prefix": "dict",
+    "body": [
+      "var ${1:scores}: Dictionary<${2:String}, ${3:Int}> = [:]"
+    ],
+    "description": "An empty dictionary — [:] , since [] is an empty list"
+  },
+  "Count with a dictionary": {
+    "prefix": "count",
+    "body": [
+      "var ${1:counts}: Dictionary<${2:String}, Int> = [:]",
+      "for ${3:item} in ${4:items} {",
+      "\t$1[$3] = $1[$3].or(0) + 1",
+      "}"
+    ],
+    "description": "Counting — a lookup gives back a maybe, so .or(0) starts it"
   }
 }

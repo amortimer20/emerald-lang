@@ -1,0 +1,6 @@
+
+dictionary_bad_key_type.em:6  A dictionary cannot be keyed by Dog.
+
+    6 | var owners: Dictionary<Dog, String> = [:]
+
+  Keys are Int, Float, String, or Bool. Looking one up needs hashing, and a type's own equals? is not something the lookup can consult yet.

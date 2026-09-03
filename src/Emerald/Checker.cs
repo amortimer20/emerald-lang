@@ -820,6 +820,30 @@ public sealed class Checker(
     private void CheckIndexAssign(Stmt.Assign a, Expr.Index index, Scope scope)
     {
         var target = TypeOf(index.Target, scope);
+
+        // A dictionary is keyed by whatever it was declared with, so it is settled before
+        // the Int requirement that lists impose.
+        if (target is EmType.Dict dict)
+        {
+            var key = TypeOf(index.Position, scope);
+            var given = TypeOf(a.Value, scope);
+
+            if (!dict.Key.Accepts(key))
+                Error(a.Op.Line,
+                      $"This dictionary is keyed by {dict.Key.Show()}, but this is {key.Show()}.",
+                      Widening(dict.Key, key));
+
+            // A compound assignment combines the old value with the new, and the old one
+            // is a maybe — so what lands is the operator's result, checked where it is.
+            if (a.Op.Type == TokenType.Assign && !dict.Value.Accepts(given))
+                Error(a.Op.Line,
+                      $"This dictionary holds {dict.Value.Show()}, "
+                      + $"but this gives it {given.Show()}.",
+                      Widening(dict.Value, given));
+
+            return;
+        }
+
         Expect(TypeOf(index.Position, scope), EmType.Int, index.Position, "an index");
         var value = TypeOf(a.Value, scope);
 
@@ -912,10 +936,16 @@ public sealed class Checker(
             default:
                 Error(f.Variable.Line,
                       $"Cannot loop over {iterable.Show()}.",
-                      iterable is EmType.Obj
-                          ? "A range, a list, and a string can be looped over. "
-                            + "For anything else, expose a list from it."
-                          : "Loop over a range (1..5), a list, or a string.",
+                      iterable switch
+                      {
+                          // A dictionary holds pairs, and there is no pair type to give
+                          // the loop variable — so it says which half is wanted instead.
+                          EmType.Dict => "Walk its keys or its values:  "
+                                         + "for key in scores.keys { ... }",
+                          EmType.Obj => "A range, a list, and a string can be looped over. "
+                                        + "For anything else, expose a list from it.",
+                          _ => "Loop over a range (1..5), a list, or a string.",
+                      },
                       topic: "loop-over");
                 element = EmType.Any;
                 break;
@@ -1066,6 +1096,7 @@ public sealed class Checker(
         Expr.Variable v => VariableType(v, scope),
         Expr.RangeExpr r => RangeType(r, scope),
         Expr.ListLiteral a => ListLiteralType(a, scope),
+        Expr.DictLiteral d => DictLiteralType(d, scope),
         Expr.Index ix => IndexType(ix, scope),
         Expr.Unary u => UnaryType(u, scope),
         Expr.Binary b => BinaryType(b, scope),
@@ -1332,6 +1363,8 @@ public sealed class Checker(
         if (receiver is EmType.Lst list)
             return ListMemberType(list, name, EmType.Any, EmType.Any);
 
+        if (receiver is EmType.Dict dict) return DictMemberType(dict, name, null, scope);
+
         // .or and .value are the two things you are *supposed* to ask of a maybe, so they
         // have to be reachable before the guard below rejects everything else (§3.2).
         if (receiver.IsMaybe && name.Lexeme is "or" or "value")
@@ -1393,6 +1426,7 @@ public sealed class Checker(
 
             var receiver = TypeOf(get.Target, scope);
             if (receiver is EmType.Lst list) return ListCallType(list, c, get.Name, scope);
+            if (receiver is EmType.Dict dict) return DictMemberType(dict, get.Name, c, scope);
 
             List<EmType> args = [.. c.Args.Select(arg => TypeOf(arg, scope))];
             if (c.Trailing is not null) TypeOf(c.Trailing, scope);
@@ -1533,6 +1567,69 @@ public sealed class Checker(
     }
 
     /// <summary>
+    /// <c>["a": 1]</c> — the narrowest key type and the narrowest value type both items
+    /// share, by the same rule a list literal uses.
+    /// </summary>
+    private EmType DictLiteralType(Expr.DictLiteral d, Scope scope)
+    {
+        if (d.Entries.Count == 0) return new EmType.Dict(EmType.Any, EmType.Any);
+
+        EmType? keys = null;
+        EmType? values = null;
+
+        foreach (var entry in d.Entries)
+        {
+            var key = TypeOf(entry.Key, scope);
+            var value = TypeOf(entry.Value, scope);
+
+            if (keys is null) { keys = key; values = value; continue; }
+
+            var mergedKey = CommonType(keys, key);
+            if (mergedKey is null)
+            {
+                Error(d.Bracket.Line,
+                      $"This dictionary is keyed by {keys.Show()} but a key is {key.Show()}.",
+                      "Every key has to share a type, and every value has to share one.");
+                return new EmType.Dict(EmType.Any, EmType.Any);
+            }
+
+            var mergedValue = CommonType(values!, value);
+            if (mergedValue is null)
+            {
+                Error(d.Bracket.Line,
+                      $"This dictionary holds {values!.Show()} but a value is {value.Show()}.",
+                      "Every value has to share a type.");
+                return new EmType.Dict(mergedKey, EmType.Any);
+            }
+
+            keys = mergedKey;
+            values = mergedValue;
+        }
+
+        CheckKeyType(keys!, d.Bracket.Line);
+        return new EmType.Dict(keys!, values!);
+    }
+
+    /// <summary>
+    /// What may be a key. Restricted to the primitives, because looking one up needs
+    /// hashing and equality that the runtime can perform — and a user type's idea of
+    /// sameness lives in <c>equals?</c>, an Emerald method the host dictionary cannot see.
+    /// Allowing it would compare by identity instead, so two equal-looking keys would miss
+    /// each other: a wrong answer with no diagnostic, which is the worst kind.
+    /// </summary>
+    private void CheckKeyType(EmType key, int line)
+    {
+        if (key is EmType.Unknown) return;
+        if (key.Equals(EmType.Int) || key.Equals(EmType.Float)
+            || key.Equals(EmType.String) || key.Equals(EmType.Bool)) return;
+
+        Error(line,
+              $"A dictionary cannot be keyed by {key.Show()}.",
+              "Keys are Int, Float, String, or Bool. Looking one up needs hashing, and "
+              + "a type's own equals? is not something the lookup can consult yet.");
+    }
+
+    /// <summary>
     /// The narrowest type that holds both — for <c>[rex, tweety]</c>, the class they share.
     /// Needed only once inheritance exists; before that, "the first item's type" sufficed,
     /// which is why this gap stayed invisible until classes landed.
@@ -1554,6 +1651,22 @@ public sealed class Checker(
     private EmType IndexType(Expr.Index ix, Scope scope)
     {
         var target = TypeOf(ix.Target, scope);
+
+        // A dictionary is looked up before the Int requirement, since its key is whatever
+        // it was declared to be. It also gives back V? rather than V: a missing key is the
+        // ordinary case for a lookup, where a missing list position is a bug.
+        if (target is EmType.Dict dict)
+        {
+            var key = TypeOf(ix.Position, scope);
+            if (!dict.Key.Accepts(key))
+                Error(ix.Bracket.Line,
+                      $"This dictionary is keyed by {dict.Key.Show()}, "
+                      + $"but this is {key.Show()}.",
+                      Widening(dict.Key, key));
+
+            return EmType.Nullable(dict.Value);
+        }
+
         Expect(TypeOf(ix.Position, scope), EmType.Int, ix.Position, "an index");
 
         if (target is EmType.Lst list) return list.Element;
@@ -1584,6 +1697,63 @@ public sealed class Checker(
     /// rather than looked up — and the block's parameter is bound to the element type on
     /// the way in, which is what lets <c>{ x =&gt; ... }</c> know what x is.
     /// </summary>
+    /// <summary>
+    /// What a dictionary method gives back. Like the list methods, these depend on the key
+    /// and value types, so they are computed rather than looked up in a table.
+    /// </summary>
+    private EmType DictMemberType(EmType.Dict dict, Token name, Expr.Call? call, Scope scope)
+    {
+        if (call is not null)
+        {
+            foreach (var arg in call.Args) TypeOf(arg, scope);
+
+            // each { key, value => ... } — the block's parameters come from the
+            // dictionary, which is the same contextual typing a list block gets.
+            if (call.Trailing is { } block && name.Lexeme == "each")
+            {
+                var inner = new Scope(scope, functionBoundary: true);
+                if (block.Params.Count > 0)
+                    inner.Declare(block.Params[0].Name.Lexeme, dict.Key);
+                if (block.Params.Count > 1)
+                    inner.Declare(block.Params[1].Name.Lexeme, dict.Value);
+
+                _returnTypes.Push(EmType.Any);
+                CheckBlock(block.Body, inner);
+                _returnTypes.Pop();
+            }
+            else if (call.Trailing is not null) TypeOf(call.Trailing, scope);
+        }
+
+        return name.Lexeme switch
+        {
+            "count" => EmType.Int,
+            "empty?" => EmType.Bool,
+            "has_key?" => EmType.Bool,
+            "has_value?" => EmType.Bool,
+            "keys" => new EmType.Lst(dict.Key),
+            "values" => new EmType.Lst(dict.Value),
+
+            // Same answer as d[key], and the same reason: a lookup that misses is normal.
+            "get" => EmType.Nullable(dict.Value),
+
+            "set" or "remove" or "clear" or "each" => EmType.Nothing,
+
+            _ => Unknown(name, dict),
+        };
+    }
+
+    private EmType Unknown(Token name, EmType.Dict dict)
+    {
+        // contains? is what a list calls this, and on a dictionary the question has two
+        // answers — so the suggestion has to name both rather than pick one.
+        string? hint = name.Lexeme is "contains?" or "includes?" or "has?"
+            ? "A dictionary can be asked about either half:  has_key? or has_value?"
+            : Suggest(name.Lexeme, Signatures.DictMethods);
+
+        Error(name.Line, $"No method named {name.Lexeme} on {dict.Show()}.", hint);
+        return EmType.Any;
+    }
+
     private EmType ListCallType(EmType.Lst list, Expr.Call c, Token name, Scope scope)
     {
         foreach (var arg in c.Args) TypeOf(arg, scope);
@@ -1643,26 +1813,50 @@ public sealed class Checker(
         // holds: the checker has always been able to represent List<String>, and only the
         // annotation grammar could not spell it — which meant a named function could not
         // take a list at all, since parameters must be annotated.
+        var given = annotation.Arguments;
+
         if (annotation.Name.Lexeme == "List")
         {
-            if (annotation.Element is null)
+            if (given is null || given.Count != 1)
             {
                 Error(annotation.Name.Line,
-                      "List needs to say what it holds.",
+                      given is null
+                          ? "List needs to say what it holds."
+                          : $"List takes one type, not {given.Count}.",
                       "Write the element type in angle brackets:  List<String>",
                       topic: "list-type");
                 return EmType.Any;
             }
 
-            var listType = new EmType.Lst(Resolve(annotation.Element));
+            var listType = new EmType.Lst(Resolve(given[0]));
             return annotation.Nullable ? EmType.Nullable(listType) : listType;
         }
 
-        if (annotation.Element is not null)
+        if (annotation.Name.Lexeme == "Dictionary")
+        {
+            if (given is null || given.Count != 2)
+            {
+                Error(annotation.Name.Line,
+                      given is null
+                          ? "Dictionary needs to say what it maps to what."
+                          : $"Dictionary takes two types, not {given.Count}.",
+                      "The key type then the value type:  Dictionary<String, Int>",
+                      topic: "dictionary-type");
+                return EmType.Any;
+            }
+
+            var key = Resolve(given[0]);
+            CheckKeyType(key, annotation.Name.Line);
+
+            var dictType = new EmType.Dict(key, Resolve(given[1]));
+            return annotation.Nullable ? EmType.Nullable(dictType) : dictType;
+        }
+
+        if (given is not null)
             Error(annotation.Name.Line,
-                  $"{annotation.Name.Lexeme} does not take a type argument.",
-                  "List is the only generic type in Emerald, and it is built in — "
-                  + "a program cannot declare its own.");
+                  $"{annotation.Name.Lexeme} does not take type arguments.",
+                  "List and Dictionary are the only generic types in Emerald, and both "
+                  + "are built in — a program cannot declare its own.");
 
         EmType baseType = annotation.Name.Lexeme switch
         {

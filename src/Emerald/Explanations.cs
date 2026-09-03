@@ -303,6 +303,27 @@ public static class Explanations
             Nesting works the same way: List<List<Int>> is a list of lists of numbers.
             """),
 
+        ["dictionary-type"] = new(
+            "Writing a dictionary type",
+            """
+            var scores: Dictionary = [:]
+            """,
+            """
+            var scores: Dictionary<String, Int> = [:]
+
+            scores["ada"] = 36
+            print(scores["ada"].or(0))
+            """,
+            """
+            A dictionary has to say what it maps to what: the key type first, then the
+            value type.
+
+            Looking one up gives back Int? rather than Int, because the key might not be
+            there — which is the ordinary case for a lookup, not a mistake. .or(0) is how
+            you say what to use when it is missing, and it is what makes counting read
+            well:  counts[word] = counts[word].or(0) + 1
+            """),
+
         ["argument-type"] = new(
             "Passing the wrong kind of value",
             """

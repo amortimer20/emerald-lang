@@ -17,11 +17,12 @@ public sealed record Diagnostic(
     string? Topic = null);
 
 /// <summary>
-/// A written type. <c>Element</c> is the type argument of a generic — only
-/// <c>List<T></c> for now, since §5.3 makes the parameterised containers
-/// compiler-owned and users cannot declare their own.
+/// A written type. <c>Arguments</c> holds the type arguments of a generic —
+/// <c>List&lt;T&gt;</c> takes one and <c>Dictionary&lt;K, V&gt;</c> two. §5.3 makes the
+/// parameterised containers compiler-owned, so this grammar is for consuming them and
+/// never for declaring one.
 /// </summary>
-public sealed record TypeRef(Token Name, bool Nullable, TypeRef? Element = null);
+public sealed record TypeRef(Token Name, bool Nullable, List<TypeRef>? Arguments = null);
 
 public sealed record Param(Token Name, TypeRef? Type, Expr? Default);
 
@@ -32,6 +33,9 @@ public sealed record Param(Token Name, TypeRef? Type, Expr? Default);
 /// puzzle nobody needs to solve twice.
 /// </summary>
 public sealed record Attr(Token Name, Expr? Argument);
+
+/// <summary>One <c>key: value</c> pair of a dictionary literal.</summary>
+public sealed record Entry(Expr Key, Expr Value);
 
 // ---- expressions --------------------------------------------------------
 
@@ -57,6 +61,14 @@ public abstract record Expr
 
     /// <summary>[1, 2, 3]</summary>
     public sealed record ListLiteral(Token Bracket, List<Expr> Items) : Expr;
+
+    /// <summary>
+    /// <c>["a": 1, "b": 2]</c>, and <c>[:]</c> for an empty one. Shares the bracket with
+    /// a list rather than taking <c>{ }</c>, which is a block and a trailing lambda here —
+    /// <c>{ x: 1 }</c> could not be told from <c>{ x =&gt; 1 }</c> without lookahead nobody
+    /// should have to do. Swift solves it the same way, for the same reason.
+    /// </summary>
+    public sealed record DictLiteral(Token Bracket, List<Entry> Entries) : Expr;
 
     /// <summary>a[0] — lowered through the Indexable trait once traits exist (§3.2).</summary>
     public sealed record Index(Expr Target, Token Bracket, Expr Position) : Expr;

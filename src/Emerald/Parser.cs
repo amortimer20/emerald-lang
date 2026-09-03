@@ -689,16 +689,59 @@ public sealed class Parser(List<Token> tokens, string fileName)
             var bracket = Previous;
             bool saved = _noTrailingLambda;
             _noTrailingLambda = false;
-            List<Expr> items = [];
             SkipNewlines();
+
+            // [:] is the empty dictionary. [] is the empty list — the two need telling
+            // apart, and a bare [] has no key to reveal which was meant.
+            if (Match(TokenType.Colon))
+            {
+                _noTrailingLambda = saved;
+                Consume(TokenType.RightBracket, "Expected ']' after '[:'.");
+                return new Expr.DictLiteral(bracket, []);
+            }
+
+            List<Expr> items = [];
+            List<Entry> entries = [];
+
             if (!Check(TokenType.RightBracket))
             {
-                do { SkipNewlines(); items.Add(Expression()); SkipNewlines(); }
+                do
+                {
+                    SkipNewlines();
+                    var first = Expression();
+
+                    // The colon after the first element decides which literal this is,
+                    // and every element after it must agree.
+                    if (entries.Count > 0 || (items.Count == 0 && Check(TokenType.Colon)))
+                    {
+                        Consume(TokenType.Colon,
+                                "Expected ':' — this literal started as a dictionary.");
+                        SkipNewlines();
+                        entries.Add(new Entry(first, Expression()));
+                    }
+                    else
+                    {
+                        if (Check(TokenType.Colon))
+                            throw Error(Peek, "Expected ',' — this literal started as a list.",
+                                        "A literal is a list or a dictionary, not both. "
+                                        + "Write every item as key: value, or none of them.");
+                        items.Add(first);
+                    }
+
+                    SkipNewlines();
+                }
                 while (Match(TokenType.Comma));
             }
+
             _noTrailingLambda = saved;
-            Consume(TokenType.RightBracket, "Expected ']' to close the list.");
-            return new Expr.ListLiteral(bracket, items);
+            Consume(TokenType.RightBracket,
+                    entries.Count > 0
+                        ? "Expected ']' to close the dictionary."
+                        : "Expected ']' to close the list.");
+
+            return entries.Count > 0
+                ? new Expr.DictLiteral(bracket, entries)
+                : new Expr.ListLiteral(bracket, items);
         }
 
         if (Check(TokenType.Identifier))
@@ -852,10 +895,11 @@ public sealed class Parser(List<Token> tokens, string fileName)
         //
         // Nesting works without special handling: List<List<Int>> closes with two
         // Greater tokens, since Emerald has no shift operators to confuse them with.
-        TypeRef? element = null;
+        List<TypeRef>? arguments = null;
         if (Match(TokenType.Less))
         {
-            element = ParseTypeRef();
+            arguments = [];
+            do { arguments.Add(ParseTypeRef()); } while (Match(TokenType.Comma));
             Consume(TokenType.Greater, $"Expected '>' to close {name.Lexeme}<...>.");
         }
 
@@ -863,7 +907,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
         // arrives as its own token: Array<Int>?
         bool nullable = Match(TokenType.Question);
 
-        return new TypeRef(name, nullable, element);
+        return new TypeRef(name, nullable, arguments);
     }
 
     private List<Param> ParameterList()

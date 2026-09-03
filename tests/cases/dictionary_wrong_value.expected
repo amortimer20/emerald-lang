@@ -1,0 +1,4 @@
+
+dictionary_wrong_value.em:2  This dictionary holds Int, but this gives it String.
+
+    2 | ages["bo"] = "seven"

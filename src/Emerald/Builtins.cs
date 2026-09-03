@@ -15,6 +15,43 @@ public sealed class EmList(List<object?> items)
 }
 
 /// <summary>
+/// A dictionary, in insertion order.
+///
+/// Order is kept deliberately. .NET's Dictionary makes no promise about it, and a
+/// program whose output changes between runs for no visible reason is the worst thing to
+/// hand a beginner — they cannot tell it from a bug in their own code. Python and
+/// JavaScript both settled here for the same reason.
+/// </summary>
+public sealed class EmDict
+{
+    private readonly Dictionary<object, object?> _values = [];
+    private readonly List<object> _order = [];
+
+    public int Count => _order.Count;
+    public IReadOnlyList<object> Keys => _order;
+
+    public bool Has(object key) => _values.ContainsKey(key);
+    public bool HasValue(object? value) => _order.Any(k => Equals(_values[k], value));
+
+    public object? Get(object key) => _values.GetValueOrDefault(key);
+
+    public void Set(object key, object? value)
+    {
+        if (!_values.ContainsKey(key)) _order.Add(key);
+        _values[key] = value;
+    }
+
+    public void Remove(object key)
+    {
+        if (_values.Remove(key)) _order.RemoveAll(k => Equals(k, key));
+    }
+
+    public void Clear() { _values.Clear(); _order.Clear(); }
+
+    public IEnumerable<object?> Values => _order.Select(k => _values[k]);
+}
+
+/// <summary>
 /// A built-in namespace of free functions, reached as <c>Math.sqrt(2.0)</c>. Distinct
 /// from a user module (a file with no class line) only in being written in C#.
 /// </summary>
@@ -141,6 +178,7 @@ public static class Builtins
             string s => StringMethod(s, name, args),
             EmRange r => RangeMethod(interpreter, r, name, args),
             EmList a => ListMethod(interpreter, a, name, args),
+            EmDict d => DictMethod(interpreter, d, name, args),
             EmError e => name switch
             {
                 "message" => e.Message,
@@ -160,6 +198,56 @@ public static class Builtins
 
             _ => throw new RuntimeError($"No method named {name} on {TypeName(target)}.")
         };
+
+    // ---- Dictionary -----------------------------------------------------
+
+    private static object? DictMethod(
+        Interpreter interp, EmDict dict, string name, List<object?> args)
+    {
+        switch (name)
+        {
+            case "count": return (long)dict.Count;
+            case "empty?": return dict.Count == 0;
+            case "keys": return new EmList([.. dict.Keys]);
+            case "values": return new EmList([.. dict.Values]);
+            case "clear": dict.Clear(); return null;
+
+            case "has_key?": return dict.Has(Key(args[0]));
+            case "has_value?": return dict.HasValue(args[0]);
+
+            // Missing gives nothing rather than failing — a lookup that misses is the
+            // ordinary case, which is why this returns V? and .or(...) is the idiom.
+            case "get": return dict.Get(Key(args[0]));
+
+            case "set": dict.Set(Key(args[0]), args[1]); return null;
+            case "remove": dict.Remove(Key(args[0])); return null;
+
+            case "each":
+            {
+                var block = args.LastOrDefault() as ICallable
+                    ?? throw new RuntimeError(
+                        "each needs a block, like { key, value => ... }.");
+
+                // A copy of the keys, so writing to the dictionary inside the block ends
+                // rather than looping — the same promise `for x in list` makes.
+                foreach (var key in dict.Keys.ToList())
+                    block.Call(interp, [key, dict.Get(key)]);
+
+                return null;
+            }
+        }
+
+        throw new RuntimeError($"No method named {name} on Dictionary.");
+    }
+
+    /// <summary>
+    /// A key has to be something the lookup can hash. The checker already refuses any
+    /// other type, so reaching here means a value arrived through an unchecked path.
+    /// </summary>
+    private static object Key(object? value) =>
+        value ?? throw new RuntimeError(
+            "nothing cannot be a dictionary key.",
+            "A key has to be an Int, a Float, a String, or a Bool.");
 
     // ---- List -----------------------------------------------------------
 
@@ -376,6 +464,8 @@ public static class Builtins
         EmClass c => $"<class {c.Name}>",
         EmInstance i => $"<{i.Class.Name}>",
         EmList a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
+        EmDict d => d.Count == 0 ? "[:]"
+            : "[" + string.Join(", ", d.Keys.Select(k => $"{Display(k)}: {Display(d.Get(k))}")) + "]",
         EmModule m => $"<module {m.Name}>",
         EmError e => e.Message,
         ICallable => "<function>",
@@ -391,6 +481,7 @@ public static class Builtins
         string => "String",
         EmRange => "Range",
         EmList => "List",
+        EmDict => "Dictionary",
         EmModule m => m.Name,
         EmError => "Error",
         EmClass c => $"class {c.Name}",
