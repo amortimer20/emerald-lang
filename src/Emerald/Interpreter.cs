@@ -96,6 +96,11 @@ public sealed class Interpreter
     {
         Dictionary<string, EmOverloads> sets = [];
 
+        // Only names declared in *this* batch are gathered together. Without that, a
+        // function redefined at a prompt would be read as an overload of the one it was
+        // meant to replace — and correcting a typo would be impossible.
+        HashSet<string> declaredHere = [];
+
         foreach (var stmt in program)
         {
             if (stmt is not Stmt.FuncDecl fn) continue;
@@ -103,7 +108,8 @@ public sealed class Interpreter
 
             if (sets.TryGetValue(fn.Name.Lexeme, out var set)) { set.Add(built); continue; }
 
-            if (_globals.TryGet(fn.Name.Lexeme, out object? already)
+            if (declaredHere.Contains(fn.Name.Lexeme)
+                && _globals.TryGet(fn.Name.Lexeme, out object? already)
                 && already is EmFunction first)
             {
                 var combined = new EmOverloads(fn.Name.Lexeme);
@@ -114,7 +120,41 @@ public sealed class Interpreter
                 continue;
             }
 
+            declaredHere.Add(fn.Name.Lexeme);
             _globals.Declare(fn.Name.Lexeme, built);
+        }
+    }
+
+    /// <summary>
+    /// Runs statements at a prompt, printing what a bare expression came to.
+    ///
+    /// The difference from <see cref="Run"/> is only that: an expression statement in a
+    /// program computes something and discards it, which §3.1 calls an error, while at a
+    /// prompt it is the question being asked.
+    /// </summary>
+    public void RunInteractive(List<Stmt> entry)
+    {
+        DeclareFunctions(entry);
+
+        foreach (var stmt in entry)
+        {
+            if (stmt is Stmt.FuncDecl) continue;
+
+            if (stmt is Stmt.ExprStmt shown)
+            {
+                object? value = Evaluate(shown.Expression, _globals);
+
+                // A bare name that is callable is a call (§3.1), so `exit` still means
+                // `exit()` here and does not print itself as a function.
+                if (shown.Expression is Expr.Variable
+                    && value is ICallable callable and not EmClass)
+                    value = callable.Call(this, []);
+
+                if (value is not null) Console.WriteLine(Builtins.Display(value));
+                continue;
+            }
+
+            Execute(stmt, _globals);
         }
     }
 

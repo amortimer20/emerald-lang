@@ -11,6 +11,7 @@ if (args.Length == 0)
           emerald new <name>        start a project
           emerald run <file.em>     run a program
           emerald check <file.em>   look for problems without running
+          emerald repl              try code a line at a time
           emerald test [path]       run every @test function
           emerald fmt [path]        format code, one way, no settings
           emerald explain           explain the last error
@@ -26,6 +27,7 @@ if (args.Length == 0)
 if (args[0] == "new") return Commands.New(args[1..]);
 if (args[0] == "check") return Commands.Check(args[1..]);
 if (args[0] == "test") return Commands.Test(args[1..]);
+if (args[0] is "repl" or "i") return Repl.Run();
 if (args[0] == "fmt") return Commands.Fmt(args[1..]);
 if (args[0] == "explain") return Explanations.Run(args[1..]);
 if (args[0] is "build" or "ship" or "add") return Commands.NotYet(args[0]);

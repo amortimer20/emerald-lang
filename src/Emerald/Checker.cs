@@ -11,7 +11,8 @@ namespace Emerald;
 public sealed class Checker(
     string fileName,
     IReadOnlyDictionary<Stmt, string>? fileOf = null,
-    Func<string, string[]>? sourceOf = null)
+    Func<string, string[]>? sourceOf = null,
+    bool interactive = false)
 {
     public List<Diagnostic> Diagnostics { get; } = [];
 
@@ -833,6 +834,11 @@ public sealed class Checker(
     private void CheckExpressionStatement(Stmt.ExprStmt statement, Scope scope)
     {
         var type = TypeOf(statement.Expression, scope);
+
+        // At a prompt a bare expression is the request, not a mistake: typing `1 + 1` to
+        // see 2 is the whole point of having one. §3.1's rule is about a statement in a
+        // program computing something and dropping it, which is a different act.
+        if (interactive) return;
 
         if (statement.Expression is Expr.Variable name)
         {
