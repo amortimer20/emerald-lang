@@ -4,3 +4,5 @@ break_in_block.em:4  break cannot leave a block.
     4 |     [4, 5].each { y => break }
 
   The loop around this one is outside the block, and a block is a function — break only affects a loop written in the same function. A plain for loop over the same items can use it.
+
+  emerald explain

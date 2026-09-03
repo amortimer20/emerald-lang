@@ -71,12 +71,19 @@ executable on an NTFS mount; the DLL is invoked directly instead.
 
 ```
 ./tests/run.sh              # golden tests — everything
-./tests/run.sh arrays       # cases matching a name
+./tests/run.sh lists        # cases matching a name
 BLESS=1 ./tests/run.sh      # rewrite .expected files from current output
 
 ./tests/examples.sh         # smoke-run every example project
 ./tests/exitcheck.sh        # process exit codes, which the golden suite cannot see
+./tests/checkcheck.sh       # emerald check, human and --json output
+./tests/newcheck.sh         # emerald new
+./tests/fmtcheck.sh         # emerald fmt — a file afterwards, not a program's output
+./tests/explaincheck.sh     # emerald explain, and the topic an error leaves behind
 ```
+
+The last four test *commands* rather than programs, which is why they are not golden
+cases: what they produce is a rewritten file, an exit code, or a state file.
 
 Golden tests: each `tests/cases/*.em` runs and its combined output is diffed against a
 `.expected` file. Deliberately end-to-end rather than unit tests against `Scanner` or

@@ -20,13 +20,30 @@ public static class Reporter
     /// </summary>
     public static void Report(List<Diagnostic> problems, Project project)
     {
+        // Both callers already check, but this method is public and indexes problems[0]
+        // below. A guard that costs nothing beats one that lives in every caller.
+        if (problems.Count == 0) return;
+
         foreach (var warning in problems.Where(d => d.Severity == Severity.Warning))
             Write(warning, project, "warning: ");
 
         var errors = problems.Where(d => d.Severity == Severity.Error).ToList();
+
+        // The topic of whatever is about to be reported, so `emerald explain` needs no
+        // argument. A warning counts when nothing worse happened — it is still the last
+        // thing the compiler said.
+        Explanations.Remember(
+            (errors.Count > 0 ? errors[0] : problems[0]).Topic);
+
         if (errors.Count == 0) return;
 
         Write(errors[0], project, "");
+
+        if (errors[0].Topic is not null)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("  emerald explain");
+        }
 
         if (errors.Count > 1)
         {

@@ -5,4 +5,6 @@ list_annotation_bare.em:1  List needs to say what it holds.
 
   Write the element type in angle brackets:  List<String>
 
+  emerald explain
+
   2 further error(s) suppressed — likely caused by this one.

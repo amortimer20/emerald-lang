@@ -76,6 +76,77 @@ public static class Commands
     }
 
     /// <summary>
+    /// <c>emerald fmt</c> — zero configuration, by design (§3.5). gofmt's innovation was
+    /// removing the argument, not the formatting, so there is nothing here to set.
+    ///
+    /// A path may be a file or a directory; with no path, the current directory. Files
+    /// that do not scan are reported and skipped rather than rewritten — a file with an
+    /// unterminated string has no reliable brace structure, and a formatter guessing at
+    /// one is how a small mistake becomes a mangled file.
+    /// </summary>
+    public static int Fmt(string[] args)
+    {
+        bool checkOnly = args.Contains("--check");
+        string path = args.FirstOrDefault(a => !a.StartsWith('-')) ?? ".";
+
+        List<string> files = [];
+        if (File.Exists(path)) files.Add(path);
+        else if (Directory.Exists(path))
+            files.AddRange(Directory.EnumerateFiles(path, "*.em", SearchOption.AllDirectories)
+                                    .OrderBy(p => p, StringComparer.Ordinal));
+        else
+        {
+            Console.Error.WriteLine($"No file or directory named {path}.");
+            return 66;
+        }
+
+        if (files.Count == 0)
+        {
+            Console.WriteLine($"No .em files under {path}.");
+            return 0;
+        }
+
+        int changed = 0, skipped = 0;
+
+        foreach (string file in files)
+        {
+            string original = File.ReadAllText(file);
+            string? formatted = Formatter.Format(original);
+
+            if (formatted is null)
+            {
+                Console.Error.WriteLine($"{Path.GetFileName(file)} — cannot be formatted "
+                                        + "until it scans. Run emerald check on it.");
+                skipped++;
+                continue;
+            }
+
+            if (formatted == original.Replace("\r\n", "\n")) continue;
+
+            changed++;
+            if (checkOnly) Console.WriteLine($"{file} would change.");
+            else File.WriteAllText(file, formatted);
+        }
+
+        if (checkOnly)
+        {
+            Console.WriteLine(changed == 0
+                ? "Already formatted."
+                : $"{changed} file(s) would change.");
+        }
+        else
+        {
+            Console.WriteLine(changed == 0
+                ? "Already formatted."
+                : $"Formatted {changed} file(s).");
+        }
+
+        // --check is for a build that should fail on unformatted code; formatting for
+        // real has done its job either way.
+        return checkOnly && changed > 0 ? 1 : skipped > 0 ? 65 : 0;
+    }
+
+    /// <summary>
     /// <c>emerald new my_game</c> — creates one file and nothing else (§3.5). No manifest,
     /// no src/, no .gitignore: emerald.toml appears the first time something needs it.
     /// A new project should be readable in full, which is the line-1 principle applied to

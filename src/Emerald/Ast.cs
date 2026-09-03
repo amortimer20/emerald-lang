@@ -9,7 +9,12 @@ public enum Severity { Error, Warning }
 
 public sealed record Diagnostic(
     string File, int Line, string Message, string? Hint = null,
-    Severity Severity = Severity.Error);
+    Severity Severity = Severity.Error,
+
+    /// <summary>Which worked example `emerald explain` should show for this. Null where
+    /// none is written yet, which is most of them and is said out loud rather than
+    /// papered over.</summary>
+    string? Topic = null);
 
 /// <summary>
 /// A written type. <c>Element</c> is the type argument of a generic — only

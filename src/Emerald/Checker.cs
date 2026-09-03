@@ -425,7 +425,8 @@ public sealed class Checker(
                   + $"{Join(ownFields)} would never be given a value.",
                   $"Add one:  constructor({ownFields[0]}: ...) {{ self.{ownFields[0]} = {ownFields[0]} }}"
                   + "\n  Or give the field a value where it is declared, or declare it "
-                  + "nullable with ? if it may genuinely be missing.");
+                  + "nullable with ? if it may genuinely be missing.",
+                  topic: "field-needs-value");
             return;
         }
 
@@ -453,7 +454,8 @@ public sealed class Checker(
               $"This constructor leaves {Join(missed)} without a value.",
               $"Assign it here:  self.{missed[0]} = ...\n"
               + "  Only assignments written directly in the constructor count — a helper "
-              + "method cannot be seen to have done it.");
+              + "method cannot be seen to have done it.",
+              topic: "field-needs-value");
     }
 
     private static string Join(List<string> names) =>
@@ -749,7 +751,8 @@ public sealed class Checker(
             {
                 Error(a.Op.Line,
                       $"{s.Info.Name} is a struct, so {member.Name.Lexeme} cannot be changed.",
-                      "Structs are immutable. Build a new one instead of modifying this.");
+                      "Structs are immutable. Build a new one instead of modifying this.",
+                      topic: "struct-immutable");
             }
             return;
         }
@@ -808,7 +811,8 @@ public sealed class Checker(
                   $"{word} cannot leave a block.",
                   $"The loop around this one is outside the block, and a block is a "
                   + $"function — {word} only affects a loop written in the same function. "
-                  + "A plain for loop over the same items can use it.");
+                  + "A plain for loop over the same items can use it.",
+                  topic: "break-in-block");
         else
             Error(keyword.Line, $"{word} can only appear inside a loop.");
     }
@@ -911,7 +915,8 @@ public sealed class Checker(
                       iterable is EmType.Obj
                           ? "A range, a list, and a string can be looped over. "
                             + "For anything else, expose a list from it."
-                          : "Loop over a range (1..5), a list, or a string.");
+                          : "Loop over a range (1..5), a list, or a string.",
+                      topic: "loop-over");
                 element = EmType.Any;
                 break;
         }
@@ -1225,7 +1230,8 @@ public sealed class Checker(
             Error(b.Op.Line,
                   $"{left.Show()} does not define {b.Op.Lexeme}.",
                   $"Operators are methods here. Mix in {trait} and define {method}:  "
-                  + $"{kind} {left.Show()} with {trait}");
+                  + $"{kind} {left.Show()} with {trait}",
+                  topic: "operator-trait");
             return EmType.Any;
         }
 
@@ -1338,7 +1344,8 @@ public sealed class Checker(
             Error(name.Line,
                   $"This is {receiver.Show()}, not {receiver.Stripped.Show()}, so {name.Lexeme} may not exist.",
                   $"{Article(receiver.Show())} {receiver.Show()} holds either {Article(receiver.Stripped.Show()).ToLowerInvariant()} {receiver.Stripped.Show()} or nothing. "
-                  + "Check it first, or supply a fallback with .or(...)");
+                  + "Check it first, or supply a fallback with .or(...)",
+                  topic: "maybe");
             return EmType.Any;
         }
 
@@ -1472,7 +1479,8 @@ public sealed class Checker(
             Error(LineOf(c.Args[i]) is var at && at > 0 ? at : line,
                   $"{what} expects {fn.Params[i].Show()} "
                   + $"{Ordinal(i)}, but this is {given[i].Show()}.",
-                  Widening(fn.Params[i], given[i]));
+                  Widening(fn.Params[i], given[i]),
+                  topic: "argument-type");
         }
 
         return fn.Return;
@@ -1641,7 +1649,8 @@ public sealed class Checker(
             {
                 Error(annotation.Name.Line,
                       "List needs to say what it holds.",
-                      "Write the element type in angle brackets:  List<String>");
+                      "Write the element type in angle brackets:  List<String>",
+                      topic: "list-type");
                 return EmType.Any;
             }
 
@@ -1911,7 +1920,8 @@ public sealed class Checker(
             if (!char.IsUpper(bare[0]) || bare.Contains('_'))
                 Warn(name.Line,
                      $"Type names are written in PascalCase, so {text} reads as something else.",
-                     $"Rename it to {ToPascal(bare)}. Types are capitalised; nothing else is.");
+                     $"Rename it to {ToPascal(bare)}. Types are capitalised; nothing else is.",
+                     topic: "casing");
             return;
         }
 
@@ -1927,7 +1937,8 @@ public sealed class Checker(
         if (bare.Any(char.IsUpper))
             Warn(name.Line,
                  $"{Article(kind)} {kind} is written in snake_case, so {text} reads as a type.",
-                 $"Rename it to {ToSnake(bare)}. Capitalised names mean types in Emerald.");
+                 $"Rename it to {ToSnake(bare)}. Capitalised names mean types in Emerald.",
+                 topic: "casing");
     }
 
     /// <summary>
@@ -1975,9 +1986,9 @@ public sealed class Checker(
         string.Concat(name.Split('_', StringSplitOptions.RemoveEmptyEntries)
                           .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
 
-    private void Warn(int line, string message, string? hint = null) =>
-        Diagnostics.Add(new Diagnostic(_file, line, message, hint, Severity.Warning));
+    private void Warn(int line, string message, string? hint = null, string? topic = null) =>
+        Diagnostics.Add(new Diagnostic(_file, line, message, hint, Severity.Warning, topic));
 
-    private void Error(int line, string message, string? hint = null) =>
-        Diagnostics.Add(new Diagnostic(_file, line, message, hint));
+    private void Error(int line, string message, string? hint = null, string? topic = null) =>
+        Diagnostics.Add(new Diagnostic(_file, line, message, hint, Severity.Error, topic));
 }

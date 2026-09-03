@@ -4,3 +4,5 @@ err_nullable.em:2  This is Int?, not Int, so abs may not exist.
     2 | print(maybe.abs)
 
   An Int? holds either an Int or nothing. Check it first, or supply a fallback with .or(...)
+
+  emerald explain

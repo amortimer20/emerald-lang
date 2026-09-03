@@ -40,6 +40,15 @@ public sealed class Scanner(string source, string fileName)
 
     public List<Diagnostic> Diagnostics { get; } = [];
 
+    /// <summary>
+    /// First and last line of each multi-line <c>#[ ]#</c> comment. The formatter needs
+    /// these: what is inside a block comment is freeform text — a diagram, a pasted
+    /// sample — and re-indenting it destroys the only thing its layout was for. Recorded
+    /// here rather than found again later, since finding them means repeating the nesting
+    /// and string rules this scanner already has.
+    /// </summary>
+    public List<(int From, int To)> BlockComments { get; } = [];
+
     public List<Token> ScanTokens()
     {
         while (!AtEnd)
@@ -126,6 +135,7 @@ public sealed class Scanner(string source, string fileName)
     {
         if (Peek() == '[')            // #[ ... ]# block, nesting
         {
+            int opened = _line;
             Advance();
             int depth = 1;
             while (!AtEnd && depth > 0)
@@ -135,6 +145,7 @@ public sealed class Scanner(string source, string fileName)
                 else { if (Peek() == '\n') _line++; Advance(); }
             }
             if (depth > 0) Error("This block comment is never closed.");
+            else if (_line > opened) BlockComments.Add((opened, _line));
         }
         else                          // # line and ## doc comments
         {

@@ -1,4 +1,4 @@
-# Program: My Number Guessing Game
+# Program: Number Guessing Game
 # Author: Anthony Mortimer
 
 print("### Number Guessing Game 2026 ###")
