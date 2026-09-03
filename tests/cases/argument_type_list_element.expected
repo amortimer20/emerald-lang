@@ -1,0 +1,4 @@
+
+argument_type_list_element.em:2  total expects List<Int> as its first argument, but this is List<String>.
+
+    2 | print(total(["a", "b"]))

@@ -1,5 +1,5 @@
 
-err_alias_collect.em:2  No method named collect on Array<Int>.
+err_alias_collect.em:2  No method named collect on List<Int>.
 
     2 | print(ns.collect { n => n * 2 })
 

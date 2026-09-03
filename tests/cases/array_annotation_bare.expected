@@ -1,8 +1,0 @@
-
-array_annotation_bare.em:1  Array needs to say what it holds.
-
-    1 | func total(xs: Array): Int { return xs.sum }
-
-  Write the element type in angle brackets:  Array<String>
-
-  2 further error(s) suppressed — likely caused by this one.

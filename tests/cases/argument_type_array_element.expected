@@ -1,4 +1,0 @@
-
-argument_type_array_element.em:2  total expects Array<Int> as its first argument, but this is Array<String>.
-
-    2 | print(total(["a", "b"]))

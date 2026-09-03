@@ -8,7 +8,7 @@ for i in 1..3 {
 }
 
 for animal in ["cat", "dog", "fox"] {
-    print("array: #{animal}")
+    print("list:   #{animal}")
 }
 
 # A string yields characters — real ones. `é` is one turn of the loop, not two,

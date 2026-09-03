@@ -1,4 +1,4 @@
-# Arrays and the core collection API
+# Lists and the core collection API
 
 var numbers = [5, 3, 8, 1, 9, 2]
 
@@ -9,7 +9,7 @@ print("sorted:   #{numbers.sort.join(", ")}")
 print("reversed: #{numbers.reverse.join(", ")}")
 print("index 0:  #{numbers[0]}")
 
-# x is known to be an Int here — inferred from the array's element type
+# x is known to be an Int here — inferred from the list's element type
 var doubled = numbers.map { x => x * 2 }
 print("doubled:  #{doubled.join(", ")}")
 

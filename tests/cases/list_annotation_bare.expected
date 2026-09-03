@@ -1,0 +1,8 @@
+
+list_annotation_bare.em:1  List needs to say what it holds.
+
+    1 | func total(xs: List): Int { return xs.sum }
+
+  Write the element type in angle brackets:  List<String>
+
+  2 further error(s) suppressed — likely caused by this one.

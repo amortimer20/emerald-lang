@@ -1,14 +1,14 @@
-## Array<T> as a parameter, a return type, a field, and nested — none of which could
+## List<T> as a parameter, a return type, a field, and nested — none of which could
 ## be written down before.
-func total(xs: Array<Int>): Int {
+func total(xs: List<Int>): Int {
     return xs.sum
 }
 
-func shout(names: Array<String>): Array<String> {
+func shout(names: List<String>): List<String> {
     return names.map { n => n.upper() }
 }
 
-func rows_in(grid: Array<Array<Int>>): Int {
+func rows_in(grid: List<List<Int>>): Int {
     var n = 0
     for row in grid { n += row.count }
     return n
@@ -18,14 +18,14 @@ print(total([1, 2, 3]))
 print(shout(["ada", "bo"]).join(", "))
 print(rows_in([[1, 2], [3]]))
 
-## Nullable array.
-var cache: Array<String>? = nothing
+## Nullable list.
+var cache: List<String>? = nothing
 print(cache.or(["empty"]).join(""))
 
 class Report {
-    var rows: Array<String>
+    var rows: List<String>
 
-    constructor(rows: Array<String>) {
+    constructor(rows: List<String>) {
         self.rows = rows
     }
 
@@ -33,7 +33,7 @@ class Report {
         self.rows.add(text)
     }
 
-    func lines(): Array<String> {
+    func lines(): List<String> {
         return self.rows
     }
 }

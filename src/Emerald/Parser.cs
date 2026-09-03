@@ -645,8 +645,8 @@ public sealed class Parser(List<Token> tokens, string fileName)
                 while (Match(TokenType.Comma));
             }
             _noTrailingLambda = saved;
-            Consume(TokenType.RightBracket, "Expected ']' to close the array.");
-            return new Expr.ArrayLiteral(bracket, items);
+            Consume(TokenType.RightBracket, "Expected ']' to close the list.");
+            return new Expr.ListLiteral(bracket, items);
         }
 
         if (Check(TokenType.Identifier))
@@ -774,11 +774,11 @@ public sealed class Parser(List<Token> tokens, string fileName)
         if (name.Lexeme.EndsWith('?'))
             return new TypeRef(name with { Lexeme = name.Lexeme[..^1] }, Nullable: true);
 
-        // Array<String>. One type argument, because Array is the only generic there is —
+        // List<String>. One type argument, because List is the only generic there is —
         // §5.3 makes the parameterised containers compiler-owned, so this grammar is for
         // consuming them, never for declaring one.
         //
-        // Nesting works without special handling: Array<Array<Int>> closes with two
+        // Nesting works without special handling: List<List<Int>> closes with two
         // Greater tokens, since Emerald has no shift operators to confuse them with.
         TypeRef? element = null;
         if (Match(TokenType.Less))

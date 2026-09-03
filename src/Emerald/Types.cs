@@ -22,11 +22,11 @@ public abstract record EmType
     }
 
     /// <summary>
-    /// Array&lt;T&gt; — the one generic type in v0. Users cannot declare generics; the
+    /// List&lt;T&gt; — the one generic type there is. Users cannot declare generics; the
     /// compiler owns the parameterised containers. That is §5.3's split, and exactly what
     /// Go did with slices and maps for a decade.
     /// </summary>
-    public sealed record Arr(EmType Element) : EmType;
+    public sealed record Lst(EmType Element) : EmType;
 
     /// <summary>An instance of a user-declared class.</summary>
     public sealed record Obj(ClassInfo Info) : EmType;
@@ -58,17 +58,17 @@ public abstract record EmType
     {
         Prim p => p.Name,
         Maybe m => m.Inner.Show() + "?",
-        Arr a => $"Array<{a.Element.Show()}>",
+        Lst a => $"List<{a.Element.Show()}>",
         Obj o => o.Info.Name,
         Func => "Function",
         _ => "?"
     };
 
-    /// <summary>The name used to look up methods — <c>Array&lt;Int&gt;</c> resolves as Array.</summary>
+    /// <summary>The name used to look up methods — <c>List&lt;Int&gt;</c> resolves as List.</summary>
     public string Head => this switch
     {
         Prim p => p.Name,
-        Arr => "Array",
+        Lst => "List",
         Obj o => o.Info.Name,
         Func => "Function",
         Maybe m => m.Inner.Head,
@@ -94,7 +94,7 @@ public abstract record EmType
         // Int widens into Float, but not the reverse — no silent truncation.
         if (Equals(Float) && from.Equals(Int)) return true;
 
-        if (this is Arr x && from is Arr y) return x.Element.Accepts(y.Element);
+        if (this is Lst x && from is Lst y) return x.Element.Accepts(y.Element);
 
         // A subclass is usable wherever its base is wanted.
         if (this is Obj want && from is Obj got) return got.Info.IsSubclassOf(want.Info);
@@ -149,8 +149,8 @@ public static class Signatures
         [("String", "to_float_maybe")] = EmType.Nullable(EmType.Float),
 
         // §3.2 promised these when it ruled out integer indexing on strings.
-        [("String", "chars")] = new EmType.Arr(EmType.String),
-        [("String", "split")] = new EmType.Arr(EmType.String),
+        [("String", "chars")] = new EmType.Lst(EmType.String),
+        [("String", "split")] = new EmType.Lst(EmType.String),
         [("String", "replace")] = EmType.String,
 
         // Math — free functions that replace no syntax, so §3.7 sends them to a module.
@@ -180,15 +180,15 @@ public static class Signatures
 
     /// <summary>Method names on this type, for "did you mean" suggestions (§3.6).</summary>
     public static IEnumerable<string> MethodsOn(EmType receiver) =>
-        receiver is EmType.Arr
-            ? ArrayMethods
+        receiver is EmType.Lst
+            ? ListMethods
             : Returns.Keys.Where(k => k.Item1 == receiver.Head).Select(k => k.Item2);
 
     /// <summary>
     /// The core twenty (§3.7). Return types depend on the element type, so unlike the
     /// table above these are resolved in the checker rather than looked up.
     /// </summary>
-    public static readonly string[] ArrayMethods =
+    public static readonly string[] ListMethods =
     [
         "each", "map", "filter", "reject", "find", "index_of", "contains?",
         "any?", "all?", "empty?", "reduce", "count", "sum", "min", "max",

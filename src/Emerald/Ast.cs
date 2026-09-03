@@ -13,7 +13,7 @@ public sealed record Diagnostic(
 
 /// <summary>
 /// A written type. <c>Element</c> is the type argument of a generic — only
-/// <c>Array<T></c> for now, since §5.3 makes the parameterised containers
+/// <c>List<T></c> for now, since §5.3 makes the parameterised containers
 /// compiler-owned and users cannot declare their own.
 /// </summary>
 public sealed record TypeRef(Token Name, bool Nullable, TypeRef? Element = null);
@@ -43,7 +43,7 @@ public abstract record Expr
     public sealed record RangeExpr(Expr Start, Expr End) : Expr;
 
     /// <summary>[1, 2, 3]</summary>
-    public sealed record ArrayLiteral(Token Bracket, List<Expr> Items) : Expr;
+    public sealed record ListLiteral(Token Bracket, List<Expr> Items) : Expr;
 
     /// <summary>a[0] — lowered through the Indexable trait once traits exist (§3.2).</summary>
     public sealed record Index(Expr Target, Token Bracket, Expr Position) : Expr;

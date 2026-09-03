@@ -1,6 +1,0 @@
-
-array_annotation_not_generic.em:1  Int does not take a type argument.
-
-    1 | var n: Int<String> = 5
-
-  Array is the only generic type in Emerald, and it is built in — a program cannot declare its own.

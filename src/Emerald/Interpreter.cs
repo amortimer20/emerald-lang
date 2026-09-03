@@ -183,7 +183,7 @@ public sealed class Interpreter
     }
 
     /// <summary>
-    /// <c>a[i] = value</c>, and the compound forms. An array writes in place; a user type
+    /// <c>a[i] = value</c>, and the compound forms. A list writes in place; a user type
     /// writes through <c>set_at</c>, the setter half of Indexable.
     /// </summary>
     private void ExecuteIndexAssign(Stmt.Assign a, Expr.Index index, Env env)
@@ -221,20 +221,20 @@ public sealed class Interpreter
             throw new RuntimeError(
                 $"An index must be an Int, got {Builtins.TypeName(position)}.");
 
-        if (target is not EmArray array)
+        if (target is not EmList list)
             throw new RuntimeError($"Cannot index {Builtins.TypeName(target)}.");
 
-        if (i < 0 || i >= array.Items.Count)
+        if (i < 0 || i >= list.Items.Count)
             throw new RuntimeError(
-                $"Index {i} is outside this array, which holds {array.Items.Count} item(s).",
-                array.Items.Count == 0
-                    ? "The array is empty."
-                    : $"Valid positions run from 0 to {array.Items.Count - 1}.");
+                $"Index {i} is outside this list, which holds {list.Items.Count} item(s).",
+                list.Items.Count == 0
+                    ? "The list is empty."
+                    : $"Valid positions run from 0 to {list.Items.Count - 1}.");
 
         if (a.Op.Type != TokenType.Assign)
-            value = Operate(array.Items[(int)i], CompoundOp(a.Op.Type), value, a.Op);
+            value = Operate(list.Items[(int)i], CompoundOp(a.Op.Type), value, a.Op);
 
-        array.Items[(int)i] = value;
+        list.Items[(int)i] = value;
     }
 
     /// <summary>
@@ -265,17 +265,17 @@ public sealed class Interpreter
         IEnumerable<object?> items = iterable switch
         {
             EmRange range => range.Select(i => (object?)i),
-            EmArray array => array.Items,
+            EmList list => list.Items,
             string text => Builtins.CharactersOf(text),
             _ => throw new RuntimeError(
                 $"Cannot loop over {Builtins.TypeName(iterable)}.",
-                "Loop over a range (1..5), an array, or a string."),
+                "Loop over a range (1..5), a list, or a string."),
         };
 
-        // An array copied before walking it, so `for x in xs { xs.add(...) }` terminates
+        // A list copied before walking it, so `for x in xs { xs.add(...) }` terminates
         // rather than growing under the loop. A student writing that has made a mistake,
         // but hanging is a far worse way to learn it than a loop that simply ends.
-        if (iterable is EmArray) items = [.. items];
+        if (iterable is EmList) items = [.. items];
 
         foreach (object? item in items)
         {
@@ -580,7 +580,7 @@ public sealed class Interpreter
         Expr.Variable v => Lookup(v.Name, env),
         Expr.Interpolation s => Interpolate(s, env),
         Expr.RangeExpr r => MakeRange(r, env),
-        Expr.ArrayLiteral a => new EmArray([.. a.Items.Select(item => Evaluate(item, env))]),
+        Expr.ListLiteral a => new EmList([.. a.Items.Select(item => Evaluate(item, env))]),
         Expr.Index ix => EvaluateIndex(ix, env),
         Expr.Unary u => EvaluateUnary(u, env),
         Expr.Binary b => EvaluateBinary(b, env),
@@ -615,7 +615,7 @@ public sealed class Interpreter
 
         // A user type indexes through Indexable. Checked before the Int requirement,
         // because at() decides for itself what an index is — a Grid may want a String key
-        // even though arrays never will.
+        // even though lists never will.
         if (target is EmInstance instance)
         {
             var at = instance.Class.FindMethod(Prelude.AtMethod)
@@ -630,17 +630,17 @@ public sealed class Interpreter
             throw new RuntimeError(
                 $"An index must be an Int, got {Builtins.TypeName(position)}.");
 
-        if (target is not EmArray array)
+        if (target is not EmList list)
             throw new RuntimeError($"Cannot index {Builtins.TypeName(target)}.");
 
-        if (i < 0 || i >= array.Items.Count)
+        if (i < 0 || i >= list.Items.Count)
             throw new RuntimeError(
-                $"Index {i} is outside this array, which holds {array.Items.Count} item(s).",
-                array.Items.Count == 0
-                    ? "The array is empty."
-                    : $"Valid positions run from 0 to {array.Items.Count - 1}.");
+                $"Index {i} is outside this list, which holds {list.Items.Count} item(s).",
+                list.Items.Count == 0
+                    ? "The list is empty."
+                    : $"Valid positions run from 0 to {list.Items.Count - 1}.");
 
-        return array.Items[(int)i];
+        return list.Items[(int)i];
     }
 
     private object? MakeRange(Expr.RangeExpr r, Env env)

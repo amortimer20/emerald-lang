@@ -1,4 +1,4 @@
-## for walks a range, an array, or a string. Nothing else — there is no Iterable
+## for walks a range, a list, or a string. Nothing else — there is no Iterable
 ## trait yet, deliberately.
 for i in 1..3 { print(i) }
 

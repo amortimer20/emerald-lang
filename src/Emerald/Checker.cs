@@ -777,7 +777,7 @@ public sealed class Checker(
     }
 
     /// <summary>
-    /// <c>a[i] = value</c>. An array writes its element type; a user type writes through
+    /// <c>a[i] = value</c>. A list writes its element type; a user type writes through
     /// <c>set_at</c>, which is the setter half of Indexable — present means writable,
     /// absent means read-only, exactly as a property's <c>set</c> body works.
     /// </summary>
@@ -817,12 +817,12 @@ public sealed class Checker(
             case EmType.Unknown:
                 return;
 
-            case EmType.Arr array:
-                if (!compound && !array.Element.Accepts(value))
+            case EmType.Lst list:
+                if (!compound && !list.Element.Accepts(value))
                     Error(a.Op.Line,
-                          $"This array holds {array.Element.Show()}, "
+                          $"This list holds {list.Element.Show()}, "
                           + $"but this gives it {value.Show()}.",
-                          Widening(array.Element, value));
+                          Widening(list.Element, value));
                 return;
 
             case EmType.Obj obj:
@@ -878,8 +878,8 @@ public sealed class Checker(
                 element = EmType.Any;
                 break;
 
-            case EmType.Arr array:
-                element = array.Element;
+            case EmType.Lst list:
+                element = list.Element;
                 break;
 
             case EmType.Prim { Name: "Range" }:
@@ -896,9 +896,9 @@ public sealed class Checker(
                 Error(f.Variable.Line,
                       $"Cannot loop over {iterable.Show()}.",
                       iterable is EmType.Obj
-                          ? "A range, an array, and a string can be looped over. "
-                            + "For anything else, expose an array from it."
-                          : "Loop over a range (1..5), an array, or a string.");
+                          ? "A range, a list, and a string can be looped over. "
+                            + "For anything else, expose a list from it."
+                          : "Loop over a range (1..5), a list, or a string.");
                 element = EmType.Any;
                 break;
         }
@@ -1046,7 +1046,7 @@ public sealed class Checker(
         Expr.Grouping g => TypeOf(g.Inner, scope),
         Expr.Variable v => VariableType(v, scope),
         Expr.RangeExpr r => RangeType(r, scope),
-        Expr.ArrayLiteral a => ArrayLiteralType(a, scope),
+        Expr.ListLiteral a => ListLiteralType(a, scope),
         Expr.Index ix => IndexType(ix, scope),
         Expr.Unary u => UnaryType(u, scope),
         Expr.Binary b => BinaryType(b, scope),
@@ -1309,8 +1309,8 @@ public sealed class Checker(
 
         // A bare `arr.count` is a zero-argument call, so it resolves the same way
         // `arr.count()` does — parens are optional when nothing is passed (§3.1).
-        if (receiver is EmType.Arr array)
-            return ArrayMemberType(array, name, EmType.Any, EmType.Any);
+        if (receiver is EmType.Lst list)
+            return ListMemberType(list, name, EmType.Any, EmType.Any);
 
         // .or and .value are the two things you are *supposed* to ask of a maybe, so they
         // have to be reachable before the guard below rejects everything else (§3.2).
@@ -1348,7 +1348,7 @@ public sealed class Checker(
 
     private EmType CallType(Expr.Call c, Scope scope)
     {
-        // Method calls resolve the receiver first, because an array method's block
+        // Method calls resolve the receiver first, because a list method's block
         // parameter is typed from the element type — that is the contextual inference
         // that makes `numbers.map { x => x * 2 }` know what x is.
         if (c.Callee is Expr.Get get)
@@ -1362,7 +1362,7 @@ public sealed class Checker(
             }
 
             var receiver = TypeOf(get.Target, scope);
-            if (receiver is EmType.Arr array) return ArrayCallType(array, c, get.Name, scope);
+            if (receiver is EmType.Lst list) return ListCallType(list, c, get.Name, scope);
 
             foreach (var arg in c.Args) TypeOf(arg, scope);
             if (c.Trailing is not null) TypeOf(c.Trailing, scope);
@@ -1459,11 +1459,11 @@ public sealed class Checker(
     private static string Article(string word) =>
         "AEIOU".Contains(char.ToUpperInvariant(word[0])) ? "An" : "A";
 
-    // ---- arrays ---------------------------------------------------------
+    // ---- lists  ---------------------------------------------------------
 
-    private EmType ArrayLiteralType(Expr.ArrayLiteral a, Scope scope)
+    private EmType ListLiteralType(Expr.ListLiteral a, Scope scope)
     {
-        if (a.Items.Count == 0) return new EmType.Arr(EmType.Any);
+        if (a.Items.Count == 0) return new EmType.Lst(EmType.Any);
 
         var types = a.Items.Select(i => TypeOf(i, scope)).ToList();
         var common = types[0];
@@ -1474,14 +1474,14 @@ public sealed class Checker(
             if (merged is null)
             {
                 Error(a.Bracket.Line,
-                      $"This array holds {common.Show()} but item {i + 1} is {types[i].Show()}.",
-                      "Every item in an array has to share a type.");
-                return new EmType.Arr(EmType.Any);
+                      $"This list holds {common.Show()} but item {i + 1} is {types[i].Show()}.",
+                      "Every item in a list has to share a type.");
+                return new EmType.Lst(EmType.Any);
             }
             common = merged;
         }
 
-        return new EmType.Arr(common);
+        return new EmType.Lst(common);
     }
 
     /// <summary>
@@ -1508,7 +1508,7 @@ public sealed class Checker(
         var target = TypeOf(ix.Target, scope);
         Expect(TypeOf(ix.Position, scope), EmType.Int, ix.Position, "an index");
 
-        if (target is EmType.Arr array) return array.Element;
+        if (target is EmType.Lst list) return list.Element;
         if (target is EmType.Unknown) return EmType.Any;
 
         // A user type reaches a[i] through Indexable, the same way + goes through Addable.
@@ -1536,18 +1536,18 @@ public sealed class Checker(
     /// rather than looked up — and the block's parameter is bound to the element type on
     /// the way in, which is what lets <c>{ x =&gt; ... }</c> know what x is.
     /// </summary>
-    private EmType ArrayCallType(EmType.Arr array, Expr.Call c, Token name, Scope scope)
+    private EmType ListCallType(EmType.Lst list, Expr.Call c, Token name, Scope scope)
     {
         foreach (var arg in c.Args) TypeOf(arg, scope);
 
         EmType blockReturn = EmType.Any;
         if (c.Trailing is not null)
         {
-            var hint = Signatures.TakesElementBlock.Contains(name.Lexeme) ? array.Element : null;
+            var hint = Signatures.TakesElementBlock.Contains(name.Lexeme) ? list.Element : null;
             if (LambdaType(c.Trailing, scope, hint) is EmType.Func f) blockReturn = f.Return;
         }
 
-        return ArrayMemberType(array, name, blockReturn,
+        return ListMemberType(list, name, blockReturn,
                                c.Args.Count > 0 ? TypeOf(c.Args[0], scope) : EmType.Any);
     }
 
@@ -1555,22 +1555,22 @@ public sealed class Checker(
     /// Shared by <c>arr.count</c> and <c>arr.count()</c>, which are the same thing —
     /// parens are optional when there is nothing to pass (§3.1).
     /// </summary>
-    private EmType ArrayMemberType(
-        EmType.Arr array, Token name, EmType blockReturn, EmType firstArg)
+    private EmType ListMemberType(
+        EmType.Lst list, Token name, EmType blockReturn, EmType firstArg)
     {
-        EmType element = array.Element;
+        EmType element = list.Element;
 
-        if (!Signatures.ArrayMethods.Contains(name.Lexeme))
+        if (!Signatures.ListMethods.Contains(name.Lexeme))
         {
-            Error(name.Line, $"No method named {name.Lexeme} on {array.Show()}.",
-                  Suggest(name.Lexeme, Signatures.ArrayMethods));
+            Error(name.Line, $"No method named {name.Lexeme} on {list.Show()}.",
+                  Suggest(name.Lexeme, Signatures.ListMethods));
             return EmType.Any;
         }
 
         return name.Lexeme switch
         {
-            "map" => new EmType.Arr(blockReturn),
-            "filter" or "reject" or "sort" or "sort_by" or "reverse" => array,
+            "map" => new EmType.Lst(blockReturn),
+            "filter" or "reject" or "sort" or "sort_by" or "reverse" => list,
 
             // These can miss, so they give back a maybe and the checker insists you deal
             // with it. The clearest place the nullability design earns itself.
@@ -1591,28 +1591,28 @@ public sealed class Checker(
     {
         if (annotation is null) return EmType.Any;
 
-        // Array is the one generic a program may write down (§5.3). It must say what it
-        // holds: the checker has always been able to represent Array<String>, and only the
+        // List is the one generic a program may write down (§5.3). It must say what it
+        // holds: the checker has always been able to represent List<String>, and only the
         // annotation grammar could not spell it — which meant a named function could not
-        // take an array at all, since parameters must be annotated.
-        if (annotation.Name.Lexeme == "Array")
+        // take a list at all, since parameters must be annotated.
+        if (annotation.Name.Lexeme == "List")
         {
             if (annotation.Element is null)
             {
                 Error(annotation.Name.Line,
-                      "Array needs to say what it holds.",
-                      "Write the element type in angle brackets:  Array<String>");
+                      "List needs to say what it holds.",
+                      "Write the element type in angle brackets:  List<String>");
                 return EmType.Any;
             }
 
-            var arrayType = new EmType.Arr(Resolve(annotation.Element));
-            return annotation.Nullable ? EmType.Nullable(arrayType) : arrayType;
+            var listType = new EmType.Lst(Resolve(annotation.Element));
+            return annotation.Nullable ? EmType.Nullable(listType) : listType;
         }
 
         if (annotation.Element is not null)
             Error(annotation.Name.Line,
                   $"{annotation.Name.Lexeme} does not take a type argument.",
-                  "Array is the only generic type in Emerald, and it is built in — "
+                  "List is the only generic type in Emerald, and it is built in — "
                   + "a program cannot declare its own.");
 
         EmType baseType = annotation.Name.Lexeme switch
@@ -1634,7 +1634,7 @@ public sealed class Checker(
     private EmType Unknown(int line, string name)
     {
         Error(line, $"No type named {name}.",
-              "Emerald knows Int, Float, String, Bool, Range, Array<...>, and Nothing.");
+              "Emerald knows Int, Float, String, Bool, Range, List<...>, and Nothing.");
         return EmType.Any;
     }
 

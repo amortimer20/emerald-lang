@@ -7,11 +7,11 @@ public interface ICallable
     object? Call(Interpreter interpreter, List<object?> args);
 }
 
-/// <summary>A growable sequence — Emerald has one, not C#'s array/List split (§3.7).</summary>
-public sealed class EmArray(List<object?> items)
+/// <summary>A growable sequence — Emerald has one, not C#'s list/List split (§3.7).</summary>
+public sealed class EmList(List<object?> items)
 {
     public List<object?> Items { get; } = items;
-    public EmArray() : this([]) { }
+    public EmList() : this([]) { }
 }
 
 /// <summary>
@@ -140,7 +140,7 @@ public static class Builtins
             double d => FloatMethod(d, name, args),
             string s => StringMethod(s, name, args),
             EmRange r => RangeMethod(interpreter, r, name, args),
-            EmArray a => ArrayMethod(interpreter, a, name, args),
+            EmList a => ListMethod(interpreter, a, name, args),
             EmError e => name switch
             {
                 "message" => e.Message,
@@ -161,20 +161,20 @@ public static class Builtins
             _ => throw new RuntimeError($"No method named {name} on {TypeName(target)}.")
         };
 
-    // ---- Array ----------------------------------------------------------
+    // ---- List -----------------------------------------------------------
 
-    private static object? ArrayMethod(
-        Interpreter interp, EmArray array, string name, List<object?> args)
+    private static object? ListMethod(
+        Interpreter interp, EmList list, string name, List<object?> args)
     {
-        List<object?> items = array.Items;
+        List<object?> items = list.Items;
 
         return name switch
         {
             // iterate / transform / select
             "each" => Each(interp, items, args),
-            "map" => new EmArray([.. items.Select(x => Block(args).Call(interp, [x]))]),
-            "filter" => new EmArray([.. items.Where(x => Truthy(Block(args).Call(interp, [x])))]),
-            "reject" => new EmArray([.. items.Where(x => !Truthy(Block(args).Call(interp, [x])))]),
+            "map" => new EmList([.. items.Select(x => Block(args).Call(interp, [x]))]),
+            "filter" => new EmList([.. items.Where(x => Truthy(Block(args).Call(interp, [x])))]),
+            "reject" => new EmList([.. items.Where(x => !Truthy(Block(args).Call(interp, [x])))]),
 
             // search — find and first/last give back a maybe, because they can miss
             "find" => items.FirstOrDefault(x => Truthy(Block(args).Call(interp, [x]))),
@@ -196,9 +196,9 @@ public static class Builtins
             "max" => items.Count == 0 ? null : items.Max(),
 
             // order
-            "sort" => new EmArray([.. items.OrderBy(x => x)]),
-            "sort_by" => new EmArray([.. items.OrderBy(x => Block(args).Call(interp, [x]))]),
-            "reverse" => new EmArray([.. Enumerable.Reverse(items)]),
+            "sort" => new EmList([.. items.OrderBy(x => x)]),
+            "sort_by" => new EmList([.. items.OrderBy(x => Block(args).Call(interp, [x]))]),
+            "reverse" => new EmList([.. Enumerable.Reverse(items)]),
 
             // access
             "first" => items.Count == 0 ? null : items[0],
@@ -212,7 +212,7 @@ public static class Builtins
             "remove_at" => Mutate(items, () => items.RemoveAt((int)AsInt(args[0], "remove_at"))),
             "clear" => Mutate(items, items.Clear),
 
-            _ => throw new RuntimeError($"No method named {name} on Array.")
+            _ => throw new RuntimeError($"No method named {name} on List.")
         };
 
         static object? Each(Interpreter interp, List<object?> items, List<object?> args)
@@ -330,9 +330,9 @@ public static class Builtins
 
             // The one §3.2 promised: strings are not integer-indexed, so this is how you
             // get characters. Graphemes, not UTF-16 units — an emoji is one character.
-            "chars" => new EmArray([.. Graphemes(value).Cast<object?>()]),
+            "chars" => new EmList([.. Graphemes(value).Cast<object?>()]),
 
-            "split" => new EmArray([.. value
+            "split" => new EmList([.. value
                 .Split(AsString(args[0], "split"), StringSplitOptions.None)
                 .Cast<object?>()]),
 
@@ -375,7 +375,7 @@ public static class Builtins
         EmRange r => $"{r.Start}..{r.End}",
         EmClass c => $"<class {c.Name}>",
         EmInstance i => $"<{i.Class.Name}>",
-        EmArray a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
+        EmList a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
         EmModule m => $"<module {m.Name}>",
         EmError e => e.Message,
         ICallable => "<function>",
@@ -390,7 +390,7 @@ public static class Builtins
         double => "Float",
         string => "String",
         EmRange => "Range",
-        EmArray => "Array",
+        EmList => "List",
         EmModule m => m.Name,
         EmError => "Error",
         EmClass c => $"class {c.Name}",
@@ -401,7 +401,7 @@ public static class Builtins
 
     /// <summary>
     /// A string's characters, for <c>for c in text</c>. The same graphemes
-    /// <c>.chars</c> gives, so walking a string and indexing its <c>.chars</c> array can
+    /// <c>.chars</c> gives, so walking a string and indexing its <c>.chars</c> list can
     /// never disagree about what a character is.
     /// </summary>
     public static IEnumerable<object?> CharactersOf(string value) =>

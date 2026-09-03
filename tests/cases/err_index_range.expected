@@ -1,5 +1,5 @@
 
-err_index_range.em:2  Index 7 is outside this array, which holds 2 item(s).
+err_index_range.em:2  Index 7 is outside this list, which holds 2 item(s).
 
     2 | print(ns[7])
 
