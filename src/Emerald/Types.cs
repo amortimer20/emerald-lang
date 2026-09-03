@@ -176,6 +176,7 @@ public static class Signatures
         [("Float", "zero?")] = new(Bool),      [("Float", "positive?")] = new(Bool),
         [("Float", "negative?")] = new(Bool),
         [("Float", "to_string")] = new(Str),   [("Float", "to_int")] = new(Int),
+        [("Float", "round_to")] = new(Float, [Int]),
 
         // String
         [("String", "length")] = new(Int),     [("String", "empty?")] = new(Bool),

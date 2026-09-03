@@ -462,6 +462,12 @@ public static class Builtins
         name switch
         {
             "round" => (long)Math.Round(value, MidpointRounding.AwayFromZero),
+
+            // A separate name rather than round(places), because the answer is a
+            // different type: round gives a whole number and round_to gives a Float.
+            // One name returning two types is an overload, which Emerald does not have
+            // yet — and `to_int` / `to_int_or` / `to_int_maybe` already settle the shape.
+            "round_to" => RoundTo(value, AsInt(args[0], "round_to")),
             "floor" => (long)Math.Floor(value),
             "ceil" => (long)Math.Ceiling(value),
             "abs" => Math.Abs(value),
@@ -472,6 +478,18 @@ public static class Builtins
             "to_int" => (long)value,
             _ => throw new RuntimeError($"No method named {name} on Float.")
         };
+
+    private static double RoundTo(double value, long places)
+    {
+        // .NET rounds to at most 15 places and throws past that. A number rounded to a
+        // negative place is a question with no answer rather than an edge case.
+        if (places < 0 || places > 15)
+            throw new RuntimeError(
+                $"round_to({places}) has no meaning.",
+                "Round to between 0 and 15 decimal places.");
+
+        return Math.Round(value, (int)places, MidpointRounding.AwayFromZero);
+    }
 
     // ---- String ---------------------------------------------------------
 
