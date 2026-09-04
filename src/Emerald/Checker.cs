@@ -287,6 +287,7 @@ public sealed class Checker(
     {
         var info = _classes[decl.Name.Lexeme];
         info.Kind = decl.Kind;
+        info.Mirrors = Carries(decl.Attributes, "mirrors");
 
         foreach (var traitName in decl.Traits)
         {
@@ -1534,10 +1535,34 @@ public sealed class Checker(
     /// Returns null when the target is not a class name, so ordinary member access
     /// continues normally.
     /// </summary>
+    /// <summary>
+    /// A member whose name begins with <c>_</c> belongs to its type and to anything that
+    /// extends it (§3.2). Checked at the <em>use</em> site, which is the reason visibility
+    /// lives in the name at all: a reader sees it where the call is written, without
+    /// going to look the declaration up.
+    /// </summary>
+    private void CheckVisibility(ClassInfo owner, Token name)
+    {
+        if (!name.Lexeme.StartsWith('_')) return;
+        if (_currentType is { } here && here.IsSubclassOf(owner)) return;
+
+        // Mirrored types follow a foreign API's naming, and .NET does use a leading
+        // underscore for names it means to be public. Emerald's rule cannot reach back
+        // and rename them, so it does not claim them either.
+        if (owner.Mirrors) return;
+
+        Error(name.Line,
+              $"{name.Lexeme} belongs to {owner.Name} — that is what the _ says.",
+              $"A name starting with _ can be used inside {owner.Name}, and inside any "
+              + $"class that extends it. Drop the _ to let the rest of the program use it.");
+    }
+
     private EmType? StaticOf(Expr target, Token name)
     {
         if (target is not Expr.Variable v) return null;
         if (!_classes.TryGetValue(v.Name.Lexeme, out var info)) return null;
+
+        CheckVisibility(info, name);
 
         if (info.FindStatic(name.Lexeme) is { } found) return found;
 
@@ -1668,6 +1693,7 @@ public sealed class Checker(
         // A user class: fields and methods, walking the base chain exactly as EmClass does.
         if (receiver is EmType.Obj obj)
         {
+            CheckVisibility(obj.Info, name);
             if (obj.Info.FindField(name.Lexeme) is { } fieldType) return fieldType;
             if (obj.Info.FindMethods(name.Lexeme) is { Count: > 0 } overloads)
             {
@@ -1790,6 +1816,7 @@ public sealed class Checker(
             if (receiver is EmType.Obj obj
                 && obj.Info.FindMethods(get.Name.Lexeme) is { Count: > 0 } candidates)
             {
+                CheckVisibility(obj.Info, get.Name);
                 string what = $"{obj.Info.Name}.{get.Name.Lexeme}";
 
                 if (candidates.Count == 1)

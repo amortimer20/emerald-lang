@@ -417,6 +417,9 @@ public sealed class ClassInfo(string name)
 
     public bool HasConstructor { get; set; }
 
+    /// <summary>Carries @mirrors, so its member names came from a foreign API (§3.4).</summary>
+    public bool Mirrors { get; set; }
+
     /// <summary>A class is usable as its base and as any trait it mixes in.</summary>
     public bool IsSubclassOf(ClassInfo other) =>
         this == other
