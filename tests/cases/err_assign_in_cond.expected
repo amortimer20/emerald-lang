@@ -4,3 +4,5 @@ err_assign_in_cond.em:2  Assignment cannot appear in a condition.
     2 | if x = 5 {
 
   Emerald uses = to assign a value and == to compare two values. Did you mean ==?
+
+  emerald explain

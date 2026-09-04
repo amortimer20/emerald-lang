@@ -491,7 +491,8 @@ public sealed class Parser(List<Token> tokens, string fileName)
         if (Check(TokenType.Assign))
             throw Error(Peek, "Assignment cannot appear in a condition.",
                         "Emerald uses = to assign a value and == to compare two values. "
-                        + "Did you mean ==?");
+                        + "Did you mean ==?",
+                        topic: "assign-in-condition");
 
         Consume(TokenType.LeftBrace, "Expected '{' to open a block.");
         List<Stmt> statements = [];
@@ -1000,9 +1001,10 @@ public sealed class Parser(List<Token> tokens, string fileName)
         throw Error(Peek, message, hint);
     }
 
-    private ParseError Error(Token token, string message, string? hint = null)
+    private ParseError Error(Token token, string message, string? hint = null,
+                             string? topic = null)
     {
-        Diagnostics.Add(new Diagnostic(fileName, token.Line, message, hint));
+        Diagnostics.Add(new Diagnostic(fileName, token.Line, message, hint, Topic: topic));
         return new ParseError();
     }
 
