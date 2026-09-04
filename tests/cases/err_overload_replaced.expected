@@ -1,0 +1,6 @@
+
+err_overload_replaced.em:14  Circle.draw takes 0 arguments, but got 1.
+
+   14 | print(Circle().draw(3))
+
+  Shape.draw takes 1, but Circle declares draw itself, and a class's own version replaces every one it inherits under that name. Add the version you want to Circle, or call it something else.

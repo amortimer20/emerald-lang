@@ -1824,19 +1824,28 @@ public sealed class Checker(
                 string what = $"{obj.Info.Name}.{get.Name.Lexeme}";
 
                 if (candidates.Count == 1)
-                    return CheckArguments(candidates[0], c, args, what, get.Name.Line);
+                    return CheckArguments(candidates[0], c, args, what, get.Name.Line,
+                                          obj.Info, get.Name.Lexeme);
 
                 int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
                 var chosen = candidates.FirstOrDefault(f => Fits(f, supplied, args));
                 if (chosen is not null) return chosen.Return;
+
+                string has = "It has " + string.Join(", and ", candidates.Select(
+                    f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".";
+
+                if (ReplacedOwner(obj.Info, get.Name.Lexeme, supplied) is { } from)
+                    has += $"\n{from}.{get.Name.Lexeme} would have taken these, but "
+                           + $"{obj.Info.Name} declares {get.Name.Lexeme} itself, and a "
+                           + "class's own version replaces every one it inherits under "
+                           + "that name.";
 
                 Error(get.Name.Line,
                       $"No version of {what} takes "
                       + (args.Count == 0
                             ? "no arguments."
                             : $"({string.Join(", ", args.Select(t => t.Show()))})."),
-                      "It has " + string.Join(", and ", candidates.Select(
-                          f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".");
+                      has);
                 return EmType.Any;
             }
 
@@ -1954,8 +1963,37 @@ public sealed class Checker(
     /// checker while <c>rename("a", "b", "c")</c> did not. One routine means a method's
     /// diagnostic cannot drift from a function's, and cannot go missing.
     /// </summary>
+    /// <summary>
+    /// The base or trait whose version of a name was replaced, when the class declared
+    /// that name itself and the call would have fitted the version it replaced.
+    ///
+    /// §3.2 makes a subclass declaring a name replace the base's whole set for it — that
+    /// is what overriding means. But the arity error on its own sends the reader to a
+    /// class that is missing a method they can plainly see on its parent, which is the
+    /// kind of true-but-unhelpful message §3.6 exists to stop.
+    /// </summary>
+    private static string? ReplacedOwner(ClassInfo info, string name, int supplied)
+    {
+        // Nothing of its own means nothing was replaced — the name resolved by inheritance.
+        if (!info.Methods.ContainsKey(name)) return null;
+
+        bool Fits(List<EmType.Func> versions) =>
+            versions.Any(f => supplied >= f.LeastArgs && supplied <= f.Params.Count);
+
+        for (var owner = info.Base; owner is not null; owner = owner.Base)
+            if (owner.Methods.TryGetValue(name, out var inherited) && Fits(inherited))
+                return owner.Name;
+
+        foreach (var trait in info.Traits)
+            if (trait.Methods.TryGetValue(name, out var provided) && Fits(provided))
+                return trait.Name;
+
+        return null;
+    }
+
     private EmType CheckArguments(
-        EmType.Func fn, Expr.Call c, List<EmType> given, string what, int line)
+        EmType.Func fn, Expr.Call c, List<EmType> given, string what, int line,
+        ClassInfo? owner = null, string? method = null)
     {
         int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
 
@@ -1967,7 +2005,17 @@ public sealed class Checker(
                 ? Count(fn.Params.Count, "argument")
                 : $"between {fn.LeastArgs} and {Count(fn.Params.Count, "argument")}";
 
-            Error(line, $"{what} takes {wanted}, but got {supplied}.");
+            string? replaced = owner is not null && method is not null
+                ? ReplacedOwner(owner, method, supplied)
+                : null;
+
+            Error(line, $"{what} takes {wanted}, but got {supplied}.",
+                  replaced is null
+                      ? null
+                      : $"{replaced}.{method} takes {supplied}, but {owner!.Name} declares "
+                        + $"{method} itself, and a class's own version replaces every one it "
+                        + $"inherits under that name. Add the version you want to "
+                        + $"{owner.Name}, or call it something else.");
             return fn.Return;
         }
 
@@ -2110,6 +2158,12 @@ public sealed class Checker(
         if (b is EmType.Unknown) return a;
         if (a.Accepts(b)) return a;
         if (b.Accepts(a)) return b;
+
+        // `nothing` beside a value is not a clash — it is what makes the pair optional.
+        // `["ada", nothing]` is a List<String?>, the type you would otherwise have had to
+        // write out and fill with .add, one item at a time, because the literal refused.
+        if (a.Equals(EmType.Nothing)) return EmType.Nullable(b);
+        if (b.Equals(EmType.Nothing)) return EmType.Nullable(a);
 
         if (a is EmType.Obj x && b is EmType.Obj y)
             for (var candidate = x.Info; candidate is not null; candidate = candidate.Base)
