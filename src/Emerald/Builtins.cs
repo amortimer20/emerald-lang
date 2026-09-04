@@ -201,7 +201,7 @@ public static class Builtins
         }
 
         // A present value simply is itself, whichever of these you ask.
-        if (target is not null && name is "or" or "value") return target;
+        if (target is not null && name is "or" or "must") return target;
         return Dispatch(interpreter, target, name, args);
     }
 
@@ -230,10 +230,10 @@ public static class Builtins
             },
             bool b => BoolMethod(b, name),
 
-            // .or and .value are the only things you may ask of nothing (§3.2).
+            // .or and .must are the only things you may ask of nothing (§3.2).
             null when name == "or" => args[0],
-            null when name == "value" => throw new RuntimeError(
-                "This is nothing, but .value() requires a value.",
+            null when name == "must" => throw new RuntimeError(
+                "This is nothing, and .must() said it would not be.",
                 "Check it against nothing first, or use .or(...) for a fallback."),
             null => throw new RuntimeError(
                 $"Cannot call {name} on nothing.",

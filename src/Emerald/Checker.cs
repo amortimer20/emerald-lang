@@ -1547,10 +1547,21 @@ public sealed class Checker(
         if (receiver is EmType.Dict dict) return DictMemberType(dict, name, null, scope);
         if (receiver is EmType.SetOf set) return SetMemberType(set, name, null, scope);
 
-        // .or and .value are the two things you are *supposed* to ask of a maybe, so they
+        // .or and .must are the two things you are *supposed* to ask of a maybe, so they
         // have to be reachable before the guard below rejects everything else (§3.2).
-        if (receiver.IsMaybe && name.Lexeme is "or" or "value")
+        if (receiver.IsMaybe && name.Lexeme is "or" or "must")
             return receiver.Stripped;
+
+        // Named .value() until it was renamed. The old name is the obvious thing to reach
+        // for, and §3.6's suggestion table exists for exactly that.
+        if (receiver.IsMaybe && name.Lexeme == "value")
+        {
+            Error(name.Line,
+                  $"There is no .value on {receiver.Show()} — the name is .must.",
+                  "must says the value is there and fails loudly when it is not:  "
+                  + "count.must()\n  For a fallback instead, use .or(0)");
+            return receiver.Stripped;
+        }
 
         // The payoff of non-nullable-by-default: reaching through a maybe is an error
         // here, not a crash later (§3.2).

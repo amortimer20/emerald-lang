@@ -346,6 +346,7 @@ public static class Signatures
         ["uppercase"] = "upper",
         ["lowercase"] = "lower",
         ["strip"] = "trim",
+        ["value"] = "must",
         ["quit"] = "exit",
         ["halt"] = "exit",
         ["puts"] = "print",
