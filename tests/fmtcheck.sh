@@ -76,6 +76,34 @@ class Dog {
     constructor(name: String) { self.name = name }   # trailing }
 }' "$(cat "$sandbox/comments.em")"
 
+# The closing line of a block comment is interior too. Written with `]#` at column 0 the
+# old off-by-one never showed; a comment that ends mid-line had its indentation stripped.
+cat > "$sandbox/closing.em" <<'EOF'
+#[ a comment
+   whose last line ]#
+print("after")
+EOF
+dotnet "$emerald" fmt "$sandbox/closing.em" >/dev/null 2>&1
+check "block comment closing line" '#[ a comment
+   whose last line ]#
+print("after")' "$(cat "$sandbox/closing.em")"
+
+# catch begins its line for the same reason else does — one rule, not a special case.
+cat > "$sandbox/catch.em" <<'EOF'
+try {
+print("ok")
+} catch e {
+print(e.message)
+}
+EOF
+dotnet "$emerald" fmt "$sandbox/catch.em" >/dev/null 2>&1
+check "catch is not cuddled" 'try {
+    print("ok")
+}
+catch e {
+    print(e.message)
+}' "$(cat "$sandbox/catch.em")"
+
 # --check reports without writing, and fails so a build can gate on it.
 cat > "$sandbox/gate.em" <<'EOF'
 if true {

@@ -45,12 +45,16 @@ public static class Formatter
         List<string> output = [];
         int depth = 0;
 
-        // Lines strictly inside a multi-line block comment, which are left exactly as
-        // written. A diagram or a pasted sample in there has layout that means something,
-        // and this formatter's whole justification is not destroying what it cannot read.
+        // Lines inside a multi-line block comment, which are left exactly as written. A
+        // diagram or a pasted sample in there has layout that means something, and this
+        // formatter's whole justification is not destroying what it cannot read.
+        //
+        // The closing line counts: everything left of its `]#` is comment as much as the
+        // line above it is. Only the opening line is re-indented, because it begins with
+        // `#[` and so belongs to the block it sits in.
         HashSet<int> verbatim = [];
         foreach (var (from, to) in scanner.BlockComments)
-            for (int line = from + 1; line < to; line++) verbatim.Add(line);
+            for (int line = from + 1; line <= to; line++) verbatim.Add(line);
 
         for (int i = 0; i < lines.Length; i++)
         {
@@ -74,12 +78,14 @@ public static class Formatter
             int lead = here.Count > 0 && IsCloser(here[0].Type) ? 1 : 0;
             int indent = Math.Max(0, depth - lead);
 
-            // `} else {` is the one brace placement §3.1 names, and the one people
-            // actually get wrong. Split only when the `}` opens the line, where the first
-            // character is known to be that token and the cut is unambiguous.
+            // A closing brace begins its line and is never cuddled (§3.1). `} else` is the
+            // one people actually get wrong; `} catch` is the same shape and was missed
+            // here until a document written in the wrong style went through the formatter
+            // and came out still wrong. Split only when the `}` opens the line, where the
+            // first character is known to be that token and the cut is unambiguous.
             if (here.Count >= 2
                 && here[0].Type == TokenType.RightBrace
-                && here[1].Type == TokenType.Else)
+                && here[1].Type is TokenType.Else or TokenType.Catch)
             {
                 output.Add(Repeat(indent) + "}");
                 text = text[1..].TrimStart();

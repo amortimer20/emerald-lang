@@ -415,9 +415,11 @@ Shouted: GRACE</pre></div>
 
 if score >= 90 {
     print("A")
-} else if score >= 80 {
+}
+else if score >= 80 {
     print("B")
-} else {
+}
+else {
     print("something else")
 }
 
@@ -650,7 +652,8 @@ var unsure: String? = nothing   # a String, or nothing at all
 # Emerald will not let you read unsure until you have checked it
 if unsure != nothing {
     print(unsure.length)
-} else {
+}
+else {
     print("there was nothing there")
 }
 
@@ -964,7 +967,8 @@ false</pre></div>
 for input in ["42", "banana"] {
     try {
         print("age: #{age_from(input)}")
-    } catch e {
+    }
+    catch e {
         print("could not read that: #{e.message}")
     }
 }</pre>
