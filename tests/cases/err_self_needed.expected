@@ -1,0 +1,6 @@
+
+err_self_needed.em:10  No variable named contents.
+
+   10 |     func peek(): String { return contents }
+
+  contents belongs to Box, so it is reached through self:  self.contents

@@ -165,6 +165,11 @@ public static class Builtins
     /// </summary>
     public static readonly Dictionary<string, EmModule> Modules = new()
     {
+        // The kernel, reachable by name as well as bare (§3.3). Exactly the same functions
+        // — Kernel is the dictionary above, not a copy of it, so the two spellings cannot
+        // drift apart.
+        ["Kernel"] = new EmModule("Kernel", Kernel),
+
         ["Math"] = new EmModule("Math", new()
         {
             ["pi"] = _ => Math.PI,

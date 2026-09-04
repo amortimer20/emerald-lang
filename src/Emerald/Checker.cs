@@ -100,6 +100,11 @@ public sealed class Checker(
         foreach (var name in Builtins.Modules.Keys)
             globals.Declare(name, new EmType.Prim(name));
 
+        // The kernel is reachable through its own name as well as bare (§3.3), which is
+        // what stops it being the one namespace nobody can explore: everything else
+        // answers a dot, and `print` answered nothing until Kernel existed to type.
+        globals.Declare("Kernel", new EmType.Prim("Kernel"));
+
         // Classes are registered by name first, so they can reference each other in any
         // order — including a base declared below its subclass.
         //
@@ -1306,6 +1311,21 @@ public sealed class Checker(
     /// </summary>
     private string MistakenForAFunction(Token name)
     {
+        // Inside a type, a bare name that is one of its own members is a missing receiver,
+        // not an undeclared variable. `return contents` reads perfectly and is wrong, and
+        // "declare it first" answers it by suggesting a second, unrelated variable — §3.6's
+        // confidently-wrong case exactly.
+        if (_currentType is { } here)
+        {
+            if (here.MemberNames().Contains(name.Lexeme))
+                return $"{name.Lexeme} belongs to {here.Name}, so it is reached through "
+                       + $"self:  self.{name.Lexeme}";
+
+            if (here.StaticNames().Contains(name.Lexeme))
+                return $"{name.Lexeme} belongs to {here.Name} itself, so it is reached "
+                       + $"through the type:  {here.Name}.{name.Lexeme}";
+        }
+
         // Every owner, from both sources. Naming only the first is worse than naming none:
         // `count(items)` answered with "Range has one" is true and points away from the
         // list the reader is actually holding.
