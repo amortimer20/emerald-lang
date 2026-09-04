@@ -1,7 +1,10 @@
 # Emerald — v0 prototype
 
-An experimental tree-walking interpreter for Emerald. Enough of the language runs to
-play with; the design doc is the specification.
+An experimental tree-walking interpreter for Emerald. The language runs: classes,
+traits, enums, structs, lists, dictionaries, sets, operator overloading, static typing
+with flow-sensitive narrowing, and a checker that treats its own diagnostics as a
+deliverable. `docs/design.html` is the specification, and the argument for every
+decision in it.
 
 ## Getting started
 
@@ -11,7 +14,15 @@ bash tools/install-cli.sh          # once — puts `emerald` on your PATH
 emerald new my_game                # one file, no config
 emerald run my_game/main.em
 emerald check my_game/main.em      # look for problems without running
+
+emerald repl                       # try a line at a time
+emerald test my_game               # run every @test function
+emerald fmt my_game                # one formatting, no settings
+emerald explain                    # explain the last error, with a worked example
 ```
+
+`build`, `ship` and `add` are named in the design and not built — each says what it
+needs if you run it. They wait on a code generator, which is Phase 2.
 
 `emerald` rebuilds the compiler whenever a `.cs` file is newer than the binary, so you
 never run a stale build and there is no separate build step to remember.
