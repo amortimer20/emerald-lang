@@ -74,8 +74,11 @@ public abstract record Expr
     public sealed record Index(Expr Target, Token Bracket, Expr Position) : Expr;
     public sealed record Lambda(List<Param> Params, List<Stmt> Body) : Expr;
 
-    /// <summary>Property or method access: <c>dog.name</c>, <c>5.times</c>.</summary>
-    public sealed record Get(Expr Target, Token Name) : Expr;
+    /// <summary>
+    /// Property or method access: <c>dog.name</c>, <c>5.times</c>. <c>Optional</c> is the
+    /// <c>?.</c> form, where a receiver that is nothing gives nothing back unread.
+    /// </summary>
+    public sealed record Get(Expr Target, Token Name, bool Optional = false) : Expr;
 
     /// <summary>
     /// A call. <c>Trailing</c> is the trailing-lambda sprinkle: <c>1.upto(5) { i => ... }</c>

@@ -598,9 +598,10 @@ public sealed class Parser(List<Token> tokens, string fileName)
         var expr = Primary();
         while (true)
         {
-            if (Match(TokenType.Dot))
+            if (Match(TokenType.Dot, TokenType.QuestionDot))
             {
-                expr = new Expr.Get(expr, MemberName());
+                bool optional = Previous.Type == TokenType.QuestionDot;
+                expr = new Expr.Get(expr, MemberName(), optional);
                 expr = MaybeCall(expr);
             }
             else if (Match(TokenType.LeftBracket))

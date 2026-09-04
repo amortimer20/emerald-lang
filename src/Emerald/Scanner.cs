@@ -88,9 +88,9 @@ public sealed class Scanner(string source, string fileName)
             case '@': Add(TokenType.At, "@"); break;
 
             // A '?' glued to an identifier is folded into it by ScanIdentifier — that is how
-            // predicate names and String? both work. One standing alone can only be the
-            // nullable marker after a closing '>', as in Array<Int>?.
-            case '?': Add(TokenType.Question, "?"); break;
+            // predicate names and String? both work. One standing alone is the nullable
+            // marker after a closing '>', as in List<Int>?, unless a '.' follows it.
+            case '?': Add(Match('.') ? TokenType.QuestionDot : TokenType.Question, Text); break;
 
             case '.':
                 Add(Match('.') ? TokenType.DotDot : TokenType.Dot, Match2());
@@ -259,8 +259,13 @@ public sealed class Scanner(string source, string fileName)
     {
         while (IsIdentPart(Peek())) Advance();
 
-        // A trailing '?' is part of a predicate method's name (§3.4).
-        if (Peek() == '?') Advance();
+        // A trailing '?' is part of a predicate method's name (§3.4) — unless a '.' follows
+        // it, where it is the optional-chaining operator instead. One rule, stated once: a
+        // '?' in a name is never immediately followed by a dot. The cost is that a
+        // predicate cannot have a method called straight off it — `(n.even?).to_string()`
+        // rather than `n.even?.to_string()` — which is why the checker explains that
+        // spelling when the reading goes wrong.
+        if (Peek() == '?' && PeekNext() != '.') Advance();
 
         string text = Text;
         Add(Keywords.TryGetValue(text, out var kw) ? kw : TokenType.Identifier, text);

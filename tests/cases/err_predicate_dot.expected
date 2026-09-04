@@ -1,0 +1,6 @@
+
+err_predicate_dot.em:5  No method named even on Int.
+
+    5 | print(n.even?.to_string())
+
+  The ? in even? is part of its name, so a dot cannot follow it. Parenthesise the question to use its answer:  (n.even?).to_string

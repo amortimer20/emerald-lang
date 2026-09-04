@@ -882,6 +882,16 @@ public sealed class Checker(
             var owner = TypeOf(member.Target, scope);
             TypeOf(a.Value, scope);
 
+            // `a?.b = 1` reads as a write that may not happen, which is a statement whose
+            // effect depends on something it does not say out loud. Swift allows it; C#
+            // does not, and neither does this — the check belongs where a reader can see
+            // it (§2.6).
+            if (member.Optional)
+                Error(a.Op.Line,
+                      "?. reads a value, so it cannot be assigned through.",
+                      $"Say when the write happens:  if {Source.Of(member.Target)} != nothing "
+                      + $"{{ {Source.Of(member.Target)}.{member.Name.Lexeme} = ... }}");
+
             // Structs are immutable (§3.2). Only a struct's own constructor may write its
             // fields — which is what makes C#'s `transform.position.x = 5` unwritable here
             // rather than merely discouraged.
@@ -1253,7 +1263,7 @@ public sealed class Checker(
         Expr.Logical l => LogicalType(l, scope),
         Expr.IfExpr i => IfExprType(i, scope),
         Expr.Lambda l => LambdaType(l, scope),
-        Expr.Get g => StaticOf(g.Target, g.Name) ?? MemberType(TypeOf(g.Target, scope), g.Name, scope),
+        Expr.Get g => StaticOf(g.Target, g.Name) ?? OptionalMemberType(g, scope),
         Expr.Call c => CallType(c, scope),
         _ => EmType.Any
     };
@@ -1538,6 +1548,67 @@ public sealed class Checker(
         return EmType.Any;
     }
 
+    /// <summary>
+    /// The <c>?.</c> access whose receiver is being typed right now, if there is one.
+    /// Only <see cref="PredicateSwallowed"/> reads it, to recognise the one shape the
+    /// scanner's rule gets wrong for a reader: <c>n.even?.to_string()</c>, where the ? was
+    /// meant to end the name and was taken as the operator.
+    /// </summary>
+    private Expr.Get? _optionalDot;
+
+    /// <summary>Types a <c>?.</c>'s receiver, remembering that it is one.</summary>
+    private EmType ReceiverType(Expr.Get g, Scope scope)
+    {
+        var previous = _optionalDot;
+        _optionalDot = g.Optional ? g : null;
+        try { return TypeOf(g.Target, scope); }
+        finally { _optionalDot = previous; }
+    }
+
+    /// <summary>
+    /// Whether the name that just failed to resolve is a predicate the <c>?.</c> rule ate
+    /// — <c>even</c> looked up because <c>even?.</c> was written. Says so plainly, since
+    /// "did you mean even??" answers a question nobody asked.
+    /// </summary>
+    private string? PredicateSwallowed(Token name, IEnumerable<string> members) =>
+        _optionalDot is { Target: Expr.Get inner } outer
+        && ReferenceEquals(name, inner.Name)
+        && members.Contains(name.Lexeme + "?")
+            ? $"The ? in {name.Lexeme}? is part of its name, so a dot cannot follow it. "
+              + $"Parenthesise the question to use its answer:  "
+              + $"({Source.Of(inner)}?).{outer.Name.Lexeme}"
+            : null;
+
+    /// <summary>A member read, with <c>?.</c> handled if that is how it was written.</summary>
+    private EmType OptionalMemberType(Expr.Get g, Scope scope)
+    {
+        var receiver = ReceiverType(g, scope);
+
+        if (!g.Optional) return MemberType(receiver, g.Name, scope);
+
+        return CheckedOptional(receiver, g)
+            ? EmType.Nullable(MemberType(receiver.Stripped, g.Name, scope))
+            : MemberType(receiver, g.Name, scope);
+    }
+
+    /// <summary>
+    /// Whether a <c>?.</c> has something to ask. On a type that is never nothing it is
+    /// noise that reads as caution, and the habit of writing it everywhere is what makes
+    /// the operator stop carrying information — so it is refused rather than ignored.
+    ///
+    /// Returns whether to go on treating the access as optional.
+    /// </summary>
+    private bool CheckedOptional(EmType receiver, Expr.Get g)
+    {
+        if (receiver.IsMaybe || receiver is EmType.Unknown) return true;
+
+        Error(g.Name.Line,
+              $"{receiver.Show()} is never nothing, so ?. has nothing to check.",
+              $"Write a plain dot:  .{g.Name.Lexeme}");
+
+        return false;
+    }
+
     private EmType MemberType(EmType receiver, Token name, Scope scope)
     {
         if (receiver is EmType.Unknown) return EmType.Any;
@@ -1613,7 +1684,8 @@ public sealed class Checker(
             }
 
             Error(name.Line, $"No member named {name.Lexeme} on {obj.Info.Name}.",
-                  Suggest(name.Lexeme, obj.Info.MemberNames()));
+                  PredicateSwallowed(name, obj.Info.MemberNames())
+                      ?? Suggest(name.Lexeme, obj.Info.MemberNames()));
             return EmType.Any;
         }
 
@@ -1637,7 +1709,8 @@ public sealed class Checker(
         if (Signatures.TryLookup(receiver, name.Lexeme, out var result)) return result;
 
         Error(name.Line, $"No method named {name.Lexeme} on {receiver.Show()}.",
-              Suggest(name.Lexeme, Signatures.MethodsOn(receiver)));
+              PredicateSwallowed(name, Signatures.MethodsOn(receiver))
+                  ?? Suggest(name.Lexeme, Signatures.MethodsOn(receiver)));
         return EmType.Any;
     }
 
@@ -1680,7 +1753,30 @@ public sealed class Checker(
                 return staticResult;
             }
 
-            var receiver = TypeOf(get.Target, scope);
+            var receiver = ReceiverType(get, scope);
+
+            // ?. reads through the ? and puts it back on the answer: the call happens only
+            // when the receiver is there, so what comes out might not be either.
+            if (get.Optional)
+                return CheckedOptional(receiver, get)
+                    ? EmType.Nullable(MemberCallType(receiver.Stripped, c, get, scope))
+                    : MemberCallType(receiver, c, get, scope);
+
+            return MemberCallType(receiver, c, get, scope);
+        }
+
+        List<EmType> given = [.. c.Args.Select(arg => TypeOf(arg, scope))];
+        if (c.Trailing is not null) TypeOf(c.Trailing, scope);
+        return NonMemberCallType(c, given, scope);
+    }
+
+    /// <summary>
+    /// A call whose receiver is already resolved. Split out so <c>?.</c> can hand it the
+    /// stripped type and wrap what comes back, without every exit here having to know.
+    /// </summary>
+    private EmType MemberCallType(EmType receiver, Expr.Call c, Expr.Get get, Scope scope)
+    {
+        {
             if (receiver is EmType.Lst list) return ListCallType(list, c, get.Name, scope);
             if (receiver is EmType.Dict dict) return DictMemberType(dict, get.Name, c, scope);
             if (receiver is EmType.SetOf set) return SetMemberType(set, get.Name, c, scope);
@@ -1720,10 +1816,11 @@ public sealed class Checker(
 
             return MemberType(receiver, get.Name, scope);
         }
+    }
 
-        List<EmType> given = [.. c.Args.Select(arg => TypeOf(arg, scope))];
-        if (c.Trailing is not null) TypeOf(c.Trailing, scope);
-
+    /// <summary>A call that is not a method call: a constructor, a name, an expression.</summary>
+    private EmType NonMemberCallType(Expr.Call c, List<EmType> given, Scope scope)
+    {
         // Constructing a type: reject traits and anything with unimplemented members.
         if (c.Callee is Expr.Variable typeName
             && _classes.TryGetValue(typeName.Name.Lexeme, out var target))
@@ -2204,7 +2301,8 @@ public sealed class Checker(
         if (!Signatures.ListMethods.Contains(name.Lexeme))
         {
             Error(name.Line, $"No method named {name.Lexeme} on {list.Show()}.",
-                  Suggest(name.Lexeme, Signatures.ListMethods));
+                  PredicateSwallowed(name, Signatures.ListMethods)
+                      ?? Suggest(name.Lexeme, Signatures.ListMethods));
             return EmType.Any;
         }
 

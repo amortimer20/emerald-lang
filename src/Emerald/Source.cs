@@ -44,7 +44,7 @@ public static class Source
             : "[" + string.Join(", ", d.Entries.Select(e => $"{Of(e.Key)}: {Of(e.Value)}")) + "]",
 
         Expr.Index x => $"{Of(x.Target)}[{Of(x.Position)}]",
-        Expr.Get g => $"{Of(g.Target)}.{g.Name.Lexeme}",
+        Expr.Get g => $"{Of(g.Target)}{(g.Optional ? "?." : ".")}{g.Name.Lexeme}",
         Expr.Lambda l => Lambda(l),
         Expr.Call c => Call(c),
         _ => "..."

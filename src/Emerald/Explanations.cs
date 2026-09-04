@@ -130,6 +130,12 @@ public static class Explanations
             check, name is an ordinary String for the rest of the block.
 
             When any answer will do, ask for one:  name.or("unknown").length
+
+            The check works on a name, not on a path, so a chain gets ?. instead. It
+            reads through the ? and puts it back on the answer, stopping at the first
+            step that is missing:
+
+                print(user.address?.city?.name.or("unknown"))
             """),
 
         ["struct-immutable"] = new(

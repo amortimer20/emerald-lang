@@ -1065,6 +1065,12 @@ public sealed class Interpreter
         _line = g.Name.Line;
         object? target = Evaluate(g.Target, env);
 
+        // ?. stops here when there is nothing to read. Each link checks itself, and that is
+        // enough for the whole chain: a ?. hands back a T?, so the checker requires ?. at
+        // every step after it — there is no way to write a chain that runs on past a
+        // missing value, which is the rule other languages need an end-of-chain rule for.
+        if (target is null && g.Optional) return null;
+
         if (target is EmInstance instance) return GetOrInvoke(instance, g.Name, []);
         if (target is EmClass cls) return GetStatic(cls, g.Name, []);
 
@@ -1074,17 +1080,26 @@ public sealed class Interpreter
 
     private object? EvaluateCall(Expr.Call c, Env env)
     {
-        List<object?> args = [.. c.Args.Select(a => Evaluate(a, env))];
-        if (c.Trailing is not null) args.Add(new EmLambda(c.Trailing, env));
-
         // A method call is a Get in callee position — evaluate the receiver, then dispatch.
         if (c.Callee is Expr.Get get)
         {
             object? target = Evaluate(get.Target, env);
-            if (target is EmInstance instance) return GetOrInvoke(instance, get.Name, args);
-            if (target is EmClass cls) return GetStatic(cls, get.Name, args);
-            return Builtins.InvokeMethod(this, target, get.Name.Lexeme, args);
+
+            // The receiver is evaluated before the arguments so that a ?. on nothing skips
+            // them too: `logger?.write(expensive())` should not do the work for a call it
+            // is not going to make.
+            if (target is null && get.Optional) return null;
+
+            List<object?> received = [.. c.Args.Select(a => Evaluate(a, env))];
+            if (c.Trailing is not null) received.Add(new EmLambda(c.Trailing, env));
+
+            if (target is EmInstance instance) return GetOrInvoke(instance, get.Name, received);
+            if (target is EmClass cls) return GetStatic(cls, get.Name, received);
+            return Builtins.InvokeMethod(this, target, get.Name.Lexeme, received);
         }
+
+        List<object?> args = [.. c.Args.Select(a => Evaluate(a, env))];
+        if (c.Trailing is not null) args.Add(new EmLambda(c.Trailing, env));
 
         object? callee = Evaluate(c.Callee, env);
         if (callee is not ICallable callable)
