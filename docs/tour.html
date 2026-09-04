@@ -1,0 +1,1275 @@
+<title>A Tour of Emerald</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+
+<style>
+  :root {
+    --ground:      #FAFBF9;
+    --surface:     #F1F4F0;
+    --surface-2:   #E9EEE9;
+    --ink:         #16201B;
+    --ink-soft:    #3D4A44;
+    --muted:       #5F6C65;
+    --rule:        #DCE3DD;
+    --accent:      #0F7B5A;
+    --accent-deep: #0B5F45;
+    --accent-wash: #E3F0EA;
+    --amber:       #8A5E0F;
+    --amber-wash:  #F5EEDC;
+
+    --sans:  "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
+    --mono:  "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #101613;
+      --surface:     #18201C;
+      --surface-2:   #1F2823;
+      --ink:         #E4EAE5;
+      --ink-soft:    #C2CDC6;
+      --muted:       #94A29A;
+      --rule:        #28322C;
+      --accent:      #4FD1A0;
+      --accent-deep: #6FDDB4;
+      --accent-wash: #163026;
+      --amber:       #D9A441;
+      --amber-wash:  #2A2317;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #101613;
+    --surface:     #18201C;
+    --surface-2:   #1F2823;
+    --ink:         #E4EAE5;
+    --ink-soft:    #C2CDC6;
+    --muted:       #94A29A;
+    --rule:        #28322C;
+    --accent:      #4FD1A0;
+    --accent-deep: #6FDDB4;
+    --accent-wash: #163026;
+    --amber:       #D9A441;
+    --amber-wash:  #2A2317;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 1180px; margin: 0 auto; padding: 0 28px 80px; }
+
+  header.top {
+    padding: 68px 0 38px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 46px;
+  }
+
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 18px;
+  }
+
+  header.top h1 {
+    font-family: var(--serif);
+    font-size: clamp(40px, 6vw, 60px);
+    line-height: 1.05;
+    font-weight: 500;
+    margin: 0 0 20px;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+
+  header.top .lede {
+    font-family: var(--serif);
+    font-size: 20px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    max-width: 60ch;
+    margin: 0 0 26px;
+  }
+
+  .verified {
+    display: block;
+    font-size: 13.5px;
+    color: var(--muted);
+    background: var(--accent-wash);
+    border-left: 2px solid var(--accent);
+    padding: 11px 16px;
+    max-width: 62ch;
+    line-height: 1.55;
+    margin: 0;
+  }
+  .verified b { color: var(--accent-deep); font-weight: 600; }
+
+  .shell { display: block; }
+
+  @media (min-width: 1060px) {
+    .shell { display: grid; grid-template-columns: 196px 1fr; gap: 54px; align-items: start; }
+  }
+
+  nav.toc { display: none; }
+
+  @media (min-width: 1060px) {
+    nav.toc {
+      display: block;
+      position: sticky;
+      top: 28px;
+      max-height: calc(100vh - 56px);
+      overflow-y: auto;
+      font-size: 13px;
+      line-height: 1.4;
+      padding-right: 6px;
+    }
+    nav.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+    nav.toc li.part-head {
+      font-size: 10.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 600;
+      margin: 16px 0 5px;
+    }
+    nav.toc li.part-head:first-child { margin-top: 0; }
+    nav.toc a {
+      display: flex;
+      gap: 9px;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 2px 0;
+    }
+    nav.toc a:hover { color: var(--accent-deep); }
+    nav.toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    nav.toc .n {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--rule);
+      padding-top: 1px;
+      font-variant-numeric: tabular-nums;
+    }
+    nav.toc a:hover .n { color: var(--accent); }
+  }
+
+  main { min-width: 0; }
+
+  section { margin: 0 0 56px; scroll-margin-top: 22px; }
+
+  section h2 {
+    font-family: var(--serif);
+    font-size: 27px;
+    font-weight: 500;
+    line-height: 1.2;
+    margin: 0 0 14px;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    text-wrap: balance;
+  }
+
+  section h2 .n {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    font-variant-numeric: tabular-nums;
+    flex: 0 0 auto;
+  }
+
+  section p { max-width: 66ch; margin: 0 0 15px; color: var(--ink-soft); }
+  section p:last-child { margin-bottom: 0; }
+
+  code.inl {
+    font-family: var(--mono);
+    font-size: 0.87em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    color: var(--ink);
+  }
+
+  .unit {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    margin: 20px 0 0;
+  }
+  .unit + .unit, .unit + .diag, .diag + .unit, .diag + .diag { margin-top: 14px; }
+
+  pre {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.65;
+    overflow-x: auto;
+    padding: 17px 20px;
+    tab-size: 4;
+  }
+
+  .unit .out {
+    border-top: 1px solid var(--rule);
+    background: var(--surface-2);
+    display: flex;
+    align-items: flex-start;
+  }
+
+  .unit .out .lab {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 19px 0 0 20px;
+    flex: 0 0 96px;
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  .unit .out pre { padding: 16px 20px 17px 0; color: var(--ink-soft); flex: 1 1 auto; min-width: 0; }
+
+  .diag {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--amber);
+    background: var(--amber-wash);
+    margin: 20px 0 0;
+  }
+  .diag .lab {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--amber);
+    padding: 14px 20px 0;
+    display: block;
+  }
+  .diag pre { color: var(--ink); padding-top: 7px; }
+
+  .k  { color: var(--accent-deep); font-weight: 500; }
+  .s  { color: var(--amber); }
+  .c  { color: var(--muted); font-style: italic; }
+  .nu { color: var(--ink-soft); }
+
+  .aside {
+    border-left: 2px solid var(--rule);
+    padding: 1px 0 1px 18px;
+    margin: 20px 0 0;
+    color: var(--muted);
+    font-size: 14.5px;
+    max-width: 62ch;
+  }
+  .aside p { color: inherit; margin: 0; max-width: none; }
+
+  .part-label {
+    font-size: 11.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 30px;
+    padding-top: 44px;
+    border-top: 1px solid var(--rule);
+  }
+  .part-label:first-child { padding-top: 0; border-top: 0; }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    color: var(--muted);
+    font-size: 13.5px;
+    max-width: 66ch;
+  }
+
+  a { color: var(--accent-deep); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <p class="eyebrow">Emerald &middot; v0</p>
+  <h1>A tour of Emerald</h1>
+  <p class="lede">Emerald is meant to be a good first language and a good working one &mdash; the same language, not a teaching version of a real one. This walks through it a feature at a time, with a small program for each.</p>
+  <p class="verified"><b>Everything here was run.</b> Every program on this page was executed by the compiler, and every output shown is what it actually printed &mdash; including all the mistakes near the end.</p>
+</header>
+
+<div class="shell">
+
+<nav class="toc" aria-label="Sections"><ol id="toc-list"></ol></nav>
+
+<main>
+
+<p class="part-label" data-part>The basics</p>
+
+<section id="s01">
+  <h2><span class="n">01</span> Hello</h2>
+  <p>A program is a list of things to do. There is no setup, no <code class="inl">main</code> function to write, and nothing to import &mdash; every <code class="inl">.em</code> file in the folder is part of the same program.</p>
+  <div class="unit">
+    <pre class="code"># A program is just statements, run from the top down.
+
+print("Hello, Emerald.")
+
+# This is a comment.
+#[ and this one
+   spans lines ]#</pre>
+    <div class="out"><span class="lab">prints</span><pre>Hello, Emerald.</pre></div>
+  </div>
+</section>
+
+<section id="s02">
+  <h2><span class="n">02</span> Variables</h2>
+  <p>A <code class="inl">var</code> can change later. A <code class="inl">const</code> cannot &mdash; if you try, the program will not run, which is usually what you wanted.</p>
+  <p>You can write down what kind of thing a variable holds, or leave it out and let Emerald work it out from the value. Both are equally checked; the type is there either way.</p>
+  <div class="unit">
+    <pre class="code">var name = "Ada"        # a var can change
+const YEAR = 1843       # a const cannot
+
+var score: Int = 0      # you can write the type
+var ratio = 0.5         # or let Emerald work it out
+
+score = score + 10
+score += 5
+
+print("#{name}, #{YEAR}, #{score}, #{ratio}")</pre>
+    <div class="out"><span class="lab">prints</span><pre>Ada, 1843, 15, 0.5</pre></div>
+  </div>
+</section>
+
+<section id="s03">
+  <h2><span class="n">03</span> Numbers, text, and yes-or-no</h2>
+  <p>Four kinds of value to start with: <code class="inl">Int</code> for whole numbers, <code class="inl">Float</code> for numbers with a decimal point, <code class="inl">String</code> for text, and <code class="inl">Bool</code> for true or false.</p>
+  <p>Everything is an object, so you ask a number a question the same way you ask anything else &mdash; with a dot. There are no separate global functions to remember.</p>
+  <div class="unit">
+    <pre class="code">var whole = 7           # Int
+var exact = 7.5         # Float
+var word = "seven"      # String
+var yes = true          # Bool
+
+print(7 + 2)
+print(7 - 2)
+print(7 * 2)
+print(7 / 2)            # gives a Float
+print(7 // 2)           # whole-number division
+print(7 % 2)            # remainder
+print(7 ** 2)           # power
+
+print(word.length)
+print(word.upper())
+print(word.reverse())
+print(whole.even?)
+print(yes and not false)</pre>
+    <div class="out"><span class="lab">prints</span><pre>9
+5
+14
+3.5
+3
+1
+49
+5
+SEVEN
+neves
+false
+true</pre></div>
+  </div>
+  <div class="aside"><p>A method whose name ends in <code class="inl">?</code> always answers true or false. You can tell what <code class="inl">even?</code> gives back without looking it up, and Emerald checks that the promise is kept.</p></div>
+</section>
+
+<section id="s04">
+  <h2><span class="n">04</span> Putting values into text</h2>
+  <p>Write <code class="inl">#{ }</code> inside a string and whatever is in the braces gets worked out and dropped in. Anything can go in there, not just a name.</p>
+  <div class="unit">
+    <pre class="code">var name = "Grace"
+var ships = 3
+
+print("#{name} has #{ships} ships.")
+print("Next year: #{ships + 1}")
+print("Shouted: #{name.upper()}")</pre>
+    <div class="out"><span class="lab">prints</span><pre>Grace has 3 ships.
+Next year: 4
+Shouted: GRACE</pre></div>
+  </div>
+</section>
+
+<section id="s05">
+  <h2><span class="n">05</span> Choosing</h2>
+  <p><code class="inl">if</code> works how you would expect. <code class="inl">unless</code> is the opposite, for when writing <code class="inl">if not</code> would be harder to read than the thing it means.</p>
+  <p>An <code class="inl">if</code> can also <em>produce</em> a value rather than doing something, and it can sit at the end of a line as a guard.</p>
+  <div class="unit">
+    <pre class="code">var score = 82
+
+if score >= 90 {
+    print("A")
+} else if score >= 80 {
+    print("B")
+} else {
+    print("something else")
+}
+
+unless score > 100 {
+    print("that is a believable score")
+}
+
+# if can produce a value
+var grade = if score >= 80 then "pass" else "resit"
+print(grade)
+
+# and it can guard a single line
+print("nearly an A") if score > 80</pre>
+    <div class="out"><span class="lab">prints</span><pre>B
+that is a believable score
+pass
+nearly an A</pre></div>
+  </div>
+</section>
+
+<section id="s06">
+  <h2><span class="n">06</span> Repeating</h2>
+  <p><code class="inl">for</code> walks over a range, a list, or a string. There is no three-part C-style loop, so there is nothing else for it to be confused with.</p>
+  <p><code class="inl">until</code> is <code class="inl">while</code>'s opposite, the same way <code class="inl">unless</code> is <code class="inl">if</code>'s. <code class="inl">break</code> leaves a loop and <code class="inl">continue</code> skips to the next turn, and both take the one-line guard.</p>
+  <div class="unit">
+    <pre class="code">for i in 1..3 {
+    print("count #{i}")
+}
+
+for animal in ["cat", "dog"] {
+    print(animal)
+}
+
+for letter in "hi" {
+    print(letter)
+}
+
+var left = 3
+until left.zero? {
+    print("t-minus #{left}")
+    left -= 1
+}
+
+3.times { print("again") }
+
+for n in 1..10 {
+    continue if n % 3 != 0
+    break if n > 6
+    print("multiple of three: #{n}")
+}</pre>
+    <div class="out"><span class="lab">prints</span><pre>count 1
+count 2
+count 3
+cat
+dog
+h
+i
+t-minus 3
+t-minus 2
+t-minus 1
+again
+again
+again
+multiple of three: 3
+multiple of three: 6</pre></div>
+  </div>
+</section>
+
+<p class="part-label" data-part>Collections</p>
+
+<section id="s07">
+  <h2><span class="n">07</span> Lists</h2>
+  <p>A list holds many of one kind of thing, in order. It grows and shrinks as you go, and it knows what it contains &mdash; a list of numbers will not let a word in.</p>
+  <div class="unit">
+    <pre class="code">var numbers = [5, 3, 8, 1]
+
+print(numbers.count)
+print(numbers[0])
+print(numbers.sum)
+print(numbers.sort.join(", "))
+
+numbers.add(10)
+print(numbers.join(" "))
+
+numbers[0] = 99
+print(numbers[0])
+
+var names: List&lt;String&gt; = ["ada", "alan"]
+print(names.join(" and "))</pre>
+    <div class="out"><span class="lab">prints</span><pre>4
+5
+17
+1, 3, 5, 8
+5 3 8 1 10
+99
+ada and alan</pre></div>
+  </div>
+  <div class="aside"><p>When you do write the type down, it is <code class="inl">List&lt;String&gt;</code> &mdash; a list, and then what is in it.</p></div>
+</section>
+
+<section id="s08">
+  <h2><span class="n">08</span> Dictionaries</h2>
+  <p>A dictionary maps keys to values &mdash; a name to an age, a word to how often it appeared. Looking one up gives back "the value, or nothing", because a key that is not there is an ordinary thing to happen rather than a mistake.</p>
+  <p>That is why <code class="inl">.or(0)</code> appears below: it says what a miss should count as. Counting things is what dictionaries are mostly for, and it comes out as one line.</p>
+  <div class="unit">
+    <pre class="code">var ages = ["ada": 36, "bo": 7]
+
+print(ages["ada"].or(0))
+print(ages["nobody"].or(0))
+print(ages.count)
+
+ages["cy"] = 12
+ages["bo"] += 1
+
+print(ages.keys.join(", "))
+print(ages.has_key?("cy"))
+
+var counts: Dictionary&lt;String, Int&gt; = [:]
+for word in "the cat the mat".split(" ") {
+    counts[word] = counts[word].or(0) + 1
+}
+print(counts["the"].or(0))</pre>
+    <div class="out"><span class="lab">prints</span><pre>36
+0
+2
+ada, bo, cy
+true
+2</pre></div>
+  </div>
+  <div class="aside"><p>Things stay in the order you put them in. A program whose output shuffles between runs is miserable to debug, because you cannot tell it from a mistake of your own.</p></div>
+</section>
+
+<section id="s09">
+  <h2><span class="n">09</span> Sets</h2>
+  <p>A set remembers <em>whether</em> something is in it, not how many times or in what position. Duplicates collapse on the way in. Write one as a list and convert.</p>
+  <div class="unit">
+    <pre class="code">var vowels = ["a", "e", "i", "o", "u"].to_set
+
+print(vowels.count)
+print(vowels.contains?("e"))
+
+var rolls = [3, 1, 3, 2, 1].to_set
+print(rolls.to_list.join(", "))
+
+var monday = ["ada", "bo"].to_set
+var tuesday = ["bo", "cy"].to_set
+print(monday.union(tuesday).to_list.join(", "))
+print(monday.intersect(tuesday).to_list.join(", "))</pre>
+    <div class="out"><span class="lab">prints</span><pre>5
+true
+3, 1, 2
+ada, bo, cy
+bo</pre></div>
+  </div>
+</section>
+
+<p class="part-label" data-part>Functions and blocks</p>
+
+<section id="s10">
+  <h2><span class="n">10</span> Functions</h2>
+  <p>A function says what it takes and what it gives back. A parameter can have a default, so the common call stays short. Two functions can share a name as long as a call could always tell them apart.</p>
+  <div class="unit">
+    <pre class="code">func double(n: Int): Int {
+    return n * 2
+}
+
+func greet(name: String, greeting: String = "Hello"): String {
+    return "#{greeting}, #{name}!"
+}
+
+# A function that answers yes or no ends in ?
+func old_enough?(age: Int): Bool {
+    return age >= 18
+}
+
+# Two functions can share a name if a call can tell them apart
+func area(side: Int): Int { return side * side }
+func area(width: Int, height: Int): Int { return width * height }
+
+print(double(21))
+print(greet("Ana"))
+print(greet("Bo", "Welcome"))
+print(old_enough?(20))
+print(area(4))
+print(area(4, 5))</pre>
+    <div class="out"><span class="lab">prints</span><pre>42
+Hello, Ana!
+Welcome, Bo!
+true
+16
+20</pre></div>
+  </div>
+</section>
+
+<section id="s11">
+  <h2><span class="n">11</span> Blocks</h2>
+  <p>A block is a piece of code you hand to something else to run. <code class="inl">map</code> makes a new list by running your block on each item, <code class="inl">filter</code> keeps the ones your block says yes to, and <code class="inl">each</code> just runs it.</p>
+  <p>You never have to say what <code class="inl">n</code> is below. The list is a list of <code class="inl">Int</code>, so <code class="inl">n</code> is an <code class="inl">Int</code>, and <code class="inl">n.even?</code> is checked like anything else.</p>
+  <div class="unit">
+    <pre class="code">var numbers = [5, 3, 8, 1, 9]
+
+print(numbers.map { n =&gt; n * 2 }.join(", "))
+print(numbers.filter { n =&gt; n.even? }.join(", "))
+print(numbers.any? { n =&gt; n &gt; 8 })
+
+# find might not find anything, so it hands back "an Int or nothing"
+print(numbers.find { n =&gt; n &gt; 100 }.or(0))
+
+var total = 0
+numbers.each { n =&gt; total += n }
+print(total)</pre>
+    <div class="out"><span class="lab">prints</span><pre>10, 6, 16, 2, 18
+8
+true
+0
+26</pre></div>
+  </div>
+</section>
+
+<p class="part-label" data-part>Values that might not be there</p>
+
+<section id="s12">
+  <h2><span class="n">12</span> Values that might not be there</h2>
+  <p>A <code class="inl">String</code> always holds a string. Sometimes you need "or nothing at all" &mdash; so you add a <code class="inl">?</code>.</p>
+  <p>Emerald will not let you use a <code class="inl">String?</code> until you have checked it. That is the whole point: the crash where something turned out to be empty cannot happen, because the program will not run until you have said what to do about it.</p>
+  <div class="unit">
+    <pre class="code">var certain: String = "Ada"     # always a String
+var unsure: String? = nothing   # a String, or nothing at all
+
+# Emerald will not let you read unsure until you have checked it
+if unsure != nothing {
+    print(unsure.length)
+} else {
+    print("there was nothing there")
+}
+
+# .or supplies a fallback
+print(unsure.or("nobody"))
+
+# .must says "I know this is there" — and stops the program if it is not
+var found: Int? = "42".to_int_maybe()
+print(found.must())</pre>
+    <div class="out"><span class="lab">prints</span><pre>there was nothing there
+nobody
+42</pre></div>
+  </div>
+  <div class="aside"><p>After <code class="inl">if unsure != nothing</code>, <code class="inl">unsure</code> is an ordinary <code class="inl">String</code> for the rest of that block &mdash; you do not unwrap it or write anything extra. The check <em>is</em> the unwrapping.</p></div>
+</section>
+
+<section id="s13">
+  <h2><span class="n">13</span> Reaching through a chain</h2>
+  <p>Checking works on a name, not on a path, so when several steps in a row might be missing you use <code class="inl">?.</code> instead. It reads through the <code class="inl">?</code> and stops at the first step that is not there.</p>
+  <div class="unit">
+    <pre class="code">class City {
+    var name: String
+    constructor(name: String) { self.name = name }
+}
+
+class Trip {
+    var destination: City?
+    constructor(destination: City?) { self.destination = destination }
+}
+
+var booked = Trip(City("Leeds"))
+var unbooked = Trip(nothing)
+
+# ?. reads through the ?, and stops at the first step that is missing
+print(booked.destination?.name.or("nowhere yet"))
+print(unbooked.destination?.name.or("nowhere yet"))</pre>
+    <div class="out"><span class="lab">prints</span><pre>Leeds
+nowhere yet</pre></div>
+  </div>
+</section>
+
+<p class="part-label" data-part>Making your own types</p>
+
+<section id="s14">
+  <h2><span class="n">14</span> Classes</h2>
+  <p>A class describes a kind of thing: what it knows, and what it can do. The <code class="inl">constructor</code> is what runs when you make one. Inside, <code class="inl">self</code> means "this one".</p>
+  <div class="unit">
+    <pre class="code">class Dog {
+    var name: String
+    var legs: Int = 4
+
+    constructor(name: String) {
+        self.name = name
+    }
+
+    func speak(): String {
+        return "Woof"
+    }
+
+    func introduce(): String {
+        return "#{self.name} says #{self.speak()}"
+    }
+}
+
+var rex = Dog("Rex")
+print(rex.introduce())
+print(rex.legs)
+
+rex.name = "Rexington"
+print(rex.name)</pre>
+    <div class="out"><span class="lab">prints</span><pre>Rex says Woof
+4
+Rexington</pre></div>
+  </div>
+  <div class="aside"><p>Every field has to have a value by the time the constructor finishes. Forget one and the program will not run &mdash; which is the mistake this catches most often in practice.</p></div>
+</section>
+
+<section id="s15">
+  <h2><span class="n">15</span> Properties, shared values, and private names</h2>
+  <p>A property looks like a field from the outside but runs code when you read it. <code class="inl">static</code> means the value or function belongs to the class itself rather than to any one of them.</p>
+  <p>A name beginning with <code class="inl">_</code> can only be used inside the class and anything that extends it. There is no keyword to learn, and you can see that it is private at the place it is used rather than having to go and look at where it was declared.</p>
+  <div class="unit">
+    <pre class="code">class Circle {
+    static const PI = 3.14159
+    static var made: Int = 0
+
+    var radius: Float
+
+    # A property looks like a field from the outside, but runs code.
+    var area: Float {
+        get { return Circle.PI * self._squared() }
+    }
+
+    constructor(radius: Float) {
+        self.radius = radius
+        Circle.made += 1
+    }
+
+    # A name starting with _ belongs to the class. Code outside cannot call it.
+    func _squared(): Float { return self.radius * self.radius }
+
+    static func unit(): Circle { return Circle(1.0) }
+}
+
+var c = Circle(2.0)
+print(c.area)
+print(Circle.unit().area)
+print(Circle.made)</pre>
+    <div class="out"><span class="lab">prints</span><pre>12.56636
+3.14159
+2</pre></div>
+  </div>
+</section>
+
+<section id="s16">
+  <h2><span class="n">16</span> Building on another class</h2>
+  <p><code class="inl">extends</code> means "everything that one has, plus this". A method written again in the new class replaces the old one, and code that was written against the original keeps working.</p>
+  <div class="unit">
+    <pre class="code">class Animal {
+    var name: String
+
+    constructor(name: String) { self.name = name }
+
+    func speak(): String { return "..." }
+
+    func introduce(): String { return "#{self.name} says #{self.speak()}" }
+}
+
+class Dog extends Animal {
+    func speak(): String { return "Woof" }
+}
+
+class Cat extends Animal {
+    func speak(): String { return "Meow" }
+}
+
+var pets = [Dog("Rex"), Cat("Momo")]
+for pet in pets {
+    print(pet.introduce())
+}</pre>
+    <div class="out"><span class="lab">prints</span><pre>Rex says Woof
+Momo says Meow</pre></div>
+  </div>
+  <div class="aside"><p><code class="inl">introduce</code> was written once, in <code class="inl">Animal</code>, and it calls <code class="inl">self.speak()</code> &mdash; which finds whichever version belongs to the actual animal. A class can only extend one other class.</p></div>
+</section>
+
+<section id="s17">
+  <h2><span class="n">17</span> Traits</h2>
+  <p>A trait says what a type must have, and can hand it things in return. Unlike <code class="inl">extends</code>, a class can mix in as many traits as it likes.</p>
+  <p>Below, <code class="inl">Swimmer</code> demands a <code class="inl">stamina</code> and gives back a <code class="inl">swim</code>. Neither class writes <code class="inl">swim</code>; both get it.</p>
+  <div class="unit">
+    <pre class="code"># A trait says what a type must have, and can hand it things in return.
+trait Swimmer {
+    abstract func stamina(): Int        # you must write this
+
+    func swim(): String {               # you get this for free
+        return "swimming for #{self.stamina()} minutes"
+    }
+}
+
+class Dog with Swimmer {
+    func stamina(): Int { return 30 }
+}
+
+class Duck with Swimmer {
+    func stamina(): Int { return 90 }
+}
+
+print(Dog().swim())
+print(Duck().swim())</pre>
+    <div class="out"><span class="lab">prints</span><pre>swimming for 30 minutes
+swimming for 90 minutes</pre></div>
+  </div>
+</section>
+
+<section id="s18">
+  <h2><span class="n">18</span> Operators on your own types</h2>
+  <p>There is no special syntax for making <code class="inl">+</code> work on something you wrote. <code class="inl">a + b</code> <em>is</em> <code class="inl">a.add(b)</code>, so you write an ordinary method and mix in the trait that names it.</p>
+  <p>One <code class="inl">compare</code> answers all four of <code class="inl">&lt;</code>, <code class="inl">&gt;</code>, <code class="inl">&lt;=</code> and <code class="inl">&gt;=</code>. And <code class="inl">+=</code> goes through the same <code class="inl">add</code> you already wrote.</p>
+  <div class="unit">
+    <pre class="code">struct Money with Addable, Equatable, Ordered {
+    var cents: Int
+
+    func add(other: Money): Money { return Money(self.cents + other.cents) }
+    func equals?(other: Money): Bool { return self.cents == other.cents }
+    func compare(other: Money): Int { return self.cents - other.cents }
+
+    func to_string(): String {
+        var pennies = self.cents % 100
+        return "$#{self.cents // 100}.#{if pennies &lt; 10 then "0#{pennies}" else "#{pennies}"}"
+    }
+}
+
+var lunch = Money(1250)
+var coffee = Money(450)
+
+print((lunch + coffee).to_string())
+print(lunch &gt; coffee)
+print(lunch == Money(1250))
+
+var total = Money(0)
+total += lunch
+print(total.to_string())</pre>
+    <div class="out"><span class="lab">prints</span><pre>$17.00
+true
+true
+$12.50</pre></div>
+  </div>
+</section>
+
+<section id="s19">
+  <h2><span class="n">19</span> Square brackets on your own types</h2>
+  <p>Same idea. <code class="inl">Indexable</code> gives you <code class="inl">board[0]</code> for reading if you write <code class="inl">at</code>, and writing as well if you also write <code class="inl">set_at</code>. Leave <code class="inl">set_at</code> out and the type is read-only.</p>
+  <div class="unit">
+    <pre class="code">class Board with Indexable {
+    var squares: List&lt;String&gt;
+
+    constructor(size: Int) {
+        self.squares = []
+        size.times { self.squares.add(".") }
+    }
+
+    func at(square: Int): String { return self.squares[square] }
+    func set_at(square: Int, mark: String) { self.squares[square] = mark }
+}
+
+var board = Board(3)
+board[0] = "X"
+board[2] = "O"
+
+print(board[0])
+print(board.squares.join(" "))</pre>
+    <div class="out"><span class="lab">prints</span><pre>X
+X . O</pre></div>
+  </div>
+</section>
+
+<section id="s20">
+  <h2><span class="n">20</span> Structs</h2>
+  <p>A struct is a small value that never changes once it is made &mdash; a point, an amount of money, a colour. Because it cannot change, you do not have to write a constructor: Emerald builds one from the fields, in the order you declared them.</p>
+  <p>You "change" a struct by making a new one, which is why <code class="inl">moved_by</code> returns a <code class="inl">Point</code> rather than editing this one.</p>
+  <div class="unit">
+    <pre class="code"># A struct is a small value that never changes once it is made.
+struct Point {
+    var x: Int
+    var y: Int
+
+    # No constructor written — Emerald builds one from the fields, in order.
+
+    func moved_by(dx: Int, dy: Int): Point {
+        return Point(self.x + dx, self.y + dy)
+    }
+}
+
+var here = Point(2, 3)
+var there = here.moved_by(1, 1)
+
+print("#{here.x}, #{here.y}")
+print("#{there.x}, #{there.y}")</pre>
+    <div class="out"><span class="lab">prints</span><pre>2, 3
+3, 4</pre></div>
+  </div>
+</section>
+
+<section id="s21">
+  <h2><span class="n">21</span> Enums</h2>
+  <p>An enum is a closed set of names. The alternative is passing strings around, and then <code class="inl">red?("HAERTS")</code> compiles happily and quietly does the wrong thing. <code class="inl">Suit.HAERTS</code> cannot be spelled at all.</p>
+  <div class="unit">
+    <pre class="code">enum Suit { HEARTS, DIAMONDS, CLUBS, SPADES }
+
+var card = Suit.HEARTS
+
+print(card)
+print(card.name)
+print(card == Suit.HEARTS)
+
+for suit in Suit.values {
+    print(suit.name)
+}
+
+# A function taking a Suit cannot be handed anything else —
+# a misspelled string would have compiled and then misbehaved.
+func red?(s: Suit): Bool {
+    return s == Suit.HEARTS or s == Suit.DIAMONDS
+}
+
+print(red?(Suit.CLUBS))</pre>
+    <div class="out"><span class="lab">prints</span><pre>Suit.HEARTS
+HEARTS
+true
+HEARTS
+DIAMONDS
+CLUBS
+SPADES
+false</pre></div>
+  </div>
+</section>
+
+<p class="part-label" data-part>Things going wrong</p>
+
+<section id="s22">
+  <h2><span class="n">22</span> When something goes wrong on purpose</h2>
+  <p>When a function cannot do what it was asked, it can <code class="inl">throw</code>. Whoever called it can <code class="inl">catch</code> that and decide what to do. Notice <code class="inl">throw ... if ...</code> using the same one-line guard as everything else.</p>
+  <div class="unit">
+    <pre class="code">func age_from(text: String): Int {
+    var age = text.to_int_maybe()
+    throw "\"#{text}\" is not a number" if age == nothing
+    return age.must()
+}
+
+for input in ["42", "banana"] {
+    try {
+        print("age: #{age_from(input)}")
+    } catch e {
+        print("could not read that: #{e.message}")
+    }
+}</pre>
+    <div class="out"><span class="lab">prints</span><pre>age: 42
+could not read that: "banana" is not a number</pre></div>
+  </div>
+</section>
+
+<section id="s23">
+  <h2><span class="n">23</span> Tests</h2>
+  <p>A test is a function marked <code class="inl">@test</code>, in a file whose name ends in <code class="inl">_test.em</code>. <code class="inl">assert</code> states something you believe is true.</p>
+  <p>When an assertion fails it shows you the line you wrote <em>and</em> both sides of it, so you do not have to go back and add prints to find out what the values actually were.</p>
+  <div class="unit">
+    <pre class="code"># main.em
+func double(n: Int): Int { return n * 2 }
+
+print(double(21))</pre>
+  </div>
+  <div class="unit">
+    <pre class="code"># double_test.em
+@test
+func doubling_works?(): Bool {
+    assert double(4) == 8
+    assert double(0) == 0
+    return true
+}
+
+@test
+func doubling_is_wrong_on_purpose?(): Bool {
+    assert double(3) == 7
+    return true
+}</pre>
+    <div class="out"><span class="lab">emerald&nbsp;test</span><pre>  ok    DoubleTest.doubling_works?
+  FAIL  DoubleTest.doubling_is_wrong_on_purpose?
+        Assertion failed:  double(3) == 7
+        left  was 6
+        right was 7
+
+2 tests, 1 failing.</pre></div>
+  </div>
+</section>
+
+<section id="s24">
+  <h2><span class="n">24</span> What the compiler says when you get it wrong</h2>
+  <p>This is the part of a language you actually spend your time with, so it is the part Emerald spends the most effort on. An error names one cause, quotes the line, and where it can, says what to do instead. There is no jargon and no stack trace.</p>
+  <p>Every message below is real output, from the programs shown above them.</p>
+
+  <div class="unit">
+    <pre class="code">var name: String? = nothing
+print(name.length)</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  This is String?, not String, so length may not exist.
+
+    2 | print(name.length)
+
+  A String? holds either a String or nothing. Check it first, or supply a fallback with .or(...)
+
+  emerald explain</pre></div>
+
+  <div class="unit">
+    <pre class="code">class Player {
+    var name: String
+    var score: Int
+
+    constructor(name: String) {
+        self.name = name
+    }
+}</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:5  This constructor leaves score without a value.
+
+    5 |     constructor(name: String) {
+
+  Assign it here:  self.score = ...
+  Only assignments written directly in the constructor count — a helper method cannot be seen to have done it.
+
+  emerald explain</pre></div>
+
+  <div class="unit">
+    <pre class="code">func double(n: Int): Int { return n * 2 }
+print(double("four"))</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  double expects Int as its first argument, but this is String.
+
+    2 | print(double("four"))
+
+  emerald explain</pre></div>
+
+  <div class="unit">
+    <pre class="code">var x = 5
+if x = 6 {
+    print("hm")
+}</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  Assignment cannot appear in a condition.
+
+    2 | if x = 6 {
+
+  Emerald uses = to assign a value and == to compare two values. Did you mean ==?</pre></div>
+
+  <div class="unit">
+    <pre class="code">var words = ["apple", "fig"]
+print(words.cont)</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  No method named cont on List&lt;String&gt;.
+
+    2 | print(words.cont)
+
+  Did you mean count?</pre></div>
+
+  <div class="unit">
+    <pre class="code">class Circle {
+    var radius: Float
+    constructor(radius: Float) { self.radius = radius }
+    func _squared(): Float { return self.radius * self.radius }
+}
+print(Circle(2.0)._squared())</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:6  _squared belongs to Circle — that is what the _ says.
+
+    6 | print(Circle(2.0)._squared())
+
+  A name starting with _ can be used inside Circle, and inside any class that extends it. Drop the _ to let the rest of the program use it.</pre></div>
+
+  <div class="unit">
+    <pre class="code">func area(side: Int): Int { return side * side }
+func area(length: Int): Int { return length }</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  area already has an overload matching this one, on line 1.
+
+    2 | func area(length: Int): Int { return length }
+
+  Two of one name have to be told apart by what they take. No argument could choose between these.</pre></div>
+
+  <p>Some things are worth mentioning but not worth stopping for. Those are warnings: they are printed, and then the program runs anyway.</p>
+
+  <div class="unit">
+    <pre class="code">func GetScore(): Int {
+    return 10
+}
+print(GetScore())</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:1  warning: A function is written in snake_case, so GetScore reads as a type.
+
+    1 | func GetScore(): Int {
+
+  Rename it to get_score. Capitalised names mean types in Emerald.
+10</pre></div>
+
+  <p>When a message mentions <code class="inl">emerald explain</code>, that is an offer. Run it and you get the same mistake shown as a small worked example &mdash; the broken version, the fixed version, and why.</p>
+
+  <div class="unit">
+    <div class="out"><span class="lab">explain</span><pre>Reaching through a value that might be nothing
+
+  This does not work:
+
+      var name: String? = nothing
+      print(name.length)
+
+  This does:
+
+      var name: String? = nothing
+      if name != nothing {
+          print(name.length)
+      }
+
+  A String? holds either a String or nothing, and nothing has no length.
+  Checking it first is what tells the compiler which one it has — after that
+  check, name is an ordinary String for the rest of the block.
+
+  When any answer will do, ask for one:  name.or("unknown").length</pre></div>
+  </div>
+</section>
+
+<p class="part-label" data-part>Working with it</p>
+
+<section id="s25">
+  <h2><span class="n">25</span> The tools</h2>
+  <p>One command, a handful of things it does. There is no project file to configure and no build to set up &mdash; <code class="inl">emerald new</code> makes a folder with one file in it, and every <code class="inl">.em</code> file you add beside it joins the same program.</p>
+  <div class="unit">
+    <div class="out"><span class="lab">emerald</span><pre>emerald — v0 prototype
+
+  emerald new &lt;name&gt;        start a project
+  emerald run &lt;file.em&gt;     run a program
+  emerald check &lt;file.em&gt;   look for problems without running
+  emerald repl              try code a line at a time
+  emerald test [path]       run every @test function
+  emerald fmt [path]        format code, one way, no settings
+  emerald explain           explain the last error
+  emerald &lt;file.em&gt;         same as run
+
+  build, ship, add          named, and not buildable yet — try one to see why
+
+Every .em file beside the entry file is part of the project — no imports needed.</pre></div>
+  </div>
+
+  <p><code class="inl">emerald fmt</code> lays code out one way, with nothing to configure and so nothing to argue about.</p>
+  <div class="unit">
+    <pre class="code">class Dog {
+var name: String
+constructor(name: String) {
+self.name = name
+}
+func speak(): String {
+return "Woof"
+}
+}
+print(Dog("Rex").speak())</pre>
+    <div class="out"><span class="lab">becomes</span><pre>class Dog {
+    var name: String
+    constructor(name: String) {
+        self.name = name
+    }
+    func speak(): String {
+        return "Woof"
+    }
+}
+print(Dog("Rex").speak())</pre></div>
+  </div>
+
+  <p><code class="inl">emerald repl</code> lets you try one line at a time. Type an expression and it shows you what it comes to; define a name again and the new one replaces it.</p>
+  <div class="unit">
+    <div class="out"><span class="lab">repl</span><pre>Emerald. Type an expression to see it, :help for more.
+
+&gt; var x = 21
+&gt; x * 2
+42
+&gt; func shout(s: String): String { return s.upper() }
+&gt; shout("hello")
+HELLO
+&gt; var n: Int? = nothing
+&gt; n.length
+  This is Int?, not Int, so length may not exist.
+    An Int? holds either an Int or nothing. Check it first, or supply a fallback with .or(...)
+&gt; :what
+  x, shout, n</pre></div>
+  </div>
+</section>
+
+<footer>
+  <p>Emerald v0, September 2026. The language runs today on a tree-walking interpreter; compiling to .NET is the next piece of work, and <code class="inl">build</code> and <code class="inl">ship</code> are named in the command list for that reason.</p>
+  <p>Every program on this page was run by the compiler before the page was written, and each output is what it printed.</p>
+</footer>
+
+</main>
+</div>
+</div>
+
+<script>
+(function () {
+  // Section index, built from the page so the two cannot drift.
+  var list = document.getElementById("toc-list");
+  var nodes = document.querySelectorAll("main > .part-label, main > section");
+
+  nodes.forEach(function (node) {
+    var li = document.createElement("li");
+
+    if (node.hasAttribute("data-part")) {
+      li.className = "part-head";
+      li.textContent = node.textContent;
+      list.appendChild(li);
+      return;
+    }
+
+    var h = node.querySelector("h2");
+    var num = h.querySelector(".n").textContent;
+    var title = h.textContent.replace(num, "").trim();
+
+    var a = document.createElement("a");
+    a.href = "#" + node.id;
+    var n = document.createElement("span");
+    n.className = "n";
+    n.textContent = num;
+    var t = document.createElement("span");
+    t.textContent = title;
+    a.appendChild(n);
+    a.appendChild(t);
+    li.appendChild(a);
+    list.appendChild(li);
+  });
+
+  // Emerald's own keywords, from the scanner.
+  var KEYWORDS = ["var","const","func","return","if","then","else","while","unless",
+    "until","for","in","and","or","not","true","false","nothing","class","trait",
+    "struct","abstract","enum","static","throw","try","catch","break","continue",
+    "assert","extends","with","constructor","self"];
+
+  // One left-to-right pass, alternation ordered so a '#' inside a string is part of
+  // the string and a quote inside a comment is part of the comment.
+  var RE = new RegExp([
+    '("(?:[^"\\\\]|\\\\.)*")',
+    '(#\\[[\\s\\S]*?\\]#)',
+    '(#[^\\n]*)',
+    '\\b(\\d+\\.\\d+|\\d+)\\b',
+    '\\b(' + KEYWORDS.join("|") + ')\\b'
+  ].join("|"), "g");
+
+  document.querySelectorAll("pre.code").forEach(function (pre) {
+    pre.innerHTML = pre.innerHTML.replace(RE, function (m, str, block, line, num, kw) {
+      if (str)   return '<span class="s">' + str + "</span>";
+      if (block) return '<span class="c">' + block + "</span>";
+      if (line)  return '<span class="c">' + line + "</span>";
+      if (num)   return '<span class="nu">' + num + "</span>";
+      return '<span class="k">' + kw + "</span>";
+    });
+  });
+})();
+</script>
