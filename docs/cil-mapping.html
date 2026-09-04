@@ -1,0 +1,373 @@
+<title>Emerald to CIL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+
+<style>
+  :root {
+    --ground:      #FAFBF9;
+    --surface:     #F1F4F0;
+    --surface-2:   #E9EEE9;
+    --ink:         #16201B;
+    --ink-soft:    #3D4A44;
+    --muted:       #5F6C65;
+    --rule:        #DCE3DD;
+    --accent:      #0F7B5A;
+    --accent-deep: #0B5F45;
+    --accent-wash: #E3F0EA;
+    --amber:       #8A5E0F;
+    --amber-wash:  #F5EEDC;
+
+    --sans:  "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
+    --mono:  "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #101613;
+      --surface:     #18201C;
+      --surface-2:   #1F2823;
+      --ink:         #E4EAE5;
+      --ink-soft:    #C2CDC6;
+      --muted:       #94A29A;
+      --rule:        #28322C;
+      --accent:      #4FD1A0;
+      --accent-deep: #6FDDB4;
+      --accent-wash: #163026;
+      --amber:       #D9A441;
+      --amber-wash:  #2A2317;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #101613;
+    --surface:     #18201C;
+    --surface-2:   #1F2823;
+    --ink:         #E4EAE5;
+    --ink-soft:    #C2CDC6;
+    --muted:       #94A29A;
+    --rule:        #28322C;
+    --accent:      #4FD1A0;
+    --accent-deep: #6FDDB4;
+    --accent-wash: #163026;
+    --amber:       #D9A441;
+    --amber-wash:  #2A2317;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 900px; margin: 0 auto; padding: 0 28px 80px; }
+
+  header.top {
+    padding: 64px 0 34px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 44px;
+  }
+
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 16px;
+  }
+
+  header.top h1 {
+    font-family: var(--serif);
+    font-size: clamp(38px, 5.5vw, 56px);
+    line-height: 1.05;
+    font-weight: 500;
+    margin: 0 0 18px;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+
+  header.top .lede {
+    font-family: var(--serif);
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    max-width: 60ch;
+    margin: 0 0 22px;
+  }
+
+  .scope {
+    display: block;
+    font-size: 13.5px;
+    color: var(--muted);
+    background: var(--accent-wash);
+    border-left: 2px solid var(--accent);
+    padding: 11px 16px;
+    max-width: 64ch;
+    line-height: 1.55;
+    margin: 0;
+  }
+  .scope b { color: var(--accent-deep); font-weight: 600; }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 30px;
+    font-weight: 500;
+    margin: 56px 0 8px;
+    letter-spacing: -0.01em;
+    padding-top: 40px;
+    border-top: 1px solid var(--rule);
+    text-wrap: balance;
+  }
+  h2:first-of-type { padding-top: 0; border-top: 0; margin-top: 0; }
+
+  h2 + p.sub { color: var(--muted); margin: 0 0 26px; max-width: 66ch; font-size: 15px; }
+
+  p { max-width: 68ch; color: var(--ink-soft); }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.87em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    color: var(--ink);
+  }
+
+  .tablewrap { overflow-x: auto; margin: 0 0 8px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 620px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--rule); }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    border-bottom-color: var(--ink-soft);
+  }
+  td:first-child { color: var(--ink); width: 30%; }
+  td:last-child { color: var(--muted); width: 14%; font-size: 13px; white-space: nowrap; }
+  td code { background: none; padding: 0; }
+
+  .q {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--amber);
+    background: var(--surface);
+    padding: 20px 22px;
+    margin: 0 0 16px;
+  }
+  .q h3 {
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 10px;
+    color: var(--ink);
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .q h3 .n {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--amber);
+    font-weight: 500;
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .q p { margin: 0 0 10px; font-size: 15px; max-width: none; }
+  .q p:last-child { margin-bottom: 0; }
+  .q ul { margin: 0 0 10px; padding-left: 20px; font-size: 15px; color: var(--ink-soft); }
+  .q li { margin-bottom: 5px; }
+  .q li:last-child { margin-bottom: 0; }
+
+  .lean {
+    background: var(--accent-wash);
+    border-left: 2px solid var(--accent);
+    padding: 9px 14px;
+    font-size: 14.5px;
+    color: var(--ink-soft);
+    margin: 12px 0 0;
+  }
+  .lean b { color: var(--accent-deep); font-weight: 600; }
+
+  pre {
+    margin: 12px 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    overflow-x: auto;
+    padding: 14px 16px;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    color: var(--ink);
+  }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    color: var(--muted);
+    font-size: 13.5px;
+    max-width: 68ch;
+  }
+
+  a { color: var(--accent-deep); }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <p class="eyebrow">Emerald &middot; Phase 2 preparation</p>
+  <h1>Emerald to CIL</h1>
+  <p class="lede">Every construct in the language, and what it becomes in a .NET assembly &mdash; separated into what the design already settles and what still needs deciding.</p>
+  <p class="scope"><b>This document decides nothing.</b> Where §3 or §5 determines a mapping it is recorded below with its source. Where nothing determines it, the question is stated with its options and my leaning, and left open. Written before any emit code exists, so that a mapping that refuses costs a paragraph rather than a rewrite.</p>
+</header>
+
+<h2>Determined</h2>
+<p class="sub">Settled by the design document or by the CLR itself. Nothing here needs a decision; it needs implementing.</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Emerald</th><th>CIL</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td colspan="3" style="padding-top:18px;color:var(--accent);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;border-bottom-color:var(--rule)">Shape of a program</td></tr>
+    <tr><td>A project (one directory tree)</td><td>One assembly</td><td>§3.3</td></tr>
+    <tr><td>Directory path</td><td>Namespace, project as root &mdash; <code>Shapes.Dog</code> is <code>MyGame.Shapes.Dog</code></td><td>§3.3</td></tr>
+    <tr><td>A file</td><td>A class; the entry file's is the assembly entry point</td><td>§3.3</td></tr>
+    <tr><td>A file declaring no type</td><td>A class named after the file, every member static</td><td>§3.3, built</td></tr>
+    <tr><td>A free function</td><td>A static method on the file's class</td><td>§3.3</td></tr>
+    <tr><td>Top-level variables</td><td>Static fields on the file's class</td><td>§3.3</td></tr>
+    <tr><td>A module file's top-level code</td><td>A static constructor &mdash; runs once, on first member access</td><td>§3.3</td></tr>
+
+    <tr><td colspan="3" style="padding-top:18px;color:var(--accent);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;border-bottom-color:var(--rule)">Types and members</td></tr>
+    <tr><td><code>class</code>, <code>extends</code></td><td>Class, single inheritance</td><td>§3.2</td></tr>
+    <tr><td><code>trait</code>, <code>with</code></td><td>Interface with default interface methods</td><td>§3.2</td></tr>
+    <tr><td>Trait state</td><td>None &mdash; a CLR interface holds no fields, so neither does a trait</td><td>§3.2</td></tr>
+    <tr><td><code>abstract func</code></td><td>Abstract method / interface member with no body</td><td>§3.2</td></tr>
+    <tr><td>A property (<code>var</code> with <code>get</code>/<code>set</code>)</td><td>A CLR property</td><td>§3.2</td></tr>
+    <tr><td>Method overloads</td><td>Method overloads &mdash; rejected at declaration, so no resolution rules travel</td><td>§3.2</td></tr>
+    <tr><td><code>_name</code></td><td><code>protected</code> &mdash; the class and its subclasses is exactly what <code>_</code> means</td><td>§3.4</td></tr>
+    <tr><td><code>empty?</code> (no arguments)</td><td><code>IsEmpty</code></td><td>§3.4</td></tr>
+    <tr><td><code>contains?(x)</code></td><td><code>Contains(x)</code> &mdash; the <code>?</code> strips</td><td>§3.4</td></tr>
+    <tr><td><code>@name("Any")</code></td><td>Overrides the emitted name</td><td>§3.8</td></tr>
+
+    <tr><td colspan="3" style="padding-top:18px;color:var(--accent);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;border-bottom-color:var(--rule)">Values</td></tr>
+    <tr><td><code>nothing</code></td><td><code>null</code></td><td>§3.2</td></tr>
+    <tr><td><code>.or()</code>, <code>.must()</code></td><td>Compiler intrinsics &mdash; inlined null tests, not calls. A null reference cannot dispatch</td><td>§3.2</td></tr>
+    <tr><td><code>?.</code></td><td>Null test and branch</td><td>§3.2</td></tr>
+    <tr><td>Narrowing, definite assignment, casing, visibility</td><td>Nothing &mdash; checker-only, no IL</td><td>&mdash;</td></tr>
+    <tr><td>User-declared generics</td><td>None exist. The compiler owns <code>List</code>, <code>Dictionary</code>, <code>Set</code></td><td>§5.3</td></tr>
+
+    <tr><td colspan="3" style="padding-top:18px;color:var(--accent);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;border-bottom-color:var(--rule)">Toolchain</td></tr>
+    <tr><td>The emitter</td><td>Mono.Cecil, at build time, never shipped</td><td>§7</td></tr>
+    <tr><td>The shipped runtime library</td><td>Must not <em>reference</em> <code>Reflection.Emit</code> &mdash; referencing it fails an IL2CPP build, used or not</td><td>§5.4</td></tr>
+    <tr><td>Target framework</td><td>Modern .NET. Not netstandard2.1 &mdash; Unity's CoreCLR migration lands first</td><td>§5.4</td></tr>
+    <tr><td>Debug info</td><td>Portable PDB, or breakpoints never map to <code>.em</code> files</td><td>§7</td></tr>
+    <tr><td>First milestone</td><td>An Emerald class subclassing a C# class, with C# calling back in</td><td>§5.2</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Open</h2>
+<p class="sub">Eight questions the design does not answer. Each changes the emitter's shape, and several change what a C# caller sees, so they are cheaper settled now than discovered later.</p>
+
+<div class="q">
+  <h3><span class="n">01</span> Dictionary and Set cannot be the BCL types</h3>
+  <p>This is the one that forces a decision rather than inviting one. §3.7 promises that a dictionary and a set <strong>keep insertion order</strong>, and the reasoning is explicitly pedagogical: <em>a program whose output shuffles between runs is the worst thing to hand a beginner, because they cannot tell it from a bug of their own.</em></p>
+  <p><code>System.Collections.Generic.Dictionary&lt;K,V&gt;</code> and <code>HashSet&lt;T&gt;</code> make no such promise. Their current implementations often appear ordered, which is worse than if they never were &mdash; it holds until a removal, then quietly stops.</p>
+  <ul>
+    <li><strong>Keep the promise.</strong> Emit an ordered implementation. A C# caller then receives an Emerald type rather than a familiar one, unless it implements <code>IDictionary&lt;K,V&gt;</code>.</li>
+    <li><strong>Drop the promise.</strong> Use the BCL types directly, and delete the §3.7 rows.</li>
+  </ul>
+  <p class="lean"><b>Leaning:</b> keep it. The promise is load-bearing for the teaching case and it is already documented, demonstrated in <code>examples/</code>, and relied on by the tour. Implementing <code>IDictionary&lt;K,V&gt;</code> over an ordered store recovers most of the interop.</p>
+</div>
+
+<div class="q">
+  <h3><span class="n">02</span> What is <code>List&lt;T&gt;</code> at the boundary?</h3>
+  <p>Emerald's list has about twenty methods &mdash; <code>count</code>, <code>sum</code>, <code>map</code>, <code>filter</code>, <code>any?</code>, <code>find</code>, <code>join</code>. The BCL's <code>List&lt;T&gt;</code> has <code>Count</code>, and the rest live in LINQ, which §3.7 deliberately does not auto-import.</p>
+  <ul>
+    <li><strong>It is <code>System.Collections.Generic.List&lt;T&gt;</code></strong>, and Emerald's methods are extension methods the compiler resolves. Best interop; a C# caller gets a real <code>List&lt;T&gt;</code>.</li>
+    <li><strong>It is an Emerald type</strong> wrapping one. Full control; every signature crossing the boundary carries a type C# does not know.</li>
+  </ul>
+  <p class="lean"><b>Leaning:</b> the BCL type. <code>List&lt;T&gt;</code> is the most common thing to hand across the boundary, and question 01 already spends the interop budget on <code>Dictionary</code>. Note this makes <code>map</code> and <code>find</code> extension methods that must not collide with LINQ's <code>Select</code> and <code>First</code> &mdash; which §3.7 has already thought about.</p>
+</div>
+
+<div class="q">
+  <h3><span class="n">03</span> <code>Int?</code> and <code>String?</code> are different shapes in IL</h3>
+  <p>One language feature, two representations. <code>String?</code> is a reference that may be null, carrying a nullability annotation the CLR does not enforce. <code>Int?</code> is <code>Nullable&lt;long&gt;</code> &mdash; a struct, with <code>HasValue</code>, that boxes when it meets <code>object</code>.</p>
+  <p>That difference reaches <code>.or()</code>, <code>?.</code>, and every generic instantiation: <code>List&lt;Int?&gt;</code> is <code>List&lt;long?&gt;</code>, and <code>List&lt;String?&gt;</code> is <code>List&lt;string&gt;</code> plus an attribute.</p>
+  <p>It also decides what <code>nothing</code> compiles to in a context where the type is not yet known &mdash; <code>[nothing, nothing]</code> is legal today and infers <code>List&lt;Nothing&gt;</code>.</p>
+  <p class="lean"><b>Leaning:</b> follow the CLR rather than unify. C# lives with exactly this split and its users mostly never notice, because the compiler hides it. Unifying would mean boxing every <code>Int?</code>, which is the one thing a game engine will punish.</p>
+</div>
+
+<div class="q">
+  <h3><span class="n">04</span> Does a struct box when it uses an operator trait?</h3>
+  <p><code>struct Money with Addable</code> is a CLR value type implementing an interface. Dispatching <code>a + b</code> through the interface boxes the receiver &mdash; on every addition.</p>
+  <p>Emerald never dispatches dynamically: overloads are resolved at declaration, there is no runtime metaprogramming, and the static type at every call site is known. So the emitter can always call the method directly and never touch the interface.</p>
+  <p class="lean"><b>Leaning:</b> emit direct calls, and treat the interface as a compile-time contract that also happens to exist in metadata. Worth confirming early, because if it does not hold, <code>struct</code> plus operator traits is a performance trap sitting under the most natural way to write a vector type.</p>
+</div>
+
+<div class="q">
+  <h3><span class="n">05</span> Should operator traits also emit <code>op_Addition</code>?</h3>
+  <p>A C# consumer of <code>Money</code> sees an <code>Add</code> method and writes <code>a.Add(b)</code>. It could just as easily see <code>operator+</code> and write <code>a + b</code>. Emitting both costs one extra method that forwards.</p>
+  <p>§3.4's stated goal for the naming rules is that <em>a C# consumer never learns Emerald was involved</em>, which argues for emitting the operator.</p>
+  <p class="lean"><b>Leaning:</b> emit both. It is cheap, it is invisible from Emerald, and it is the difference between a library that feels foreign and one that does not.</p>
+</div>
+
+<div class="q">
+  <h3><span class="n">06</span> What is an Emerald error, and does <code>catch</code> see .NET exceptions?</h3>
+  <p><code>throw "text"</code> and <code>throw Error("text")</code> both work, and <code>catch e</code> is untyped in v0. Two questions follow that the tree-walker never had to answer, because it had no BCL beneath it.</p>
+  <ul>
+    <li>What CLR type is thrown? Presumably one <code>EmeraldError : Exception</code>, so <code>e.message</code> has somewhere to live.</li>
+    <li>When Emerald calls into .NET and .NET throws &mdash; a <code>FileNotFoundException</code>, say &mdash; does <code>catch e</code> catch it? If yes, <code>e.message</code> must work on any <code>Exception</code>. If no, a program can be killed by something it visibly wrapped in a <code>try</code>.</li>
+  </ul>
+  <p class="lean"><b>Leaning:</b> catch everything, and give <code>e.message</code> the underlying <code>Exception.Message</code>. A <code>try</code> that visibly fails to catch is the worse outcome, and typed catch is already deferred to when user-declared error classes exist.</p>
+</div>
+
+<div class="q">
+  <h3><span class="n">07</span> Where does the assembly and namespace root name come from?</h3>
+  <p>§3.3 maps directories to namespaces <em>with the project as root</em>, so <code>Shapes.Dog</code> becomes <code>MyGame.Shapes.Dog</code>. Nothing says where <code>MyGame</code> comes from.</p>
+  <ul>
+    <li>The entry file's directory name &mdash; nothing to configure, but renaming a folder renames the namespace.</li>
+    <li><code>emerald.toml</code>, which §3.5 already says appears on first need.</li>
+  </ul>
+  <p class="lean"><b>Leaning:</b> directory name by default, overridable in <code>emerald.toml</code> once that file exists for another reason. A student building a Windows executable should never meet a manifest.</p>
+</div>
+
+<div class="q">
+  <h3><span class="n">08</span> What does the entry point look like?</h3>
+  <p>The entry file's top-level statements become a static method that is the assembly entry point. Two details are unstated: whether it takes <code>string[] args</code> (there is no way to read them in the language yet), and how <code>exit(code)</code> reaches the process exit code &mdash; as a return value from <code>Main</code>, or as <code>Environment.Exit</code>.</p>
+  <p class="lean"><b>Leaning:</b> emit <code>static int Main()</code>, and let <code>exit(code)</code> throw an internal signal the entry point catches and returns &mdash; which is exactly what the interpreter already does with <code>ExitSignal</code>, so the semantics are already decided and tested.</p>
+</div>
+
+<h2>Notes and risks</h2>
+<p class="sub">Not decisions, but things that will bite during phase 2 if they are met by surprise.</p>
+
+<div class="q" style="border-left-color:var(--accent)">
+  <h3><span class="n" style="color:var(--accent)">&mdash;</span> String iteration is by text element, not by <code>char</code></h3>
+  <p><code>for letter in "héllo"</code> yields real characters &mdash; the tour and the examples both promise that <code>é</code> is one turn of the loop and a family emoji is one. .NET's <code>string</code> enumerates UTF-16 code units, which is neither. This needs <code>StringInfo</code> / <code>TextElementEnumerator</code>, and it is easy to emit the fast wrong thing by accident because the fast wrong thing is what <code>foreach (char c in s)</code> does.</p>
+</div>
+
+<div class="q" style="border-left-color:var(--accent)">
+  <h3><span class="n" style="color:var(--accent)">&mdash;</span> The environment may block a freshly emitted assembly</h3>
+  <p>Smart App Control already blocks the compiler's own build on this machine, which is why everything runs under WSL with <code>-p:UseAppHost=false</code>. An assembly the compiler writes and then tries to execute is a new instance of the same class of problem, and it will look like a compiler bug when it is not. Worth provoking deliberately, early, on a trivial assembly &mdash; before there is enough emitted code for the failure to be ambiguous.</p>
+</div>
+
+<div class="q" style="border-left-color:var(--accent)">
+  <h3><span class="n" style="color:var(--accent)">&mdash;</span> Two implementations, and one of them is the oracle</h3>
+  <p>Once the backend runs anything, every golden test becomes a differential test for free: the same program through the interpreter and through the assembly must print the same thing. That is worth wiring up on the very first program that compiles, rather than after the emitter is large enough to have opinions.</p>
+  <p>What it cannot see is semantics that are wrong <em>consistently</em> &mdash; the emitter will be written by reading the interpreter, so a shared mistake stays invisible. That is the gap the combination pass exists to cover, and the reason it comes first.</p>
+</div>
+
+<footer>
+  <p>Written 4 September 2026, before any emit code exists. Sources are the design document's §3 (settled decisions), §5 (platform constraints), and §7 (roadmap, phase 2).</p>
+</footer>
+
+</div>
