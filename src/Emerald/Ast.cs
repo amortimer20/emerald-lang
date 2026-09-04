@@ -41,7 +41,12 @@ public sealed record Entry(Expr Key, Expr Value);
 
 public abstract record Expr
 {
-    public sealed record Literal(object? Value) : Expr;
+    /// <summary>
+    /// A constant. <c>Line</c> exists only so a diagnostic can point at one: an expression
+    /// made entirely of literals — <c>if true then "a" else 42</c> — otherwise carried no
+    /// token anywhere, and the error came out at line 0 with no source line to quote.
+    /// </summary>
+    public sealed record Literal(object? Value, int Line = 0) : Expr;
 
     /// <summary>"a #{b} c" — alternating literal and expression parts.</summary>
     public sealed record Interpolation(List<Expr> Parts) : Expr;

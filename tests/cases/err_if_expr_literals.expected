@@ -1,0 +1,6 @@
+
+err_if_expr_literals.em:4  The then branch gives String but the else branch gives Int.
+
+    4 | var x = if true then "a" else 42
+
+  Both branches of an if expression must produce the same type.

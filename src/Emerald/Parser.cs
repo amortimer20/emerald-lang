@@ -713,10 +713,10 @@ public sealed class Parser(List<Token> tokens, string fileName)
 
     private Expr Primary()
     {
-        if (Match(TokenType.True)) return new Expr.Literal(true);
-        if (Match(TokenType.False)) return new Expr.Literal(false);
-        if (Match(TokenType.Nothing)) return new Expr.Literal(null);
-        if (Check(TokenType.Int, TokenType.Float)) return new Expr.Literal(Advance().Literal);
+        if (Match(TokenType.True)) return new Expr.Literal(true, Previous.Line);
+        if (Match(TokenType.False)) return new Expr.Literal(false, Previous.Line);
+        if (Match(TokenType.Nothing)) return new Expr.Literal(null, Previous.Line);
+        if (Check(TokenType.Int, TokenType.Float)) { var number = Advance(); return new Expr.Literal(number.Literal, number.Line); }
         if (Check(TokenType.String)) return StringExpression(Advance());
         if (Check(TokenType.LeftBrace)) return LambdaLiteral();
 
@@ -819,7 +819,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
     private Expr StringExpression(Token token)
     {
         string raw = (string)token.Literal!;
-        if (!raw.Contains("#{") && !raw.Contains('\\')) return new Expr.Literal(raw);
+        if (!raw.Contains("#{") && !raw.Contains('\\')) return new Expr.Literal(raw, token.Line);
 
         List<Expr> parts = [];
         var literal = new StringBuilder();
@@ -839,7 +839,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
             {
                 if (literal.Length > 0)
                 {
-                    parts.Add(new Expr.Literal(literal.ToString()));
+                    parts.Add(new Expr.Literal(literal.ToString(), token.Line));
                     literal.Clear();
                 }
 
@@ -884,7 +884,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
             else literal.Append(raw[i]);
         }
 
-        if (literal.Length > 0) parts.Add(new Expr.Literal(literal.ToString()));
+        if (literal.Length > 0) parts.Add(new Expr.Literal(literal.ToString(), token.Line));
         return new Expr.Interpolation(parts);
     }
 

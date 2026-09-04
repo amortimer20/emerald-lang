@@ -1502,9 +1502,10 @@ public sealed class Checker(
         var a = TypeOf(i.Then, thenScope);
         var b = TypeOf(i.Else, elseScope);
 
-        if (a is EmType.Unknown || b is EmType.Unknown) return a is EmType.Unknown ? b : a;
-        if (a.Accepts(b)) return a;
-        if (b.Accepts(a)) return b;
+        // The same rule a list literal uses, and for the same reasons: `nothing` in one
+        // branch makes the answer optional rather than a clash, and two classes meet at a
+        // shared base. This had its own copy of the first half and neither of those.
+        if (CommonType(a, b) is { } common) return common;
 
         Error(LineOf(i.Condition),
               $"The then branch gives {a.Show()} but the else branch gives {b.Show()}.",
@@ -2584,8 +2585,20 @@ public sealed class Checker(
         Expr.Get g => g.Name.Line,
         Expr.Call c => LineOf(c.Callee),
         Expr.Grouping g => LineOf(g.Inner),
+        Expr.Literal l => l.Line,
+        Expr.Index x => x.Bracket.Line,
+        Expr.ListLiteral l => l.Bracket.Line,
+        Expr.DictLiteral d => d.Bracket.Line,
+        Expr.RangeExpr r => LineOf(r.Start),
+
+        // An if expression's own line is its condition's, falling through to the branches
+        // when the condition carries nothing — every part of it can be a bare literal.
+        Expr.IfExpr i => First(LineOf(i.Condition), LineOf(i.Then), LineOf(i.Else)),
+        Expr.Interpolation p => p.Parts.Select(LineOf).FirstOrDefault(n => n > 0),
         _ => 0
     };
+
+    private static int First(params int[] lines) => lines.FirstOrDefault(n => n > 0);
 
     /// <summary>Where a statement begins, for the indentation check. Zero means the shape
     /// carries no usable token, and the statement is simply skipped.</summary>
