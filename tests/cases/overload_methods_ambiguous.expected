@@ -1,0 +1,6 @@
+
+overload_methods_ambiguous.em:5  Greeter.hi already has an overload matching this one.
+
+    5 |     func hi(other: String): String { return "b" }
+
+  Two of one name have to be told apart by what they take. No argument could choose between these.

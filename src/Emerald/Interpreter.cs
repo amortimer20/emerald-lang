@@ -71,6 +71,31 @@ public sealed class Interpreter
                 Execute(stmt, _globals);
     }
 
+    /// <summary>
+    /// Which overload these values fit. The checker refused any pair a call could not tell
+    /// apart, so the first that fits is the only one that can — this is never choosing a
+    /// best match, only finding the one.
+    /// </summary>
+    private static Stmt.FuncDecl? Choose(List<Stmt.FuncDecl> overloads, List<object?> args)
+    {
+        if (overloads.Count == 1) return overloads[0];
+
+        foreach (var candidate in overloads)
+        {
+            int least = candidate.Params.TakeWhile(p => p.Default is null).Count();
+            if (args.Count < least || args.Count > candidate.Params.Count) continue;
+
+            bool fits = true;
+            for (int i = 0; i < args.Count; i++)
+                if (candidate.Params[i].Type is { } declared && !Matches(declared, args[i]))
+                { fits = false; break; }
+
+            if (fits) return candidate;
+        }
+
+        return null;
+    }
+
     /// <summary>Calls a nullary function, or a static method when an owner is named.</summary>
     public object? CallNamed(string? owner, string name)
     {
@@ -319,7 +344,7 @@ public sealed class Interpreter
 
         if (target is EmInstance instance)
         {
-            var setAt = instance.Class.FindMethod(Prelude.SetAtMethod)
+            var setAt = Choose(instance.Class.FindMethods(Prelude.SetAtMethod), [position, value])
                 ?? throw new RuntimeError(
                     $"{instance.Class.Name} cannot be written to by position.",
                     $"Define {Prelude.SetAtMethod}(index, value) to allow "
@@ -523,24 +548,41 @@ public sealed class Interpreter
         // Trait-provided methods are merged in first, so the class's own definitions win.
         // On the CLR this would lower to interface default methods (§3.2); in a tree-walker
         // a merged table is the same thing with less ceremony.
-        Dictionary<string, Stmt.FuncDecl> methods = [];
+        Dictionary<string, List<Stmt.FuncDecl>> methods = [];
         List<string> required = [];
+
+        void Provide(string name, Stmt.FuncDecl method)
+        {
+            if (!methods.TryGetValue(name, out var overloads))
+                methods[name] = overloads = [];
+            overloads.Add(method);
+        }
 
         foreach (var traitName in decl.Traits)
         {
             if (!env.TryGet(traitName.Lexeme, out object? found) || found is not EmClass trait)
                 throw new RuntimeError($"No trait named {traitName.Lexeme}.");
 
-            foreach (var (name, method) in trait.Methods)
-                if (method.Body is not null) methods[name] = method;
-                else required.Add(name);
+            foreach (var (name, provided) in trait.Methods)
+                foreach (var method in provided)
+                    if (method.Body is not null) Provide(name, method);
+                    else required.Add(name);
 
             required.AddRange(trait.Unimplemented);
         }
 
+        // A class's own methods replace what a trait provided under that name, rather than
+        // joining it — otherwise mixing in a trait would silently overload every method
+        // you wrote to replace one of its defaults.
+        foreach (var name in decl.Members.OfType<Stmt.FuncDecl>()
+                                 .Where(m => !m.IsStatic && m.Body is not null)
+                                 .Select(m => m.Name.Lexeme)
+                                 .Distinct())
+            methods.Remove(name);
+
         foreach (var method in decl.Members.OfType<Stmt.FuncDecl>().Where(m => !m.IsStatic))
         {
-            if (method.Body is not null) methods[method.Name.Lexeme] = method;
+            if (method.Body is not null) Provide(method.Name.Lexeme, method);
             else required.Add(method.Name.Lexeme);
         }
 
@@ -556,7 +598,11 @@ public sealed class Interpreter
             built.Properties[property.Name.Lexeme] = property;
 
         foreach (var method in decl.Members.OfType<Stmt.FuncDecl>().Where(m => m.IsStatic))
-            built.StaticMethods[method.Name.Lexeme] = method;
+        {
+            if (!built.StaticMethods.TryGetValue(method.Name.Lexeme, out var overloads))
+                built.StaticMethods[method.Name.Lexeme] = overloads = [];
+            overloads.Add(method);
+        }
 
         // Static initialisers run once, when the type is declared.
         var staticScope = new Env(env);
@@ -712,9 +758,15 @@ public sealed class Interpreter
             return null;
         }
 
-        var method = instance.Class.FindMethod(name.Lexeme);
-        if (method is not null)
+        var overloads = instance.Class.FindMethods(name.Lexeme);
+        if (overloads.Count > 0)
+        {
+            var method = Choose(overloads, args)
+                ?? throw new RuntimeError(
+                    $"No version of {instance.Class.Name}.{name.Lexeme} takes these arguments.");
+
             return CallMethod(method, instance, instance.Class.Closure, args);
+        }
 
         throw new RuntimeError(
             $"No member named {name.Lexeme} on {instance.Class.Name}.");
@@ -726,8 +778,12 @@ public sealed class Interpreter
         if (args.Count == 0 && cls.OwnerOfStatic(name.Lexeme) is { } owner)
             return owner.Statics[name.Lexeme];
 
-        if (cls.FindStaticMethod(name.Lexeme) is { } method)
+        if (cls.FindStaticMethods(name.Lexeme) is { Count: > 0 } statics)
         {
+            var method = Choose(statics, args)
+                ?? throw new RuntimeError(
+                    $"No version of {cls.Name}.{name.Lexeme} takes these arguments.");
+
             var scope = new Env(cls.Closure);
             scope.Declare("Self", cls);
             BindParameters(method.Params, args, scope, name.Lexeme);
@@ -824,7 +880,7 @@ public sealed class Interpreter
         // even though lists never will.
         if (target is EmInstance instance)
         {
-            var at = instance.Class.FindMethod(Prelude.AtMethod)
+            var at = Choose(instance.Class.FindMethods(Prelude.AtMethod), [position])
                 ?? throw new RuntimeError(
                     $"{instance.Class.Name} cannot be indexed with [].",
                     $"Mix in {Prelude.IndexableTrait} and define {Prelude.AtMethod}.");
@@ -921,7 +977,13 @@ public sealed class Interpreter
         if (left is not EmInstance instance || !Prelude.Operators.TryGetValue(op, out var entry))
             return Arithmetic(left, op, right, token);
 
-        var method = instance.Class.FindMethod(entry.Method);
+        var method = Choose(instance.Class.FindMethods(entry.Method), [right]);
+        if (method is null && instance.Class.FindMethods(entry.Method).Count > 0)
+            throw new RuntimeError(
+                $"No version of {instance.Class.Name}.{entry.Method} takes "
+                + $"{Builtins.TypeName(right)}.",
+                $"{token.Lexeme} passes the right-hand value to {entry.Method}.");
+
         if (method is null)
             throw new RuntimeError(
                 $"{instance.Class.Name} does not define {token.Lexeme}.",
@@ -938,7 +1000,7 @@ public sealed class Interpreter
     private bool Same(object? left, object? right)
     {
         if (left is EmInstance instance
-            && instance.Class.FindMethod(Prelude.EqualsMethod) is { } method)
+            && Choose(instance.Class.FindMethods(Prelude.EqualsMethod), [right]) is { } method)
             return Truthy(CallMethod(method, instance, instance.Class.Closure, [right]));
 
         return AreEqual(left, right);
@@ -952,7 +1014,7 @@ public sealed class Interpreter
     {
         if (left is EmInstance instance)
         {
-            var method = instance.Class.FindMethod(Prelude.CompareMethod)
+            var method = Choose(instance.Class.FindMethods(Prelude.CompareMethod), [right])
                 ?? throw new RuntimeError(
                     $"{instance.Class.Name} cannot be ordered with {op.Lexeme}.",
                     $"Mix in {Prelude.OrderedTrait} and define {Prelude.CompareMethod}.");

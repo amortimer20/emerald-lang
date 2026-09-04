@@ -373,7 +373,13 @@ public sealed class ClassInfo(string name)
     public HashSet<string> AbstractNames { get; } = [];
     public Dictionary<string, EmType> Fields { get; } = [];
     public Dictionary<string, EmType> StaticFields { get; } = [];
-    public Dictionary<string, EmType.Func> StaticMethods { get; } = [];
+    /// <summary>
+    /// Methods by name, each name holding every overload of it (§3.2). A list rather than
+    /// one signature, because two methods may share a name when their parameters differ —
+    /// and a subclass declaring a name replaces the base's set for that name entirely,
+    /// which is what overriding already meant.
+    /// </summary>
+    public Dictionary<string, List<EmType.Func>> StaticMethods { get; } = [];
 
     /// <summary>Fields declared with a get body. Indistinguishable to callers.</summary>
     public HashSet<string> PropertyNames { get; } = [];
@@ -402,7 +408,7 @@ public sealed class ClassInfo(string name)
                             && !f.Value.IsMaybe)
                 .Select(f => (f.Key, f.Value)));
     public HashSet<string> ReadOnlyProperties { get; } = [];
-    public Dictionary<string, EmType.Func> Methods { get; } = [];
+    public Dictionary<string, List<EmType.Func>> Methods { get; } = [];
     public List<EmType> ConstructorParams { get; set; } = [];
 
     /// <summary>How many of them a caller must supply — see <see cref="EmType.Func"/>.</summary>
@@ -419,10 +425,27 @@ public sealed class ClassInfo(string name)
     public EmType? FindField(string wanted) =>
         Fields.TryGetValue(wanted, out var t) ? t : Base?.FindField(wanted);
 
-    public EmType.Func? FindMethod(string wanted) =>
-        Methods.TryGetValue(wanted, out var m) ? m
-            : Base?.FindMethod(wanted)
-              ?? Traits.Select(t => t.FindMethod(wanted)).FirstOrDefault(f => f is not null);
+    /// <summary>
+    /// The first method of this name. Enough for everything that only asks whether one
+    /// exists — trait requirements, and the operator lowering, where the name is fixed.
+    /// </summary>
+    public EmType.Func? FindMethod(string wanted) => FindMethods(wanted).FirstOrDefault();
+
+    /// <summary>
+    /// Every overload of a name, from wherever it is first declared. Own methods shadow
+    /// the base's rather than adding to them: a subclass writing <c>speak</c> replaces
+    /// what it inherited, which is what an override has always meant here.
+    /// </summary>
+    public List<EmType.Func> FindMethods(string wanted)
+    {
+        if (Methods.TryGetValue(wanted, out var mine)) return mine;
+        if (Base?.FindMethods(wanted) is { Count: > 0 } inherited) return inherited;
+
+        foreach (var trait in Traits)
+            if (trait.FindMethods(wanted) is { Count: > 0 } provided) return provided;
+
+        return [];
+    }
 
     /// <summary>
     /// Resolved lazily rather than copied at declaration time, so a trait may be declared
@@ -444,12 +467,15 @@ public sealed class ClassInfo(string name)
     /// <summary>The signature, not just the return type — a call site needs the parameters
     /// to check what it was handed.</summary>
     public EmType.Func? FindStaticMethod(string wanted) =>
-        StaticMethods.TryGetValue(wanted, out var m) ? m : Base?.FindStaticMethod(wanted);
+        FindStaticMethods(wanted).FirstOrDefault();
+
+    public List<EmType.Func> FindStaticMethods(string wanted) =>
+        StaticMethods.TryGetValue(wanted, out var mine) ? mine
+            : Base?.FindStaticMethods(wanted) ?? [];
 
     public EmType? FindStatic(string wanted) =>
         StaticFields.TryGetValue(wanted, out var f) ? f
-            : StaticMethods.TryGetValue(wanted, out var m) ? m.Return
-            : Base?.FindStatic(wanted);
+            : FindStaticMethod(wanted)?.Return ?? Base?.FindStatic(wanted);
 
     public IEnumerable<string> StaticNames() =>
         StaticFields.Keys.Concat(StaticMethods.Keys).Concat(Base?.StaticNames() ?? []);

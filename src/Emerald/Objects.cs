@@ -9,7 +9,7 @@ public sealed class EmClass(
     TypeKind kind,
     EmClass? super,
     List<Stmt.VarDecl> fields,
-    Dictionary<string, Stmt.FuncDecl> methods,
+    Dictionary<string, List<Stmt.FuncDecl>> methods,
     Stmt.ConstructorDecl? constructor,
     List<string> unimplemented,
     Env closure) : ICallable
@@ -24,7 +24,7 @@ public sealed class EmClass(
 
     /// <summary>Type-level state and behaviour: one copy, shared by every instance.</summary>
     public Dictionary<string, object?> Statics { get; } = [];
-    public Dictionary<string, Stmt.FuncDecl> StaticMethods { get; } = [];
+    public Dictionary<string, List<Stmt.FuncDecl>> StaticMethods { get; } = [];
 
     /// <summary>Fields declared with a <c>get</c> body — computed rather than stored.</summary>
     public Dictionary<string, Stmt.VarDecl> Properties { get; } = [];
@@ -33,15 +33,30 @@ public sealed class EmClass(
         Properties.TryGetValue(wanted, out var p) ? p : super?.FindProperty(wanted);
 
     public Stmt.FuncDecl? FindStaticMethod(string wanted) =>
-        StaticMethods.TryGetValue(wanted, out var m) ? m : super?.FindStaticMethod(wanted);
+        FindStaticMethods(wanted).FirstOrDefault();
+
+    public List<Stmt.FuncDecl> FindStaticMethods(string wanted) =>
+        StaticMethods.TryGetValue(wanted, out var mine) ? mine
+            : super?.FindStaticMethods(wanted) ?? [];
 
     public EmClass? OwnerOfStatic(string wanted) =>
         Statics.ContainsKey(wanted) ? this : super?.OwnerOfStatic(wanted);
 
-    public IReadOnlyDictionary<string, Stmt.FuncDecl> Methods => methods;
+    public IReadOnlyDictionary<string, List<Stmt.FuncDecl>> Methods => methods;
 
-    public Stmt.FuncDecl? FindMethod(string wanted) =>
-        methods.TryGetValue(wanted, out var found) ? found : super?.FindMethod(wanted);
+    /// <summary>The first of this name — enough where the name is fixed, as it is for the
+    /// operator lowering and for asking whether a trait requirement is met.</summary>
+    public Stmt.FuncDecl? FindMethod(string wanted) => FindMethods(wanted).FirstOrDefault();
+
+    /// <summary>
+    /// Every overload of a name (§3.2). Own methods shadow the base's rather than adding
+    /// to them, which is what overriding already meant.
+    /// </summary>
+    public List<Stmt.FuncDecl> FindMethods(string wanted)
+    {
+        if (methods.TryGetValue(wanted, out var mine)) return mine;
+        return super?.FindMethods(wanted) ?? [];
+    }
 
     /// <summary>Base fields first, so a subclass's initialisers can rely on them.</summary>
     public IEnumerable<Stmt.VarDecl> AllFields() =>

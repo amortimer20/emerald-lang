@@ -335,25 +335,26 @@ public sealed class Checker(
 
                 case Stmt.FuncDecl method:
                 {
-                    // Overloading is on functions, not yet on methods (§3.2) — a method
-                    // table holds one signature per name, and the trait and operator
-                    // machinery reads it that way. Until that changes, a repeat has to be
-                    // an error: it used to overwrite in silence, so calls to the first went
-                    // somewhere else, which is the handling §3.2 calls the worst possible.
+                    // Methods overload on the same rule functions do (§3.2): two of one
+                    // name are fine when no call could confuse them, and the pair that
+                    // could is refused here rather than at every call site.
                     var table = method.IsStatic ? info.StaticMethods : info.Methods;
+                    var signature = SignatureOf(method);
 
-                    if (table.ContainsKey(method.Name.Lexeme))
+                    if (!table.TryGetValue(method.Name.Lexeme, out var existing))
+                        table[method.Name.Lexeme] = existing = [];
+
+                    if (existing.Any(e => Indistinguishable(e, signature)))
                     {
                         Error(method.Name.Line,
-                              $"{decl.Name.Lexeme} already has "
-                              + $"{(method.IsStatic ? "a type-level" : "a")} member "
-                              + $"named {method.Name.Lexeme}.",
-                              "Two functions may share a name when their parameters differ, "
-                              + "but two methods may not yet. Rename one of them.");
+                              $"{decl.Name.Lexeme}.{method.Name.Lexeme} already has an "
+                              + "overload matching this one.",
+                              "Two of one name have to be told apart by what they take. "
+                              + "No argument could choose between these.");
                         break;
                     }
 
-                    table[method.Name.Lexeme] = SignatureOf(method);
+                    existing.Add(signature);
                     if (!method.IsStatic && method.Body is null)
                         info.AbstractNames.Add(method.Name.Lexeme);
                     break;
@@ -1414,9 +1415,9 @@ public sealed class Checker(
         Expr.Binary b, EmType left, EmType right, string method, string? trait = null)
     {
         var info = ((EmType.Obj)left).Info;
-        var fn = info.FindMethod(method);
+        var overloads = info.FindMethods(method);
 
-        if (fn is null)
+        if (overloads.Count == 0)
         {
             if (trait is null) return EmType.Bool;
 
@@ -1438,12 +1439,23 @@ public sealed class Checker(
         // The operand goes to the method as its argument, so the method's own parameter
         // type is what rejects `money + 5`. The trait cannot do this itself — it has no
         // way to say "the same type as whatever implements me".
-        if (fn.Params.Count == 1 && !fn.Params[0].Accepts(right))
-            Error(b.Op.Line,
-                  $"{b.Op.Lexeme} cannot take {right.Show()} on the right of {left.Show()}.",
-                  $"{left.Show()}.{method} expects {fn.Params[0].Show()}.");
+        //
+        // An overloaded one is resolved here like any other call, which is what lets a
+        // vector add both another vector and a number.
+        var fn = overloads.FirstOrDefault(
+            f => f.Params.Count == 1 && f.Params[0].Accepts(right));
 
-        return fn.Return;
+        if (fn is not null) return fn.Return;
+
+        Error(b.Op.Line,
+              $"{b.Op.Lexeme} cannot take {right.Show()} on the right of {left.Show()}.",
+              overloads.Count == 1
+                  ? $"{left.Show()}.{method} expects {overloads[0].Params.FirstOrDefault()?.Show() ?? "nothing"}."
+                  : $"{left.Show()}.{method} has "
+                    + string.Join(", and ", overloads.Select(
+                        f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".");
+
+        return overloads[0].Return;
     }
 
     private EmType LogicalType(Expr.Logical l, Scope scope)
@@ -1572,7 +1584,19 @@ public sealed class Checker(
         if (receiver is EmType.Obj obj)
         {
             if (obj.Info.FindField(name.Lexeme) is { } fieldType) return fieldType;
-            if (obj.Info.FindMethod(name.Lexeme) is { } method) return method.Return;
+            if (obj.Info.FindMethods(name.Lexeme) is { Count: > 0 } overloads)
+            {
+                // A bare name is a zero-argument call (§3.1), so it wants whichever
+                // version takes none — not simply the first one declared.
+                var nullary = overloads.FirstOrDefault(f => f.LeastArgs == 0);
+                if (nullary is not null) return nullary.Return;
+
+                Error(name.Line,
+                      $"{obj.Info.Name}.{name.Lexeme} takes arguments, but got none.",
+                      "It has " + string.Join(", and ", overloads.Select(
+                          f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".");
+                return EmType.Any;
+            }
 
             Error(name.Line, $"No member named {name.Lexeme} on {obj.Info.Name}.",
                   Suggest(name.Lexeme, obj.Info.MemberNames()));
@@ -1618,10 +1642,25 @@ public sealed class Checker(
 
                 if (get.Target is Expr.Variable owner
                     && _classes.TryGetValue(owner.Name.Lexeme, out var ownerInfo)
-                    && ownerInfo.FindStaticMethod(get.Name.Lexeme) is { } staticMethod)
+                    && ownerInfo.FindStaticMethods(get.Name.Lexeme) is { Count: > 0 } statics)
                 {
-                    return CheckArguments(staticMethod, c, staticArgs,
-                                          $"{ownerInfo.Name}.{get.Name.Lexeme}", get.Name.Line);
+                    string what = $"{ownerInfo.Name}.{get.Name.Lexeme}";
+
+                    if (statics.Count == 1)
+                        return CheckArguments(statics[0], c, staticArgs, what, get.Name.Line);
+
+                    int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
+                    var chosen = statics.FirstOrDefault(f => Fits(f, supplied, staticArgs));
+                    if (chosen is not null) return chosen.Return;
+
+                    Error(get.Name.Line,
+                          $"No version of {what} takes "
+                          + (staticArgs.Count == 0
+                                ? "no arguments."
+                                : $"({string.Join(", ", staticArgs.Select(t => t.Show()))})."),
+                          "It has " + string.Join(", and ", statics.Select(
+                              f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".");
+                    return EmType.Any;
                 }
 
                 return staticResult;
@@ -1639,10 +1678,25 @@ public sealed class Checker(
             // the return-type table, which records what it gives back and not what it
             // takes, so there is nothing there to check a call against.
             if (receiver is EmType.Obj obj
-                && obj.Info.FindMethod(get.Name.Lexeme) is { } method)
+                && obj.Info.FindMethods(get.Name.Lexeme) is { Count: > 0 } candidates)
             {
-                return CheckArguments(method, c, args,
-                                      $"{obj.Info.Name}.{get.Name.Lexeme}", get.Name.Line);
+                string what = $"{obj.Info.Name}.{get.Name.Lexeme}";
+
+                if (candidates.Count == 1)
+                    return CheckArguments(candidates[0], c, args, what, get.Name.Line);
+
+                int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
+                var chosen = candidates.FirstOrDefault(f => Fits(f, supplied, args));
+                if (chosen is not null) return chosen.Return;
+
+                Error(get.Name.Line,
+                      $"No version of {what} takes "
+                      + (args.Count == 0
+                            ? "no arguments."
+                            : $"({string.Join(", ", args.Select(t => t.Show()))})."),
+                      "It has " + string.Join(", and ", candidates.Select(
+                          f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".");
+                return EmType.Any;
             }
 
             // A built-in has a signature now too, so the standard library is checked the
