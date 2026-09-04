@@ -133,7 +133,11 @@ public sealed class Checker(
                 continue;
             }
 
-            _classes[name] = new ClassInfo(name);
+            // Kind is set here rather than in DescribeClass, which runs a type at a time:
+            // `class Dog with Swimmer` in dog.em was described before swimmer.em, read
+            // Swimmer's kind while it was still the default, and reported the trait as a
+            // class. Whether a name is a trait cannot depend on where its file sorts.
+            _classes[name] = new ClassInfo(name) { Kind = c.Kind };
             declaringType[name] = c;
         }
 

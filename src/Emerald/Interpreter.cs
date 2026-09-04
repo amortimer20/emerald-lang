@@ -35,12 +35,13 @@ public sealed class Interpreter
             // file reads top to bottom without forward declarations and mutual recursion
             // works. Without this the checker accepts programs the runtime then rejects.
             DeclareFunctions(program);
+            DeclareTypes(program);
 
-            // Function declarations are skipped here: DeclareFunctions has already put
-            // them in, gathered into overload sets. Executing them again would declare
-            // each on its own and replace the set with whichever came last.
+            // Function and type declarations are skipped here: both have been hoisted
+            // above — functions gathered into overload sets, types built in dependency
+            // order. Executing either again would declare it a second time.
             foreach (var stmt in program)
-                if (stmt is not Stmt.FuncDecl) Execute(stmt, _globals);
+                if (stmt is not (Stmt.FuncDecl or Stmt.ClassDecl)) Execute(stmt, _globals);
         }
         catch (RuntimeError error)
         {
@@ -65,9 +66,10 @@ public sealed class Interpreter
     public void LoadDeclarations(List<Stmt> program)
     {
         DeclareFunctions(program);
+        DeclareTypes(program);
 
         foreach (var stmt in program)
-            if (stmt is Stmt.ClassDecl or Stmt.VarDecl)
+            if (stmt is Stmt.VarDecl)
                 Execute(stmt, _globals);
     }
 
@@ -151,6 +153,41 @@ public sealed class Interpreter
     }
 
     /// <summary>
+    /// Builds every top-level type, a base and its traits before whatever uses them.
+    ///
+    /// Declaration order cannot decide this. A project is every <c>.em</c> file in the
+    /// folder (§3.3), loaded in name order, so <c>class Dog with Swimmer</c> in dog.em ran
+    /// before swimmer.em existed and failed with "No trait named Swimmer" — a program
+    /// broken by what its files were called. The checker had the same fault from the same
+    /// cause and reported the trait as a class.
+    ///
+    /// The checker has already refused cycles and unknown names, so following the
+    /// dependencies here terminates and anything still missing is not this pass's to
+    /// report — it is left to <see cref="BuildClass"/>, which says so properly.
+    /// </summary>
+    private void DeclareTypes(List<Stmt> program)
+    {
+        Dictionary<string, Stmt.ClassDecl> declared = [];
+        foreach (var stmt in program)
+            if (stmt is Stmt.ClassDecl c) declared.TryAdd(c.Name.Lexeme, c);
+
+        HashSet<string> done = [];
+
+        void Build(Stmt.ClassDecl decl)
+        {
+            if (!done.Add(decl.Name.Lexeme)) return;
+
+            foreach (var dependency in decl.Traits.Append(decl.BaseName!).Where(t => t is not null))
+                if (declared.TryGetValue(dependency.Lexeme, out var earlier)) Build(earlier);
+
+            _globals.Declare(decl.Name.Lexeme, BuildClass(decl, _globals));
+        }
+
+        foreach (var stmt in program)
+            if (stmt is Stmt.ClassDecl c) Build(c);
+    }
+
+    /// <summary>
     /// Runs statements at a prompt, printing what a bare expression came to.
     ///
     /// The difference from <see cref="Run"/> is only that: an expression statement in a
@@ -160,10 +197,11 @@ public sealed class Interpreter
     public void RunInteractive(List<Stmt> entry)
     {
         DeclareFunctions(entry);
+        DeclareTypes(entry);
 
         foreach (var stmt in entry)
         {
-            if (stmt is Stmt.FuncDecl) continue;
+            if (stmt is Stmt.FuncDecl or Stmt.ClassDecl) continue;
 
             if (stmt is Stmt.ExprStmt shown)
             {
