@@ -744,6 +744,13 @@ public sealed class Interpreter
     /// </summary>
     private object? GetOrInvoke(EmInstance instance, Token name, List<object?> args)
     {
+        // .or and .must belong to the ?, not to the value, so a value that is there simply
+        // is itself — the same answer an Int or a String gives. An instance is the only
+        // value that could declare these names itself, which is why the checker reserves
+        // them: otherwise whether .or meant the fallback or a method would depend on what
+        // the variable happened to be holding at the time.
+        if (name.Lexeme is "or" or "must") return instance;
+
         if (args.Count == 0 && instance.Fields.TryGetValue(name.Lexeme, out object? value))
             return value;
 

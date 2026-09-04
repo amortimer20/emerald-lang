@@ -1,0 +1,9 @@
+Leeds
+unknown
+Leeds
+
+maybe_object.em:19  This is nothing, and .must() said it would not be.
+
+   19 | print(absent.must().name)
+
+  Check it against nothing first, or use .or(...) for a fallback.

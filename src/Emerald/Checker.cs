@@ -452,12 +452,14 @@ public sealed class Checker(
                 case Stmt.VarDecl { Getter: not null } property:
                     CheckAttributes(property.Attributes, "variable");
                     CheckCasing(property.Name, "property", property.IsConst);
+                    if (!property.IsStatic) CheckReservedMember(property.Name, "A property");
                     CheckProperty(property, info, body);
                     break;
 
                 case Stmt.VarDecl field:
                     CheckAttributes(field.Attributes, "variable");
                     CheckCasing(field.Name, "instance variable", field.IsConst);
+                    if (!field.IsStatic) CheckReservedMember(field.Name, "An instance variable");
 
                     // Traits carry no state (§3.2): a CLR interface cannot hold fields, so
                     // a trait names what it needs as an abstract member instead of hiding
@@ -483,6 +485,7 @@ public sealed class Checker(
                 case Stmt.FuncDecl method:
                     CheckAttributes(method.Attributes, "function");
                     CheckCasing(method.Name, "method");
+                    if (!method.IsStatic) CheckReservedMember(method.Name, "A method");
                     CheckPredicateName(method);
                     if (method.Body is not null)
                         CheckCallable(method.Params, method.Body, body, method.Name.Lexeme);
@@ -2601,6 +2604,26 @@ public sealed class Checker(
     /// enforcing both directions makes <c>list.empty?</c> state its return type at the
     /// call site.
     /// </summary>
+    /// <summary>
+    /// <c>or</c> and <c>must</c> are what a <c>T?</c> is asked, and every value answers
+    /// them the same way — a present one gives itself back (§3.2). A class that declared
+    /// either name would make <c>city.or(...)</c> mean the fallback or the method
+    /// depending on the variable's declared type rather than on what is written, so the
+    /// names are reserved on instance members and the question never arises.
+    /// </summary>
+    private void CheckReservedMember(Token name, string kind)
+    {
+        if (name.Lexeme is not ("or" or "must")) return;
+
+        string owner = _currentType?.Name ?? "This type";
+
+        Error(name.Line,
+              $"{kind} cannot be named {name.Lexeme} — that name belongs to optionals.",
+              $"Every value answers .{name.Lexeme}: on {owner}? it stands in for the "
+              + $"missing case, and on {owner} it gives the {owner} back. A member of that "
+              + "name could never be reached.");
+    }
+
     private void CheckPredicateName(Stmt.FuncDecl fn)
     {
         // An unannotated return type says nothing either way; guessing from the body
