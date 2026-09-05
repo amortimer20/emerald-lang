@@ -1051,9 +1051,9 @@ public sealed class Checker(
     }
 
     /// <summary>
-    /// A bare function name as a statement is a call (§3.1). Anything else that merely
-    /// computes a value and drops it is a mistake, and saying so catches a whole class
-    /// of typos that would otherwise run silently.
+    /// A statement that computes a value and drops it is a mistake (§3.1). This is the
+    /// whole safety net for a forgotten <c>()</c>: since a bare name is no longer a call,
+    /// <c>exit</c> and <c>rex.speak</c> alone are caught here rather than running.
     /// </summary>
     private void CheckExpressionStatement(Stmt.ExprStmt statement, Scope scope)
     {
@@ -1064,20 +1064,48 @@ public sealed class Checker(
         // program computing something and dropping it, which is a different act.
         if (interactive) return;
 
+        // A checker that already reported something here has nothing to add.
+        if (type is EmType.Unknown) return;
+
+        // The mistake this change creates, so it is the one worth naming precisely: what
+        // was written is the function, and the parentheses that would run it are missing.
+        if (type is EmType.Func fn && Uncalled(statement.Expression) is { } written)
+        {
+            Error(LineOf(statement.Expression),
+                  $"This names {written} without calling it.",
+                  $"It is {fn.Show()}. Add parentheses to run it:  {written}()");
+            return;
+        }
+
         if (statement.Expression is Expr.Variable name)
         {
-            if (type is EmType.Func or EmType.Unknown) return;
-
             Error(name.Name.Line,
                   $"This does nothing — {name.Name.Lexeme} is looked up and thrown away.",
                   $"Did you mean to call it, or to use the value?  var result = {name.Name.Lexeme}");
             return;
         }
 
+        if (statement.Expression is Expr.Get read)
+            Error(read.Name.Line,
+                  $"This does nothing — {read.Name.Lexeme} is read and thrown away.",
+                  $"Did you mean to use the value?  var result = {Source.Of(statement.Expression)}");
+
         if (statement.Expression is Expr.Binary or Expr.Unary)
             Error(LineOf(statement.Expression), "This does nothing.",
                   "Its result is computed and then thrown away.");
     }
+
+    /// <summary>
+    /// How an uncalled function was written, if it was written as a plain name or member
+    /// read. A lambda dropped on its own line is a different mistake and gets the general
+    /// message, since there is no <c>()</c> to suggest adding to it.
+    /// </summary>
+    private static string? Uncalled(Expr expression) => expression switch
+    {
+        Expr.Variable v => v.Name.Lexeme,
+        Expr.Get g => Source.Of(g),
+        _ => null,
+    };
 
     private void CheckVarDecl(Stmt.VarDecl v, Scope scope)
     {
@@ -2009,15 +2037,15 @@ public sealed class Checker(
             : null;
 
     /// <summary>A member read, with <c>?.</c> handled if that is how it was written.</summary>
-    private EmType OptionalMemberType(Expr.Get g, Scope scope)
+    private EmType OptionalMemberType(Expr.Get g, Scope scope, EmType? wanted = null)
     {
         var receiver = ReceiverType(g, scope);
 
-        if (!g.Optional) return MemberType(receiver, g.Name, scope);
+        if (!g.Optional) return MemberType(receiver, g.Name, scope, wanted);
 
         return CheckedOptional(receiver, g)
-            ? EmType.Nullable(MemberType(receiver.Stripped, g.Name, scope))
-            : MemberType(receiver, g.Name, scope);
+            ? EmType.Nullable(MemberType(receiver.Stripped, g.Name, scope, wanted))
+            : MemberType(receiver, g.Name, scope, wanted);
     }
 
     /// <summary>
@@ -2038,7 +2066,11 @@ public sealed class Checker(
         return false;
     }
 
-    private EmType MemberType(EmType receiver, Token name, Scope scope)
+    /// <summary>
+    /// A member read — no parentheses were written. Since every call has them (§3.1),
+    /// this yields a field, a property, or the method <em>itself</em>; it never runs one.
+    /// </summary>
+    private EmType MemberType(EmType receiver, Token name, Scope scope, EmType? wanted = null)
     {
         if (receiver is EmType.Unknown) return EmType.Any;
 
@@ -2051,23 +2083,13 @@ public sealed class Checker(
                 return EmType.Any;
             }
 
-            // A bare name is a zero-argument call (§3.1), so one that needs arguments was
-            // reached without them.
-            if (fn.LeastArgs > 0)
-                Error(name.Line,
-                      $"Kernel.{name.Lexeme} takes {Count(fn.LeastArgs, "argument")}, "
-                      + "but got none.");
-
-            return fn.Return;
+            return fn;
         }
 
-        // A bare `arr.count` is a zero-argument call, so it resolves the same way
-        // `arr.count()` does — parens are optional when nothing is passed (§3.1).
-        if (receiver is EmType.Lst list)
-            return ListMemberType(list, name, EmType.Any, EmType.Any);
-
-        if (receiver is EmType.Dict dict) return DictMemberType(dict, name, null, scope);
-        if (receiver is EmType.SetOf set) return SetMemberType(set, name, null, scope);
+        // The built-ins expose no properties (§3.1), so every member of one is a method
+        // and reading it without parentheses is the missing-parens mistake.
+        if (receiver is EmType.Lst or EmType.Dict or EmType.SetOf)
+            return BuiltinRead(receiver, name);
 
         // .or and .must are the two things you are *supposed* to ask of a maybe, so they
         // have to be reachable before the guard below rejects everything else (§3.2).
@@ -2131,18 +2153,7 @@ public sealed class Checker(
             CheckVisibility(obj.Info, name);
             if (obj.Info.FindField(name.Lexeme) is { } fieldType) return fieldType;
             if (obj.Info.FindMethods(name.Lexeme) is { Count: > 0 } overloads)
-            {
-                // A bare name is a zero-argument call (§3.1), so it wants whichever
-                // version takes none — not simply the first one declared.
-                var nullary = overloads.FirstOrDefault(f => f.LeastArgs == 0);
-                if (nullary is not null) return nullary.Return;
-
-                Error(name.Line,
-                      $"{obj.Info.Name}.{name.Lexeme} takes arguments, but got none.",
-                      "It has " + string.Join(", and ", overloads.Select(
-                          f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".");
-                return EmType.Any;
-            }
+                return MethodValue(overloads, obj.Info.Name, name, wanted);
 
             Error(name.Line, $"No member named {name.Lexeme} on {obj.Info.Name}.",
                   PredicateSwallowed(name, obj.Info.MemberNames())
@@ -2150,28 +2161,56 @@ public sealed class Checker(
             return EmType.Any;
         }
 
-        // A bare name is a zero-argument call (§3.1), so a method that needs a block was
-        // reached without one — it would run nothing, silently. The same shape as bare
-        // `exit` doing nothing, which was a real bug once.
-        if (Signatures.SignatureOf(receiver, name.Lexeme) is { } signature
-            && (signature.WantsBlock || signature.Takes.Length > 0))
-        {
-            Error(name.Line,
-                  signature.WantsBlock
-                      ? $"{receiver.Show()}.{name.Lexeme} needs a block."
-                      : $"{receiver.Show()}.{name.Lexeme} takes "
-                        + $"{Count(signature.Takes.Length, "argument")}, but got none.",
-                  signature.WantsBlock
-                      ? $"Write what to do each time:  {name.Lexeme} {{ i => ... }}"
-                      : $"It wants {string.Join(", ", signature.Takes.Select(t => t.Show()))}.");
-            return signature.Returns;
-        }
+        return BuiltinRead(receiver, name);
+    }
 
-        if (Signatures.TryLookup(receiver, name.Lexeme, out var result)) return result;
+    /// <summary>
+    /// Reading a built-in member without parentheses. There are no built-in properties
+    /// (§3.1), so either the name exists and the parentheses are missing, or it does not
+    /// exist at all — and those are different messages.
+    /// </summary>
+    private EmType BuiltinRead(EmType receiver, Token name)
+    {
+        if (Signatures.MethodsOn(receiver).Contains(name.Lexeme))
+        {
+            // Not offered as a value: a built-in method has no declaration to bind, so
+            // there is nothing to hand back. A block does the same job and can be checked.
+            Error(name.Line,
+                  $"{receiver.Show()}.{name.Lexeme} is a method, so this names it "
+                  + "without calling it.",
+                  $"Calling it takes parentheses:  {name.Lexeme}()\n"
+                  + "To pass it somewhere, wrap the call in a block:  "
+                  + $"{{ ... {name.Lexeme}() }}");
+            return EmType.Any;
+        }
 
         Error(name.Line, $"No method named {name.Lexeme} on {receiver.Show()}.",
               PredicateSwallowed(name, Signatures.MethodsOn(receiver))
                   ?? Suggest(name.Lexeme, Signatures.MethodsOn(receiver)));
+        return EmType.Any;
+    }
+
+    /// <summary>
+    /// <c>rex.speak</c> — the method itself, receiver attached. One overload is the whole
+    /// answer; several are only resolvable against an expected shape, since a bare name
+    /// carries no arguments to choose by.
+    /// </summary>
+    private EmType MethodValue(
+        List<EmType.Func> overloads, string owner, Token name, EmType? wanted)
+    {
+        if (overloads.Count == 1) return overloads[0];
+
+        if (wanted is EmType.Func shape
+            && overloads.Where(f => Answers(f, shape)).ToList() is { Count: 1 } single)
+            return single[0];
+
+        Error(name.Line,
+              $"{owner}.{name.Lexeme} has {overloads.Count} versions, so it is not clear "
+              + "which one this names.",
+              "It has " + string.Join(", and ", overloads.Select(
+                  f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})"))
+              + ".\nCall the one you mean inside a block instead:  "
+              + $"{{ {name.Lexeme}(...) }}");
         return EmType.Any;
     }
 
@@ -2234,10 +2273,18 @@ public sealed class Checker(
     }
 
     /// <summary>Types an expression, offering a lambda the shape it is expected to have.</summary>
-    private EmType TypeOf(Expr expr, Scope scope, EmType? wanted) =>
-        expr is Expr.Lambda l && wanted is EmType.Func shape
-            ? LambdaType(l, scope, shape: shape)
-            : TypeOf(expr, scope);
+    private EmType TypeOf(Expr expr, Scope scope, EmType? wanted) => expr switch
+    {
+        Expr.Lambda l when wanted is EmType.Func shape => LambdaType(l, scope, shape: shape),
+
+        // Which overload `rex.speak` names cannot be read off the site, so the expected
+        // type decides (§3.1). Only a member read needs this: a call picks its overload
+        // from the arguments, which are written right there.
+        Expr.Get g when wanted is EmType.Func && StaticOf(g.Target, g.Name) is null
+            => OptionalMemberType(g, scope, wanted),
+
+        _ => TypeOf(expr, scope),
+    };
 
     /// <summary>
     /// A call whose receiver is already resolved. Split out so <c>?.</c> can hand it the
@@ -2327,6 +2374,22 @@ public sealed class Checker(
                 if (blockType is not null) args.Add(blockType);
                 return CheckArguments(field, c, args,
                                       $"{held.Info.Name}.{get.Name.Lexeme}", get.Name.Line);
+            }
+
+            // A field or property, reached with parentheses. The two are deliberately
+            // indistinguishable here — that interchange is what survived the removal of
+            // optional parens (§3.1) — so the message names neither, only that this is a
+            // value the object has rather than something it does.
+            if (receiver is EmType.Obj value
+                && value.Info.FindMethods(get.Name.Lexeme).Count == 0
+                && value.Info.FindField(get.Name.Lexeme) is { } plain)
+            {
+                CheckVisibility(value.Info, get.Name);
+                Error(get.Name.Line,
+                      $"{value.Info.Name}.{get.Name.Lexeme} is {plain.Show()}, not a method.",
+                      "It is read without parentheses:  "
+                      + $"{Source.Of(get.Target)}.{get.Name.Lexeme}");
+                return plain;
             }
 
             // Kernel goes through the very signatures the bare names use, so `print(x)`

@@ -154,3 +154,17 @@ public sealed class BoundMethod(Stmt.FuncDecl declaration, EmInstance receiver, 
 
     public override string ToString() => $"<method {declaration.Name.Lexeme}>";
 }
+
+/// <summary>
+/// A static method as a value. There is no receiver to attach, only the class the body
+/// calls <c>Self</c>, so this is the type-level counterpart to <see cref="BoundMethod"/>.
+/// </summary>
+public sealed class StaticMethod(Stmt.FuncDecl declaration, EmClass owner) : ICallable
+{
+    public string Name => declaration.Name.Lexeme;
+
+    public object? Call(Interpreter interpreter, List<object?> args) =>
+        interpreter.CallStatic(declaration, owner, args);
+
+    public override string ToString() => $"<method {owner.Name}.{declaration.Name.Lexeme}>";
+}

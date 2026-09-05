@@ -207,12 +207,6 @@ public sealed class Interpreter
             {
                 object? value = Evaluate(shown.Expression, _globals);
 
-                // A bare name that is callable is a call (§3.1), so `exit` still means
-                // `exit()` here and does not print itself as a function.
-                if (shown.Expression is Expr.Variable
-                    && value is ICallable callable and not EmClass)
-                    value = callable.Call(this, []);
-
                 if (value is not null) Console.WriteLine(Builtins.Display(value));
                 continue;
             }
@@ -426,22 +420,13 @@ public sealed class Interpreter
     }
 
     /// <summary>
-    /// A bare function name used as a statement is a call — <c>exit</c> means
-    /// <c>exit()</c>, the same way <c>s.upper</c> means <c>s.upper()</c> (§3.1). Only in
-    /// statement position: there, naming a function and discarding it can never be what
-    /// anyone meant, whereas in expression position a bare name may be a real value.
-    /// A class name is left alone, so <c>Dog</c> does not silently construct one.
+    /// Evaluates and discards. A bare name is never a call — <c>exit</c> had been made to
+    /// mean <c>exit()</c> while parens were optional, and that went with them (§3.1). The
+    /// checker rejects a statement whose value is thrown away, so nothing arrives here
+    /// silently doing nothing; what reaches this is a call, an assignment, or a REPL line.
     /// </summary>
-    private void ExecuteExpressionStatement(Stmt.ExprStmt statement, Env env)
-    {
-        object? value = Evaluate(statement.Expression, env);
-
-        if (statement.Expression is Expr.Variable
-            && value is ICallable callable and not EmClass)
-        {
-            callable.Call(this, []);
-        }
-    }
+    private void ExecuteExpressionStatement(Stmt.ExprStmt statement, Env env) =>
+        Evaluate(statement.Expression, env);
 
     /// <summary>
     /// <c>assert total == 10</c>.
@@ -791,11 +776,13 @@ public sealed class Interpreter
     }
 
     /// <summary>
-    /// Field first, then method. A bare <c>dog.speak</c> invokes the method rather than
-    /// producing a reference to it, because parens are optional (§3.1) — the two spellings
-    /// have to mean the same thing.
+    /// Field, then property, then method. Whether the method is <em>run</em> is decided by
+    /// the caller, not here: <c>dog.speak</c> hands back a <see cref="BoundMethod"/> and
+    /// <c>dog.speak()</c> runs it (§3.1). Only a written '(' or a trailing block makes a
+    /// Call node, so <paramref name="invoking"/> is the parentheses, carried down.
     /// </summary>
-    private object? GetOrInvoke(EmInstance instance, Token name, List<object?> args)
+    private object? GetOrInvoke(
+        EmInstance instance, Token name, List<object?> args, bool invoking = true)
     {
         // .or and .must belong to the ?, not to the value, so a value that is there simply
         // is itself — the same answer an Int or a String gives. An instance is the only
@@ -804,13 +791,19 @@ public sealed class Interpreter
         // the variable happened to be holding at the time.
         if (name.Lexeme is "or" or "must") return instance;
 
-        if (args.Count == 0 && instance.Fields.TryGetValue(name.Lexeme, out object? value))
+        if (!invoking && instance.Fields.TryGetValue(name.Lexeme, out object? value))
             return value;
 
         // A property is a var with a body: reading it runs the getter (§3.2). Callers
-        // cannot tell it apart from a stored field, which is the whole point.
-        if (args.Count == 0 && instance.Class.FindProperty(name.Lexeme) is { Getter: { } getter })
+        // cannot tell it apart from a stored field, which is still the whole point — that
+        // interchange is where uniform access lives now that a method is not part of it.
+        if (instance.Class.FindProperty(name.Lexeme) is { Getter: { } getter })
         {
+            if (invoking)
+                throw new RuntimeError(
+                    $"{instance.Class.Name}.{name.Lexeme} is a property, not a method.",
+                    $"A property is read without parentheses:  {Lower(instance.Class.Name)}.{name.Lexeme}");
+
             var scope = new Env(instance.Class.Closure);
             scope.Declare("self", instance);
             try { ExecuteBlock(getter, scope); }
@@ -821,6 +814,19 @@ public sealed class Interpreter
         var overloads = instance.Class.FindMethods(name.Lexeme);
         if (overloads.Count > 0)
         {
+            // No parentheses: the method itself, receiver already attached. Which overload
+            // is meant cannot be read off the call site, so the checker resolves it against
+            // the expected func(...) type and this is only the backstop.
+            if (!invoking)
+            {
+                if (overloads.Count > 1)
+                    throw new RuntimeError(
+                        $"{instance.Class.Name}.{name.Lexeme} has {overloads.Count} versions, "
+                        + "so it is not clear which one this names.");
+
+                return new BoundMethod(overloads[0], instance, instance.Class.Closure);
+            }
+
             var method = Choose(overloads, args)
                 ?? throw new RuntimeError(
                     $"No version of {instance.Class.Name}.{name.Lexeme} takes these arguments.");
@@ -828,9 +834,24 @@ public sealed class Interpreter
             return CallMethod(method, instance, instance.Class.Closure, args);
         }
 
+        // A field holding a function, reached with parentheses. EvaluateCall handles the
+        // common shape; this catches the rest, so `holder.cb()` is never a silent no-op.
+        if (invoking && instance.Fields.TryGetValue(name.Lexeme, out object? held))
+        {
+            if (held is ICallable fn) return fn.Call(this, args);
+
+            throw new RuntimeError(
+                $"{instance.Class.Name}.{name.Lexeme} is a field, not a method.",
+                $"A field is read without parentheses:  {Lower(instance.Class.Name)}.{name.Lexeme}");
+        }
+
         throw new RuntimeError(
             $"No member named {name.Lexeme} on {instance.Class.Name}.");
     }
+
+    /// <summary>A class name as an example receiver, so a hint reads like written code.</summary>
+    private static string Lower(string className) =>
+        className.Length == 0 ? "it" : char.ToLowerInvariant(className[0]) + className[1..];
 
     /// <summary>
     /// Runs a module's top-level code, once, before its first member is reached (§3.3).
@@ -873,26 +894,42 @@ public sealed class Interpreter
     }
 
     /// <summary>Type-level access: <c>Dog.from_shelter_id(42)</c>, <c>Vector3.zero</c>.</summary>
-    private object? GetStatic(EmClass cls, Token name, List<object?> args)
+    private object? GetStatic(
+        EmClass cls, Token name, List<object?> args, bool invoking = true)
     {
         Initialise(cls);
 
-        if (args.Count == 0 && cls.OwnerOfStatic(name.Lexeme) is { } owner)
+        // A static var is a value, so it is read without parentheses either way — the
+        // parens only decide what happens to a static *method* (§3.1).
+        if (!invoking && cls.OwnerOfStatic(name.Lexeme) is { } owner)
             return owner.Statics[name.Lexeme];
 
         if (cls.FindStaticMethods(name.Lexeme) is { Count: > 0 } statics)
         {
+            if (!invoking)
+            {
+                if (statics.Count > 1)
+                    throw new RuntimeError(
+                        $"{cls.Name}.{name.Lexeme} has {statics.Count} versions, "
+                        + "so it is not clear which one this names.");
+
+                return new StaticMethod(statics[0], cls);
+            }
+
             var method = Choose(statics, args)
                 ?? throw new RuntimeError(
                     $"No version of {cls.Name}.{name.Lexeme} takes these arguments.");
 
-            var scope = new Env(cls.Closure);
-            scope.Declare("Self", cls);
-            BindParameters(method.Params, args, scope, name.Lexeme);
+            return CallStatic(method, cls, args);
+        }
 
-            try { ExecuteBlock(method.Body!, scope); }
-            catch (ReturnSignal r) { return r.Value; }
-            return null;
+        if (invoking && cls.OwnerOfStatic(name.Lexeme) is { } holder)
+        {
+            if (holder.Statics[name.Lexeme] is ICallable fn) return fn.Call(this, args);
+
+            throw new RuntimeError(
+                $"{cls.Name}.{name.Lexeme} is a value, not a method.",
+                $"It is read without parentheses:  {cls.Name}.{name.Lexeme}");
         }
 
         throw new RuntimeError(
@@ -900,6 +937,21 @@ public sealed class Interpreter
             cls.FindMethod(name.Lexeme) is not null
                 ? $"{name.Lexeme} belongs to an instance — call it on a {cls.Name} value."
                 : null);
+    }
+
+    /// <summary>
+    /// Runs a static method. Public because <see cref="StaticMethod"/> holds one as a
+    /// value and calls back in, the same way <see cref="BoundMethod"/> does.
+    /// </summary>
+    public object? CallStatic(Stmt.FuncDecl method, EmClass owner, List<object?> args)
+    {
+        var scope = new Env(owner.Closure);
+        scope.Declare("Self", owner);
+        BindParameters(method.Params, args, scope, method.Name.Lexeme);
+
+        try { ExecuteBlock(method.Body!, scope); }
+        catch (ReturnSignal r) { return r.Value; }
+        return null;
     }
 
     private void SetField(EmInstance instance, Token name, object? value)
@@ -1181,11 +1233,16 @@ public sealed class Interpreter
         if (target is null && g.Optional) return null;
 
         if (target is EmSuper above) return InvokeInherited(above, g.Name, []);
-        if (target is EmInstance instance) return GetOrInvoke(instance, g.Name, []);
-        if (target is EmClass cls) return GetStatic(cls, g.Name, []);
+        if (target is EmInstance instance)
+            return GetOrInvoke(instance, g.Name, [], invoking: false);
+        if (target is EmClass cls) return GetStatic(cls, g.Name, [], invoking: false);
 
-        // A property-style access is a zero-argument method call: 5.even?, "hi".length
-        return Builtins.InvokeMethod(this, target, g.Name.Lexeme, []);
+        // Builtins expose no properties (§3.1), so every member of one is a method and a
+        // read without parentheses is the missing-parens mistake. The checker says so
+        // first; this is what a program reaching here at runtime is told.
+        throw new RuntimeError(
+            $"{Builtins.TypeName(target)}.{g.Name.Lexeme} is a method.",
+            $"Calling it takes parentheses:  {g.Name.Lexeme}()");
     }
 
     private object? EvaluateCall(Expr.Call c, Env env)
