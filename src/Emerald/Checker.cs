@@ -661,6 +661,57 @@ public sealed class Checker(
     /// <summary>An unannotated parameter shows as "anything" rather than as "?", which is
     /// what <see cref="EmType.Unknown"/> prints and means nothing to a reader.</summary>
     /// <summary>
+    /// <c>.or(fallback)</c> and <c>.must()</c> on a <c>T?</c>, which both give back a
+    /// <c>T</c> — so the fallback has to be one, and there has to be exactly one of it.
+    /// </summary>
+    private EmType CheckFallback(EmType receiver, Expr.Call c, List<EmType> args, Token name)
+    {
+        var held = receiver.Stripped;
+        int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
+
+        if (name.Lexeme == "must")
+        {
+            if (supplied > 0)
+                Error(name.Line, $".must() takes no arguments, but got {supplied}.",
+                      $"It says the value is there. To supply one for when it is not, "
+                      + $"that is .or({Source.Of(c.Args[0])}).");
+            return held;
+        }
+
+        if (supplied != 1)
+        {
+            Error(name.Line,
+                  supplied == 0
+                      ? $".or() needs the value to use when there is none."
+                      : $".or() takes one argument, but got {supplied}.",
+                  $"Write what {receiver.Show()} should come to when it holds nothing:  "
+                  + $".or({Example(held)})");
+            return held;
+        }
+
+        if (!held.Accepts(args[0]))
+            Error(name.Line,
+                  $"This is {receiver.Show()}, so the fallback is {held.Show()}, "
+                  + $"but this is {args[0].Show()}.",
+                  Widening(held, args[0])
+                  ?? $".or gives back {Article(held.Show()).ToLowerInvariant()} "
+                     + $"{held.Show()} whichever way it goes, so both sides have to agree.");
+
+        return held;
+    }
+
+    /// <summary>A value of this type, for showing in a hint.</summary>
+    private static string Example(EmType type) => type switch
+    {
+        _ when type.Equals(EmType.Int) => "0",
+        _ when type.Equals(EmType.Float) => "0.0",
+        _ when type.Equals(EmType.String) => "\"\"",
+        _ when type.Equals(EmType.Bool) => "false",
+        EmType.Lst => "[]",
+        _ => "...",
+    };
+
+    /// <summary>
     /// Why one block does not fit where another was wanted. An unannotated block parameter
     /// has no type to print, so the shapes alone read as <c>func()</c> against
     /// <c>func(?)</c> — true, and no help at all about what to change.
@@ -2257,6 +2308,13 @@ public sealed class Checker(
                       has);
                 return EmType.Any;
             }
+
+            // .or and .must are intrinsics rather than entries in a signature table, so
+            // nothing was checking them: `count.or()` reached a runtime crash when the
+            // value was missing, and `count.or("none")` on an Int? was accepted while
+            // giving back a String from an expression the checker called Int.
+            if (receiver.IsMaybe && get.Name.Lexeme is "or" or "must")
+                return CheckFallback(receiver, c, args, get.Name);
 
             // A field holding a function, called: `button.on_click()`. It is not a method,
             // so the method lookup above passed it by, and without this the call went

@@ -1,0 +1,6 @@
+
+err_or_wrong_type.em:5  This is Int?, so the fallback is Int, but this is String.
+
+    5 | print(n.or("not a number"))
+
+  .or gives back an Int whichever way it goes, so both sides have to agree.

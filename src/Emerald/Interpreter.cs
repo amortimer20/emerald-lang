@@ -1200,6 +1200,16 @@ public sealed class Interpreter
             // is not going to make.
             if (target is null && get.Optional) return null;
 
+            // .or is an intrinsic, not a method (§3.2), and its whole meaning is "the value
+            // to use when there is none" — so the fallback is evaluated only when there is
+            // none. It read as a call and behaved like one: `here.or(fallback())` ran the
+            // fallback and discarded it, burning whatever side effects it had. Every
+            // neighbouring construct short-circuits, including the `or` operator this
+            // shares a name with, and §3.2 defines this one as `if v != nothing then v
+            // else x` — which evaluates a single branch.
+            if (get.Name.Lexeme == "or" && c.Args.Count == 1 && c.Trailing is null)
+                return target ?? Evaluate(c.Args[0], env);
+
             List<object?> received = [.. c.Args.Select(a => Evaluate(a, env))];
             if (c.Trailing is not null) received.Add(new EmLambda(c.Trailing, env));
 

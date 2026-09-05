@@ -1,0 +1,6 @@
+
+err_or_no_fallback.em:6  .or() needs the value to use when there is none.
+
+    6 | print(n.or())
+
+  Write what Int? should come to when it holds nothing:  .or(0)
