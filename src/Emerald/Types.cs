@@ -83,8 +83,14 @@ public abstract record EmType
         Dict d => $"Dictionary<{d.Key.Show()}, {d.Value.Show()}>",
         SetOf t => $"Set<{t.Element.Show()}>",
         Obj o => o.Info.Name,
-        Func => "Function",
-        Overloads => "Function",
+
+        // Written the way it is declared, so a mismatch reads as one: "expects func() but
+        // this is func(Int)" says what to change, where two identical "Function"s did not.
+        // The return is left off when there is none, matching a declaration with no `: T`.
+        Func f => $"func({string.Join(", ", f.Params.Select(p => p.Show()))})"
+                  + (f.Return.Equals(Nothing) || f.Return is Unknown ? "" : $": {f.Return.Show()}"),
+
+        Overloads => "func",
         _ => "?"
     };
 

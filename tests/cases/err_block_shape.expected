@@ -1,0 +1,8 @@
+
+err_block_shape.em:7  run expects func() as its first argument, but this is func(?).
+
+    7 | run { x => print(x) }
+
+  This block takes 1 parameter, and the one wanted takes none.
+
+  emerald explain

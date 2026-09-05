@@ -22,7 +22,20 @@ public sealed record Diagnostic(
 /// parameterised containers compiler-owned, so this grammar is for consuming them and
 /// never for declaring one.
 /// </summary>
-public sealed record TypeRef(Token Name, bool Nullable, List<TypeRef>? Arguments = null);
+/// <summary>
+/// The written shape of a callable: <c>func(Int): String</c>. A function's type is its
+/// header with the name removed, so there is no second grammar to learn — and the return
+/// type is optional here for the same reason it is optional on a declaration.
+/// </summary>
+public sealed record FuncRef(List<TypeRef> Params, TypeRef? Returns);
+
+/// <summary>
+/// A written type. <c>Arguments</c> holds the type arguments of a compiler-owned generic;
+/// <c>Function</c> is set instead when the type is a callable, and then <c>Name</c> is the
+/// <c>func</c> keyword itself, kept only so a diagnostic has a line to point at.
+/// </summary>
+public sealed record TypeRef(Token Name, bool Nullable, List<TypeRef>? Arguments = null,
+                             FuncRef? Function = null);
 
 public sealed record Param(Token Name, TypeRef? Type, Expr? Default);
 

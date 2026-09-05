@@ -1153,6 +1153,17 @@ public sealed class Interpreter
             List<object?> received = [.. c.Args.Select(a => Evaluate(a, env))];
             if (c.Trailing is not null) received.Add(new EmLambda(c.Trailing, env));
 
+            // A field holding a function: `button.on_click()` calls what it holds, where
+            // `button.on_click` on its own is the function itself. Only a written '(' or a
+            // trailing block makes a Call node, so this is the one place that can tell the
+            // two apart — GetOrInvoke sees no parentheses and handed the field straight
+            // back, which made every callback in a field a silent no-op.
+            if (target is EmInstance holder
+                && holder.Fields.TryGetValue(get.Name.Lexeme, out object? held)
+                && held is ICallable stored
+                && holder.Class.FindMethods(get.Name.Lexeme).Count == 0)
+                return stored.Call(this, received);
+
             if (target is EmInstance instance) return GetOrInvoke(instance, get.Name, received);
             if (target is EmClass cls) return GetStatic(cls, get.Name, received);
             return Builtins.InvokeMethod(this, target, get.Name.Lexeme, received);

@@ -57,8 +57,27 @@ var problems = project.Diagnostics;
 if (problems.Count == 0)
 {
     var checker = new Checker(entryName, project.FileOf, project.LinesOf);
-    checker.Check(program);
-    problems = checker.Diagnostics;
+
+    // The same last resort the run below has. Checking is where a compiler bug is most
+    // likely to surface, and the guarantee that §3.6 makes — no .NET stack trace ever
+    // reaches the reader — has to hold here too, or it holds only where someone thought
+    // to catch. Found by writing a program that crashed the checker.
+    try
+    {
+        checker.Check(program);
+        problems = checker.Diagnostics;
+    }
+    catch (Exception unexpected)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(
+            "  The compiler hit a problem it did not expect while checking "
+            + $"{entryName}, and stopped: {unexpected.GetType().Name}.");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("  This is a bug in Emerald, not in your program.");
+        Console.Error.WriteLine($"  What it said was: {unexpected.Message}");
+        return 70;
+    }
 }
 
 // Warnings are printed and then stepped over. A warning that stopped the program would

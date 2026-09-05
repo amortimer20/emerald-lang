@@ -593,6 +593,19 @@ public sealed class Checker(
 
     /// <summary>An unannotated parameter shows as "anything" rather than as "?", which is
     /// what <see cref="EmType.Unknown"/> prints and means nothing to a reader.</summary>
+    /// <summary>
+    /// Why one block does not fit where another was wanted. An unannotated block parameter
+    /// has no type to print, so the shapes alone read as <c>func()</c> against
+    /// <c>func(?)</c> — true, and no help at all about what to change.
+    /// </summary>
+    private static string? BlockShape(EmType wanted, EmType got) =>
+        wanted is EmType.Func w && got is EmType.Func g && w.Params.Count != g.Params.Count
+            ? $"This block takes {Parameters(g.Params.Count)}, and the one wanted "
+              + $"takes {Parameters(w.Params.Count)}."
+            : null;
+
+    private static string Parameters(int n) => n == 0 ? "none" : Count(n, "parameter");
+
     private static string Signature(string name, EmType.Func fn) =>
         $"{name}({string.Join(", ", fn.Params.Select(Named))}): {Named(fn.Return)}";
 
@@ -1747,16 +1760,30 @@ public sealed class Checker(
         return EmType.Any;
     }
 
-    private EmType LambdaType(Expr.Lambda l, Scope scope, EmType? paramHint = null)
+    private EmType LambdaType(Expr.Lambda l, Scope scope, EmType? paramHint = null,
+                             EmType.Func? shape = null)
     {
         var inner = new Scope(scope, functionBoundary: true);
-        foreach (var p in l.Params)
-            inner.Declare(p.Name.Lexeme,
-                          p.Type is not null ? Resolve(p.Type) : paramHint ?? EmType.Any);
+
+        // What each parameter is: written down if the writer said so, otherwise taken from
+        // the shape the receiving function declared, otherwise from a single hint — which
+        // is what a list method gives, since every parameter of `map`'s block is one
+        // element. Nothing to go on leaves it open rather than guessing.
+        List<EmType> parameters = [];
+        for (int i = 0; i < l.Params.Count; i++)
+        {
+            var p = l.Params[i];
+            parameters.Add(
+                p.Type is not null ? Resolve(p.Type)
+                : shape is not null && i < shape.Params.Count ? shape.Params[i]
+                : paramHint ?? EmType.Any);
+
+            inner.Declare(p.Name.Lexeme, parameters[i]);
+        }
 
         // A one-expression body is the lambda's value (§3.2).
         if (l.Body is [Stmt.ExprStmt only])
-            return new EmType.Func([.. l.Params.Select(_ => EmType.Any)], TypeOf(only.Expression, inner));
+            return new EmType.Func(parameters, TypeOf(only.Expression, inner));
 
         _returnTypes.Push(EmType.Any);
         int enclosingLoops = _loopDepth;
@@ -1766,7 +1793,7 @@ public sealed class Checker(
         _loopDepth = enclosingLoops;
         _hiddenLoops -= enclosingLoops;
         _returnTypes.Pop();
-        return new EmType.Func([.. l.Params.Select(_ => EmType.Any)], EmType.Any);
+        return new EmType.Func(parameters, EmType.Any);
     }
 
     /// <summary>
@@ -2072,10 +2099,18 @@ public sealed class Checker(
             return MemberCallType(receiver, c, get, scope);
         }
 
+        // The trailing block is deliberately left untyped here: NonMemberCallType types it
+        // once the callee is known, so its parameters can be inferred from the shape the
+        // callee asks for.
         List<EmType> given = [.. c.Args.Select(arg => TypeOf(arg, scope))];
-        if (c.Trailing is not null) TypeOf(c.Trailing, scope);
         return NonMemberCallType(c, given, scope);
     }
+
+    /// <summary>Types an expression, offering a lambda the shape it is expected to have.</summary>
+    private EmType TypeOf(Expr expr, Scope scope, EmType? wanted) =>
+        expr is Expr.Lambda l && wanted is EmType.Func shape
+            ? LambdaType(l, scope, shape: shape)
+            : TypeOf(expr, scope);
 
     /// <summary>
     /// A call whose receiver is already resolved. Split out so <c>?.</c> can hand it the
@@ -2089,7 +2124,26 @@ public sealed class Checker(
             if (receiver is EmType.SetOf set) return SetMemberType(set, get.Name, c, scope);
 
             List<EmType> args = [.. c.Args.Select(arg => TypeOf(arg, scope))];
-            if (c.Trailing is not null) TypeOf(c.Trailing, scope);
+
+            // A method that declares a block parameter gives the block its shape, exactly
+            // as a plain function does — so it is typed after the method is known.
+            //
+            // It joins the argument list only for a user-declared method, where a block is
+            // an ordinary last argument. A built-in counts the two apart on purpose:
+            // `5.times { }` passes no arguments and one block, and CheckBuiltinCall says
+            // "does not take a block" precisely because it can still tell them apart.
+            EmType? blockType = null;
+            if (c.Trailing is not null)
+            {
+                var wanted = receiver is EmType.Obj holder
+                    ? Wanted(holder.Info.FindMethods(get.Name.Lexeme) is [var only]
+                                 ? only
+                                 : EmType.Any,
+                             args.Count)
+                    : null;
+
+                blockType = TypeOf(c.Trailing, scope, wanted);
+            }
 
             // A user-declared method carries real parameter types. A built-in one lives in
             // the return-type table, which records what it gives back and not what it
@@ -2097,6 +2151,8 @@ public sealed class Checker(
             if (receiver is EmType.Obj obj
                 && obj.Info.FindMethods(get.Name.Lexeme) is { Count: > 0 } candidates)
             {
+                if (blockType is not null) args.Add(blockType);
+
                 CheckVisibility(obj.Info, get.Name);
                 string what = $"{obj.Info.Name}.{get.Name.Lexeme}";
 
@@ -2126,6 +2182,19 @@ public sealed class Checker(
                 return EmType.Any;
             }
 
+            // A field holding a function, called: `button.on_click()`. It is not a method,
+            // so the method lookup above passed it by, and without this the call went
+            // unchecked entirely.
+            if (receiver is EmType.Obj held
+                && held.Info.FindMethods(get.Name.Lexeme).Count == 0
+                && held.Info.FindField(get.Name.Lexeme) is EmType.Func field)
+            {
+                CheckVisibility(held.Info, get.Name);
+                if (blockType is not null) args.Add(blockType);
+                return CheckArguments(field, c, args,
+                                      $"{held.Info.Name}.{get.Name.Lexeme}", get.Name.Line);
+            }
+
             // Kernel goes through the very signatures the bare names use, so `print(x)`
             // and `Kernel.print(x)` cannot be checked differently.
             if (receiver is EmType.Prim { Name: "Kernel" })
@@ -2143,6 +2212,26 @@ public sealed class Checker(
     }
 
     /// <summary>A call that is not a method call: a constructor, a name, an expression.</summary>
+    /// <summary>
+    /// The shape a callee declares for the argument in this position, if it declares one.
+    /// Used only as a hint: a wrong guess costs nothing, because the argument is checked
+    /// against the real signature immediately afterwards.
+    /// </summary>
+    private static EmType? Wanted(EmType callee, int position) => callee switch
+    {
+        EmType.Func fn when position < fn.Params.Count => fn.Params[position],
+
+        // An overload set only helps when every version agrees about this position, which
+        // is the common case for a block: one shape, differing in the arguments before it.
+        EmType.Overloads set when set.Alternatives
+            .Where(f => position < f.Params.Count)
+            .Select(f => f.Params[position])
+            .Distinct()
+            .ToList() is [var only] => only,
+
+        _ => null,
+    };
+
     private EmType NonMemberCallType(Expr.Call c, List<EmType> given, Scope scope)
     {
         // Constructing a type: reject traits and anything with unimplemented members.
@@ -2165,12 +2254,20 @@ public sealed class Checker(
         }
 
         var callee = TypeOf(c.Callee, scope);
+
+        // A trailing block is typed here rather than with the other arguments, because the
+        // shape it should have is written on the function receiving it — the same
+        // contextual inference that lets `numbers.map { x => x * 2 }` know x is an Int, now
+        // available to a function anyone can write.
+        if (c.Trailing is not null)
+            given.Add(TypeOf(c.Trailing, scope, Wanted(callee, given.Count)));
+
         if (callee is EmType.Unknown) return EmType.Any;
 
         if (callee is EmType.Overloads alternatives)
         {
             string overloaded = c.Callee is Expr.Variable which ? which.Name.Lexeme : "This";
-            int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
+            int supplied = given.Count;
 
             // At most one can match: §3.2 refused any pair a call could not tell apart, so
             // there is no "best match" rule here and none to explain to anyone.
@@ -2306,10 +2403,10 @@ public sealed class Checker(
         {
             if (fn.Params[i].Accepts(given[i])) continue;
 
-            Error(LineOf(c.Args[i]) is var at && at > 0 ? at : line,
+            Error(i < c.Args.Count && LineOf(c.Args[i]) is var at && at > 0 ? at : line,
                   $"{what} expects {fn.Params[i].Show()} "
                   + $"{Ordinal(i)}, but this is {given[i].Show()}.",
-                  Widening(fn.Params[i], given[i]),
+                  Widening(fn.Params[i], given[i]) ?? BlockShape(fn.Params[i], given[i]),
                   topic: "argument-type");
         }
 
@@ -2710,6 +2807,19 @@ public sealed class Checker(
     private EmType Resolve(TypeRef? annotation)
     {
         if (annotation is null) return EmType.Any;
+
+        // func(Int): String. Every parameter is required — a declared shape says what the
+        // caller must supply, and a default belongs to the function being written, not to
+        // the description of one being asked for.
+        if (annotation.Function is { } shape)
+        {
+            List<EmType> takes = [.. shape.Params.Select(Resolve)];
+            var callable = new EmType.Func(
+                takes, shape.Returns is null ? EmType.Nothing : Resolve(shape.Returns),
+                Required: takes.Count);
+
+            return annotation.Nullable ? EmType.Nullable(callable) : callable;
+        }
 
         // List is the one generic a program may write down (§5.3). It must say what it
         // holds: the checker has always been able to represent List<String>, and only the

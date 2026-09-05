@@ -919,6 +919,26 @@ public sealed class Parser(List<Token> tokens, string fileName)
 
     private TypeRef ParseTypeRef()
     {
+        // func(Int): String — a function's type is its header without the name. Only the
+        // parameter types appear: a name in there would describe nothing, since the caller
+        // supplies a block whose parameters carry their own names.
+        if (Check(TokenType.Func))
+        {
+            var keyword = Advance();
+            Consume(TokenType.LeftParen, "Expected '(' after func in a type.");
+
+            List<TypeRef> takes = [];
+            if (!Check(TokenType.RightParen))
+                do { takes.Add(ParseTypeRef()); } while (Match(TokenType.Comma));
+
+            Consume(TokenType.RightParen, "Expected ')' to close the parameter types.");
+
+            TypeRef? returns = Match(TokenType.Colon) ? ParseTypeRef() : null;
+
+            return new TypeRef(keyword, Match(TokenType.Question), null,
+                               new FuncRef(takes, returns));
+        }
+
         var name = Consume(TokenType.Identifier, "Expected a type name.");
 
         // The scanner folds a trailing '?' into the identifier, because that is how
