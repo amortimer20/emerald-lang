@@ -102,6 +102,11 @@ public sealed class Checker(
         foreach (var (name, signature) in Kernel)
             globals.Declare(name, signature);
 
+        // Which variables a call can change behind a check's back. Gathered before
+        // anything is checked, because a function declared below still reassigns a
+        // variable used above it.
+        FindCapturedAssignments(program);
+
         // Built-in modules are ordinary named types to the checker, so Math.sqrt resolves
         // through the same signature table as String.upper.
         foreach (var name in Builtins.Modules.Keys)
@@ -1271,33 +1276,166 @@ public sealed class Checker(
     // ---- narrowing ------------------------------------------------------
 
     /// <summary>
+    /// Names that some function or block assigns without declaring — a variable one call
+    /// can change behind another's back.
+    ///
+    /// Narrowing proves what a variable holds at the moment of the check. If a call in
+    /// between can reassign it, the proof expires and the checker was still trusting it:
+    ///
+    ///     var name: String? = "ada"
+    ///     func clear() { name = nothing }
+    ///     if name != nothing {
+    ///         clear()
+    ///         print(name.length)      # compiled, then crashed
+    ///     }
+    ///
+    /// Kotlin refuses the same smart cast for the same reason. A variable a lambda merely
+    /// declares for itself is not captured and stays narrowable — otherwise the rule would
+    /// take away far more than it protects.
+    /// </summary>
+    private readonly HashSet<string> _capturedAndAssigned = [];
+
+    private void FindCapturedAssignments(List<Stmt> program)
+    {
+        foreach (var stmt in program) Walk(stmt, visible: null);
+
+        // `visible` is null at the top level, where an assignment is to a plain variable
+        // and nothing is captured. Inside a function or block it holds the names declared
+        // there, so an assignment to anything else reaches outward.
+        void Walk(Stmt stmt, HashSet<string>? visible)
+        {
+            switch (stmt)
+            {
+                case Stmt.VarDecl v:
+                    visible?.Add(v.Name.Lexeme);
+                    if (v.Init is not null) WalkExpr(v.Init, visible);
+                    if (v.Getter is not null) Enter(v.Getter, visible, []);
+                    if (v.Setter is not null) Enter(v.Setter, visible, ["value"]);
+                    break;
+
+                case Stmt.Assign a:
+                    if (visible is not null && a.Target is Expr.Variable target
+                        && !visible.Contains(target.Name.Lexeme))
+                        _capturedAndAssigned.Add(target.Name.Lexeme);
+                    WalkExpr(a.Value, visible);
+                    break;
+
+                case Stmt.FuncDecl f when f.Body is not null:
+                    Enter(f.Body, visible, [.. f.Params.Select(p => p.Name.Lexeme)]);
+                    break;
+
+                case Stmt.ConstructorDecl c:
+                    Enter(c.Body, visible, [.. c.Params.Select(p => p.Name.Lexeme)]);
+                    break;
+
+                case Stmt.ClassDecl c:
+                    foreach (var member in c.Members) Walk(member, visible);
+                    foreach (var line in c.Initialiser ?? []) Walk(line, visible);
+                    break;
+
+                case Stmt.If i:
+                    WalkExpr(i.Condition, visible);
+                    foreach (var s in i.Then) Walk(s, visible);
+                    foreach (var s in i.Else ?? []) Walk(s, visible);
+                    break;
+
+                case Stmt.While w:
+                    WalkExpr(w.Condition, visible);
+                    foreach (var s in w.Body) Walk(s, visible);
+                    break;
+
+                case Stmt.For f:
+                    WalkExpr(f.Iterable, visible);
+                    visible?.Add(f.Variable.Lexeme);
+                    foreach (var s in f.Body) Walk(s, visible);
+                    break;
+
+                case Stmt.TryCatch t:
+                    foreach (var s in t.Body) Walk(s, visible);
+                    foreach (var s in t.Handler) Walk(s, visible);
+                    break;
+
+                case Stmt.ExprStmt e: WalkExpr(e.Expression, visible); break;
+                case Stmt.Return r when r.Value is not null: WalkExpr(r.Value, visible); break;
+                case Stmt.Throw t: WalkExpr(t.Value, visible); break;
+                case Stmt.Assert a: WalkExpr(a.Condition, visible); break;
+            }
+        }
+
+        void Enter(List<Stmt> body, HashSet<string>? outer, IEnumerable<string> bound)
+        {
+            // A nested body sees what it declares plus what encloses it: assigning a name
+            // the enclosing function declared is still a capture from this one's view, but
+            // it is the outer scope's business, and it is recorded when that body is read.
+            HashSet<string> inner = [.. bound];
+            if (outer is not null) inner.UnionWith(outer);
+            foreach (var s in body) Walk(s, inner);
+        }
+
+        void WalkExpr(Expr expr, HashSet<string>? visible)
+        {
+            switch (expr)
+            {
+                case Expr.Lambda l:
+                    Enter(l.Body, visible, [.. l.Params.Select(p => p.Name.Lexeme)]);
+                    break;
+
+                case Expr.Call c:
+                    WalkExpr(c.Callee, visible);
+                    foreach (var arg in c.Args) WalkExpr(arg, visible);
+                    if (c.Trailing is not null) WalkExpr(c.Trailing, visible);
+                    break;
+
+                case Expr.Binary b: WalkExpr(b.Left, visible); WalkExpr(b.Right, visible); break;
+                case Expr.Logical l: WalkExpr(l.Left, visible); WalkExpr(l.Right, visible); break;
+                case Expr.Unary u: WalkExpr(u.Right, visible); break;
+                case Expr.Grouping g: WalkExpr(g.Inner, visible); break;
+                case Expr.Get g: WalkExpr(g.Target, visible); break;
+                case Expr.Index x: WalkExpr(x.Target, visible); WalkExpr(x.Position, visible); break;
+                case Expr.RangeExpr r: WalkExpr(r.Start, visible); WalkExpr(r.End, visible); break;
+                case Expr.ListLiteral l: foreach (var i in l.Items) WalkExpr(i, visible); break;
+                case Expr.Interpolation p: foreach (var i in p.Parts) WalkExpr(i, visible); break;
+                case Expr.IfExpr i:
+                    WalkExpr(i.Condition, visible);
+                    WalkExpr(i.Then, visible);
+                    WalkExpr(i.Else, visible);
+                    break;
+                case Expr.DictLiteral d:
+                    foreach (var e in d.Entries) { WalkExpr(e.Key, visible); WalkExpr(e.Value, visible); }
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
     /// What a condition proves about the variables in it. Handles the shapes a beginner
     /// actually writes — <c>x != nothing</c>, <c>x == nothing</c>, and those joined by
     /// <c>and</c>. Anything more elaborate simply narrows nothing, which is safe.
     /// </summary>
-    private static Dictionary<string, EmType> Refinements(Expr condition, bool whenTrue, Scope scope)
+    private Dictionary<string, EmType> Refinements(Expr condition, bool whenTrue, Scope scope)
     {
         Dictionary<string, EmType> result = [];
-        Collect(condition, whenTrue, result, scope);
+        Collect(condition, whenTrue, result, scope, _capturedAndAssigned);
         return result;
 
         static void Collect(
-            Expr expr, bool whenTrue, Dictionary<string, EmType> into, Scope scope)
+            Expr expr, bool whenTrue, Dictionary<string, EmType> into, Scope scope,
+            HashSet<string> blocked)
         {
             switch (expr)
             {
                 case Expr.Grouping g:
-                    Collect(g.Inner, whenTrue, into, scope);
+                    Collect(g.Inner, whenTrue, into, scope, blocked);
                     break;
 
                 // `a and b` proves both when true.
                 case Expr.Logical { Op.Type: TokenType.And } l when whenTrue:
-                    Collect(l.Left, true, into, scope);
-                    Collect(l.Right, true, into, scope);
+                    Collect(l.Left, true, into, scope, blocked);
+                    Collect(l.Right, true, into, scope, blocked);
                     break;
 
                 case Expr.Unary { Op.Type: TokenType.Not } u:
-                    Collect(u.Right, !whenTrue, into, scope);
+                    Collect(u.Right, !whenTrue, into, scope, blocked);
                     break;
 
                 // Narrowing strips the ?, rather than widening to "could be anything".
@@ -1306,7 +1444,9 @@ public sealed class Checker(
                 // find `add` on it. Any is the fallback for a name that is somehow not in
                 // scope; the surrounding code will have reported that already.
                 case Expr.Binary b when IsNothingTest(b, out var name, out bool isNotEqual):
-                    if (isNotEqual == whenTrue)
+                    // A variable some call can reassign is not narrowed: the check would
+                    // still be believed after the call that undid it.
+                    if (isNotEqual == whenTrue && !blocked.Contains(name))
                         into[name] = scope.Find(name)?.Type.Stripped ?? EmType.Any;
                     break;
             }
@@ -1680,13 +1820,24 @@ public sealed class Checker(
     /// </summary>
     private Expr.Get? _optionalDot;
 
+    /// <summary>
+    /// The variable a member access was written on, if it was written on one. Read only by
+    /// the maybe diagnostic, to tell "you have not checked this" apart from "you checked it
+    /// and the check does not hold here".
+    /// </summary>
+    private string? _lastReceiverName;
+
     /// <summary>Types a <c>?.</c>'s receiver, remembering that it is one.</summary>
     private EmType ReceiverType(Expr.Get g, Scope scope)
     {
         var previous = _optionalDot;
         _optionalDot = g.Optional ? g : null;
         try { return TypeOf(g.Target, scope); }
-        finally { _optionalDot = previous; }
+        finally
+        {
+            _optionalDot = previous;
+            _lastReceiverName = g.Target is Expr.Variable v ? v.Name.Lexeme : null;
+        }
     }
 
     /// <summary>
@@ -1784,10 +1935,22 @@ public sealed class Checker(
         // here, not a crash later (§3.2).
         if (receiver.IsMaybe)
         {
+            // Telling someone to check it first, when the check is on the line above and
+            // was refused because a call can undo it, is the worst version of this message.
+            string hint = _lastReceiverName is { } held && _capturedAndAssigned.Contains(held)
+                ? $"Checking {held} does not settle it here: a function assigns {held}, so "
+                  + "it could have changed in between. Copy it first and check the copy, "
+                  + $"which nothing else can reach:\n"
+                  + $"  var it = {held}\n"
+                  + $"  if it != nothing {{ ... }}"
+                : $"{Article(receiver.Show())} {receiver.Show()} holds either "
+                  + $"{Article(receiver.Stripped.Show()).ToLowerInvariant()} "
+                  + $"{receiver.Stripped.Show()} or nothing. "
+                  + "Check it first, or supply a fallback with .or(...)";
+
             Error(name.Line,
                   $"This is {receiver.Show()}, not {receiver.Stripped.Show()}, so {name.Lexeme} may not exist.",
-                  $"{Article(receiver.Show())} {receiver.Show()} holds either {Article(receiver.Stripped.Show()).ToLowerInvariant()} {receiver.Stripped.Show()} or nothing. "
-                  + "Check it first, or supply a fallback with .or(...)",
+                  hint,
                   topic: "maybe");
             return EmType.Any;
         }
