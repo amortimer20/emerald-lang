@@ -1,0 +1,6 @@
+
+err_abstract_signature.em:6  Square.area does not match what Shape asks for.
+
+    6 | class Square extends Shape {
+
+  Shape declares area(): Int, and this is area(): String.

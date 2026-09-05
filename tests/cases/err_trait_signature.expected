@@ -1,0 +1,6 @@
+
+err_trait_signature.em:8  Tag.label does not match what Named asks for.
+
+    8 | class Tag with Named {
+
+  Named declares label(): String, and this is label(Int): String.

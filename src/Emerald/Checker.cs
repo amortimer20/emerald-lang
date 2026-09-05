@@ -522,6 +522,7 @@ public sealed class Checker(
         }
 
         CheckFieldsGetValues(decl, info);
+        CheckRequirementsAreMet(decl, info);
 
         // A module's own top-level code. Its statics are visible unqualified here: they
         // were written as a file's own variables and only became static fields because
@@ -539,6 +540,59 @@ public sealed class Checker(
         _mirroring = wasMirroring;
         _currentType = previousType;
     }
+
+    /// <summary>
+    /// A class answering an abstract requirement has to answer the one that was asked.
+    ///
+    /// Only the name was checked before, so <c>abstract func label(): String</c> was
+    /// satisfied by <c>func label(size: Int): Int</c> — wrong arity, wrong parameters,
+    /// wrong return type, all accepted, for traits and abstract classes alike. §3.2 rests
+    /// a good deal on traits being contracts, and an unchecked contract is a comment.
+    ///
+    /// An unannotated requirement asks for nothing in particular and is satisfied by
+    /// anything: the operator traits are written <c>abstract func add(other)</c>, and a
+    /// type's own <c>add</c> takes and returns itself. That is the point of them.
+    /// </summary>
+    private void CheckRequirementsAreMet(Stmt.ClassDecl decl, ClassInfo info)
+    {
+        foreach (string name in info.Required().Distinct())
+        {
+            // Still abstract here, or answered somewhere up the chain that already
+            // checked it. Either way this class is not the one making the claim.
+            if (info.AbstractNames.Contains(name)) continue;
+            if (!info.Methods.TryGetValue(name, out var given)) continue;
+            if (info.Requirement(name) is not { } required) continue;
+
+            // The operator traits carry diagnostics written for them — `compare` returning
+            // the wrong type is answered by explaining what compare means and pointing at
+            // the comparison. A generic shape mismatch would pre-empt the better message.
+            if (Prelude.TypeNames.Contains(required.Owner.Name)) continue;
+
+            if (given.Any(f => Answers(f, required.Wanted))) continue;
+
+            var first = given[0];
+            Error(decl.Name.Line,
+                  $"{decl.Name.Lexeme}.{name} does not match what "
+                  + $"{required.Owner.Name} asks for.",
+                  $"{required.Owner.Name} declares {Signature(name, required.Wanted)}, "
+                  + $"and this is {Signature(name, first)}.");
+        }
+    }
+
+    /// <summary>Whether one method can stand as the answer to a declared requirement.</summary>
+    private static bool Answers(EmType.Func given, EmType.Func wanted) =>
+        given.Params.Count == wanted.Params.Count
+        && given.LeastArgs <= wanted.LeastArgs
+        && given.Params.Zip(wanted.Params).All(p => p.First.Overlaps(p.Second))
+        && wanted.Return.Accepts(given.Return);
+
+    /// <summary>An unannotated parameter shows as "anything" rather than as "?", which is
+    /// what <see cref="EmType.Unknown"/> prints and means nothing to a reader.</summary>
+    private static string Signature(string name, EmType.Func fn) =>
+        $"{name}({string.Join(", ", fn.Params.Select(Named))}): {Named(fn.Return)}";
+
+    private static string Named(EmType type) =>
+        type is EmType.Unknown ? "anything" : type.Show();
 
     // ---- definite assignment --------------------------------------------
 

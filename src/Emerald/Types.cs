@@ -474,6 +474,26 @@ public sealed class ClassInfo(string name)
     public IEnumerable<string> Missing() =>
         Required().Distinct().Where(n => !Provides(n));
 
+    /// <summary>
+    /// Where a requirement of this name is declared, and what shape it was declared with.
+    /// Only the name was ever consulted before, so a class could satisfy
+    /// <c>abstract func label(): String</c> with <c>func label(size: Int): Int</c> and the
+    /// contract went unenforced in both directions.
+    /// </summary>
+    public (ClassInfo Owner, EmType.Func Wanted)? Requirement(string name)
+    {
+        if (AbstractNames.Contains(name) && Methods.TryGetValue(name, out var own)
+            && own.FirstOrDefault() is { } mine)
+            return (this, mine);
+
+        if (Base?.Requirement(name) is { } fromBase) return fromBase;
+
+        foreach (var trait in Traits)
+            if (trait.Requirement(name) is { } fromTrait) return fromTrait;
+
+        return null;
+    }
+
     /// <summary>The signature, not just the return type — a call site needs the parameters
     /// to check what it was handed.</summary>
     public EmType.Func? FindStaticMethod(string wanted) =>
