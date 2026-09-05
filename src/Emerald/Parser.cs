@@ -59,7 +59,8 @@ public sealed class Parser(List<Token> tokens, string fileName)
         if (Check(TokenType.Enum)) return EnumDeclaration();
         if (Check(TokenType.Constructor)) return ConstructorDeclaration();
         if (Check(TokenType.Static)) return StaticMember();
-        if (Check(TokenType.Func, TokenType.Abstract)) return FunctionDeclaration();
+        if (Check(TokenType.Func, TokenType.Abstract, TokenType.Override))
+            return FunctionDeclaration();
         if (Check(TokenType.Try)) return TryStatement();
         if (Check(TokenType.While, TokenType.Until)) return WhileStatement();
         if (Check(TokenType.Unless)) return UnlessStatement();
@@ -355,6 +356,12 @@ public sealed class Parser(List<Token> tokens, string fileName)
     private Stmt FunctionDeclaration(bool isStatic = false)
     {
         bool isAbstract = Match(TokenType.Abstract);
+
+        // A modifier, beside abstract and static rather than an attribute: §3.8 reserves
+        // attributes for what generates no code and changes no checking, and this decides
+        // whether the program compiles.
+        bool isOverride = Match(TokenType.Override);
+
         Consume(TokenType.Func, "Expected 'func'.");
         var name = Consume(TokenType.Identifier, "Expected a function name after 'func'.");
         var parameters = ParameterList();
@@ -363,7 +370,8 @@ public sealed class Parser(List<Token> tokens, string fileName)
         // An abstract member states a requirement and stops. A null body carries that
         // downstream without a separate flag to keep in sync.
         return new Stmt.FuncDecl(name, parameters, returnType,
-                                 isAbstract ? null : Block(), isStatic);
+                                 isAbstract ? null : Block(), isStatic,
+                                 IsOverride: isOverride);
     }
 
     /// <summary>

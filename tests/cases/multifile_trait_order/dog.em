@@ -7,6 +7,6 @@ class Dog extends Animal with Swimmer
 
 constructor(name: String) { self.name = name }
 
-func speak(): String { return "Woof" }
+override func speak(): String { return "Woof" }
 
 func stamina(): Int { return 30 }

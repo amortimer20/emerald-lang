@@ -7,7 +7,7 @@ public enum TokenType
 
     // Keywords
     Var, Const, Func, Return, If, Then, Else, While, For, In, Unless, Until,
-    Class, Trait, Struct, Enum, Extends, With, Constructor, Abstract, Static,
+    Class, Trait, Struct, Enum, Extends, With, Constructor, Abstract, Static, Override,
     Throw, Try, Catch, Break, Continue, Assert,
     And, Or, Not, True, False, Nothing,
 

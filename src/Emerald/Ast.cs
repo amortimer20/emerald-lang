@@ -17,12 +17,6 @@ public sealed record Diagnostic(
     string? Topic = null);
 
 /// <summary>
-/// A written type. <c>Arguments</c> holds the type arguments of a generic —
-/// <c>List&lt;T&gt;</c> takes one and <c>Dictionary&lt;K, V&gt;</c> two. §5.3 makes the
-/// parameterised containers compiler-owned, so this grammar is for consuming them and
-/// never for declaring one.
-/// </summary>
-/// <summary>
 /// The written shape of a callable: <c>func(Int): String</c>. A function's type is its
 /// header with the name removed, so there is no second grammar to learn — and the return
 /// type is optional here for the same reason it is optional on a declaration.
@@ -129,7 +123,11 @@ public abstract record Stmt
     /// <summary>A null <c>Body</c> means abstract: required, not provided (§3.2).</summary>
     public sealed record FuncDecl(
         Token Name, List<Param> Params, TypeRef? ReturnType, List<Stmt>? Body,
-        bool IsStatic = false, List<Attr>? Attributes = null) : Stmt;
+        bool IsStatic = false, List<Attr>? Attributes = null,
+
+        /// <summary>Declared with the <c>override</c> keyword — a claim that this replaces
+        /// an inherited implementation, checked in both directions (§3.2).</summary>
+        bool IsOverride = false) : Stmt;
     public sealed record Return(Token Keyword, Expr? Value) : Stmt;
 
     /// <summary>

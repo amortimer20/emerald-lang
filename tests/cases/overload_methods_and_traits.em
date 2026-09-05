@@ -8,7 +8,7 @@ trait Loud {
 
 class Radio with Loud {
     func volume(): Int { return 11 }
-    func shout(): String { return "class version" }
+    override func shout(): String { return "class version" }
 }
 
 class Siren with Loud {

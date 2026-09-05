@@ -486,6 +486,24 @@ public sealed class ClassInfo(string name)
     /// <c>abstract func label(): String</c> with <c>func label(size: Int): Int</c> and the
     /// contract went unenforced in both directions.
     /// </summary>
+    /// <summary>
+    /// Where an inherited <em>implementation</em> of this name comes from, if there is one.
+    /// Not what merely requires it: implementing an abstract member replaces nothing, so it
+    /// is not an override and needs no keyword. Only a member with a body can be replaced.
+    /// </summary>
+    public ClassInfo? Replaces(string name)
+    {
+        for (var owner = Base; owner is not null; owner = owner.Base)
+            if (owner.Methods.ContainsKey(name) && !owner.AbstractNames.Contains(name))
+                return owner;
+
+        foreach (var trait in Traits)
+            if (trait.Methods.ContainsKey(name) && !trait.AbstractNames.Contains(name))
+                return trait;
+
+        return null;
+    }
+
     public (ClassInfo Owner, EmType.Func Wanted)? Requirement(string name)
     {
         if (AbstractNames.Contains(name) && Methods.TryGetValue(name, out var own)

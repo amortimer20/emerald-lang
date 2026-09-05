@@ -8,7 +8,7 @@ class Shape {
 }
 
 class Circle extends Shape {
-    func draw(): String { return "circle" }
+    override func draw(): String { return "circle" }
 }
 
 print(Circle().draw(3))

@@ -28,7 +28,7 @@ public sealed class Scanner(string source, string fileName)
         ["catch"] = TokenType.Catch,
         ["break"] = TokenType.Break,      ["continue"] = TokenType.Continue,
         ["assert"] = TokenType.Assert,
-        ["extends"] = TokenType.Extends,
+        ["extends"] = TokenType.Extends,   ["override"] = TokenType.Override,
         ["with"] = TokenType.With,      ["constructor"] = TokenType.Constructor,
 
         // Deliberately NOT a keyword: `self` stays an ordinary identifier, so `self.name`

@@ -1,0 +1,7 @@
+
+err_override_missing.em:18  reset replaces Timer.reset, so it says override.
+
+   18 |     func reset() { self.laps = 0 }
+
+  Write:  override func reset(...)
+If you did not mean to replace it, Timer already has a reset and calling it will now reach this one instead. Rename yours.

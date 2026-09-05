@@ -12,11 +12,11 @@ class Animal {
 }
 
 class Dog extends Animal {
-    func speak(): String { return "Woof" }
+    override func speak(): String { return "Woof" }
 }
 
 class Cat extends Animal {
-    func speak(): String { return "Meow" }
+    override func speak(): String { return "Meow" }
 }
 
 ## Both branches meet at Animal, which is the only type that can describe the answer.

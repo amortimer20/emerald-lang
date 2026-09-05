@@ -18,7 +18,7 @@ class Animal {
 }
 
 class Dog extends Animal {
-    func speak(): String {
+    override func speak(): String {
         return "Woof"
     }
 }
@@ -26,7 +26,7 @@ class Dog extends Animal {
 class Bird extends Animal {
     var legs: Int = 2
 
-    func speak(): String {
+    override func speak(): String {
         return "Tweet"
     }
 }

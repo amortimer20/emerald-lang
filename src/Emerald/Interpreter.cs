@@ -609,6 +609,10 @@ public sealed class Interpreter
             required.AddRange(trait.Unimplemented);
         }
 
+        // What the traits gave, before the class's own methods take their places — kept so
+        // an override can still reach the default it replaced.
+        Dictionary<string, List<Stmt.FuncDecl>> fromTraits = new(methods);
+
         // A class's own methods replace what a trait provided under that name, rather than
         // joining it — otherwise mixing in a trait would silently overload every method
         // you wrote to replace one of its defaults.
@@ -631,6 +635,8 @@ public sealed class Interpreter
 
         var built = new EmClass(decl.Name.Lexeme, decl.Kind, super, fields, methods,
                                 constructor, unimplemented, env);
+
+        foreach (var (name, provided) in fromTraits) built.FromTraits[name] = provided;
 
         foreach (var property in decl.Members.OfType<Stmt.VarDecl>().Where(f => f.Getter is not null))
             built.Properties[property.Name.Lexeme] = property;
@@ -742,6 +748,13 @@ public sealed class Interpreter
     {
         var scope = new Env(closure);
         scope.Declare("self", receiver);
+
+        // `super` is bound the way `self` is — an ordinary name, not a keyword — and points
+        // at what the class declaring this method inherits, so an override can call the
+        // thing it replaced instead of calling itself forever.
+        if (receiver.Class.OwnerOfMethod(method) is { } declaring)
+            scope.Declare("super", new EmSuper(receiver, declaring));
+
         BindParameters(method.Params, args, scope, method.Name.Lexeme);
 
         try { ExecuteBlock(method.Body, scope); }
@@ -835,6 +848,28 @@ public sealed class Interpreter
         var scope = new Env(cls.Closure, shared: cls.Statics);
         scope.Declare("Self", cls);
         ExecuteBlock(body, scope);
+    }
+
+    /// <summary>
+    /// <c>super.speak()</c> — runs what this class replaced, on this same instance. The
+    /// method is looked up above the class that declared the running one, and then called
+    /// with the real receiver, so anything it calls in turn dispatches normally.
+    /// </summary>
+    private object? InvokeInherited(EmSuper above, Token name, List<object?> args)
+    {
+        var overloads = above.DeclaredIn.Inherited(name.Lexeme);
+
+        if (overloads.Count == 0)
+            throw new RuntimeError(
+                $"Nothing above {above.DeclaredIn.Name} has a {name.Lexeme}.",
+                $"super reaches what {above.DeclaredIn.Name} replaced. There is no "
+                + $"{name.Lexeme} to replace.");
+
+        var method = Choose(overloads, args)
+            ?? throw new RuntimeError(
+                $"No version of super.{name.Lexeme} takes these arguments.");
+
+        return CallMethod(method, above.Instance, above.Instance.Class.Closure, args);
     }
 
     /// <summary>Type-level access: <c>Dog.from_shelter_id(42)</c>, <c>Vector3.zero</c>.</summary>
@@ -1145,6 +1180,7 @@ public sealed class Interpreter
         // missing value, which is the rule other languages need an end-of-chain rule for.
         if (target is null && g.Optional) return null;
 
+        if (target is EmSuper above) return InvokeInherited(above, g.Name, []);
         if (target is EmInstance instance) return GetOrInvoke(instance, g.Name, []);
         if (target is EmClass cls) return GetStatic(cls, g.Name, []);
 
@@ -1178,6 +1214,7 @@ public sealed class Interpreter
                 && holder.Class.FindMethods(get.Name.Lexeme).Count == 0)
                 return stored.Call(this, received);
 
+            if (target is EmSuper above) return InvokeInherited(above, get.Name, received);
             if (target is EmInstance instance) return GetOrInvoke(instance, get.Name, received);
             if (target is EmClass cls) return GetStatic(cls, get.Name, received);
             return Builtins.InvokeMethod(this, target, get.Name.Lexeme, received);

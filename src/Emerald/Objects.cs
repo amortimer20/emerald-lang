@@ -4,6 +4,17 @@ namespace Emerald;
 /// A class at runtime. Method and field lookup walk the base chain, which is all single
 /// inheritance needs in a tree-walker — no vtables until there is a CIL backend.
 /// </summary>
+/// <summary>
+/// <c>super</c> inside a method: the same instance, but looked up starting above the class
+/// that declared the method being run. Carrying the declaring class rather than just the
+/// instance is what stops <c>super.speak()</c> finding the override again and recursing —
+/// which was not even a catchable error, but a stack overflow that killed the process.
+/// </summary>
+public sealed record EmSuper(EmInstance Instance, EmClass DeclaredIn)
+{
+    public override string ToString() => $"<super of {DeclaredIn.Name}>";
+}
+
 public sealed class EmClass(
     string name,
     TypeKind kind,
@@ -28,6 +39,30 @@ public sealed class EmClass(
 
     /// <summary>Fields declared with a <c>get</c> body — computed rather than stored.</summary>
     public Dictionary<string, Stmt.VarDecl> Properties { get; } = [];
+
+    /// <summary>
+    /// What the traits provided, kept even where the class replaced it. The class's own
+    /// methods are merged over these, so without a copy the replaced default is gone and
+    /// <c>super.swim()</c> would have nothing to reach.
+    /// </summary>
+    public Dictionary<string, List<Stmt.FuncDecl>> FromTraits { get; } = [];
+
+    /// <summary>Where <c>super</c> looks: the base chain first, then a trait's default.</summary>
+    public List<Stmt.FuncDecl> Inherited(string wanted) =>
+        super?.FindMethods(wanted) is { Count: > 0 } fromBase
+            ? fromBase
+            : FromTraits.GetValueOrDefault(wanted, []);
+
+    /// <summary>
+    /// Which class in the chain actually declares this method — where <c>super</c> starts
+    /// counting from. Taking the receiver's own class would be wrong for a method inherited
+    /// two levels down: <c>super</c> inside <c>Animal.speak</c> means <c>Animal</c>'s base,
+    /// whichever subclass the instance happens to be.
+    /// </summary>
+    public EmClass? OwnerOfMethod(Stmt.FuncDecl method) =>
+        methods.TryGetValue(method.Name.Lexeme, out var mine) && mine.Contains(method)
+            ? this
+            : super?.OwnerOfMethod(method);
 
     /// <summary>
     /// A module file's own top-level code, and whether it has run. §3.3 runs it once on

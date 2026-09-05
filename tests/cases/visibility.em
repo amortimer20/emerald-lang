@@ -11,7 +11,7 @@ class Animal {
 
 class Dog extends Animal {
     ## A subclass may: _ collapses private and protected into one level.
-    func speak(): String { return self._whisper() }
+    override func speak(): String { return self._whisper() }
 }
 
 print(Dog().speak())

@@ -467,6 +467,17 @@ public sealed class Checker(
         var body = new Scope(scope, functionBoundary: true);
         body.Declare("self", new EmType.Obj(info));
 
+        // `super` is this class's inherited half and nothing of its own — a view with an
+        // empty method table over the same base and traits, so a lookup on it finds exactly
+        // what an override replaced and never the override itself.
+        if (info.Base is not null || info.Traits.Count > 0)
+        {
+            var above = new ClassInfo(info.Base?.Name ?? info.Name)
+                { Kind = info.Kind, Base = info.Base };
+            above.Traits.AddRange(info.Traits);
+            body.Declare("super", new EmType.Obj(above));
+        }
+
         foreach (var member in decl.Members)
         {
             switch (member)
@@ -509,6 +520,7 @@ public sealed class Checker(
                     CheckCasing(method.Name, "method");
                     if (!method.IsStatic) CheckReservedMember(method.Name, "A method");
                     CheckPredicateName(method);
+                    if (!method.IsStatic) CheckOverride(method, info);
                     if (method.Body is not null)
                         CheckCallable(method.Params, method.Body, body, method.Name.Lexeme);
                     break;
@@ -544,6 +556,61 @@ public sealed class Checker(
 
         _mirroring = wasMirroring;
         _currentType = previousType;
+    }
+
+    /// <summary>
+    /// <c>override</c>, checked both ways round. §3.2 lets a subclass's method replace what
+    /// it inherits, and nothing said which of the two mistakes you had made:
+    ///
+    ///   • meant to replace and did not — <c>func spek()</c> beside <c>speak</c> compiled,
+    ///     and the dog never barked;
+    ///   • did not mean to replace and did — a <c>reset</c> written without knowing the base
+    ///     had one, so the base's own <c>run</c> called the wrong version and both classes
+    ///     looked right in isolation. That is the fragile base class, and it is the half
+    ///     that a reader cannot find by looking at the code they wrote.
+    ///
+    /// Required only where something is actually replaced. Implementing an abstract member
+    /// replaces nothing, so <c>class Dog with Swimmer { func stamina(): Int }</c> is
+    /// untouched — which keeps the common case free and leaves the rule no exceptions.
+    /// </summary>
+    private void CheckOverride(Stmt.FuncDecl method, ClassInfo info)
+    {
+        // An abstract member states a requirement rather than answering one.
+        if (method.Body is null)
+        {
+            if (method.IsOverride)
+                Error(method.Name.Line,
+                      $"{method.Name.Lexeme} is abstract, so it overrides nothing.",
+                      "An abstract member asks for an implementation. Only one that has a "
+                      + "body can replace another.");
+            return;
+        }
+
+        var replaced = info.Replaces(method.Name.Lexeme);
+
+        if (replaced is not null && !method.IsOverride)
+        {
+            Error(method.Name.Line,
+                  $"{method.Name.Lexeme} replaces {replaced.Name}.{method.Name.Lexeme}, "
+                  + "so it says override.",
+                  $"Write:  override func {method.Name.Lexeme}(...)\n"
+                  + $"If you did not mean to replace it, {replaced.Name} already has a "
+                  + $"{method.Name.Lexeme} and calling it will now reach this one instead. "
+                  + "Rename yours.");
+            return;
+        }
+
+        if (replaced is null && method.IsOverride)
+            Error(method.Name.Line,
+                  $"{method.Name.Lexeme} overrides nothing.",
+                  Suggest(method.Name.Lexeme,
+                          info.Base?.MemberNames()
+                              .Concat(info.Traits.SelectMany(t => t.MemberNames())) ?? [])
+                  ?? (info.Base is null && info.Traits.Count == 0
+                          ? $"{info.Name} extends nothing and mixes in nothing, so there is "
+                            + "no implementation for it to replace."
+                          : $"Nothing {info.Name} inherits has a {method.Name.Lexeme} with a "
+                            + "body. Drop the override."));
     }
 
     /// <summary>
@@ -1538,6 +1605,15 @@ public sealed class Checker(
     /// </summary>
     private string MistakenForAFunction(Token name)
     {
+        // super is bound like self — an ordinary name, present only where there is
+        // something above to reach. "Declare it first: var super = ..." is the least
+        // helpful thing that could be said to someone who wrote it.
+        if (name.Lexeme == "super")
+            return _currentType is { } inside
+                ? $"{inside.Name} extends nothing and mixes in no traits, so there is nothing "
+                  + "above it for super to reach."
+                : "super means the class you extended, so it only has a meaning inside one.";
+
         // Inside a type, a bare name that is one of its own members is a missing receiver,
         // not an undeclared variable. `return contents` reads perfectly and is wrong, and
         // "declare it first" answers it by suggesting a second, unrelated variable — §3.6's
