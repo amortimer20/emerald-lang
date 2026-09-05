@@ -64,7 +64,7 @@ public static class Reporter
         if (d.Hint is not null)
         {
             Console.Error.WriteLine();
-            Console.Error.WriteLine($"  {d.Hint}");
+            WriteHint(d.Hint);
         }
     }
 
@@ -77,9 +77,21 @@ public static class Reporter
         if (error.Hint is not null)
         {
             Console.Error.WriteLine();
-            Console.Error.WriteLine($"  {error.Hint}");
+            WriteHint(error.Hint);
         }
         Console.Error.WriteLine();
+    }
+
+    /// <summary>
+    /// Every line of a hint, indented. Only the first used to be, so a hint that spanned
+    /// lines came out ragged unless whoever wrote the string had remembered to put the
+    /// spaces in themselves — which some had and some had not, and the difference was
+    /// invisible until two of them appeared side by side.
+    /// </summary>
+    private static void WriteHint(string hint)
+    {
+        foreach (string line in hint.Replace("\r\n", "\n").Split('\n'))
+            Console.Error.WriteLine($"  {line.TrimStart()}");
     }
 
     private static void Quote(string[] lines, int line)
