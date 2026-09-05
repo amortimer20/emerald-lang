@@ -252,7 +252,7 @@
     <tr><td>Trait state</td><td>None &mdash; a CLR interface holds no fields, so neither does a trait</td><td>§3.2</td></tr>
     <tr><td><code>abstract func</code></td><td>Abstract method / interface member with no body</td><td>§3.2</td></tr>
     <tr><td>A property (<code>var</code> with <code>get</code>/<code>set</code>)</td><td>A CLR property</td><td>§3.2</td></tr>
-    <tr><td>Method overloads</td><td>Method overloads &mdash; rejected at declaration, so no resolution rules travel</td><td>§3.2</td></tr>
+    <tr><td>Method overloads</td><td>Method overloads. Overlap is rejected at declaration, so no resolution rules travel &mdash; but see question 09 for what a subclass does to an inherited <em>set</em></td><td>§3.2</td></tr>
     <tr><td><code>_name</code></td><td><code>protected</code> &mdash; the class and its subclasses is exactly what <code>_</code> means</td><td>§3.4</td></tr>
     <tr><td><code>empty?</code> (no arguments)</td><td><code>IsEmpty</code></td><td>§3.4</td></tr>
     <tr><td><code>contains?(x)</code></td><td><code>Contains(x)</code> &mdash; the <code>?</code> strips</td><td>§3.4</td></tr>
@@ -276,7 +276,7 @@
 </div>
 
 <h2>Open</h2>
-<p class="sub">Eight questions the design does not answer. Each changes the emitter's shape, and several change what a C# caller sees, so they are cheaper settled now than discovered later.</p>
+<p class="sub">Nine questions the design does not answer. Each changes the emitter's shape, and several change what a C# caller sees, so they are cheaper settled now than discovered later. The ninth arrived from outside, having been sitting in the settled column above.</p>
 
 <div class="q">
   <h3><span class="n">01</span> Dictionary and Set cannot be the BCL types</h3>
@@ -345,6 +345,18 @@
   <h3><span class="n">08</span> What does the entry point look like?</h3>
   <p>The entry file's top-level statements become a static method that is the assembly entry point. Two details are unstated: whether it takes <code>string[] args</code> (there is no way to read them in the language yet), and how <code>exit(code)</code> reaches the process exit code &mdash; as a return value from <code>Main</code>, or as <code>Environment.Exit</code>.</p>
   <p class="lean"><b>Leaning:</b> emit <code>static int Main()</code>, and let <code>exit(code)</code> throw an internal signal the entry point catches and returns &mdash; which is exactly what the interpreter already does with <code>ExitSignal</code>, so the semantics are already decided and tested.</p>
+</div>
+
+<div class="q">
+  <h3><span class="n">09</span> What a subclass does to an inherited overload set</h3>
+  <p>§3.2 says a subclass declaring a name replaces the base's whole set for it. So given <code>Shape.draw()</code> and <code>Shape.draw(Int)</code>, a <code>Circle</code> that declares <code>draw()</code> has no <code>draw(Int)</code> at all. C++ hides this way; C#, Java and Kotlin do not &mdash; overriding one overload leaves its siblings reachable.</p>
+  <p>This was in the settled column above until an outside reading queried it, and the first correction was overstated: it is not that the rule cannot be encoded. Emerald's own compiler resolves Emerald calls and can enforce hiding perfectly well. The real question is narrower and has two halves.</p>
+  <ul>
+    <li><strong>What does a C# consumer see?</strong> A <code>Circle</code> whose <code>Draw(int)</code> is absent has to be emitted as something &mdash; a <code>new</code>-style shadow, a redeclared member that throws, or nothing at all, in which case C# sees <code>Shape.Draw(int)</code> and Emerald's rule stops applying at the language boundary.</li>
+    <li><strong>How does it reconcile with virtual dispatch?</strong> If <code>Shape.draw(Int)</code> is virtual and still inherited in IL, a call through a <code>Shape</code> reference reaches it on a <code>Circle</code> &mdash; which the Emerald rule says does not exist.</li>
+  </ul>
+  <p><code>override</code> makes this stranger rather than better, which is new since the rule was written: <code>override func draw()</code> states a claim about one signature while silently removing another that nobody mentioned. The keyword exists precisely so that replacing something is said out loud.</p>
+  <p class="lean"><b>Leaning:</b> none yet &mdash; but the question to answer first is not the encoding, it is <em>what behaviour Emerald intends to preserve</em> for a .NET caller. Once that is stated, the encoding follows. Worth revisiting whether the language rule earns its cost at all, given it is the odd one out among the languages Emerald otherwise borrows from.</p>
 </div>
 
 <h2>Notes and risks</h2>
