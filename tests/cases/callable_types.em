@@ -28,7 +28,7 @@ func pick(items: List<String>, keep: func(String): Bool): List<String> {
     return kept
 }
 
-print(pick(["ada", "bo", "cy"]) { name => name.length() > 2 }.join(", "))
+print(pick(["ada", "bo", "cy"]) { name => name.count() > 2 }.join(", "))
 
 ## A named function goes where a block does.
 func double(n: Int): Int { return n * 2 }

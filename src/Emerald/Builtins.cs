@@ -515,11 +515,19 @@ public static class Builtins
     private static object? StringMethod(string value, string name, List<object?> args) =>
         name switch
         {
-            "length" => (long)value.Length,
+            // Graphemes, not UTF-16 units, so this agrees with .chars() and with `for`
+            // — three ways of asking the same question about the same string, which had
+            // better not give three answers. .length gave 10 for a string those two called
+            // 3, and it was the only name a String answered while every container said
+            // count. Two names split by receiver type is the mistake Java is known for.
+            "count" => (long)Graphemes(value).Count(),
             "empty?" => value.Length == 0,
             "upper" => value.ToUpperInvariant(),
             "lower" => value.ToLowerInvariant(),
-            "reverse" => new string(value.Reverse().ToArray()),
+
+            // Reversing by char tears an emoji into its halves and reassembles it
+            // backwards, which is the same bug wearing a different hat.
+            "reverse" => string.Concat(Graphemes(value).Reverse()),
             "trim" => value.Trim(),
             "contains?" => value.Contains(AsString(args[0], "contains?"), StringComparison.Ordinal),
             "starts_with?" => value.StartsWith(AsString(args[0], "starts_with?"), StringComparison.Ordinal),

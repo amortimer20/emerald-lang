@@ -201,7 +201,7 @@ public static class Signatures
         [("Float", "round_to")] = new(Float, [Int]),
 
         // String
-        [("String", "length")] = new(Int),     [("String", "empty?")] = new(Bool),
+        [("String", "count")] = new(Int),      [("String", "empty?")] = new(Bool),
         [("String", "upper")] = new(Str),      [("String", "lower")] = new(Str),
         [("String", "reverse")] = new(Str),    [("String", "trim")] = new(Str),
         [("String", "contains?")] = new(Bool, [Str]),

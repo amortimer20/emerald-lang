@@ -1,0 +1,6 @@
+
+err_one_name_for_how_many.em:5  No method named length on String.
+
+    5 | print(s.length())
+
+  Emerald calls that count.

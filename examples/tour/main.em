@@ -17,7 +17,7 @@ var status = if 95 >= 90 then "A" else "B"
 print("grade: #{status}")
 
 print("hello".upper())
-print("hello".length())
+print("hello".count())
 print("olleh".reverse())
 
 func double(n: Int): Int {

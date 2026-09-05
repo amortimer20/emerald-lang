@@ -1,2 +1,2 @@
 var s = "hi"
-print(s.lenght)
+print(s.revrse())

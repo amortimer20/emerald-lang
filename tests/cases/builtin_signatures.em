@@ -11,7 +11,7 @@ print(Math.pow(2.0, 3.0))
 1.upto(3) { i => print(i) }
 
 ## Bare access is a zero-argument call, and still works where nothing is needed.
-print("hi".length())
+print("hi".count())
 print(7.abs())
 print((1..3).count())
 print(Math.pi())

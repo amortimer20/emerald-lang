@@ -3,7 +3,7 @@
 for i in 1..3 { print(i) }
 
 for word in ["apple", "fig"] {
-    print("#{word} has #{word.length()} letters")
+    print("#{word} has #{word.count()} letters")
 }
 
 ## A string yields graphemes, so an accented letter is one turn of the loop.

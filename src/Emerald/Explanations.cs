@@ -125,7 +125,7 @@ public static class Explanations
             }
             """,
             """
-            A String? holds either a String or nothing, and nothing has a count of nothing.
+            A String? holds either a String or nothing, and nothing cannot be counted.
             Checking it first is what tells the compiler which one it has — after that
             check, name is an ordinary String for the rest of the block.
 

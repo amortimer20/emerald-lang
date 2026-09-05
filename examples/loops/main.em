@@ -20,9 +20,9 @@ for letter in "héllo" {
 print()
 
 # The loop variable's type comes from what is being walked, so the checker knows
-# `word` is a String here and `word.length` is checked like any other call.
+# `word` is a String here and `word.count` is checked like any other call.
 for word in ["apple", "fig"] {
-    print("#{word} is #{word.length()} letters")
+    print("#{word} is #{word.count()} letters")
 }
 
 print()

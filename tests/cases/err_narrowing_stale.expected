@@ -1,7 +1,7 @@
 
-err_narrowing_stale.em:12  This is String?, not String, so length may not exist.
+err_narrowing_stale.em:12  This is String?, not String, so count may not exist.
 
-   12 |     print(name.length)
+   12 |     print(name.count)
 
   Checking name does not settle it here: a function assigns name, so it could have changed in between. Copy it first and check the copy, which nothing else can reach:
   var it = name

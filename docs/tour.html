@@ -369,7 +369,7 @@ print(7 // 2)           # whole-number division
 print(7 % 2)            # remainder
 print(7 ** 2)           # power
 
-print(word.length())
+print(word.count())
 print(word.upper())
 print(word.reverse())
 print(whole.even?())
@@ -750,7 +750,7 @@ var unsure: String? = nothing   # a String, or nothing at all
 
 # Emerald will not let you read unsure until you have checked it
 if unsure != nothing {
-    print(unsure.length())
+    print(unsure.count())
 }
 else {
     print("there was nothing there")
@@ -1202,11 +1202,11 @@ func doubling_is_wrong_on_purpose?(): Bool {
 
   <div class="unit">
     <pre class="code">var name: String? = nothing
-print(name.length)</pre>
+print(name.count)</pre>
   </div>
-  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  This is String?, not String, so length may not exist.
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  This is String?, not String, so count may not exist.
 
-    2 | print(name.length)
+    2 | print(name.count)
 
   A String? holds either a String or nothing. Check it first, or supply a fallback with .or(...)
 
@@ -1310,20 +1310,26 @@ print(GetScore())</pre>
   This does not work:
 
       var name: String? = nothing
-      print(name.length)
+      print(name.count())
 
   This does:
 
       var name: String? = nothing
       if name != nothing {
-          print(name.length)
+          print(name.count())
       }
 
-  A String? holds either a String or nothing, and nothing has no length.
+  A String? holds either a String or nothing, and nothing cannot be counted.
   Checking it first is what tells the compiler which one it has — after that
   check, name is an ordinary String for the rest of the block.
 
-  When any answer will do, ask for one:  name.or("unknown").length</pre></div>
+  When any answer will do, ask for one:  name.or("unknown").count()
+
+  The check works on a name, not on a path, so a chain gets ?. instead. It
+  reads through the ? and puts it back on the answer, stopping at the first
+  step that is missing:
+
+      print(user.address?.city?.name.or("unknown"))</pre></div>
   </div>
 </section>
 
@@ -1384,8 +1390,8 @@ print(Dog("Rex").speak())</pre></div>
 &gt; shout("hello")
 HELLO
 &gt; var n: Int? = nothing
-&gt; n.length
-  This is Int?, not Int, so length may not exist.
+&gt; n.count
+  This is Int?, not Int, so count may not exist.
     An Int? holds either an Int or nothing. Check it first, or supply a fallback with .or(...)
 &gt; :what
   x, shout, n</pre></div>

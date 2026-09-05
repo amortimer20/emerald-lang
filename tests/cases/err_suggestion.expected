@@ -1,6 +1,6 @@
 
-err_suggestion.em:2  No method named lenght on String.
+err_suggestion.em:2  No method named revrse on String.
 
-    2 | print(s.lenght)
+    2 | print(s.revrse())
 
-  Did you mean length?
+  Did you mean reverse?

@@ -9,5 +9,5 @@ func clear() {
 
 if name != nothing {
     clear()
-    print(name.length)
+    print(name.count)
 }
