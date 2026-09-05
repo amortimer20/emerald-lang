@@ -304,7 +304,10 @@ public static class Builtins
             case "clear": dict.Clear(); return null;
 
             case "has_key?": return dict.Has(Key(args[0]));
-            case "has_value?": return dict.HasValue(args[0]);
+            // Through the same == as everything else. It used to use .NET's Equals, so
+            // a dictionary said it did not hold a struct that a list beside it found
+            // without trouble — one question, two answers, decided by the container.
+            case "has_value?": return dict.Values.Any(v => interp.Same(v, args[0]));
 
             // Missing gives nothing rather than failing — a lookup that misses is the
             // ordinary case, which is why this returns V? and .or(...) is the idiom.

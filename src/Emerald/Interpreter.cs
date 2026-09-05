@@ -1208,6 +1208,30 @@ public sealed class Interpreter
                    && a.Fields.All(f => b.Fields.TryGetValue(f.Key, out var theirs)
                                         && Same(f.Value, theirs));
 
+        // A container is a value in the same sense a struct is, so two holding the same
+        // things are the same thing. Without this `[1, 2] == [1, 2]` was false, and
+        // §3.7's promise that list search uses == made that answer spread: a list of
+        // lists could not find a list it visibly contained.
+        //
+        // Safe here in a way it is not everywhere, because these are mutable: the classic
+        // hazard is a container used as a key and then changed underneath the hash, and
+        // §3.7 already restricts keys and set members to Int, Float, String and Bool. The
+        // hazard is structurally out of reach rather than merely unlikely.
+        if (left is EmList first && right is EmList second)
+            return first.Items.Count == second.Items.Count
+                   && first.Items.Zip(second.Items).All(p => Same(p.First, p.Second));
+
+        if (left is EmSet leftSet && right is EmSet rightSet)
+            return leftSet.Members.Count == rightSet.Members.Count
+                   && leftSet.Members.All(m => rightSet.Members.Any(o => Same(m, o)));
+
+        // Order is not part of what a dictionary *is*, even though §3.7 keeps it: two
+        // dictionaries with the same pairs answer every question the same way.
+        if (left is EmDict leftDict && right is EmDict rightDict)
+            return leftDict.Keys.Count == rightDict.Keys.Count
+                   && leftDict.Keys.All(k => rightDict.Has(k)
+                                             && Same(leftDict.Get(k), rightDict.Get(k)));
+
         return AreEqual(left, right);
     }
 
