@@ -369,10 +369,10 @@ print(7 // 2)           # whole-number division
 print(7 % 2)            # remainder
 print(7 ** 2)           # power
 
-print(word.length)
+print(word.length())
 print(word.upper())
 print(word.reverse())
-print(whole.even?)
+print(whole.even?())
 print(yes and not false)</pre>
     <div class="out"><span class="lab">prints</span><pre>9
 5
@@ -458,7 +458,7 @@ for letter in "hi" {
 }
 
 var left = 3
-until left.zero? {
+until left.zero?() {
     print("t-minus #{left}")
     left -= 1
 }
@@ -496,10 +496,10 @@ multiple of three: 6</pre></div>
   <div class="unit">
     <pre class="code">var numbers = [5, 3, 8, 1]
 
-print(numbers.count)
+print(numbers.count())
 print(numbers[0])
-print(numbers.sum)
-print(numbers.sort.join(", "))
+print(numbers.sum())
+print(numbers.sort().join(", "))
 
 numbers.add(10)
 print(numbers.join(" "))
@@ -529,12 +529,12 @@ ada and alan</pre></div>
 
 print(ages["ada"].or(0))
 print(ages["nobody"].or(0))
-print(ages.count)
+print(ages.count())
 
 ages["cy"] = 12
 ages["bo"] += 1
 
-print(ages.keys.join(", "))
+print(ages.keys().join(", "))
 print(ages.has_key?("cy"))
 
 var counts: Dictionary&lt;String, Int&gt; = [:]
@@ -556,18 +556,18 @@ true
   <h2><span class="n">09</span> Sets</h2>
   <p>A set remembers <em>whether</em> something is in it, not how many times or in what position. Duplicates collapse on the way in. Write one as a list and convert.</p>
   <div class="unit">
-    <pre class="code">var vowels = ["a", "e", "i", "o", "u"].to_set
+    <pre class="code">var vowels = ["a", "e", "i", "o", "u"].to_set()
 
-print(vowels.count)
+print(vowels.count())
 print(vowels.contains?("e"))
 
-var rolls = [3, 1, 3, 2, 1].to_set
-print(rolls.to_list.join(", "))
+var rolls = [3, 1, 3, 2, 1].to_set()
+print(rolls.to_list().join(", "))
 
-var monday = ["ada", "bo"].to_set
-var tuesday = ["bo", "cy"].to_set
-print(monday.union(tuesday).to_list.join(", "))
-print(monday.intersect(tuesday).to_list.join(", "))</pre>
+var monday = ["ada", "bo"].to_set()
+var tuesday = ["bo", "cy"].to_set()
+print(monday.union(tuesday).to_list().join(", "))
+print(monday.intersect(tuesday).to_list().join(", "))</pre>
     <div class="out"><span class="lab">prints</span><pre>5
 true
 3, 1, 2
@@ -617,12 +617,12 @@ true
 <section id="s11">
   <h2><span class="n">11</span> Blocks</h2>
   <p>A block is a piece of code you hand to something else to run. <code class="inl">map</code> makes a new list by running your block on each item, <code class="inl">filter</code> keeps the ones your block says yes to, and <code class="inl">each</code> just runs it.</p>
-  <p>You never have to say what <code class="inl">n</code> is below. The list is a list of <code class="inl">Int</code>, so <code class="inl">n</code> is an <code class="inl">Int</code>, and <code class="inl">n.even?</code> is checked like anything else.</p>
+  <p>You never have to say what <code class="inl">n</code> is below. The list is a list of <code class="inl">Int</code>, so <code class="inl">n</code> is an <code class="inl">Int</code>, and <code class="inl">n.even?()</code> is checked like anything else.</p>
   <div class="unit">
     <pre class="code">var numbers = [5, 3, 8, 1, 9]
 
 print(numbers.map { n =&gt; n * 2 }.join(", "))
-print(numbers.filter { n =&gt; n.even? }.join(", "))
+print(numbers.filter { n =&gt; n.even?() }.join(", "))
 print(numbers.any? { n =&gt; n &gt; 8 })
 
 # find might not find anything, so it hands back "an Int or nothing"
@@ -697,6 +697,45 @@ Button("OK") { print("clicked") }.press()</pre>
 clicked</pre></div>
   </div>
   <div class="aside"><p><code class="inl">button.on_click</code> is the function itself; <code class="inl">button.on_click()</code> runs it. The brackets are what tell them apart.</p></div>
+  <p>That rule is not only for fields. A <em>method</em> named without its brackets is the method itself, with the object it belongs to already attached — so you can hand one over the same way, and it remembers which object it came from.</p>
+  <div class="unit">
+    <pre class="code">class Dog {
+    var name: String
+
+    constructor(name: String) { self.name = name }
+
+    func speak(): String { return "#{self.name} says woof" }
+}
+
+func announce(what: func(): String) { print(what()) }
+
+var rex = Dog("Rex")
+var fido = Dog("Fido")
+
+# no brackets: the method itself, not what it answers
+announce(rex.speak)
+announce(fido.speak)
+
+# with brackets: the answer
+print(rex.speak())</pre>
+    <div class="out"><span class="lab">prints</span><pre>Rex says woof
+Fido says woof
+Rex says woof</pre></div>
+  </div>
+  <p>This is the reason brackets are required on every call, even one with nothing to pass. If <code class="inl">rex.speak</code> ran the method, there would be no way left to write down the method itself — and connecting something up later, like a button to the thing it should do, is a large part of what you use a class for.</p>
+  <p>Forgetting them is the mistake the rule creates, so the compiler is direct about it.</p>
+  <div class="unit">
+    <pre class="code">class Cat {
+    func speak(): String { return "meow" }
+}
+
+print(Cat().speak)</pre>
+    <div class="diag"><span class="lab">emerald run</span><pre>main.em:5  This shows Cat().speak itself, not what it answers.
+
+    5 | print(Cat().speak)
+
+  It is func(): String. Add parentheses to call it:  Cat().speak()</pre></div>
+  </div>
 </section>
 
 <p class="part-label" data-part>Values that might not be there</p>
@@ -711,7 +750,7 @@ var unsure: String? = nothing   # a String, or nothing at all
 
 # Emerald will not let you read unsure until you have checked it
 if unsure != nothing {
-    print(unsure.length)
+    print(unsure.length())
 }
 else {
     print("there was nothing there")
@@ -816,8 +855,8 @@ func square?(): Bool { return self.width == self.height }</pre>
 # so there is nothing to import
 var r = Rect(3, 4)
 print(r.area())
-print(r.square?)
-print(Rect(5, 5).square?)</pre>
+print(r.square?())
+print(Rect(5, 5).square?())</pre>
     <div class="out"><span class="lab">prints</span><pre>12
 false
 true</pre></div>
@@ -1114,7 +1153,7 @@ for input in ["42", "banana"] {
         print("age: #{age_from(input)}")
     }
     catch e {
-        print("could not read that: #{e.message}")
+        print("could not read that: #{e.message()}")
     }
 }</pre>
     <div class="out"><span class="lab">prints</span><pre>age: 42

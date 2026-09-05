@@ -93,6 +93,7 @@ BLESS=1 ./tests/run.sh      # rewrite .expected files from current output
 ./tests/explaincheck.sh     # emerald explain, and the topic an error leaves behind
 ./tests/testcheck.sh        # emerald test, and the commands that are not built yet
 ./tests/replcheck.sh        # emerald repl — a session, not a file
+./tests/tourcheck.sh        # docs/tour.html — every snippet on the page, run
 ```
 
 The last six test *commands* rather than programs, which is why they are not golden
