@@ -29,6 +29,15 @@ public sealed class EmClass(
     /// <summary>Fields declared with a <c>get</c> body — computed rather than stored.</summary>
     public Dictionary<string, Stmt.VarDecl> Properties { get; } = [];
 
+    /// <summary>
+    /// A module file's own top-level code, and whether it has run. §3.3 runs it once on
+    /// first member access rather than at startup, which is what keeps Python's
+    /// import-order problems from arising: nothing runs because a file merely exists.
+    /// </summary>
+    public List<Stmt>? Initialiser { get; set; }
+
+    public bool Initialised { get; set; }
+
     public Stmt.VarDecl? FindProperty(string wanted) =>
         Properties.TryGetValue(wanted, out var p) ? p : super?.FindProperty(wanted);
 

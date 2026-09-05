@@ -5,7 +5,15 @@ namespace Emerald;
 /// This is the object a REPL would hold onto and keep extending (§3.5), which is why
 /// it is a real class rather than a dictionary buried in the interpreter.
 /// </summary>
-public sealed class Env(Env? parent = null)
+/// <param name="shared">
+/// A dictionary this scope reads and writes through as if the names were its own, checked
+/// after its own bindings and before its parent's. A module's top-level code uses it to
+/// reach the file's own variables: those became static fields when §3.3 turned the file
+/// into a class, but the code was written as a file's body and must still see them.
+/// Sharing the dictionary rather than copying it means a static method called from the
+/// initialiser sees the same values, in both directions.
+/// </param>
+public sealed class Env(Env? parent = null, Dictionary<string, object?>? shared = null)
 {
     private readonly Dictionary<string, object?> _values = [];
     private readonly HashSet<string> _constants = [];
@@ -19,6 +27,7 @@ public sealed class Env(Env? parent = null)
     public bool TryGet(string name, out object? value)
     {
         if (_values.TryGetValue(name, out value)) return true;
+        if (shared is not null && shared.TryGetValue(name, out value)) return true;
         if (parent is not null) return parent.TryGet(name, out value);
         value = null;
         return false;
@@ -35,6 +44,13 @@ public sealed class Env(Env? parent = null)
             _values[name] = value;
             return true;
         }
+
+        if (shared is not null && shared.ContainsKey(name))
+        {
+            shared[name] = value;
+            return true;
+        }
+
         return parent?.TryAssign(name, value) ?? false;
     }
 }

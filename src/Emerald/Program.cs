@@ -106,3 +106,22 @@ catch (RuntimeError error)
     Reporter.RuntimeFailure(error, entryName, project);
     return 70;
 }
+catch (Exception unexpected)
+{
+    // Last resort. Every failure above is one Emerald raised deliberately; this catches
+    // the ones it did not, which are compiler bugs rather than program bugs. §3.6 exists
+    // to keep a .NET stack trace away from a student, and without this the guarantee held
+    // only for the paths someone remembered — `random(1)` reached an IndexOutOfRange and
+    // printed twenty frames of Emerald's own internals.
+    //
+    // The type name is kept because it is the one useful thing in a bug report, and the
+    // message says plainly whose fault it is.
+    Reporter.RuntimeFailure(
+        new RuntimeError(
+            "The compiler hit a problem it did not expect, "
+            + $"and stopped: {unexpected.GetType().Name}.",
+            "This is a bug in Emerald, not in your program. "
+            + $"What it said was: {unexpected.Message}"),
+        entryName, project);
+    return 70;
+}

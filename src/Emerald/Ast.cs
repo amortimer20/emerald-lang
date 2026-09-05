@@ -150,10 +150,16 @@ public abstract record Stmt
     /// one Constructor. The block-free file form (§3.3) produces the same node — only the
     /// parsing differs, so nothing downstream needs to know which shape was written.
     /// </summary>
+    /// <summary>
+    /// <c>Initialiser</c> holds a module file's top-level statements — the code that is not
+    /// a declaration. §3.3 lowers them to a static constructor, run once on first member
+    /// access. They used to be handed through as "members", where every pass that walked
+    /// members ignored anything that was not a declaration, and they ran nowhere at all.
+    /// </summary>
     public sealed record ClassDecl(
         TypeKind Kind, Token Name, Token? BaseName,
         List<Token> Traits, List<Stmt> Members,
-        List<Attr>? Attributes = null) : Stmt;
+        List<Attr>? Attributes = null, List<Stmt>? Initialiser = null) : Stmt;
 
     public sealed record ConstructorDecl(
         Token Keyword, List<Param> Params, List<Stmt> Body) : Stmt;

@@ -87,14 +87,23 @@ public sealed class Project(string entryPath)
 
         var name = new Token(TokenType.Identifier, ModuleName(fileName), null, 1);
 
-        List<Stmt> members = [.. statements.Select(s => s switch
-        {
-            Stmt.FuncDecl f => f with { IsStatic = true },
-            Stmt.VarDecl v => v with { IsStatic = true },
-            _ => s,
-        })];
+        // Declarations become static members. Everything else is the module's own code,
+        // which §3.3 runs once on first member access — so it is kept apart here rather
+        // than passed through as a "member" that every later pass then skips.
+        List<Stmt> members = [];
+        List<Stmt> initialiser = [];
 
-        return [new Stmt.ClassDecl(TypeKind.Class, name, null, [], members)];
+        foreach (var stmt in statements)
+            switch (stmt)
+            {
+                case Stmt.FuncDecl f: members.Add(f with { IsStatic = true }); break;
+                case Stmt.VarDecl v: members.Add(v with { IsStatic = true }); break;
+                case Stmt.EnumDecl: members.Add(stmt); break;
+                default: initialiser.Add(stmt); break;
+            }
+
+        return [new Stmt.ClassDecl(TypeKind.Class, name, null, [], members,
+                                   Initialiser: initialiser)];
     }
 
     /// <summary>math_utils.em -> MathUtils</summary>

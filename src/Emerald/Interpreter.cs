@@ -649,6 +649,8 @@ public sealed class Interpreter
             built.Statics[field.Name.Lexeme] =
                 field.Init is null ? null : Evaluate(field.Init, staticScope);
 
+        if (decl.Initialiser is { Count: > 0 }) built.Initialiser = decl.Initialiser;
+
         return built;
     }
 
@@ -817,9 +819,29 @@ public sealed class Interpreter
             $"No member named {name.Lexeme} on {instance.Class.Name}.");
     }
 
+    /// <summary>
+    /// Runs a module's top-level code, once, before its first member is reached (§3.3).
+    ///
+    /// The flag is set before the body runs, not after: a module whose initialiser reaches
+    /// back into itself would otherwise recurse forever, and running it once is the promise
+    /// — not running it once per path that arrives.
+    /// </summary>
+    private void Initialise(EmClass cls)
+    {
+        if (cls.Initialised || cls.Initialiser is not { } body) return;
+
+        cls.Initialised = true;
+
+        var scope = new Env(cls.Closure, shared: cls.Statics);
+        scope.Declare("Self", cls);
+        ExecuteBlock(body, scope);
+    }
+
     /// <summary>Type-level access: <c>Dog.from_shelter_id(42)</c>, <c>Vector3.zero</c>.</summary>
     private object? GetStatic(EmClass cls, Token name, List<object?> args)
     {
+        Initialise(cls);
+
         if (args.Count == 0 && cls.OwnerOfStatic(name.Lexeme) is { } owner)
             return owner.Statics[name.Lexeme];
 

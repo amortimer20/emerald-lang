@@ -225,15 +225,11 @@ public static class Signatures
         [("Math", "min")] = new(EmType.Any, [EmType.Any, EmType.Any]),
         [("Math", "max")] = new(EmType.Any, [EmType.Any, EmType.Any]),
 
-        // Kernel — the same functions that are callable bare (§3.3). Named here so that
-        // typing `Kernel.` lists them, which is the whole reason the name exists. Their
-        // arguments are left open for the same reason the bare forms are: v0's signatures
-        // cannot say that read_line's prompt is optional.
-        [("Kernel", "print")] = new(Void, [EmType.Any]),
-        [("Kernel", "read_line")] = new(Str, [EmType.Any]),
-        [("Kernel", "random")] = new(Int, [EmType.Any]),
-        [("Kernel", "exit")] = new(Void, [EmType.Any]),
-        [("Kernel", "Error")] = new(new EmType.Prim("Error"), [EmType.Any]),
+        // Kernel is deliberately absent. It resolves through the checker's own kernel
+        // signatures — the same ones the bare names use — because a second table here
+        // promptly disagreed with the first: it gave `random` one parameter where the
+        // function takes two, so `Kernel.random(1, 6)` was refused and `random(1, 6)` was
+        // not. One name, one signature, whichever way it is written.
 
         // Range
         [("Range", "each")] = new(Void, [], WantsBlock: true),

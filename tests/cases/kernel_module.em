@@ -3,4 +3,4 @@
 ## Kernel is the dictionary the bare names come from, not a copy of it.
 Kernel.print("qualified")
 print("bare")
-print(Kernel.random(1) >= 0)
+print(Kernel.random(1, 6).between?(1, 6))

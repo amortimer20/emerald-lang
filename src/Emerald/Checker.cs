@@ -43,13 +43,20 @@ public sealed class Checker(
 
     /// <summary>Kernel functions are not arity-checked in v0 — <c>read_line</c> takes an
     /// optional prompt, and modelling that needs richer signatures than this has.</summary>
-    private static readonly Dictionary<string, EmType> Kernel = new()
+    /// <summary>
+    /// The kernel, with real arities. These were once a bare return type and a single
+    /// <c>Any</c> parameter that the call checker then skipped, on the grounds that a
+    /// signature could not say <c>read_line</c>'s prompt was optional — which stopped
+    /// being true when <see cref="EmType.Func"/> gained <c>Required</c>. Until then
+    /// <c>random(1)</c> passed the checker and reached a .NET IndexOutOfRange.
+    /// </summary>
+    private static readonly Dictionary<string, EmType.Func> Kernel = new()
     {
-        ["print"] = EmType.Nothing,
-        ["read_line"] = EmType.String,
-        ["random"] = EmType.Int,
-        ["exit"] = EmType.Nothing,
-        ["Error"] = new EmType.Prim("Error"),
+        ["print"] = new([EmType.Any], EmType.Nothing, Required: 0),
+        ["read_line"] = new([EmType.Any], EmType.String, Required: 0),
+        ["random"] = new([EmType.Int, EmType.Int], EmType.Int, Required: 2),
+        ["exit"] = new([EmType.Int], EmType.Nothing, Required: 0),
+        ["Error"] = new([EmType.String], new EmType.Prim("Error"), Required: 1),
     };
 
     private readonly Stack<EmType> _returnTypes = new();
@@ -92,8 +99,8 @@ public sealed class Checker(
     public void Check(List<Stmt> program)
     {
         var globals = new Scope();
-        foreach (var (name, ret) in Kernel)
-            globals.Declare(name, new EmType.Func([EmType.Any], ret));
+        foreach (var (name, signature) in Kernel)
+            globals.Declare(name, signature);
 
         // Built-in modules are ordinary named types to the checker, so Math.sqrt resolves
         // through the same signature table as String.upper.
@@ -516,6 +523,19 @@ public sealed class Checker(
 
         CheckFieldsGetValues(decl, info);
 
+        // A module's own top-level code. Its statics are visible unqualified here: they
+        // were written as a file's own variables and only became static fields because
+        // §3.3 turns a file into a class. That says nothing about how another file reaches
+        // them, which is a separate question §3.3 leaves open.
+        if (decl.Initialiser is { Count: > 0 } initialiser)
+        {
+            var moduleScope = new Scope(body);
+            foreach (var (field, type) in info.StaticFields)
+                moduleScope.Declare(field, type, isConst: false, line: decl.Name.Line);
+
+            CheckBlock(initialiser, moduleScope);
+        }
+
         _mirroring = wasMirroring;
         _currentType = previousType;
     }
@@ -935,7 +955,7 @@ public sealed class Checker(
         if (binding is null)
         {
             Error(target.Name.Line, $"No variable named {target.Name.Lexeme}.",
-                  $"Declare it first: var {target.Name.Lexeme} = ...");
+                  MistakenForAFunction(target.Name));
             return;
         }
 
@@ -1663,6 +1683,25 @@ public sealed class Checker(
     {
         if (receiver is EmType.Unknown) return EmType.Any;
 
+        if (receiver is EmType.Prim { Name: "Kernel" })
+        {
+            if (!Kernel.TryGetValue(name.Lexeme, out var fn))
+            {
+                Error(name.Line, $"No function named {name.Lexeme} on Kernel.",
+                      Suggest(name.Lexeme, Kernel.Keys));
+                return EmType.Any;
+            }
+
+            // A bare name is a zero-argument call (§3.1), so one that needs arguments was
+            // reached without them.
+            if (fn.LeastArgs > 0)
+                Error(name.Line,
+                      $"Kernel.{name.Lexeme} takes {Count(fn.LeastArgs, "argument")}, "
+                      + "but got none.");
+
+            return fn.Return;
+        }
+
         // A bare `arr.count` is a zero-argument call, so it resolves the same way
         // `arr.count()` does — parens are optional when nothing is passed (§3.1).
         if (receiver is EmType.Lst list)
@@ -1870,6 +1909,13 @@ public sealed class Checker(
                 return EmType.Any;
             }
 
+            // Kernel goes through the very signatures the bare names use, so `print(x)`
+            // and `Kernel.print(x)` cannot be checked differently.
+            if (receiver is EmType.Prim { Name: "Kernel" })
+                return Kernel.TryGetValue(get.Name.Lexeme, out var kernel)
+                    ? CheckArguments(kernel, c, args, $"Kernel.{get.Name.Lexeme}", get.Name.Line)
+                    : MemberType(receiver, get.Name, scope);
+
             // A built-in has a signature now too, so the standard library is checked the
             // same way the program is.
             if (Signatures.SignatureOf(receiver, get.Name.Lexeme) is { } builtin)
@@ -1930,9 +1976,6 @@ public sealed class Checker(
             return EmType.Any;
         }
 
-        // Kernel functions are declared with a single Any parameter and skipped, since
-        // v0's signatures cannot express read_line's optional prompt.
-        if (c.Callee is Expr.Variable v && Kernel.ContainsKey(v.Name.Lexeme)) return fn.Return;
 
         string name = c.Callee is Expr.Variable named ? named.Name.Lexeme : "This";
         return CheckArguments(fn, c, given, name, LineOf(c.Callee));
