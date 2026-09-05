@@ -968,6 +968,64 @@ class RaceTimer extends Timer {
 
   Write:  override func reset(...)
   If you did not mean to replace it, Timer already has a reset and calling it will now reach this one instead. Rename yours.</pre></div>
+  <p>When the new class has something of its own to set up, it writes its own <code class="inl">constructor</code> and starts it by calling the one above with <code class="inl">super</code>. That is how the base gets to fill in its own part &mdash; you say what to pass it, and it does the rest.</p>
+  <div class="unit">
+    <pre class="code">class Vehicle {
+    var wheels: Int
+    var name: String
+
+    constructor(name: String, wheels: Int) {
+        self.name = name
+        self.wheels = wheels
+    }
+
+    func describe(): String { return "#{self.name}, #{self.wheels} wheels" }
+}
+
+class Bike extends Vehicle {
+    var gears: Int
+
+    constructor(name: String, gears: Int) {
+        super(name, 2)          # build the Vehicle part first
+        self.gears = gears
+    }
+
+    override func describe(): String {
+        return "#{super.describe()}, #{self.gears} gears"
+    }
+}
+
+print(Bike("commuter", 8).describe())</pre>
+    <div class="out"><span class="lab">prints</span><pre>commuter, 2 wheels, 8 gears</pre></div>
+  </div>
+  <div class="aside"><p><code class="inl">super</code> means one thing &mdash; the class above &mdash; and you can do two things with it. <code class="inl">super(...)</code> runs its constructor; <code class="inl">super.describe()</code> calls a method it wrote.</p></div>
+  <p><code class="inl">super(...)</code> has to be the first line. Until it has run, the fields the base looks after are still empty, so nothing else can safely go before it. And you only need to write it when the base's constructor wants something &mdash; if it takes nothing, it is called for you.</p>
+  <p>What you must not do is fill in the base's fields yourself. Emerald will not let you, and the reason is worth seeing: <code class="inl">Vehicle</code> might do something with the values on the way in, and a class that sets the fields directly quietly skips all of it.</p>
+  <div class="unit">
+    <pre class="code">class Vehicle {
+    var wheels: Int
+    var name: String
+
+    constructor(name: String, wheels: Int) {
+        self.name = name
+        self.wheels = wheels
+    }
+}
+
+class Bike extends Vehicle {
+    var gears: Int
+
+    constructor(name: String, gears: Int) {
+        self.gears = gears
+    }
+}</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:14  Vehicle's constructor needs 2 arguments, so Bike has to say what to pass it.
+
+   14 |     constructor(name: String, gears: Int) {
+
+  Call it first:  super(...)
+  Vehicle's constructor takes (String, Int).</pre></div>
   <p>And when you do replace a method, <code class="inl">super</code> is the one you replaced &mdash; useful when you want to add to it rather than throw it away.</p>
   <div class="unit">
     <pre class="code">class Greeter {

@@ -28,7 +28,9 @@ class Maybe {
     var note: String?
 }
 
-## A subclass with its own constructor assigns the base's fields too.
+## A subclass with its own constructor calls the base's and then fills its own. It does
+## not assign a's field itself: Base's constructor is what gives a its value, and saying
+## so is what stops the two drifting apart.
 class Base {
     var a: Int
     constructor(a: Int) { self.a = a }
@@ -36,7 +38,7 @@ class Base {
 class Child extends Base {
     var b: Int
     constructor(a: Int, b: Int) {
-        self.a = a
+        super(a)
         self.b = b
     }
 }

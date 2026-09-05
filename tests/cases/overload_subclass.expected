@@ -1,6 +1,6 @@
 
-overload_subclass.em:12  feed already has an overload matching this one, on line 11.
+overload_subclass.em:11  feed already has an overload matching this one, on line 10.
 
-   12 | func feed(d: Dog): String { return "dog" }
+   11 | func feed(d: Dog): String { return "dog" }
 
   Two of one name have to be told apart by what they take. No argument could choose between these.

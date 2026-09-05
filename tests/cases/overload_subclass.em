@@ -5,7 +5,6 @@ class Animal {
 }
 
 class Dog extends Animal {
-    constructor(name: String) { self.name = name }
 }
 
 func feed(a: Animal): String { return "animal" }

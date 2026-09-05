@@ -412,14 +412,23 @@ public sealed class ClassInfo(string name)
     /// exactly what declaring it <c>T?</c> means. An unannotated one is excluded because
     /// its type is Unknown, and Unknown is where the checker stays quiet by policy.
     /// </summary>
+    /// <summary>
+    /// The fields this class must fill itself. Inherited ones are not among them: the
+    /// base's constructor fills those, and it always runs — explicitly through
+    /// <c>super(...)</c>, or implicitly when it needs nothing (§3.2).
+    ///
+    /// Before chaining existed this walked the base chain, and it had to, because nothing
+    /// else was going to fill them. What that produced was a subclass repeating its
+    /// base's assignments: it compiled, it silently skipped whatever the base's
+    /// constructor did with those values, and it broke the day the base gained a field.
+    /// </summary>
     public IEnumerable<(string Name, EmType Type)> FieldsNeedingAValue() =>
-        (Base?.FieldsNeedingAValue() ?? [])
-            .Concat(Fields
-                .Where(f => !InitialisedFields.Contains(f.Key)
-                            && !PropertyNames.Contains(f.Key)
-                            && f.Value is not EmType.Unknown
-                            && !f.Value.IsMaybe)
-                .Select(f => (f.Key, f.Value)));
+        Fields
+            .Where(f => !InitialisedFields.Contains(f.Key)
+                        && !PropertyNames.Contains(f.Key)
+                        && f.Value is not EmType.Unknown
+                        && !f.Value.IsMaybe)
+            .Select(f => (f.Key, f.Value));
     public HashSet<string> ReadOnlyProperties { get; } = [];
     public Dictionary<string, List<EmType.Func>> Methods { get; } = [];
     public List<EmType> ConstructorParams { get; set; } = [];

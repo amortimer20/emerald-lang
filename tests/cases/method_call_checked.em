@@ -10,7 +10,6 @@ class Animal {
 }
 
 class Dog extends Animal {
-    constructor(name: String) { self.name = name }
 
     func fed(times: Int, treat: String = "biscuit"): String {
         return "#{self.name} ate #{times} #{treat}"

@@ -10,8 +10,25 @@ namespace Emerald;
 /// instance is what stops <c>super.speak()</c> finding the override again and recursing —
 /// which was not even a catchable error, but a stack overflow that killed the process.
 /// </summary>
-public sealed record EmSuper(EmInstance Instance, EmClass DeclaredIn)
+public sealed record EmSuper(EmInstance Instance, EmClass DeclaredIn) : ICallable
 {
+    /// <summary>
+    /// <c>super(name)</c> in a constructor — runs the base's constructor on this same
+    /// object, so the base fills its own fields and does its own work. One word with one
+    /// meaning: <c>super.speak()</c> is the method above, <c>super(...)</c> the
+    /// constructor above. The checker allows the call form only as a constructor's first
+    /// statement (§3.2), so reaching it anywhere else is a program that did not check.
+    /// </summary>
+    public object? Call(Interpreter interpreter, List<object?> args)
+    {
+        if (DeclaredIn.Super?.ConstructorOwner is not { } above)
+            throw new RuntimeError(
+                $"Nothing above {DeclaredIn.Name} has a constructor to call.");
+
+        interpreter.RunConstructor(above, Instance, args);
+        return null;
+    }
+
     public override string ToString() => $"<super of {DeclaredIn.Name}>";
 }
 
@@ -108,6 +125,17 @@ public sealed class EmClass(
 
     /// <summary>A subclass with no constructor of its own inherits its base's.</summary>
     public Stmt.ConstructorDecl? Constructor => constructor ?? super?.Constructor;
+
+    /// <summary>This class's own constructor, not one it inherits.</summary>
+    public Stmt.ConstructorDecl? OwnConstructor => constructor;
+
+    /// <summary>
+    /// Which class in the chain actually declares the constructor that runs. Needed
+    /// wherever <see cref="Constructor"/> is not enough on its own: running one means
+    /// knowing what <em>its</em> base is, so the chain can continue upward.
+    /// </summary>
+    public EmClass? ConstructorOwner =>
+        constructor is not null ? this : super?.ConstructorOwner;
 
     public bool IsSubclassOf(EmClass other) =>
         this == other || (super?.IsSubclassOf(other) ?? false);

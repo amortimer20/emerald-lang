@@ -690,15 +690,9 @@ public sealed class Interpreter
             instance.Fields[field.Name.Lexeme] =
                 field.Init is null ? null : Evaluate(field.Init, fieldScope);
 
-        var constructor = cls.Constructor;
-        if (constructor is not null)
+        if (cls.ConstructorOwner is { } owner)
         {
-            var scope = new Env(cls.Closure);
-            scope.Declare("self", instance);
-            BindParameters(constructor.Params, args, scope, cls.Name);
-
-            try { ExecuteBlock(constructor.Body, scope); }
-            catch (ReturnSignal) { /* an early return from a constructor is allowed */ }
+            RunConstructor(owner, instance, args);
         }
         else if (cls.Kind == TypeKind.Struct)
         {
@@ -727,6 +721,40 @@ public sealed class Interpreter
 
         return instance;
     }
+
+    /// <summary>
+    /// Runs one class's constructor on an object. <paramref name="owner"/> is the class
+    /// that declares it rather than the object's own class, because the chain walks
+    /// upward: <c>super(...)</c> calls back in here with the class above.
+    ///
+    /// A base constructor taking no required arguments is called implicitly, so a
+    /// hierarchy whose base has nothing to fill stays quiet (§3.2). One that needs
+    /// arguments is the caller's to write, and the checker insists on it.
+    /// </summary>
+    public void RunConstructor(EmClass owner, EmInstance instance, List<object?> args)
+    {
+        var constructor = owner.OwnConstructor!;
+
+        var scope = new Env(owner.Closure);
+        scope.Declare("self", instance);
+        scope.Declare("super", new EmSuper(instance, owner));
+
+        BindParameters(constructor.Params, args, scope, owner.Name);
+
+        // The implicit call, before the body. Skipped when the body opens with an explicit
+        // one, which would otherwise run the base twice.
+        if (owner.Super?.ConstructorOwner is { } above && !OpensWithSuper(constructor.Body))
+            RunConstructor(above, instance, []);
+
+        try { ExecuteBlock(constructor.Body, scope); }
+        catch (ReturnSignal) { /* an early return from a constructor is allowed */ }
+    }
+
+    /// <summary>Whether a constructor body's first statement is <c>super(...)</c>.</summary>
+    public static bool OpensWithSuper(List<Stmt> body) =>
+        body.Count > 0
+        && body[0] is Stmt.ExprStmt
+           { Expression: Expr.Call { Callee: Expr.Variable { Name.Lexeme: "super" } } };
 
     public object? CallMethod(
         Stmt.FuncDecl method, EmInstance receiver, Env closure, List<object?> args)

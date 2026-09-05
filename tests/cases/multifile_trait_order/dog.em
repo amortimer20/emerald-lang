@@ -5,7 +5,6 @@
 ## program, which is the clearest possible sign the order was never allowed to matter.
 class Dog extends Animal with Swimmer
 
-constructor(name: String) { self.name = name }
 
 override func speak(): String { return "Woof" }
 

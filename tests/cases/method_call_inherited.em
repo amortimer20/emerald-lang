@@ -6,7 +6,6 @@ class Animal {
 }
 
 class Dog extends Animal {
-    constructor(name: String) { self.name = name }
 }
 
 print(Dog("rex").speak("loud"))

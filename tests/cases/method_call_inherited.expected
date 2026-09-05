@@ -1,6 +1,6 @@
 
-method_call_inherited.em:12  Dog.speak expects Int as its first argument, but this is String.
+method_call_inherited.em:11  Dog.speak expects Int as its first argument, but this is String.
 
-   12 | print(Dog("rex").speak("loud"))
+   11 | print(Dog("rex").speak("loud"))
 
   emerald explain

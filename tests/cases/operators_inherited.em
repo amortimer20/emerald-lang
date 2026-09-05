@@ -7,7 +7,6 @@ class Weight with Addable {
 }
 
 class Parcel extends Weight {
-    constructor(grams: Int) { self.grams = grams }
 }
 
 print((Parcel(100) + Parcel(50)).to_string())

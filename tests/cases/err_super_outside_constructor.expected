@@ -1,0 +1,6 @@
+
+err_super_outside_constructor.em:8  super(...) builds the base part of an object, so it belongs in a constructor.
+
+    8 |     func rename() { super("x") }
+
+  To call a method the class above declares, name it:  super.method_name()

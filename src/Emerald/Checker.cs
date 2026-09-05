@@ -92,6 +92,13 @@ public sealed class Checker(
     private ClassInfo? _currentType;
     private bool _inConstructor;
 
+    /// <summary>
+    /// Whether the constructor being checked calls <c>super(...)</c>. Read twice: to
+    /// insist on the call when the base needs arguments, and to stop definite assignment
+    /// asking this class for fields the base's constructor has just filled (§3.2).
+    /// </summary>
+    private bool _sawSuperCall;
+
     /// <summary>The file whose top-level statement is being checked, so a diagnostic in a
     /// project of many files names the right one.</summary>
     private string _file = fileName;
@@ -527,7 +534,9 @@ public sealed class Checker(
 
                 case Stmt.ConstructorDecl ctor:
                     _inConstructor = true;
+                    _sawSuperCall = false;
                     CheckCallable(ctor.Params, ctor.Body, body, "constructor");
+                    CheckSuperPlacement(ctor);
                     _inConstructor = false;
                     break;
 
@@ -1106,6 +1115,54 @@ public sealed class Checker(
         Expr.Get g => Source.Of(g),
         _ => null,
     };
+
+    /// <summary>
+    /// <c>super(...)</c> goes first, and goes in at all when the base needs arguments.
+    ///
+    /// First because the alternative is reading an inherited field before the base has
+    /// filled it — the null-reference shape §3.2 exists to remove, arriving through the
+    /// one door definite assignment cannot watch. Stating it as a position rather than as
+    /// "before anything that reads self" costs the case where an argument wants working
+    /// out first, and that case can be written inside the parentheses.
+    /// </summary>
+    private void CheckSuperPlacement(Stmt.ConstructorDecl ctor)
+    {
+        bool first = Interpreter.OpensWithSuper(ctor.Body);
+
+        if (_sawSuperCall && !first)
+        {
+            Error(SuperLine(ctor.Body) ?? ctor.Keyword.Line,
+                  "super(...) has to be the first statement in a constructor.",
+                  "Until the base part is built, an inherited field holds nothing — so "
+                  + "nothing can run before it.\nIf an argument needs working out first, "
+                  + "the work can go inside the parentheses:  super(name.trim())");
+            return;
+        }
+
+        if (_sawSuperCall || _currentType?.Base is not { } above) return;
+
+        // No call written. The base's constructor still runs — implicitly, with nothing
+        // passed — so this is only a problem when it needed something.
+        if (above.ConstructorRequired > 0 && above.ConstructorParams.Count > 0)
+            Error(ctor.Keyword.Line,
+                  $"{above.Name}'s constructor needs "
+                  + $"{Count(above.ConstructorRequired, "argument")}, so "
+                  + $"{_currentType!.Name} has to say what to pass it.",
+                  "Call it first:  super(...)\n"
+                  + $"{above.Name}'s constructor takes ("
+                  + string.Join(", ", above.ConstructorParams.Select(t => t.Show()))
+                  + ").");
+    }
+
+    /// <summary>Where a misplaced <c>super(...)</c> was written, for the diagnostic.</summary>
+    private static int? SuperLine(List<Stmt> body)
+    {
+        foreach (var statement in body)
+            if (statement is Stmt.ExprStmt
+                { Expression: Expr.Call { Callee: Expr.Variable { Name.Lexeme: "super" } v } })
+                return v.Name.Line;
+        return null;
+    }
 
     private void CheckVarDecl(Stmt.VarDecl v, Scope scope)
     {
@@ -2542,6 +2599,49 @@ public sealed class Checker(
     /// Used only as a hint: a wrong guess costs nothing, because the argument is checked
     /// against the real signature immediately afterwards.
     /// </summary>
+    /// <summary>
+    /// <c>super(...)</c>. Three things have to hold: it is inside a constructor, the class
+    /// has something above it with a constructor, and the arguments fit that constructor.
+    /// Placement — that it is the <em>first</em> statement — is checked where the body is
+    /// known, in <see cref="CheckSuperPlacement"/>.
+    /// </summary>
+    private EmType SuperCallType(Expr.Call c, Expr.Variable written, List<EmType> given)
+    {
+        _sawSuperCall = true;
+
+        if (!_inConstructor)
+        {
+            Error(written.Name.Line,
+                  "super(...) builds the base part of an object, so it belongs in a "
+                  + "constructor.",
+                  "To call a method the class above declares, name it:  "
+                  + "super.method_name()");
+            return EmType.Nothing;
+        }
+
+        if (_currentType?.Base is not { } above)
+        {
+            Error(written.Name.Line,
+                  $"{_currentType?.Name ?? "This"} extends nothing, so there is no base "
+                  + "constructor to call.");
+            return EmType.Nothing;
+        }
+
+        if (!above.HasConstructor && above.Base is null)
+        {
+            Error(written.Name.Line,
+                  $"{above.Name} has no constructor, so there is nothing to call.",
+                  $"Its fields are given their values where they are declared, so "
+                  + $"{_currentType!.Name} has only its own to fill.");
+            return EmType.Nothing;
+        }
+
+        var wanted = new EmType.Func(above.ConstructorParams, EmType.Nothing,
+                                     above.ConstructorRequired);
+        CheckArguments(wanted, c, given, $"{above.Name}'s constructor", written.Name.Line);
+        return EmType.Nothing;
+    }
+
     private static EmType? Wanted(EmType callee, int position) => callee switch
     {
         EmType.Func fn when position < fn.Params.Count => fn.Params[position],
@@ -2577,6 +2677,12 @@ public sealed class Checker(
                       $"Cannot create {target.Name} — {missing} has no implementation.",
                       "Implement it here, or create a subclass that does.");
         }
+
+        // super(...) builds the base part of this object. It is not an ordinary call —
+        // there is no value named super to look up — so it is answered here before the
+        // callee is resolved, and refused everywhere it does not belong (§3.2).
+        if (c.Callee is Expr.Variable { Name.Lexeme: "super" } superCall)
+            return SuperCallType(c, superCall, given);
 
         // A bare `print(x)` reaches here rather than the Kernel path, and it is the same
         // check: nothing else takes Any, so nothing else can miss a forgotten () (§3.1).
