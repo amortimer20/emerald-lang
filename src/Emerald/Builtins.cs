@@ -342,6 +342,20 @@ public static class Builtins
 
     // ---- List -----------------------------------------------------------
 
+    /// <summary>
+    /// Removes the first item the language would call equal, rather than the first .NET
+    /// would. Searching a list has to mean what <c>==</c> means, or a type that defines
+    /// <c>equals?</c> gets one answer from <c>a == b</c> and the opposite from
+    /// <c>list.contains?(b)</c> — which it did.
+    /// </summary>
+    private static bool RemoveSame(Interpreter interp, List<object?> items, object? wanted)
+    {
+        int at = items.FindIndex(x => interp.Same(x, wanted));
+        if (at < 0) return false;
+        items.RemoveAt(at);
+        return true;
+    }
+
     private static object? ListMethod(
         Interpreter interp, EmList list, string name, List<object?> args)
     {
@@ -357,8 +371,8 @@ public static class Builtins
 
             // search — find and first/last give back a maybe, because they can miss
             "find" => items.FirstOrDefault(x => Truthy(Block(args).Call(interp, [x]))),
-            "index_of" => (long)items.FindIndex(x => Equals(x, args[0])),
-            "contains?" => items.Any(x => Equals(x, args[0])),
+            "index_of" => (long)items.FindIndex(x => interp.Same(x, args[0])),
+            "contains?" => items.Any(x => interp.Same(x, args[0])),
 
             // test
             "any?" => args.Count > 0
@@ -387,7 +401,7 @@ public static class Builtins
 
             // mutate
             "add" => Mutate(items, () => items.Add(args[0])),
-            "remove" => Mutate(items, () => items.Remove(args[0])),
+            "remove" => Mutate(items, () => RemoveSame(interp, items, args[0])),
             "remove_at" => Mutate(items, () => items.RemoveAt((int)AsInt(args[0], "remove_at"))),
             "clear" => Mutate(items, items.Clear),
 

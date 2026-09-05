@@ -1064,11 +1064,25 @@ public sealed class Interpreter
     /// not is compared by identity. <c>!=</c> is always the negation of this, so the two
     /// can never be made to disagree.
     /// </summary>
-    private bool Same(object? left, object? right)
+    public bool Same(object? left, object? right)
     {
         if (left is EmInstance instance
             && Choose(instance.Class.FindMethods(Prelude.EqualsMethod), [right]) is { } method)
             return Truthy(CallMethod(method, instance, instance.Class.Closure, [right]));
+
+        // A struct is a value (§3.2), so two of them holding the same things are the same
+        // thing — which is what "value type" means, and what C# gives a struct for free.
+        // Without this, `Point(1, 2) == Point(1, 2)` was false: a wrong answer, silently,
+        // to the most obvious question anyone asks of a small value.
+        //
+        // Fields are compared with this same method, so a struct holding a struct compares
+        // by value all the way down, and one holding a class compares that field by
+        // identity — which is what == means for a class, consistently.
+        if (left is EmInstance a && right is EmInstance b
+            && a.Class.Kind == TypeKind.Struct && a.Class == b.Class)
+            return a.Fields.Count == b.Fields.Count
+                   && a.Fields.All(f => b.Fields.TryGetValue(f.Key, out var theirs)
+                                        && Same(f.Value, theirs));
 
         return AreEqual(left, right);
     }
