@@ -1011,6 +1011,18 @@ print("#{there.x}, #{there.y}")</pre>
     <div class="out"><span class="lab">prints</span><pre>2, 3
 3, 4</pre></div>
   </div>
+  <p>And because a struct <em>is</em> its contents, two structs holding the same things are the same thing. You do not have to write that; it is what being a value means.</p>
+  <div class="unit">
+    <pre class="code">print(Point(2, 3) == Point(2, 3))
+print(Point(2, 3) == Point(9, 9))
+
+var route = [Point(0, 0), Point(2, 3)]
+print(route.contains?(Point(2, 3)))</pre>
+    <div class="out"><span class="lab">prints</span><pre>true
+false
+true</pre></div>
+  </div>
+  <div class="aside"><p>A class is different: two classes are the same only if they are the <em>same one</em>. That is the honest answer when nothing has said otherwise &mdash; and a class can say otherwise, which is the next section but one.</p></div>
 </section>
 
 <section id="s23">
