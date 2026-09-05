@@ -402,7 +402,7 @@ public static class Builtins
             // mutate
             "add" => Mutate(items, () => items.Add(args[0])),
             "remove" => Mutate(items, () => RemoveSame(interp, items, args[0])),
-            "remove_at" => Mutate(items, () => items.RemoveAt((int)AsInt(args[0], "remove_at"))),
+            "remove_at" => Mutate(items, () => items.RemoveAt(Position(items, args[0]))),
             "clear" => Mutate(items, items.Clear),
 
             // A set is written as a list and converted, since the braces a set
@@ -510,6 +510,43 @@ public static class Builtins
         return Math.Round(value, (int)places, MidpointRounding.AwayFromZero);
     }
 
+    /// <summary>
+    /// <c>replace</c>, with the one argument .NET refuses caught first. An empty string to
+    /// look for matches everywhere and nowhere, so <c>Replace</c> throws — which arrived as
+    /// "this is a bug in Emerald" for a program that had merely asked something meaningless.
+    /// </summary>
+    private static string Replaced(string value, string looking, string instead)
+    {
+        if (looking.Length == 0)
+            throw new RuntimeError(
+                "replace needs something to look for, and this is an empty string.",
+                "An empty string sits between every character, so there is no one place "
+                + "to put the replacement.");
+
+        return value.Replace(looking, instead, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A position in a list, checked. Without this <c>remove_at</c> handed the number
+    /// straight to .NET and an out-of-range one came back as an ArgumentOutOfRangeException
+    /// — reported as "this is a bug in Emerald", which for an ordinary mistake in an
+    /// ordinary program is both alarming and false. Indexing had this guard; the one
+    /// method that removes by index did not.
+    /// </summary>
+    private static int Position(List<object?> items, object? given)
+    {
+        long i = AsInt(given, "remove_at");
+
+        if (i < 0 || i >= items.Count)
+            throw new RuntimeError(
+                $"Index {i} is outside this list, which holds {items.Count} item(s).",
+                items.Count == 0
+                    ? "The list is empty."
+                    : $"Valid positions run from 0 to {items.Count - 1}.");
+
+        return (int)i;
+    }
+
     // ---- String ---------------------------------------------------------
 
     private static object? StringMethod(string value, string name, List<object?> args) =>
@@ -559,9 +596,8 @@ public static class Builtins
                 .Split(AsString(args[0], "split"), StringSplitOptions.None)
                 .Cast<object?>()]),
 
-            "replace" => value.Replace(AsString(args[0], "replace"),
-                                       AsString(args[1], "replace"),
-                                       StringComparison.Ordinal),
+            "replace" => Replaced(value, AsString(args[0], "replace"),
+                                  AsString(args[1], "replace")),
             _ => throw new RuntimeError($"No method named {name} on String.")
         };
 

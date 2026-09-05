@@ -1291,6 +1291,12 @@ public sealed class Interpreter
         // A method call is a Get in callee position — evaluate the receiver, then dispatch.
         if (c.Callee is Expr.Get get)
         {
+            // Set before the receiver is evaluated, not after: this is the line a failure
+            // inside the call belongs to. Only EvaluateGet used to do it, so a receiver
+            // that was a variable set the line on its way past and a literal one did not —
+            // `print("banana".to_int())` reported main.em:0, whatever line it sat on.
+            _line = get.Name.Line;
+
             object? target = Evaluate(get.Target, env);
 
             // The receiver is evaluated before the arguments so that a ?. on nothing skips
