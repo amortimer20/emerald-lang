@@ -156,6 +156,23 @@ public sealed class BoundMethod(Stmt.FuncDecl declaration, EmInstance receiver, 
 }
 
 /// <summary>
+/// Several versions of one method, receiver attached. <c>g.hi</c> names them all: the
+/// checker has already picked which one the expression's type refers to, and the runtime
+/// has no types to pick with, so it keeps the set and chooses on the arguments the call
+/// finally supplies. Both arrive at the same version, because the checker only let the
+/// expression through against a shape exactly one of these answers.
+/// </summary>
+public sealed class BoundOverloads(
+    List<Stmt.FuncDecl> alternatives, EmInstance receiver, Env closure) : ICallable
+{
+    public object? Call(Interpreter interpreter, List<object?> args) =>
+        interpreter.CallOverload(alternatives, receiver, closure, args);
+
+    public override string ToString() =>
+        $"<method {alternatives[0].Name.Lexeme}>";
+}
+
+/// <summary>
 /// A static method as a value. There is no receiver to attach, only the class the body
 /// calls <c>Self</c>, so this is the type-level counterpart to <see cref="BoundMethod"/>.
 /// </summary>

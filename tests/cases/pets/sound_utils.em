@@ -1,6 +1,6 @@
 # No class line, so this file is a module: every member is reached as SoundUtils.<name>
 func loudly(text: String): String {
-    return text.upper + "!"
+    return text.upper() + "!"
 }
 
 func repeat(text: String, times: Int): String {

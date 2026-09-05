@@ -527,9 +527,16 @@ public sealed class ClassInfo(string name)
         StaticMethods.TryGetValue(wanted, out var mine) ? mine
             : Base?.FindStaticMethods(wanted) ?? [];
 
+    /// <summary>
+    /// A type-level member read without parentheses: a static var's value, or a static
+    /// method <em>itself</em> (§3.1). It used to give the method's return type, because a
+    /// bare name was a call — that is what made <c>Make.tag</c> unusable as a value.
+    /// </summary>
     public EmType? FindStatic(string wanted) =>
         StaticFields.TryGetValue(wanted, out var f) ? f
-            : FindStaticMethod(wanted)?.Return ?? Base?.FindStatic(wanted);
+            : FindStaticMethods(wanted) is [var only] ? only
+            : FindStaticMethods(wanted) is { Count: > 1 } set ? new EmType.Overloads(set)
+            : Base?.FindStatic(wanted);
 
     public IEnumerable<string> StaticNames() =>
         StaticFields.Keys.Concat(StaticMethods.Keys).Concat(Base?.StaticNames() ?? []);

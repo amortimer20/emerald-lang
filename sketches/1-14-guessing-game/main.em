@@ -3,8 +3,8 @@
 
 print("### Number Guessing Game 2026 ###")
 
-var bottom_number = read_line("Enter your starting number: ").to_int
-var top_number = read_line("Enter your top number: ").to_int
+var bottom_number = read_line("Enter your starting number: ").to_int()
+var top_number = read_line("Enter your top number: ").to_int()
 
 if bottom_number >= top_number {
     print("Error: Invalid number range. Exiting...")

@@ -13,7 +13,7 @@ class Label {
 class Checked {
     var text: String
     constructor(raw: String) {
-        if raw.empty? { throw "a label needs text" }
+        if raw.empty?() { throw "a label needs text" }
         else { self.text = raw }
     }
 }

@@ -1,4 +1,4 @@
 
 set_union_not_a_set.em:2  union on Set<Int> takes Set<Int>, but this is List<Int>.
 
-    2 | print(s.union([3, 4]).count)
+    2 | print(s.union([3, 4]).count())

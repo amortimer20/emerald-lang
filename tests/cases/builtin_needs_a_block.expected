@@ -1,6 +1,6 @@
 
-builtin_needs_a_block.em:3  Int.times needs a block.
+builtin_needs_a_block.em:2  Int.times needs a block.
 
-    3 | 3.times
+    2 | 3.times()
 
   Write what to do each time:  times { i => ... }

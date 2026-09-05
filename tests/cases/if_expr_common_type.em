@@ -2,7 +2,7 @@
 ## other rules, so `if c then "x" else nothing` was a type clash rather than a String?,
 ## and two sibling classes had no common answer at all.
 for n in [1, 2, 3] {
-    var label: String? = if n.even? then "even" else nothing
+    var label: String? = if n.even?() then "even" else nothing
     continue if label == nothing
     print(label.upper())
 }

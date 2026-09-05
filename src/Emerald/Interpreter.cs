@@ -818,14 +818,9 @@ public sealed class Interpreter
             // is meant cannot be read off the call site, so the checker resolves it against
             // the expected func(...) type and this is only the backstop.
             if (!invoking)
-            {
-                if (overloads.Count > 1)
-                    throw new RuntimeError(
-                        $"{instance.Class.Name}.{name.Lexeme} has {overloads.Count} versions, "
-                        + "so it is not clear which one this names.");
-
-                return new BoundMethod(overloads[0], instance, instance.Class.Closure);
-            }
+                return overloads.Count == 1
+                    ? new BoundMethod(overloads[0], instance, instance.Class.Closure)
+                    : new BoundOverloads(overloads, instance, instance.Class.Closure);
 
             var method = Choose(overloads, args)
                 ?? throw new RuntimeError(
@@ -937,6 +932,20 @@ public sealed class Interpreter
             cls.FindMethod(name.Lexeme) is not null
                 ? $"{name.Lexeme} belongs to an instance — call it on a {cls.Name} value."
                 : null);
+    }
+
+    /// <summary>
+    /// Runs whichever version of an overloaded method the arguments fit. Public for
+    /// <see cref="BoundOverloads"/>, which holds the set until the call supplies them.
+    /// </summary>
+    public object? CallOverload(
+        List<Stmt.FuncDecl> alternatives, EmInstance receiver, Env closure, List<object?> args)
+    {
+        var method = Choose(alternatives, args)
+            ?? throw new RuntimeError(
+                $"No version of {alternatives[0].Name.Lexeme} takes these arguments.");
+
+        return CallMethod(method, receiver, closure, args);
     }
 
     /// <summary>
@@ -1237,9 +1246,14 @@ public sealed class Interpreter
             return GetOrInvoke(instance, g.Name, [], invoking: false);
         if (target is EmClass cls) return GetStatic(cls, g.Name, [], invoking: false);
 
-        // Builtins expose no properties (§3.1), so every member of one is a method and a
-        // read without parentheses is the missing-parens mistake. The checker says so
-        // first; this is what a program reaching here at runtime is told.
+        // An enum value carries a name and nothing else, so that name is the one property
+        // in the built-in surface — it is data the value has, not work it does. Its
+        // .to_string() is the method beside it, and takes parentheses like any other.
+        if (target is EmEnumValue enumValue && g.Name.Lexeme == "name") return enumValue.Name;
+
+        // Otherwise the built-ins expose no properties (§3.1), so every member of one is a
+        // method and a read without parentheses is the missing-parens mistake. The checker
+        // says so first; this is what a program reaching here at runtime is told.
         throw new RuntimeError(
             $"{Builtins.TypeName(target)}.{g.Name.Lexeme} is a method.",
             $"Calling it takes parentheses:  {g.Name.Lexeme}()");
@@ -1468,7 +1482,7 @@ public sealed class Interpreter
             throw new RuntimeError(
                 $"{baseValue} ** {exponent} is too large to hold in an Int.",
                 "Floats hold numbers this large:  "
-                + $"{baseValue}.to_float ** {exponent}");
+                + $"{baseValue}.to_float() ** {exponent}");
         }
 
         return result;

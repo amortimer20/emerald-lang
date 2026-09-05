@@ -1109,8 +1109,13 @@ public sealed class Checker(
 
     private void CheckVarDecl(Stmt.VarDecl v, Scope scope)
     {
-        EmType inferred = v.Init is null ? EmType.Any : TypeOf(v.Init, scope);
-        EmType declared = v.Type is null ? inferred : Resolve(v.Type);
+        // The annotation is resolved first so it can be handed to the initialiser: a
+        // block takes its parameter types from it, and an overloaded method value takes
+        // which version it names from it (§3.1). Both need the shape before the value.
+        EmType? annotation = v.Type is null ? null : Resolve(v.Type);
+
+        EmType inferred = v.Init is null ? EmType.Any : TypeOf(v.Init, scope, annotation);
+        EmType declared = annotation ?? inferred;
 
         if (v.Type is not null && v.Init is not null && !declared.Accepts(inferred))
             Error(v.Name.Line,
@@ -1276,7 +1281,7 @@ public sealed class Checker(
             default:
                 Error(index.Bracket.Line, $"Cannot index {target.Show()}.",
                       target.Equals(EmType.String)
-                          ? "Emerald strings are not integer-indexed. Use .chars to get characters."
+                          ? "Emerald strings are not integer-indexed. Use .chars() to get characters."
                           : null);
                 return;
         }
@@ -1344,7 +1349,7 @@ public sealed class Checker(
                           // A dictionary holds pairs, and there is no pair type to give
                           // the loop variable — so it says which half is wanted instead.
                           EmType.Dict => "Walk its keys or its values:  "
-                                         + "for key in scores.keys { ... }",
+                                         + "for key in scores.keys() { ... }",
                           EmType.Obj => "A range, a list, and a string can be looped over. "
                                         + "For anything else, expose a list from it.",
                           _ => "Loop over a range (1..5), a list, or a string.",
@@ -1653,8 +1658,26 @@ public sealed class Checker(
 
     private EmType CheckInterpolation(Expr.Interpolation node, Scope scope)
     {
-        foreach (var part in node.Parts) TypeOf(part, scope);
+        foreach (var part in node.Parts) NotAFunction(TypeOf(part, scope), part);
         return EmType.String;
+    }
+
+    /// <summary>
+    /// Refuses a function where a value is being displayed. Everywhere else a method value
+    /// is checked against a declared shape, so a forgotten <c>()</c> is caught by the type
+    /// it does not match — but <c>print</c> takes anything and interpolation displays
+    /// anything, so those two would show <c>&lt;function&gt;</c> and say nothing. Since
+    /// parens became required (§3.1) that is the mistake most likely to be made, so the
+    /// two places that cannot catch it by type are made to catch it by name.
+    /// </summary>
+    private void NotAFunction(EmType type, Expr written)
+    {
+        if (type is not EmType.Func fn) return;
+
+        string source = Source.Of(written);
+        Error(LineOf(written),
+              $"This shows {source} itself, not what it answers.",
+              $"It is {fn.Show()}. Add parentheses to call it:  {source}()");
     }
 
     private static EmType LiteralType(object? value) => value switch
@@ -1998,7 +2021,9 @@ public sealed class Checker(
     /// The <c>?.</c> access whose receiver is being typed right now, if there is one.
     /// Only <see cref="PredicateSwallowed"/> reads it, to recognise the one shape the
     /// scanner's rule gets wrong for a reader: <c>n.even?.to_string()</c>, where the ? was
-    /// meant to end the name and was taken as the operator.
+    /// meant to end the name and was taken as the operator. Rarer than it was — with
+    /// parentheses required (§3.1) the correct spelling has no <c>?.</c> in it at all,
+    /// since <c>n.even?().to_string()</c> puts a <c>)</c> between the two marks.
     /// </summary>
     private Expr.Get? _optionalDot;
 
@@ -2032,8 +2057,8 @@ public sealed class Checker(
         && ReferenceEquals(name, inner.Name)
         && members.Contains(name.Lexeme + "?")
             ? $"The ? in {name.Lexeme}? is part of its name, so a dot cannot follow it. "
-              + $"Parenthesise the question to use its answer:  "
-              + $"({Source.Of(inner)}?).{outer.Name.Lexeme}"
+              + "Its parentheses separate the two:  "
+              + $"{Source.Of(inner)}?().{outer.Name.Lexeme}()"
             : null;
 
     /// <summary>A member read, with <c>?.</c> handled if that is how it was written.</summary>
@@ -2041,11 +2066,11 @@ public sealed class Checker(
     {
         var receiver = ReceiverType(g, scope);
 
-        if (!g.Optional) return MemberType(receiver, g.Name, scope, wanted);
+        if (!g.Optional) return MemberType(receiver, g.Name, scope, wanted, g);
 
         return CheckedOptional(receiver, g)
-            ? EmType.Nullable(MemberType(receiver.Stripped, g.Name, scope, wanted))
-            : MemberType(receiver, g.Name, scope, wanted);
+            ? EmType.Nullable(MemberType(receiver.Stripped, g.Name, scope, wanted, g))
+            : MemberType(receiver, g.Name, scope, wanted, g);
     }
 
     /// <summary>
@@ -2070,7 +2095,9 @@ public sealed class Checker(
     /// A member read — no parentheses were written. Since every call has them (§3.1),
     /// this yields a field, a property, or the method <em>itself</em>; it never runs one.
     /// </summary>
-    private EmType MemberType(EmType receiver, Token name, Scope scope, EmType? wanted = null)
+    private EmType MemberType(
+        EmType receiver, Token name, Scope scope,
+        EmType? wanted = null, Expr.Get? written = null)
     {
         if (receiver is EmType.Unknown) return EmType.Any;
 
@@ -2135,7 +2162,10 @@ public sealed class Checker(
         // since an enum has no fields or methods of its own to find.
         if (receiver is EmType.Obj { Info.Kind: TypeKind.Enum } enumValue)
         {
-            if (name.Lexeme is "name" or "to_string") return EmType.String;
+            // .name is the value's own data, so it is read; .to_string is a method, so
+            // naming it without parentheses hands back the method itself (§3.1).
+            if (name.Lexeme == "name") return EmType.String;
+            if (name.Lexeme == "to_string") return new EmType.Func([], EmType.String, 0);
 
             Error(name.Line,
                   $"No member named {name.Lexeme} on {enumValue.Info.Name}.",
@@ -2153,7 +2183,7 @@ public sealed class Checker(
             CheckVisibility(obj.Info, name);
             if (obj.Info.FindField(name.Lexeme) is { } fieldType) return fieldType;
             if (obj.Info.FindMethods(name.Lexeme) is { Count: > 0 } overloads)
-                return MethodValue(overloads, obj.Info.Name, name, wanted);
+                return MethodValue(overloads, obj.Info.Name, name, wanted, written);
 
             Error(name.Line, $"No member named {name.Lexeme} on {obj.Info.Name}.",
                   PredicateSwallowed(name, obj.Info.MemberNames())
@@ -2196,7 +2226,8 @@ public sealed class Checker(
     /// carries no arguments to choose by.
     /// </summary>
     private EmType MethodValue(
-        List<EmType.Func> overloads, string owner, Token name, EmType? wanted)
+        List<EmType.Func> overloads, string owner, Token name, EmType? wanted,
+        Expr.Get? written)
     {
         if (overloads.Count == 1) return overloads[0];
 
@@ -2209,8 +2240,9 @@ public sealed class Checker(
               + "which one this names.",
               "It has " + string.Join(", and ", overloads.Select(
                   f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})"))
-              + ".\nCall the one you mean inside a block instead:  "
-              + $"{{ {name.Lexeme}(...) }}");
+              + ".\nSay which by writing the type it should have:  "
+              + $"var f: {overloads[0].Show()} = "
+              + (written is null ? name.Lexeme : Source.Of(written)));
         return EmType.Any;
     }
 
@@ -2376,6 +2408,22 @@ public sealed class Checker(
                                       $"{held.Info.Name}.{get.Name.Lexeme}", get.Name.Line);
             }
 
+            // An enum value has one property and one method. Calling the method is
+            // ordinary; calling the property is the same mistake as calling a field.
+            if (receiver is EmType.Obj { Info.Kind: TypeKind.Enum }
+                && get.Name.Lexeme == "to_string")
+                return EmType.String;
+
+            if (receiver is EmType.Obj { Info.Kind: TypeKind.Enum } value2
+                && get.Name.Lexeme == "name")
+            {
+                Error(get.Name.Line,
+                      $"{value2.Info.Name}.name is String, not a method.",
+                      "It is read without parentheses:  "
+                      + $"{Source.Of(get.Target)}.name");
+                return EmType.String;
+            }
+
             // A field or property, reached with parentheses. The two are deliberately
             // indistinguishable here — that interchange is what survived the removal of
             // optional parens (§3.1) — so the message names neither, only that this is a
@@ -2395,9 +2443,14 @@ public sealed class Checker(
             // Kernel goes through the very signatures the bare names use, so `print(x)`
             // and `Kernel.print(x)` cannot be checked differently.
             if (receiver is EmType.Prim { Name: "Kernel" })
+            {
+                if (get.Name.Lexeme == "print")
+                    foreach (var written in c.Args) NotAFunction(TypeOf(written, scope), written);
+
                 return Kernel.TryGetValue(get.Name.Lexeme, out var kernel)
                     ? CheckArguments(kernel, c, args, $"Kernel.{get.Name.Lexeme}", get.Name.Line)
                     : MemberType(receiver, get.Name, scope);
+            }
 
             // A built-in has a signature now too, so the standard library is checked the
             // same way the program is.
@@ -2449,6 +2502,12 @@ public sealed class Checker(
                       $"Cannot create {target.Name} — {missing} has no implementation.",
                       "Implement it here, or create a subclass that does.");
         }
+
+        // A bare `print(x)` reaches here rather than the Kernel path, and it is the same
+        // check: nothing else takes Any, so nothing else can miss a forgotten () (§3.1).
+        if (c.Callee is Expr.Variable { Name.Lexeme: "print" })
+            for (int i = 0; i < c.Args.Count && i < given.Count; i++)
+                NotAFunction(given[i], c.Args[i]);
 
         var callee = TypeOf(c.Callee, scope);
 
@@ -2788,11 +2847,11 @@ public sealed class Checker(
               target switch
               {
                   EmType.Prim { Name: "String" } =>
-                      "Emerald strings are not integer-indexed. Use .chars to get characters.",
+                      "Emerald strings are not integer-indexed. Use .chars() to get characters.",
 
                   // A set has no positions — membership is the question it answers.
                   EmType.SetOf => "A set has no order to index into. Ask whether it holds "
-                                  + "something with .contains?, or take .to_list first.",
+                                  + "something with .contains?(), or take .to_list() first.",
 
                   _ => null,
               });
@@ -2950,8 +3009,9 @@ public sealed class Checker(
     }
 
     /// <summary>
-    /// Shared by <c>arr.count</c> and <c>arr.count()</c>, which are the same thing —
-    /// parens are optional when there is nothing to pass (§3.1).
+    /// The shape of <c>arr.count()</c> and every other list method. Reached from the
+    /// call path only: a paren-less <c>arr.count</c> names nothing, since the built-ins
+    /// have no properties for it to name (§3.1).
     /// </summary>
     private EmType ListMemberType(
         EmType.Lst list, Token name, EmType blockReturn, EmType firstArg)

@@ -51,8 +51,8 @@ present?.write(loud())
 ## Built-in types read the same way.
 var some: List<Int>? = [1, 2, 3]
 var none: List<Int>? = nothing
-print(some?.count.or(0))
-print(none?.count.or(0))
+print(some?.count().or(0))
+print(none?.count().or(0))
 
 var text: String? = "hi"
 print(text?.upper().or("-"))

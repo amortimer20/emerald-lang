@@ -1,0 +1,6 @@
+
+err_call_a_field.em:6  Dog.name is String, not a method.
+
+    6 | print(Dog("rex").name())
+
+  It is read without parentheses:  Dog("rex").name

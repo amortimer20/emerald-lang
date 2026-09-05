@@ -1,6 +1,6 @@
 
 err_optional_chaining.em:4  String is never nothing, so ?. has nothing to check.
 
-    4 | print(s?.length)
+    4 | print(s?.length())
 
   Write a plain dot:  .length

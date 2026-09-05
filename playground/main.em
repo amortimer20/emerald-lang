@@ -8,16 +8,16 @@ print("")
 
 # Sprinkles
 5.times { print("hi") }
-print(7.even?)
+print(7.even?())
 print(42.clamp(1, 10))
 
 # Arrays — the block parameter's type is inferred from the element type
 var numbers = [5, 3, 8, 1]
-print(numbers.sort.join(", "))
+print(numbers.sort().join(", "))
 print(numbers.filter { n => n > 3 }.map { n => n * 10 }.join(" "))
 
 # if/then is an expression, so there is no ternary to learn
-var grade = if numbers.sum > 10 then "big" else "small"
+var grade = if numbers.sum() > 10 then "big" else "small"
 print("the numbers are #{grade}")
 
 # Classes, traits, and a struct

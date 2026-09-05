@@ -10,8 +10,10 @@ print(g.hi("ada"))
 print(g.hi(7))
 print(g.hi())
 
-## A bare name is a zero-argument call, so it wants the version taking none.
-print(g.hi)
+## Naming a method without parentheses hands back the method itself, and the type it is
+## being given to picks which version that is.
+var greet: func(String): String = g.hi
+print(greet("there"))
 
 ## Type-level methods too.
 class Make {

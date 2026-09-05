@@ -116,20 +116,20 @@ public static class Explanations
             "Reaching through a value that might be nothing",
             """
             var name: String? = nothing
-            print(name.length)
+            print(name.count())
             """,
             """
             var name: String? = nothing
             if name != nothing {
-                print(name.length)
+                print(name.count())
             }
             """,
             """
-            A String? holds either a String or nothing, and nothing has no length.
+            A String? holds either a String or nothing, and nothing has a count of nothing.
             Checking it first is what tells the compiler which one it has — after that
             check, name is an ordinary String for the rest of the block.
 
-            When any answer will do, ask for one:  name.or("unknown").length
+            When any answer will do, ask for one:  name.or("unknown").count()
 
             The check works on a name, not on a path, so a chain gets ?. instead. It
             reads through the ? and puts it back on the answer, stopping at the first
@@ -294,17 +294,17 @@ public static class Explanations
             "Writing a list type",
             """
             func total(xs: List): Int {
-                return xs.sum
+                return xs.sum()
             }
             """,
             """
             func total(xs: List<Int>): Int {
-                return xs.sum
+                return xs.sum()
             }
             """,
             """
             A list has to say what it holds. Without that the compiler cannot know what
-            xs.sum adds up, nor stop a list of strings being handed to it.
+            xs.sum() adds up, nor stop a list of strings being handed to it.
 
             Nesting works the same way: List<List<Int>> is a list of lists of numbers.
             """),
@@ -336,15 +336,15 @@ public static class Explanations
             var seen: Set = []
             """,
             """
-            var vowels = ["a", "e", "i", "o", "u"].to_set
-            var seen: Set<String> = [].to_set
+            var vowels = ["a", "e", "i", "o", "u"].to_set()
+            var seen: Set<String> = [].to_set()
 
             print(vowels.contains?("e"))
             """,
             """
             A set has no literal of its own. The braces other languages use for one are
             a block and a trailing lambda here, and the bracket already belongs to lists —
-            so a set is written as a list and converted with .to_set.
+            so a set is written as a list and converted with .to_set().
 
             It has to say what it holds, the same way a list does. Members are Int, Float,
             String, or Bool: finding a value again needs hashing.

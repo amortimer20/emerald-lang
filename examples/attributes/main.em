@@ -47,7 +47,7 @@ class PlayerController {
 
 var player = PlayerController()
 player.update()
-print("any? #{player.any?}")
+print("any? #{player.any?()}")
 
 # @test marks a function for the test runner.
 @test

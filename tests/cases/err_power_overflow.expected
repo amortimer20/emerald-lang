@@ -3,4 +3,4 @@ err_power_overflow.em:1  2 ** 200 is too large to hold in an Int.
 
     1 | print(2 ** 200)
 
-  Floats hold numbers this large:  2.to_float ** 200
+  Floats hold numbers this large:  2.to_float() ** 200

@@ -9,16 +9,16 @@ for i in 1..3 {
     print("for #{i}")
 }
 
-print(7.even?)
+print(7.even?())
 print(7.between?(1, 10))
 print(42.clamp(1, 10))
 
 var status = if 95 >= 90 then "A" else "B"
 print("grade: #{status}")
 
-print("hello".upper)
-print("hello".length)
-print("olleh".reverse)
+print("hello".upper())
+print("hello".length())
+print("olleh".reverse())
 
 func double(n: Int): Int {
     return n * 2

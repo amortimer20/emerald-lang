@@ -35,5 +35,5 @@ class Box {
     func empty?(): Bool { return self.n == 0 }
 }
 
-print(Box(0).show)
-print(Box(0).empty?)
+print(Box(0).show())
+print(Box(0).empty?())

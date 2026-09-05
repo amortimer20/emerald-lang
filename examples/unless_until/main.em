@@ -7,7 +7,7 @@ unless ready {
 }
 
 var countdown = 3
-until countdown.zero? {
+until countdown.zero?() {
     print("t-minus #{countdown}")
     countdown -= 1
 }
@@ -24,6 +24,6 @@ print(check(40))
 
 # reads better than `if not`
 var names = ["ada", "grace"]
-unless names.empty? {
-    print("we have #{names.count} names")
+unless names.empty?() {
+    print("we have #{names.count()} names")
 }

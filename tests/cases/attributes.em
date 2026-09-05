@@ -28,7 +28,7 @@ class Player {
 }
 
 print(Player().speed)
-print(Player().any?)
+print(Player().any?())
 
 @test
 func speed_is_positive?(): Bool {

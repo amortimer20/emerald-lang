@@ -30,7 +30,7 @@ print()
 for suit in Suit.values {
     print("  #{suit.name}")
 }
-print("#{Suit.values.count} suits")
+print("#{Suit.values.count()} suits")
 
 # The point: a function that takes one cannot be handed anything else. A misspelled
 # string would have compiled and misbehaved at runtime.
@@ -45,13 +45,13 @@ print("right margin:  #{margin_for(Alignment.RIGHT)}")
 # An enum value is an ordinary value — it goes in lists, dictionaries, and sets.
 var red_suits = [Suit.HEARTS, Suit.DIAMONDS]
 print()
-print("red suits: #{red_suits.count}")
+print("red suits: #{red_suits.count()}")
 
-var seen: Set<String> = [].to_set
+var seen: Set<String> = [].to_set()
 for suit in Suit.values {
     seen.add(suit.name)
 }
-print("names remembered: #{seen.count}")
+print("names remembered: #{seen.count()}")
 
 # What an enum is not, in v0: it has no payload and no methods. A closed set of names is
 # what the demand was, and a tagged union is a different feature wearing the same word.

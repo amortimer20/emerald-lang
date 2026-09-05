@@ -16,7 +16,7 @@ print(tags.contains?(Tag("red")))
 print(tags.index_of(Tag("blue")))
 
 tags.remove(Tag("red"))
-print(tags.count)
+print(tags.count())
 
 ## And structs, which now answer for themselves.
 struct Point {
@@ -29,5 +29,5 @@ print(points.contains?(Point(3, 4)))
 print(points.index_of(Point(1, 2)))
 
 points.remove(Point(1, 2))
-print(points.count)
+print(points.count())
 print(points[0].x)

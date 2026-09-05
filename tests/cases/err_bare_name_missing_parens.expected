@@ -1,0 +1,6 @@
+
+err_bare_name_missing_parens.em:4  This names exit without calling it.
+
+    4 | exit
+
+  It is func(Int). Add parentheses to run it:  exit()

@@ -23,7 +23,7 @@ print("aligned #{side.name.lower()}")
 for colour in Colour.values {
     print("  #{colour}")
 }
-print(Colour.values.count)
+print(Colour.values.count())
 
 func describe(a: Alignment): String {
     return if a == Alignment.CENTER then "middle" else "edge"
@@ -34,7 +34,7 @@ print(describe(Alignment.RIGHT))
 
 ## An ordinary value: it goes in lists, dictionaries, and sets.
 var picked = [Colour.RED, Colour.BLUE]
-print(picked.count)
+print(picked.count())
 
 var labels: Dictionary<String, Int> = [:]
 labels[Colour.GREEN.name] = 2

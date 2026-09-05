@@ -4,4 +4,4 @@ class Dog {
 }
 
 var owners: Dictionary<Dog, String> = [:]
-print(owners.count)
+print(owners.count())

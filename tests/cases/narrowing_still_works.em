@@ -4,12 +4,12 @@
 var maybe = "42".to_int_maybe()
 
 if maybe != nothing {
-    print(maybe.abs)
+    print(maybe.abs())
 }
 
 func run() {
     var text: String? = "inside a function"
-    if text != nothing { print(text.length) }
+    if text != nothing { print(text.length()) }
 }
 
 run()
@@ -17,10 +17,10 @@ run()
 [1, 2].each { i =>
     var local: String? = nothing
     local = "declared in the block"
-    if local != nothing { print(local.length) }
+    if local != nothing { print(local.length()) }
 }
 
-var found = ["a", "bb"].find { word => word.length > 1 }
+var found = ["a", "bb"].find { word => word.length() > 1 }
 if found != nothing { print(found.upper()) }
 
 ## The fix the diagnostic suggests: copy first, then check the copy.
@@ -33,5 +33,5 @@ func clear() {
 var it = name
 if it != nothing {
     clear()
-    print(it.length)
+    print(it.length())
 }

@@ -31,7 +31,7 @@ print(counts["b"].or(next_id()))
 print("ids consumed: #{issued}")
 
 ## Everything beside it short-circuits, including the operator it shares a name with.
-print(true or fallback().empty?)
+print(true or fallback().empty?())
 
 var widened: Float? = nothing
 print(widened.or(2))

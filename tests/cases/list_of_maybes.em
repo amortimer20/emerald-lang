@@ -4,7 +4,7 @@
 ## one was an empty list and .add for every item.
 var names: List<String?> = ["ada", nothing, "bo"]
 
-print(names.count)
+print(names.count())
 for name in names {
     print(name.or("(none)"))
 }

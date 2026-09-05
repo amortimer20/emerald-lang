@@ -7,7 +7,7 @@
 var ages = ["ada": 36, "bo": 7, "cy": 12]
 
 print("ada is #{ages["ada"].or(0)}")
-print("there are #{ages.count} people")
+print("there are #{ages.count()} people")
 
 # Looking one up gives back a maybe — Int? rather than Int. A key that is not there is
 # the ordinary case for a lookup, not a mistake, so the type says so and .or(...) is how
@@ -24,8 +24,8 @@ ages["ada"] += 1
 ages.remove("cy")
 
 print()
-print("keys:   #{ages.keys.join(", ")}")
-print("values: #{ages.values.join(", ")}")
+print("keys:   #{ages.keys().join(", ")}")
+print("values: #{ages.values().join(", ")}")
 
 # Insertion order is kept. .NET's dictionary makes no promise about order, and a program
 # whose output shuffles between runs is the worst thing to hand a beginner — they cannot

@@ -1,0 +1,6 @@
+
+err_print_a_function.em:7  This shows Dog().speak itself, not what it answers.
+
+    7 | print(Dog().speak)
+
+  It is func(): String. Add parentheses to call it:  Dog().speak()

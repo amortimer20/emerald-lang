@@ -1,7 +1,7 @@
 ## List<T> as a parameter, a return type, a field, and nested — none of which could
 ## be written down before.
 func total(xs: List<Int>): Int {
-    return xs.sum
+    return xs.sum()
 }
 
 func shout(names: List<String>): List<String> {
@@ -10,7 +10,7 @@ func shout(names: List<String>): List<String> {
 
 func rows_in(grid: List<List<Int>>): Int {
     var n = 0
-    for row in grid { n += row.count }
+    for row in grid { n += row.count() }
     return n
 }
 

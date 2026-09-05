@@ -14,7 +14,7 @@ for i in 0..2 {
         print("ok: #{parse_age(inputs[i])}")
     }
     catch problem {
-        print("rejected: #{problem.message}")
+        print("rejected: #{problem.message()}")
     }
 }
 
@@ -23,5 +23,5 @@ try {
     print("banana".to_int())
 }
 catch problem {
-    print("caught a runtime error: #{problem.message}")
+    print("caught a runtime error: #{problem.message()}")
 }

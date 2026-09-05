@@ -52,7 +52,7 @@ class Menu with Indexable {
     }
 
     func count(): Int {
-        return self.items.count
+        return self.items.count()
     }
 }
 

@@ -17,7 +17,7 @@ func clamp(value: Int, low: Int, high: Int): Int {
 func initials(name: String): String {
     var letters = ""
     for part in name.split(" ") {
-        letters += part.chars[0].upper()
+        letters += part.chars()[0].upper()
     }
     return letters
 }

@@ -28,7 +28,7 @@ check "falls off the end" 'print("done")'             0 || fail=1
 # Needs an error the checker genuinely cannot see. `nothing.abs` will not do — that is
 # caught statically, which is the type system working.
 check "runtime error"   'var ns = [1, 2]
-var i = ns.count + 5
+var i = ns.count() + 5
 print(ns[i])'                                         70 || fail=1
 check "compile error"   'print(undefined_name)'       65 || fail=1
 

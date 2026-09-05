@@ -20,7 +20,7 @@ class Dog {
     constructor(name: String) { self.name = name }
 }
 
-func show(items: List<Int>): String { return "a list of #{items.count}" }
+func show(items: List<Int>): String { return "a list of #{items.count()}" }
 func show(d: Dog): String { return "a dog called #{d.name}" }
 
 print(show([1, 2, 3]))
