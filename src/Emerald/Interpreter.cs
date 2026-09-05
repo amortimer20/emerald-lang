@@ -1252,11 +1252,10 @@ public sealed class Interpreter
         if (target is EmEnumValue enumValue && g.Name.Lexeme == "name") return enumValue.Name;
 
         // Otherwise the built-ins expose no properties (§3.1), so every member of one is a
-        // method and a read without parentheses is the missing-parens mistake. The checker
-        // says so first; this is what a program reaching here at runtime is told.
-        throw new RuntimeError(
-            $"{Builtins.TypeName(target)}.{g.Name.Lexeme} is a method.",
-            $"Calling it takes parentheses:  {g.Name.Lexeme}()");
+        // method — and naming a method without parentheses is the method itself, on a
+        // built-in exactly as on anything else. The checker has already refused a name
+        // that is not one, and refused the block-taking methods whose type needs a block.
+        return new BuiltinMethod(target, g.Name.Lexeme);
     }
 
     private object? EvaluateCall(Expr.Call c, Env env)

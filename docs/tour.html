@@ -722,6 +722,17 @@ print(rex.speak())</pre>
 Fido says woof
 Rex says woof</pre></div>
   </div>
+  <p>The methods that came with the language work the same way. There is no separate rule for them, which is the point &mdash; you should not have to know whether something was written by you or shipped with Emerald in order to know how to write it down.</p>
+  <div class="unit">
+    <pre class="code">func shout(f: func(): String): String { return f() }
+
+var word = "seven"
+print(shout(word.upper))
+print(shout(word.reverse))</pre>
+    <div class="out"><span class="lab">prints</span><pre>SEVEN
+neves</pre></div>
+  </div>
+  <p>The one exception is a method that takes a block, like <code class="inl">map</code>. What <code class="inl">map</code> gives back is whatever your block gives back, so until there is a block there is nothing to say about it &mdash; and Emerald says exactly that rather than guessing.</p>
   <p>This is the reason brackets are required on every call, even one with nothing to pass. If <code class="inl">rex.speak</code> ran the method, there would be no way left to write down the method itself — and connecting something up later, like a button to the thing it should do, is a large part of what you use a class for.</p>
   <p>Forgetting them is the mistake the rule creates, so the compiler is direct about it.</p>
   <div class="unit">

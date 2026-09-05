@@ -1,7 +1,6 @@
 
-err_builtin_missing_parens.em:3  List<String>.count is a method, so this names it without calling it.
+err_builtin_missing_parens.em:4  This names words.count without calling it.
 
-    3 | print(words.count)
+    4 | words.count
 
-  Calling it takes parentheses:  count()
-  To pass it somewhere, wrap the call in a block:  { ... count() }
+  It is func(): Int. Add parentheses to run it:  words.count()

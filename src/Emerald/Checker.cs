@@ -2203,14 +2203,18 @@ public sealed class Checker(
     {
         if (Signatures.MethodsOn(receiver).Contains(name.Lexeme))
         {
-            // Not offered as a value: a built-in method has no declaration to bind, so
-            // there is nothing to hand back. A block does the same job and can be checked.
+            if (BuiltinShape(receiver, name.Lexeme) is { } shape) return shape;
+
+            // The one built-in method that cannot be named without calling it, and the
+            // reason is a rule rather than a list: its type depends on the block. What
+            // `map` gives back is whatever the block gives back, so there is no shape to
+            // write down until a block is written.
             Error(name.Line,
-                  $"{receiver.Show()}.{name.Lexeme} is a method, so this names it "
-                  + "without calling it.",
-                  $"Calling it takes parentheses:  {name.Lexeme}()\n"
-                  + "To pass it somewhere, wrap the call in a block:  "
-                  + $"{{ ... {name.Lexeme}() }}");
+                  $"{receiver.Show()}.{name.Lexeme} takes a block, so naming it on its "
+                  + "own does not say what it answers.",
+                  $"Call it:  {name.Lexeme} {{ ... }}\n"
+                  + "Or, to pass the whole thing along, wrap it in a block of your own:  "
+                  + $"{{ ... {name.Lexeme} {{ ... }} }}");
             return EmType.Any;
         }
 
@@ -2219,6 +2223,77 @@ public sealed class Checker(
                   ?? Suggest(name.Lexeme, Signatures.MethodsOn(receiver)));
         return EmType.Any;
     }
+
+    /// <summary>
+    /// The type of a built-in method named without parentheses, or null if it takes a
+    /// block. §3.7's table records what a container method gives back and not what it
+    /// takes, so the containers are answered here where the element, key and value types
+    /// are known — the same place their arguments are already checked.
+    /// </summary>
+    private EmType? BuiltinShape(EmType receiver, string method) => receiver switch
+    {
+        EmType.Lst list => ListShape(list, method),
+        EmType.Dict dict => DictShape(dict, method),
+        EmType.SetOf set => SetShape(set, method),
+
+        _ => Signatures.SignatureOf(receiver, method) is { WantsBlock: false } signature
+            ? new EmType.Func([.. signature.Takes], signature.Returns,
+                              signature.Takes.Length)
+            : null,
+    };
+
+    private static EmType? Shape(EmType returns, params EmType[] takes) =>
+        new EmType.Func([.. takes], returns, takes.Length);
+
+    private EmType? ListShape(EmType.Lst list, string method)
+    {
+        EmType element = list.Element;
+        return method switch
+        {
+            "count" or "index_of" or "sum" => method == "index_of"
+                ? Shape(EmType.Int, element)
+                : Shape(EmType.Int),
+            "empty?" => Shape(EmType.Bool),
+            "contains?" => Shape(EmType.Bool, element),
+            "first" or "last" or "min" or "max" => Shape(EmType.Nullable(element)),
+            "join" => Shape(EmType.String, EmType.String),
+            "sort" or "reverse" => Shape(list),
+            "add" => Shape(EmType.Nothing, element),
+            "remove" => Shape(EmType.Nothing, element),
+            "remove_at" => Shape(EmType.Nothing, EmType.Int),
+            "clear" => Shape(EmType.Nothing),
+            "to_set" => Shape(Setify(list, null)),
+            _ => null,          // each, map, filter, reject, find, any?, all?, sort_by, reduce
+        };
+    }
+
+    private static EmType? DictShape(EmType.Dict dict, string method) => method switch
+    {
+        "count" => Shape(EmType.Int),
+        "empty?" => Shape(EmType.Bool),
+        "has_key?" => Shape(EmType.Bool, dict.Key),
+        "has_value?" => Shape(EmType.Bool, dict.Value),
+        "keys" => Shape(new EmType.Lst(dict.Key)),
+        "values" => Shape(new EmType.Lst(dict.Value)),
+        "get" => Shape(EmType.Nullable(dict.Value), dict.Key),
+        "set" => Shape(EmType.Nothing, dict.Key, dict.Value),
+        "remove" => Shape(EmType.Nothing, dict.Key),
+        "clear" => Shape(EmType.Nothing),
+        _ => null,              // each
+    };
+
+    private static EmType? SetShape(EmType.SetOf set, string method) => method switch
+    {
+        "count" => Shape(EmType.Int),
+        "empty?" => Shape(EmType.Bool),
+        "contains?" => Shape(EmType.Bool, set.Element),
+        "add" or "remove" => Shape(EmType.Nothing, set.Element),
+        "clear" => Shape(EmType.Nothing),
+        "to_list" => Shape(new EmType.Lst(set.Element)),
+        "union" or "intersect" or "difference" => Shape(set, set),
+        "subset_of?" => Shape(EmType.Bool, set),
+        _ => null,              // each
+    };
 
     /// <summary>
     /// <c>rex.speak</c> — the method itself, receiver attached. One overload is the whole

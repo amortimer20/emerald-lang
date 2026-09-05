@@ -1,0 +1,7 @@
+
+err_builtin_takes_a_block.em:5  List<Int>.map takes a block, so naming it on its own does not say what it answers.
+
+    5 | var f = xs.map
+
+  Call it:  map { ... }
+  Or, to pass the whole thing along, wrap it in a block of your own:  { ... map { ... } }

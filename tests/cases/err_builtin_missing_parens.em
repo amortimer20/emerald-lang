@@ -1,3 +1,4 @@
-## Built-ins have no properties, so every member of one is a method (§3.1).
+## The built-ins behave exactly as a user's methods do now: naming one without its
+## parentheses is the method itself, and a statement that drops it says so.
 var words = ["a", "b"]
-print(words.count)
+words.count

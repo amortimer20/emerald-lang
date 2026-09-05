@@ -173,6 +173,21 @@ public sealed class BoundOverloads(
 }
 
 /// <summary>
+/// A built-in method with its receiver attached — <c>word.upper</c>. There is no
+/// declaration to bind, only a name and the value to dispatch it on, which is all
+/// <see cref="Builtins.InvokeMethod"/> ever needed. Without this a built-in was the one
+/// kind of method that could not be named without calling it, and §3.1's rule would have
+/// held everywhere except on the types a student uses most.
+/// </summary>
+public sealed class BuiltinMethod(object? receiver, string name) : ICallable
+{
+    public object? Call(Interpreter interpreter, List<object?> args) =>
+        Builtins.InvokeMethod(interpreter, receiver, name, args);
+
+    public override string ToString() => $"<method {name}>";
+}
+
+/// <summary>
 /// A static method as a value. There is no receiver to attach, only the class the body
 /// calls <c>Self</c>, so this is the type-level counterpart to <see cref="BoundMethod"/>.
 /// </summary>
