@@ -639,10 +639,70 @@ true
   </div>
 </section>
 
+<section id="s12">
+  <h2><span class="n">12</span> Functions are values</h2>
+  <p>Everything in the last section was a built-in taking a block. Your own functions can take one too, and the type you write for it is just the function's header with the name taken off.</p>
+  <div class="unit">
+    <pre class="code">func greet(name: String): String { return "hi #{name}" }
+#                    the function above has the type below
+#        func(String): String</pre>
+  </div>
+  <p>So a function that wants a block says what shape of block it wants. If there is nothing to hand in and nothing to give back, that is just <code class="inl">func()</code>.</p>
+  <div class="unit">
+    <pre class="code">func do_twice(action: func()) {
+    action()
+    action()
+}
+
+do_twice { print("hi") }</pre>
+    <div class="out"><span class="lab">prints</span><pre>hi
+hi</pre></div>
+  </div>
+  <p>You do not have to say what <code class="inl">n</code> is here either. <code class="inl">transform</code> said its block takes an <code class="inl">Int</code>, so <code class="inl">n</code> is an <code class="inl">Int</code> — the same help the built-in list methods give, now on a function you wrote yourself.</p>
+  <div class="unit">
+    <pre class="code">func transform(items: List&lt;Int&gt;, change: func(Int): Int): List&lt;Int&gt; {
+    return items.map { n =&gt; change(n) }
+}
+
+print(transform([1, 2, 3]) { n =&gt; n * 2 }.join(", "))
+
+# a function you already have goes where a block does
+func double(n: Int): Int { return n * 2 }
+
+func apply(n: Int, change: func(Int): Int): Int { return change(n) }
+
+print(apply(21, double))</pre>
+    <div class="out"><span class="lab">prints</span><pre>2, 4, 6
+42</pre></div>
+  </div>
+  <p>And because a function is a value, it goes in a variable, in a list, or in a field — which is how something remembers what to do later.</p>
+  <div class="unit">
+    <pre class="code">class Button {
+    var label: String
+    var on_click: func()
+
+    constructor(label: String, on_click: func()) {
+        self.label = label
+        self.on_click = on_click
+    }
+
+    func press() {
+        print("pressing #{self.label}")
+        self.on_click()
+    }
+}
+
+Button("OK") { print("clicked") }.press()</pre>
+    <div class="out"><span class="lab">prints</span><pre>pressing OK
+clicked</pre></div>
+  </div>
+  <div class="aside"><p><code class="inl">button.on_click</code> is the function itself; <code class="inl">button.on_click()</code> runs it. The brackets are what tell them apart.</p></div>
+</section>
+
 <p class="part-label" data-part>Values that might not be there</p>
 
-<section id="s12">
-  <h2><span class="n">12</span> Values that might not be there</h2>
+<section id="s13">
+  <h2><span class="n">13</span> Values that might not be there</h2>
   <p>A <code class="inl">String</code> always holds a string. Sometimes you need "or nothing at all" &mdash; so you add a <code class="inl">?</code>.</p>
   <p>Emerald will not let you use a <code class="inl">String?</code> until you have checked it. That is the whole point: the crash where something turned out to be empty cannot happen, because the program will not run until you have said what to do about it.</p>
   <div class="unit">
@@ -670,8 +730,8 @@ nobody
   <div class="aside"><p>After <code class="inl">if unsure != nothing</code>, <code class="inl">unsure</code> is an ordinary <code class="inl">String</code> for the rest of that block &mdash; you do not unwrap it or write anything extra. The check <em>is</em> the unwrapping.</p></div>
 </section>
 
-<section id="s13">
-  <h2><span class="n">13</span> Reaching through a chain</h2>
+<section id="s14">
+  <h2><span class="n">14</span> Reaching through a chain</h2>
   <p>Checking works on a name, not on a path, so when several steps in a row might be missing you use <code class="inl">?.</code> instead. It reads through the <code class="inl">?</code> and stops at the first step that is not there.</p>
   <div class="unit">
     <pre class="code">class City {
@@ -697,8 +757,8 @@ nowhere yet</pre></div>
 
 <p class="part-label" data-part>Making your own types</p>
 
-<section id="s14">
-  <h2><span class="n">14</span> Classes</h2>
+<section id="s15">
+  <h2><span class="n">15</span> Classes</h2>
   <p>A class describes a kind of thing: what it knows, and what it can do. The <code class="inl">constructor</code> is what runs when you make one. Inside, <code class="inl">self</code> means "this one".</p>
   <div class="unit">
     <pre class="code">class Dog {
@@ -731,8 +791,8 @@ Rexington</pre></div>
   <div class="aside"><p>Every field has to have a value by the time the constructor finishes. Forget one and the program will not run &mdash; which is the mistake this catches most often in practice.</p></div>
 </section>
 
-<section id="s15">
-  <h2><span class="n">15</span> A class without the braces</h2>
+<section id="s16">
+  <h2><span class="n">16</span> A class without the braces</h2>
   <p>Most of the time a file holds one class, and then the braces around it are wrapping the entire file and indenting every line inside it for no gain. So you can leave them off: name the class on the first line, and everything below is its body, all the way to the end of the file.</p>
   <p>It is the same declaration &mdash; <code class="inl">extends</code> and <code class="inl">with</code> work exactly as they do above &mdash; with the body implied instead of written out.</p>
   <div class="unit">
@@ -766,8 +826,8 @@ true</pre></div>
   <div class="aside"><p>Godot names the type after the file instead. Emerald does not, so that <code class="inl">class Rect</code> is a thing you can search for, and renaming a file cannot quietly rename a type.</p></div>
 </section>
 
-<section id="s16">
-  <h2><span class="n">16</span> Properties, shared values, and private names</h2>
+<section id="s17">
+  <h2><span class="n">17</span> Properties, shared values, and private names</h2>
   <p>A property looks like a field from the outside but runs code when you read it. <code class="inl">static</code> means the value or function belongs to the class itself rather than to any one of them.</p>
   <p>A name beginning with <code class="inl">_</code> can only be used inside the class and anything that extends it. There is no keyword to learn, and you can see that it is private at the place it is used rather than having to go and look at where it was declared.</p>
   <div class="unit">
@@ -803,8 +863,8 @@ print(Circle.made)</pre>
   </div>
 </section>
 
-<section id="s17">
-  <h2><span class="n">17</span> Building on another class</h2>
+<section id="s18">
+  <h2><span class="n">18</span> Building on another class</h2>
   <p><code class="inl">extends</code> means "everything that one has, plus this". A method written again in the new class replaces the old one, and code that was written against the original keeps working.</p>
   <div class="unit">
     <pre class="code">class Animal {
@@ -835,8 +895,8 @@ Momo says Meow</pre></div>
   <div class="aside"><p><code class="inl">introduce</code> was written once, in <code class="inl">Animal</code>, and it calls <code class="inl">self.speak()</code> &mdash; which finds whichever version belongs to the actual animal. A class can only extend one other class.</p></div>
 </section>
 
-<section id="s18">
-  <h2><span class="n">18</span> Traits</h2>
+<section id="s19">
+  <h2><span class="n">19</span> Traits</h2>
   <p>A trait says what a type must have, and can hand it things in return. Unlike <code class="inl">extends</code>, a class can mix in as many traits as it likes.</p>
   <p>Below, <code class="inl">Swimmer</code> demands a <code class="inl">stamina</code> and gives back a <code class="inl">swim</code>. Neither class writes <code class="inl">swim</code>; both get it.</p>
   <div class="unit">
@@ -864,8 +924,8 @@ swimming for 90 minutes</pre></div>
   </div>
 </section>
 
-<section id="s19">
-  <h2><span class="n">19</span> Operators on your own types</h2>
+<section id="s20">
+  <h2><span class="n">20</span> Operators on your own types</h2>
   <p>There is no special syntax for making <code class="inl">+</code> work on something you wrote. <code class="inl">a + b</code> <em>is</em> <code class="inl">a.add(b)</code>, so you write an ordinary method and mix in the trait that names it.</p>
   <p>One <code class="inl">compare</code> answers all four of <code class="inl">&lt;</code>, <code class="inl">&gt;</code>, <code class="inl">&lt;=</code> and <code class="inl">&gt;=</code>. And <code class="inl">+=</code> goes through the same <code class="inl">add</code> you already wrote.</p>
   <div class="unit">
@@ -899,8 +959,8 @@ $12.50</pre></div>
   </div>
 </section>
 
-<section id="s20">
-  <h2><span class="n">20</span> Square brackets on your own types</h2>
+<section id="s21">
+  <h2><span class="n">21</span> Square brackets on your own types</h2>
   <p>Same idea. <code class="inl">Indexable</code> gives you <code class="inl">board[0]</code> for reading if you write <code class="inl">at</code>, and writing as well if you also write <code class="inl">set_at</code>. Leave <code class="inl">set_at</code> out and the type is read-only.</p>
   <div class="unit">
     <pre class="code">class Board with Indexable {
@@ -926,8 +986,8 @@ X . O</pre></div>
   </div>
 </section>
 
-<section id="s21">
-  <h2><span class="n">21</span> Structs</h2>
+<section id="s22">
+  <h2><span class="n">22</span> Structs</h2>
   <p>A struct is a small value that never changes once it is made &mdash; a point, an amount of money, a colour. Because it cannot change, you do not have to write a constructor: Emerald builds one from the fields, in the order you declared them.</p>
   <p>You "change" a struct by making a new one, which is why <code class="inl">moved_by</code> returns a <code class="inl">Point</code> rather than editing this one.</p>
   <div class="unit">
@@ -953,8 +1013,8 @@ print("#{there.x}, #{there.y}")</pre>
   </div>
 </section>
 
-<section id="s22">
-  <h2><span class="n">22</span> Enums</h2>
+<section id="s23">
+  <h2><span class="n">23</span> Enums</h2>
   <p>An enum is a closed set of names. The alternative is passing strings around, and then <code class="inl">red?("HAERTS")</code> compiles happily and quietly does the wrong thing. <code class="inl">Suit.HAERTS</code> cannot be spelled at all.</p>
   <div class="unit">
     <pre class="code">enum Suit { HEARTS, DIAMONDS, CLUBS, SPADES }
@@ -989,8 +1049,8 @@ false</pre></div>
 
 <p class="part-label" data-part>Things going wrong</p>
 
-<section id="s23">
-  <h2><span class="n">23</span> When something goes wrong on purpose</h2>
+<section id="s24">
+  <h2><span class="n">24</span> When something goes wrong on purpose</h2>
   <p>When a function cannot do what it was asked, it can <code class="inl">throw</code>. Whoever called it can <code class="inl">catch</code> that and decide what to do. Notice <code class="inl">throw ... if ...</code> using the same one-line guard as everything else.</p>
   <div class="unit">
     <pre class="code">func age_from(text: String): Int {
@@ -1012,8 +1072,8 @@ could not read that: "banana" is not a number</pre></div>
   </div>
 </section>
 
-<section id="s24">
-  <h2><span class="n">24</span> Tests</h2>
+<section id="s25">
+  <h2><span class="n">25</span> Tests</h2>
   <p>A test is a function marked <code class="inl">@test</code>, in a file whose name ends in <code class="inl">_test.em</code>. <code class="inl">assert</code> states something you believe is true.</p>
   <p>When an assertion fails it shows you the line you wrote <em>and</em> both sides of it, so you do not have to go back and add prints to find out what the values actually were.</p>
   <div class="unit">
@@ -1046,8 +1106,8 @@ func doubling_is_wrong_on_purpose?(): Bool {
   </div>
 </section>
 
-<section id="s25">
-  <h2><span class="n">25</span> What the compiler says when you get it wrong</h2>
+<section id="s26">
+  <h2><span class="n">26</span> What the compiler says when you get it wrong</h2>
   <p>This is the part of a language you actually spend your time with, so it is the part Emerald spends the most effort on. An error names one cause, quotes the line, and where it can, says what to do instead. There is no jargon and no stack trace.</p>
   <p>Every message below is real output, from the programs shown above them.</p>
 
@@ -1180,8 +1240,8 @@ print(GetScore())</pre>
 
 <p class="part-label" data-part>Working with it</p>
 
-<section id="s26">
-  <h2><span class="n">26</span> The tools</h2>
+<section id="s27">
+  <h2><span class="n">27</span> The tools</h2>
   <p>One command, a handful of things it does. There is no project file to configure and no build to set up &mdash; <code class="inl">emerald new</code> makes a folder with one file in it, and every <code class="inl">.em</code> file you add beside it joins the same program.</p>
   <div class="unit">
     <div class="out"><span class="lab">emerald</span><pre>emerald — v0 prototype
