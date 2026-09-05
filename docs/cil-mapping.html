@@ -265,6 +265,9 @@
     <tr><td>Narrowing, definite assignment, casing, visibility</td><td>Nothing &mdash; checker-only, no IL</td><td>&mdash;</td></tr>
     <tr><td>User-declared generics</td><td>None exist. The compiler owns <code>List</code>, <code>Dictionary</code>, <code>Set</code></td><td>§5.3</td></tr>
 
+    <tr><td>Integer arithmetic</td><td><code>add.ovf</code>, <code>sub.ovf</code>, <code>mul.ovf</code> &mdash; never the unchecked forms</td><td>&sect;3.1</td></tr>
+    <tr><td>An overflow</td><td>The CLR's <code>OverflowException</code>, caught and reported as an Emerald error</td><td>&sect;3.1</td></tr>
+
     <tr><td colspan="3" style="padding-top:18px;color:var(--accent);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;border-bottom-color:var(--rule)">Toolchain</td></tr>
     <tr><td>The emitter</td><td>Mono.Cecil, at build time, never shipped</td><td>§7</td></tr>
     <tr><td>The shipped runtime library</td><td>Must not <em>reference</em> <code>Reflection.Emit</code> &mdash; referencing it fails an IL2CPP build, used or not</td><td>§5.4</td></tr>

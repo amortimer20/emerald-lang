@@ -1,0 +1,7 @@
+4
+1000000000000
+-9223372036854775807
+9223372036854775807 + 1 is too large to hold in an Int.
+-9223372036854775807 - 2 is too large to hold in an Int.
+9223372036854775807 * 2 is too large to hold in an Int.
+9223372036854775807 ** 2 is too large to hold in an Int.

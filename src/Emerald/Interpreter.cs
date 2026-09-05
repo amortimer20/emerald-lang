@@ -1382,9 +1382,13 @@ public sealed class Interpreter
         {
             switch (op)
             {
-                case TokenType.Plus: return a + b;
-                case TokenType.Minus: return a - b;
-                case TokenType.Star: return a * b;
+                // Checked, so an Int that will not hold the answer says so instead of
+                // wrapping to a negative one. ** already reported overflow and these
+                // three did not, which made the largest number in the language behave
+                // one way under one operator and another way under the rest.
+                case TokenType.Plus: return Checked(() => checked(a + b), a, "+", b);
+                case TokenType.Minus: return Checked(() => checked(a - b), a, "-", b);
+                case TokenType.Star: return Checked(() => checked(a * b), a, "*", b);
                 case TokenType.StarStar: return IntPower(a, b, token);
 
                 // `/` always gives a Float, even on two Ints. C# and Java quietly floor
@@ -1543,6 +1547,33 @@ public sealed class Interpreter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Runs an arithmetic operation that may not fit, and reports it if it does not.
+    ///
+    /// The alternative is what C#, Java, Go and Kotlin do — wrap silently, so adding one
+    /// to the largest Int gives the smallest — and it is the worst shape of failure this
+    /// language can produce: not a crash, which points at itself, but a plausible wrong
+    /// number that goes on being used. Swift is the precedent for trapping instead, and
+    /// <c>**</c> here had already made the same choice on its own.
+    ///
+    /// Floats are untouched: they overflow to infinity, which says so.
+    /// </summary>
+    private static object Checked(Func<long> operation, long left, string op, long right)
+    {
+        try
+        {
+            return operation();
+        }
+        catch (OverflowException)
+        {
+            throw new RuntimeError(
+                $"{left} {op} {right} is too large to hold in an Int.",
+                "An Int holds whole numbers from -9223372036854775808 to "
+                + "9223372036854775807.\nFor arithmetic beyond that, work in Floats:  "
+                + $"{left}.to_float() {op} {right}");
+        }
     }
 
     private static RuntimeError DivideByZero() =>
