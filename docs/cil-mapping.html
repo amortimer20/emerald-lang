@@ -276,7 +276,7 @@
 </div>
 
 <h2>Open</h2>
-<p class="sub">Nine questions the design does not answer. Each changes the emitter's shape, and several change what a C# caller sees, so they are cheaper settled now than discovered later. The ninth arrived from outside, having been sitting in the settled column above.</p>
+<p class="sub">Ten questions the design does not answer. Each changes the emitter's shape, and several change what a C# caller sees, so they are cheaper settled now than discovered later. The ninth arrived from outside, having been sitting in the settled column above. The tenth arrived from the language changing underneath the document.</p>
 
 <div class="q">
   <h3><span class="n">01</span> Dictionary and Set cannot be the BCL types</h3>
@@ -357,6 +357,17 @@
   </ul>
   <p><code>override</code> makes this stranger rather than better, which is new since the rule was written: <code>override func draw()</code> states a claim about one signature while silently removing another that nobody mentioned. The keyword exists precisely so that replacing something is said out loud.</p>
   <p class="lean"><b>Leaning:</b> none yet &mdash; but the question to answer first is not the encoding, it is <em>what behaviour Emerald intends to preserve</em> for a .NET caller. Once that is stated, the encoding follows. Worth revisiting whether the language rule earns its cost at all, given it is the odd one out among the languages Emerald otherwise borrows from.</p>
+</div>
+
+<div class="q">
+  <h3><span class="n">10</span> What is a <code>func(...)</code>, and what is a method value?</h3>
+  <p>New. §3.1 removed optional parentheses so that <code>rex.speak</code> could be the method rather than its answer, which means the emitter now has to produce something for a member read that names a method &mdash; a thing the tree-walker answers with a <code>BoundMethod</code> object and IL has no equivalent for. Two decisions, and the second is the awkward one.</p>
+  <ul>
+    <li><strong>What type is <code>func(Int): String</code>?</strong> Either the BCL's <code>Func&lt;int, string&gt;</code> and <code>Action&lt;&hellip;&gt;</code> family, or a delegate type emitted per signature. The BCL types are what a C# caller expects and what every library takes, and they cost nothing to consume; against them, they stop at sixteen parameters, they split into two families over whether anything is returned &mdash; a split Emerald does not have, since <code>func()</code> is one shape &mdash; and <code>ref</code>/<code>out</code> have no spelling in either.</li>
+    <li><strong>How is a method value emitted?</strong> <code>ldftn</code> plus <code>newobj</code> on the delegate, which is exactly C#'s method-group conversion, so the shape is not in doubt. What is in doubt is <em>which</em> method, when the name is overloaded: the checker picks the overload from the expected type and the runtime keeps the whole set and dispatches on the arguments, which agree today only because the checker refuses any expression where they would not. An emitter has to record the checker's choice on the AST rather than rediscover it, and nothing currently does &mdash; the interpreter never needed it.</li>
+  </ul>
+  <p>This meets question 09 head-on. If a subclass hides an inherited overload set, then <code>circle.draw</code> as a method value has to resolve against Emerald's view of the set and not the CLR's, and a C# consumer converting the same method group would get the other answer.</p>
+  <p class="lean"><b>Leaning:</b> the BCL types, for the same interop reason as question 02, and accept that a seventeen-parameter function is not a language anyone needs. The overload-choice recording is not a question so much as work the emitter will require: worth doing in the checker now, while the rule is fresh, rather than reconstructing it later from a type that no longer says which alternative it came from.</p>
 </div>
 
 <h2>Notes and risks</h2>
