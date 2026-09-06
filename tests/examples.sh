@@ -17,6 +17,9 @@ for dir in "$root"/examples/*/; do
     case "$name" in
         mad_lib)        input=$'A\nb\nc\nd\n1\n' ;;
         hello)          input=$'Ada\n' ;;
+        # The games are a menu; quitting it proves the project loads and the menu runs.
+        # tests/gamecheck.sh is the one that plays them.
+        games)          input=$'q\n' ;;
         *guessing*)     input=$'1\n100\n'"$(seq 1 100)" ;;
         *)              input="" ;;
     esac

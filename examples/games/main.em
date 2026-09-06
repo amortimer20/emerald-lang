@@ -1,8 +1,8 @@
 # Three games, one project. Every .em file beside this one is part of it, so there is
 # nothing to import — the menu just calls them.
 #
-#   emerald run games/main.em      play
-#   emerald test games             check the rules
+#   emerald run examples/games/main.em      play
+#   emerald test examples/games             check the rules
 
 Text.banner("Emerald Games")
 

@@ -94,7 +94,7 @@ BLESS=1 ./tests/run.sh      # rewrite .expected files from current output
 ./tests/testcheck.sh        # emerald test, and the commands that are not built yet
 ./tests/replcheck.sh        # emerald repl — a session, not a file
 ./tests/tourcheck.sh        # docs/tour.html — every snippet on the page, run
-./tests/gamecheck.sh        # games/ — the rules tested, and each game played through
+./tests/gamecheck.sh        # examples/games/ — rules tested, and each game played through
 ```
 
 The last six test *commands* rather than programs, which is why they are not golden

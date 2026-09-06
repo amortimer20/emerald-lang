@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The games in games/ are the first programs written in Emerald that are programs rather
-# than demonstrations of a feature. They are checked two ways: the rules have their own
-# @test functions, and each game is played through to the end with scripted input.
+# The games in examples/games/ are the first programs written in Emerald that are programs
+# rather than demonstrations of a feature. They are checked two ways: the rules have their
+# own @test functions, and each game is played through to the end with scripted input.
 #
 # The second half matters because the rules and the screen are deliberately separate. A
 # test can prove Wordle scores SPEED against ERASE correctly and still not notice that
@@ -10,7 +10,7 @@ set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 emerald="$root/src/Emerald/bin/Debug/net10.0/Emerald.dll"
-games="$root/games"
+games="$root/examples/games"
 
 if ! dotnet build "$root/src/Emerald" -v q --nologo -p:UseAppHost=false >/dev/null 2>&1; then
     echo "build failed"; exit 1
