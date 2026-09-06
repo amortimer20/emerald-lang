@@ -1597,9 +1597,10 @@ public sealed class Checker(
                       {
                           EmType.Dict => "A dictionary walks in pairs:  "
                                          + "for (key, value) in scores { ... }",
-                          EmType.Obj => "A range, a list, and a string can be looped over. "
-                                        + "For anything else, expose a list from it.",
-                          _ => "Loop over a range (1..5), a list, or a string.",
+                          EmType.Obj => "A range, a list, a set, a string and a dictionary "
+                                        + "can be looped over. For anything else, expose a "
+                                        + "list from it.",
+                          _ => "Loop over a range (1..5), a list, a set, or a string.",
                       },
                       topic: "loop-over");
                 element = EmType.Any;

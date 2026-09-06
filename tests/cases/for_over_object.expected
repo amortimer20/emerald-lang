@@ -3,6 +3,6 @@ for_over_object.em:6  Cannot loop over Bag.
 
     6 | for x in Bag(3) { print(x) }
 
-  A range, a list, and a string can be looped over. For anything else, expose a list from it.
+  A range, a list, a set, a string and a dictionary can be looped over. For anything else, expose a list from it.
 
   emerald explain

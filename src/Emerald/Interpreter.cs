@@ -534,7 +534,7 @@ public sealed class Interpreter
                 $"Cannot loop over {Builtins.TypeName(iterable)}.",
                 iterable is EmDict
                     ? "A dictionary walks in pairs:  for (key, value) in ages { ... }"
-                    : "Loop over a range (1..5), a list, or a string."),
+                    : "Loop over a range (1..5), a list, a set, or a string."),
         };
 
         // A list copied before walking it, so `for x in xs { xs.add(...) }` terminates
