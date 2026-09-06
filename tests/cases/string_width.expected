@@ -1,0 +1,16 @@
+[ab    ]
+[    ab]
+[  ab  ]
+[ abc  ]
+[ab....]
+[Chapter. . . .1]
+[toolong]
+--------------------
+ababab
+[]
+5
+true
+4
+true true true false false
+true true false false
+true true false

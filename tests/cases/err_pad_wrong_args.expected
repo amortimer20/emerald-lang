@@ -1,0 +1,6 @@
+
+err_pad_wrong_args.em:3  String.pad_right takes 1 or 2 arguments, but got 3.
+
+    3 | print("ab".pad_right(6, ".", "extra"))
+
+  It wants Int, String.

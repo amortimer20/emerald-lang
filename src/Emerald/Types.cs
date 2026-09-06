@@ -182,9 +182,17 @@ public static class Signatures
     /// counted separately, since <c>5.times { }</c> passes one and it is not an argument
     /// in the sense the parentheses mean.
     /// </summary>
-    public sealed record Signature(EmType Returns, EmType[] Takes, bool WantsBlock = false)
+    public sealed record Signature(EmType Returns, EmType[] Takes, bool WantsBlock = false,
+                                  int Required = -1)
     {
         public Signature(EmType returns) : this(returns, []) { }
+
+        /// <summary>
+        /// The fewest arguments a call may pass. Defaults to all of them — the standard
+        /// library had no way to say otherwise, so <c>pad_right(20)</c> could not have an
+        /// optional fill character while an ordinary function could (§3.2).
+        /// </summary>
+        public int Least => Required < 0 ? Takes.Length : Required;
     }
 
     private static readonly EmType Int = EmType.Int;
@@ -219,6 +227,15 @@ public static class Signatures
         [("String", "count")] = new(Int),      [("String", "empty?")] = new(Bool),
         [("String", "upper")] = new(Str),      [("String", "lower")] = new(Str),
         [("String", "reverse")] = new(Str),    [("String", "trim")] = new(Str),
+
+        // Width. The fill is optional and a space when left out.
+        [("String", "pad_left")] = new(Str, [Int, Str], Required: 1),
+        [("String", "pad_right")] = new(Str, [Int, Str], Required: 1),
+        [("String", "pad_center")] = new(Str, [Int, Str], Required: 1),
+        [("String", "repeat")] = new(Str, [Int]),
+
+        [("String", "letter?")] = new(Bool),   [("String", "digit?")] = new(Bool),
+        [("String", "blank?")] = new(Bool),
         [("String", "contains?")] = new(Bool, [Str]),
         [("String", "starts_with?")] = new(Bool, [Str]),
         [("String", "ends_with?")] = new(Bool, [Str]),

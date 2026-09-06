@@ -2952,16 +2952,21 @@ public sealed class Checker(
     /// block is not an argument in the sense the parentheses mean — <c>5.times { }</c>
     /// passes none and one — so the two counts have to be kept apart.
     /// </summary>
+    /// <summary>How many arguments a built-in wants, when some of them are optional.</summary>
+    private static string Wanted(Signatures.Signature signature) =>
+        signature.Least == signature.Takes.Length
+            ? Count(signature.Takes.Length, "argument")
+            : $"{signature.Least} or {signature.Takes.Length} arguments";
+
     private EmType CheckBuiltinCall(
         Signatures.Signature signature, Expr.Call c, List<EmType> given,
         EmType receiver, Token name)
     {
         string what = $"{receiver.Show()}.{name.Lexeme}";
 
-        if (given.Count != signature.Takes.Length)
+        if (given.Count < signature.Least || given.Count > signature.Takes.Length)
             Error(name.Line,
-                  $"{what} takes {Count(signature.Takes.Length, "argument")}, "
-                  + $"but got {given.Count}.",
+                  $"{what} takes {Wanted(signature)}, but got {given.Count}.",
                   signature.Takes.Length == 0
                       ? null
                       : $"It wants {string.Join(", ", signature.Takes.Select(t => t.Show()))}.");

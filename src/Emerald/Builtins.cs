@@ -662,6 +662,27 @@ public static class Builtins
             // backwards, which is the same bug wearing a different hat.
             "reverse" => string.Concat(Graphemes(value).Reverse()),
             "trim" => value.Trim(),
+
+            // Width, which the language had no way to ask for at all — so a board, a
+            // table or a menu had nowhere to start, and every project wrote these four
+            // for itself. Counted in graphemes, so they agree with .count() and with
+            // `for`: a hand-written pad that measures the .NET way lines an accented
+            // column up wrong, which is the bug .reverse had.
+            "pad_left" => Pad(value, args, "pad_left", before: true),
+            "pad_right" => Pad(value, args, "pad_right", before: false),
+            "pad_center" => PadCenter(value, args),
+            "repeat" => Repeated(value, AsInt(args[0], "repeat")),
+
+            // Whole-string questions: is every character one of these. One character is
+            // the common call and reads best — `typed.letter?()` — and the same rule
+            // answers "is this whole thing digits" before .to_int().
+            "letter?" => EveryCharacter(value, char.IsLetter),
+            "digit?" => EveryCharacter(value, char.IsDigit),
+
+            // blank? is the exception, and deliberately: it asks whether there is nothing
+            // here to read, and an empty string is the clearest case of that. The other
+            // two need a character to be true of.
+            "blank?" => Graphemes(value).All(g => g.All(char.IsWhiteSpace)),
             "contains?" => value.Contains(AsString(args[0], "contains?"), StringComparison.Ordinal),
             "starts_with?" => value.StartsWith(AsString(args[0], "starts_with?"), StringComparison.Ordinal),
             "ends_with?" => value.EndsWith(AsString(args[0], "ends_with?"), StringComparison.Ordinal),
@@ -771,6 +792,70 @@ public static class Builtins
     /// Splits into grapheme clusters, so an emoji or an accented letter counts as one
     /// character rather than the two or more UTF-16 units it occupies.
     /// </summary>
+    /// <summary>
+    /// Whether every character satisfies <paramref name="ok"/>, tested on the first unit of
+    /// each grapheme — so an accented letter is a letter, since its base is one, and an
+    /// emoji is not. An empty string is false: there is no character to be true of.
+    /// </summary>
+    private static bool EveryCharacter(string value, Func<char, bool> ok) =>
+        value.Length > 0 && Graphemes(value).All(g => ok(g[0]));
+
+    private static string Pad(string value, List<object?> args, string method, bool before)
+    {
+        string filled = Fill(Padding(args, method), Missing(value, args, method));
+        return before ? filled + value : value + filled;
+    }
+
+    private static string PadCenter(string value, List<object?> args)
+    {
+        int missing = Missing(value, args, "pad_center");
+        if (missing <= 0) return value;
+
+        // The odd character goes on the right, so a column of centered text keeps its
+        // left edge straight — which is the edge anyone lining one up is looking at.
+        string fill = Padding(args, "pad_center");
+        int left = missing / 2;
+        return Fill(fill, left) + value + Fill(fill, missing - left);
+    }
+
+    private static string Padding(List<object?> args, string method) =>
+        args.Count > 1 ? AsString(args[1], method) : " ";
+
+    private static int Missing(string value, List<object?> args, string method) =>
+        (int)AsInt(args[0], method) - Graphemes(value).Count();
+
+    /// <summary>
+    /// Enough of <paramref name="fill"/> to cover <paramref name="count"/> characters,
+    /// repeating it and cutting it off part-way if it does not divide evenly.
+    /// </summary>
+    private static string Fill(string fill, int count)
+    {
+        if (count <= 0) return "";
+        if (fill.Length == 0)
+            throw new RuntimeError("The padding cannot be an empty string.",
+                                   "Leave it out for spaces, or give a character to use.");
+
+        List<string> made = [];
+        while (made.Count < count)
+            foreach (var grapheme in Graphemes(fill))
+            {
+                if (made.Count == count) break;
+                made.Add(grapheme);
+            }
+
+        return string.Concat(made);
+    }
+
+    private static string Repeated(string value, long times)
+    {
+        if (times < 0)
+            throw new RuntimeError($"repeat needs zero or more, not {times}.");
+
+        var built = new System.Text.StringBuilder();
+        for (long i = 0; i < times; i++) built.Append(value);
+        return built.ToString();
+    }
+
     private static IEnumerable<string> Graphemes(string value)
     {
         var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(value);
