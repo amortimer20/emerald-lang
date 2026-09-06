@@ -1,0 +1,6 @@
+
+err_block_names_too_many.em:6  map hands its block 1 value, but this one names 2.
+
+    6 | print(numbers.map { a, b => a }.join(","))
+
+  Name one:  map { a => ... }

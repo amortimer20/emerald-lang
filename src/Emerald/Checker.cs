@@ -2145,8 +2145,11 @@ public sealed class Checker(
     }
 
     private EmType LambdaType(Expr.Lambda l, Scope scope, EmType? paramHint = null,
-                             EmType.Func? shape = null)
+                             EmType.Func? shape = null,
+                             int? supplies = null, string? given = null)
     {
+        if (supplies is { } handed && given is { } by) CheckBlockArity(l, handed, by);
+
         var inner = new Scope(scope, functionBoundary: true);
 
         // What each parameter is: written down if the writer said so, otherwise taken from
@@ -2177,8 +2180,47 @@ public sealed class Checker(
         _loopDepth = enclosingLoops;
         _hiddenLoops -= enclosingLoops;
         _returnTypes.Pop();
-        return new EmType.Func(parameters, EmType.Any);
+
+        // §3.2 promised this and did not have it: a block that never returns a value has
+        // none to give. Calling it Any made `map { n => print(n) }` a list of nothings
+        // that nothing complained about, which is the silent nothing the row ruled out.
+        return new EmType.Func(parameters,
+                               ReturnsAValue(l.Body) ? EmType.Any : EmType.Nothing);
     }
+
+    /// <summary>
+    /// Whether any way out of this body carries a value. Nested lambdas are not descended
+    /// into, since a return inside one belongs to it (§3.2).
+    /// </summary>
+    private static bool ReturnsAValue(List<Stmt> body) =>
+        body.Any(stmt => stmt switch
+        {
+            Stmt.Return r => r.Value is not null,
+            Stmt.If i => ReturnsAValue(i.Then) || (i.Else is not null && ReturnsAValue(i.Else)),
+            Stmt.While w => ReturnsAValue(w.Body),
+            Stmt.For f => ReturnsAValue(f.Body),
+            Stmt.TryCatch t => ReturnsAValue(t.Body) || ReturnsAValue(t.Handler),
+            _ => false
+        });
+
+    /// <summary>
+    /// A block cannot name more than it is handed. Naming fewer is ordinary — ignoring an
+    /// argument is allowed everywhere — but the extra names could only ever be nothing,
+    /// and they were silently bound to the element type as though they held one.
+    /// </summary>
+    private void CheckBlockArity(Expr.Lambda block, int supplied, string given)
+    {
+        if (block.Params.Count <= supplied) return;
+
+        Error(block.Params[supplied].Name.Line,
+              $"{given} hands its block {Amount(supplied)}, but this one names "
+              + $"{block.Params.Count}.",
+              supplied == 1
+                  ? $"Name one:  {given} {{ {block.Params[0].Name.Lexeme} => ... }}"
+                  : null);
+    }
+
+    private static string Amount(int n) => n == 1 ? "1 value" : $"{n} values";
 
     /// <summary>
     /// <c>Dog.from_shelter_id(42)</c> — a type name on the left means a type-level member.
@@ -3245,6 +3287,8 @@ public sealed class Checker(
 
             if (call.Trailing is { } block && name.Lexeme == "each")
             {
+                CheckBlockArity(block, 1, "each");
+
                 var inner = new Scope(scope, functionBoundary: true);
                 if (block.Params.Count > 0)
                     inner.Declare(block.Params[0].Name.Lexeme, set.Element);
@@ -3297,6 +3341,8 @@ public sealed class Checker(
             // dictionary, which is the same contextual typing a list block gets.
             if (call.Trailing is { } block && name.Lexeme == "each")
             {
+                CheckBlockArity(block, 2, "each");
+
                 var inner = new Scope(scope, functionBoundary: true);
                 if (block.Params.Count > 0)
                     inner.Declare(block.Params[0].Name.Lexeme, dict.Key);
@@ -3363,7 +3409,22 @@ public sealed class Checker(
         if (c.Trailing is not null)
         {
             var hint = Signatures.TakesElementBlock.Contains(name.Lexeme) ? list.Element : null;
-            if (LambdaType(c.Trailing, scope, hint) is EmType.Func f) blockReturn = f.Return;
+
+            // reduce walks with a running total beside the item; everything else hands the
+            // block one element at a time.
+            int supplies = name.Lexeme == "reduce" ? 2 : 1;
+
+            if (LambdaType(c.Trailing, scope, hint, supplies: supplies, given: name.Lexeme)
+                is EmType.Func f) blockReturn = f.Return;
+
+            // each is the one that does not look at the answer. For the rest the block's
+            // value is the whole point, so a block with none to give is the mistake.
+            if (name.Lexeme != "each" && blockReturn.Equals(EmType.Nothing))
+                Error(name.Line,
+                      $"This block gives nothing back, but {name.Lexeme} needs an answer "
+                      + "from it.",
+                      "A block of one expression answers with it. A longer one says which "
+                      + "value it gives:  return ...");
         }
 
         return ListMemberType(list, name, blockReturn,
