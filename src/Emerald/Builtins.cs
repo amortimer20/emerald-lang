@@ -99,13 +99,19 @@ public sealed class EmModule(string name, Dictionary<string, Func<List<object?>,
     public override string ToString() => $"<module {name}>";
 }
 
-/// <summary>An inclusive range, <c>1..5</c>.</summary>
+/// <summary>
+/// An inclusive range, <c>1..5</c>. Counts up, and only up: <c>5..1</c> is empty.
+///
+/// It used to reverse itself, which made <c>0..(count - 1)</c> — the only spelling an
+/// inclusive range has for "walk n items" — yield <c>{0, -1}</c> on an empty collection
+/// and index out of bounds. Ruby and Python both answer this the same way, and choosing
+/// inclusive ranges is what obliges the question to be answered at all.
+/// </summary>
 public sealed record EmRange(long Start, long End) : IEnumerable<long>
 {
     public IEnumerator<long> GetEnumerator()
     {
-        if (Start <= End) for (long i = Start; i <= End; i++) yield return i;
-        else for (long i = Start; i >= End; i--) yield return i;
+        for (long i = Start; i <= End; i++) yield return i;
     }
 
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
@@ -447,8 +453,8 @@ public static class Builtins
     {
         // Sprinkles: each replaces a loop or an awkward expression (§3.7).
         "times" => Repeat(interp, value, args, start: 0),
-        "upto" => Iterate(interp, new EmRange(value, AsInt(args[0], "upto")), args[1]),
-        "downto" => Iterate(interp, new EmRange(value, AsInt(args[0], "downto")), args[1]),
+        "upto" => Iterate(interp, new EmRange(value, AsInt(args[0], "upto")), args[1], "upto"),
+        "downto" => Iterate(interp, Descending(value, AsInt(args[0], "downto")), args[1], "downto"),
         "even?" => value % 2 == 0,
         "odd?" => value % 2 != 0,
         "zero?" => value == 0,
@@ -471,11 +477,23 @@ public static class Builtins
         return null;
     }
 
-    private static object? Iterate(Interpreter interp, EmRange range, object? callable)
+    private static object? Iterate(
+        Interpreter interp, IEnumerable<long> steps, object? callable, string named)
     {
-        var body = AsCallable(callable, "upto");
-        foreach (long i in range) body.Call(interp, [i]);
+        var body = AsCallable(callable, named);
+        foreach (long i in steps) body.Call(interp, [i]);
         return null;
+    }
+
+    /// <summary>
+    /// <c>5.downto(1)</c>. Both names used to build a range and walk it, so the range's
+    /// own direction decided what happened and neither name meant anything: 3.upto(1)
+    /// counted down and 5.downto(9) counted up. Now upto is ascending because a range is,
+    /// and this is the one thing in the language that descends.
+    /// </summary>
+    private static IEnumerable<long> Descending(long from, long to)
+    {
+        for (long i = from; i >= to; i--) yield return i;
     }
 
     // ---- Float ----------------------------------------------------------
@@ -684,7 +702,7 @@ public static class Builtins
     private static object? RangeMethod(
         Interpreter interp, EmRange range, string name, List<object?> args) => name switch
     {
-        "each" => Iterate(interp, range, args.LastOrDefault()),
+        "each" => Iterate(interp, range, args.LastOrDefault(), "each"),
         "count" => (long)range.Count(),
         "contains?" => range.Contains(AsInt(args[0], "contains?")),
         "first" => range.Start,

@@ -1882,8 +1882,27 @@ public sealed class Checker(
     {
         Expect(TypeOf(r.Start, scope), EmType.Int, r.Start, "a range start");
         Expect(TypeOf(r.End, scope), EmType.Int, r.End, "a range end");
+
+        // A range counts up, so one written the other way round holds nothing — and doing
+        // nothing quietly is the failure §2.6 exists to catch. Only when both ends are
+        // written out: `0..(n - 1)` has to stay silently empty, since that is the whole
+        // reason the range is empty rather than reversing, and there the emptiness is the
+        // answer rather than a mistake.
+        if (ConstantInt(r.Start) is { } from && ConstantInt(r.End) is { } to && to < from)
+            Error(LineOf(r.Start),
+                  $"{from}..{to} is empty — a range counts up, never down.",
+                  $"To count down:  {from}.downto({to})");
+
         return EmType.Range;
     }
+
+    /// <summary>An integer written out, including a negated one. Null if it is computed.</summary>
+    private static long? ConstantInt(Expr expr) => expr switch
+    {
+        Expr.Literal { Value: long n } => n,
+        Expr.Unary { Op.Type: TokenType.Minus, Right: Expr.Literal { Value: long n } } => -n,
+        _ => null
+    };
 
     private EmType UnaryType(Expr.Unary u, Scope scope)
     {

@@ -1,0 +1,6 @@
+
+err_range_counts_down.em:3  10..1 is empty — a range counts up, never down.
+
+    3 | for i in 10..1 {
+
+  To count down:  10.downto(1)
