@@ -46,6 +46,44 @@ Two details specific to Emerald:
 **Editing** — `#` toggles line comments, `#[ ]#` toggles blocks, brackets auto-close, and
 `##` doc comments continue onto the next line when you press Enter.
 
+## The file icon
+
+`icons/file_type_emerald.svg` is a file-type icon for the
+[vscode-icons](https://marketplace.visualstudio.com/items?itemName=vscode-icons-team.vscode-icons)
+extension, which is separate from this one and reads custom icons from a fixed folder.
+
+Copy it into VS Code's user directory:
+
+```
+# Windows
+copy icons\file_type_emerald.svg "%APPDATA%\Code\User\vsicons-custom-icons\"
+
+# Linux
+cp icons/file_type_emerald.svg ~/.config/Code/User/vsicons-custom-icons/
+
+# macOS
+cp icons/file_type_emerald.svg ~/Library/Application\ Support/Code/User/vsicons-custom-icons/
+```
+
+Then add the association to your **user** `settings.json`:
+
+```json
+"vsicons.associations.files": [
+    { "icon": "emerald", "extensions": ["em"], "format": "svg" }
+]
+```
+
+Finally **Ctrl+Shift+P -> Apply Icons Customization**, which rebuilds vscode-icons'
+manifest and reloads the window. Nothing changes until that command is run.
+
+The `emerald` in the association is what names the file: vscode-icons prefixes it with
+`file_type_`, so the icon must be `file_type_emerald.svg` exactly. A light-theme variant
+would be `file_type_light_emerald.svg`; there is not one, because the green reads on both
+grounds.
+
+`icons/emerald.svg` is the same drawing at a smaller scale and is not used by anything --
+kept as the general-purpose logo.
+
 ## What it does not do yet
 
 No language server, so there is no completion, no hover, no go-to-definition, and no
