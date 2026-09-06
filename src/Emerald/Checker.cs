@@ -447,6 +447,7 @@ public sealed class Checker(
     private void CheckEnum(Stmt.EnumDecl decl, Scope scope)
     {
         CheckAttributes(decl.Attributes, "type");
+
         CheckCasing(decl.Name, "type");
 
         if (decl.Members.Count == 0)
@@ -537,6 +538,26 @@ public sealed class Checker(
         _currentType = info;
 
         CheckAttributes(decl.Attributes, "type");
+
+        // type_name answers the same question on every value there is, which is the only
+        // reason it is worth having -- a class that redefined it would make "what is
+        // this?" mean whatever that class decided, on exactly the values where the
+        // question is hardest to answer by reading.
+        foreach (var member in decl.Members)
+        {
+            var declared = member switch
+            {
+                Stmt.FuncDecl f => f.Name,
+                Stmt.VarDecl v => v.Name,
+                _ => null,
+            };
+
+            if (declared?.Lexeme == Signatures.TypeNameMethod)
+                Error(declared.Line,
+                      $"{Signatures.TypeNameMethod} is answered by every value, so a type "
+                      + "cannot give it another meaning.",
+                      "Name it something this type owns:  kind, label, describe.");
+        }
 
         // @mirrors covers the whole type, not each member: a foreign API is mirrored
         // wholesale or not at all, and marking every member would be the ceremony §3.4
@@ -1854,27 +1875,35 @@ public sealed class Checker(
     private Dictionary<string, EmType> Refinements(Expr condition, bool whenTrue, Scope scope)
     {
         Dictionary<string, EmType> result = [];
-        Collect(condition, whenTrue, result, scope, _capturedAndAssigned);
+        Collect(condition, whenTrue, result, scope, _capturedAndAssigned, Resolve);
         return result;
 
         static void Collect(
             Expr expr, bool whenTrue, Dictionary<string, EmType> into, Scope scope,
-            HashSet<string> blocked)
+            HashSet<string> blocked, Func<TypeRef?, EmType> resolve)
         {
             switch (expr)
             {
                 case Expr.Grouping g:
-                    Collect(g.Inner, whenTrue, into, scope, blocked);
+                    Collect(g.Inner, whenTrue, into, scope, blocked, resolve);
                     break;
 
                 // `a and b` proves both when true.
                 case Expr.Logical { Op.Type: TokenType.And } l when whenTrue:
-                    Collect(l.Left, true, into, scope, blocked);
-                    Collect(l.Right, true, into, scope, blocked);
+                    Collect(l.Left, true, into, scope, blocked, resolve);
+                    Collect(l.Right, true, into, scope, blocked, resolve);
                     break;
 
                 case Expr.Unary { Op.Type: TokenType.Not } u:
-                    Collect(u.Right, !whenTrue, into, scope, blocked);
+                    Collect(u.Right, !whenTrue, into, scope, blocked, resolve);
+                    break;
+
+                // `x is Dog` proves what x holds, exactly as `x != nothing` does. Only in
+                // the true branch: knowing a value is not a Dog says nothing about which
+                // of the remaining types it is.
+                case Expr.TypeTest { Value: Expr.Variable v } t when whenTrue:
+                    if (!blocked.Contains(v.Name.Lexeme) && resolve(t.Type) is { } narrowed)
+                        into[v.Name.Lexeme] = narrowed;
                     break;
 
                 // Narrowing strips the ?, rather than widening to "could be anything".
@@ -1907,6 +1936,62 @@ public sealed class Checker(
         }
     }
 
+    /// <summary>
+    /// <c>value is Dog</c>. Always a Bool, and always worth checking for the two shapes
+    /// that mean the writer misunderstood something: a test that cannot fail, and a test
+    /// that cannot pass. Both compile in C# and Java without comment, and both are bugs
+    /// often enough to be worth naming here.
+    /// </summary>
+    private EmType TypeTestType(Expr.TypeTest test, Scope scope)
+    {
+        var value = TypeOf(test.Value, scope);
+        var wanted = Resolve(test.Type);
+
+        // A maybe is the ordinary receiver for this, and `x is Dog` answering false for
+        // nothing is what makes it useful. So the question is asked of what is inside.
+        var held = value.Stripped;
+
+        if (wanted is EmType.Obj || held is EmType.Obj || held.Equals(EmType.Any))
+        {
+            if (held is EmType.Obj from && wanted is EmType.Obj to)
+            {
+                if (Descends(from.Info, to.Info) && !value.IsMaybe)
+                    Warn(test.Keyword.Line,
+                         $"This is always true: every {from.Info.Name} is "
+                         + $"a {to.Info.Name}.",
+                         "The check can go, and so can the branch it guards.");
+
+                // A trait on either side is never impossible: some subclass of the static
+                // type may well mix it in, and refusing the test would refuse the case it
+                // exists for -- an Animal that turns out to be a Speaker.
+                else if (!Descends(from.Info, to.Info) && !Descends(to.Info, from.Info)
+                         && from.Info.Kind != TypeKind.Trait
+                         && to.Info.Kind != TypeKind.Trait)
+                    Error(test.Keyword.Line,
+                          $"{from.Info.Name} can never be {to.Info.Name}.",
+                          "Neither inherits from the other, so this is false for every "
+                          + "value it could be given.");
+            }
+
+            return EmType.Bool;
+        }
+
+        // Built-in types are sealed and have no hierarchy, so the answer is decidable now
+        // and the test is never the right tool. Saying which member answers the question
+        // beats saying only that this one does not.
+        Error(test.Keyword.Line,
+              $"{held.Show()} is not a type this can ask about.",
+              "is compares an object against a class or trait. A built-in type is already "
+              + "known here, so there is nothing to ask.");
+        return EmType.Bool;
+    }
+
+    /// <summary>Whether one class reaches another through its bases or its traits.</summary>
+    private static bool Descends(ClassInfo from, ClassInfo to) =>
+        from == to
+        || from.Traits.Any(t => Descends(t, to))
+        || (from.Base is { } up && Descends(up, to));
+
     // ---- expressions ----------------------------------------------------
 
     private EmType TypeOf(Expr expr, Scope scope) => expr switch
@@ -1923,6 +2008,7 @@ public sealed class Checker(
         Expr.Index ix => IndexType(ix, scope),
         Expr.Unary u => UnaryType(u, scope),
         Expr.Binary b => BinaryType(b, scope),
+        Expr.TypeTest t => TypeTestType(t, scope),
         Expr.Logical l => LogicalType(l, scope),
         Expr.IfExpr i => IfExprType(i, scope),
         Expr.Lambda l => LambdaType(l, scope),
@@ -2437,6 +2523,11 @@ public sealed class Checker(
     {
         if (receiver is EmType.Unknown) return EmType.Any;
 
+        // Every value answers this, so it is settled before any receiver-specific path --
+        // including on a T?, since the value that surprised you is the one you ask about.
+        if (name.Lexeme == Signatures.TypeNameMethod)
+            return new EmType.Func([], EmType.String, 0);
+
         if (receiver is EmType.Prim { Name: "Kernel" })
         {
             if (!Kernel.TryGetValue(name.Lexeme, out var fn))
@@ -2748,6 +2839,11 @@ public sealed class Checker(
     private EmType MemberCallType(EmType receiver, Expr.Call c, Expr.Get get, Scope scope)
     {
         {
+            // Asked of anything, including a maybe — the value that surprised you is the
+            // one you ask about, and refusing it on a T? would refuse the common case.
+            if (get.Name.Lexeme == Signatures.TypeNameMethod && c.Args.Count == 0)
+                return EmType.String;
+
             if (receiver is EmType.Lst list) return ListCallType(list, c, get.Name, scope);
             if (receiver is EmType.Dict dict) return DictMemberType(dict, get.Name, c, scope);
             if (receiver is EmType.SetOf set) return SetMemberType(set, get.Name, c, scope);

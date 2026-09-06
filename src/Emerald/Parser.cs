@@ -570,6 +570,16 @@ public sealed class Parser(List<Token> tokens, string fileName)
     private Expr Comparison()
     {
         var expr = RangeExpression();
+
+        // `is` sits with the comparisons because it answers one: it takes a type on the
+        // right rather than an expression, which is why it is its own node and not a
+        // Binary with a name in it.
+        if (Match(TokenType.Is))
+        {
+            var keyword = Previous;
+            return new Expr.TypeTest(expr, keyword, ParseTypeRef());
+        }
+
         if (Check(TokenType.Equal, TokenType.NotEqual, TokenType.Less,
                   TokenType.Greater, TokenType.LessEqual, TokenType.GreaterEqual))
         {

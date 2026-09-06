@@ -1,0 +1,6 @@
+
+err_type_name_is_reserved.em:4  type_name is answered by every value, so a type cannot give it another meaning.
+
+    4 |     func type_name(): String { return "definitely a human" }
+
+  Name it something this type owns:  kind, label, describe.

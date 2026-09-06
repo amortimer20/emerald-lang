@@ -600,6 +600,8 @@ public sealed class Interpreter
             overloads.Add(method);
         }
 
+        HashSet<string> traitNames = [];
+
         foreach (var traitName in decl.Traits)
         {
             if (!env.TryGet(traitName.Lexeme, out object? found) || found is not EmClass trait)
@@ -611,6 +613,12 @@ public sealed class Interpreter
                     else required.Add(name);
 
             required.AddRange(trait.Unimplemented);
+
+            // A trait built on another trait counts as both, so `x is Drawable` answers
+            // yes for a class that reached it through a third. Collected here, where the
+            // trait object is in hand, rather than walked at test time from names alone.
+            traitNames.Add(traitName.Lexeme);
+            traitNames.UnionWith(trait.TraitNames);
         }
 
         // What the traits gave, before the class's own methods take their places — kept so
@@ -642,6 +650,7 @@ public sealed class Interpreter
         { IsModule = decl.IsModule };
 
         foreach (var (name, provided) in fromTraits) built.FromTraits[name] = provided;
+        built.TraitNames.UnionWith(traitNames);
 
         foreach (var property in decl.Members.OfType<Stmt.VarDecl>().Where(f => f.Getter is not null))
             built.Properties[property.Name.Lexeme] = property;
@@ -848,6 +857,17 @@ public sealed class Interpreter
     private object? GetOrInvoke(
         EmInstance instance, Token name, List<object?> args, bool invoking = true)
     {
+        // Every value answers this, and an instance reaches it here rather than through
+        // Builtins, which only ever sees the native ones. Answered before the class's own
+        // members are consulted: the point of the name is that it means one thing on
+        // everything, so a class is not allowed to redefine it -- the checker says so at
+        // the declaration, and this is the runtime half of the same rule.
+        if (name.Lexeme == "type_name" && args.Count == 0)
+            return invoking
+                ? Builtins.TypeName(instance)
+                : throw new RuntimeError(
+                    "type_name is a method. Call it:  value.type_name()");
+
         // .or and .must belong to the ?, not to the value, so a value that is there simply
         // is itself — the same answer an Int or a String gives. An instance is the only
         // value that could declare these names itself, which is why the checker reserves
@@ -1083,6 +1103,7 @@ public sealed class Interpreter
         Expr.Index ix => EvaluateIndex(ix, env),
         Expr.Unary u => EvaluateUnary(u, env),
         Expr.Binary b => EvaluateBinary(b, env),
+        Expr.TypeTest t => EvaluateTypeTest(t, env),
         Expr.Logical l => EvaluateLogical(l, env),
         Expr.IfExpr i => Truthy(Evaluate(i.Condition, env))
             ? Evaluate(i.Then, env)
@@ -1202,6 +1223,31 @@ public sealed class Interpreter
             },
             _ => throw new RuntimeError($"Unknown operator {u.Op.Lexeme}.")
         };
+    }
+
+    /// <summary>
+    /// <c>value is Dog</c> at runtime. Walks the class chain and the traits, so a test
+    /// against a base or a trait answers true for anything below it — which is what makes
+    /// the check worth having rather than a comparison against one exact name.
+    ///
+    /// <c>nothing is Dog</c> is false rather than an error. The value that might be
+    /// missing is the ordinary receiver here, and answering the question is more use than
+    /// refusing it.
+    /// </summary>
+    private object EvaluateTypeTest(Expr.TypeTest t, Env env)
+    {
+        object? value = Evaluate(t.Value, env);
+        string wanted = t.Type.Name.Lexeme;
+
+        return value is EmInstance instance && Reaches(instance.Class, wanted);
+
+        static bool Reaches(EmClass? cls, string wanted)
+        {
+            for (var walk = cls; walk is not null; walk = walk.Super)
+                if (walk.Name == wanted || walk.TraitNames.Contains(wanted)) return true;
+
+            return false;
+        }
     }
 
     private object? EvaluateBinary(Expr.Binary b, Env env)

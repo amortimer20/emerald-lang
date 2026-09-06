@@ -334,6 +334,12 @@ public static class Signatures
     /// </summary>
     public static readonly string[] Shared = Builtins.Shared;
 
+    /// <summary>
+    /// Answered by every value there is, so it belongs to no one type's list. §3.1 has no
+    /// properties on built-ins, so it is a call like everything else.
+    /// </summary>
+    public const string TypeNameMethod = "type_name";
+
     public static readonly string[] SetMethods =
     [
         .. Shared,

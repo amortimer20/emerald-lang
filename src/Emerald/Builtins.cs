@@ -213,6 +213,11 @@ public static class Builtins
 
         // A present value simply is itself, whichever of these you ask.
         if (target is not null && name is "or" or "must") return target;
+
+        // Every value answers this, including nothing — which is the case worth having,
+        // since "what is this?" is asked most often about the value that surprised you.
+        if (name == "type_name") return TypeName(target);
+
         return Dispatch(interpreter, target, name, args);
     }
 

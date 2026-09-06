@@ -9,7 +9,7 @@ public enum TokenType
     Var, Const, Func, Return, If, Then, Else, While, For, In, Unless, Until,
     Class, Trait, Struct, Enum, Extends, With, Constructor, Abstract, Static, Override,
     Throw, Try, Catch, Break, Continue, Assert,
-    And, Or, Not, True, False, Nothing,
+    And, Or, Not, True, False, Nothing, Is,
 
     // Punctuation
     LeftParen, RightParen, LeftBrace, RightBrace,

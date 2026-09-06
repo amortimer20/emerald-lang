@@ -63,6 +63,13 @@ public abstract record Expr
     public sealed record Unary(Token Op, Expr Right) : Expr;
     public sealed record Binary(Expr Left, Token Op, Expr Right) : Expr;
 
+    /// <summary>
+    /// <c>value is Dog</c>. Asks what a value actually is at runtime, and narrows the
+    /// name to that type for the branch where the answer is yes — the same machinery
+    /// the <c>nothing</c> check has always used, pointed at a second question.
+    /// </summary>
+    public sealed record TypeTest(Expr Value, Token Keyword, TypeRef Type) : Expr;
+
     /// <summary>Short-circuits, so it cannot share Binary's evaluation.</summary>
     public sealed record Logical(Expr Left, Token Op, Expr Right) : Expr;
 

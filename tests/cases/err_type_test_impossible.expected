@@ -1,0 +1,6 @@
+
+err_type_test_impossible.em:7  Cat can never be Rock.
+
+    7 | print(c is Rock)
+
+  Neither inherits from the other, so this is false for every value it could be given.

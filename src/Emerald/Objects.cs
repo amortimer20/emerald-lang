@@ -67,6 +67,13 @@ public sealed class EmClass(
     /// </summary>
     public Dictionary<string, List<Stmt.FuncDecl>> FromTraits { get; } = [];
 
+    /// <summary>
+    /// The traits mixed into this class. FromTraits records what they <em>provided</em>,
+    /// which is not the same question — a trait that is all abstract contributes no
+    /// methods and would leave no trace there, and `x is Drawable` still has to say yes.
+    /// </summary>
+    public HashSet<string> TraitNames { get; } = [];
+
     /// <summary>Where <c>super</c> looks: the base chain first, then a trait's default.</summary>
     public List<Stmt.FuncDecl> Inherited(string wanted) =>
         super?.FindMethods(wanted) is { Count: > 0 } fromBase
