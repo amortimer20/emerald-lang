@@ -673,11 +673,27 @@ public sealed class Interpreter
     /// </summary>
     private static EmClass BuildEnum(Stmt.EnumDecl decl, Env env)
     {
-        var built = new EmClass(decl.Name.Lexeme, TypeKind.Enum, null, [], [], null, [], env);
+        Dictionary<string, List<Stmt.FuncDecl>> methods = [];
+
+        foreach (var method in (decl.Methods ?? []).OfType<Stmt.FuncDecl>().Where(m => !m.IsStatic))
+        {
+            if (!methods.TryGetValue(method.Name.Lexeme, out var overloads))
+                methods[method.Name.Lexeme] = overloads = [];
+            overloads.Add(method);
+        }
+
+        var built = new EmClass(decl.Name.Lexeme, TypeKind.Enum, null, [], methods, null, [], env);
+
+        foreach (var method in (decl.Methods ?? []).OfType<Stmt.FuncDecl>().Where(m => m.IsStatic))
+        {
+            if (!built.StaticMethods.TryGetValue(method.Name.Lexeme, out var overloads))
+                built.StaticMethods[method.Name.Lexeme] = overloads = [];
+            overloads.Add(method);
+        }
 
         for (int i = 0; i < decl.Members.Count; i++)
             built.Statics[decl.Members[i].Lexeme] =
-                new EmEnumValue(decl.Name.Lexeme, decl.Members[i].Lexeme, i);
+                new EmEnumValue(decl.Name.Lexeme, decl.Members[i].Lexeme, i) { Owner = built };
 
         built.Statics["values"] = new EmList([.. built.Statics.Values]);
         return built;
@@ -1000,6 +1016,23 @@ public sealed class Interpreter
     /// Runs a static method. Public because <see cref="StaticMethod"/> holds one as a
     /// value and calls back in, the same way <see cref="BoundMethod"/> does.
     /// </summary>
+    /// <summary>
+    /// A method on an enum value. Like a static call with <c>self</c> bound: an enum has no
+    /// fields, so the value and the parameters are the whole of what the body can reach.
+    /// </summary>
+    public object? CallEnumMethod(
+        Stmt.FuncDecl method, EmEnumValue value, EmClass owner, List<object?> args)
+    {
+        var scope = new Env(owner.Closure);
+        scope.Declare("self", value);
+        scope.Declare("Self", owner);
+        BindParameters(method.Params, args, scope, method.Name.Lexeme);
+
+        try { ExecuteBlock(method.Body!, scope); }
+        catch (ReturnSignal r) { return r.Value; }
+        return null;
+    }
+
     public object? CallStatic(Stmt.FuncDecl method, EmClass owner, List<object?> args)
     {
         var scope = new Env(owner.Closure);
@@ -1386,6 +1419,13 @@ public sealed class Interpreter
             if (target is EmSuper above) return InvokeInherited(above, get.Name, received);
             if (target is EmInstance instance) return GetOrInvoke(instance, get.Name, received);
             if (target is EmClass cls) return GetStatic(cls, get.Name, received);
+
+            // A method the enum declared. Checked before the built-in surface so a value
+            // answers for itself, the way every other type does.
+            if (target is EmEnumValue value
+                && value.Owner?.FindMethod(get.Name.Lexeme) is { } declared)
+                return CallEnumMethod(declared, value, value.Owner, received);
+
             return Builtins.InvokeMethod(this, target, get.Name.Lexeme, received);
         }
 

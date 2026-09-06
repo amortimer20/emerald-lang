@@ -187,7 +187,11 @@ public abstract record Stmt
     /// wearing the same keyword.
     /// </summary>
     public sealed record EnumDecl(
-        Token Name, List<Token> Members, List<Attr>? Attributes = null) : Stmt;
+        Token Name, List<Token> Members, List<Attr>? Attributes = null,
+
+        /// <summary>Methods written after the values. Payloads are still out — a tagged
+        /// union is a different feature — but a fact about a value belongs on it (§3.2).</summary>
+        List<Stmt>? Methods = null) : Stmt;
 }
 
 /// <summary>

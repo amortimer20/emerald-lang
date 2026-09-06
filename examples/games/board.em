@@ -64,9 +64,3 @@ func winner(): Piece? {
 var over?: Bool {
     get { return self.winner() != nothing or self.full? }
 }
-
-# Whose turn it is after this one. An enum has no methods in v0, so the one fact about
-# a Piece that is not a name has to live on some other type.
-static func other(piece: Piece): Piece {
-    return if piece == Piece.X then Piece.O else Piece.X
-}

@@ -75,19 +75,11 @@ func letter_news(): Dictionary<String, Mark> {
             var letter = letters[i]
             var known = news[letter]
 
-            if known == nothing or Wordle.better?(attempt.marks[i], known.or(Mark.MISS)) {
+            if known == nothing or attempt.marks[i].better_than?(known.or(Mark.MISS)) {
                 news[letter] = attempt.marks[i]
             }
         }
     }
 
     return news
-}
-
-static func better?(mark: Mark, than: Mark): Bool {
-    return Wordle.rank(mark) > Wordle.rank(than)
-}
-
-static func rank(mark: Mark): Int {
-    return if mark == Mark.HIT then 2 else if mark == Mark.PRESENT then 1 else 0
 }

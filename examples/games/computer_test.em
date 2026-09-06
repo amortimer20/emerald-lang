@@ -7,7 +7,7 @@ func played(squares: List<Int>): Board {
     var turn = Piece.X
     for square in squares {
         board[square] = turn
-        turn = Board.other(turn)
+        turn = turn.other()
     }
     return board
 }
@@ -50,7 +50,7 @@ func draws_against_itself() {
 
         while not board.over? {
             board[Computer(turn).choose(board)] = turn
-            turn = Board.other(turn)
+            turn = turn.other()
         }
 
         assert board.winner() == nothing

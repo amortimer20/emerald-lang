@@ -203,6 +203,12 @@ public sealed class Checker(
             if (stmt is Stmt.ClassDecl c && ReferenceEquals(declaringType[c.Name.Lexeme], c))
                 DescribeClass(c);
 
+        // An enum is a ClassInfo, so its methods are described the same way a class's are.
+        foreach (var stmt in program)
+            if (stmt is Stmt.EnumDecl e && _classes.TryGetValue(e.Name.Lexeme, out var enumInfo)
+                && enumInfo.Kind == TypeKind.Enum)
+                DescribeMembers(enumInfo, e.Name.Lexeme, e.Methods ?? []);
+
         // A class name in expression position is its constructor.
         foreach (var (name, info) in _classes)
             globals.Declare(name,
@@ -347,7 +353,37 @@ public sealed class Checker(
             }
         }
 
-        foreach (var member in decl.Members)
+        DescribeMembers(info, decl.Name.Lexeme, decl.Members);
+
+        // A class with no constructor of its own inherits its base's, matching EmClass.
+        if (!info.HasConstructor && info.Base is not null)
+            info.ConstructorParams = info.Base.ConstructorParams;
+
+        // A struct with no constructor gets one from its fields, in declaration order
+        // (§3.2). Close to mandatory rather than a convenience: a struct is immutable, so
+        // without a constructor there is no moment at which its fields could ever be given
+        // values, and the type is unusable. The design document's own Vector3 sample
+        // assumed this and did not compile.
+        //
+        // Every stored field is a parameter, including one with an initializer. The
+        // alternative — an initialized field drops out of the parameter list — reads well
+        // until someone adds an initializer to an existing field and silently changes the
+        // arity of every call. When default parameter values land, a field's initializer
+        // should become that parameter's default, which fixes this additively.
+        if (!info.HasConstructor && info.Base is null && decl.Kind == TypeKind.Struct)
+            info.ConstructorParams =
+                [.. decl.Members.OfType<Stmt.VarDecl>()
+                       .Where(f => !f.IsStatic && f.Getter is null)
+                       .Select(f => Resolve(f.Type))];
+    }
+
+    /// <summary>
+    /// What a body declares, recorded on the type. Shared by classes and enums, since an
+    /// enum is a ClassInfo with a different Kind and its methods are ordinary ones.
+    /// </summary>
+    private void DescribeMembers(ClassInfo info, string typeName, List<Stmt> members)
+    {
+        foreach (var member in members)
         {
             switch (member)
             {
@@ -381,7 +417,7 @@ public sealed class Checker(
                     if (existing.Any(e => Indistinguishable(e, signature)))
                     {
                         Error(method.Name.Line,
-                              $"{decl.Name.Lexeme}.{method.Name.Lexeme} already has an "
+                              $"{typeName}.{method.Name.Lexeme} already has an "
                               + "overload matching this one.",
                               "Two of one name have to be told apart by what they take. "
                               + "No argument could choose between these.");
@@ -402,33 +438,13 @@ public sealed class Checker(
             }
         }
 
-        // A class with no constructor of its own inherits its base's, matching EmClass.
-        if (!info.HasConstructor && info.Base is not null)
-            info.ConstructorParams = info.Base.ConstructorParams;
-
-        // A struct with no constructor gets one from its fields, in declaration order
-        // (§3.2). Close to mandatory rather than a convenience: a struct is immutable, so
-        // without a constructor there is no moment at which its fields could ever be given
-        // values, and the type is unusable. The design document's own Vector3 sample
-        // assumed this and did not compile.
-        //
-        // Every stored field is a parameter, including one with an initializer. The
-        // alternative — an initialized field drops out of the parameter list — reads well
-        // until someone adds an initializer to an existing field and silently changes the
-        // arity of every call. When default parameter values land, a field's initializer
-        // should become that parameter's default, which fixes this additively.
-        if (!info.HasConstructor && info.Base is null && decl.Kind == TypeKind.Struct)
-            info.ConstructorParams =
-                [.. decl.Members.OfType<Stmt.VarDecl>()
-                       .Where(f => !f.IsStatic && f.Getter is null)
-                       .Select(f => Resolve(f.Type))];
     }
 
     /// <summary>
     /// An enum's values are constants of its own type, so §3.4's constant casing applies
     /// to them — <c>Color.RED</c>, not <c>Color.red</c>. That needs no new rule.
     /// </summary>
-    private void CheckEnum(Stmt.EnumDecl decl)
+    private void CheckEnum(Stmt.EnumDecl decl, Scope scope)
     {
         CheckAttributes(decl.Attributes, "type");
         CheckCasing(decl.Name, "type");
@@ -453,6 +469,61 @@ public sealed class Checker(
 
             CheckCasing(member, "enum value", isConst: true);
         }
+
+        CheckEnumMembers(decl, scope);
+    }
+
+    /// <summary>
+    /// An enum's methods. §3.2 said "no methods" and meant "no payloads" — a tagged union
+    /// is a different feature, but a fact about a value belongs on the value, and without
+    /// this every one of them was a static parked on an unrelated type, which is the
+    /// global-operating-on-a-receiver shape §3.2 exists to not have.
+    /// </summary>
+    private void CheckEnumMembers(Stmt.EnumDecl decl, Scope scope)
+    {
+        if (decl.Methods is not { Count: > 0 } methods) return;
+
+        var info = _classes[decl.Name.Lexeme];
+        var previousType = _currentType;
+        _currentType = info;
+
+        // `self` is the value the method was called on. An enum has no fields, so that is
+        // the whole of what a body can reach beyond its own parameters.
+        var body = new Scope(scope, functionBoundary: true);
+        body.Declare("self", new EmType.Obj(info));
+
+        foreach (var member in methods)
+            switch (member)
+            {
+                case Stmt.FuncDecl method when method.Body is null:
+                    Error(method.Name.Line,
+                          $"{decl.Name.Lexeme}.{method.Name.Lexeme} has no body.",
+                          "An enum is a closed set of values, so there is nothing below it "
+                          + "to supply one. Abstract members belong in a trait or a class.");
+                    break;
+
+                case Stmt.FuncDecl method:
+                    CheckAttributes(method.Attributes, "function");
+                    CheckCasing(method.Name, "method");
+                    CheckPredicateName(method);
+                    CheckCallable(method.Params, method.Body, body, method.Name.Lexeme,
+                                  Resolve(method.ReturnType), method.Name.Line);
+                    break;
+
+                case Stmt.VarDecl field:
+                    Error(field.Name.Line,
+                          $"{decl.Name.Lexeme} cannot have a {(field.IsStatic ? "static " : "")}"
+                          + "variable.",
+                          "An enum is a closed set of names and carries nothing else. A "
+                          + "value that varies belongs on a class.");
+                    break;
+
+                default:
+                    Error(decl.Name.Line, $"{decl.Name.Lexeme} can only hold values and methods.");
+                    break;
+            }
+
+        _currentType = previousType;
     }
 
     private void CheckClass(Stmt.ClassDecl decl, Scope scope)
@@ -1059,7 +1130,7 @@ public sealed class Checker(
             case Stmt.For f: CheckFor(f, scope); break;
             case Stmt.FuncDecl fn: CheckFunc(fn, scope); break;
             case Stmt.ClassDecl c: CheckClass(c, scope); break;
-            case Stmt.EnumDecl e: CheckEnum(e); break;
+            case Stmt.EnumDecl e: CheckEnum(e, scope); break;
 
             case Stmt.Throw t:
                 TypeOf(t.Value, scope);

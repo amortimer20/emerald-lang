@@ -14,7 +14,7 @@ func choose(board: Board): Int {
     for square in open {
         var score = Computer.value(board.after(square, self.piece),
                                    self.piece,
-                                   Board.other(self.piece),
+                                   self.piece.other(),
                                    1, best_score, 100)
         if score > best_score {
             best_score = score
@@ -51,7 +51,7 @@ static func value(board: Board, me: Piece, turn: Piece, depth: Int,
     var ceiling = beta
 
     for square in board.free() {
-        var score = Computer.value(board.after(square, turn), me, Board.other(turn),
+        var score = Computer.value(board.after(square, turn), me, turn.other(),
                                    depth + 1, floor, ceiling)
 
         if mine {

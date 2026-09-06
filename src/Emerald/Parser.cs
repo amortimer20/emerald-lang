@@ -257,7 +257,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
         SkipNewlines();
 
         List<Token> members = [];
-        if (!Check(TokenType.RightBrace))
+        if (!Check(TokenType.RightBrace) && !StartsAMember())
         {
             do
             {
@@ -268,9 +268,25 @@ public sealed class Parser(List<Token> tokens, string fileName)
             while (Match(TokenType.Comma));
         }
 
+        // The values first, then anything a body can hold. What an enum may actually keep
+        // there is the checker's business; the shape is read here.
+        SkipNewlines();
+        List<Stmt> methods = [];
+        while (!Check(TokenType.RightBrace) && !AtEnd)
+        {
+            var member = Statement();
+            if (member is not null) methods.Add(member);
+            SkipNewlines();
+        }
+
         Consume(TokenType.RightBrace, $"This {name.Lexeme} body is never closed.");
-        return new Stmt.EnumDecl(name, members);
+        return new Stmt.EnumDecl(name, members, Methods: methods);
     }
+
+    /// <summary>Whether what follows begins a member rather than another enum value.</summary>
+    private bool StartsAMember() =>
+        Check(TokenType.Func, TokenType.Static, TokenType.At, TokenType.Var,
+              TokenType.Const, TokenType.Abstract, TokenType.Override);
 
     /// <summary>
     /// <c>class Dog extends Animal with Swimmer</c>, followed by either a braced body or —

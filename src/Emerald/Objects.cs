@@ -160,6 +160,9 @@ public sealed class EmClass(
 /// </summary>
 public sealed record EmEnumValue(string Type, string Name, int Ordinal)
 {
+    /// <summary>The enum this belongs to, so a method call on a value can find one.</summary>
+    public EmClass? Owner { get; init; }
+
     public override string ToString() => $"{Type}.{Name}";
 }
 
