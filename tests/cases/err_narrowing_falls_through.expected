@@ -1,0 +1,8 @@
+
+err_narrowing_falls_through.em:5  This is Int?, not Int, so abs may not exist.
+
+    5 |     return n.abs()
+
+  An Int? holds either an Int or nothing. Check it first, or supply a fallback with .or(...)
+
+  emerald explain

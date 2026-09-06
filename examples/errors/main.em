@@ -3,8 +3,12 @@
 func parse_age(text: String): Int {
     var age = text.to_int_maybe()
     throw "\"#{text}\" is not a number" if age == nothing
-    throw Error("an age of #{age.or(0)} is not believable") unless age.or(0).between?(0, 130)
-    return age.or(0)
+
+    # Past that guard, age is an Int and not an Int?. A throw leaves the function, so
+    # everything below it is the case where the check held - the same narrowing an
+    # if/else would give, without the else.
+    throw Error("an age of #{age} is not believable") unless age.between?(0, 130)
+    return age
 }
 
 var inputs = ["42", "banana", "900"]

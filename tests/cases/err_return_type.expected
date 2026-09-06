@@ -1,0 +1,4 @@
+
+err_return_type.em:4  name returns String, but this is Int.
+
+    4 |     return 42

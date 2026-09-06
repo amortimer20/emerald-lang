@@ -14,9 +14,12 @@ func choose(board: Board): Int {
             continue
         }
 
+        # Past that guard, square is an Int rather than an Int?, because a branch that
+        # cannot fall through makes the rest of the loop its else.
+        #
         # Squares are numbered 1-9 on the screen and 0-8 in the list. One subtraction,
         # in one place, is the whole of that translation.
-        var index = square.or(0) - 1
+        var index = square - 1
 
         unless index.between?(0, Board.SIZE - 1) {
             print("   That is not a square.")

@@ -1,0 +1,6 @@
+
+err_return_maybe.em:2  best returns Int, but this is Int?.
+
+    2 |     return scores.find { s => s > 100 }
+
+  Declare it as Int? if it can be nothing.

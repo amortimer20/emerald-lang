@@ -1,0 +1,6 @@
+
+err_return_from_a_constructor.em:6  constructor returns nothing, but this returns a value.
+
+    6 |         return name
+
+  A constructor gives back the object it is building. A plain `return` leaves it early.

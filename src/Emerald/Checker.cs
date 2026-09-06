@@ -59,7 +59,12 @@ public sealed class Checker(
         ["Error"] = new([EmType.String], new EmType.Prim("Error"), Required: 1),
     };
 
-    private readonly Stack<EmType> _returnTypes = new();
+    /// <summary>
+    /// What the body being checked promised to return, and the name to call it in a
+    /// diagnostic. This was a stack of <c>Any</c> used only to tell whether a return was
+    /// inside a function at all, which is why a declared return type went unchecked.
+    /// </summary>
+    private readonly Stack<(string What, EmType Type)> _returnTypes = new();
 
     /// <summary>
     /// How many loops enclose the statement being checked. Reset across a function
@@ -529,13 +534,15 @@ public sealed class Checker(
                     CheckPredicateName(method);
                     if (!method.IsStatic) CheckOverride(method, info);
                     if (method.Body is not null)
-                        CheckCallable(method.Params, method.Body, body, method.Name.Lexeme);
+                        CheckCallable(method.Params, method.Body, body, method.Name.Lexeme,
+                                      Resolve(method.ReturnType));
                     break;
 
                 case Stmt.ConstructorDecl ctor:
                     _inConstructor = true;
                     _sawSuperCall = false;
-                    CheckCallable(ctor.Params, ctor.Body, body, "constructor");
+                    CheckCallable(ctor.Params, ctor.Body, body, "constructor",
+                                  EmType.Nothing);
                     CheckSuperPlacement(ctor);
                     _inConstructor = false;
                     break;
@@ -933,19 +940,21 @@ public sealed class Checker(
     /// </summary>
     private void CheckProperty(Stmt.VarDecl property, ClassInfo info, Scope body)
     {
-        CheckCallable([], property.Getter!, body, property.Name.Lexeme);
+        CheckCallable([], property.Getter!, body, property.Name.Lexeme,
+                      info.Fields.GetValueOrDefault(property.Name.Lexeme, EmType.Any));
 
         if (property.Setter is null) return;
 
         var setterScope = new Scope(body, functionBoundary: true);
         setterScope.Declare("value",
                             info.Fields.GetValueOrDefault(property.Name.Lexeme, EmType.Any));
-        _returnTypes.Push(EmType.Any);
+        _returnTypes.Push((property.Name.Lexeme, EmType.Nothing));
         CheckBlock(property.Setter, setterScope);
         _returnTypes.Pop();
     }
 
-    private void CheckCallable(List<Param> parameters, List<Stmt> body, Scope outer, string what)
+    private void CheckCallable(List<Param> parameters, List<Stmt> body, Scope outer,
+                               string what, EmType returns)
     {
         var inner = new Scope(outer, functionBoundary: true);
         foreach (var p in parameters)
@@ -963,7 +972,7 @@ public sealed class Checker(
 
         CheckDefaultsComeLast(parameters);
 
-        _returnTypes.Push(EmType.Any);
+        _returnTypes.Push((what, returns));
         CheckBlock(body, inner);
         _returnTypes.Pop();
     }
@@ -1052,10 +1061,42 @@ public sealed class Checker(
             }
 
             case Stmt.Return r:
-                if (r.Value is not null) TypeOf(r.Value, scope);
+            {
                 if (_returnTypes.Count == 0)
+                {
+                    if (r.Value is not null) TypeOf(r.Value, scope);
                     Error(r.Keyword.Line, "return can only appear inside a function.");
+                    break;
+                }
+
+                var (what, wanted) = _returnTypes.Peek();
+
+                if (r.Value is null)
+                {
+                    if (wanted is not EmType.Unknown && !wanted.Equals(EmType.Nothing))
+                        Error(r.Keyword.Line,
+                              $"{what} returns {wanted.Show()}, but this return has no value.");
+                    break;
+                }
+
+                var given = TypeOf(r.Value, scope, wanted);
+
+                if (wanted.Equals(EmType.Nothing))
+                {
+                    Error(r.Keyword.Line, $"{what} returns nothing, but this returns a value.",
+                          what == "constructor"
+                              ? "A constructor gives back the object it is building. A plain "
+                                + "`return` leaves it early."
+                              : "Leave the value off.");
+                    break;
+                }
+
+                if (given is not EmType.Unknown && !wanted.Accepts(given))
+                    Error(LineOf(r.Value) is var line && line > 0 ? line : r.Keyword.Line,
+                          $"{what} returns {wanted.Show()}, but this is {given.Show()}.",
+                          Widening(wanted, given));
                 break;
+            }
         }
     }
 
@@ -1460,7 +1501,7 @@ public sealed class Checker(
 
         CheckDefaultsComeLast(fn.Params);
 
-        _returnTypes.Push(EmType.Any);
+        _returnTypes.Push((fn.Name.Lexeme, Resolve(fn.ReturnType)));
         int enclosingLoops = _loopDepth;
         _hiddenLoops += enclosingLoops;
         _loopDepth = 0;
@@ -1473,8 +1514,41 @@ public sealed class Checker(
     private void CheckBlock(List<Stmt> body, Scope scope)
     {
         CheckIndentation(body, _file);
-        foreach (var stmt in body) CheckStmt(stmt, scope);
+
+        // An `if` with no else whose branch cannot fall out of the bottom makes everything
+        // after it the else. So what the condition disproved is proved from there on, and
+        // `if x == nothing { return }` narrows the rest of the block the way writing the
+        // else out longhand already did.
+        //
+        // This is what the guard modifier is for — `return 0 if total == nothing` is the
+        // shape §3.1 encourages — and without it the encouraged shape was the one that
+        // lost narrowing.
+        var current = scope;
+
+        foreach (var stmt in body)
+        {
+            CheckStmt(stmt, current);
+
+            if (stmt is not Stmt.If { Else: null } guard || !Leaves(guard.Then)) continue;
+
+            var after = new Scope(current);
+            foreach (var (name, type) in Refinements(guard.Condition, whenTrue: false, current))
+                after.Declare(name, type);
+            current = after;
+        }
     }
+
+    /// <summary>
+    /// Whether control cannot reach the bottom of this block. Conservative on purpose: a
+    /// block that might fall through narrows nothing, which is the safe answer.
+    /// </summary>
+    private static bool Leaves(List<Stmt> body) =>
+        body.Count > 0 && body[^1] switch
+        {
+            Stmt.Return or Stmt.Throw or Stmt.Break or Stmt.Continue => true,
+            Stmt.If i => i.Else is not null && Leaves(i.Then) && Leaves(i.Else),
+            _ => false
+        };
 
     /// <summary>
     /// A second declaration of a name still visible in this function is almost always a
@@ -2020,7 +2094,7 @@ public sealed class Checker(
         if (l.Body is [Stmt.ExprStmt only])
             return new EmType.Func(parameters, TypeOf(only.Expression, inner));
 
-        _returnTypes.Push(EmType.Any);
+        _returnTypes.Push(("this block", EmType.Any));
         int enclosingLoops = _loopDepth;
         _hiddenLoops += enclosingLoops;
         _loopDepth = 0;
@@ -2276,10 +2350,22 @@ public sealed class Checker(
         }
 
         Error(name.Line, $"No method named {name.Lexeme} on {receiver.Show()}.",
-              PredicateSwallowed(name, Signatures.MethodsOn(receiver))
+              LeftOverFallback(name, receiver)
+                  ?? PredicateSwallowed(name, Signatures.MethodsOn(receiver))
                   ?? Suggest(name.Lexeme, Signatures.MethodsOn(receiver)));
         return EmType.Any;
     }
+
+    /// <summary>
+    /// <c>.or</c> and <c>.must</c> belong to <c>T?</c>, so meeting one on a plain <c>T</c>
+    /// almost always means the value was checked already and the fallback is left from
+    /// before the check. Saying a method is missing hides what actually changed.
+    /// </summary>
+    private static string? LeftOverFallback(Token name, EmType receiver) =>
+        name.Lexeme is "or" or "must"
+            ? $"{name.Lexeme} belongs to an optional. This is {receiver.Show()}, which "
+              + "always holds a value, so the fallback can go."
+            : null;
 
     /// <summary>
     /// The type of a built-in method named without parentheses, or null if it takes a
@@ -2583,6 +2669,18 @@ public sealed class Checker(
                     ? CheckArguments(kernel, c, args, $"Kernel.{get.Name.Lexeme}", get.Name.Line)
                     : MemberType(receiver, get.Name, scope);
             }
+
+            // A built-in method is found by head type, and a head reads through a ? —
+            // List<Int> and List<Int>? both look up as List. The container paths match on
+            // the concrete type and so noticed anyway, but the primitives were looked up
+            // by that name alone: `count.abs()` on an Int? found Int's abs and the maybe
+            // went unremarked. That skipped the check the language exists for on exactly
+            // the types most maybes have, since to_int_maybe, find and a dictionary lookup
+            // nearly all give back a primitive one.
+            //
+            // .or and .must are what you are supposed to ask of a maybe, so they go on.
+            if (receiver.IsMaybe && get.Name.Lexeme is not ("or" or "must"))
+                return MemberType(receiver, get.Name, scope);
 
             // A built-in has a signature now too, so the standard library is checked the
             // same way the program is.
@@ -3076,7 +3174,7 @@ public sealed class Checker(
                 if (block.Params.Count > 0)
                     inner.Declare(block.Params[0].Name.Lexeme, set.Element);
 
-                _returnTypes.Push(EmType.Any);
+                _returnTypes.Push(("this block", EmType.Any));
                 CheckBlock(block.Body, inner);
                 _returnTypes.Pop();
             }
@@ -3130,7 +3228,7 @@ public sealed class Checker(
                 if (block.Params.Count > 1)
                     inner.Declare(block.Params[1].Name.Lexeme, dict.Value);
 
-                _returnTypes.Push(EmType.Any);
+                _returnTypes.Push(("this block", EmType.Any));
                 CheckBlock(block.Body, inner);
                 _returnTypes.Pop();
             }
@@ -3157,8 +3255,16 @@ public sealed class Checker(
 
     private EmType NoSuchMember(Token name, string on, IEnumerable<string> candidates)
     {
-        Error(name.Line, $"No method named {name.Lexeme} on {on}.",
-              Suggest(name.Lexeme, candidates));
+        // .or and .must belong to T?, so meeting one on a plain T almost always means the
+        // value was checked already and the fallback is left over from before the check.
+        // Without this the reader is told a method is missing, when what changed is that
+        // the check above made it unnecessary.
+        string? hint = name.Lexeme is "or" or "must"
+            ? $"{name.Lexeme} belongs to an optional. This is {on}, which always holds a "
+              + "value, so the fallback can go."
+            : Suggest(name.Lexeme, candidates);
+
+        Error(name.Line, $"No method named {name.Lexeme} on {on}.", hint);
         return EmType.Any;
     }
 

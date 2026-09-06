@@ -1,0 +1,10 @@
+
+err_maybe_primitive_method.em:7  This is Int?, not Int, so abs may not exist.
+
+    7 | print(typed.abs())
+
+  An Int? holds either an Int or nothing. Check it first, or supply a fallback with .or(...)
+
+  emerald explain
+
+  2 further error(s) suppressed — likely caused by this one.
