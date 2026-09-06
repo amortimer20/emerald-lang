@@ -2752,6 +2752,12 @@ public sealed class Checker(
             if (receiver is EmType.Dict dict) return DictMemberType(dict, get.Name, c, scope);
             if (receiver is EmType.SetOf set) return SetMemberType(set, get.Name, c, scope);
 
+            // A range walks whole numbers, so its shared members are typed from Int. The
+            // rest of it -- contains?, first, last -- stays in the signature table, which
+            // is enough for members whose answer does not depend on a block.
+            if (receiver.Equals(EmType.Range) && Builtins.Shared.Contains(get.Name.Lexeme))
+                return IterableMemberType(EmType.Range, [EmType.Int], get.Name, c, scope);
+
             List<EmType> args = [.. c.Args.Select(arg => TypeOf(arg, scope))];
 
             // A method that declares a block parameter gives the block its shape, exactly
@@ -3356,6 +3362,83 @@ public sealed class Checker(
     /// What a dictionary method gives back. Like the list methods, these depend on the key
     /// and value types, so they are computed rather than looked up in a table.
     /// </summary>
+    /// <summary>
+    /// The members every container shares, typed once for all four.
+    ///
+    /// <paramref name="yields"/> is what the block is handed: one element from a list, set
+    /// or range, and a key beside a value from a dictionary — matching the two-parameter
+    /// block its <c>each</c> has always taken. Everything that differs between containers
+    /// is carried in that argument and in <paramref name="receiver"/>, so there is one
+    /// place where <c>map</c> means something and one place to change it.
+    /// </summary>
+    private EmType IterableMemberType(
+        EmType receiver, EmType[] yields, Token name, Expr.Call? call, Scope scope)
+    {
+        EmType element = yields[0];
+        bool inPairs = yields.Length > 1;
+        EmType blockReturn = EmType.Any;
+        EmType firstArg = EmType.Any;
+
+        if (call is not null)
+        {
+            if (call.Args.Count > 0) firstArg = TypeOf(call.Args[0], scope);
+
+            if (call.Trailing is { } block)
+            {
+                // reduce walks with a running total beside whatever the container yields;
+                // everything else hands over just the yield. Given as a shape rather than
+                // a single hint, because a dictionary's two are not the same type.
+                List<EmType> takes =
+                    name.Lexeme == "reduce" ? [firstArg, .. yields] : [.. yields];
+
+                if (LambdaType(block, scope, shape: new EmType.Func(takes, EmType.Any),
+                               supplies: takes.Count, given: name.Lexeme)
+                    is EmType.Func typed) blockReturn = typed.Return;
+
+                // each is the one that does not look at the answer. For the rest the
+                // block's value is the whole point, so a block with none is the mistake.
+                if (name.Lexeme != "each" && blockReturn.Equals(EmType.Nothing))
+                    Error(name.Line,
+                          $"This block gives nothing back, but {name.Lexeme} needs an "
+                          + "answer from it.",
+                          "A block of one expression answers with it. A longer one says "
+                          + "which value it gives:  return ...");
+            }
+        }
+
+        // A dictionary walks in pairs, and Emerald has no tuple type — so there is no
+        // value for the members that hand an element back to hand back. Refused with the
+        // route that does exist rather than answered with a shape that does not.
+        if (inPairs && name.Lexeme is "find" or "min" or "max" or "to_list" or "sum")
+        {
+            Error(name.Line,
+                  $"{name.Lexeme} is not available on {receiver.Show()}.",
+                  "A dictionary walks in pairs, and a pair is not a value on its own. "
+                  + "Ask its .keys() or .values() first.");
+            return EmType.Any;
+        }
+
+        return name.Lexeme switch
+        {
+            "map" => new EmType.Lst(blockReturn),
+
+            // Narrowing a container does not change what it is, so a filtered set is a
+            // set and a filtered dictionary is a dictionary. A range is the exception and
+            // gives a list: 1..10 without its odds is not a range, and no representation
+            // Emerald has could hold one.
+            "filter" or "reject" =>
+                receiver.Equals(EmType.Range) ? new EmType.Lst(element) : receiver,
+
+            "find" or "min" or "max" => EmType.Nullable(element),
+            "to_list" => new EmType.Lst(element),
+            "count" => EmType.Int,
+            "sum" => element.Equals(EmType.Float) ? EmType.Float : EmType.Int,
+            "any?" or "all?" or "empty?" => EmType.Bool,
+            "reduce" => firstArg,
+            _ => EmType.Nothing,
+        };
+    }
+
     private EmType SetMemberType(EmType.SetOf set, Token name, Expr.Call? call, Scope scope)
     {
         if (call is not null)
@@ -3368,7 +3451,8 @@ public sealed class Checker(
             var wanted = name.Lexeme switch
             {
                 "add" or "remove" or "contains?" => set.Element,
-                "union" or "intersect" or "difference" or "subset_of?" => set,
+                "union" or "intersect" or "difference" or "subset_of?"
+                    or "superset_of?" => set,
                 _ => null,
             };
 
@@ -3378,28 +3462,20 @@ public sealed class Checker(
                       + $"but this is {given[0].Show()}.",
                       Widening(wanted, given[0]));
 
-            if (call.Trailing is { } block && name.Lexeme == "each")
-            {
-                CheckBlockArity(block, 1, "each");
+            if (Builtins.Shared.Contains(name.Lexeme))
+                return IterableMemberType(set, [set.Element], name, call, scope);
 
-                var inner = new Scope(scope, functionBoundary: true);
-                if (block.Params.Count > 0)
-                    inner.Declare(block.Params[0].Name.Lexeme, set.Element);
-
-                _returnTypes.Push(("this block", EmType.Any));
-                CheckBlock(block.Body, inner);
-                _returnTypes.Pop();
-            }
-            else if (call.Trailing is not null) TypeOf(call.Trailing, scope);
+            if (call.Trailing is not null) TypeOf(call.Trailing, scope);
         }
+
+        if (Builtins.Shared.Contains(name.Lexeme))
+            return IterableMemberType(set, [set.Element], name, call, scope);
 
         return name.Lexeme switch
         {
-            "count" => EmType.Int,
-            "empty?" or "contains?" or "subset_of?" => EmType.Bool,
-            "to_list" => new EmType.Lst(set.Element),
+            "contains?" or "subset_of?" or "superset_of?" => EmType.Bool,
             "union" or "intersect" or "difference" => set,
-            "add" or "remove" or "clear" or "each" => EmType.Nothing,
+            "add" or "remove" or "clear" => EmType.Nothing,
 
             _ => NoSuchMember(name, set.Show(), Signatures.SetMethods),
         };
@@ -3430,29 +3506,19 @@ public sealed class Checker(
                       + $"but this gives it {given[1].Show()}.",
                       Widening(dict.Value, given[1]));
 
-            // each { key, value => ... } — the block's parameters come from the
-            // dictionary, which is the same contextual typing a list block gets.
-            if (call.Trailing is { } block && name.Lexeme == "each")
-            {
-                CheckBlockArity(block, 2, "each");
+            // A dictionary hands its block a key beside a value, which is the shape its
+            // each has always had and now the shape map, filter and the rest inherit.
+            if (Builtins.Shared.Contains(name.Lexeme))
+                return IterableMemberType(dict, [dict.Key, dict.Value], name, call, scope);
 
-                var inner = new Scope(scope, functionBoundary: true);
-                if (block.Params.Count > 0)
-                    inner.Declare(block.Params[0].Name.Lexeme, dict.Key);
-                if (block.Params.Count > 1)
-                    inner.Declare(block.Params[1].Name.Lexeme, dict.Value);
-
-                _returnTypes.Push(("this block", EmType.Any));
-                CheckBlock(block.Body, inner);
-                _returnTypes.Pop();
-            }
-            else if (call.Trailing is not null) TypeOf(call.Trailing, scope);
+            if (call.Trailing is not null) TypeOf(call.Trailing, scope);
         }
+
+        if (Builtins.Shared.Contains(name.Lexeme))
+            return IterableMemberType(dict, [dict.Key, dict.Value], name, call, scope);
 
         return name.Lexeme switch
         {
-            "count" => EmType.Int,
-            "empty?" => EmType.Bool,
             "has_key?" => EmType.Bool,
             "has_value?" => EmType.Bool,
             "keys" => new EmType.Lst(dict.Key),
@@ -3496,6 +3562,9 @@ public sealed class Checker(
 
     private EmType ListCallType(EmType.Lst list, Expr.Call c, Token name, Scope scope)
     {
+        if (Builtins.Shared.Contains(name.Lexeme))
+            return IterableMemberType(list, [list.Element], name, c, scope);
+
         foreach (var arg in c.Args) TypeOf(arg, scope);
 
         EmType blockReturn = EmType.Any;
@@ -3544,17 +3613,15 @@ public sealed class Checker(
 
         return name.Lexeme switch
         {
-            "map" => new EmType.Lst(blockReturn),
-            "filter" or "reject" or "sort" or "sort_by" or "reverse" => list,
+            "sort" or "sort_by" or "reverse" => list,
 
             // These can miss, so they give back a maybe and the checker insists you deal
             // with it. The clearest place the nullability design earns itself.
-            "find" or "first" or "last" or "min" or "max" => EmType.Nullable(element),
+            "first" or "last" => EmType.Nullable(element),
 
-            "index_of" or "count" or "sum" => EmType.Int,
-            "contains?" or "any?" or "all?" or "empty?" => EmType.Bool,
+            "index_of" => EmType.Int,
+            "contains?" => EmType.Bool,
             "join" => EmType.String,
-            "reduce" => firstArg,
 
             // A set has no literal of its own — the braces Python uses are a block and a
             // trailing lambda here, and the bracket is already a list's. So a list is how

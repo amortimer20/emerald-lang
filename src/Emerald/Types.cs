@@ -327,25 +327,40 @@ public static class Signatures
     /// What a set can be asked. <c>contains?</c> is unambiguous here where it was not on a
     /// dictionary — a set holds one kind of thing, so there is only one question to ask.
     /// </summary>
+    /// <summary>
+    /// What every container answers to. Kept beside the three lists below rather than
+    /// spelled into each, so a member added to the shared set cannot reach one container's
+    /// suggestions and miss another's.
+    /// </summary>
+    public static readonly string[] Shared = Builtins.Shared;
+
     public static readonly string[] SetMethods =
     [
-        "count", "empty?", "contains?", "add", "remove", "clear",
-        "to_list", "each", "union", "intersect", "difference", "subset_of?",
+        .. Shared,
+        "contains?", "add", "remove", "clear",
+        "union", "intersect", "difference", "subset_of?", "superset_of?",
     ];
 
+    /// <summary>
+    /// A dictionary walks in pairs, so the shared members that hand an element back have
+    /// no shape to give and are left out. They still resolve, and say why.
+    /// </summary>
     public static readonly string[] DictMethods =
     [
-        "count", "empty?", "has_key?", "has_value?", "keys", "values",
-        "get", "set", "remove", "clear", "each",
+        .. Shared.Where(m => m is not ("find" or "min" or "max" or "to_list" or "sum")),
+        "has_key?", "has_value?", "keys", "values", "get", "set", "remove", "clear",
     ];
 
     public static readonly string[] ListMethods =
     [
-        "each", "map", "filter", "reject", "find", "index_of", "contains?",
-        "any?", "all?", "empty?", "reduce", "count", "sum", "min", "max",
-        "sort", "sort_by", "reverse", "first", "last", "join",
+        .. Shared,
+        "index_of", "contains?", "sort", "sort_by", "reverse", "first", "last", "join",
         "add", "remove", "remove_at", "clear", "to_set",
     ];
+
+    /// <summary>A range walks whole numbers, and answers to the shared set like the rest.</summary>
+    public static readonly string[] RangeMethods =
+        [.. Shared, "contains?", "first", "last"];
 
     /// <summary>Methods whose last argument is a block taking one element.</summary>
     public static readonly HashSet<string> TakesElementBlock =

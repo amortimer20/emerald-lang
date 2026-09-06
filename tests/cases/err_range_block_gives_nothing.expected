@@ -1,0 +1,6 @@
+
+err_range_block_gives_nothing.em:3  This block gives nothing back, but map needs an answer from it.
+
+    3 | var squares = (1..3).map { n => print(n) }
+
+  A block of one expression answers with it. A longer one says which value it gives:  return ...

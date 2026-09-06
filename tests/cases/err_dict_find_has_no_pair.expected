@@ -1,0 +1,6 @@
+
+err_dict_find_has_no_pair.em:5  find is not available on Dictionary<String, Int>.
+
+    5 | print(scores.find { name, score => score > 50 })
+
+  A dictionary walks in pairs, and a pair is not a value on its own. Ask its .keys() or .values() first.

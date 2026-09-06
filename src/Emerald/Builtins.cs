@@ -260,11 +260,9 @@ public static class Builtins
     {
         switch (name)
         {
-            case "count": return (long)set.Count;
-            case "empty?": return set.Count == 0;
             case "contains?": return args[0] is { } v && set.Has(v);
-            case "to_list": return new EmList([.. set.Members]);
             case "clear": set.Clear(); return null;
+            case "superset_of?": return Other(args).Members.All(set.Has);
 
             case "add":
                 set.Add(args[0] ?? throw new RuntimeError("nothing cannot be a set member."));
@@ -279,16 +277,9 @@ public static class Builtins
             case "difference": return EmSet.Of(set.Members.Where(m => !Other(args).Has(m)));
             case "subset_of?": return set.Members.All(Other(args).Has);
 
-            case "each":
-            {
-                var block = args.LastOrDefault() as ICallable
-                    ?? throw new RuntimeError("each needs a block, like { item => ... }.");
-
-                foreach (var member in set.Members.ToList()) block.Call(interp, [member]);
-                return null;
-            }
         }
 
+        if (Shared.Contains(name)) return SharedMethod(interp, set, name, args);
         throw new RuntimeError($"No method named {name} on Set.");
     }
 
@@ -303,8 +294,6 @@ public static class Builtins
     {
         switch (name)
         {
-            case "count": return (long)dict.Count;
-            case "empty?": return dict.Count == 0;
             case "keys": return new EmList([.. dict.Keys]);
             case "values": return new EmList([.. dict.Values]);
             case "clear": dict.Clear(); return null;
@@ -322,21 +311,9 @@ public static class Builtins
             case "set": dict.Set(Key(args[0]), args[1]); return null;
             case "remove": dict.Remove(Key(args[0])); return null;
 
-            case "each":
-            {
-                var block = args.LastOrDefault() as ICallable
-                    ?? throw new RuntimeError(
-                        "each needs a block, like { key, value => ... }.");
-
-                // A copy of the keys, so writing to the dictionary inside the block ends
-                // rather than looping — the same promise `for x in list` makes.
-                foreach (var key in dict.Keys.ToList())
-                    block.Call(interp, [key, dict.Get(key)]);
-
-                return null;
-            }
         }
 
+        if (Shared.Contains(name)) return SharedMethod(interp, dict, name, args);
         throw new RuntimeError($"No method named {name} on Dictionary.");
     }
 
@@ -370,32 +347,16 @@ public static class Builtins
     {
         List<object?> items = list.Items;
 
+        // Everything a set, range and dictionary also answers to lives in one place, so
+        // the four containers cannot drift apart. What stays here is what is genuinely a
+        // list's own: ordering, positional access, and mutation.
+        if (Shared.Contains(name)) return SharedMethod(interp, list, name, args);
+
         return name switch
         {
-            // iterate / transform / select
-            "each" => Each(interp, items, args),
-            "map" => new EmList([.. items.Select(x => Block(args).Call(interp, [x]))]),
-            "filter" => new EmList([.. items.Where(x => Truthy(Block(args).Call(interp, [x])))]),
-            "reject" => new EmList([.. items.Where(x => !Truthy(Block(args).Call(interp, [x])))]),
-
-            // search — find and first/last give back a maybe, because they can miss
-            "find" => items.FirstOrDefault(x => Truthy(Block(args).Call(interp, [x]))),
+            // search
             "index_of" => (long)items.FindIndex(x => interp.Same(x, args[0])),
             "contains?" => items.Any(x => interp.Same(x, args[0])),
-
-            // test
-            "any?" => args.Count > 0
-                ? items.Any(x => Truthy(Block(args).Call(interp, [x])))
-                : items.Count > 0,
-            "all?" => items.All(x => Truthy(Block(args).Call(interp, [x]))),
-            "empty?" => items.Count == 0,
-
-            // reduce
-            "reduce" => items.Aggregate(args[0], (acc, x) => Block(args).Call(interp, [acc, x])),
-            "count" => (long)items.Count,
-            "sum" => items.Aggregate(0L, (acc, x) => acc + (x is long i ? i : 0L)),
-            "min" => items.Count == 0 ? null : items.Min(),
-            "max" => items.Count == 0 ? null : items.Max(),
 
             // order
             "sort" => new EmList([.. items.OrderBy(x => x)]),
@@ -420,13 +381,6 @@ public static class Builtins
 
             _ => throw new RuntimeError($"No method named {name} on List.")
         };
-
-        static object? Each(Interpreter interp, List<object?> items, List<object?> args)
-        {
-            var body = Block(args);
-            foreach (var item in items) body.Call(interp, [item]);
-            return null;
-        }
 
         static object? Mutate(List<object?> items, Action action)
         {
@@ -716,17 +670,162 @@ public static class Builtins
             _ => throw new RuntimeError($"No method named {name} on String.")
         };
 
+    // ---- Iterable -------------------------------------------------------
+
+    /// <summary>
+    /// The members every container answers to, implemented once over whatever it yields.
+    ///
+    /// Before this, only <c>List</c> had them: <c>(1..10).map</c>, <c>set.filter</c> and
+    /// <c>scores.any?</c> were all errors, so a student who learned the vocabulary on a
+    /// list met a wall on every other container — not a different name to learn, just a
+    /// wall. §3.7 fenced sprinkles away from collections on the grounds that they already
+    /// carried the core twenty; only one of the four did.
+    /// </summary>
+    public static readonly string[] Shared =
+    [
+        "each", "map", "filter", "reject", "find", "any?", "all?", "count", "empty?",
+        "reduce", "sum", "min", "max", "to_list",
+    ];
+
+    /// <summary>
+    /// What a container hands its block, one call at a time. A list, set or range gives
+    /// one value; a dictionary gives a key and a value, matching the two-parameter block
+    /// its own <c>each</c> has always taken.
+    /// </summary>
+    private static IEnumerable<List<object?>> Rows(object? target) => target switch
+    {
+        EmList list => list.Items.ToList().Select(x => new List<object?> { x }),
+        EmSet set => set.Members.ToList().Select(x => new List<object?> { x }),
+        EmRange range => range.Select(n => new List<object?> { n }),
+
+        // A copy of the keys, so writing to the dictionary inside the block ends rather
+        // than looping — the same promise `for x in list` and `dict.each` both make.
+        EmDict dict => dict.Keys.ToList().Select(k => new List<object?> { k, dict.Get(k) }),
+
+        _ => throw new RuntimeError($"{TypeName(target)} cannot be walked.")
+    };
+
+    /// <summary>
+    /// Puts kept rows back into the shape they came from. <c>filter</c> on a set is a set
+    /// and on a dictionary is a dictionary, because narrowing a container should not
+    /// change what it is. A range rebuilds as a list: 1..10 filtered to the evens is not
+    /// a range, and pretending otherwise would need a representation Emerald does not
+    /// have. <c>map</c> is a list from every receiver, since its answers may collide or
+    /// be unhashable and it is not narrowing anything.
+    /// </summary>
+    private static object? Rebuild(object? original, IEnumerable<List<object?>> kept) =>
+        original switch
+        {
+            EmSet => EmSet.Of(kept.Select(row => row[0])),
+            EmDict => DictOf(kept),
+            _ => new EmList([.. kept.Select(row => row[0])]),
+        };
+
+    private static EmDict DictOf(IEnumerable<List<object?>> rows)
+    {
+        var built = new EmDict();
+        foreach (var row in rows) built.Set(row[0]!, row[1]);
+        return built;
+    }
+
+    /// <summary>
+    /// A dictionary yields pairs, and a pair is not a value Emerald can hand back — there
+    /// is no tuple type. So the members that return an <em>element</em> are unavailable on
+    /// one, and say so rather than inventing a shape.
+    /// </summary>
+    private static object? Single(object? target, List<object?> row, string name) =>
+        target is EmDict
+            ? throw new RuntimeError(
+                $"{name} is not available on a Dictionary.",
+                "A dictionary walks in pairs, and a pair is not a value on its own. "
+                + "Ask its .keys() or .values() instead.")
+            : row[0];
+
+    private static object? SharedMethod(
+        Interpreter interp, object? target, string name, List<object?> args)
+    {
+        var rows = Rows(target);
+        bool Test(List<object?> row) => Truthy(Block(args).Call(interp, row));
+
+        switch (name)
+        {
+            case "each":
+            {
+                foreach (var row in rows) Block(args).Call(interp, row);
+                return null;
+            }
+
+            case "map": return new EmList([.. rows.Select(r => Block(args).Call(interp, r))]);
+            case "filter": return Rebuild(target, rows.Where(Test));
+            case "reject": return Rebuild(target, rows.Where(r => !Test(r)));
+
+            case "any?": return args.Count > 0 ? rows.Any(Test) : rows.Any();
+            case "all?": return rows.All(Test);
+            case "count": return (long)rows.Count();
+            case "empty?": return !rows.Any();
+
+            case "find":
+                return rows.FirstOrDefault(Test) is { } hit ? Single(target, hit, "find") : null;
+
+            case "reduce":
+                return rows.Aggregate(
+                    args[0], (acc, row) => Block(args).Call(interp, [acc, .. row]));
+
+            case "to_list": return new EmList([.. rows.Select(r => Single(target, r, "to_list"))]);
+
+            // Sums whatever it is given rather than only whole numbers. Adding a list of
+            // Floats used to answer 0, because the old fold started at 0L and dropped
+            // anything that was not a long on the floor.
+            case "sum": return Total(rows.Select(r => Single(target, r, "sum")));
+
+            case "min":
+            case "max":
+            {
+                var values = rows.Select(r => Single(target, r, name)).ToList();
+                if (values.Count == 0) return null;
+                return name == "min" ? values.Min() : values.Max();
+            }
+        }
+
+        throw new RuntimeError($"No method named {name} on {TypeName(target)}.");
+
+        static ICallable Block(List<object?> args) =>
+            args.LastOrDefault() as ICallable
+            ?? throw new RuntimeError("This method needs a block, like { x => ... }.");
+    }
+
+    /// <summary>
+    /// Adds whole numbers as whole numbers and anything with a fraction as a Float, so a
+    /// list of Ints still sums to an Int and a list of Floats no longer sums to zero.
+    /// </summary>
+    private static object? Total(IEnumerable<object?> values)
+    {
+        long whole = 0;
+        double fractional = 0;
+        bool anyFloat = false;
+
+        foreach (var value in values)
+        {
+            if (value is long i) whole += i;
+            else if (value is double d) { fractional += d; anyFloat = true; }
+        }
+
+        // Cast both arms: without them C# unifies the ternary to double, and every sum
+        // of whole numbers came back as 5050.0.
+        return anyFloat ? (object)(whole + fractional) : (object)whole;
+    }
+
     // ---- Range / Bool ---------------------------------------------------
 
     private static object? RangeMethod(
         Interpreter interp, EmRange range, string name, List<object?> args) => name switch
     {
-        "each" => Iterate(interp, range, args.LastOrDefault(), "each"),
-        "count" => (long)range.Count(),
         "contains?" => range.Contains(AsInt(args[0], "contains?")),
         "first" => range.Start,
         "last" => range.End,
-        _ => throw new RuntimeError($"No method named {name} on Range.")
+        _ => Shared.Contains(name)
+            ? SharedMethod(interp, range, name, args)
+            : throw new RuntimeError($"No method named {name} on Range.")
     };
 
     private static object? BoolMethod(bool value, string name) => name switch
