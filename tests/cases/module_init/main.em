@@ -5,5 +5,5 @@
 print("entry starts")
 print(Counter.total)
 print(Counter.total)
-print("untouched is never initialised")
+print("untouched is never initialized")
 print("entry ends")

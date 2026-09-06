@@ -3,7 +3,7 @@ using System.Text;
 namespace Emerald;
 
 /// <summary>
-/// Tree -> behaviour. A tree-walking interpreter: each node type knows how to evaluate
+/// Tree -> behavior. A tree-walking interpreter: each node type knows how to evaluate
 /// itself, recursively. Slow by design and simple by design — the CIL backend replaces
 /// this later, but the semantics get decided here.
 /// </summary>
@@ -638,20 +638,20 @@ public sealed class Interpreter
             overloads.Add(method);
         }
 
-        // Static initialisers run once, when the type is declared.
+        // Static initializers run once, when the type is declared.
         var staticScope = new Env(env);
         staticScope.Declare("Self", built);
         foreach (var field in decl.Members.OfType<Stmt.VarDecl>().Where(f => f.IsStatic))
             built.Statics[field.Name.Lexeme] =
                 field.Init is null ? null : Evaluate(field.Init, staticScope);
 
-        if (decl.Initialiser is { Count: > 0 }) built.Initialiser = decl.Initialiser;
+        if (decl.Initializer is { Count: > 0 }) built.Initializer = decl.Initializer;
 
         return built;
     }
 
     /// <summary>
-    /// An enum is an EmClass whose statics are its values, so <c>Colour.RED</c> resolves
+    /// An enum is an EmClass whose statics are its values, so <c>Color.RED</c> resolves
     /// through the same static lookup a class uses and nothing downstream needs to know
     /// the difference. <c>values</c> is added alongside, because asking an enum for its
     /// members is the one thing you cannot write yourself.
@@ -687,7 +687,7 @@ public sealed class Interpreter
 
         var instance = new EmInstance(cls);
 
-        // Field initialisers run in a scope where `self` already exists, so one field can
+        // Field initializers run in a scope where `self` already exists, so one field can
         // be defined in terms of another.
         var fieldScope = new Env(cls.Closure);
         fieldScope.Declare("self", instance);
@@ -884,15 +884,15 @@ public sealed class Interpreter
     /// <summary>
     /// Runs a module's top-level code, once, before its first member is reached (§3.3).
     ///
-    /// The flag is set before the body runs, not after: a module whose initialiser reaches
+    /// The flag is set before the body runs, not after: a module whose initializer reaches
     /// back into itself would otherwise recurse forever, and running it once is the promise
     /// — not running it once per path that arrives.
     /// </summary>
-    private void Initialise(EmClass cls)
+    private void Initialize(EmClass cls)
     {
-        if (cls.Initialised || cls.Initialiser is not { } body) return;
+        if (cls.Initialized || cls.Initializer is not { } body) return;
 
-        cls.Initialised = true;
+        cls.Initialized = true;
 
         var scope = new Env(cls.Closure, shared: cls.Statics);
         scope.Declare("Self", cls);
@@ -925,7 +925,7 @@ public sealed class Interpreter
     private object? GetStatic(
         EmClass cls, Token name, List<object?> args, bool invoking = true)
     {
-        Initialise(cls);
+        Initialize(cls);
 
         // A static var is a value, so it is read without parentheses either way — the
         // parens only decide what happens to a static *method* (§3.1).
@@ -1163,7 +1163,7 @@ public sealed class Interpreter
 
     /// <summary>
     /// An arithmetic operator, dispatched to a method when the left side is a user type
-    /// (§3.2). Everything else falls through to the built-in numeric behaviour.
+    /// (§3.2). Everything else falls through to the built-in numeric behavior.
     ///
     /// This has to be an instance method — calling a user's <c>add</c> needs the
     /// interpreter — which is why <see cref="Arithmetic"/> stays static behind it.
@@ -1337,7 +1337,7 @@ public sealed class Interpreter
             // to use when there is none" — so the fallback is evaluated only when there is
             // none. It read as a call and behaved like one: `here.or(fallback())` ran the
             // fallback and discarded it, burning whatever side effects it had. Every
-            // neighbouring construct short-circuits, including the `or` operator this
+            // neighboring construct short-circuits, including the `or` operator this
             // shares a name with, and §3.2 defines this one as `if v != nothing then v
             // else x` — which evaluates a single branch.
             if (get.Name.Lexeme == "or" && c.Args.Count == 1 && c.Trailing is null)

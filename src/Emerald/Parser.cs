@@ -241,7 +241,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
     }
 
     /// <summary>
-    /// <c>enum Colour { RED, GREEN, BLUE }</c>.
+    /// <c>enum Color { RED, GREEN, BLUE }</c>.
     ///
     /// Comma-separated rather than newline-separated, because the body is a list of names
     /// and not a sequence of statements — the same shape as <c>with A, B</c> and

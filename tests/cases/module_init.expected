@@ -1,6 +1,6 @@
 entry starts
-counter initialising
+counter initializing
 42
 42
-untouched is never initialised
+untouched is never initialized
 entry ends

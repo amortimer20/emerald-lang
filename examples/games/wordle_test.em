@@ -20,7 +20,7 @@ func yellows_a_letter_in_the_wrong_place() {
 }
 
 # The one that matters. ABBEY holds two Bs; the exact match at position three claims
-# one, so only one is left over — the leading B is yellow and the fourth is grey.
+# one, so only one is left over — the leading B is yellow and the fourth is gray.
 @test
 func spends_each_repeated_letter_once() {
     assert WordleTest.marks_of("abbey", "bobby") == "PMHMH"

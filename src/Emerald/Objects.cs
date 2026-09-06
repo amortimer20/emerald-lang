@@ -50,7 +50,7 @@ public sealed class EmClass(
     /// <summary>Abstract members nothing has provided. Non-empty means not instantiable.</summary>
     public IReadOnlyList<string> Unimplemented => unimplemented;
 
-    /// <summary>Type-level state and behaviour: one copy, shared by every instance.</summary>
+    /// <summary>Type-level state and behavior: one copy, shared by every instance.</summary>
     public Dictionary<string, object?> Statics { get; } = [];
     public Dictionary<string, List<Stmt.FuncDecl>> StaticMethods { get; } = [];
 
@@ -86,9 +86,9 @@ public sealed class EmClass(
     /// first member access rather than at startup, which is what keeps Python's
     /// import-order problems from arising: nothing runs because a file merely exists.
     /// </summary>
-    public List<Stmt>? Initialiser { get; set; }
+    public List<Stmt>? Initializer { get; set; }
 
-    public bool Initialised { get; set; }
+    public bool Initialized { get; set; }
 
     public Stmt.VarDecl? FindProperty(string wanted) =>
         Properties.TryGetValue(wanted, out var p) ? p : super?.FindProperty(wanted);
@@ -119,7 +119,7 @@ public sealed class EmClass(
         return super?.FindMethods(wanted) ?? [];
     }
 
-    /// <summary>Base fields first, so a subclass's initialisers can rely on them.</summary>
+    /// <summary>Base fields first, so a subclass's initializers can rely on them.</summary>
     public IEnumerable<Stmt.VarDecl> AllFields() =>
         (super?.AllFields() ?? []).Concat(fields);
 
@@ -150,9 +150,9 @@ public sealed class EmClass(
 /// <summary>
 /// One value of an enum. Carries its type and its name, which is all a closed set of
 /// names needs — no payload, because §6 harvested the demand as alignment, dock,
-/// orientation and colour, and every one of those is a plain name.
+/// orientation and color, and every one of those is a plain name.
 ///
-/// A record, so <c>==</c> compares the two fields and two references to Colour.RED are
+/// A record, so <c>==</c> compares the two fields and two references to Color.RED are
 /// equal without anything being written to make them so.
 /// </summary>
 public sealed record EmEnumValue(string Type, string Name, int Ordinal)

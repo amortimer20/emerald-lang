@@ -132,7 +132,7 @@ public abstract record Stmt
 
     /// <summary>
     /// Leaving a loop early, and skipping to its next turn. Both carry their keyword
-    /// token only — there is no labelled form, so there is nothing else to record.
+    /// token only — there is no labeled form, so there is nothing else to record.
     /// </summary>
     public sealed record Break(Token Keyword) : Stmt;
     public sealed record Continue(Token Keyword) : Stmt;
@@ -162,7 +162,7 @@ public abstract record Stmt
     /// parsing differs, so nothing downstream needs to know which shape was written.
     /// </summary>
     /// <summary>
-    /// <c>Initialiser</c> holds a module file's top-level statements — the code that is not
+    /// <c>Initializer</c> holds a module file's top-level statements — the code that is not
     /// a declaration. §3.3 lowers them to a static constructor, run once on first member
     /// access. They used to be handed through as "members", where every pass that walked
     /// members ignored anything that was not a declaration, and they ran nowhere at all.
@@ -170,15 +170,15 @@ public abstract record Stmt
     public sealed record ClassDecl(
         TypeKind Kind, Token Name, Token? BaseName,
         List<Token> Traits, List<Stmt> Members,
-        List<Attr>? Attributes = null, List<Stmt>? Initialiser = null) : Stmt;
+        List<Attr>? Attributes = null, List<Stmt>? Initializer = null) : Stmt;
 
     public sealed record ConstructorDecl(
         Token Keyword, List<Param> Params, List<Stmt> Body) : Stmt;
 
     /// <summary>
-    /// <c>enum Colour { RED, GREEN, BLUE }</c> — a closed set of named values, and
+    /// <c>enum Color { RED, GREEN, BLUE }</c> — a closed set of named values, and
     /// nothing else. No payloads: §6 harvested the demand as alignment, dock, orientation
-    /// and colour, all of which are plain names, and a tagged union is a different feature
+    /// and color, all of which are plain names, and a tagged union is a different feature
     /// wearing the same keyword.
     /// </summary>
     public sealed record EnumDecl(

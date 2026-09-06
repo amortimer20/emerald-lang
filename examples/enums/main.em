@@ -1,7 +1,7 @@
 # Enums: a closed set of named values (§6)
 #
 # The alternative is passing strings around, which loses every bit of checking — the one
-# thing the type system exists for. `align("centre")` compiles and then does nothing;
+# thing the type system exists for. `align("center")` compiles and then does nothing;
 # `align(Alignment.CENTER)` cannot be spelled wrong.
 
 enum Alignment { LEFT, CENTER, RIGHT }
@@ -22,7 +22,7 @@ print(side.name)
 print(side.name.lower())
 
 print()
-print("centred? #{side == Alignment.CENTER}")
+print("centered? #{side == Alignment.CENTER}")
 print("left?    #{side == Alignment.LEFT}")
 
 # Every value, in declaration order.
@@ -39,7 +39,7 @@ func margin_for(a: Alignment): Int {
 }
 
 print()
-print("centre margin: #{margin_for(Alignment.CENTER)}")
+print("center margin: #{margin_for(Alignment.CENTER)}")
 print("right margin:  #{margin_for(Alignment.RIGHT)}")
 
 # An enum value is an ordinary value — it goes in lists, dictionaries, and sets.

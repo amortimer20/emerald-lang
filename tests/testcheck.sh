@@ -40,7 +40,7 @@ grep -q "MAIN RAN" <<<"$out" && bad "main.em must not run during tests" || ok "m
 grep -q "ok    DoubleTest.doubles?" <<<"$out" && ok "reports a pass" || bad "reports a pass"
 grep -q "returned false" <<<"$out" && ok "reports a false return" || bad "reports a false return"
 grep -q "deliberate" <<<"$out" && ok "reports a thrown message" || bad "reports a thrown message"
-grep -q "3 tests, 2 failing" <<<"$out" && ok "summarises" || bad "summarises"
+grep -q "3 tests, 2 failing" <<<"$out" && ok "summarizes" || bad "summarizes"
 [[ $code -eq 1 ]] && ok "fails with exit 1" || bad "fails with exit 1 (got $code)"
 
 # An enum is a type the tests must be able to see. Loading declarations for a test run
@@ -48,7 +48,7 @@ grep -q "3 tests, 2 failing" <<<"$out" && ok "summarises" || bad "summarises"
 # variable named ..." — including an enum declared in the entry file.
 mkdir -p "$sandbox/enums"
 cat > "$sandbox/enums/main.em" <<'EOF'
-enum Colour { RED, BLUE }
+enum Color { RED, BLUE }
 EOF
 cat > "$sandbox/enums/side.em" <<'EOF'
 enum Side { LEFT, RIGHT }
@@ -56,7 +56,7 @@ EOF
 cat > "$sandbox/enums/colour_test.em" <<'EOF'
 @test
 func sees_an_enum_in_the_entry_file() {
-    assert Colour.RED.name == "RED"
+    assert Color.RED.name == "RED"
 }
 
 @test

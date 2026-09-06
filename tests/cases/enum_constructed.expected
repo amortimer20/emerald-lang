@@ -1,6 +1,6 @@
 
-enum_constructed.em:2  Colour is an enum, so it has only the values it declares.
+enum_constructed.em:2  Color is an enum, so it has only the values it declares.
 
-    2 | var c = Colour()
+    2 | var c = Color()
 
-  Use one of them:  Colour.RED
+  Use one of them:  Color.RED

@@ -70,7 +70,7 @@ public sealed class Checker(
     /// How many loops enclose the statement being checked. Reset across a function
     /// boundary, so `items.each { x => break }` is rejected: the block is a function, and
     /// break cannot leave one. Ruby allows it and the result is a control-flow construct
-    /// whose behaviour depends on whether the enclosing call happens to yield.
+    /// whose behavior depends on whether the enclosing call happens to yield.
     /// </summary>
     private int _loopDepth;
 
@@ -171,7 +171,7 @@ public sealed class Checker(
         }
 
         // An enum is a ClassInfo with a different Kind, so type annotations, Obj values
-        // and Colour.RED all resolve through the machinery classes already use. What it
+        // and Color.RED all resolve through the machinery classes already use. What it
         // is *not* allowed to do is enforced where those differences matter.
         foreach (var stmt in program)
         {
@@ -412,10 +412,10 @@ public sealed class Checker(
         // values, and the type is unusable. The design document's own Vector3 sample
         // assumed this and did not compile.
         //
-        // Every stored field is a parameter, including one with an initialiser. The
-        // alternative — an initialised field drops out of the parameter list — reads well
-        // until someone adds an initialiser to an existing field and silently changes the
-        // arity of every call. When default parameter values land, a field's initialiser
+        // Every stored field is a parameter, including one with an initializer. The
+        // alternative — an initialized field drops out of the parameter list — reads well
+        // until someone adds an initializer to an existing field and silently changes the
+        // arity of every call. When default parameter values land, a field's initializer
         // should become that parameter's default, which fixes this additively.
         if (!info.HasConstructor && info.Base is null && decl.Kind == TypeKind.Struct)
             info.ConstructorParams =
@@ -426,7 +426,7 @@ public sealed class Checker(
 
     /// <summary>
     /// An enum's values are constants of its own type, so §3.4's constant casing applies
-    /// to them — <c>Colour.RED</c>, not <c>Colour.red</c>. That needs no new rule.
+    /// to them — <c>Color.RED</c>, not <c>Color.red</c>. That needs no new rule.
     /// </summary>
     private void CheckEnum(Stmt.EnumDecl decl)
     {
@@ -561,13 +561,13 @@ public sealed class Checker(
         // were written as a file's own variables and only became static fields because
         // §3.3 turns a file into a class. That says nothing about how another file reaches
         // them, which is a separate question §3.3 leaves open.
-        if (decl.Initialiser is { Count: > 0 } initialiser)
+        if (decl.Initializer is { Count: > 0 } initializer)
         {
             var moduleScope = new Scope(body);
             foreach (var (field, type) in info.StaticFields)
                 moduleScope.Declare(field, type, isConst: false, line: decl.Name.Line);
 
-            CheckBlock(initialiser, moduleScope);
+            CheckBlock(initializer, moduleScope);
         }
 
         _mirroring = wasMirroring;
@@ -1210,7 +1210,7 @@ public sealed class Checker(
 
     private void CheckVarDecl(Stmt.VarDecl v, Scope scope)
     {
-        // The annotation is resolved first so it can be handed to the initialiser: a
+        // The annotation is resolved first so it can be handed to the initializer: a
         // block takes its parameter types from it, and an overloaded method value takes
         // which version it names from it (§3.1). Both need the shape before the value.
         EmType? annotation = v.Type is null ? null : Resolve(v.Type);
@@ -1681,7 +1681,7 @@ public sealed class Checker(
 
                 case Stmt.ClassDecl c:
                     foreach (var member in c.Members) Walk(member, visible);
-                    foreach (var line in c.Initialiser ?? []) Walk(line, visible);
+                    foreach (var line in c.Initializer ?? []) Walk(line, visible);
                     break;
 
                 case Stmt.If i:
@@ -2267,7 +2267,7 @@ public sealed class Checker(
 
     /// <summary>
     /// The <c>?.</c> access whose receiver is being typed right now, if there is one.
-    /// Only <see cref="PredicateSwallowed"/> reads it, to recognise the one shape the
+    /// Only <see cref="PredicateSwallowed"/> reads it, to recognize the one shape the
     /// scanner's rule gets wrong for a reader: <c>n.even?.to_string()</c>, where the ? was
     /// meant to end the name and was taken as the operator. Rarer than it was — with
     /// parentheses required (§3.1) the correct spelling has no <c>?.</c> in it at all,
@@ -3818,7 +3818,7 @@ public sealed class Checker(
     // ---- naming (§3.4) --------------------------------------------------
 
     /// <summary>
-    /// Two casings, one statable rule: types are capitalised, nothing else is. Warnings
+    /// Two casings, one statable rule: types are capitalized, nothing else is. Warnings
     /// rather than errors, because renaming is a semantic change and a compiler that
     /// refuses to run over a style disagreement is a compiler people route around.
     ///
@@ -3843,7 +3843,7 @@ public sealed class Checker(
             if (!char.IsUpper(bare[0]) || bare.Contains('_'))
                 Warn(name.Line,
                      $"Type names are written in PascalCase, so {text} reads as something else.",
-                     $"Rename it to {ToPascal(bare)}. Types are capitalised; nothing else is.",
+                     $"Rename it to {ToPascal(bare)}. Types are capitalized; nothing else is.",
                      topic: "casing");
             return;
         }
@@ -3860,7 +3860,7 @@ public sealed class Checker(
         if (bare.Any(char.IsUpper))
             Warn(name.Line,
                  $"{Article(kind)} {kind} is written in snake_case, so {text} reads as a type.",
-                 $"Rename it to {ToSnake(bare)}. Capitalised names mean types in Emerald.",
+                 $"Rename it to {ToSnake(bare)}. Capitalized names mean types in Emerald.",
                  topic: "casing");
     }
 

@@ -385,8 +385,8 @@ public static class Explanations
             class PlayerStats { }
             """,
             """
-            Emerald uses two casings and one rule: types are capitalised, and nothing else
-            is. So a capitalised name reads as a type wherever it appears, and a reader
+            Emerald uses two casings and one rule: types are capitalized, and nothing else
+            is. So a capitalized name reads as a type wherever it appears, and a reader
             never has to look a name up to know which kind of thing it is.
 
             This is a warning, not an error. The program runs; the name just says

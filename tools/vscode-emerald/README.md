@@ -37,7 +37,7 @@ code, all three comment forms, `@attributes`, numbers, and ranges.
 
 Two details specific to Emerald:
 
-- **Predicate methods** (`empty?`, `even?`) are recognised as one token, `?` included, so
+- **Predicate methods** (`empty?`, `even?`) are recognized as one token, `?` included, so
   the name highlights as a unit rather than a name plus a stray operator.
 - **Keywords after a dot are not keywords.** `maybe.or(0)` highlights `or` as a method,
   not as the logical operator — because in Emerald it is one (member names live in their

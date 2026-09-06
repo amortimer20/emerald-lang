@@ -57,7 +57,7 @@ print(Math.sqrt(16.0))
 var cs = "héllo".chars()
 print("#{cs.count()} #{cs[1]} #{cs.join("-")}")
 
-## Three conversions, three behaviours, three names.
+## Three conversions, three behaviors, three names.
 print("42".to_int())
 print("x".to_int_or(0))
 print("42".to_int_maybe().or(-1))

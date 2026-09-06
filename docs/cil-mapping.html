@@ -359,7 +359,7 @@
     <li><strong>How does it reconcile with virtual dispatch?</strong> If <code>Shape.draw(Int)</code> is virtual and still inherited in IL, a call through a <code>Shape</code> reference reaches it on a <code>Circle</code> &mdash; which the Emerald rule says does not exist.</li>
   </ul>
   <p><code>override</code> makes this stranger rather than better, which is new since the rule was written: <code>override func draw()</code> states a claim about one signature while silently removing another that nobody mentioned. The keyword exists precisely so that replacing something is said out loud.</p>
-  <p class="lean"><b>Leaning:</b> none yet &mdash; but the question to answer first is not the encoding, it is <em>what behaviour Emerald intends to preserve</em> for a .NET caller. Once that is stated, the encoding follows. Worth revisiting whether the language rule earns its cost at all, given it is the odd one out among the languages Emerald otherwise borrows from.</p>
+  <p class="lean"><b>Leaning:</b> none yet &mdash; but the question to answer first is not the encoding, it is <em>what behavior Emerald intends to preserve</em> for a .NET caller. Once that is stated, the encoding follows. Worth revisiting whether the language rule earns its cost at all, given it is the odd one out among the languages Emerald otherwise borrows from.</p>
 </div>
 
 <div class="q">

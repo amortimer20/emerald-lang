@@ -94,7 +94,7 @@ public sealed class Project(string entryPath)
         // which §3.3 runs once on first member access — so it is kept apart here rather
         // than passed through as a "member" that every later pass then skips.
         List<Stmt> members = [];
-        List<Stmt> initialiser = [];
+        List<Stmt> initializer = [];
         List<Stmt> types = [];
 
         foreach (var stmt in statements)
@@ -103,28 +103,28 @@ public sealed class Project(string entryPath)
                 case Stmt.FuncDecl f: members.Add(f with { IsStatic = true }); break;
                 case Stmt.VarDecl v: members.Add(v with { IsStatic = true }); break;
                 case Stmt.EnumDecl: types.Add(stmt); break;
-                default: initialiser.Add(stmt); break;
+                default: initializer.Add(stmt); break;
             }
 
         // A file holding nothing but enums has no module to be: naming one after the file
         // would stand a class beside the enum, competing for the same name.
-        if (members.Count == 0 && initialiser.Count == 0) return types;
+        if (members.Count == 0 && initializer.Count == 0) return types;
 
         return [new Stmt.ClassDecl(TypeKind.Class, name, null, [], members,
-                                   Initialiser: initialiser), .. types];
+                                   Initializer: initializer), .. types];
     }
 
     /// <summary>math_utils.em -> MathUtils</summary>
     private static string ModuleName(string fileName)
     {
         var result = new StringBuilder();
-        bool capitalise = true;
+        bool capitalize = true;
 
         foreach (char c in Path.GetFileNameWithoutExtension(fileName))
         {
-            if (c == '_') { capitalise = true; continue; }
-            result.Append(capitalise ? char.ToUpperInvariant(c) : c);
-            capitalise = false;
+            if (c == '_') { capitalize = true; continue; }
+            result.Append(capitalize ? char.ToUpperInvariant(c) : c);
+            capitalize = false;
         }
 
         return result.Length == 0 ? "Module" : result.ToString();

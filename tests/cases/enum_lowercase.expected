@@ -1,13 +1,13 @@
 
 enum_lowercase.em:2  warning: Constants are written in SCREAMING_SNAKE_CASE, so red reads as a variable.
 
-    2 | enum Colour { red, green }
+    2 | enum Color { red, green }
 
   Rename it to RED.
 
 enum_lowercase.em:2  warning: Constants are written in SCREAMING_SNAKE_CASE, so green reads as a variable.
 
-    2 | enum Colour { red, green }
+    2 | enum Color { red, green }
 
   Rename it to GREEN.
-Colour.red
+Color.red

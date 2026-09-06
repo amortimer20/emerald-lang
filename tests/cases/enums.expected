@@ -1,12 +1,12 @@
-Colour.RED
+Color.RED
 RED
 true
 false
 true
 aligned left
-  Colour.RED
-  Colour.GREEN
-  Colour.BLUE
+  Color.RED
+  Color.GREEN
+  Color.BLUE
 3
 middle
 edge

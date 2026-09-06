@@ -11,7 +11,7 @@ namespace Emerald;
 /// reach the file's own variables: those became static fields when §3.3 turned the file
 /// into a class, but the code was written as a file's body and must still see them.
 /// Sharing the dictionary rather than copying it means a static method called from the
-/// initialiser sees the same values, in both directions.
+/// initializer sees the same values, in both directions.
 /// </param>
 public sealed class Env(Env? parent = null, Dictionary<string, object?>? shared = null)
 {
@@ -85,7 +85,7 @@ public sealed class ThrownError(EmError value) : Exception(value.Message)
 
 /// <summary>
 /// Raised by <c>exit</c>. A signal rather than <c>Environment.Exit</c>, so the CLI stays
-/// in control of how a run ends and the behaviour is testable.
+/// in control of how a run ends and the behavior is testable.
 /// </summary>
 public sealed class ExitSignal(int code) : Exception
 {

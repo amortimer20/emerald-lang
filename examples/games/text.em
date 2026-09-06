@@ -23,7 +23,7 @@ func pad_left(text: String, width: Int): String {
     return Text.repeat(" ", width - text.count()) + text
 }
 
-func centre(text: String, width: Int): String {
+func center(text: String, width: Int): String {
     var spare = width - text.count()
     return text if spare <= 0
     var left = spare // 2

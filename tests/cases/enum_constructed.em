@@ -1,2 +1,2 @@
-enum Colour { RED, GREEN }
-var c = Colour()
+enum Color { RED, GREEN }
+var c = Color()

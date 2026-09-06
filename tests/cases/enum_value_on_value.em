@@ -1,2 +1,2 @@
-enum Colour { RED }
-print(Colour.RED.RED)
+enum Color { RED }
+print(Color.RED.RED)

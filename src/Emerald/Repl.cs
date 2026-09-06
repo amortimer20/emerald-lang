@@ -7,7 +7,7 @@ namespace Emerald;
 /// it named are what make it cheap now: a single statement parses standalone, and the
 /// environment is an ordinary object rather than something the runtime hides.
 ///
-/// The session is modelled as one file that keeps growing. Each entry is appended to the
+/// The session is modeled as one file that keeps growing. Each entry is appended to the
 /// accumulated source and its tokens shifted by the lines already there, so a diagnostic
 /// quotes the right line without the REPL inventing its own numbering. Everything typed so
 /// far is re-checked each time, which is quadratic and irrelevant: a session is tens of

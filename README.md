@@ -122,7 +122,7 @@ changing it *by accident* is what the suite prevents.
 | `Types.cs` | what a type is, and the built-in signatures |
 | `Checker.cs` | tree → types, including flow-sensitive narrowing |
 | `Environment.cs` | variable scopes |
-| `Interpreter.cs` | tree → behaviour |
+| `Interpreter.cs` | tree → behavior |
 | `Builtins.cs` | Kernel functions and the sprinkles |
 | `Program.cs` | the CLI and diagnostic formatting |
 

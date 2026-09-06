@@ -15,7 +15,7 @@ Two of the page's conventions have to be understood to run it the way a reader r
 So a section is run as a whole, once, and its output is compared against every "prints"
 block in it joined together -- which is what a reader would see typing the page in. A
 snippet with no output beside it is a fragment being discussed rather than a claim about
-behaviour; those are counted so the skips stay visible.
+behavior; those are counted so the skips stay visible.
 
     python3 tools/tourcheck.py            check
     python3 tools/tourcheck.py --list     name every section and what it ran

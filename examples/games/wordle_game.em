@@ -1,4 +1,4 @@
-# Wordle without colour. The web game says everything in green, yellow and grey, which
+# Wordle without color. The web game says everything in green, yellow and gray, which
 # a terminal cannot be relied on to show — so the marks go on a line of their own under
 # the word, and what is known about each letter is spelled out in words.
 
@@ -19,7 +19,7 @@ func board(game: Wordle) {
     }
 }
 
-# Which letters are known to be where. This is the part a colour display gives you for
+# Which letters are known to be where. This is the part a color display gives you for
 # free and a plain one has to say out loud.
 func news(game: Wordle) {
     var found = WordleGame.letters(game, Mark.HIT)

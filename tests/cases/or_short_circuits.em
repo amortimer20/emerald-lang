@@ -4,7 +4,7 @@
 ## side effects it had with it.
 ##
 ## §3.2 already defined .or(x) as `if v != nothing then v else x`, which evaluates one
-## branch, and called it a compiler intrinsic. The behaviour was the thing out of step,
+## branch, and called it a compiler intrinsic. The behavior was the thing out of step,
 ## not the specification.
 func fallback(): String {
     print("  ...the fallback ran")

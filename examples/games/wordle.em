@@ -12,9 +12,9 @@ constructor(secret: String) {
 }
 
 # The rule that separates a real Wordle from a naive one is what happens to a repeated
-# letter. Guessing SPEED against ERASE must green the second E and grey the first: the
+# letter. Guessing SPEED against ERASE must green the second E and gray the first: the
 # word holds two Es, one is already spoken for by the exact match, so only one is left
-# to colour. Counting the leftovers is the whole algorithm.
+# to color. Counting the leftovers is the whole algorithm.
 func score(guess: String): List<Mark> {
     var wanted = self.secret.chars()
     var given = guess.chars()

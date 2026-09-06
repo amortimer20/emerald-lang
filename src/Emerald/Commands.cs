@@ -48,7 +48,7 @@ public static class Commands
                     message = d.Message,
                     hint = d.Hint,
 
-                    // The editor needs this to pick a squiggle colour, and lowercase
+                    // The editor needs this to pick a squiggle color, and lowercase
                     // because that is what every editor protocol already expects.
                     severity = d.Severity.ToString().ToLowerInvariant(),
                 }),

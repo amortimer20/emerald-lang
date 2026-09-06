@@ -11,9 +11,9 @@ namespace Emerald;
 /// without a macro system.
 ///
 /// Rendered rather than quoted from the original text, because the parser keeps no spans —
-/// a token knows its line and not its column. The cost is that spacing is normalised: what
+/// a token knows its line and not its column. The cost is that spacing is normalized: what
 /// comes back is what the formatter would have written, not what was typed. For a
-/// diagnostic that is arguably better, and it is the same normalising a formatter does.
+/// diagnostic that is arguably better, and it is the same normalizing a formatter does.
 ///
 /// §3.5 wants generated code visible in a synthetic source document. This is the half of
 /// that which does not need a code generator.

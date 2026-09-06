@@ -25,9 +25,9 @@ public static class Formatter
     /// </summary>
     public static string? Format(string source)
     {
-        string normalised = source.Replace("\r\n", "\n");
+        string normalized = source.Replace("\r\n", "\n");
 
-        var scanner = new Scanner(normalised, "<fmt>");
+        var scanner = new Scanner(normalized, "<fmt>");
         var tokens = scanner.ScanTokens();
         if (scanner.Diagnostics.Count > 0) return null;
 
@@ -41,7 +41,7 @@ public static class Formatter
             list.Add(token);
         }
 
-        string[] lines = normalised.Split('\n');
+        string[] lines = normalized.Split('\n');
         List<string> output = [];
         int depth = 0;
 
