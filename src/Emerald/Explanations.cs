@@ -307,11 +307,17 @@ public static class Explanations
             }
             """,
             """
-            for walks three things: a range, a list, and a string. A number is not a
-            sequence of anything — 1..total is the range from one to that number.
+            for walks a range, a list, a set, and a string. A number is not a sequence
+            of anything — 1..total is the range from one to that number.
 
             5.times { print("hi") } is the other way to repeat something a set number of
             times, when the count itself is not needed.
+
+            A dictionary walks in pairs, so it takes two names:
+
+                for (name, age) in people {
+                    print("#{name} is #{age}")
+                }
             """),
 
         ["list-type"] = new(

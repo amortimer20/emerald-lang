@@ -168,6 +168,24 @@ public sealed class Parser(List<Token> tokens, string fileName)
 
     private Stmt VariableDeclaration(bool isConst, bool isStatic = false)
     {
+        // var (name, score) = best. Unambiguous the moment a '(' follows var, since a
+        // name can never start with one -- no lookahead beyond the token in hand.
+        if (Check(TokenType.LeftParen))
+        {
+            if (isStatic)
+                Error(Previous, "A static cannot be taken apart into two names.",
+                      "Declare the pair, then read its halves where they are used.");
+
+            Advance();
+            var firstName = Consume(TokenType.Identifier, "Expected a name after '('.");
+            Consume(TokenType.Comma, "Expected ',' between the two names.");
+            var secondName = Consume(TokenType.Identifier, "Expected a second name.");
+            Consume(TokenType.RightParen, "Expected ')' after the two names.");
+            Consume(TokenType.Assign, "A destructure must be given a pair to take apart.");
+
+            return new Stmt.PairDecl(firstName, secondName, Expression(), isConst);
+        }
+
         var name = Consume(TokenType.Identifier, "Expected a name after 'var'.");
         TypeRef? type = Match(TokenType.Colon) ? ParseTypeRef() : null;
 
@@ -464,10 +482,25 @@ public sealed class Parser(List<Token> tokens, string fileName)
     private Stmt ForStatement()
     {
         Advance();
-        var variable = Consume(TokenType.Identifier, "Expected a loop variable after 'for'.");
+
+        // for (key, value) in pairs -- the same shape as the var form, so learning one
+        // teaches the other.
+        Token? second = null;
+        Token variable;
+
+        if (Match(TokenType.LeftParen))
+        {
+            variable = Consume(TokenType.Identifier, "Expected a name after '('.");
+            Consume(TokenType.Comma, "Expected ',' between the two loop variables.");
+            second = Consume(TokenType.Identifier, "Expected a second loop variable.");
+            Consume(TokenType.RightParen, "Expected ')' after the two loop variables.");
+        }
+        else variable = Consume(TokenType.Identifier,
+                                "Expected a loop variable after 'for'.");
+
         Consume(TokenType.In, "Expected 'in' after the loop variable.");
         var iterable = Condition();
-        return new Stmt.For(variable, iterable, Block());
+        return new Stmt.For(variable, iterable, Block(), second);
     }
 
     /// <summary>

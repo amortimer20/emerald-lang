@@ -1149,6 +1149,7 @@ public sealed class Checker(
             case Stmt.Continue c2: CheckLoopJump(c2.Keyword, "continue"); break;
 
             case Stmt.For f: CheckFor(f, scope); break;
+            case Stmt.PairDecl pd: CheckPairDecl(pd, scope); break;
             case Stmt.FuncDecl fn: CheckFunc(fn, scope); break;
             case Stmt.ClassDecl c: CheckClass(c, scope); break;
             case Stmt.EnumDecl e: CheckEnum(e, scope); break;
@@ -1517,6 +1518,36 @@ public sealed class Checker(
         CheckBlock(i.Else, elseScope);
     }
 
+    /// <summary>
+    /// <c>var (name, score) = best</c>. Both names come from the pair, so neither is
+    /// annotated -- writing the types would be writing them twice, and the pair already
+    /// knows.
+    /// </summary>
+    private void CheckPairDecl(Stmt.PairDecl pd, Scope scope)
+    {
+        var value = TypeOf(pd.Init, scope);
+
+        if (value is not EmType.PairOf pair)
+        {
+            if (value is not EmType.Unknown)
+                Error(pd.First.Line,
+                      $"Two names need a pair to take apart, and this is {value.Show()}.",
+                      value.IsMaybe
+                          ? "Deal with the maybe first:  .or(...) or a check."
+                          : "Pair(a, b) makes one, and so do a dictionary's find and "
+                            + "to_list.");
+
+            pair = new EmType.PairOf(EmType.Any, EmType.Any);
+        }
+
+        foreach (var (name, held) in new[] { (pd.First, pair.First), (pd.Second, pair.Second) })
+        {
+            CheckShadowing(name, scope);
+            CheckCasing(name, pd.IsConst ? "constant" : "variable");
+            scope.Declare(name.Lexeme, held, isConst: pd.IsConst, line: name.Line);
+        }
+    }
+
     private void CheckFor(Stmt.For f, Scope scope)
     {
         var iterable = TypeOf(f.Iterable, scope);
@@ -1551,15 +1582,21 @@ public sealed class Checker(
                 element = EmType.String;
                 break;
 
+            // A dictionary walks in pairs, and now there is a type for one -- so it is
+            // loopable in the two-name form, and only in that form. `for k in ages`
+            // cannot say whether k is a key or a pair, and guessing is worse than
+            // refusing; `for (k, v) in ages` says so out loud.
+            case EmType.Dict pairs when f.Second is not null:
+                element = new EmType.PairOf(pairs.Key, pairs.Value);
+                break;
+
             default:
                 Error(f.Variable.Line,
                       $"Cannot loop over {iterable.Show()}.",
                       iterable switch
                       {
-                          // A dictionary holds pairs, and there is no pair type to give
-                          // the loop variable — so it says which half is wanted instead.
-                          EmType.Dict => "Walk its keys or its values:  "
-                                         + "for key in scores.keys() { ... }",
+                          EmType.Dict => "A dictionary walks in pairs:  "
+                                         + "for (key, value) in scores { ... }",
                           EmType.Obj => "A range, a list, and a string can be looped over. "
                                         + "For anything else, expose a list from it.",
                           _ => "Loop over a range (1..5), a list, or a string.",
@@ -1571,7 +1608,28 @@ public sealed class Checker(
 
         var body = new Scope(scope);
         CheckShadowing(f.Variable, scope);
-        body.Declare(f.Variable.Lexeme, element, line: f.Variable.Line);
+
+        if (f.Second is { } second)
+        {
+            if (element is EmType.PairOf held)
+            {
+                body.Declare(f.Variable.Lexeme, held.First, line: f.Variable.Line);
+                CheckShadowing(second, scope);
+                body.Declare(second.Lexeme, held.Second, line: second.Line);
+            }
+            else
+            {
+                if (!element.Equals(EmType.Any))
+                    Error(f.Variable.Line,
+                          $"Two names need a pair to fill them, and this walks "
+                          + $"{element.Show()}.",
+                          $"Take one name:  for {f.Variable.Lexeme} in ...");
+
+                body.Declare(f.Variable.Lexeme, EmType.Any, line: f.Variable.Line);
+                body.Declare(second.Lexeme, EmType.Any, line: second.Line);
+            }
+        }
+        else body.Declare(f.Variable.Lexeme, element, line: f.Variable.Line);
 
         _loopDepth++;
         CheckBlock(f.Body, body);
@@ -2844,6 +2902,15 @@ public sealed class Checker(
             if (get.Name.Lexeme == Signatures.TypeNameMethod && c.Args.Count == 0)
                 return EmType.String;
 
+            if (receiver is EmType.PairOf pair)
+                return get.Name.Lexeme switch
+                {
+                    "first" => pair.First,
+                    "second" => pair.Second,
+                    "to_string" => EmType.String,
+                    _ => NoSuchMember(get.Name, pair.Show(), ["first", "second", "to_string"]),
+                };
+
             if (receiver is EmType.Lst list) return ListCallType(list, c, get.Name, scope);
             if (receiver is EmType.Dict dict) return DictMemberType(dict, get.Name, c, scope);
             if (receiver is EmType.SetOf set) return SetMemberType(set, get.Name, c, scope);
@@ -3081,6 +3148,21 @@ public sealed class Checker(
                 Error(typeName.Name.Line,
                       $"Cannot create {target.Name} — {missing} has no implementation.",
                       "Implement it here, or create a subclass that does.");
+        }
+
+        // Pair(a, b) is a call rather than a literal. A literal would need punctuation the
+        // grammar does not have spare: (a, b) collides with grouping, and every other
+        // bracket is spoken for. A call needs nothing new and reads the same.
+        if (c.Callee is Expr.Variable { Name.Lexeme: "Pair" } && !_classes.ContainsKey("Pair"))
+        {
+            if (c.Args.Count != 2 || c.Trailing is not null)
+            {
+                Error(LineOf(c.Callee), $"Pair takes two values, got {c.Args.Count}.",
+                      "One for each half:  Pair(name, score)");
+                return EmType.Any;
+            }
+
+            return new EmType.PairOf(given[0], given[1]);
         }
 
         // super(...) builds the base part of this object. It is not an ordinary call —
@@ -3470,8 +3552,11 @@ public sealed class Checker(
     private EmType IterableMemberType(
         EmType receiver, EmType[] yields, Token name, Expr.Call? call, Scope scope)
     {
-        EmType element = yields[0];
+        // A dictionary's element is the pair of what it yields. Before Pair existed there
+        // was no such type, and the members handing an element back were refused on a
+        // dictionary outright.
         bool inPairs = yields.Length > 1;
+        EmType element = inPairs ? new EmType.PairOf(yields[0], yields[1]) : yields[0];
         EmType blockReturn = EmType.Any;
         EmType firstArg = EmType.Any;
 
@@ -3511,16 +3596,16 @@ public sealed class Checker(
             }
         }
 
-        // A dictionary walks in pairs, and Emerald has no tuple type — so there is no
-        // value for the members that hand an element back to hand back. Refused with the
-        // route that does exist rather than answered with a shape that does not.
-        if (inPairs && name.Lexeme is "find" or "min" or "max" or "to_list" or "sum"
-                                  or "min_by" or "max_by" or "group_by")
+        // min, max and sum order or add their elements, and a pair does neither -- there
+        // is no arrangement of two values of different types that says which pair is
+        // larger. min_by and max_by still work, because the block supplies the ordering.
+        if (inPairs && name.Lexeme is "min" or "max" or "sum")
         {
             Error(name.Line,
                   $"{name.Lexeme} is not available on {receiver.Show()}.",
-                  "A dictionary walks in pairs, and a pair is not a value on its own. "
-                  + "Ask its .keys() or .values() first.");
+                  $"A pair has no order of its own. Use one half:  "
+                  + $"scores.values().{name.Lexeme}()"
+                  + (name.Lexeme == "sum" ? "" : ", or min_by / max_by with a block"));
             return EmType.Any;
         }
 
@@ -3565,7 +3650,7 @@ public sealed class Checker(
             {
                 "add" or "remove" or "contains?" => set.Element,
                 "union" or "intersect" or "difference" or "subset_of?"
-                    or "superset_of?" => set,
+                    or "superset_of?" or "disjoint?" => set,
                 _ => null,
             };
 
@@ -3586,7 +3671,7 @@ public sealed class Checker(
 
         return name.Lexeme switch
         {
-            "contains?" or "subset_of?" or "superset_of?" => EmType.Bool,
+            "contains?" or "subset_of?" or "superset_of?" or "disjoint?" => EmType.Bool,
             "union" or "intersect" or "difference" => set,
             "add" or "remove" or "clear" => EmType.Nothing,
 
@@ -3737,6 +3822,11 @@ public sealed class Checker(
             "join" => EmType.String,
             "insert_at" => EmType.Nothing,
 
+            // Stops at the shorter side, so the element type is a pair of the two, never
+            // a maybe -- there is no position where only one half exists.
+            "zip" => new EmType.Lst(new EmType.PairOf(
+                element, firstArg is EmType.Lst other ? other.Element : EmType.Any)),
+
             // A set has no literal of its own — the braces Python uses are a block and a
             // trailing lambda here, and the bracket is already a list's. So a list is how
             // one is written, and .to_set is the visible step between them.
@@ -3836,6 +3926,25 @@ public sealed class Checker(
 
             var setType = new EmType.SetOf(member);
             return annotation.Nullable ? EmType.Nullable(setType) : setType;
+        }
+
+        // Pair<A, B>. Both halves are free -- unlike a set member or a dictionary key,
+        // nothing hashes a pair, so there is no restriction to impose.
+        if (annotation.Name.Lexeme == "Pair")
+        {
+            if (given is null || given.Count != 2)
+            {
+                Error(annotation.Name.Line,
+                      given is null
+                          ? "Pair needs to say what it holds."
+                          : $"Pair takes two types, not {given.Count}.",
+                      "Both halves in angle brackets:  Pair<String, Int>",
+                      topic: "pair-type");
+                return EmType.Any;
+            }
+
+            var pairType = new EmType.PairOf(Resolve(given[0]), Resolve(given[1]));
+            return annotation.Nullable ? EmType.Nullable(pairType) : pairType;
         }
 
         if (given is not null)

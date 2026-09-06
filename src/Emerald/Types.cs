@@ -43,6 +43,21 @@ public abstract record EmType
     public sealed record SetOf(EmType Element) : EmType;
 
     /// <summary>
+    /// Pair&lt;A, B&gt; — two values travelling together. The fourth compiler-owned
+    /// container, and the only one that is not a collection.
+    ///
+    /// Built because three separate features were waiting on it: a dictionary's find,
+    /// to_list, min_by and max_by hand back an <em>element</em>, and a dictionary's
+    /// element is a pair; zip has nowhere to put what it joins; and a dictionary cannot
+    /// be sorted without a value to sort. One missing type, three blocked features.
+    ///
+    /// Compiler-owned rather than declarable, which is what §5.3 allows: consuming
+    /// generics is mandatory, declaring them can wait. So Pair is spelled with the
+    /// existing generic grammar and needs no new type syntax at all.
+    /// </summary>
+    public sealed record PairOf(EmType First, EmType Second) : EmType;
+
+    /// <summary>
     /// Two or more functions of one name (§3.2). A call picks the one whose parameters
     /// accept what it was handed; §3.2 makes overlap an error at the <em>declaration</em>,
     /// so at most one can ever match and there is no call-site resolution to teach.
@@ -82,6 +97,7 @@ public abstract record EmType
         Lst a => $"List<{a.Element.Show()}>",
         Dict d => $"Dictionary<{d.Key.Show()}, {d.Value.Show()}>",
         SetOf t => $"Set<{t.Element.Show()}>",
+        PairOf p2 => $"Pair<{p2.First.Show()}, {p2.Second.Show()}>",
         Obj o => o.Info.Name,
 
         // Written the way it is declared, so a mismatch reads as one: "expects func() but
@@ -101,6 +117,7 @@ public abstract record EmType
         Lst => "List",
         Dict => "Dictionary",
         SetOf => "Set",
+        PairOf => "Pair",
         Obj o => o.Info.Name,
         Func => "Function",
         Maybe m => m.Inner.Head,
@@ -140,6 +157,9 @@ public abstract record EmType
             return a2.Key.Accepts(b2.Key) && a2.Value.Accepts(b2.Value);
 
         if (this is SetOf s1 && from is SetOf s2) return s1.Element.Accepts(s2.Element);
+
+        if (this is PairOf p1 && from is PairOf p2)
+            return p1.First.Accepts(p2.First) && p1.Second.Accepts(p2.Second);
 
         // A subclass is usable wherever its base is wanted.
         if (this is Obj want && from is Obj got) return got.Info.IsSubclassOf(want.Info);
@@ -360,7 +380,7 @@ public static class Signatures
     [
         .. Shared,
         "contains?", "add", "remove", "clear",
-        "union", "intersect", "difference", "subset_of?", "superset_of?",
+        "union", "intersect", "difference", "subset_of?", "superset_of?", "disjoint?",
     ];
 
     /// <summary>
@@ -369,7 +389,7 @@ public static class Signatures
     /// </summary>
     public static readonly string[] DictMethods =
     [
-        .. Shared.Where(m => m is not ("find" or "min" or "max" or "to_list" or "sum")),
+        .. Shared.Where(m => m is not ("min" or "max" or "sum")),
         "has_key?", "has_value?", "keys", "values", "get", "set", "remove", "clear",
     ];
 
@@ -377,7 +397,7 @@ public static class Signatures
     [
         .. Shared,
         "index_of", "contains?", "sort", "sort_by", "reverse", "first", "last", "join",
-        "add", "insert_at", "remove", "remove_at", "clear", "to_set",
+        "add", "insert_at", "remove", "remove_at", "clear", "to_set", "zip",
     ];
 
     /// <summary>A range walks whole numbers, and answers to the shared set like the rest.</summary>

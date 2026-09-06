@@ -267,6 +267,19 @@ public sealed class Interpreter
                 ExecuteFor(f, env);
                 break;
 
+            case Stmt.PairDecl pd:
+            {
+                _line = pd.First.Line;
+                if (Evaluate(pd.Init, env) is not EmPair pair)
+                    throw new RuntimeError(
+                        "Two names need a pair to take apart.",
+                        "Pair(a, b) makes one, and so do a dictionary's find and to_list.");
+
+                env.Declare(pd.First.Lexeme, pair.First);
+                env.Declare(pd.Second.Lexeme, pair.Second);
+                break;
+            }
+
             case Stmt.FuncDecl fn:
                 env.Declare(fn.Name.Lexeme, new EmFunction(fn.Name.Lexeme, fn.Params, fn.Body, env));
                 break;
@@ -509,9 +522,19 @@ public sealed class Interpreter
             EmList list => list.Items,
             EmSet set => set.Members,
             string text => Builtins.CharactersOf(text),
+
+            // A dictionary is walkable only in the two-name form. §3.7 kept it out of the
+            // loop because `for k in ages` cannot say whether k is a key or a pair, and
+            // guessing is worse than refusing -- but `for (k, v) in ages` says so out
+            // loud, so the objection does not apply to it.
+            EmDict dict when f.Second is not null
+                => dict.Keys.ToList().Select(k => (object?)new EmPair(k, dict.Get(k))),
+
             _ => throw new RuntimeError(
                 $"Cannot loop over {Builtins.TypeName(iterable)}.",
-                "Loop over a range (1..5), a list, or a string."),
+                iterable is EmDict
+                    ? "A dictionary walks in pairs:  for (key, value) in ages { ... }"
+                    : "Loop over a range (1..5), a list, or a string."),
         };
 
         // A list copied before walking it, so `for x in xs { xs.add(...) }` terminates
@@ -524,7 +547,20 @@ public sealed class Interpreter
             // A fresh scope each turn (§3.3), so a closure made inside the body captures
             // that turn's value rather than sharing one variable with every other turn.
             var scope = new Env(env);
-            scope.Declare(f.Variable.Lexeme, item);
+
+            if (f.Second is { } second)
+            {
+                if (item is not EmPair pair)
+                    throw new RuntimeError(
+                        $"Two names need a pair to fill them, and this is "
+                        + $"{Builtins.TypeName(item)}.",
+                        "Loop over pairs, or take one name:  "
+                        + $"for {f.Variable.Lexeme} in ...");
+
+                scope.Declare(f.Variable.Lexeme, pair.First);
+                scope.Declare(second.Lexeme, pair.Second);
+            }
+            else scope.Declare(f.Variable.Lexeme, item);
 
             try { ExecuteBlock(f.Body, scope); }
             catch (BreakSignal) { break; }
@@ -1422,6 +1458,13 @@ public sealed class Interpreter
 
     private object? EvaluateCall(Expr.Call c, Env env)
     {
+        // Pair(a, b). Answered before the callee is looked up, since there is no value
+        // named Pair to find -- the same shape super(...) uses. A program that declares
+        // its own Pair wins, so this cannot take a name out of anyone's hands.
+        if (c.Callee is Expr.Variable { Name.Lexeme: "Pair" } && c.Args.Count == 2
+            && !env.TryGet("Pair", out _))
+            return new EmPair(Evaluate(c.Args[0], env), Evaluate(c.Args[1], env));
+
         // A method call is a Get in callee position — evaluate the receiver, then dispatch.
         if (c.Callee is Expr.Get get)
         {

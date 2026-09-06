@@ -1,0 +1,17 @@
+(ada, 95)
+ada
+95
+true
+false
+ada scored 95
+ada: 95
+alan: 88
+grace: 91
+[(ada, 95), (alan, 88), (grace, 91)]
+(alan, 88)
+top: ada 95
+[(ada, 95), (alan, 88)]
+ada -> 95
+alan -> 88
+[(ada, 1), (alan, 2)]
+[(1, ada), (2, alan)]

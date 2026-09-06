@@ -126,7 +126,24 @@ public abstract record Stmt
     public sealed record If(Expr Condition, List<Stmt> Then, List<Stmt>? Else) : Stmt;
 
     public sealed record While(Expr Condition, List<Stmt> Body) : Stmt;
-    public sealed record For(Token Variable, Expr Iterable, List<Stmt> Body) : Stmt;
+    /// <summary>
+    /// <c>for x in xs</c>, and <c>for (k, v) in pairs</c> when <c>Second</c> is present.
+    /// A pair is worth having only if it can be taken apart, and the loop is where taking
+    /// one apart is most often wanted.
+    /// </summary>
+    public sealed record For(
+        Token Variable, Expr Iterable, List<Stmt> Body, Token? Second = null) : Stmt;
+
+    /// <summary>
+    /// <c>var (name, score) = best</c>. Two names bound from one pair.
+    ///
+    /// Its own statement rather than a VarDecl carrying a list, because almost everything
+    /// a VarDecl can be -- a property with a get body, a static, an annotated field --
+    /// is meaningless here, and folding it in would mean writing "not on a destructure"
+    /// into a dozen checks that currently do not have to think about it.
+    /// </summary>
+    public sealed record PairDecl(
+        Token First, Token Second, Expr Init, bool IsConst) : Stmt;
     /// <summary>A null <c>Body</c> means abstract: required, not provided (§3.2).</summary>
     public sealed record FuncDecl(
         Token Name, List<Param> Params, TypeRef? ReturnType, List<Stmt>? Body,

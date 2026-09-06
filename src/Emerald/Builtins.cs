@@ -56,6 +56,13 @@ public sealed class EmDict
 /// part of what a set <em>means</em>, which is exactly why it must not be allowed to vary
 /// between runs: a difference with no cause is unattributable.
 /// </summary>
+/// <summary>
+/// Two values travelling together. A record, so two pairs holding the same things are the
+/// same pair without anyone writing an equals -- which is what makes a pair usable as a
+/// value rather than as a box you have to unpack before comparing.
+/// </summary>
+public sealed record EmPair(object? First, object? Second);
+
 public sealed class EmSet
 {
     private readonly HashSet<object> _members = [];
@@ -232,6 +239,7 @@ public static class Builtins
             EmList a => ListMethod(interpreter, a, name, args),
             EmDict d => DictMethod(interpreter, d, name, args),
             EmSet t => SetMethod(interpreter, t, name, args),
+            EmPair pair => PairMethod(pair, name),
             EmEnumValue v => name switch
             {
                 "name" => v.Name,
@@ -268,6 +276,7 @@ public static class Builtins
             case "contains?": return args[0] is { } v && set.Has(v);
             case "clear": set.Clear(); return null;
             case "superset_of?": return Other(args).Members.All(set.Has);
+            case "disjoint?": return !set.Members.Any(Other(args).Has);
 
             case "add":
                 set.Add(args[0] ?? throw new RuntimeError("nothing cannot be a set member."));
@@ -379,6 +388,14 @@ public static class Builtins
             "remove" => Mutate(items, () => RemoveSame(interp, items, args[0])),
             "remove_at" => Mutate(items, () => items.RemoveAt(Position(items, args[0]))),
             "insert_at" => Mutate(items, () => items.Insert(Slot(items, args[0]), args[1])),
+
+            // Stops at the shorter side rather than padding the gap with nothing, which
+            // is what Ruby, Python and C# all do -- a pair with a missing half is a
+            // maybe the caller then has to unpick on every element.
+            "zip" => new EmList([.. items.Zip(
+                (args[0] as EmList
+                    ?? throw new RuntimeError("zip takes another list.")).Items,
+                (object? a, object? b) => (object?)new EmPair(a, b))]),
             "clear" => Mutate(items, items.Clear),
 
             // A set is written as a list and converted, since the braces a set
@@ -786,17 +803,15 @@ public static class Builtins
     }
 
     /// <summary>
-    /// A dictionary yields pairs, and a pair is not a value Emerald can hand back — there
-    /// is no tuple type. So the members that return an <em>element</em> are unavailable on
-    /// one, and say so rather than inventing a shape.
+    /// One element, out of whatever the container yielded.
+    ///
+    /// A dictionary yields two things at a time, and its element is the pair of them --
+    /// which used to have nowhere to go, so find, to_list, min_by and max_by were refused
+    /// on a dictionary outright. Pair is why they work now, and unblocking them was most
+    /// of the reason to build it.
     /// </summary>
     private static object? Single(object? target, List<object?> row, string name) =>
-        target is EmDict
-            ? throw new RuntimeError(
-                $"{name} is not available on a Dictionary.",
-                "A dictionary walks in pairs, and a pair is not a value on its own. "
-                + "Ask its .keys() or .values() instead.")
-            : row[0];
+        row.Count > 1 ? new EmPair(row[0], row[1]) : row[0];
 
     private static object? SharedMethod(
         Interpreter interp, object? target, string name, List<object?> args)
@@ -876,7 +891,14 @@ public static class Builtins
             // Sums whatever it is given rather than only whole numbers. Adding a list of
             // Floats used to answer 0, because the old fold started at 0L and dropped
             // anything that was not a long on the floor.
-            case "sum": return Total(rows.Select(r => Single(target, r, "sum")));
+            case "sum":
+                if (target is EmDict)
+                    throw new RuntimeError(
+                        "A Dictionary cannot be summed.",
+                        "It walks in pairs, and a pair is not a number. "
+                        + "Sum one half:  scores.values().sum()");
+
+                return Total(rows.Select(r => Single(target, r, "sum")));
 
             case "min":
             case "max":
@@ -969,6 +991,19 @@ public static class Builtins
     private static long Lcm(long a, long b) =>
         a == 0 || b == 0 ? 0 : Math.Abs(a / Gcd(a, b) * b);
 
+    /// <summary>
+    /// first and second, and nothing else. A pair is not a collection -- it holds two
+    /// things of possibly different types, so counting it or walking it would be asking
+    /// the wrong question, and there is deliberately nothing here to invite either.
+    /// </summary>
+    private static object? PairMethod(EmPair pair, string name) => name switch
+    {
+        "first" => pair.First,
+        "second" => pair.Second,
+        "to_string" => Display(pair),
+        _ => throw new RuntimeError($"No method named {name} on Pair.")
+    };
+
     private static object? BoolMethod(bool value, string name) => name switch
     {
         "to_string" => value ? "true" : "false",
@@ -990,6 +1025,7 @@ public static class Builtins
         EmList a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
         EmEnumValue v => v.ToString(),
         EmSet t => "{" + string.Join(", ", t.Members.Select(Display)) + "}",
+        EmPair pair => $"({Display(pair.First)}, {Display(pair.Second)})",
         EmDict d => d.Count == 0 ? "[:]"
             : "[" + string.Join(", ", d.Keys.Select(k => $"{Display(k)}: {Display(d.Get(k))}")) + "]",
         EmModule m => $"<module {m.Name}>",
@@ -1009,6 +1045,7 @@ public static class Builtins
         EmList => "List",
         EmDict => "Dictionary",
         EmSet => "Set",
+        EmPair => "Pair",
         EmEnumValue v => v.Type,
         EmModule m => m.Name,
         EmError => "Error",

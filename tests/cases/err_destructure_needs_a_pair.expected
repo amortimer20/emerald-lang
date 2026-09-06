@@ -1,0 +1,6 @@
+
+err_destructure_needs_a_pair.em:4  Two names need a pair to take apart, and this is Int.
+
+    4 | var (a, b) = single
+
+  Pair(a, b) makes one, and so do a dictionary's find and to_list.
