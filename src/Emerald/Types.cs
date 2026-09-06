@@ -416,7 +416,7 @@ public sealed class ClassInfo(string name)
     /// Fields given a value where they are declared. Those run before the constructor, so
     /// the constructor owes them nothing.
     /// </summary>
-    public HashSet<string> InitialisedFields { get; } = [];
+    public HashSet<string> InitializedFields { get; } = [];
 
     /// <summary>
     /// Fields that hold nothing unless a constructor puts something there — the whole
@@ -439,7 +439,7 @@ public sealed class ClassInfo(string name)
     /// </summary>
     public IEnumerable<(string Name, EmType Type)> FieldsNeedingAValue() =>
         Fields
-            .Where(f => !InitialisedFields.Contains(f.Key)
+            .Where(f => !InitializedFields.Contains(f.Key)
                         && !PropertyNames.Contains(f.Key)
                         && f.Value is not EmType.Unknown
                         && !f.Value.IsMaybe)

@@ -10,7 +10,7 @@ func greens_an_exact_match() {
 }
 
 @test
-func greys_a_letter_that_is_not_there() {
+func grays_a_letter_that_is_not_there() {
     assert WordleTest.marks_of("crane", "boggy") == "MMMMM"
 }
 

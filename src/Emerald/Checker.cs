@@ -357,7 +357,7 @@ public sealed class Checker(
                     if (field.IsStatic) info.StaticFields[field.Name.Lexeme] = fieldType;
                     else info.Fields[field.Name.Lexeme] = fieldType;
 
-                    if (field.Init is not null) info.InitialisedFields.Add(field.Name.Lexeme);
+                    if (field.Init is not null) info.InitializedFields.Add(field.Name.Lexeme);
 
                     if (field.Getter is not null)
                     {
@@ -776,7 +776,7 @@ public sealed class Checker(
             // are the base's own problem, and were reported when it was checked.
             List<string> ownFields =
                 [.. info.Fields
-                       .Where(f => !info.InitialisedFields.Contains(f.Key)
+                       .Where(f => !info.InitializedFields.Contains(f.Key)
                                    && !info.PropertyNames.Contains(f.Key)
                                    && f.Value is not EmType.Unknown
                                    && !f.Value.IsMaybe)

@@ -53,7 +53,7 @@ EOF
 cat > "$sandbox/enums/side.em" <<'EOF'
 enum Side { LEFT, RIGHT }
 EOF
-cat > "$sandbox/enums/colour_test.em" <<'EOF'
+cat > "$sandbox/enums/color_test.em" <<'EOF'
 @test
 func sees_an_enum_in_the_entry_file() {
     assert Color.RED.name == "RED"
