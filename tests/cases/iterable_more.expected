@@ -1,0 +1,17 @@
+0. apple
+1. fig
+2. cherry
+3. date
+[apple, fig]
+[cherry, date]
+[]
+[]
+fig
+cherry
+[5: [apple], 3: [fig], 6: [cherry], 4: [date]]
+[1, 2, 3]
+{3, 1}
+0 ada 36
+1 alan 41
+[1, 2, 3, 4]
+[1, 2, 3, 4, 5]

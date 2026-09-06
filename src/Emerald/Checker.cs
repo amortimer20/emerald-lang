@@ -3484,8 +3484,16 @@ public sealed class Checker(
                 // reduce walks with a running total beside whatever the container yields;
                 // everything else hands over just the yield. Given as a shape rather than
                 // a single hint, because a dictionary's two are not the same type.
-                List<EmType> takes =
-                    name.Lexeme == "reduce" ? [firstArg, .. yields] : [.. yields];
+                List<EmType> takes = name.Lexeme switch
+                {
+                    "reduce" => [firstArg, .. yields],
+
+                    // The index goes last, so naming it stays opt-in and a block that
+                    // wants only the item is unchanged.
+                    "each_with_index" => [.. yields, EmType.Int],
+
+                    _ => [.. yields],
+                };
 
                 if (LambdaType(block, scope, shape: new EmType.Func(takes, EmType.Any),
                                supplies: takes.Count, given: name.Lexeme)
@@ -3493,7 +3501,8 @@ public sealed class Checker(
 
                 // each is the one that does not look at the answer. For the rest the
                 // block's value is the whole point, so a block with none is the mistake.
-                if (name.Lexeme != "each" && blockReturn.Equals(EmType.Nothing))
+                if (name.Lexeme is not ("each" or "each_with_index")
+                    && blockReturn.Equals(EmType.Nothing))
                     Error(name.Line,
                           $"This block gives nothing back, but {name.Lexeme} needs an "
                           + "answer from it.",
@@ -3505,7 +3514,8 @@ public sealed class Checker(
         // A dictionary walks in pairs, and Emerald has no tuple type — so there is no
         // value for the members that hand an element back to hand back. Refused with the
         // route that does exist rather than answered with a shape that does not.
-        if (inPairs && name.Lexeme is "find" or "min" or "max" or "to_list" or "sum")
+        if (inPairs && name.Lexeme is "find" or "min" or "max" or "to_list" or "sum"
+                                  or "min_by" or "max_by" or "group_by")
         {
             Error(name.Line,
                   $"{name.Lexeme} is not available on {receiver.Show()}.",
@@ -3525,8 +3535,15 @@ public sealed class Checker(
             "filter" or "reject" =>
                 receiver.Equals(EmType.Range) ? new EmType.Lst(element) : receiver,
 
-            "find" or "min" or "max" => EmType.Nullable(element),
+            "find" or "min" or "max" or "min_by" or "max_by" => EmType.Nullable(element),
             "to_list" => new EmType.Lst(element),
+
+            // A run of elements is still the container it came from, on the same rule
+            // filter follows -- and a range is still the same exception.
+            "take" or "drop" =>
+                receiver.Equals(EmType.Range) ? new EmType.Lst(element) : receiver,
+
+            "group_by" => new EmType.Dict(blockReturn, new EmType.Lst(element)),
             "count" => EmType.Int,
             "sum" => element.Equals(EmType.Float) ? EmType.Float : EmType.Int,
             "any?" or "all?" or "empty?" => EmType.Bool,
@@ -3718,6 +3735,7 @@ public sealed class Checker(
             "index_of" => EmType.Int,
             "contains?" => EmType.Bool,
             "join" => EmType.String,
+            "insert_at" => EmType.Nothing,
 
             // A set has no literal of its own — the braces Python uses are a block and a
             // trailing lambda here, and the bracket is already a list's. So a list is how

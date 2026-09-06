@@ -1564,7 +1564,15 @@ public sealed class Interpreter
             throw new RuntimeError(
                 $"Cannot compare {Builtins.TypeName(left)} with {Builtins.TypeName(right)}.");
 
-        int cmp = ToDouble(left).CompareTo(ToDouble(right));
+        double x = ToDouble(left), y = ToDouble(right);
+
+        // A NaN does not sit anywhere on the number line, so all four questions answer no
+        // -- including `nan <= nan`. CompareTo would instead give it a total order and
+        // rank it below every number, which is what .NET needs for sorting and is not what
+        // an operator should say. sort() still uses that total order, exactly as C# does.
+        if (double.IsNaN(x) || double.IsNaN(y)) return false;
+
+        int cmp = x.CompareTo(y);
         return op.Type switch
         {
             TokenType.Less => cmp < 0,
@@ -1574,8 +1582,27 @@ public sealed class Interpreter
         };
     }
 
+    /// <summary>
+    /// Sameness for everything without a rule of its own.
+    ///
+    /// NaN is the exception, and it is deliberate: .NET's <c>Equals</c> says two NaNs are
+    /// the same value, while C#'s <c>==</c> says they are not, and Emerald had silently
+    /// inherited the first. IEEE says a NaN is equal to nothing, itself included, and
+    /// every language a reader is likely to arrive from agrees — so <c>x == x</c> being
+    /// false is the surprise they have already been taught to expect, and its opposite is
+    /// the one that would cost them.
+    ///
+    /// This reaches list search too, since §3.7 promises that uses ==. It does <em>not</em>
+    /// reach a set or a dictionary key: those hash, and a hash table that disagreed with
+    /// its own equality would lose values rather than merely answer oddly -- so a set
+    /// holds one NaN, not two. That is the single place in the language where membership
+    /// and == give different answers, and it is exactly where C# puts it, for the same
+    /// reason: the hash contract does not survive a value that is not equal to itself.
+    /// </summary>
     private static bool AreEqual(object? a, object? b) =>
-        a is null && b is null || (a?.Equals(b) ?? false);
+        a is double x && double.IsNaN(x) || b is double y && double.IsNaN(y)
+            ? false
+            : a is null && b is null || (a?.Equals(b) ?? false);
 
     /// <summary>
     /// Only <c>false</c> and <c>nothing</c> are falsy. Notably 0 and "" are not — a

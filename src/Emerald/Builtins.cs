@@ -378,6 +378,7 @@ public static class Builtins
             "add" => Mutate(items, () => items.Add(args[0])),
             "remove" => Mutate(items, () => RemoveSame(interp, items, args[0])),
             "remove_at" => Mutate(items, () => items.RemoveAt(Position(items, args[0]))),
+            "insert_at" => Mutate(items, () => items.Insert(Slot(items, args[0]), args[1])),
             "clear" => Mutate(items, items.Clear),
 
             // A set is written as a list and converted, since the braces a set
@@ -396,6 +397,33 @@ public static class Builtins
         static ICallable Block(List<object?> args) =>
             args.LastOrDefault() as ICallable
             ?? throw new RuntimeError("This method needs a block, like { x => ... }.");
+
+        // Asking for a negative count is a mistake worth naming rather than quietly
+        // treating as zero -- it almost always means an arithmetic slip in the caller.
+        static int Count(List<object?> args, string method)
+        {
+            long many = AsInt(args.FirstOrDefault(), method);
+            if (many < 0)
+                throw new RuntimeError($"{method} needs a count of zero or more, got {many}.");
+
+            return (int)Math.Min(many, int.MaxValue);
+        }
+    }
+
+    /// <summary>
+    /// Where an insertion may land. One past the end is allowed and means "at the end",
+    /// which is what makes insert_at usable in a loop that walks to the end -- Position
+    /// refuses it, correctly, because reading or removing there is a mistake.
+    /// </summary>
+    private static int Slot(List<object?> items, object? given)
+    {
+        long at = AsInt(given, "insert_at");
+        if (at < 0 || at > items.Count)
+            throw new RuntimeError(
+                $"Cannot insert at {at}: this list has {items.Count} item(s).",
+                $"A value can go anywhere from 0 to {items.Count}.");
+
+        return (int)at;
     }
 
     private static bool Truthy(object? value) => value switch
@@ -426,6 +454,15 @@ public static class Builtins
         "abs" => Math.Abs(value),
         "to_string" => value.ToString(CultureInfo.InvariantCulture),
         "to_float" => (double)value,
+
+        // Admitted as exceptions rather than through the gate (§3.7): each is Ruby's
+        // alone among the four reference languages, and each is writable in Emerald. They
+        // are here because they are curriculum -- gcd and lcm are how fractions are
+        // taught, and digits is the first interesting thing to do to a number.
+        "gcd" => Gcd(value, AsInt(args[0], "gcd")),
+        "lcm" => Lcm(value, AsInt(args[0], "lcm")),
+        "digits" => Digits(value),
+
         _ => throw new RuntimeError($"No method named {name} on Int.")
     };
 
@@ -475,6 +512,13 @@ public static class Builtins
             "negative?" => value < 0,
             "to_string" => Display(value),
             "to_int" => (long)value,
+
+            // Required rather than convenient, now that == follows IEEE: a NaN is equal
+            // to nothing including itself, so `x == x` no longer detects one and there
+            // would otherwise be no way to ask at all. This is why C# has Double.IsNaN.
+            "nan?" => double.IsNaN(value),
+            "infinite?" => double.IsInfinity(value),
+
             _ => throw new RuntimeError($"No method named {name} on Float.")
         };
 
@@ -672,6 +716,13 @@ public static class Builtins
 
             "replace" => Replaced(value, AsString(args[0], "replace"),
                                   AsString(args[1], "replace")),
+
+            "capitalize" => Capitalized(value),
+            "trim_start" => value.TrimStart(),
+            "trim_end" => value.TrimEnd(),
+            "index_of" => IndexOfGrapheme(value, AsString(args[0], "index_of")),
+            "slice" => Slice(value, AsInt(args[0], "slice"),
+                             args.Count > 1 ? AsInt(args[1], "slice") : long.MaxValue),
             _ => throw new RuntimeError($"No method named {name} on String.")
         };
 
@@ -688,8 +739,9 @@ public static class Builtins
     /// </summary>
     public static readonly string[] Shared =
     [
-        "each", "map", "filter", "reject", "find", "any?", "all?", "count", "empty?",
-        "reduce", "sum", "min", "max", "to_list",
+        "each", "each_with_index", "map", "filter", "reject", "find", "any?", "all?",
+        "count", "empty?", "reduce", "sum", "min", "max", "to_list", "take", "drop",
+        "min_by", "max_by", "group_by",
     ];
 
     /// <summary>
@@ -760,6 +812,49 @@ public static class Builtins
                 return null;
             }
 
+            // The index goes last, so `{ item => }` still works and naming it is opt-in.
+            // Ruby and JavaScript both put it there; Python's enumerate puts it first and
+            // then has to be unpacked, which is a step this does not need.
+            case "each_with_index":
+            {
+                long at = 0;
+                foreach (var row in rows) Block(args).Call(interp, [.. row, at++]);
+                return null;
+            }
+
+            case "take": return Rebuild(target, rows.Take(Count(args, "take")));
+            case "drop": return Rebuild(target, rows.Skip(Count(args, "drop")));
+
+            case "min_by":
+            case "max_by":
+            {
+                var ranked = rows.Select(r => (Row: r, Key: Block(args).Call(interp, r)))
+                                 .ToList();
+                if (ranked.Count == 0) return null;
+
+                var best = name == "min_by"
+                    ? ranked.MinBy(e => e.Key)
+                    : ranked.MaxBy(e => e.Key);
+
+                return Single(target, best.Row, name);
+            }
+
+            case "group_by":
+            {
+                var grouped = new EmDict();
+                foreach (var row in rows)
+                {
+                    object key = Block(args).Call(interp, row)
+                        ?? throw new RuntimeError("nothing cannot be a group.");
+
+                    if (grouped.Get(key) is not EmList bucket)
+                        grouped.Set(key, bucket = new EmList([]));
+
+                    bucket.Items.Add(Single(target, row, "group_by"));
+                }
+                return grouped;
+            }
+
             case "map": return new EmList([.. rows.Select(r => Block(args).Call(interp, r))]);
             case "filter": return Rebuild(target, rows.Where(Test));
             case "reject": return Rebuild(target, rows.Where(r => !Test(r)));
@@ -797,6 +892,17 @@ public static class Builtins
         static ICallable Block(List<object?> args) =>
             args.LastOrDefault() as ICallable
             ?? throw new RuntimeError("This method needs a block, like { x => ... }.");
+
+        // Asking for a negative count is a mistake worth naming rather than quietly
+        // treating as zero -- it almost always means an arithmetic slip in the caller.
+        static int Count(List<object?> args, string method)
+        {
+            long many = AsInt(args.FirstOrDefault(), method);
+            if (many < 0)
+                throw new RuntimeError($"{method} needs a count of zero or more, got {many}.");
+
+            return (int)Math.Min(many, int.MaxValue);
+        }
     }
 
     /// <summary>
@@ -832,6 +938,36 @@ public static class Builtins
             ? SharedMethod(interp, range, name, args)
             : throw new RuntimeError($"No method named {name} on Range.")
     };
+
+    /// <summary>
+    /// Every grapheme in order, with a leading minus dropped -- the digits of a number are
+    /// the digits, and a sign is not one of them. Least-significant first would match Ruby
+    /// and surprise everyone else; reading order is what a beginner writing a digit sum or
+    /// a palindrome check expects to see.
+    /// </summary>
+    private static EmList Digits(long value)
+    {
+        string text = Math.Abs(value).ToString(CultureInfo.InvariantCulture);
+        return new EmList([.. text.Select(c => (object?)(long)(c - '0'))]);
+    }
+
+    /// <summary>
+    /// Euclid, on magnitudes. gcd(0, 0) is 0, which is the convention every library uses
+    /// and the only answer that does not require picking one arbitrarily.
+    /// </summary>
+    private static long Gcd(long a, long b)
+    {
+        (a, b) = (Math.Abs(a), Math.Abs(b));
+        while (b != 0) (a, b) = (b, a % b);
+        return a;
+    }
+
+    /// <summary>
+    /// The multiple both divide, by way of their gcd so it cannot overflow on the way --
+    /// a * b / gcd would compute the product first and lose the answer for large inputs.
+    /// </summary>
+    private static long Lcm(long a, long b) =>
+        a == 0 || b == 0 ? 0 : Math.Abs(a / Gcd(a, b) * b);
 
     private static object? BoolMethod(bool value, string name) => name switch
     {
@@ -971,6 +1107,61 @@ public static class Builtins
         new([.. (separator.Length == 0 ? Graphemes(value)
                                        : value.Split(separator, StringSplitOptions.None))
              .Cast<object?>()]);
+
+    /// <summary>
+    /// The first character upper-cased and the rest left exactly as written.
+    ///
+    /// Lower-casing the tail is what Python and Ruby do, and it destroys "IBM" and
+    /// "McDonald" to fix a case nobody asked about. Working on the first *grapheme*
+    /// rather than the first char keeps an accented or combining initial whole.
+    /// </summary>
+    private static string Capitalized(string value)
+    {
+        string? first = Graphemes(value).FirstOrDefault();
+        return first is null ? value : first.ToUpperInvariant() + value[first.Length..];
+    }
+
+    /// <summary>
+    /// Where a substring starts, counted in graphemes so the answer means the same thing
+    /// as every other position in the language -- .NET's IndexOf counts UTF-16 units, and
+    /// handing that number to slice() would land mid-character. -1 when it is not there,
+    /// matching List.index_of.
+    /// </summary>
+    private static long IndexOfGrapheme(string value, string wanted)
+    {
+        if (wanted.Length == 0) return 0;
+
+        long position = 0;
+        for (int at = 0; at < value.Length; position++)
+        {
+            if (string.CompareOrdinal(value, at, wanted, 0, wanted.Length) == 0) return position;
+            at += Graphemes(value[at..]).First().Length;
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// <c>s.slice(from, count)</c> in graphemes. §3.2 keeps strings out of the index
+    /// syntax because grapheme indexing is O(n) wearing O(1)'s clothes; a method makes no
+    /// such promise, so the same operation is honest here.
+    ///
+    /// Runs off either end rather than failing. A substring request that overshoots is the
+    /// ordinary case -- the last ten characters of a name that has six -- and every
+    /// language that throws for it is a language where callers write the bounds check by
+    /// hand every time.
+    /// </summary>
+    private static string Slice(string value, long from, long count)
+    {
+        if (count <= 0) return "";
+
+        var graphemes = Graphemes(value).ToList();
+        if (from < 0) from = Math.Max(0, graphemes.Count + from);
+        if (from >= graphemes.Count) return "";
+
+        long take = Math.Min(count, graphemes.Count - from);
+        return string.Concat(graphemes.Skip((int)from).Take((int)take));
+    }
 
     private static IEnumerable<string> Graphemes(string value)
     {

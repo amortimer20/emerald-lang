@@ -215,6 +215,10 @@ public static class Signatures
         [("Int", "abs")] = new(Int),           [("Int", "to_string")] = new(Str),
         [("Int", "to_float")] = new(Float),
 
+        // Curriculum, admitted as exceptions rather than through §3.7's gate.
+        [("Int", "gcd")] = new(Int, [Int]),    [("Int", "lcm")] = new(Int, [Int]),
+        [("Int", "digits")] = new(new EmType.Lst(Int)),
+
         // Float
         [("Float", "round")] = new(Int),       [("Float", "floor")] = new(Int),
         [("Float", "ceil")] = new(Int),        [("Float", "abs")] = new(Float),
@@ -222,6 +226,10 @@ public static class Signatures
         [("Float", "negative?")] = new(Bool),
         [("Float", "to_string")] = new(Str),   [("Float", "to_int")] = new(Int),
         [("Float", "round_to")] = new(Float, [Int]),
+
+        // Now that == follows IEEE, `x == x` no longer finds a NaN and this is the only
+        // way to ask -- which is exactly why C# ships Double.IsNaN.
+        [("Float", "nan?")] = new(Bool),       [("Float", "infinite?")] = new(Bool),
 
         // String
         [("String", "count")] = new(Int),      [("String", "empty?")] = new(Bool),
@@ -253,6 +261,14 @@ public static class Signatures
         [("String", "chars")] = new(new EmType.Lst(EmType.String)),
         [("String", "split")] = new(new EmType.Lst(EmType.String), [Str]),
         [("String", "replace")] = new(Str, [Str, Str]),
+
+        // slice is the sanctioned route to a substring, since §3.2 keeps strings out of
+        // the index syntax. The count is optional and means "the rest".
+        [("String", "slice")] = new(Str, [Int, Int], Required: 1),
+        [("String", "index_of")] = new(Int, [Str]),
+        [("String", "capitalize")] = new(Str),
+        [("String", "trim_start")] = new(Str),
+        [("String", "trim_end")] = new(Str),
 
         // Math — free functions that replace no syntax, so §3.7 sends them to a module.
         [("Math", "pi")] = new(Float),         [("Math", "e")] = new(Float),
@@ -361,7 +377,7 @@ public static class Signatures
     [
         .. Shared,
         "index_of", "contains?", "sort", "sort_by", "reverse", "first", "last", "join",
-        "add", "remove", "remove_at", "clear", "to_set",
+        "add", "insert_at", "remove", "remove_at", "clear", "to_set",
     ];
 
     /// <summary>A range walks whole numbers, and answers to the shared set like the rest.</summary>
