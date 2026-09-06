@@ -40,6 +40,25 @@ printf 'struct P {\n    var x: Int\n}\nvar p = P(1)\np.x = 2\n' > "$sandbox/prog
 dotnet "$emerald" run "$sandbox/prog/main.em" >/dev/null 2>&1
 has "last error wins" "Changing a struct" "$(dotnet "$emerald" explain 2>&1)"
 
+# An error with no explanation written for it must clear the last one. Explaining a
+# mistake the reader is not looking at is worse than explaining nothing, because they
+# have no way to tell it is the wrong answer.
+printf 'var n: Int = 1\nn = \"hello\"\n' > "$sandbox/prog/main.em"
+dotnet "$emerald" run "$sandbox/prog/main.em" >/dev/null 2>&1
+after="$(dotnet "$emerald" explain 2>&1)"
+has "topicless error forgets the last one" "does not have an explanation written" "$after"
+if grep -q "Changing a struct" <<<"$after"; then
+    bad "topicless error leaves a stale explanation"
+else
+    ok "topicless error leaves no stale explanation"
+fi
+
+# A crash is the last thing the compiler said too, and it carries no topic either.
+printf 'var xs = [1, 2]\nprint(xs[9])\n' > "$sandbox/prog/main.em"
+dotnet "$emerald" run "$sandbox/prog/main.em" >/dev/null 2>&1
+has "runtime failure forgets too" "does not have an explanation written" \
+    "$(dotnet "$emerald" explain 2>&1)"
+
 # An unknown name says so rather than inventing an answer.
 dotnet "$emerald" explain frobnicate >/dev/null 2>&1
 [[ $? -eq 66 ]] && ok "unknown topic exits 66" || bad "unknown topic exits 66"

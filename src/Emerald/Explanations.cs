@@ -23,13 +23,21 @@ public static class Explanations
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "emerald", "last-error");
 
+    /// <summary>
+    /// Records what the compiler just complained about, or that it complained about
+    /// something with no explanation written for it.
+    ///
+    /// A null topic must still be written down. Leaving the previous run's topic in place
+    /// would make the next bare <c>emerald explain</c> answer a question nobody asked —
+    /// and a confident explanation of the wrong mistake is worse for a stuck student than
+    /// no explanation at all.
+    /// </summary>
     public static void Remember(string? topic)
     {
         try
         {
-            if (topic is null) return;
             Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
-            File.WriteAllText(StatePath, topic);
+            File.WriteAllText(StatePath, topic ?? "");
         }
         catch (IOException)
         {
@@ -68,12 +76,28 @@ public static class Explanations
         {
             wanted = Recall();
 
+            // Three different situations, and telling them apart is the point. Nothing
+            // remembered means no error has happened yet; an empty topic means one did,
+            // and no explanation has been written for it. Answering both with the same
+            // sentence would tell a student who is looking at an error that they are not.
             if (wanted is null)
             {
                 Console.WriteLine("There is no recent error to explain.");
                 Console.WriteLine();
                 Console.WriteLine("  emerald explain --list     what can be explained");
                 Console.WriteLine("  emerald explain <name>     explain one of them");
+                return 0;
+            }
+
+            if (wanted.Length == 0)
+            {
+                Console.WriteLine("The last error does not have an explanation written yet.");
+                Console.WriteLine();
+                Console.WriteLine("The message itself is what there is to go on. If it was");
+                Console.WriteLine("not enough, that is worth saying — a message a reader");
+                Console.WriteLine("cannot act on is a bug in the message.");
+                Console.WriteLine();
+                Console.WriteLine("  emerald explain --list     what can be explained");
                 return 0;
             }
         }

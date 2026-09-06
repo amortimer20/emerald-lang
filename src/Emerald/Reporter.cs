@@ -70,6 +70,11 @@ public static class Reporter
 
     public static void RuntimeFailure(RuntimeError error, string fileName, Project project)
     {
+        // No runtime failure carries a topic yet, but it is still the last thing the
+        // compiler said. Forgetting the previous one keeps `emerald explain` from
+        // answering a crash with an explanation of an unrelated compile-time mistake.
+        Explanations.Remember(null);
+
         Console.Error.WriteLine();
         Console.Error.WriteLine($"{fileName}:{error.Line}  {error.Message}");
         Quote(project.LinesOf(fileName), error.Line);
