@@ -111,7 +111,7 @@ public sealed class Project(string entryPath)
         if (members.Count == 0 && initializer.Count == 0) return types;
 
         return [new Stmt.ClassDecl(TypeKind.Class, name, null, [], members,
-                                   Initializer: initializer), .. types];
+                                   Initializer: initializer, IsModule: true), .. types];
     }
 
     /// <summary>math_utils.em -> MathUtils</summary>

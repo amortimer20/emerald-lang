@@ -170,7 +170,12 @@ public abstract record Stmt
     public sealed record ClassDecl(
         TypeKind Kind, Token Name, Token? BaseName,
         List<Token> Traits, List<Stmt> Members,
-        List<Attr>? Attributes = null, List<Stmt>? Initializer = null) : Stmt;
+        List<Attr>? Attributes = null, List<Stmt>? Initializer = null,
+
+        /// <summary>A file that declared no type, wrapped into one by <see cref="Project"/>.
+        /// It reads like a class everywhere else, but its members see each other by their
+        /// bare names — a file's own contents were the one thing it could not (§3.3).</summary>
+        bool IsModule = false) : Stmt;
 
     public sealed record ConstructorDecl(
         Token Keyword, List<Param> Params, List<Stmt> Body) : Stmt;

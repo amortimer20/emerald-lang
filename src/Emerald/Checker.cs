@@ -479,6 +479,23 @@ public sealed class Checker(
         var body = new Scope(scope, functionBoundary: true);
         body.Declare("self", new EmType.Obj(info));
 
+        // A module's own members are in scope by their bare names. Every file could
+        // already see every other file's top-level functions that way, so a file's own
+        // contents were the single thing it had to qualify — the asymmetry ran the wrong
+        // way round. Other files still reach it as Text.repeat, which is unchanged.
+        //
+        // Classes are deliberately not included: §3.2 requires self. on a field, and a
+        // bare static beside a qualified field would be the split that rule removes.
+        if (decl.IsModule)
+        {
+            foreach (var (name, type) in info.StaticFields) body.Declare(name, type);
+
+            foreach (var (name, overloads) in info.StaticMethods)
+                body.Declare(name, overloads.Count == 1
+                                       ? overloads[0]
+                                       : new EmType.Overloads(overloads));
+        }
+
         // `super` is this class's inherited half and nothing of its own — a view with an
         // empty method table over the same base and traits, so a lookup on it finds exactly
         // what an override replaced and never the override itself.

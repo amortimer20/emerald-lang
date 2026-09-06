@@ -47,6 +47,9 @@ public sealed class EmClass(
     public EmClass? Super => super;
     public Env Closure => closure;
 
+    /// <summary>A file with no type in it. Its members see each other by bare name (§3.3).</summary>
+    public bool IsModule { get; init; }
+
     /// <summary>Abstract members nothing has provided. Non-empty means not instantiable.</summary>
     public IReadOnlyList<string> Unimplemented => unimplemented;
 

@@ -346,16 +346,30 @@ public sealed class Interpreter
 
         object? value = Evaluate(a.Value, env);
 
+        // A module's own state, named without its type (§3.3). Anything in scope wins, so
+        // this is consulted only when nothing else has the name.
+        bool inScope = env.TryGet(target.Name.Lexeme, out object? held);
+        var module = inScope ? null : ModuleHolding(target.Name.Lexeme, env);
+
         if (a.Op.Type != TokenType.Assign)
         {
-            if (!env.TryGet(target.Name.Lexeme, out object? current))
-                throw Unknown(target.Name);
-
-            value = Operate(current, CompoundOp(a.Op.Type), value, a.Op);
+            if (!inScope && module is null) throw Unknown(target.Name);
+            value = Operate(inScope ? held : module!.Statics[target.Name.Lexeme],
+                            CompoundOp(a.Op.Type), value, a.Op);
         }
 
-        if (!env.TryAssign(target.Name.Lexeme, value)) throw Unknown(target.Name);
+        if (module is not null) module.Statics[target.Name.Lexeme] = value;
+        else if (!env.TryAssign(target.Name.Lexeme, value)) throw Unknown(target.Name);
     }
+
+    /// <summary>
+    /// The module a bare name belongs to, when what is running is inside one. Null in every
+    /// other scope, which is every scope but a module's own members.
+    /// </summary>
+    private static EmClass? ModuleHolding(string name, Env env) =>
+        env.TryGet("Self", out object? self) && self is EmClass module && module.IsModule
+            ? module.OwnerOfStatic(name)
+            : null;
 
     /// <summary>
     /// <c>a[i] = value</c>, and the compound forms. A list writes in place; a user type
@@ -624,7 +638,8 @@ public sealed class Interpreter
                     .Where(n => !methods.ContainsKey(n) && super?.FindMethod(n)?.Body is null)];
 
         var built = new EmClass(decl.Name.Lexeme, decl.Kind, super, fields, methods,
-                                constructor, unimplemented, env);
+                                constructor, unimplemented, env)
+        { IsModule = decl.IsModule };
 
         foreach (var (name, provided) in fromTraits) built.FromTraits[name] = provided;
 
@@ -1048,7 +1063,18 @@ public sealed class Interpreter
     private object? Lookup(Token name, Env env)
     {
         _line = name.Line;
-        return env.TryGet(name.Lexeme, out object? value) ? value : throw Unknown(name);
+        if (env.TryGet(name.Lexeme, out object? value)) return value;
+
+        // Inside a module, its own members answer to their bare names (§3.3). A module is
+        // a class with no instances, so a static method's `Self` is the module itself and
+        // its statics are what a sibling name means.
+        if (env.TryGet("Self", out object? holder) && holder is EmClass module
+            && module.IsModule
+            && (module.OwnerOfStatic(name.Lexeme) is not null
+                || module.FindStaticMethod(name.Lexeme) is not null))
+            return GetStatic(module, name, [], invoking: false);
+
+        throw Unknown(name);
     }
 
     private object? Interpolate(Expr.Interpolation node, Env env)
