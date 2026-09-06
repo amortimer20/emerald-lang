@@ -70,6 +70,13 @@ public abstract record Expr
     /// </summary>
     public sealed record TypeTest(Expr Value, Token Keyword, TypeRef Type) : Expr;
 
+    /// <summary>
+    /// <c>animal as Dog</c>, giving <c>Dog?</c>. The same question <c>is</c> asks, answered
+    /// as a value rather than as a narrowing — for the places narrowing cannot reach, since
+    /// it is recorded against a name and a field is not one.
+    /// </summary>
+    public sealed record TypeCast(Expr Value, Token Keyword, TypeRef Type) : Expr;
+
     /// <summary>Short-circuits, so it cannot share Binary's evaluation.</summary>
     public sealed record Logical(Expr Left, Token Op, Expr Right) : Expr;
 

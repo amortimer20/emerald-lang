@@ -19,7 +19,7 @@ public sealed class Scanner(string source, string fileName)
         ["for"] = TokenType.For,        ["in"] = TokenType.In,
         ["and"] = TokenType.And,        ["or"] = TokenType.Or,
         ["not"] = TokenType.Not,        ["true"] = TokenType.True,
-        ["is"] = TokenType.Is,
+        ["is"] = TokenType.Is,          ["as"] = TokenType.As,
         ["false"] = TokenType.False,    ["nothing"] = TokenType.Nothing,
 
         ["class"] = TokenType.Class,       ["trait"] = TokenType.Trait,

@@ -3,4 +3,4 @@ err_type_arguments_unwanted.em:4  count does not take a type in angle brackets.
 
     4 | print([1].count<Int>())
 
-  Drop them:  count(...)   —   as is the one that takes a type, for a value whose type is not known yet:  value.as<Dog>()
+  Angle brackets on a call are for .NET's generic methods, which wait on the code generator. To ask what an object really is, Emerald has `value is Dog` and `value as Dog`.

@@ -1140,6 +1140,7 @@ public sealed class Interpreter
         Expr.Unary u => EvaluateUnary(u, env),
         Expr.Binary b => EvaluateBinary(b, env),
         Expr.TypeTest t => EvaluateTypeTest(t, env),
+        Expr.TypeCast t => EvaluateTypeCast(t, env),
         Expr.Logical l => EvaluateLogical(l, env),
         Expr.IfExpr i => Truthy(Evaluate(i.Condition, env))
             ? Evaluate(i.Then, env)
@@ -1276,6 +1277,20 @@ public sealed class Interpreter
         string wanted = t.Type.Name.Lexeme;
 
         return value is EmInstance instance && Reaches(instance.Class, wanted);
+    }
+
+    /// <summary>
+    /// <c>animal as Dog</c>. The value when it really is one, and nothing when it is not
+    /// — never a failure, because a cast that might miss is exactly what <c>T?</c> is for.
+    /// </summary>
+    private object? EvaluateTypeCast(Expr.TypeCast cast, Env env)
+    {
+        _line = cast.Keyword.Line;
+        object? value = Evaluate(cast.Value, env);
+
+        return value is EmInstance instance && Reaches(instance.Class, cast.Type.Name.Lexeme)
+            ? value
+            : null;
     }
 
     /// <summary>
@@ -1469,22 +1484,6 @@ public sealed class Interpreter
         if (c.Callee is Expr.Variable { Name.Lexeme: "Pair" } && c.Args.Count == 2
             && !env.TryGet("Pair", out _))
             return new EmPair(Evaluate(c.Args[0], env), Evaluate(c.Args[1], env));
-
-        // value.as<Dog>() -- answered here rather than in Builtins, which never sees a
-        // user instance, and before the member lookup, which would not find it on any
-        // class. The checker has already settled that the type is real.
-        if (c.Callee is Expr.Get asGet && asGet.Name.Lexeme == "as"
-            && c.TypeArgs is { Count: 1 } asked)
-        {
-            _line = asGet.Name.Line;
-            object? subject = Evaluate(asGet.Target, env);
-
-            if (subject is null && asGet.Optional) return null;
-
-            return subject is EmInstance held && Reaches(held.Class, asked[0].Name.Lexeme)
-                ? subject
-                : null;
-        }
 
         // A method call is a Get in callee position — evaluate the receiver, then dispatch.
         if (c.Callee is Expr.Get get)

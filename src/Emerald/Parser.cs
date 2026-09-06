@@ -607,6 +607,13 @@ public sealed class Parser(List<Token> tokens, string fileName)
         // `is` sits with the comparisons because it answers one: it takes a type on the
         // right rather than an expression, which is why it is its own node and not a
         // Binary with a name in it.
+        // `as` binds tighter than the comparisons, because its answer is a value and
+        // `pet as Dog == nothing` is the obvious thing to write. `is` below does not, and
+        // does not need to: its answer is already a Bool, so there is nothing to compare
+        // it against that is not a longer way of saying it. C# splits them the same way.
+        if (Match(TokenType.As))
+            expr = new Expr.TypeCast(expr, Previous, ParseTypeRef());
+
         if (Match(TokenType.Is))
         {
             var keyword = Previous;

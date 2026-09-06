@@ -127,7 +127,7 @@
         },
         {
           "name": "keyword.operator.logical.emerald",
-          "match": "(?<!\\.)\\b(and|or|not|is)\\b"
+          "match": "(?<!\\.)\\b(and|or|not|is|as)\\b"
         },
         {
           "name": "variable.language.self.emerald",
