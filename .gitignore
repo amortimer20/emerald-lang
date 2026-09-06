@@ -5,5 +5,8 @@ obj/
 # packaged editor extension
 *.vsix
 
-# Scratch scripts used to make bulk edits; never part of the build.
+# Scratch scripts used to make bulk edits, and the throwaway projects used to try a
+# feature out by hand. Never part of the build, and never worth reviewing: an edit
+# script is a record of how a change was typed, not of what it was.
 .*.py
+_scratch/
