@@ -1276,14 +1276,19 @@ public sealed class Interpreter
         string wanted = t.Type.Name.Lexeme;
 
         return value is EmInstance instance && Reaches(instance.Class, wanted);
+    }
 
-        static bool Reaches(EmClass? cls, string wanted)
-        {
-            for (var walk = cls; walk is not null; walk = walk.Super)
-                if (walk.Name == wanted || walk.TraitNames.Contains(wanted)) return true;
+    /// <summary>
+    /// Whether a class answers to a name, through its bases or the traits mixed into any
+    /// of them. Shared by <c>is</c> and <c>as</c>, so the two can never disagree about
+    /// what a value is -- which they would, sooner or later, as two copies of a walk.
+    /// </summary>
+    private static bool Reaches(EmClass? cls, string wanted)
+    {
+        for (var walk = cls; walk is not null; walk = walk.Super)
+            if (walk.Name == wanted || walk.TraitNames.Contains(wanted)) return true;
 
-            return false;
-        }
+        return false;
     }
 
     private object? EvaluateBinary(Expr.Binary b, Env env)
@@ -1464,6 +1469,22 @@ public sealed class Interpreter
         if (c.Callee is Expr.Variable { Name.Lexeme: "Pair" } && c.Args.Count == 2
             && !env.TryGet("Pair", out _))
             return new EmPair(Evaluate(c.Args[0], env), Evaluate(c.Args[1], env));
+
+        // value.as<Dog>() -- answered here rather than in Builtins, which never sees a
+        // user instance, and before the member lookup, which would not find it on any
+        // class. The checker has already settled that the type is real.
+        if (c.Callee is Expr.Get asGet && asGet.Name.Lexeme == "as"
+            && c.TypeArgs is { Count: 1 } asked)
+        {
+            _line = asGet.Name.Line;
+            object? subject = Evaluate(asGet.Target, env);
+
+            if (subject is null && asGet.Optional) return null;
+
+            return subject is EmInstance held && Reaches(held.Class, asked[0].Name.Lexeme)
+                ? subject
+                : null;
+        }
 
         // A method call is a Get in callee position — evaluate the receiver, then dispatch.
         if (c.Callee is Expr.Get get)

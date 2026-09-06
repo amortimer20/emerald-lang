@@ -103,7 +103,14 @@ public abstract record Expr
     /// A call. <c>Trailing</c> is the trailing-lambda sprinkle: <c>1.upto(5) { i => ... }</c>
     /// and <c>5.times { ... }</c> both land here.
     /// </summary>
-    public sealed record Call(Expr Callee, List<Expr> Args, Lambda? Trailing) : Expr;
+    /// <summary>
+    /// <c>TypeArgs</c> is the <c>&lt;Dog&gt;</c> of <c>animal.as&lt;Dog&gt;()</c>: type
+    /// arguments written at a call site. Consuming a generic method, never declaring one
+    /// — §5.3 defers declaring, and nothing here introduces a type parameter.
+    /// </summary>
+    public sealed record Call(
+        Expr Callee, List<Expr> Args, Lambda? Trailing,
+        List<TypeRef>? TypeArgs = null) : Expr;
 }
 
 // ---- statements ---------------------------------------------------------

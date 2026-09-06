@@ -686,6 +686,17 @@ public sealed class Parser(List<Token> tokens, string fileName)
             {
                 expr = MaybeCall(expr);
             }
+
+            // A '<' might open type arguments and might be a comparison. MaybeCall hands
+            // the callee straight back when it turns out to be the latter, and consumes
+            // nothing -- so this must stop rather than ask again, or `a < b` spins here
+            // forever. Found by writing one.
+            else if (Check(TokenType.Less))
+            {
+                var called = MaybeCall(expr);
+                if (ReferenceEquals(called, expr)) break;
+                expr = called;
+            }
             else break;
         }
         return expr;
@@ -713,6 +724,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
     {
         List<Expr> args = [];
         bool called = false;
+        var typeArgs = TypeArguments();
 
         if (Match(TokenType.LeftParen))
         {
@@ -733,7 +745,49 @@ public sealed class Parser(List<Token> tokens, string fileName)
             called = true;
         }
 
-        return called ? new Expr.Call(callee, args, trailing) : callee;
+        return called ? new Expr.Call(callee, args, trailing, typeArgs) : callee;
+    }
+
+    /// <summary>
+    /// The <c>&lt;Dog&gt;</c> of <c>animal.as&lt;Dog&gt;()</c>, or null when the <c>&lt;</c>
+    /// in hand is a comparison after all.
+    ///
+    /// The classic ambiguity — <c>a&lt;b&gt;(c)</c> is a generic call in C# and a pair of
+    /// comparisons in most languages — is nearly absent here, because §3.1 allows only one
+    /// comparison operator in a row: <c>a &lt; b &gt; c</c> is already an error, so no
+    /// valid program can mean the other thing. The rewind is kept anyway, for the cases
+    /// that are not calls at all: <c>a &lt; b</c> followed by a newline reaches here too,
+    /// and must be handed back untouched.
+    ///
+    /// The closing <c>&gt;</c> must be followed immediately by <c>(</c>. Type arguments
+    /// with no call after them are not a form this language has.
+    /// </summary>
+    private List<TypeRef>? TypeArguments()
+    {
+        if (!Check(TokenType.Less)) return null;
+
+        int mark = _current;
+        int reported = Diagnostics.Count;
+
+        try
+        {
+            Advance();
+            List<TypeRef> args = [];
+            do { args.Add(ParseTypeRef()); } while (Match(TokenType.Comma));
+
+            if (Match(TokenType.Greater) && Check(TokenType.LeftParen)) return args;
+        }
+        catch (ParseError)
+        {
+            // Not type arguments. The rewind below puts it back and the comparison path
+            // reports whatever is really wrong, on the token the reader wrote.
+        }
+
+        _current = mark;
+        if (Diagnostics.Count > reported)
+            Diagnostics.RemoveRange(reported, Diagnostics.Count - reported);
+
+        return null;
     }
 
     private bool CanTakeTrailingLambda() =>

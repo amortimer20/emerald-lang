@@ -2045,6 +2045,62 @@ public sealed class Checker(
         return EmType.Bool;
     }
 
+    /// <summary>
+    /// <c>animal.as&lt;Dog&gt;()</c> — the downcast <c>is</c> cannot provide.
+    ///
+    /// <c>is</c> narrows a <em>name</em>, which covers the common case and nothing else:
+    /// a field, an element, or any expression that is not a bare variable has nowhere for
+    /// the narrowing to be recorded. This answers the same question as a value, and gives
+    /// back <c>T?</c> so the miss is handled by the machinery already built for it rather
+    /// than by a second convention.
+    ///
+    /// The first consumer of type arguments (§5.3's capability, not its deferral): the
+    /// type is written out at the call site and nothing declares a parameter.
+    /// </summary>
+    private EmType AsCallType(EmType receiver, Expr.Call c, Expr.Get get, Scope scope)
+    {
+        if (c.Args.Count > 0 || c.Trailing is not null)
+            Error(get.Name.Line, "as takes no arguments, only a type.",
+                  "The type goes in angle brackets:  value.as<Dog>()");
+
+        if (c.TypeArgs is not { Count: 1 })
+        {
+            Error(get.Name.Line,
+                  c.TypeArgs is null
+                      ? "as needs to say which type to try."
+                      : $"as takes one type, not {c.TypeArgs.Count}.",
+                  "Write it in angle brackets:  value.as<Dog>()");
+            return EmType.Any;
+        }
+
+        var wanted = Resolve(c.TypeArgs[0]);
+        var held = receiver.Stripped;
+
+        if (held is EmType.Obj from && wanted is EmType.Obj to
+            && !Descends(from.Info, to.Info) && !Descends(to.Info, from.Info)
+            && from.Info.Kind != TypeKind.Trait && to.Info.Kind != TypeKind.Trait)
+            Error(get.Name.Line,
+                  $"{from.Info.Name} can never be {to.Info.Name}.",
+                  "Neither inherits from the other, so this is nothing for every value "
+                  + "it could be given.");
+
+        return EmType.Nullable(wanted);
+    }
+
+    /// <summary>
+    /// Type arguments are only meaningful where something declares a type parameter, and
+    /// §5.3 defers declaring — so the compiler-owned methods are the whole list. Saying
+    /// which one takes them beats saying only that this one does not.
+    /// </summary>
+    private void RefuseTypeArguments(Expr.Call c, Token name)
+    {
+        if (c.TypeArgs is null) return;
+
+        Error(name.Line, $"{name.Lexeme} does not take a type in angle brackets.",
+              $"Drop them:  {name.Lexeme}(...)   —   as is the one that takes a type, "
+              + "for a value whose type is not known yet:  value.as<Dog>()");
+    }
+
     /// <summary>Whether one class reaches another through its bases or its traits.</summary>
     private static bool Descends(ClassInfo from, ClassInfo to) =>
         from == to
@@ -2902,6 +2958,13 @@ public sealed class Checker(
             // one you ask about, and refusing it on a T? would refuse the common case.
             if (get.Name.Lexeme == Signatures.TypeNameMethod && c.Args.Count == 0)
                 return EmType.String;
+
+            if (get.Name.Lexeme == Signatures.AsMethod)
+                return AsCallType(receiver, c, get, scope);
+
+            // Everything below takes no type arguments, so a stray pair is caught once
+            // here rather than ignored by every path that does not look for them.
+            RefuseTypeArguments(c, get.Name);
 
             if (receiver is EmType.PairOf pair)
                 return get.Name.Lexeme switch

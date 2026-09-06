@@ -1,0 +1,6 @@
+
+err_as_needs_a_type.em:3  as needs to say which type to try.
+
+    3 | print(d.as())
+
+  Write it in angle brackets:  value.as<Dog>()

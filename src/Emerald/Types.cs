@@ -376,6 +376,9 @@ public static class Signatures
     /// </summary>
     public const string TypeNameMethod = "type_name";
 
+    /// <summary>The downcast. Answered on every receiver, like type_name.</summary>
+    public const string AsMethod = "as";
+
     public static readonly string[] SetMethods =
     [
         .. Shared,
