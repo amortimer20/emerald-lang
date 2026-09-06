@@ -95,9 +95,10 @@ BLESS=1 ./tests/run.sh      # rewrite .expected files from current output
 ./tests/replcheck.sh        # emerald repl — a session, not a file
 ./tests/tourcheck.sh        # docs/tour.html — every snippet on the page, run
 ./tests/gamecheck.sh        # examples/games/ — rules tested, and each game played through
+./tests/grammarcheck.sh     # docs/design.html §9 — the grammar, against the compiler
 ```
 
-The last six test *commands* rather than programs, which is why they are not golden
+The last seven test *commands* rather than programs, which is why they are not golden
 cases: what they produce is a rewritten file, an exit code, or a state file.
 
 Golden tests: each `tests/cases/*.em` runs and its combined output is diffed against a
@@ -145,7 +146,7 @@ variables, const reassignment, annotation mismatches, bad operand types, mismatc
 `if`/`then` branches, unknown methods (with a "did you mean"), and reaching through a
 value that might be nothing.
 
-Flow-sensitive narrowing works — see `examples/narrowing.em`:
+Flow-sensitive narrowing works — see `examples/narrowing/`:
 
 ```
 var maybe = "42".to_int_maybe()   # Int?
@@ -287,6 +288,7 @@ missing brace.
 
 ## Examples
 
-- `examples/mad_lib.em` — the §4 sample
-- `examples/guessing_game.em` — the §4 sample
-- `examples/tour.em` — everything v0 supports, in one file
+- `examples/mad_lib/` — the §4 sample
+- `examples/guessing_game/` — the §4 sample
+- `examples/tour/` — everything v0 supports, in one file
+- `examples/games/` — Hangman, Wordle and tic-tac-toe, the first real programs
