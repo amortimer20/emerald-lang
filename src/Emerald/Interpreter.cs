@@ -167,6 +167,11 @@ public sealed class Interpreter
     /// </summary>
     private void DeclareTypes(List<Stmt> program)
     {
+        // An enum has no base and no traits, so it needs no ordering — but it is a type,
+        // and leaving it out meant `emerald test` could not see one at all.
+        foreach (var stmt in program)
+            if (stmt is Stmt.EnumDecl e) Execute(e, _globals);
+
         Dictionary<string, Stmt.ClassDecl> declared = [];
         foreach (var stmt in program)
             if (stmt is Stmt.ClassDecl c) declared.TryAdd(c.Name.Lexeme, c);

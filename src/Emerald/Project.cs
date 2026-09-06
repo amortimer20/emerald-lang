@@ -80,6 +80,9 @@ public sealed class Project(string entryPath)
     /// A file that declares a type contributes it directly. A file that declares none is a
     /// module: it has no instances, so its members become a type named after the file, and
     /// they are reached as <c>MathUtils.clamp(...)</c> (§3.3).
+    ///
+    /// An enum is a type either way. Folded into the module class it would be a member
+    /// with no syntax to reach it, so a file could declare one that nothing could name.
     /// </summary>
     private static IEnumerable<Stmt> Contribute(List<Stmt> statements, string fileName)
     {
@@ -92,18 +95,23 @@ public sealed class Project(string entryPath)
         // than passed through as a "member" that every later pass then skips.
         List<Stmt> members = [];
         List<Stmt> initialiser = [];
+        List<Stmt> types = [];
 
         foreach (var stmt in statements)
             switch (stmt)
             {
                 case Stmt.FuncDecl f: members.Add(f with { IsStatic = true }); break;
                 case Stmt.VarDecl v: members.Add(v with { IsStatic = true }); break;
-                case Stmt.EnumDecl: members.Add(stmt); break;
+                case Stmt.EnumDecl: types.Add(stmt); break;
                 default: initialiser.Add(stmt); break;
             }
 
+        // A file holding nothing but enums has no module to be: naming one after the file
+        // would stand a class beside the enum, competing for the same name.
+        if (members.Count == 0 && initialiser.Count == 0) return types;
+
         return [new Stmt.ClassDecl(TypeKind.Class, name, null, [], members,
-                                   Initialiser: initialiser)];
+                                   Initialiser: initialiser), .. types];
     }
 
     /// <summary>math_utils.em -> MathUtils</summary>

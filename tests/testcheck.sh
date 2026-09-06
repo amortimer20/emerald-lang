@@ -43,6 +43,31 @@ grep -q "deliberate" <<<"$out" && ok "reports a thrown message" || bad "reports 
 grep -q "3 tests, 2 failing" <<<"$out" && ok "summarises" || bad "summarises"
 [[ $code -eq 1 ]] && ok "fails with exit 1" || bad "fails with exit 1 (got $code)"
 
+# An enum is a type the tests must be able to see. Loading declarations for a test run
+# built the classes and skipped the enums, so any test that named one failed with "No
+# variable named ..." — including an enum declared in the entry file.
+mkdir -p "$sandbox/enums"
+cat > "$sandbox/enums/main.em" <<'EOF'
+enum Colour { RED, BLUE }
+EOF
+cat > "$sandbox/enums/side.em" <<'EOF'
+enum Side { LEFT, RIGHT }
+EOF
+cat > "$sandbox/enums/colour_test.em" <<'EOF'
+@test
+func sees_an_enum_in_the_entry_file() {
+    assert Colour.RED.name == "RED"
+}
+
+@test
+func sees_an_enum_in_another_file() {
+    assert Side.values.count() == 2
+}
+EOF
+
+out="$(dotnet "$emerald" test "$sandbox/enums" 2>&1)"
+grep -q "2 tests, all passing" <<<"$out"     && ok "an enum is visible to a test"     || bad "an enum is visible to a test"
+
 # All passing exits 0.
 rm "$sandbox/proj/double_test.em"
 cat > "$sandbox/proj/double_test.em" <<'EOF'
