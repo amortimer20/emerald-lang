@@ -1,0 +1,4 @@
+
+err_number_then_name.em:3  A number cannot be followed directly by a name, and this is 'x'.
+
+    3 | var n = 2x

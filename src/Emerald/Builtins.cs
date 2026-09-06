@@ -514,6 +514,81 @@ public static class Builtins
     }
 
     /// <summary>
+    /// How a Float is written. The rule is that <strong>anything printed should be
+    /// something that could have been typed</strong> — which already held for
+    /// <c>nothing</c>, <c>true</c> and <c>Suit.HEARTS</c>, and did not hold here.
+    ///
+    /// It used to switch on whether the value happened to be whole: a whole one printed
+    /// in full, so 1e21 arrived as twenty-two digits, and everything else went through
+    /// "R", which produced <c>1E-07</c> — a spelling the language could not read back,
+    /// with an uppercase E that was never Emerald syntax at all.
+    ///
+    /// The large threshold is not arbitrary. Past 2^53 a double no longer holds every
+    /// whole number, so printing one as a plain integer claims a precision it does not
+    /// have; 1e16 is the first round power of ten beyond it. The small one follows
+    /// Python, which switches at the same place.
+    /// </summary>
+    private static string Float(double d)
+    {
+        if (double.IsInfinity(d) || double.IsNaN(d))
+            return d.ToString(CultureInfo.InvariantCulture);
+
+        double size = Math.Abs(d);
+        if (size != 0 && (size >= 1e16 || size < 1e-4)) return Scientific(d);
+
+        // "R" and nothing else. The whole-number branch used to format with "0.0", which
+        // is fifteen significant digits and therefore not round-trippable: 9007199254740992
+        // printed as 9007199254740990, a wrong answer to a value that had been typed
+        // exactly. A Float is shown at whatever length it takes to read back as itself.
+        string text = d.ToString("R", CultureInfo.InvariantCulture);
+        return text.Contains('.', StringComparison.Ordinal) ? text : text + ".0";
+    }
+
+    /// <summary>
+    /// <c>1.0e-7</c> — the exponent form the scanner accepts, so the round trip closes.
+    ///
+    /// Built from "R" rather than from a fixed width. "E16" asks for seventeen digits
+    /// whether or not they mean anything, so 0.0000001 came out as 9.9999999999999995e-8
+    /// — true of the double, and not what anybody wrote or wants to read. "R" gives the
+    /// shortest text that reads back as the same value, which is the right length by
+    /// definition.
+    /// </summary>
+    private static string Scientific(double d)
+    {
+        string text = d.ToString("R", CultureInfo.InvariantCulture);
+
+        int e = text.IndexOf('E', StringComparison.Ordinal);
+        if (e >= 0)
+        {
+            string found = text[..e];
+            if (!found.Contains('.', StringComparison.Ordinal)) found += ".0";
+            return $"{found}e{int.Parse(text[(e + 1)..], CultureInfo.InvariantCulture)}";
+        }
+
+        // "R" switches to exponent form at its own threshold, not at this one, so 1e16
+        // arrives here as seventeen plain digits. Where the two disagree, the language's
+        // threshold wins and the point is placed here — by moving characters rather than
+        // by arithmetic, so nothing is rounded on the way.
+        bool negative = text.StartsWith('-');
+        if (negative) text = text[1..];
+
+        int point = text.IndexOf('.', StringComparison.Ordinal);
+        string digits = point < 0 ? text : text.Remove(point, 1);
+        if (point < 0) point = text.Length;
+
+        int first = 0;
+        while (first < digits.Length && digits[first] == '0') first++;
+        if (first == digits.Length) return negative ? "-0.0" : "0.0";
+
+        string significant = digits[first..].TrimEnd('0');
+        string mantissa = significant.Length == 1
+            ? significant + ".0"
+            : significant[..1] + "." + significant[1..];
+
+        return $"{(negative ? "-" : "")}{mantissa}e{point - first - 1}";
+    }
+
+    /// <summary>
     /// <c>replace</c>, with the one argument .NET refuses caught first. An empty string to
     /// look for matches everywhere and nowhere, so <c>Replace</c> throws — which arrived as
     /// "this is a bug in Emerald" for a program that had merely asked something meaningless.
@@ -630,9 +705,7 @@ public static class Builtins
         null => "nothing",
         bool b => b ? "true" : "false",
         long i => i.ToString(CultureInfo.InvariantCulture),
-        double d => d == Math.Floor(d) && !double.IsInfinity(d)
-            ? d.ToString("0.0", CultureInfo.InvariantCulture)
-            : d.ToString("R", CultureInfo.InvariantCulture),
+        double d => Float(d),
         string s => s,
         EmRange r => $"{r.Start}..{r.End}",
         EmClass c => $"<class {c.Name}>",

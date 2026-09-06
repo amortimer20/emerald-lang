@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace Emerald;
@@ -242,17 +243,76 @@ public sealed class Scanner(string source, string fileName)
     {
         while (char.IsAsciiDigit(Peek())) Advance();
 
+        bool fractional = false;
+
         // A '.' is a decimal point only when a digit follows it. That single guard is
         // what keeps `1..5` (a range) from lexing as `1.` and `.5` (two floats).
         if (Peek() == '.' && char.IsAsciiDigit(PeekNext()))
         {
+            fractional = true;
             Advance();
             while (char.IsAsciiDigit(Peek())) Advance();
-            Add(TokenType.Float, Text, double.Parse(Text));
+        }
+
+        // `1e6`, `1.5e-3`. Guarded the same way the decimal point is: an 'e' only begins
+        // an exponent when digits actually follow, so an identifier that happens to start
+        // with one is left alone. A number written this way is a Float whatever its
+        // exponent does — `1e3` is 1000.0, not 1000 — because the notation is about
+        // magnitude and Emerald does not silently pick a type from how big a value is.
+        if (Exponent())
+        {
+            Trailing();
+            Add(TokenType.Float, Text, double.Parse(Text, CultureInfo.InvariantCulture));
             return;
         }
 
-        Add(TokenType.Int, Text, long.Parse(Text));
+        Trailing();
+
+        if (fractional)
+        {
+            Add(TokenType.Float, Text, double.Parse(Text, CultureInfo.InvariantCulture));
+            return;
+        }
+
+        Add(TokenType.Int, Text, long.Parse(Text, CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// Reports a name written directly against a number. <c>1e</c> is the case that
+    /// prompted it — the exponent guard declines it, correctly, and it then lexed as
+    /// <c>1</c> beside the name <c>e</c>, so the reader was told there is no variable
+    /// named e and offered <c>Math.e</c>. Nothing there mentions the number they were
+    /// trying to write. <c>2x</c> and <c>3rd</c> had the same shape and the same silence.
+    /// </summary>
+    private void Trailing()
+    {
+        if (!IsIdentStart(Peek())) return;
+
+        // Reported without being consumed. The number token still has to be the digits and
+        // nothing else — swallowing the name put it in the lexeme, and long.Parse("1e")
+        // then took the whole program down. The name lexes normally on the next pass; this
+        // error is the first one reported, which is the one the reader is shown.
+        int ahead = _current;
+        while (ahead < source.Length && IsIdentPart(source[ahead])) ahead++;
+        string name = source[_current..ahead];
+
+        Error(name is "e" or "E"
+            ? "An exponent needs digits after the e, as in 1e6 or 1.5e-3."
+            : $"A number cannot be followed directly by a name, and this is '{name}'.");
+    }
+
+    /// <summary>Consumes an <c>e+12</c> / <c>e-3</c> / <c>e6</c> tail, if one is there.</summary>
+    private bool Exponent()
+    {
+        if (Peek() is not ('e' or 'E')) return false;
+
+        int after = Peek(1) is '+' or '-' ? 2 : 1;
+        if (!char.IsAsciiDigit(Peek(after))) return false;
+
+        Advance();                                  // e
+        if (Peek() is '+' or '-') Advance();
+        while (char.IsAsciiDigit(Peek())) Advance();
+        return true;
     }
 
     private void Identifier()
@@ -331,6 +391,10 @@ public sealed class Scanner(string source, string fileName)
     private char Advance() => source[_current++];
     private char Peek() => AtEnd ? '\0' : source[_current];
     private char PeekNext() => _current + 1 >= source.Length ? '\0' : source[_current + 1];
+
+    /// <summary>Look <paramref name="ahead"/> characters on, for the exponent guard.</summary>
+    private char Peek(int ahead) =>
+        _current + ahead >= source.Length ? '\0' : source[_current + ahead];
     private string Match2() => Text;
 
     private bool Match(char expected)
