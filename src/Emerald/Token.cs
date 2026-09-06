@@ -6,7 +6,7 @@ public enum TokenType
     Int, Float, String, Identifier,
 
     // Keywords
-    Var, Const, Func, Return, If, Then, Else, While, For, In, Unless, Until,
+    Var, Const, Func, Return, If, Then, Else, While, For, In, Unless,
     Class, Trait, Struct, Enum, Extends, With, Constructor, Abstract, Static, Override,
     Throw, Try, Catch, Break, Continue, Assert,
     And, Or, Not, True, False, Nothing, Is, As,

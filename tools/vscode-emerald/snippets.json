@@ -15,7 +15,7 @@
       "",
       "$0"
     ],
-    "description": "The whole file is the class body — one type per file"
+    "description": "The whole file is the class body \u2014 one type per file"
   },
   "Class extending a base": {
     "prefix": "classextends",
@@ -122,7 +122,7 @@
     "body": [
       "if ${1:condition} then ${2:a} else ${3:b}"
     ],
-    "description": "The expression form — else is required"
+    "description": "The expression form \u2014 else is required"
   },
   "Unless": {
     "prefix": "unless",
@@ -131,16 +131,7 @@
       "\t$0",
       "}"
     ],
-    "description": "if not — deliberately takes no else"
-  },
-  "Until": {
-    "prefix": "until",
-    "body": [
-      "until ${1:condition} {",
-      "\t$0",
-      "}"
-    ],
-    "description": "while not"
+    "description": "if not \u2014 deliberately takes no else"
   },
   "For over a range": {
     "prefix": "for",
@@ -165,7 +156,7 @@
     "body": [
       "break if ${1:condition}"
     ],
-    "description": "Leave the loop — break cannot leave a block"
+    "description": "Leave the loop \u2014 break cannot leave a block"
   },
   "Continue with a guard": {
     "prefix": "continue",
@@ -230,7 +221,7 @@
       "\t$0",
       "}"
     ],
-    "description": "Handle a failure — the catch is required"
+    "description": "Handle a failure \u2014 the catch is required"
   },
   "Throw": {
     "prefix": "throw",
@@ -244,7 +235,7 @@
     "body": [
       "return ${1:fallback} unless ${2:condition}"
     ],
-    "description": "A guard clause — modifiers guard, they do not loop"
+    "description": "A guard clause \u2014 modifiers guard, they do not loop"
   },
   "Addable": {
     "prefix": "addable",
@@ -253,7 +244,7 @@
       "\treturn $0",
       "}"
     ],
-    "description": "a + b — requires 'with Addable'"
+    "description": "a + b \u2014 requires 'with Addable'"
   },
   "Equatable": {
     "prefix": "equatable",
@@ -262,7 +253,7 @@
       "\treturn self.${2:field} == other.${2:field}",
       "}"
     ],
-    "description": "a == b, and a != b as its negation — requires 'with Equatable'"
+    "description": "a == b, and a != b as its negation \u2014 requires 'with Equatable'"
   },
   "Ordered": {
     "prefix": "ordered",
@@ -271,7 +262,7 @@
       "\treturn self.${2:field} - other.${2:field}",
       "}"
     ],
-    "description": "<, >, <=, >= all read this — negative, zero, or positive"
+    "description": "<, >, <=, >= all read this \u2014 negative, zero, or positive"
   },
   "Indexable": {
     "prefix": "indexable",
@@ -284,7 +275,7 @@
       "\tself.${2:items}[index] = value",
       "}"
     ],
-    "description": "a[i] and a[i] = v — omit set_at for a read-only collection"
+    "description": "a[i] and a[i] = v \u2014 omit set_at for a read-only collection"
   },
   "Doc comment": {
     "prefix": "doc",
@@ -335,7 +326,7 @@
     "body": [
       "var ${1:scores}: Dictionary<${2:String}, ${3:Int}> = [:]"
     ],
-    "description": "An empty dictionary — [:] , since [] is an empty list"
+    "description": "An empty dictionary \u2014 [:] , since [] is an empty list"
   },
   "Count with a dictionary": {
     "prefix": "count",
@@ -345,14 +336,14 @@
       "\t$1[$3] = $1[$3].or(0) + 1",
       "}"
     ],
-    "description": "Counting — a lookup gives back a maybe, so .or(0) starts it"
+    "description": "Counting \u2014 a lookup gives back a maybe, so .or(0) starts it"
   },
   "Set": {
     "prefix": "set",
     "body": [
       "var ${1:seen}: Set<${2:String}> = [].to_set"
     ],
-    "description": "An empty set — a set is a list converted, since braces are blocks here"
+    "description": "An empty set \u2014 a set is a list converted, since braces are blocks here"
   },
   "Set from values": {
     "prefix": "setof",
@@ -366,7 +357,7 @@
     "body": [
       "enum ${1:Name} { ${2:FIRST}, ${3:SECOND} }"
     ],
-    "description": "A closed set of names — values take constant casing"
+    "description": "A closed set of names \u2014 values take constant casing"
   },
   "Enum, multi-line": {
     "prefix": "enumlines",

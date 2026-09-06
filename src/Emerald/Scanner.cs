@@ -15,7 +15,7 @@ public sealed class Scanner(string source, string fileName)
         ["func"] = TokenType.Func,      ["return"] = TokenType.Return,
         ["if"] = TokenType.If,          ["then"] = TokenType.Then,
         ["else"] = TokenType.Else,      ["while"] = TokenType.While,
-        ["unless"] = TokenType.Unless,  ["until"] = TokenType.Until,
+        ["unless"] = TokenType.Unless,
         ["for"] = TokenType.For,        ["in"] = TokenType.In,
         ["and"] = TokenType.And,        ["or"] = TokenType.Or,
         ["not"] = TokenType.Not,        ["true"] = TokenType.True,

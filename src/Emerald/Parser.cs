@@ -62,7 +62,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
         if (Check(TokenType.Func, TokenType.Abstract, TokenType.Override))
             return FunctionDeclaration();
         if (Check(TokenType.Try)) return TryStatement();
-        if (Check(TokenType.While, TokenType.Until)) return WhileStatement();
+        if (Check(TokenType.While)) return WhileStatement();
         if (Check(TokenType.Unless)) return UnlessStatement();
         if (Check(TokenType.For)) return ForStatement();
         if (Check(TokenType.If)) return IfStatementOrExpression();
@@ -119,14 +119,13 @@ public sealed class Parser(List<Token> tokens, string fileName)
     /// </summary>
     private Stmt Modifiable(Stmt stmt)
     {
-        // Modifiers guard; they do not iterate. Ruby's `x += 1 until done` makes a
-        // trailing modifier loop, which reads nothing like the control flow it is —
-        // so `until` and `while` are statement forms only.
-        if (Check(TokenType.Until, TokenType.While))
+        // Modifiers guard; they do not iterate. Ruby's `x += 1 while done` makes a
+        // trailing modifier loop, which reads nothing like the control flow it is.
+        if (Check(TokenType.While))
         {
             var loop = Peek;
-            Error(loop, $"{loop.Lexeme} cannot be used as a modifier.",
-                  $"Write it as a loop:  {loop.Lexeme} condition {{ ... }}");
+            Error(loop, "while cannot be used as a modifier.",
+                  "Write it as a loop:  while condition { ... }");
             return stmt;
         }
 
@@ -408,10 +407,6 @@ public sealed class Parser(List<Token> tokens, string fileName)
                                  IsOverride: isOverride);
     }
 
-    /// <summary>
-    /// <c>while</c> and its negated twin <c>until</c>. Both produce a While node — the
-    /// negation is applied here, so nothing downstream knows <c>until</c> exists.
-    /// </summary>
     private Stmt ThrowStatement()
     {
         var keyword = Advance();
@@ -440,11 +435,8 @@ public sealed class Parser(List<Token> tokens, string fileName)
 
     private Stmt WhileStatement()
     {
-        var keyword = Advance();
-        var condition = Condition();
-
-        if (keyword.Type == TokenType.Until) condition = Negate(condition, keyword);
-        return new Stmt.While(condition, Block());
+        Advance();
+        return new Stmt.While(Condition(), Block());
     }
 
     /// <summary>

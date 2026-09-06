@@ -442,8 +442,8 @@ nearly an A</pre></div>
 
 <section id="s06">
   <h2><span class="n">06</span> Repeating</h2>
-  <p><code class="inl">for</code> walks over a range, a list, or a string. There is no three-part C-style loop, so there is nothing else for it to be confused with.</p>
-  <p><code class="inl">until</code> is <code class="inl">while</code>'s opposite, the same way <code class="inl">unless</code> is <code class="inl">if</code>'s. <code class="inl">break</code> leaves a loop and <code class="inl">continue</code> skips to the next turn, and both take the one-line guard.</p>
+  <p><code class="inl">for</code> walks a range, a list, a set, or a string &mdash; and a dictionary in pairs, <code class="inl">for (key, value) in scores</code>. There is no three-part C-style loop, so there is nothing else for it to be confused with.</p>
+  <p><code class="inl">while</code> is the other loop, and it takes the condition the plain way round. <code class="inl">break</code> leaves a loop and <code class="inl">continue</code> skips to the next turn, and both take the one-line guard.</p>
   <div class="unit">
     <pre class="code">for i in 1..3 {
     print("count #{i}")
@@ -458,7 +458,7 @@ for letter in "hi" {
 }
 
 var left = 3
-until left.zero?() {
+while not left.zero?() {
     print("t-minus #{left}")
     left -= 1
 }
@@ -1512,7 +1512,7 @@ HELLO
 
   // Emerald's own keywords, from the scanner.
   var KEYWORDS = ["var","const","func","return","if","then","else","while","unless",
-    "until","for","in","and","or","not","true","false","nothing","class","trait",
+    "for","in","and","or","not","is","as","true","false","nothing","class","trait",
     "struct","abstract","enum","static","throw","try","catch","break","continue",
     "assert","extends","with","constructor","self"];
 

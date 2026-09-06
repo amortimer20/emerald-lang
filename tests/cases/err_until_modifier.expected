@@ -1,8 +1,0 @@
-
-err_until_modifier.em:2  until cannot be used as a modifier.
-
-    2 | n += 1 until n > 3
-
-  Write it as a loop:  until condition { ... }
-
-  1 further error(s) suppressed — likely caused by this one.
