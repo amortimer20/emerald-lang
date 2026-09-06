@@ -709,9 +709,7 @@ public static class Builtins
             // get characters. Graphemes, not UTF-16 units — an emoji is one character.
             "chars" => new EmList([.. Graphemes(value).Cast<object?>()]),
 
-            "split" => new EmList([.. value
-                .Split(AsString(args[0], "split"), StringSplitOptions.None)
-                .Cast<object?>()]),
+            "split" => Split(value, AsString(args[0], "split")),
 
             "replace" => Replaced(value, AsString(args[0], "replace"),
                                   AsString(args[1], "replace")),
@@ -855,6 +853,20 @@ public static class Builtins
         for (long i = 0; i < times; i++) built.Append(value);
         return built.ToString();
     }
+
+    /// <summary>
+    /// Splits on a separator, and on an empty separator gives every character.
+    ///
+    /// .NET returns the whole string unsplit for an empty separator, which is the one
+    /// answer nobody predicts: asked to split on nothing, it did nothing. Every character
+    /// is what the request plainly means, and what a reader coming from Ruby or
+    /// JavaScript already expects. It agrees with <c>chars()</c> by construction, so
+    /// there is no second definition of what a character is.
+    /// </summary>
+    private static EmList Split(string value, string separator) =>
+        new([.. (separator.Length == 0 ? Graphemes(value)
+                                       : value.Split(separator, StringSplitOptions.None))
+             .Cast<object?>()]);
 
     private static IEnumerable<string> Graphemes(string value)
     {
