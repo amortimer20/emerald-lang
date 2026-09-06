@@ -1,0 +1,6 @@
+
+err_function_shape.em:13  take expects func(Int): Int as its first argument, but this is func(String): String.
+
+   13 | print(take(g))
+
+  emerald explain

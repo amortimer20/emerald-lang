@@ -1,0 +1,8 @@
+
+err_return_not_every_path.em:5  biggest returns Int, but it can end without returning one.
+
+    5 | func biggest(n: Int): Int {
+
+  Every way out has to return a value. Add one at the end, or give the last if an else that has one.
+
+  3 further error(s) suppressed — likely caused by this one.

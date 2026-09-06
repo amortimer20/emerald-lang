@@ -535,7 +535,7 @@ public sealed class Checker(
                     if (!method.IsStatic) CheckOverride(method, info);
                     if (method.Body is not null)
                         CheckCallable(method.Params, method.Body, body, method.Name.Lexeme,
-                                      Resolve(method.ReturnType));
+                                      Resolve(method.ReturnType), method.Name.Line);
                     break;
 
                 case Stmt.ConstructorDecl ctor:
@@ -941,7 +941,8 @@ public sealed class Checker(
     private void CheckProperty(Stmt.VarDecl property, ClassInfo info, Scope body)
     {
         CheckCallable([], property.Getter!, body, property.Name.Lexeme,
-                      info.Fields.GetValueOrDefault(property.Name.Lexeme, EmType.Any));
+                      info.Fields.GetValueOrDefault(property.Name.Lexeme, EmType.Any),
+                      property.Name.Line);
 
         if (property.Setter is null) return;
 
@@ -954,7 +955,7 @@ public sealed class Checker(
     }
 
     private void CheckCallable(List<Param> parameters, List<Stmt> body, Scope outer,
-                               string what, EmType returns)
+                               string what, EmType returns, int line = 0)
     {
         var inner = new Scope(outer, functionBoundary: true);
         foreach (var p in parameters)
@@ -975,6 +976,8 @@ public sealed class Checker(
         _returnTypes.Push((what, returns));
         CheckBlock(body, inner);
         _returnTypes.Pop();
+
+        MustReturn(returns, body, what, line);
     }
 
     /// <summary>
@@ -1509,6 +1512,8 @@ public sealed class Checker(
         _loopDepth = enclosingLoops;
         _hiddenLoops -= enclosingLoops;
         _returnTypes.Pop();
+
+        MustReturn(Resolve(fn.ReturnType), fn.Body, fn.Name.Lexeme, fn.Name.Line);
     }
 
     private void CheckBlock(List<Stmt> body, Scope scope)
@@ -1536,6 +1541,57 @@ public sealed class Checker(
                 after.Declare(name, type);
             current = after;
         }
+    }
+
+    /// <summary>
+    /// Whether every way out of this body returns a value. Separate from <see cref="Leaves"/>
+    /// because they ask different questions: <c>break</c> leaves a block without returning
+    /// from the function, so it settles narrowing and settles nothing here.
+    ///
+    /// Conservative in the direction that reports nothing: a loop that might run zero times
+    /// promises nothing, but <c>while true</c> with no way out of it never falls through.
+    /// </summary>
+    private static bool Returns(List<Stmt> body) =>
+        body.Count > 0 && body[^1] switch
+        {
+            // throw is not a return, but it is a way out — nobody receives the missing value.
+            Stmt.Return r => r.Value is not null,
+            Stmt.Throw => true,
+            Stmt.If i => i.Else is not null && Returns(i.Then) && Returns(i.Else),
+            Stmt.While w => IsAlwaysTrue(w.Condition) && !HasBreak(w.Body),
+            Stmt.TryCatch t => Returns(t.Body) && Returns(t.Handler),
+            _ => false
+        };
+
+    private static bool IsAlwaysTrue(Expr condition) =>
+        condition is Expr.Literal { Value: true };
+
+    /// <summary>
+    /// Whether a <c>break</c> can leave <em>this</em> loop. A nested loop's break is its
+    /// own, and a block cannot break at all (§3.1), so neither is descended into.
+    /// </summary>
+    private static bool HasBreak(List<Stmt> body) =>
+        body.Any(stmt => stmt switch
+        {
+            Stmt.Break => true,
+            Stmt.If i => HasBreak(i.Then) || (i.Else is not null && HasBreak(i.Else)),
+            Stmt.TryCatch t => HasBreak(t.Body) || HasBreak(t.Handler),
+            _ => false
+        });
+
+    /// <summary>
+    /// A body that promises a value has to produce one on every path out. Without this a
+    /// function declared <c>: Int</c> could fall off its end and hand back nothing, which
+    /// binds to a non-nullable Int and surfaces as an error somewhere else entirely.
+    /// </summary>
+    private void MustReturn(EmType returns, List<Stmt> body, string what, int line)
+    {
+        if (returns is EmType.Unknown || returns.Equals(EmType.Nothing)) return;
+        if (Returns(body)) return;
+
+        Error(line, $"{what} returns {returns.Show()}, but it can end without returning one.",
+              "Every way out has to return a value. Add one at the end, or give the last "
+              + "if an else that has one.");
     }
 
     /// <summary>

@@ -144,8 +144,23 @@ public abstract record EmType
         // A subclass is usable wherever its base is wanted.
         if (this is Obj want && from is Obj got) return got.Info.IsSubclassOf(want.Info);
 
-        if (this is Func a && from is Func b)
-            return a.Params.Count == b.Params.Count;
+        // A function value is the one thing here with a whole shape written down, and this
+        // compared only how many parameters it had — so func(String): String was accepted
+        // where func(Int): Int was asked for, called with an Int, and its answer used as a
+        // String. Parameters go the other way round from the return: whatever is handed
+        // over must accept everything the receiver will pass it, and give back something
+        // the receiver can use.
+        if (this is Func wanted && from is Func given)
+        {
+            if (wanted.Params.Count != given.Params.Count) return false;
+
+            for (int i = 0; i < wanted.Params.Count; i++)
+                if (!given.Params[i].Accepts(wanted.Params[i])) return false;
+
+            // A receiver that declares no return does not look at the answer, so anything
+            // may come back — discarding a value is not a mistake.
+            return wanted.Return.Equals(Nothing) || wanted.Return.Accepts(given.Return);
+        }
 
         return false;
     }
