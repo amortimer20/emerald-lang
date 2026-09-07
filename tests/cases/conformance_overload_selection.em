@@ -1,15 +1,27 @@
-## The third conformance vector, and the one that turned out to need no numbers.
+## The third conformance vector, and the one whose first version overclaimed.
 ##
-## The interpreter picks an overload from the runtime values it is holding. Emitted IL
-## will pick from the static types at the call site. Those two rules disagree in every
-## language that allows an overload set where a subtype could choose differently --
-## in C#, describe(pet) with a Dog in an Animal variable calls the Animal version, and
-## a runtime-dispatching interpreter would call the Dog one.
+## The invariant, stated so it can be tested rather than asserted:
 ##
-## Emerald cannot express the disagreement: an overload set where any argument could
-## match two members is rejected where it is declared, so no program exists whose answer
-## depends on which rule is used. This file pins that, because the guarantee is what
-## lets the emitter resolve statically without auditing the interpreter first.
+##     Every call the checker accepts selects the same declaration the interpreter
+##     invokes.
+##
+## The interpreter picks from the runtime values it is holding; emitted IL will pick from
+## the static types at the call site. Where an argument could match two declarations,
+## those two rules can choose differently.
+##
+## Four overlap shapes are refused where they are declared, each with its own case, so
+## they cannot diverge: a base and its subclass (err_overload_base_and_subclass), a trait
+## and an implementer (err_overload_trait_and_class), T and T? (err_overload_nullable),
+## and Int and Float (err_overload_int_and_float). What is below is the rest of the
+## surface -- inherited sets, default arguments, callable parameters, collection element
+## types, nullable arguments -- checked rather than assumed to follow.
+##
+## It does not all hold. Three shapes break the invariant, and two of them are unsound
+## today rather than only at the boundary:
+##   known_overload_diverges_through_a_base
+##   known_overload_ignores_block_arity
+##   known_overload_ignores_list_elements
+## This file is the part that agrees. Those three are the part that does not.
 
 class Animal { }
 class Dog extends Animal { }
@@ -36,9 +48,37 @@ print(label(1))
 print(label("x"))
 print(label(Dog()))
 
-## The four shapes that would have made static and runtime selection disagree are all
-## declaration errors, each with its own case:
-##   a base and its subclass    err_overload_base_and_subclass
-##   a trait and an implementer err_overload_trait_and_class
-##   T and T?                   err_overload_nullable
-##   Int and Float              err_overload_int_and_float
+## Default arguments. The call site omits one, so the declaration is chosen by a count
+## the checker fills in -- a place the two rules could count differently.
+func padded(a: Int, b: Int = 2): String { return "#{a}+#{b}" }
+func padded(s: String): String { return "string #{s}" }
+
+print(padded(1))
+print(padded(1, 5))
+print(padded("x"))
+
+## Callable parameters, told apart by their shape rather than by a type name.
+func run_it(g: func(): Int): String { return "no args" }
+func run_it(g: func(Int): Int): String { return "one arg" }
+
+print(run_it({ 1 }))
+## The one-parameter block belongs on the next line and is not here: the interpreter
+## picks the wrong declaration for it. See known_overload_ignores_block_arity.
+
+## Collection element types. Lists are invariant, so a List<Dog> is not a List<Animal>
+## and no value is ever both -- the overlap the class case has cannot arise here.
+func each_of(xs: List<Animal>): String { return "animals" }
+func each_of(xs: List<Dog>): String { return "dogs" }
+
+## Likewise only the List<Animal> call is here -- passing a List<Dog> picks the wrong
+## declaration. See known_overload_ignores_list_elements.
+var animals: List<Animal> = []
+print(each_of(animals))
+
+## A nullable argument reaching a parameter that accepts one, with no non-nullable
+## sibling to compete -- the shape err_overload_nullable rejects is the one where both
+## exist.
+func speak(s: String?): String { return s.or("nothing") }
+var maybe: String? = nothing
+print(speak(maybe))
+print(speak("hi"))
