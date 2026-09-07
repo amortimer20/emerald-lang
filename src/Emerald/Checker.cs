@@ -3661,7 +3661,7 @@ public sealed class Checker(
 
     /// <summary>
     /// "An" or "A" — small, but a diagnostic that says "A Int" reads as careless. Given
-    /// capitalised because most uses start a sentence; the rest lower it themselves.
+    /// capitalized because most uses start a sentence; the rest lower it themselves.
     /// </summary>
     private static string Article(string word) =>
         "AEIOU".Contains(char.ToUpperInvariant(word[0])) ? "An" : "A";
