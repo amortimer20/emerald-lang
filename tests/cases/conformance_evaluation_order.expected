@@ -1,0 +1,26 @@
+operand 1
+operand 2
+3
+argument 1
+argument 2
+took 1 and 2
+receiver
+then the argument
+1
+and: left
+and: right
+true
+or: right
+true
+false
+true
+nothing
+optional call does happen
+0
+5
+or fallback is needed
+99
+chosen branch
+1
+turn 0
+turn 1
