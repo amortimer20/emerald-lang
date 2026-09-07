@@ -1,0 +1,8 @@
+
+err_field_read_before_assigned.em:9  name is read here, before the constructor gives it a value.
+
+    9 |         print(self.name.count())
+
+  Until it is assigned it holds nothing, whatever its type says. Move self.name = ... above this line.
+
+  emerald explain

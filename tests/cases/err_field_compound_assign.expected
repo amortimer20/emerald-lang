@@ -1,0 +1,10 @@
+
+err_field_compound_assign.em:7  n is read here, before the constructor gives it a value.
+
+    7 |         self.n += 1
+
+  Until it is assigned it holds nothing, whatever its type says. Move self.n = ... above this line.
+
+  emerald explain
+
+  1 further error(s) suppressed — likely caused by this one.

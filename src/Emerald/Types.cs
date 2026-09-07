@@ -139,7 +139,8 @@ public abstract record EmType
     /// </summary>
     public bool Accepts(EmType from)
     {
-        if (this is Unknown || from is Unknown) return true;
+        if (this is Unknown) return true;
+        if (from is Unknown) return false;
         if (Equals(from)) return true;
 
         // nothing is a legal value for any nullable type.

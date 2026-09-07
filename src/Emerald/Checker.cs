@@ -909,6 +909,8 @@ public sealed class Checker(
             return;
         }
 
+        CheckReadsBeforeAssignment(constructor, info);
+
         var flow = AssignedBy(constructor.Body, []);
 
         // Every way out of the constructor that produces an object: each `return`, plus
@@ -935,6 +937,137 @@ public sealed class Checker(
               + "  Only assignments written directly in the constructor count — a helper "
               + "method cannot be seen to have done it.",
               topic: "field-needs-value");
+    }
+
+    /// <summary>
+    /// A field read before the constructor has given it a value.
+    ///
+    /// Definite assignment checks the <em>end</em> of the constructor, which is necessary
+    /// and not sufficient. Before its assignment a non-nullable String is observably
+    /// nothing, so <c>self.name.count()</c> written above <c>self.name = name</c> compiled
+    /// and then failed with "Cannot call count on nothing" -- <strong>on a field the type
+    /// system had promised could not be missing</strong>. Reported from outside.
+    ///
+    /// Conservative in the same direction as the analysis it complements: a read is only
+    /// refused where no path to it has assigned the field. A branch that assigns on both
+    /// sides counts, because control cannot arrive having done neither.
+    /// </summary>
+    private void CheckReadsBeforeAssignment(Stmt.ConstructorDecl constructor, ClassInfo info)
+    {
+        HashSet<string> owed = [.. info.FieldsNeedingAValue().Select(f => f.Name)];
+        if (owed.Count == 0) return;
+
+        WalkBody(constructor.Body, []);
+
+        // Returns what is assigned once this body has run, so a caller can carry it on.
+        HashSet<string> WalkBody(List<Stmt> body, HashSet<string> incoming)
+        {
+            HashSet<string> assigned = [.. incoming];
+
+            foreach (var stmt in body)
+                switch (stmt)
+                {
+                    // A plain `=` gives the field a value. Anything else -- `+=` and the
+                    // rest -- reads it first, which AssignedBy already refuses to count
+                    // and which this has to see as a read.
+                    case Stmt.Assign a
+                        when a.Target is Expr.Get { Target: Expr.Variable { Name.Lexeme: "self" } } g:
+                        Reads(a.Value, assigned);
+                        if (a.Op.Type is TokenType.Assign) assigned.Add(g.Name.Lexeme);
+                        else Report(g.Name, assigned);
+                        break;
+
+                    case Stmt.Assign a:
+                        Reads(a.Target, assigned);
+                        Reads(a.Value, assigned);
+                        break;
+
+                    case Stmt.If i:
+                    {
+                        Reads(i.Condition, assigned);
+                        var then = WalkBody(i.Then, assigned);
+
+                        // Without an else, reaching the next statement may mean the branch
+                        // did not run, so it guarantees nothing.
+                        assigned = i.Else is null
+                            ? assigned
+                            : [.. then.Intersect(WalkBody(i.Else, assigned))];
+                        break;
+                    }
+
+                    // A loop may run zero times, so nothing inside it is guaranteed to
+                    // have happened by the statement below.
+                    case Stmt.While w:
+                        Reads(w.Condition, assigned);
+                        WalkBody(w.Body, assigned);
+                        break;
+
+                    case Stmt.For f:
+                        Reads(f.Iterable, assigned);
+                        WalkBody(f.Body, assigned);
+                        break;
+
+                    case Stmt.TryCatch t:
+                        WalkBody(t.Body, assigned);
+                        foreach (var clause in t.Clauses) WalkBody(clause.Body, assigned);
+                        break;
+
+                    case Stmt.VarDecl { Init: not null } v: Reads(v.Init, assigned); break;
+                    case Stmt.ExprStmt e: Reads(e.Expression, assigned); break;
+                    case Stmt.Return { Value: not null } r: Reads(r.Value, assigned); break;
+                    case Stmt.Throw th: Reads(th.Value, assigned); break;
+                    case Stmt.Assert asrt: Reads(asrt.Condition, assigned); break;
+                }
+
+            return assigned;
+        }
+
+        void Report(Token name, HashSet<string> assigned)
+        {
+            if (!owed.Contains(name.Lexeme) || assigned.Contains(name.Lexeme)) return;
+
+            Error(name.Line,
+                  $"{name.Lexeme} is read here, before the constructor gives it a value.",
+                  $"Until it is assigned it holds nothing, whatever its type says. Move "
+                  + $"self.{name.Lexeme} = ... above this line.",
+                  topic: "field-needs-value");
+        }
+
+        void Reads(Expr expr, HashSet<string> assigned)
+        {
+            switch (expr)
+            {
+                case Expr.Get { Target: Expr.Variable { Name.Lexeme: "self" } } g:
+                    Report(g.Name, assigned);
+                    break;
+
+                case Expr.Call c:
+                    Reads(c.Callee, assigned);
+                    foreach (var arg in c.Args) Reads(arg, assigned);
+                    if (c.Trailing is not null) Reads(c.Trailing, assigned);
+                    break;
+
+                case Expr.Binary b: Reads(b.Left, assigned); Reads(b.Right, assigned); break;
+                case Expr.Logical l: Reads(l.Left, assigned); Reads(l.Right, assigned); break;
+                case Expr.Unary u: Reads(u.Right, assigned); break;
+                case Expr.Grouping g: Reads(g.Inner, assigned); break;
+                case Expr.Get g: Reads(g.Target, assigned); break;
+                case Expr.Index x: Reads(x.Target, assigned); Reads(x.Position, assigned); break;
+                case Expr.RangeExpr r: Reads(r.Start, assigned); Reads(r.End, assigned); break;
+                case Expr.ListLiteral l: foreach (var i in l.Items) Reads(i, assigned); break;
+                case Expr.Interpolation p: foreach (var i in p.Parts) Reads(i, assigned); break;
+                case Expr.TypeTest t: Reads(t.Value, assigned); break;
+                case Expr.TypeCast c2: Reads(c2.Value, assigned); break;
+                case Expr.IfExpr i:
+                    Reads(i.Condition, assigned);
+                    Reads(i.Then, assigned);
+                    Reads(i.Else, assigned);
+                    break;
+                case Expr.DictLiteral d:
+                    foreach (var e in d.Entries) { Reads(e.Key, assigned); Reads(e.Value, assigned); }
+                    break;
+            }
+        }
     }
 
     private static string Join(List<string> names) =>
@@ -1344,14 +1477,24 @@ public sealed class Checker(
 
         if (v.Type is not null && v.Init is not null && !declared.Accepts(inferred))
             Error(v.Name.Line,
-                  $"{v.Name.Lexeme} is declared {declared.Show()} but is given {inferred.Show()}.",
+                  // "is given ?" says nothing. An unknown here means whatever produced the
+                  // value never said what it gives back, and that is the thing to fix.
+                  inferred.Stripped is EmType.Unknown
+                      ? $"{v.Name.Lexeme} is declared {declared.Show()}, but what it is "
+                        + "given does not say what type it is."
+                      : $"{v.Name.Lexeme} is declared {declared.Show()} but is given {inferred.Show()}.",
                   // A literal is nobody's alias, so the reason a container is invariant
                   // does not apply to it and saying it would send the reader looking for
                   // a second name that is not there. What is true of a literal is simply
                   // that its items are the wrong type, and they are right here to fix.
-                  v.Init is Expr.ListLiteral or Expr.DictLiteral
-                      ? Literally(declared.Stripped, inferred.Stripped)
-                      : Widening(declared, inferred));
+                  inferred.Stripped is EmType.Unknown
+                      ? "An unannotated function or an abstract contract asks for nothing "
+                        + "in particular, so there is nothing here to check against.\n"
+                        + "Give it a return type, or leave this declaration's type off and "
+                        + "let it be inferred."
+                      : v.Init is Expr.ListLiteral or Expr.DictLiteral
+                          ? Literally(declared.Stripped, inferred.Stripped)
+                          : Widening(declared, inferred));
 
         CheckAttributes(v.Attributes, "variable");
         CheckShadowing(v.Name, scope);
