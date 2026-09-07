@@ -105,7 +105,7 @@ catch (ThrownError thrown)
     // a .NET stack trace reaching a student is exactly what §3.6 exists to prevent.
     Reporter.RuntimeFailure(
         new RuntimeError(
-            thrown.Value.Message,
+            thrown.Message,
 
             // An assertion is thrown like anything else, so a catch and a test runner both
             // see it — but telling someone to wrap a failed assertion in a try would be

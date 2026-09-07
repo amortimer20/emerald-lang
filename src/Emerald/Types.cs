@@ -314,9 +314,6 @@ public static class Signatures
         // Bool
         [("Bool", "to_string")] = new(Str),
 
-        // Error
-        [("Error", "message")] = new(Str),
-        [("Error", "to_string")] = new(Str),
     };
 
     public static bool TryLookup(EmType receiver, string method, out EmType result)

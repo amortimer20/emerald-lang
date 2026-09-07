@@ -38,4 +38,4 @@ print(first_even(7))
 print(either_way("banana"))
 announce(3)
 
-try { print(refuses(1)) } catch problem { print(problem.message()) }
+try { print(refuses(1)) } catch problem { print(problem.message) }

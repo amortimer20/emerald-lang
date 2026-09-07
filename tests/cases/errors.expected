@@ -1,4 +1,5 @@
 ok: 42
 rejected: "banana" is not a number
-rejected: an age of 900 is not believable
+rejected: an age of 900 is not believable (limit 130)
 caught a runtime error: "banana" is not a number.
+caught: something simple

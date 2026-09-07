@@ -1,7 +1,8 @@
 namespace Emerald;
 
 /// <summary>
-/// The operator traits (§3.2), written in Emerald and parsed like any other source.
+/// The operator traits and the Error base class (§3.2), written in Emerald and parsed
+/// like any other source.
 ///
 /// They could have been synthesised as <see cref="ClassInfo"/> and <see cref="EmClass"/>
 /// objects directly, which would be about the same amount of code. Writing them as source
@@ -29,6 +30,27 @@ public static class Prelude
     /// error, it is just caught against Money.add rather than against Addable.
     /// </summary>
     public const string Source = """
+        ## Something that went wrong. Every error a program declares extends this one.
+        ##
+        ## `throw "text"` is shorthand for `throw Error("text")`, so the short form and the
+        ## long form build the same value. A catch with no type named on it catches this
+        ## and everything below it, which is why the untyped form still means "anything
+        ## that can go wrong".
+        ##
+        ## @param message what went wrong, in words the reader of the output can act on
+        class Error {
+            var message: String
+
+            constructor(message: String) {
+                self.message = message
+            }
+
+            ## The message, so an error reads as its own text where a String is wanted.
+            func to_string(): String {
+                return self.message
+            }
+        }
+
         ## Values that can be joined with +.
         trait Addable {
             abstract func add(other)
@@ -118,6 +140,13 @@ public static class Prelude
     public const string CompareMethod = "compare";
     public const string OrderedTrait = "Ordered";
 
+    /// <summary>The base of every error. Named here because the checker, the
+    /// interpreter and the printer all have to agree on which class it is.</summary>
+    public const string ErrorType = "Error";
+
+    /// <summary>The one field an Error carries, and the text a catch reports.</summary>
+    public const string MessageField = "message";
+
     public const string AtMethod = "at";
     public const string SetAtMethod = "set_at";
     public const string IndexableTrait = "Indexable";
@@ -127,5 +156,6 @@ public static class Prelude
     [
         "Addable", "Subtractable", "Multipliable", "Dividable", "Equatable", "Ordered",
         "Indexable",
+        "Error",
     ];
 }

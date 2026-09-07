@@ -196,11 +196,20 @@ public abstract record Stmt
     public sealed record Assert(Token Keyword, Expr Condition) : Stmt;
 
     /// <summary>
-    /// <c>try { } catch e { }</c>. The catch name is bound to an Error inside the handler.
-    /// Untyped in v0 — catching by type needs user-declared error classes first.
+    /// One <c>catch e { }</c>, or <c>catch e: NotFound { }</c>. A clause with no
+    /// <c>Type</c> catches everything, which is why it is the last one that can be
+    /// written and the only one a program needs.
+    /// </summary>
+    public sealed record CatchClause(Token Name, TypeRef? Type, List<Stmt> Body);
+
+    /// <summary>
+    /// <c>try { } catch e { }</c>. The clauses are tried in the order they are written,
+    /// so a narrower error goes above a wider one — the same rule C# has, and the
+    /// checker reports the order that could never be reached rather than leaving it to
+    /// be discovered at runtime.
     /// </summary>
     public sealed record TryCatch(
-        Token Keyword, List<Stmt> Body, Token CaughtName, List<Stmt> Handler) : Stmt;
+        Token Keyword, List<Stmt> Body, List<CatchClause> Clauses) : Stmt;
 
     /// <summary>
     /// A class. <c>Members</c> holds VarDecls (fields), FuncDecls (methods), and at most

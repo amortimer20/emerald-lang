@@ -1223,11 +1223,39 @@ for input in ["42", "banana"] {
         print("age: #{age_from(input)}")
     }
     catch e {
-        print("could not read that: #{e.message()}")
+        print("could not read that: #{e.message}")
     }
 }</pre>
     <div class="out"><span class="lab">prints</span><pre>age: 42
 could not read that: "banana" is not a number</pre></div>
+  </div>
+
+  <p>A program can say what <em>kind</em> of thing went wrong. <code class="inl">Error</code> is an ordinary class, so you declare your own by extending it &mdash; and then a <code class="inl">catch</code> can name the one it handles.</p>
+  <p>The clauses are tried in the order you write them, so put the specific one first. The last <code class="inl">catch</code> here has no type, which means it takes anything the ones above it did not.</p>
+  <div class="unit">
+    <pre class="code">class TooOld extends Error { }
+
+func age_in_range(text: String): Int {
+    var age = text.to_int_maybe()
+    throw "that is not a number" if age == nothing
+    throw TooOld("#{age} is not a believable age") unless age.between?(0, 130)
+    return age
+}
+
+for input in ["42", "900", "banana"] {
+    try {
+        print("age: #{age_in_range(input)}")
+    }
+    catch e: TooOld {
+        print("out of range: #{e.message}")
+    }
+    catch e {
+        print("could not read that: #{e.message}")
+    }
+}</pre>
+    <div class="out"><span class="lab">prints</span><pre>age: 42
+out of range: 900 is not a believable age
+could not read that: that is not a number</pre></div>
   </div>
 </section>
 

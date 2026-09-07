@@ -56,7 +56,6 @@ public sealed class Checker(
         ["read_line"] = new([EmType.Any], EmType.String, Required: 0),
         ["random"] = new([EmType.Int, EmType.Int], EmType.Int, Required: 2),
         ["exit"] = new([EmType.Int], EmType.Nothing, Required: 0),
-        ["Error"] = new([EmType.String], new EmType.Prim("Error"), Required: 1),
     };
 
     /// <summary>
@@ -1006,20 +1005,18 @@ public sealed class Checker(
 
                 case Stmt.TryCatch t:
                 {
-                    var tried = AssignedBy(t.Body, assigned);
-                    var caught = AssignedBy(t.Handler, assigned);
-                    exits.AddRange(tried.Exits);
-                    exits.AddRange(caught.Exits);
+                    List<Flow> arms = [AssignedBy(t.Body, assigned)];
+                    arms.AddRange(t.Clauses.Select(c => AssignedBy(c.Body, assigned)));
+                    foreach (var arm in arms) exits.AddRange(arm.Exits);
 
-                    if (!tried.Completes && !caught.Completes)
-                        return new Flow(assigned, false, exits);
+                    var reaching = arms.Where(a => a.Completes).ToList();
+                    if (reaching.Count == 0) return new Flow(assigned, false, exits);
 
-                    // The try body can fail at any point, so only what the handler also
-                    // guarantees survives.
-                    assigned =
-                        !tried.Completes ? caught.Assigned
-                        : !caught.Completes ? tried.Assigned
-                        : [.. tried.Assigned.Intersect(caught.Assigned)];
+                    // The try body can fail at any point, so only what every arm that can
+                    // reach the next statement also guarantees survives.
+                    assigned = reaching.Skip(1).Aggregate(
+                        reaching[0].Assigned,
+                        (kept, arm) => [.. kept.Intersect(arm.Assigned)]);
                     break;
                 }
 
@@ -1155,8 +1152,21 @@ public sealed class Checker(
             case Stmt.EnumDecl e: CheckEnum(e, scope); break;
 
             case Stmt.Throw t:
-                TypeOf(t.Value, scope);
+            {
+                // Checked, rather than left to fail at run time. `throw 42` reached the
+                // interpreter and died there, which is exactly the class of mistake a
+                // checked language exists to catch before the program runs.
+                var thrown = TypeOf(t.Value, scope);
+
+                if (thrown is not EmType.Unknown
+                    && !thrown.Equals(EmType.String)
+                    && !IsErrorType(thrown))
+                    Error(t.Keyword.Line,
+                          $"Cannot throw {thrown.Show()}.",
+                          $"Throw a String, or a type that extends {Prelude.ErrorType}:  "
+                          + $"throw {Prelude.ErrorType}(\"...\")");
                 break;
+            }
 
             case Stmt.Assert a:
                 Expect(TypeOf(a.Condition, scope), EmType.Bool, a.Condition, "assert",
@@ -1166,10 +1176,7 @@ public sealed class Checker(
             case Stmt.TryCatch tc:
             {
                 CheckBlock(tc.Body, new Scope(scope));
-                var handler = new Scope(scope);
-                handler.Declare(tc.CaughtName.Lexeme, new EmType.Prim("Error"),
-                                line: tc.CaughtName.Line);
-                CheckBlock(tc.Handler, handler);
+                CheckCatchClauses(tc, scope);
                 break;
             }
 
@@ -1784,7 +1791,7 @@ public sealed class Checker(
             Stmt.Throw => true,
             Stmt.If i => i.Else is not null && Returns(i.Then) && Returns(i.Else),
             Stmt.While w => IsAlwaysTrue(w.Condition) && !HasBreak(w.Body),
-            Stmt.TryCatch t => Returns(t.Body) && Returns(t.Handler),
+            Stmt.TryCatch t => Returns(t.Body) && t.Clauses.All(c => Returns(c.Body)),
             _ => false
         };
 
@@ -1800,7 +1807,7 @@ public sealed class Checker(
         {
             Stmt.Break => true,
             Stmt.If i => HasBreak(i.Then) || (i.Else is not null && HasBreak(i.Else)),
-            Stmt.TryCatch t => HasBreak(t.Body) || HasBreak(t.Handler),
+            Stmt.TryCatch t => HasBreak(t.Body) || t.Clauses.Any(c => HasBreak(c.Body)),
             _ => false
         });
 
@@ -1928,7 +1935,8 @@ public sealed class Checker(
 
                 case Stmt.TryCatch t:
                     foreach (var s in t.Body) Walk(s, visible);
-                    foreach (var s in t.Handler) Walk(s, visible);
+                    foreach (var clause in t.Clauses)
+                        foreach (var s in clause.Body) Walk(s, visible);
                     break;
 
                 case Stmt.ExprStmt e: WalkExpr(e.Expression, visible); break;
@@ -2058,6 +2066,64 @@ public sealed class Checker(
     /// that cannot pass. Both compile in C# and Java without comment, and both are bugs
     /// often enough to be worth naming here.
     /// </summary>
+    /// <summary>The declared Error class, which the prelude always supplies.</summary>
+    private ClassInfo? ErrorInfo => _classes.GetValueOrDefault(Prelude.ErrorType);
+
+    /// <summary>Whether a type is Error or something a program derived from it.</summary>
+    private bool IsErrorType(EmType type) =>
+        type.Stripped is EmType.Obj o && ErrorInfo is { } root && Descends(o.Info, root);
+
+    /// <summary>
+    /// The catch clauses of one try. Each binds its name to the error it catches, so a
+    /// typed clause hands the handler the real class and its fields — which is the whole
+    /// reason to write the type down.
+    ///
+    /// Clauses are tried in source order, so one that could never run is reported here
+    /// rather than left to be discovered by an error that mysteriously lands elsewhere.
+    /// C# does the same, and for the same reason: an unreachable handler is always a
+    /// mistake about which error goes first, never a deliberate choice.
+    /// </summary>
+    private void CheckCatchClauses(Stmt.TryCatch node, Scope scope)
+    {
+        List<(EmType Type, Token Name)> earlier = [];
+
+        foreach (var clause in node.Clauses)
+        {
+            // No type written: this clause catches everything, which is what the short
+            // form has always meant and what a program that does not care should write.
+            var caught = clause.Type is null
+                ? (ErrorInfo is { } root ? new EmType.Obj(root) : EmType.Any)
+                : Resolve(clause.Type);
+
+            if (clause.Type is not null && !IsErrorType(caught) && caught is not EmType.Unknown)
+                Error(clause.Type.Name.Line,
+                      $"{caught.Show()} is not an error, so nothing can throw one.",
+                      $"A catch names {Prelude.ErrorType} or something that extends it:  "
+                      + $"class {caught.Show()} extends {Prelude.ErrorType}");
+
+            foreach (var (before, at) in earlier)
+                if (Covers(before, caught))
+                {
+                    Warn(clause.Name.Line,
+                         $"This catch can never run — the one on line {at.Line} "
+                         + $"already handles {caught.Show()}.",
+                         "Put the narrower error first, or remove this one.");
+                    break;
+                }
+
+            earlier.Add((caught, clause.Name));
+
+            var handler = new Scope(scope);
+            handler.Declare(clause.Name.Lexeme, caught, line: clause.Name.Line);
+            CheckBlock(clause.Body, handler);
+        }
+    }
+
+    /// <summary>Whether an earlier clause already catches everything a later one would.</summary>
+    private static bool Covers(EmType earlier, EmType later) =>
+        earlier is EmType.Obj wide
+        && (later is not EmType.Obj narrow || Descends(narrow.Info, wide.Info));
+
     private EmType TypeTestType(Expr.TypeTest test, Scope scope)
     {
         var value = TypeOf(test.Value, scope);
@@ -2074,7 +2140,7 @@ public sealed class Checker(
                 if (Descends(from.Info, to.Info) && !value.IsMaybe)
                     Warn(test.Keyword.Line,
                          $"This is always true: every {from.Info.Name} is "
-                         + $"a {to.Info.Name}.",
+                         + $"{Article(to.Info.Name).ToLowerInvariant()} {to.Info.Name}.",
                          "The check can go, and so can the branch it guards.");
 
                 // A trait on either side is never impossible: some subclass of the static
@@ -2547,7 +2613,8 @@ public sealed class Checker(
             Stmt.If i => ReturnsAValue(i.Then) || (i.Else is not null && ReturnsAValue(i.Else)),
             Stmt.While w => ReturnsAValue(w.Body),
             Stmt.For f => ReturnsAValue(f.Body),
-            Stmt.TryCatch t => ReturnsAValue(t.Body) || ReturnsAValue(t.Handler),
+            Stmt.TryCatch t => ReturnsAValue(t.Body)
+                               || t.Clauses.Any(c => ReturnsAValue(c.Body)),
             _ => false
         });
 
@@ -3475,11 +3542,14 @@ public sealed class Checker(
 
     // ---- helpers --------------------------------------------------------
 
-    /// <summary>"a" or "an" — small, but a diagnostic that says "A Int" reads as careless.</summary>
     /// <summary>"1 argument" not "1 argument(s)" — small, but "(s)" reads as unfinished.</summary>
     private static string Count(int n, string noun) =>
         n == 1 ? $"1 {noun}" : $"{n} {noun}s";
 
+    /// <summary>
+    /// "An" or "A" — small, but a diagnostic that says "A Int" reads as careless. Given
+    /// capitalised because most uses start a sentence; the rest lower it themselves.
+    /// </summary>
     private static string Article(string word) =>
         "AEIOU".Contains(char.ToUpperInvariant(word[0])) ? "An" : "A";
 

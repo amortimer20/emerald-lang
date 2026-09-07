@@ -1,0 +1,6 @@
+
+err_catch_not_an_error.em:9  Dog is not an error, so nothing can throw one.
+
+    9 | catch e: Dog {
+
+  A catch names Error or something that extends it:  class Dog extends Error

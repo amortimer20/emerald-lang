@@ -147,6 +147,14 @@ public sealed class EmClass(
     public EmClass? ConstructorOwner =>
         constructor is not null ? this : super?.ConstructorOwner;
 
+    /// <summary>
+    /// Whether this class is, or descends from, one of a given name. Used for the
+    /// prelude types the compiler owns — a program cannot redefine those names, so
+    /// matching on one is not the fragile thing it would be for a user class.
+    /// </summary>
+    public bool Descends(string ancestor) =>
+        name == ancestor || (super?.Descends(ancestor) ?? false);
+
     public bool IsSubclassOf(EmClass other) =>
         this == other || (super?.IsSubclassOf(other) ?? false);
 

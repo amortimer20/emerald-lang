@@ -293,8 +293,17 @@ public sealed class Interpreter
                 break;
 
             case Stmt.Throw t:
+            {
                 _line = t.Keyword.Line;
-                throw new ThrownError(AsError(Evaluate(t.Value, env), t.Keyword));
+                var raised = AsError(Evaluate(t.Value, env));
+
+                // Stamped here rather than left for the unwinding to fill in. Building the
+                // error runs a constructor -- Error's own lives in the prelude -- and that
+                // moves the interpreter's idea of the current line into a file the
+                // programmer has never seen. An uncaught throw reported a prelude line
+                // number against their own file name.
+                throw new ThrownError(raised) { Line = t.Keyword.Line };
+            }
 
             case Stmt.Assert a:
                 ExecuteAssert(a, env);
@@ -495,7 +504,7 @@ public sealed class Interpreter
 
             if (held) return;
 
-            throw new ThrownError(new EmError(
+            throw new ThrownError(NewError(
                 $"Assertion failed:  {Source.Of(statement.Condition)}"
                 + $"\n    left  was {Builtins.Display(left)}"
                 + $"\n    right was {Builtins.Display(right)}"))
@@ -505,7 +514,7 @@ public sealed class Interpreter
         if (Truthy(Evaluate(statement.Condition, env))) return;
 
         throw new ThrownError(
-            new EmError($"Assertion failed:  {Source.Of(statement.Condition)}"))
+            NewError($"Assertion failed:  {Source.Of(statement.Condition)}"))
         { Line = statement.Keyword.Line, FromAssertion = true };
     }
 
@@ -577,34 +586,79 @@ public sealed class Interpreter
     /// <c>throw "oops"</c> is shorthand for <c>throw Error("oops")</c> — a spelling, not
     /// a second concept, so both arrive here as one thing.
     /// </summary>
-    private static EmError AsError(object? value, Token keyword) => value switch
+    private EmInstance AsError(object? value) => value switch
     {
-        EmError error => error,
-        string message => new EmError(message),
+        EmInstance instance when instance.Class.Descends(Prelude.ErrorType) => instance,
+        string message => NewError(message),
         _ => throw new RuntimeError(
             $"Cannot throw {Builtins.TypeName(value)}.",
-            "Throw an Error, or a String to be wrapped in one:  throw Error(\"...\")")
+            $"Throw a String, or a type that extends {Prelude.ErrorType}:  "
+            + $"throw {Prelude.ErrorType}(\"...\")")
     };
 
     /// <summary>
-    /// Catches both a thrown Emerald value and the interpreter's own runtime errors, so a
-    /// failed <c>to_int</c> can be handled rather than merely avoided. Deliberately does
+    /// A plain <see cref="Prelude.ErrorType"/> holding a message. The class comes from the
+    /// prelude like any other, so this is an ordinary construction — the interpreter only
+    /// has to know where to find it, which the globals answer.
+    /// </summary>
+    public EmInstance NewError(string message)
+    {
+        if (!_globals.TryGet(Prelude.ErrorType, out object? found) || found is not EmClass cls)
+            throw new RuntimeError($"The prelude did not supply {Prelude.ErrorType}.");
+
+        return (EmInstance)Instantiate(cls, [message]);
+    }
+
+    /// <summary>
+    /// Catches both a thrown Emerald error and the interpreter's own runtime failures, so
+    /// a failed <c>to_int</c> can be handled rather than merely avoided. Deliberately does
     /// not catch <c>exit</c> or a <c>return</c> unwinding through — neither is a failure.
+    ///
+    /// The clauses are tried in the order they are written. A failure the compiler raised
+    /// itself is a plain Error, so a typed clause naming a program's own class correctly
+    /// declines it and a bare clause still takes it.
     /// </summary>
     private void ExecuteTryCatch(Stmt.TryCatch node, Env env)
     {
-        EmError caught;
+        EmInstance caught;
+
+        // Kept so a clause that declines the error can hand on exactly what arrived. A
+        // rethrow that loses the line reports the prelude's, because building the
+        // replacement runs a constructor there.
+        int line;
+        bool fromAssertion = false;
+
         try
         {
             ExecuteBlock(node.Body, new Env(env));
             return;
         }
-        catch (ThrownError thrown) { caught = thrown.Value; }
-        catch (RuntimeError failure) { caught = new EmError(failure.Message); }
+        catch (ThrownError thrown)
+        {
+            caught = thrown.Value;
+            line = thrown.Line;
+            fromAssertion = thrown.FromAssertion;
+        }
+        catch (RuntimeError failure)
+        {
+            caught = NewError(failure.Message);
+            line = failure.Line;
+        }
 
-        var handler = new Env(env);
-        handler.Declare(node.CaughtName.Lexeme, caught);
-        ExecuteBlock(node.Handler, handler);
+        foreach (var clause in node.Clauses)
+        {
+            if (clause.Type is not null
+                && !caught.Class.Descends(clause.Type.Name.Lexeme)) continue;
+
+            var handler = new Env(env);
+            handler.Declare(clause.Name.Lexeme, caught);
+            ExecuteBlock(clause.Body, handler);
+            return;
+        }
+
+        // Every clause named an error this is not. It keeps travelling, which is what a
+        // try that does not handle something has to mean.
+        throw new ThrownError(caught) { Line = line, FromAssertion = fromAssertion };
     }
 
     // ---- classes --------------------------------------------------------

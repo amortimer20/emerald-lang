@@ -325,13 +325,14 @@
 </div>
 
 <div class="q">
-  <h3><span class="n">06</span> What is an Emerald error, and does <code>catch</code> see .NET exceptions?</h3>
-  <p><code>throw "text"</code> and <code>throw Error("text")</code> both work, and <code>catch e</code> is untyped in v0. Two questions follow that the tree-walker never had to answer, because it had no BCL beneath it.</p>
+  <h3><span class="n">06</span> Does <code>catch</code> see .NET exceptions?</h3>
+  <p><strong>Half of this question has been answered since it was written, and the answer changed the other half.</strong> An Emerald error is no longer a compiler intrinsic: <code>Error</code> is an ordinary class declared in the prelude, a program derives its own with <code>extends</code>, and <code>catch e: NotFound</code> selects by type. So the CLR mapping for the Emerald side is the same one every class gets, with <code>Error</code> extending <code>System.Exception</code> and <code>message</code> an ordinary field.</p>
+  <p>What is left is the boundary, and typed catch sharpens rather than settles it:</p>
   <ul>
-    <li>What CLR type is thrown? Presumably one <code>EmeraldError : Exception</code>, so <code>e.message</code> has somewhere to live.</li>
-    <li>When Emerald calls into .NET and .NET throws &mdash; a <code>FileNotFoundException</code>, say &mdash; does <code>catch e</code> catch it? If yes, <code>e.message</code> must work on any <code>Exception</code>. If no, a program can be killed by something it visibly wrapped in a <code>try</code>.</li>
+    <li>Can a clause name a .NET exception &mdash; <code>catch e: FileNotFoundException</code>? The checker currently requires the named type to descend from <code>Error</code>, which no BCL exception does. Either interop types are admitted to that test, or <code>System.Exception</code> becomes the real root and <code>Error</code> sits under it.</li>
+    <li>An untyped <code>catch e</code> should still take everything, including an exception that came from .NET and has no Emerald <code>message</code> field. Mapping <code>e.message</code> onto <code>Exception.Message</code> covers it, which argues for the second option above.</li>
   </ul>
-  <p class="lean"><b>Leaning:</b> catch everything, and give <code>e.message</code> the underlying <code>Exception.Message</code>. A <code>try</code> that visibly fails to catch is the worse outcome, and typed catch is already deferred to when user-declared error classes exist.</p>
+  <p class="lean"><b>Leaning:</b> make <code>System.Exception</code> the root, with <code>Error</code> the class Emerald programs extend and the one <code>throw "text"</code> builds. A bare <code>catch</code> then catches genuinely everything &mdash; a <code>try</code> that visibly fails to catch is still the worse outcome &mdash; and naming a BCL exception needs no special case.</p>
 </div>
 
 <div class="q">

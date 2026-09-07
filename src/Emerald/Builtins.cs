@@ -163,10 +163,6 @@ public static class Builtins
             return (long)Random.Shared.NextInt64(lo, hi + 1);
         },
 
-        // Builds an error value to throw. `throw "oops"` wraps a String in one of these
-        // automatically, so the shorthand and the long form mean the same thing.
-        ["Error"] = args => new EmError(args.Count > 0 ? Display(args[0]) : ""),
-
         // Stops the program. `exit` alone means success; `exit(1)` reports a failure.
         ["exit"] = args =>
             throw new ExitSignal(args.Count > 0 ? (int)AsInt(args[0], "exit") : 0),
@@ -245,12 +241,6 @@ public static class Builtins
                 "name" => v.Name,
                 "to_string" => v.ToString(),
                 _ => throw new RuntimeError($"No method named {name} on {v.Type}.")
-            },
-            EmError e => name switch
-            {
-                "message" => e.Message,
-                "to_string" => e.Message,
-                _ => throw new RuntimeError($"No method named {name} on Error.")
             },
             bool b => BoolMethod(b, name),
 
@@ -1021,6 +1011,10 @@ public static class Builtins
         string s => s,
         EmRange r => $"{r.Start}..{r.End}",
         EmClass c => $"<class {c.Name}>",
+        // An error carries its own text, so printing one shows what went wrong rather
+        // than <Error>. Error is a prelude type the compiler owns, the same way List is.
+        EmInstance err when err.Class.Descends(Prelude.ErrorType)
+            => Display(err.Fields.GetValueOrDefault(Prelude.MessageField)),
         EmInstance i => $"<{i.Class.Name}>",
         EmList a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
         EmEnumValue v => v.ToString(),
@@ -1029,7 +1023,6 @@ public static class Builtins
         EmDict d => d.Count == 0 ? "[:]"
             : "[" + string.Join(", ", d.Keys.Select(k => $"{Display(k)}: {Display(d.Get(k))}")) + "]",
         EmModule m => $"<module {m.Name}>",
-        EmError e => e.Message,
         ICallable => "<function>",
         _ => value.ToString() ?? ""
     };
@@ -1048,7 +1041,6 @@ public static class Builtins
         EmPair => "Pair",
         EmEnumValue v => v.Type,
         EmModule m => m.Name,
-        EmError => "Error",
         EmClass c => $"class {c.Name}",
         EmInstance i => i.Class.Name,
         ICallable => "Function",

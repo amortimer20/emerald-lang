@@ -437,8 +437,9 @@ public sealed class Parser(
     }
 
     /// <summary>
-    /// <c>try { } catch e { }</c>. The catch clause is required — a <c>try</c> that
-    /// swallows nothing does nothing, and one that swallows everything silently is worse.
+    /// <c>try { } catch e { }</c>. At least one catch clause is required — a <c>try</c>
+    /// that swallows nothing does nothing, and one that swallows everything silently is
+    /// worse. Several may follow, each naming the error it handles.
     /// Stroustrup style puts <c>catch</c> on its own line, like <c>else</c>.
     /// </summary>
     private Stmt TryStatement()
@@ -446,14 +447,24 @@ public sealed class Parser(
         var keyword = Advance();
         var body = Block();
 
-        if (!Match(TokenType.Catch))
+        if (!Check(TokenType.Catch))
             throw Error(Peek, "A try needs a catch.",
                         "Say what to do when it fails:  catch error { ... }");
 
-        var name = Consume(TokenType.Identifier, "Expected a name for the caught error.",
-                           "The error is bound to it inside the handler:  catch error { ... }");
+        // One or more clauses. The type is optional, and written the way every other
+        // type in the language is — after a colon — so there is no new punctuation to
+        // learn for the case where a program cares which error it caught.
+        List<Stmt.CatchClause> clauses = [];
+        while (Match(TokenType.Catch))
+        {
+            var name = Consume(TokenType.Identifier, "Expected a name for the caught error.",
+                               "The error is bound to it inside the handler:  catch error { ... }");
 
-        return new Stmt.TryCatch(keyword, body, name, Block());
+            TypeRef? type = Match(TokenType.Colon) ? ParseTypeRef() : null;
+            clauses.Add(new Stmt.CatchClause(name, type, Block()));
+        }
+
+        return new Stmt.TryCatch(keyword, body, clauses);
     }
 
     private Stmt WhileStatement()

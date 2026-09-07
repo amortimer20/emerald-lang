@@ -40,5 +40,5 @@ try {
     print(described("nope"))
 }
 catch problem {
-    print("caught: #{problem.message()}")
+    print("caught: #{problem.message}")
 }

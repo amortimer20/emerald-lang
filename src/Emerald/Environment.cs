@@ -55,21 +55,20 @@ public sealed class Env(Env? parent = null, Dictionary<string, object?>? shared 
     }
 }
 
-/// <summary>An Emerald error value, as produced by <c>Error("...")</c>.</summary>
-public sealed class EmError(string message)
-{
-    public string Message => message;
-    public override string ToString() => $"<Error: {message}>";
-}
-
 /// <summary>
-/// Carries a thrown Emerald value up to the nearest <c>catch</c>. Distinct from
+/// Carries a thrown Emerald error up to the nearest <c>catch</c>. Distinct from
 /// <see cref="RuntimeError"/>, which the interpreter raises itself — but a catch handles
 /// both, so a failed <c>to_int</c> is catchable rather than only avoidable.
 /// </summary>
-public sealed class ThrownError(EmError value) : Exception(value.Message)
+public sealed class ThrownError(EmInstance value)
+    : Exception(Builtins.Display(value.Fields.GetValueOrDefault(Prelude.MessageField)))
 {
-    public EmError Value { get; } = value;
+    /// <summary>
+    /// The error itself, so a typed catch can ask what class it is. An ordinary
+    /// instance of a prelude class rather than a value of its own kind, which is what
+    /// lets a program declare its own errors with nothing but <c>extends</c>.
+    /// </summary>
+    public EmInstance Value { get; } = value;
 
     /// <summary>
     /// Whether a failed <c>assert</c> raised this. It is thrown like any other error so

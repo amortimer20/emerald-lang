@@ -176,7 +176,7 @@ public static class Commands
             catch (ThrownError thrown)
             {
                 Console.WriteLine($"  FAIL  {label}");
-                Detail(thrown.Value.Message);
+                Detail(thrown.Message);
                 failed++;
             }
             catch (RuntimeError error)

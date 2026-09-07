@@ -3,4 +3,4 @@ err_throw_non_error.em:1  Cannot throw Int.
 
     1 | throw 42
 
-  Throw an Error, or a String to be wrapped in one:  throw Error("...")
+  Throw a String, or a type that extends Error:  throw Error("...")

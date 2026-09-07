@@ -1,0 +1,7 @@
+
+warn_catch_never_runs.em:10  warning: This catch can never run — the one on line 7 already handles NotFound.
+
+   10 | catch e: NotFound {
+
+  Put the narrower error first, or remove this one.
+anything: gone

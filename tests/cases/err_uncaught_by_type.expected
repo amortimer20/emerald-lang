@@ -1,0 +1,6 @@
+
+err_uncaught_by_type.em:6  plain trouble
+
+    6 |     throw "plain trouble"
+
+  Nothing caught this. Wrap the risky part:  try { ... } catch e { ... }

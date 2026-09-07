@@ -89,7 +89,7 @@ public static class Repl
 
                 try { interpreter.RunInteractive(fresh); }
                 catch (ExitSignal) { throw; }
-                catch (ThrownError thrown) { Failed(thrown.Value.Message); }
+                catch (ThrownError thrown) { Failed(thrown.Message); }
                 catch (RuntimeError error) { Failed(error.Message); }
 
                 return;
