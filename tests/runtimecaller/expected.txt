@@ -21,6 +21,7 @@
 True
 True
 A,B,a,b
+fig,pear,banana
 True
 True
 True

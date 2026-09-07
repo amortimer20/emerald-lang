@@ -364,7 +364,11 @@ public static class Builtins
 
             // order
             "sort" => new EmList([.. items.OrderBy(x => x, Ordering)]),
-            "sort_by" => new EmList([.. items.OrderBy(x => Block(args).Call(interp, [x]), Ordering)]),
+            // Through the runtime library, with the interpreter's block wrapped into the
+            // plain delegate that library takes -- emitted code passes one of those with
+            // no adapter, a compiled lambda being a delegate already.
+            "sort_by" => new EmList(Runtime.Collections.SortBy(
+                items, x => Block(args).Call(interp, [x]), Ordering)),
             "reverse" => new EmList([.. Enumerable.Reverse(items)]),
 
             // access
