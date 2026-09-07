@@ -2817,7 +2817,16 @@ public sealed class Checker(
         if (l.Body is [Stmt.ExprStmt only])
             return new EmType.Func(parameters, TypeOf(only.Expression, inner));
 
-        _returnTypes.Push(("this block", EmType.Any));
+        // A block body has no single expression to read a type from, so the type being
+        // asked for is the only thing that can say what its returns must be. Without it a
+        // lambda that plainly hands back an Int was typed func(): Unknown -- and since an
+        // unknown no longer satisfies a declared type, `var f: func(): Int = { ... }` with
+        // a return in it was rejected outright, saying it had been given a func() that
+        // gives nothing. Taking the wanted type also starts checking the returns against
+        // something, which nothing was doing: Any accepted whatever came back.
+        EmType wanted = shape?.Return ?? EmType.Any;
+
+        _returnTypes.Push(("this block", wanted));
         int enclosingLoops = _loopDepth;
         _hiddenLoops += enclosingLoops;
         _loopDepth = 0;
@@ -2830,7 +2839,7 @@ public sealed class Checker(
         // none to give. Calling it Any made `map { n => print(n) }` a list of nothings
         // that nothing complained about, which is the silent nothing the row ruled out.
         return new EmType.Func(parameters,
-                               ReturnsAValue(l.Body) ? EmType.Any : EmType.Nothing);
+                               ReturnsAValue(l.Body) ? wanted : EmType.Nothing);
     }
 
     /// <summary>

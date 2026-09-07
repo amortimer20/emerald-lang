@@ -1,0 +1,4 @@
+
+err_block_lambda_returns_wrong_type.em:9  this block returns Int, but this is String.
+
+    9 |     return "not an int"
