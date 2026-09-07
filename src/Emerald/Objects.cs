@@ -120,13 +120,44 @@ public sealed class EmClass(
     public Stmt.FuncDecl? FindMethod(string wanted) => FindMethods(wanted).FirstOrDefault();
 
     /// <summary>
-    /// Every overload of a name (§3.2). Own methods shadow the base's rather than adding
-    /// to them, which is what overriding already meant.
+    /// Every overload of a name (§3.2), this class's own and the ones above it. An own
+    /// method replaces an inherited one taking the same things and leaves its siblings
+    /// reachable — the checker has already agreed which is which, so this only has to
+    /// arrive at the same set.
     /// </summary>
     public List<Stmt.FuncDecl> FindMethods(string wanted)
     {
-        if (methods.TryGetValue(wanted, out var mine)) return mine;
-        return super?.FindMethods(wanted) ?? [];
+        List<Stmt.FuncDecl> found = methods.TryGetValue(wanted, out var mine) ? [.. mine] : [];
+
+        foreach (var candidate in super?.FindMethods(wanted) ?? [])
+            if (!found.Any(f => SameParams(f, candidate))) found.Add(candidate);
+
+        foreach (var candidate in FromTraits.GetValueOrDefault(wanted, []))
+            if (!found.Any(f => SameParams(f, candidate))) found.Add(candidate);
+
+        return found;
+    }
+
+    /// <summary>
+    /// Whether two declarations take the same things, by what they were written to take.
+    /// Comparing the annotations rather than resolved types is enough here: the checker
+    /// refuses a program where that would answer differently, so this is confirming its
+    /// decision rather than making one.
+    /// </summary>
+    private static bool SameParams(Stmt.FuncDecl a, Stmt.FuncDecl b)
+    {
+        if (a.Params.Count != b.Params.Count) return false;
+
+        for (int i = 0; i < a.Params.Count; i++)
+        {
+            var (mine, theirs) = (a.Params[i].Type, b.Params[i].Type);
+            if (mine is null != theirs is null) return false;
+            if (mine is not null && theirs is not null
+                && (mine.Name.Lexeme != theirs.Name.Lexeme
+                    || mine.Nullable != theirs.Nullable)) return false;
+        }
+
+        return true;
     }
 
     /// <summary>Base fields first, so a subclass's initializers can rely on them.</summary>

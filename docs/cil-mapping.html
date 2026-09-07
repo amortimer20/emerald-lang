@@ -197,6 +197,11 @@
   }
   .lean b { color: var(--accent-deep); font-weight: 600; }
 
+  .lean.settled {
+    background: color-mix(in srgb, var(--accent-wash) 55%, transparent);
+    border-left-width: 3px;
+  }
+
   pre {
     margin: 12px 0;
     font-family: var(--mono);
@@ -278,8 +283,8 @@
 </table>
 </div>
 
-<h2>Open</h2>
-<p class="sub">Ten questions the design does not answer. Each changes the emitter's shape, and several change what a C# caller sees, so they are cheaper settled now than discovered later. The ninth arrived from outside, having been sitting in the settled column above. The tenth arrived from the language changing underneath the document.</p>
+<h2>Settled</h2>
+<p class="sub">Ten questions the design did not answer. Each changes the emitter's shape, and several change what a C# caller sees, so they were cheaper settled now than discovered later. <strong>All ten are now ruled on</strong>, against a stated preference for .NET compatibility and user-friendliness &mdash; which pull apart in exactly one place, question 01, and that one is decided for the beginner. Question 09 turned out not to need an encoding at all: the language rule it was trying to preserve was dropped instead.</p>
 
 <div class="q">
   <h3><span class="n">01</span> Dictionary and Set cannot be the BCL types</h3>
@@ -289,7 +294,7 @@
     <li><strong>Keep the promise.</strong> Emit an ordered implementation. A C# caller then receives an Emerald type rather than a familiar one, unless it implements <code>IDictionary&lt;K,V&gt;</code>.</li>
     <li><strong>Drop the promise.</strong> Use the BCL types directly, and delete the §3.7 rows.</li>
   </ul>
-  <p class="lean"><b>Leaning:</b> keep it. The promise is load-bearing for the teaching case and it is already documented, demonstrated in <code>examples/</code>, and relied on by the tour. Implementing <code>IDictionary&lt;K,V&gt;</code> over an ordered store recovers most of the interop.</p>
+  <p class="lean settled"><b>Settled:</b> keep the promise, and emit an ordered implementation implementing <code>IDictionary&lt;K,V&gt;</code> so most of the interop comes back. This is the single place where .NET familiarity and the teaching case conflict, and the teaching case wins: order is documented, demonstrated in <code>examples/</code>, relied on by the tour, and its whole reason for existing is that a beginner cannot tell shuffled output from a bug of their own. The BCL types are the worse trap precisely because they <em>look</em> ordered until the first removal.</p>
 </div>
 
 <div class="q">
@@ -299,7 +304,7 @@
     <li><strong>It is <code>System.Collections.Generic.List&lt;T&gt;</code></strong>, and Emerald's methods are extension methods the compiler resolves. Best interop; a C# caller gets a real <code>List&lt;T&gt;</code>.</li>
     <li><strong>It is an Emerald type</strong> wrapping one. Full control; every signature crossing the boundary carries a type C# does not know.</li>
   </ul>
-  <p class="lean"><b>Leaning:</b> the BCL type. <code>List&lt;T&gt;</code> is the most common thing to hand across the boundary, and question 01 already spends the interop budget on <code>Dictionary</code>. Note this makes <code>map</code> and <code>find</code> extension methods that must not collide with LINQ's <code>Select</code> and <code>First</code> &mdash; which §3.7 has already thought about.</p>
+  <p class="lean settled"><b>Settled:</b> the BCL <code>List&lt;T&gt;</code>. It is the most common thing to hand across the boundary, and question 01 already spends the interop budget on <code>Dictionary</code>. This makes <code>map</code> and <code>find</code> extension methods that must not collide with LINQ's <code>Select</code> and <code>First</code>.</p>
 </div>
 
 <div class="q">
@@ -307,21 +312,21 @@
   <p>One language feature, two representations. <code>String?</code> is a reference that may be null, carrying a nullability annotation the CLR does not enforce. <code>Int?</code> is <code>Nullable&lt;long&gt;</code> &mdash; a struct, with <code>HasValue</code>, that boxes when it meets <code>object</code>.</p>
   <p>That difference reaches <code>.or()</code>, <code>?.</code>, and every generic instantiation: <code>List&lt;Int?&gt;</code> is <code>List&lt;long?&gt;</code>, and <code>List&lt;String?&gt;</code> is <code>List&lt;string&gt;</code> plus an attribute.</p>
   <p>It also decides what <code>nothing</code> compiles to in a context where the type is not yet known &mdash; <code>[nothing, nothing]</code> is legal today and infers <code>List&lt;Nothing&gt;</code>.</p>
-  <p class="lean"><b>Leaning:</b> follow the CLR rather than unify. C# lives with exactly this split and its users mostly never notice, because the compiler hides it. Unifying would mean boxing every <code>Int?</code>, which is the one thing a game engine will punish.</p>
+  <p class="lean settled"><b>Settled:</b> follow the CLR rather than unify. C# lives with exactly this split and its users mostly never notice, because the compiler hides it. Unifying would box every <code>Int?</code>, which is the one thing a game engine will punish.</p>
 </div>
 
 <div class="q">
   <h3><span class="n">04</span> Does a struct box when it uses an operator trait?</h3>
   <p><code>struct Money with Addable</code> is a CLR value type implementing an interface. Dispatching <code>a + b</code> through the interface boxes the receiver &mdash; on every addition.</p>
   <p>Emerald never dispatches dynamically: overloads are resolved at declaration, there is no runtime metaprogramming, and the static type at every call site is known. So the emitter can always call the method directly and never touch the interface.</p>
-  <p class="lean"><b>Leaning:</b> emit direct calls, and treat the interface as a compile-time contract that also happens to exist in metadata. Worth confirming early, because if it does not hold, <code>struct</code> plus operator traits is a performance trap sitting under the most natural way to write a vector type.</p>
+  <p class="lean settled"><b>Settled:</b> emit direct calls, and treat the interface as a compile-time contract that also happens to exist in metadata. Emerald never dispatches dynamically, so the static type at every call site is known and the receiver never boxes.</p>
 </div>
 
 <div class="q">
   <h3><span class="n">05</span> Should operator traits also emit <code>op_Addition</code>?</h3>
   <p>A C# consumer of <code>Money</code> sees an <code>Add</code> method and writes <code>a.Add(b)</code>. It could just as easily see <code>operator+</code> and write <code>a + b</code>. Emitting both costs one extra method that forwards.</p>
   <p>§3.4's stated goal for the naming rules is that <em>a C# consumer never learns Emerald was involved</em>, which argues for emitting the operator.</p>
-  <p class="lean"><b>Leaning:</b> emit both. It is cheap, it is invisible from Emerald, and it is the difference between a library that feels foreign and one that does not.</p>
+  <p class="lean settled"><b>Settled:</b> emit both. It is cheap, invisible from Emerald, and §3.4's goal is that a C# consumer never learns Emerald was involved.</p>
 </div>
 
 <div class="q">
@@ -332,7 +337,7 @@
     <li>Can a clause name a .NET exception &mdash; <code>catch e: FileNotFoundException</code>? The checker currently requires the named type to descend from <code>Error</code>, which no BCL exception does. Either interop types are admitted to that test, or <code>System.Exception</code> becomes the real root and <code>Error</code> sits under it.</li>
     <li>An untyped <code>catch e</code> should still take everything, including an exception that came from .NET and has no Emerald <code>message</code> field. Mapping <code>e.message</code> onto <code>Exception.Message</code> covers it, which argues for the second option above.</li>
   </ul>
-  <p class="lean"><b>Leaning:</b> make <code>System.Exception</code> the root, with <code>Error</code> the class Emerald programs extend and the one <code>throw "text"</code> builds. A bare <code>catch</code> then catches genuinely everything &mdash; a <code>try</code> that visibly fails to catch is still the worse outcome &mdash; and naming a BCL exception needs no special case.</p>
+  <p class="lean settled"><b>Settled:</b> make <code>System.Exception</code> the root, with <code>Error</code> the class Emerald programs extend and the one <code>throw "text"</code> builds. A bare <code>catch</code> then catches genuinely everything, and naming a BCL exception needs no special case.</p>
 </div>
 
 <div class="q">
@@ -342,26 +347,22 @@
     <li>The entry file's directory name &mdash; nothing to configure, but renaming a folder renames the namespace.</li>
     <li><code>emerald.toml</code>, which §3.5 already says appears on first need.</li>
   </ul>
-  <p class="lean"><b>Leaning:</b> directory name by default, overridable in <code>emerald.toml</code> once that file exists for another reason. A student building a Windows executable should never meet a manifest.</p>
+  <p class="lean settled"><b>Settled:</b> directory name by default, overridable in <code>emerald.toml</code> once that file exists for another reason. A student building a Windows executable should never meet a manifest.</p>
 </div>
 
 <div class="q">
   <h3><span class="n">08</span> What does the entry point look like?</h3>
   <p>The entry file's top-level statements become a static method that is the assembly entry point. Two details are unstated: whether it takes <code>string[] args</code> (there is no way to read them in the language yet), and how <code>exit(code)</code> reaches the process exit code &mdash; as a return value from <code>Main</code>, or as <code>Environment.Exit</code>.</p>
-  <p class="lean"><b>Leaning:</b> emit <code>static int Main()</code>, and let <code>exit(code)</code> throw an internal signal the entry point catches and returns &mdash; which is exactly what the interpreter already does with <code>ExitSignal</code>, so the semantics are already decided and tested.</p>
+  <p class="lean settled"><b>Settled:</b> emit <code>static int Main(string[] args)</code> &mdash; the parameter goes in now even though nothing in the language can read it, so adding argument access later does not change the signature. <code>exit(code)</code> throws an internal signal the entry point catches and returns, which is what the interpreter already does with <code>ExitSignal</code>.</p>
 </div>
 
 <div class="q">
   <h3><span class="n">09</span> What a subclass does to an inherited overload set</h3>
-  <p>§3.2 says a subclass declaring a name replaces the base's whole set for it. So given <code>Shape.draw()</code> and <code>Shape.draw(Int)</code>, a <code>Circle</code> that declares <code>draw()</code> has no <code>draw(Int)</code> at all. C++ hides this way; C#, Java and Kotlin do not &mdash; overriding one overload leaves its siblings reachable.</p>
-  <p>This was in the settled column above until an outside reading queried it, and the first correction was overstated: it is not that the rule cannot be encoded. Emerald's own compiler resolves Emerald calls and can enforce hiding perfectly well. The real question is narrower and has two halves.</p>
-  <ul>
-    <li><strong>What does a C# consumer see?</strong> A <code>Circle</code> whose <code>Draw(int)</code> is absent has to be emitted as something &mdash; a <code>new</code>-style shadow, a redeclared member that throws, or nothing at all, in which case C# sees <code>Shape.Draw(int)</code> and Emerald's rule stops applying at the language boundary.</li>
-    <li><strong>How does it reconcile with virtual dispatch?</strong> If <code>Shape.draw(Int)</code> is virtual and still inherited in IL, a call through a <code>Shape</code> reference reaches it on a <code>Circle</code> &mdash; which the Emerald rule says does not exist.</li>
-  </ul>
-  <p><code>override</code> makes this stranger rather than better, which is new since the rule was written: <code>override func draw()</code> states a claim about one signature while silently removing another that nobody mentioned. The keyword exists precisely so that replacing something is said out loud.</p>
-  <p class="lean"><b>Leaning:</b> none yet &mdash; but the question to answer first is not the encoding, it is <em>what behavior Emerald intends to preserve</em> for a .NET caller. Once that is stated, the encoding follows. Worth revisiting whether the language rule earns its cost at all, given it is the odd one out among the languages Emerald otherwise borrows from.</p>
-</div>
+  <p><strong>Answered by deleting the rule, not by encoding it.</strong> §3.2 used to say a subclass declaring a name replaced the base's whole set for it, so a <code>Circle</code> declaring <code>draw()</code> had no <code>draw(Int)</code> at all. C++ hides this way; C#, Java and Kotlin do not.</p>
+  <p>The decisive argument was this document's rather than §3.2's. A <code>Circle</code> emitted to IL inherits <code>Draw(int)</code> whatever Emerald says, so a C# caller sees the sibling; and where <code>Shape.draw(Int)</code> is virtual, a call through a <code>Shape</code> reference reaches it on a <code>Circle</code> &mdash; a method the rule said did not exist. Every encoding that preserved the fiction (a <code>new</code>-style shadow, a redeclared member that throws) bought it with a method that lies.</p>
+  <p>So the rule was dropped in the language instead. An own method now replaces the inherited one <em>taking the same parameters</em> and leaves its siblings reachable, and <code>override</code> became a claim about one signature rather than about a name. The emitter has nothing special to do: ordinary virtual dispatch is now what Emerald means.</p>
+  <p class="lean settled"><b>Settled:</b> no encoding needed. <strong>The one thing worth recording is how it was found</strong> &mdash; the question came from an outside reading of a row sitting in the settled column, and what it exposed was not a hard encoding problem but a language rule that could not survive its own boundary. A rule that stops applying the moment anything crosses is a local convention with a hole in it.</p>
+  </div>
 
 <div class="q">
   <h3><span class="n">10</span> What is a <code>func(...)</code>, and what is a method value?</h3>
@@ -371,11 +372,18 @@
     <li><strong>How is a method value emitted?</strong> <code>ldftn</code> plus <code>newobj</code> on the delegate, which is exactly C#'s method-group conversion, so the shape is not in doubt. What is in doubt is <em>which</em> method, when the name is overloaded: the checker picks the overload from the expected type and the runtime keeps the whole set and dispatches on the arguments, which agree today only because the checker refuses any expression where they would not. An emitter has to record the checker's choice on the AST rather than rediscover it, and nothing currently does &mdash; the interpreter never needed it.</li>
   </ul>
   <p>This meets question 09 head-on. If a subclass hides an inherited overload set, then <code>circle.draw</code> as a method value has to resolve against Emerald's view of the set and not the CLR's, and a C# consumer converting the same method group would get the other answer.</p>
-  <p class="lean"><b>Leaning:</b> the BCL types, for the same interop reason as question 02, and accept that a seventeen-parameter function is not a language anyone needs. The overload-choice recording is not a question so much as work the emitter will require: worth doing in the checker now, while the rule is fresh, rather than reconstructing it later from a type that no longer says which alternative it came from.</p>
+  <p class="lean settled"><b>Settled:</b> the BCL <code>Func&lt;&hellip;&gt;</code> and <code>Action&lt;&hellip;&gt;</code> families, for the same interop reason as question 02, accepting that a seventeen-parameter function is not a language anyone needs. A method value is <code>ldftn</code> plus <code>newobj</code>, which is C#'s own method-group conversion. <strong>The one piece of work this creates is not a question: the checker has to record which overload it chose on the AST</strong>, because the emitter cannot rediscover it and nothing stores it today &mdash; the tree-walker kept the whole set and picked on the arguments, which IL cannot do.</p>
 </div>
 
 <h2>Notes and risks</h2>
 <p class="sub">Not decisions, but things that will bite during phase 2 if they are met by surprise.</p>
+
+<div class="q" style="border-left-color:var(--accent)">
+  <h3><span class="n" style="color:var(--accent)">&mdash;</span> <code>//</code> and <code>%</code> floor; <code>div</code> and <code>rem</code> truncate</h3>
+  <p>The one found by asking what the emitter would do rather than by reading the code. Emerald's integer division and remainder are <strong>Python-style, floored</strong>, deliberately and with a stated reason &mdash; <code>-7 // 2</code> is <code>-4</code> and <code>-7 % 2</code> is <code>1</code>, so <code>n % 2 == 1</code> detects an odd number whatever its sign. CIL's <code>div</code> and <code>rem</code> truncate toward zero, which is C#'s rule and gives <code>-3</code> and <code>-1</code>.</p>
+  <p><strong>The emitter must not reach for the obvious instruction.</strong> Nothing would catch it if it did: the golden tests run the interpreter, so the suite would stay green while every negative division in every compiled program changed its answer. This was settled and tested in <code>operators.em</code>, and it was recorded in a comment inside a test file &mdash; nowhere a person writing the code generator would look.</p>
+  <p>Confirmed as the intended behavior rather than an accident. The interop argument does not apply: <code>%</code> is an in-language operator and never crosses the boundary, so a C# consumer never learns which rule was used. The cost is a few extra instructions and a moment of surprise for a C# reader, against a beginner writing <code>if n % 2 == 1</code> and being right.</p>
+</div>
 
 <div class="q" style="border-left-color:var(--accent)">
   <h3><span class="n" style="color:var(--accent)">&mdash;</span> String iteration is by text element, not by <code>char</code></h3>

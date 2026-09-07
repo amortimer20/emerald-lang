@@ -988,7 +988,7 @@ class RaceTimer extends Timer {
    15 |     func reset() { self.laps = 0 }        # written without knowing Timer has one
 
   Write:  override func reset(...)
-  If you did not mean to replace it, Timer already has a reset and calling it will now reach this one instead. Rename yours.</pre></div>
+  If you did not mean to replace it, Timer already has a reset taking the same things, and calling it will now reach this one instead. Rename yours, or give it different parameters so the two are overloads.</pre></div>
   <p>When the new class has something of its own to set up, it writes its own <code class="inl">constructor</code> and starts it by calling the one above with <code class="inl">super</code>. That is how the base gets to fill in its own part &mdash; you say what to pass it, and it does the rest.</p>
   <div class="unit">
     <pre class="code">class Vehicle {

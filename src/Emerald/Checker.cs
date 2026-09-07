@@ -712,7 +712,7 @@ public sealed class Checker(
             return;
         }
 
-        var replaced = info.Replaces(method.Name.Lexeme);
+        var replaced = info.Replaces(method.Name.Lexeme, SignatureOf(method));
 
         if (replaced is not null && !method.IsOverride)
         {
@@ -721,8 +721,9 @@ public sealed class Checker(
                   + "so it says override.",
                   $"Write:  override func {method.Name.Lexeme}(...)\n"
                   + $"If you did not mean to replace it, {replaced.Name} already has a "
-                  + $"{method.Name.Lexeme} and calling it will now reach this one instead. "
-                  + "Rename yours.");
+                  + $"{method.Name.Lexeme} taking the same things, and calling it will now "
+                  + "reach this one instead. Rename yours, or give it different parameters "
+                  + "so the two are overloads.");
             return;
         }
 
@@ -736,7 +737,9 @@ public sealed class Checker(
                           ? $"{info.Name} extends nothing and mixes in nothing, so there is "
                             + "no implementation for it to replace."
                           : $"Nothing {info.Name} inherits has a {method.Name.Lexeme} with a "
-                            + "body. Drop the override."));
+                            + "body taking these parameters. An override replaces one "
+                            + "version, so the parameters have to match it. Drop the "
+                            + "override, or match what it takes."));
     }
 
     /// <summary>
@@ -3154,12 +3157,6 @@ public sealed class Checker(
                 string has = "It has " + string.Join(", and ", candidates.Select(
                     f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".";
 
-                if (ReplacedOwner(obj.Info, get.Name.Lexeme, supplied) is { } from)
-                    has += $"\n{from}.{get.Name.Lexeme} would have taken these, but "
-                           + $"{obj.Info.Name} declares {get.Name.Lexeme} itself, and a "
-                           + "class's own version replaces every one it inherits under "
-                           + "that name.";
-
                 Error(get.Name.Line,
                       $"No version of {what} takes "
                       + (args.Count == 0
@@ -3459,34 +3456,6 @@ public sealed class Checker(
     /// checker while <c>rename("a", "b", "c")</c> did not. One routine means a method's
     /// diagnostic cannot drift from a function's, and cannot go missing.
     /// </summary>
-    /// <summary>
-    /// The base or trait whose version of a name was replaced, when the class declared
-    /// that name itself and the call would have fitted the version it replaced.
-    ///
-    /// §3.2 makes a subclass declaring a name replace the base's whole set for it — that
-    /// is what overriding means. But the arity error on its own sends the reader to a
-    /// class that is missing a method they can plainly see on its parent, which is the
-    /// kind of true-but-unhelpful message §3.6 exists to stop.
-    /// </summary>
-    private static string? ReplacedOwner(ClassInfo info, string name, int supplied)
-    {
-        // Nothing of its own means nothing was replaced — the name resolved by inheritance.
-        if (!info.Methods.ContainsKey(name)) return null;
-
-        bool Fits(List<EmType.Func> versions) =>
-            versions.Any(f => supplied >= f.LeastArgs && supplied <= f.Params.Count);
-
-        for (var owner = info.Base; owner is not null; owner = owner.Base)
-            if (owner.Methods.TryGetValue(name, out var inherited) && Fits(inherited))
-                return owner.Name;
-
-        foreach (var trait in info.Traits)
-            if (trait.Methods.TryGetValue(name, out var provided) && Fits(provided))
-                return trait.Name;
-
-        return null;
-    }
-
     private EmType CheckArguments(
         EmType.Func fn, Expr.Call c, List<EmType> given, string what, int line,
         ClassInfo? owner = null, string? method = null)
@@ -3501,17 +3470,7 @@ public sealed class Checker(
                 ? Count(fn.Params.Count, "argument")
                 : $"between {fn.LeastArgs} and {Count(fn.Params.Count, "argument")}";
 
-            string? replaced = owner is not null && method is not null
-                ? ReplacedOwner(owner, method, supplied)
-                : null;
-
-            Error(line, $"{what} takes {wanted}, but got {supplied}.",
-                  replaced is null
-                      ? null
-                      : $"{replaced}.{method} takes {supplied}, but {owner!.Name} declares "
-                        + $"{method} itself, and a class's own version replaces every one it "
-                        + $"inherits under that name. Add the version you want to "
-                        + $"{owner.Name}, or call it something else.");
+            Error(line, $"{what} takes {wanted}, but got {supplied}.");
             return fn.Return;
         }
 

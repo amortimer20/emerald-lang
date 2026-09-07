@@ -1,0 +1,6 @@
+
+err_override_wrong_parameters.em:8  draw overrides nothing.
+
+    8 |     override func draw(): String { return "circle" }
+
+  Nothing Circle inherits has a draw with a body taking these parameters. An override replaces one version, so the parameters have to match it. Drop the override, or match what it takes.

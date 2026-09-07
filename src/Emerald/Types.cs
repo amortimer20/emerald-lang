@@ -476,8 +476,8 @@ public sealed class ClassInfo(string name)
     /// <summary>
     /// Methods by name, each name holding every overload of it (§3.2). A list rather than
     /// one signature, because two methods may share a name when their parameters differ —
-    /// and a subclass declaring a name replaces the base's set for that name entirely,
-    /// which is what overriding already meant.
+    /// and a subclass declaring a name adds to the base's set for it, replacing only the
+    /// version that takes the same things.
     /// </summary>
     public Dictionary<string, List<EmType.Func>> StaticMethods { get; } = [];
 
@@ -544,20 +544,48 @@ public sealed class ClassInfo(string name)
     public EmType.Func? FindMethod(string wanted) => FindMethods(wanted).FirstOrDefault();
 
     /// <summary>
-    /// Every overload of a name, from wherever it is first declared. Own methods shadow
-    /// the base's rather than adding to them: a subclass writing <c>speak</c> replaces
-    /// what it inherited, which is what an override has always meant here.
+    /// Every overload of a name, this class's own and every one it inherits. An own
+    /// method replaces an inherited one <em>of the same parameters</em> and leaves its
+    /// siblings alone, which is what C#, Java and Kotlin do.
+    ///
+    /// It used to replace the whole set: a subclass writing <c>draw()</c> had no
+    /// <c>draw(Int)</c> at all, C++-style. That rule was the odd one out among the
+    /// languages Emerald otherwise borrows from, and it could not survive the boundary
+    /// anyway — a C# caller sees what the CLR inherited, so the hiding stopped applying
+    /// the moment anything crossed.
     /// </summary>
     public List<EmType.Func> FindMethods(string wanted)
     {
-        if (Methods.TryGetValue(wanted, out var mine)) return mine;
-        if (Base?.FindMethods(wanted) is { Count: > 0 } inherited) return inherited;
+        List<EmType.Func> found = Methods.TryGetValue(wanted, out var mine) ? [.. mine] : [];
 
-        foreach (var trait in Traits)
-            if (trait.FindMethods(wanted) is { Count: > 0 } provided) return provided;
+        void Inherit(ClassInfo owner)
+        {
+            // An abstract declaration is a requirement, not an overload. Once this class
+            // answers the name the requirement is discharged, and carrying it in would
+            // stand the contract's unannotated parameters beside the real signature as
+            // though they were a second version -- which is what happened to the operator
+            // traits the first time this method merged instead of replacing.
+            if (owner.AbstractNames.Contains(wanted) && found.Count > 0) return;
 
-        return [];
+            foreach (var candidate in owner.FindMethods(wanted))
+                if (!found.Any(f => SameParams(f, candidate))) found.Add(candidate);
+        }
+
+        if (Base is not null) Inherit(Base);
+        foreach (var trait in Traits) Inherit(trait);
+
+        return found;
     }
+
+    /// <summary>
+    /// Whether two overloads take the same thing, which is what makes one a replacement
+    /// for the other rather than a sibling of it. The return type is deliberately not
+    /// compared: two methods differing only there could never be told apart at a call,
+    /// and §3.2 refuses that pair at the declaration.
+    /// </summary>
+    public static bool SameParams(EmType.Func a, EmType.Func b) =>
+        a.Params.Count == b.Params.Count
+        && a.Params.Zip(b.Params).All(pair => pair.First.Equals(pair.Second));
 
     /// <summary>
     /// Resolved lazily rather than copied at declaration time, so a trait may be declared
@@ -587,15 +615,23 @@ public sealed class ClassInfo(string name)
     /// Not what merely requires it: implementing an abstract member replaces nothing, so it
     /// is not an override and needs no keyword. Only a member with a body can be replaced.
     /// </summary>
-    public ClassInfo? Replaces(string name)
+    /// <summary>
+    /// What this method replaces, if anything. Signature-aware since overloads inherit:
+    /// <c>override</c> is a claim about one version, so <c>draw()</c> below a
+    /// <c>draw(Int)</c> overrides nothing and has to say so.
+    /// </summary>
+    public ClassInfo? Replaces(string name, EmType.Func? signature = null)
     {
+        bool Has(ClassInfo owner) =>
+            owner.Methods.TryGetValue(name, out var theirs)
+            && !owner.AbstractNames.Contains(name)
+            && (signature is null || theirs.Any(t => SameParams(t, signature)));
+
         for (var owner = Base; owner is not null; owner = owner.Base)
-            if (owner.Methods.ContainsKey(name) && !owner.AbstractNames.Contains(name))
-                return owner;
+            if (Has(owner)) return owner;
 
         foreach (var trait in Traits)
-            if (trait.Methods.ContainsKey(name) && !trait.AbstractNames.Contains(name))
-                return trait;
+            if (Has(trait)) return trait;
 
         return null;
     }
