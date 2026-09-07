@@ -1345,7 +1345,13 @@ public sealed class Checker(
         if (v.Type is not null && v.Init is not null && !declared.Accepts(inferred))
             Error(v.Name.Line,
                   $"{v.Name.Lexeme} is declared {declared.Show()} but is given {inferred.Show()}.",
-                  Widening(declared, inferred));
+                  // A literal is nobody's alias, so the reason a container is invariant
+                  // does not apply to it and saying it would send the reader looking for
+                  // a second name that is not there. What is true of a literal is simply
+                  // that its items are the wrong type, and they are right here to fix.
+                  v.Init is Expr.ListLiteral or Expr.DictLiteral
+                      ? Literally(declared.Stripped, inferred.Stripped)
+                      : Widening(declared, inferred));
 
         CheckAttributes(v.Attributes, "variable");
         CheckShadowing(v.Name, scope);
@@ -4145,7 +4151,56 @@ public sealed class Checker(
     private static string? Widening(EmType declared, EmType actual) =>
         declared.Stripped.Accepts(actual.Stripped) && actual.IsMaybe && !declared.IsMaybe
             ? $"Declare it as {declared.Show()}? if it can be nothing."
-            : null;
+            : Container(declared.Stripped, actual.Stripped);
+
+    /// <summary>
+    /// Why a container of one thing is not a container of another. The refusal is the
+    /// right one and the reason is invisible, which is exactly where §2.6 says the
+    /// diagnostic has to do the teaching -- the elements <em>are</em> compatible, and a
+    /// reader who knows that will read the error as the compiler being wrong.
+    /// </summary>
+    private static string? Container(EmType declared, EmType actual) =>
+        (declared, actual) switch
+        {
+            (EmType.Lst want, EmType.Lst got) when want.Element.Accepts(got.Element)
+                => Why(want.Element, got.Element, "list"),
+
+            (EmType.SetOf want, EmType.SetOf got) when want.Element.Accepts(got.Element)
+                => Why(want.Element, got.Element, "set"),
+
+            (EmType.Dict want, EmType.Dict got)
+                when want.Key.Accepts(got.Key) && want.Value.Accepts(got.Value)
+                => Why(want.Value, got.Value, "dictionary"),
+
+            _ => null,
+        };
+
+    /// <summary>The same mismatch, where the value was written out on the spot.</summary>
+    private static string? Literally(EmType declared, EmType actual) =>
+        (declared, actual) switch
+        {
+            (EmType.Lst want, EmType.Lst got) when want.Element.Accepts(got.Element)
+                => $"The items are {got.Element.Show()}. Write them as "
+                   + $"{want.Element.Show()}, like {Example(want.Element)}, or declare this "
+                   + $"List<{got.Element.Show()}>.",
+
+            (EmType.Dict want, EmType.Dict got)
+                when want.Key.Accepts(got.Key) && want.Value.Accepts(got.Value)
+                => $"The values are {got.Value.Show()}. Write them as "
+                   + $"{want.Value.Show()}, like {Example(want.Value)}, or declare this "
+                   + $"Dictionary<{got.Key.Show()}, {got.Value.Show()}>.",
+
+            _ => null,
+        };
+
+    private static string Why(EmType want, EmType got, string kind) =>
+        $"A {kind} of {got.Show()} is not a {kind} of {want.Show()}, even though "
+        + $"{got.Show()} fits where {want.Show()} is wanted. Both names would be the same "
+        + $"{kind}, so writing {Article(want.Show()).ToLowerInvariant()} {want.Show()} "
+        + $"through one would break what the other "
+        + $"says it holds.\n"
+        + $"Build a new one holding {want.Show()}, or declare this {kind} of "
+        + $"{got.Show()} too.";
 
     /// <summary>"did you mean" — high confidence only, per §3.6.</summary>
     private static string? Suggest(string typed, IEnumerable<string> candidates)

@@ -1,0 +1,7 @@
+
+err_list_is_invariant.em:14  animals is declared List<Animal> but is given List<Dog>.
+
+   14 | var animals: List<Animal> = dogs
+
+  A list of Dog is not a list of Animal, even though Dog fits where Animal is wanted. Both names would be the same list, so writing an Animal through one would break what the other says it holds.
+  Build a new one holding Animal, or declare this list of Dog too.

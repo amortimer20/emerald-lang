@@ -151,13 +151,32 @@ public abstract record EmType
         // Int widens into Float, but not the reverse — no silent truncation.
         if (Equals(Float) && from.Equals(Int)) return true;
 
-        if (this is Lst x && from is Lst y) return x.Element.Accepts(y.Element);
+        // Mutable containers are invariant: a List<Dog> is not a List<Animal>.
+        //
+        // These asked whether the element types were compatible, which reads as the
+        // obvious rule and is unsound, because both names then refer to one list. Adding
+        // an Animal through the second corrupts what the first says it holds, and the
+        // failure lands on a read that is written correctly -- fully annotated code
+        // breaking its own guarantee through an alias.
+        //
+        // It was wrong a second way that had nothing to do with aliasing. Int widens into
+        // Float, so List<Float> accepted [1, 2] and then held Ints: the declared element
+        // type was simply false, and a Float method on an element failed at run time.
+        //
+        // An element type the checker never pinned down still fits, which is what keeps
+        // an empty literal assignable -- there is nothing in it to be wrong about.
+        if (this is Lst x && from is Lst y)
+            return y.Element is Unknown || x.Element.Equals(y.Element);
 
         if (this is Dict a2 && from is Dict b2)
-            return a2.Key.Accepts(b2.Key) && a2.Value.Accepts(b2.Value);
+            return (b2.Key is Unknown || a2.Key.Equals(b2.Key))
+                   && (b2.Value is Unknown || a2.Value.Equals(b2.Value));
 
-        if (this is SetOf s1 && from is SetOf s2) return s1.Element.Accepts(s2.Element);
+        if (this is SetOf s1 && from is SetOf s2)
+            return s2.Element is Unknown || s1.Element.Equals(s2.Element);
 
+        // A pair is the exception, and stays covariant: nothing can be written into one
+        // after it is built, so there is no second name through which to spoil it.
         if (this is PairOf p1 && from is PairOf p2)
             return p1.First.Accepts(p2.First) && p1.Second.Accepts(p2.Second);
 
