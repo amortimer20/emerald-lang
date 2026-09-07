@@ -1795,10 +1795,31 @@ public sealed class Interpreter
     /// and == give different answers, and it is exactly where C# puts it, for the same
     /// reason: the hash contract does not survive a value that is not equal to itself.
     /// </summary>
+    /// <summary>
+    /// Sameness for everything without a rule of its own.
+    ///
+    /// Int and Float are one number line here, as they already were for the four ordering
+    /// operators. They disagreed until recently: <c>1 &lt;= 1.0</c> and <c>1 &gt;= 1.0</c>
+    /// were both true while <c>1 == 1.0</c> was false, because equality fell through to
+    /// host <c>Equals</c>, which compares the boxed types first. <strong>A reader can
+    /// derive a contradiction from that in three lines</strong>, and every language a
+    /// student is likely to arrive from — Python, Ruby, C#, JavaScript — says the two are
+    /// equal.
+    ///
+    /// Only the <em>mixed</em> pair converts. Two longs stay exact, because widening both
+    /// to double would make 2^63-1 and 2^63-2 compare equal — trading one wrong answer at
+    /// the edge for another.
+    ///
+    /// NaN stays equal to nothing, itself included. .NET's <c>Equals</c> says two NaNs are
+    /// the same value while C#'s <c>==</c> says they are not; IEEE and every language a
+    /// reader arrives from agree with the second.
+    /// </summary>
     private static bool AreEqual(object? a, object? b) =>
         a is double x && double.IsNaN(x) || b is double y && double.IsNaN(y)
             ? false
-            : a is null && b is null || (a?.Equals(b) ?? false);
+            : (a is long && b is double) || (a is double && b is long)
+                ? ToDouble(a) == ToDouble(b)
+                : a is null && b is null || (a?.Equals(b) ?? false);
 
     /// <summary>
     /// Only <c>false</c> and <c>nothing</c> are falsy. Notably 0 and "" are not — a

@@ -5,11 +5,11 @@
 ## invisible until two values that look alike disagree. Emerald's rule is per-kind, so it
 ## travels with the type rather than with the operator.
 
-## Numbers of one type compare by value. Int against Float is deliberately left out of
-## this vector: it is currently incoherent -- 1 <= 1.0 and 1 >= 1.0 are both true while
-## 1 == 1.0 is false -- and pinning an answer here would bless the contradiction. See
-## known_int_and_float_equality.
+## Numbers compare by value, and Int against Float is one number line rather than two
+## types -- as it already was for the ordering operators. See
+## int_and_float_are_one_number_line for why the two had to be made to agree.
 print(1 == 1)
+print(1 == 1.0)
 print(1.0 == 1.0)
 
 ## NaN equals nothing, itself included. .NET's Equals disagrees -- it says two NaNs are

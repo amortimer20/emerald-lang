@@ -1,0 +1,6 @@
+
+err_set_membership_across_types.em:9  contains? on Set<Int> takes Int, but this is Float.
+
+    9 | print(numbers.contains?(1.0))
+
+  2 further error(s) suppressed — likely caused by this one.
