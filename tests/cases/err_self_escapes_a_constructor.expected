@@ -1,0 +1,9 @@
+
+err_self_escapes_a_constructor.em:20  self cannot be passed out of a constructor.
+
+   20 |         into.record(self)
+
+  The object is not finished being built, so whatever receives it can read fields that hold nothing.
+  Hand it over once construction is done, from the code that built it.
+
+  emerald explain

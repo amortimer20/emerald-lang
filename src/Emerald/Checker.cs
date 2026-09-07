@@ -951,11 +951,23 @@ public sealed class Checker(
     /// Conservative in the same direction as the analysis it complements: a read is only
     /// refused where no path to it has assigned the field. A branch that assigns on both
     /// sides counts, because control cannot arrive having done neither.
+    ///
+    /// Two further doors, which reading alone does not cover. A constructor may not call
+    /// a method on the object it is building, and may not pass that object anywhere. Both
+    /// hand a half-built instance to code that will read whatever it likes -- and the
+    /// second is not fixable by ordering, because a base constructor cannot know whether
+    /// a subclass below it has run. Emerald has no sealed, so every class is open and
+    /// every constructor is potentially a base constructor.
+    ///
+    /// The ban is flat rather than staged on assignment because 130 constructors across
+    /// the corpus contained no use of either -- every occurrence was a test written to
+    /// demonstrate the hole. A rule that costs nothing should be the simple one.
     /// </summary>
     private void CheckReadsBeforeAssignment(Stmt.ConstructorDecl constructor, ClassInfo info)
     {
+        // Not gated on owing anything: a base whose own fields all have values can still
+        // leak self to a subclass field that has none.
         HashSet<string> owed = [.. info.FieldsNeedingAValue().Select(f => f.Name)];
-        if (owed.Count == 0) return;
 
         WalkBody(constructor.Body, []);
 
@@ -1033,12 +1045,52 @@ public sealed class Checker(
                   topic: "field-needs-value");
         }
 
+        // A method, as opposed to a field that happens to hold a function. Calling a
+        // function out of a field dispatches to nothing and is safe once the field is
+        // assigned, which the read check already covers.
+        void ReportCall(Token name)
+        {
+            if (info.FindMethods(name.Lexeme).Count == 0) return;
+
+            Error(name.Line,
+                  $"A constructor cannot call {name.Lexeme} on the object it is building.",
+                  $"The object is not finished yet, and {name.Lexeme} may be overridden by a "
+                  + "subclass whose own fields are still unset.\n"
+                  + $"  Call it after the object exists:  var it = {info.Name}(...)\n"
+                  + $"                                    it.{name.Lexeme}()",
+                  topic: "self-during-construction");
+        }
+
+        void ReportEscape(Token where)
+        {
+            Error(where.Line,
+                  "self cannot be passed out of a constructor.",
+                  "The object is not finished being built, so whatever receives it can read "
+                  + "fields that hold nothing.\n"
+                  + "  Hand it over once construction is done, from the code that built it.",
+                  topic: "self-during-construction");
+        }
+
         void Reads(Expr expr, HashSet<string> assigned)
         {
             switch (expr)
             {
                 case Expr.Get { Target: Expr.Variable { Name.Lexeme: "self" } } g:
                     Report(g.Name, assigned);
+                    break;
+
+                // self reached as a value rather than as the left of a dot: an argument,
+                // an element, the right of an assignment. The case above catches every
+                // legitimate self.x, so arriving here means it is escaping.
+                case Expr.Variable { Name.Lexeme: "self" } v:
+                    ReportEscape(v.Name);
+                    break;
+
+                case Expr.Call { Callee: Expr.Get { Target: Expr.Variable { Name.Lexeme: "self" } } gc } c2:
+                    ReportCall(gc.Name);
+                    Report(gc.Name, assigned);
+                    foreach (var arg in c2.Args) Reads(arg, assigned);
+                    if (c2.Trailing is not null) Reads(c2.Trailing, assigned);
                     break;
 
                 case Expr.Call c:

@@ -1,6 +1,0 @@
-
-known_virtual_call_from_base_constructor.em:29  Cannot call upper on nothing.
-
-   29 |     override func describe(): String { return "Derived #{self.extra.upper()}" }
-
-  Check the value before using it, or supply a fallback with .or(...)

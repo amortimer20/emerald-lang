@@ -1,4 +1,0 @@
-
-known_escaped_self_reaches_an_override.em:41  Cannot use * on nothing and Int.
-
-   41 |     override func describe(): String { return "circle of #{self.radius * 2}" }

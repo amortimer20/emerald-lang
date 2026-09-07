@@ -192,6 +192,50 @@ public static class Explanations
             changes. A class is the type that changes in place.
             """),
 
+        ["self-during-construction"] = new(
+            "Using an object while it is still being built",
+            """
+            class Greeter {
+                var name: String
+
+                func shout(): String { return self.name.upper() }
+
+                constructor() {
+                    print(self.shout())
+                    self.name = "ada"
+                }
+            }
+            """,
+            """
+            class Greeter {
+                var name: String
+
+                func shout(): String { return self.name.upper() }
+
+                constructor() {
+                    self.name = "ada"
+                }
+            }
+
+            var g = Greeter()
+            print(g.shout())
+            """,
+            """
+            A constructor's job is to give every field a value. Until it finishes, the
+            object is half-built: a field declared String is holding nothing, whatever
+            its type says.
+
+            So a constructor may not call the object's own methods, and may not pass self
+            anywhere. A method reads whatever fields it likes, and anything handed self
+            can do the same. Both are available the moment the constructor returns, which
+            is where the second version does them.
+
+            The rule is flat rather than "once the fields are set" because a class can be
+            extended. A base constructor that has assigned all of its own fields still
+            knows nothing about the fields a subclass added below it, and a method call
+            can land on that subclass's override.
+            """),
+
         ["field-needs-value"] = new(
             "A field that never gets a value",
             """
