@@ -1,0 +1,6 @@
+
+known_method_call_before_init.em:16  Cannot call upper on nothing.
+
+   16 |     func shout(): String { return self.name.upper() }
+
+  Check the value before using it, or supply a fallback with .or(...)
