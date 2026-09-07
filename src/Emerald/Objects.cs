@@ -55,6 +55,20 @@ public sealed class EmClass(
 
     /// <summary>Type-level state and behavior: one copy, shared by every instance.</summary>
     public Dictionary<string, object?> Statics { get; } = [];
+
+    /// <summary>
+    /// A module's top-level <c>var</c>s, waiting to be given their values.
+    ///
+    /// An ordinary class's <c>static var</c> is evaluated when the type is declared. A
+    /// module's cannot be: §3.3 says a module file's top-level code runs on first member
+    /// access, and a top-level <c>var</c> <em>is</em> top-level code. Evaluating it early
+    /// made a file act merely by existing &mdash; a module whose initializer named another
+    /// module ran that one before the entry file executed a statement.
+    ///
+    /// Held rather than run, and merged back into the initializer by line, so the file
+    /// still executes in the order it is written.
+    /// </summary>
+    public List<Stmt.VarDecl> DeferredFields { get; } = [];
     public Dictionary<string, List<Stmt.FuncDecl>> StaticMethods { get; } = [];
 
     /// <summary>Fields declared with a <c>get</c> body — computed rather than stored.</summary>

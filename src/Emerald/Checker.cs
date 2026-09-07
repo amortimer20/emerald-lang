@@ -4520,51 +4520,12 @@ public sealed class Checker(
         return d[a.Length, b.Length];
     }
 
-    private static int LineOf(Expr expr) => expr switch
-    {
-        Expr.Variable v => v.Name.Line,
-        Expr.Binary b => b.Op.Line,
-        Expr.Logical l => l.Op.Line,
-        Expr.Unary u => u.Op.Line,
-        Expr.Get g => g.Name.Line,
-        Expr.Call c => LineOf(c.Callee),
-        Expr.Grouping g => LineOf(g.Inner),
-        Expr.Literal l => l.Line,
-        Expr.Index x => x.Bracket.Line,
-        Expr.ListLiteral l => l.Bracket.Line,
-        Expr.DictLiteral d => d.Bracket.Line,
-        Expr.RangeExpr r => LineOf(r.Start),
-
-        // An if expression's own line is its condition's, falling through to the branches
-        // when the condition carries nothing — every part of it can be a bare literal.
-        Expr.IfExpr i => First(LineOf(i.Condition), LineOf(i.Then), LineOf(i.Else)),
-        Expr.Interpolation p => p.Parts.Select(LineOf).FirstOrDefault(n => n > 0),
-        _ => 0
-    };
+    private static int LineOf(Expr expr) => Source.LineOf(expr);
 
     private static int First(params int[] lines) => lines.FirstOrDefault(n => n > 0);
 
-    /// <summary>Where a statement begins, for the indentation check. Zero means the shape
-    /// carries no usable token, and the statement is simply skipped.</summary>
-    private static int LineOf(Stmt stmt) => stmt switch
-    {
-        Stmt.VarDecl v => v.Name.Line,
-        Stmt.Assign a => a.Op.Line,
-        Stmt.ExprStmt e => LineOf(e.Expression),
-        Stmt.If i => LineOf(i.Condition),
-        Stmt.While w => LineOf(w.Condition),
-        Stmt.For f => f.Variable.Line,
-        Stmt.FuncDecl fn => fn.Name.Line,
-        Stmt.ClassDecl c => c.Name.Line,
-        Stmt.ConstructorDecl c => c.Keyword.Line,
-        Stmt.Return r => r.Keyword.Line,
-        Stmt.Throw t => t.Keyword.Line,
-        Stmt.Assert a => a.Keyword.Line,
-        Stmt.TryCatch t => t.Keyword.Line,
-        Stmt.Break b => b.Keyword.Line,
-        Stmt.Continue c => c.Keyword.Line,
-        _ => 0
-    };
+    /// <summary>Where a statement begins, for the indentation check.</summary>
+    private static int LineOf(Stmt stmt) => Source.LineOf(stmt);
 
     // ---- misleading indentation (§3.5) ----------------------------------
 

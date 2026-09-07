@@ -815,12 +815,21 @@ public sealed class Interpreter
             overloads.Add(method);
         }
 
-        // Static initializers run once, when the type is declared.
+        // A class's static initializers run once, when the type is declared. A module's
+        // wait: its top-level var is top-level code, and §3.3 runs that on first member
+        // access. The name is declared either way, so a reference resolves; only the
+        // value waits.
         var staticScope = new Env(env);
         staticScope.Declare("Self", built);
         foreach (var field in decl.Members.OfType<Stmt.VarDecl>().Where(f => f.IsStatic))
-            built.Statics[field.Name.Lexeme] =
-                field.Init is null ? null : Evaluate(field.Init, staticScope);
+        {
+            built.Statics[field.Name.Lexeme] = null;
+
+            if (field.Init is null) continue;
+
+            if (decl.IsModule) built.DeferredFields.Add(field);
+            else built.Statics[field.Name.Lexeme] = Evaluate(field.Init, staticScope);
+        }
 
         if (decl.Initializer is { Count: > 0 }) built.Initializer = decl.Initializer;
 
@@ -1092,15 +1101,37 @@ public sealed class Interpreter
     /// back into itself would otherwise recurse forever, and running it once is the promise
     /// — not running it once per path that arrives.
     /// </summary>
+    /// <summary>
+    /// A module's statements and its top-level vars, back in source order. Both carry the
+    /// line they were written on, which is the only record of how they were interleaved
+    /// once the file was split into members and an initializer.
+    /// </summary>
+    private static IEnumerable<Stmt> Interleave(List<Stmt> body, List<Stmt.VarDecl> fields) =>
+        body.Concat(fields).OrderBy(Source.LineOf);
+
     private void Initialize(EmClass cls)
     {
-        if (cls.Initialized || cls.Initializer is not { } body) return;
+        if (cls.Initialized) return;
 
+        // Deferred fields count as work to do even with no statements beside them. A
+        // module of nothing but `var used = 0` and some functions has an empty
+        // initializer, and bailing on that left every one of its values null.
+        if (cls.Initializer is null && cls.DeferredFields.Count == 0) return;
+
+        List<Stmt> body = cls.Initializer ?? [];
         cls.Initialized = true;
 
         var scope = new Env(cls.Closure, shared: cls.Statics);
         scope.Declare("Self", cls);
-        ExecuteBlock(body, scope);
+
+        // The file's statements and its top-level vars are two lists here but one file
+        // there, so they are put back in the order they were written. Merged by line
+        // rather than appended, because a print above a var and a print below it are
+        // different programs.
+        foreach (var step in Interleave(body, cls.DeferredFields))
+            if (step is Stmt.VarDecl held) cls.Statics[held.Name.Lexeme] =
+                                               Evaluate(held.Init!, scope);
+            else Execute(step, scope);
     }
 
     /// <summary>
