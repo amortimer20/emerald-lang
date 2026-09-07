@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SubclassSpike</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Not part of the emerald CLI. A plain driver, the same relationship tests/emitspike
+    has to Emerald.Compiler: it runs the real Scanner, Parser and Checker on one Emerald
+    file, then hands the checked result to a narrow spike emitter.
+  -->
+  <!--
+    Fixture is a separate project nested in this directory rather than beside it, so the
+    default recursive glob below would otherwise compile its generated obj/ output as
+    though it were this project's own source.
+  -->
+  <ItemGroup>
+    <Compile Remove="Fixture/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Emerald/Emerald.csproj" />
+    <ProjectReference Include="../../src/Emerald.Compiler/Emerald.Compiler.csproj" />
+  </ItemGroup>
+
+</Project>
