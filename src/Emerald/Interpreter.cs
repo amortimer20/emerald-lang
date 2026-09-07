@@ -26,33 +26,7 @@ public sealed class Interpreter
         foreach (var (name, module) in Builtins.Modules)
             _globals.Declare(name, module);
 
-        // Display is static and has no interpreter to call a method with, so it is handed
-        // one. Without this a type could declare to_string and nothing would ever call it,
-        // which is how printing a class gave <Money> while every built-in gave its text.
-        Builtins.Stringify = OwnToString;
     }
-
-    /// <summary>
-    /// A value's own <c>to_string</c>, or null where its type declares none — which is
-    /// what leaves the plain <c>&lt;Money&gt;</c> form in place for a type that has not
-    /// said how it should read.
-    ///
-    /// The checker holds a declared one to no parameters and a String return, so the cast
-    /// here is not a hope. A trait's default and an inherited one both count, because
-    /// finding a method is one question with one answer.
-    /// </summary>
-    private string? OwnToString(object? value) => value switch
-    {
-        EmInstance instance
-            when instance.Class.FindMethod(Builtins.ToStringMethod) is { } method
-            => CallMethod(method, instance, instance.Class.Closure, []) as string,
-
-        EmEnumValue enumValue
-            when enumValue.Owner?.FindMethod(Builtins.ToStringMethod) is { } method
-            => CallEnumMethod(method, enumValue, enumValue.Owner, []) as string,
-
-        _ => null,
-    };
 
     public void Run(List<Stmt> program)
     {
@@ -842,7 +816,7 @@ public sealed class Interpreter
     /// the difference. <c>values</c> is added alongside, because asking an enum for its
     /// members is the one thing you cannot write yourself.
     /// </summary>
-    private static EmClass BuildEnum(Stmt.EnumDecl decl, Env env)
+    private EmClass BuildEnum(Stmt.EnumDecl decl, Env env)
     {
         Dictionary<string, List<Stmt.FuncDecl>> methods = [];
 
@@ -864,7 +838,8 @@ public sealed class Interpreter
 
         for (int i = 0; i < decl.Members.Count; i++)
             built.Statics[decl.Members[i].Lexeme] =
-                new EmEnumValue(decl.Name.Lexeme, decl.Members[i].Lexeme, i) { Owner = built };
+                new EmEnumValue(decl.Name.Lexeme, decl.Members[i].Lexeme, i)
+                    { Owner = built, Runner = this };
 
         built.Statics["values"] = new EmList([.. built.Statics.Values]);
         return built;
@@ -887,7 +862,7 @@ public sealed class Interpreter
                 $"Cannot create {cls.Name} — {string.Join(", ", cls.Unimplemented)} has no implementation.",
                 "Implement it here, or create a subclass that does.");
 
-        var instance = new EmInstance(cls);
+        var instance = new EmInstance(cls, this);
 
         // Field initializers run in a scope where `self` already exists, so one field can
         // be defined in terms of another.

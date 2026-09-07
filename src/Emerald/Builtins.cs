@@ -959,9 +959,9 @@ public static class Builtins
         string s => s,
         EmRange r => $"{r.Start}..{r.End}",
         EmClass c => $"<class {c.Name}>",
-        EmInstance i => Own(i) ?? $"<{i.Class.Name}>",
+        EmInstance i => Own(i),
         EmList a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
-        EmEnumValue v => Own(v) ?? v.ToString(),
+        EmEnumValue v => Own(v),
         EmSet t => "{" + string.Join(", ", t.Members.Select(Display)) + "}",
         EmPair pair => $"({Display(pair.First)}, {Display(pair.Second)})",
         EmDict d => d.Count == 0 ? "[:]"
@@ -975,44 +975,19 @@ public static class Builtins
     public const string ToStringMethod = "to_string";
 
     /// <summary>
-    /// How to run a value's own <c>to_string</c>. Installed by the interpreter, because
-    /// <see cref="Display"/> is static and calling a declared method needs one. Null
-    /// until a program runs — the formatter and the checker both render values with no
-    /// interpreter behind them, and get the plain form.
+    /// A value's own text, through the CLR method it already answers (§ option C).
     ///
-    /// Static, which is safe because a process builds exactly one interpreter: the run,
-    /// the REPL and the test runner each make theirs and keep it. Two alive at once would
-    /// have to share this, and that is worth remembering if one ever is.
+    /// This used to go through a static mutable Func the interpreter installed at startup
+    /// -- a process-wide singleton, safe only while exactly one interpreter existed, and
+    /// impossible for emitted code to install at all. An emitted class overrides ToString
+    /// for real, so a compiled print is a virtual call and this indirection disappears
+    /// with the interpreter rather than travelling into the backend.
     /// </summary>
-    public static Func<object?, string?>? Stringify { get; set; }
-
-    /// <summary>
-    /// How deep a chain of to_string calls may go. A to_string that prints the value it
-    /// was asked about calls itself forever; without this the process dies on a stack
-    /// overflow, which is not a thing a student can read.
-    /// </summary>
-    private const int MaxOwnDepth = 64;
-
-    private static int _ownDepth;
-
-    /// <summary>
-    /// A value's own text, or null if its type does not say. Nested by design: a list of
-    /// them formats each through the same path, because Display recurses.
-    /// </summary>
-    private static string? Own(object? value)
-    {
-        if (Stringify is null) return null;
-
-        if (_ownDepth >= MaxOwnDepth)
-            throw new RuntimeError(
-                $"{TypeName(value)}.{ToStringMethod}() has no end.",
-                $"A {ToStringMethod} that prints the value it was asked about calls itself "
-                + "forever. Build the text out of the fields instead.");
-
-        _ownDepth++;
-        try { return Stringify(value); }
-        finally { _ownDepth--; }
-    }
+    private static string Own(object? value) =>
+        Runtime.Values.Text(value, v => new RuntimeError(
+            $"{TypeName(v)}.{ToStringMethod}() has no end.",
+            $"A {ToStringMethod} that prints the value it was asked about calls itself "
+            + "forever. Build the text out of the fields instead."));
 
     /// <summary>
     /// One order for sorting, and the same one <c>&lt;</c> answers with.

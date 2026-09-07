@@ -22,6 +22,10 @@ True
 True
 A,B,a,b
 fig,pear,banana
+42
+plain
+https://example.com/x
+True
 True
 True
 True

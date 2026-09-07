@@ -223,15 +223,38 @@ public sealed record EmEnumValue(string Type, string Name, int Ordinal)
     /// <summary>The enum this belongs to, so a method call on a value can find one.</summary>
     public EmClass? Owner { get; init; }
 
-    public override string ToString() => $"{Type}.{Name}";
+    /// <summary>The enum value's own text, or <c>Suit.HEARTS</c> where it declares none.
+    /// Reached the same way an instance's is, through the CLR method.</summary>
+    public override string ToString() =>
+        Runner is not null && Owner?.FindMethod(Builtins.ToStringMethod) is { } method
+            ? Runner.CallEnumMethod(method, this, Owner, []) as string ?? $"{Type}.{Name}"
+            : $"{Type}.{Name}";
+
+    /// <summary>What can run this value's declared methods. See EmInstance.ToString.</summary>
+    public Interpreter? Runner { get; init; }
 }
 
-public sealed class EmInstance(EmClass cls)
+public sealed class EmInstance(EmClass cls, Interpreter? runner = null)
 {
     public EmClass Class => cls;
     public Dictionary<string, object?> Fields { get; } = [];
 
-    public override string ToString() => $"<{cls.Name}>";
+    /// <summary>
+    /// The object's own text, through the CLR method every .NET value already answers.
+    ///
+    /// An emitted Emerald class overrides <c>ToString</c> for real and needs none of this;
+    /// the indirection exists only because an interpreted instance is a bag of fields with
+    /// no methods on it, so running its <c>to_string</c> takes something that can run
+    /// Emerald code. That is the whole of what the interpreter has to make up for, and it
+    /// is confined to this one override.
+    ///
+    /// A type that has not said how it reads keeps the plain form, which is what leaves
+    /// <c>&lt;Money&gt;</c> in place rather than inventing something.
+    /// </summary>
+    public override string ToString() =>
+        runner is not null && cls.FindMethod(Builtins.ToStringMethod) is { } method
+            ? runner.CallMethod(method, this, cls.Closure, []) as string ?? $"<{cls.Name}>"
+            : $"<{cls.Name}>";
 }
 
 /// <summary>

@@ -56,6 +56,15 @@ var byLength = Collections.SortBy(words, w => (long)((string)w!).Length,
                                   new Ordering.Values((a, b) => new InvalidOperationException()));
 Console.WriteLine(string.Join(",", byLength));
 
+// A value's own text, through the CLR method every .NET value already answers. This is
+// the whole of option C: no interface of Emerald's in anyone's metadata, and a foreign
+// type -- a FileInfo, a Unity GameObject -- answers it without a shim, which is why the
+// CLR's own method beat an interface they could never implement.
+Console.WriteLine(Values.Text(42L, v => new InvalidOperationException()));
+Console.WriteLine(Values.Text("plain", v => new InvalidOperationException()));
+Console.WriteLine(Values.Text(new Uri("https://example.com/x"), v => new InvalidOperationException()));
+Console.WriteLine(Values.Text(null, v => new InvalidOperationException()) == "");
+
 // And the adapter, for a caller that does not know the types until it looks. It is
 // deliberately strict about what an Emerald value is: an Int is Int64, so a C# `int`
 // is not one and gets no order rather than a quiet conversion. The interpreter only
