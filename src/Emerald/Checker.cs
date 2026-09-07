@@ -506,6 +506,7 @@ public sealed class Checker(
                     CheckAttributes(method.Attributes, "function");
                     CheckCasing(method.Name, "method");
                     CheckPredicateName(method);
+                    if (!method.IsStatic) CheckToStringShape(method);
                     CheckCallable(method.Params, method.Body, body, method.Name.Lexeme,
                                   Resolve(method.ReturnType), method.Name.Line);
                     break;
@@ -640,6 +641,7 @@ public sealed class Checker(
                     CheckCasing(method.Name, "method");
                     if (!method.IsStatic) CheckReservedMember(method.Name, "A method");
                     CheckPredicateName(method);
+                    if (!method.IsStatic) CheckToStringShape(method);
                     if (!method.IsStatic) CheckOverride(method, info);
                     if (method.Body is not null)
                         CheckCallable(method.Params, method.Body, body, method.Name.Lexeme,
@@ -4461,6 +4463,45 @@ public sealed class Checker(
               $"Every value answers .{name.Lexeme}: on {owner}? it stands in for the "
               + $"missing case, and on {owner} it gives the {owner} back. A member of that "
               + "name could never be reached.");
+    }
+
+    /// <summary>
+    /// <c>to_string</c> is the one method the language calls on a program's behalf, so
+    /// its shape is not the author's to choose: printing a value has nowhere to put an
+    /// argument and nothing to do with an answer that is not text.
+    ///
+    /// An error rather than a warning, which <see cref="CheckPredicateName"/> is. The ?
+    /// rule is about a name reading honestly and a program that ignores it still runs;
+    /// this one is a contract the interpreter relies on, and breaking it would mean
+    /// printing a value either failing or quietly falling back to the plain form.
+    /// </summary>
+    private void CheckToStringShape(Stmt.FuncDecl fn)
+    {
+        if (fn.Name.Lexeme != Builtins.ToStringMethod) return;
+
+        if (fn.Params.Count > 0)
+            Error(fn.Params[0].Name.Line,
+                  $"{Builtins.ToStringMethod} cannot take arguments.",
+                  "It is called for you wherever a value is printed or put in a string, "
+                  + $"and there is nothing to hand it there:  func {Builtins.ToStringMethod}(): String");
+
+        // The annotation is required here, where the ? rule lets one be left off. That
+        // rule is about a name reading honestly; this is a contract, and an unannotated
+        // to_string handing back an Int printed <C> with nothing said -- a value silently
+        // ignoring the method written to describe it. C# cannot express the method
+        // without the type either.
+        if (fn.ReturnType is null)
+            Error(fn.Name.Line,
+                  $"{Builtins.ToStringMethod} has to say that it gives back String.",
+                  $"It is the one method the language calls for you, so it says so out "
+                  + $"loud:  func {Builtins.ToStringMethod}(): String");
+
+        else if (!Resolve(fn.ReturnType).Equals(EmType.String))
+            Error(fn.Name.Line,
+                  $"{Builtins.ToStringMethod} gives back "
+                  + $"{Resolve(fn.ReturnType).Show()}, not String.",
+                  "It says how a value reads as text, so text is the only thing it can "
+                  + $"give back:  func {Builtins.ToStringMethod}(): String");
     }
 
     private void CheckPredicateName(Stmt.FuncDecl fn)

@@ -25,7 +25,34 @@ public sealed class Interpreter
 
         foreach (var (name, module) in Builtins.Modules)
             _globals.Declare(name, module);
+
+        // Display is static and has no interpreter to call a method with, so it is handed
+        // one. Without this a type could declare to_string and nothing would ever call it,
+        // which is how printing a class gave <Money> while every built-in gave its text.
+        Builtins.Stringify = OwnToString;
     }
+
+    /// <summary>
+    /// A value's own <c>to_string</c>, or null where its type declares none — which is
+    /// what leaves the plain <c>&lt;Money&gt;</c> form in place for a type that has not
+    /// said how it should read.
+    ///
+    /// The checker holds a declared one to no parameters and a String return, so the cast
+    /// here is not a hope. A trait's default and an inherited one both count, because
+    /// finding a method is one question with one answer.
+    /// </summary>
+    private string? OwnToString(object? value) => value switch
+    {
+        EmInstance instance
+            when instance.Class.FindMethod(Builtins.ToStringMethod) is { } method
+            => CallMethod(method, instance, instance.Class.Closure, []) as string,
+
+        EmEnumValue enumValue
+            when enumValue.Owner?.FindMethod(Builtins.ToStringMethod) is { } method
+            => CallEnumMethod(method, enumValue, enumValue.Owner, []) as string,
+
+        _ => null,
+    };
 
     public void Run(List<Stmt> program)
     {

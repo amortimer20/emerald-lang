@@ -1011,13 +1011,9 @@ public static class Builtins
         string s => s,
         EmRange r => $"{r.Start}..{r.End}",
         EmClass c => $"<class {c.Name}>",
-        // An error carries its own text, so printing one shows what went wrong rather
-        // than <Error>. Error is a prelude type the compiler owns, the same way List is.
-        EmInstance err when err.Class.Descends(Prelude.ErrorType)
-            => Display(err.Fields.GetValueOrDefault(Prelude.MessageField)),
-        EmInstance i => $"<{i.Class.Name}>",
+        EmInstance i => Own(i) ?? $"<{i.Class.Name}>",
         EmList a => "[" + string.Join(", ", a.Items.Select(Display)) + "]",
-        EmEnumValue v => v.ToString(),
+        EmEnumValue v => Own(v) ?? v.ToString(),
         EmSet t => "{" + string.Join(", ", t.Members.Select(Display)) + "}",
         EmPair pair => $"({Display(pair.First)}, {Display(pair.Second)})",
         EmDict d => d.Count == 0 ? "[:]"
@@ -1026,6 +1022,49 @@ public static class Builtins
         ICallable => "<function>",
         _ => value.ToString() ?? ""
     };
+
+    /// <summary>The method a type declares to say how it should read as text.</summary>
+    public const string ToStringMethod = "to_string";
+
+    /// <summary>
+    /// How to run a value's own <c>to_string</c>. Installed by the interpreter, because
+    /// <see cref="Display"/> is static and calling a declared method needs one. Null
+    /// until a program runs — the formatter and the checker both render values with no
+    /// interpreter behind them, and get the plain form.
+    ///
+    /// Static, which is safe because a process builds exactly one interpreter: the run,
+    /// the REPL and the test runner each make theirs and keep it. Two alive at once would
+    /// have to share this, and that is worth remembering if one ever is.
+    /// </summary>
+    public static Func<object?, string?>? Stringify { get; set; }
+
+    /// <summary>
+    /// How deep a chain of to_string calls may go. A to_string that prints the value it
+    /// was asked about calls itself forever; without this the process dies on a stack
+    /// overflow, which is not a thing a student can read.
+    /// </summary>
+    private const int MaxOwnDepth = 64;
+
+    private static int _ownDepth;
+
+    /// <summary>
+    /// A value's own text, or null if its type does not say. Nested by design: a list of
+    /// them formats each through the same path, because Display recurses.
+    /// </summary>
+    private static string? Own(object? value)
+    {
+        if (Stringify is null) return null;
+
+        if (_ownDepth >= MaxOwnDepth)
+            throw new RuntimeError(
+                $"{TypeName(value)}.{ToStringMethod}() has no end.",
+                $"A {ToStringMethod} that prints the value it was asked about calls itself "
+                + "forever. Build the text out of the fields instead.");
+
+        _ownDepth++;
+        try { return Stringify(value); }
+        finally { _ownDepth--; }
+    }
 
     public static string TypeName(object? value) => value switch
     {

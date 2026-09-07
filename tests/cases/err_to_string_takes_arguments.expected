@@ -1,0 +1,6 @@
+
+err_to_string_takes_arguments.em:2  to_string cannot take arguments.
+
+    2 |     func to_string(prefix: String): String {
+
+  It is called for you wherever a value is printed or put in a string, and there is nothing to hand it there:  func to_string(): String

@@ -839,6 +839,27 @@ print(rex.name)</pre>
 Rexington</pre></div>
   </div>
   <div class="aside"><p>Every field has to have a value by the time the constructor finishes. Forget one and the program will not run &mdash; which is the mistake this catches most often in practice.</p></div>
+
+  <p>Printing <code class="inl">rex</code> itself would show <code class="inl">&lt;Dog&gt;</code>, which tells you nothing. Give the class a <code class="inl">to_string</code> and it says what you wrote instead &mdash; everywhere a value turns into text, without you asking.</p>
+  <div class="unit">
+    <pre class="code">class Cat {
+    var name: String
+    constructor(name: String) { self.name = name }
+
+    func to_string(): String {
+        return "#{self.name} the cat"
+    }
+}
+
+var kit = Cat("Kit")
+print(kit)
+print("I met #{kit}")
+print([kit, Cat("Moss")])</pre>
+    <div class="out"><span class="lab">prints</span><pre>Kit the cat
+I met Kit the cat
+[Kit the cat, Moss the cat]</pre></div>
+  </div>
+  <div class="aside"><p>It has to be written <code class="inl">func to_string(): String</code> with nothing in the brackets. It is the one method the language calls on your behalf, so it is the one whose shape is fixed.</p></div>
 </section>
 
 <section id="s16">
@@ -1074,6 +1095,7 @@ swimming for 90 minutes</pre></div>
   <h2><span class="n">20</span> Operators on your own types</h2>
   <p>There is no special syntax for making <code class="inl">+</code> work on something you wrote. <code class="inl">a + b</code> <em>is</em> <code class="inl">a.add(b)</code>, so you write an ordinary method and mix in the trait that names it.</p>
   <p>One <code class="inl">compare</code> answers all four of <code class="inl">&lt;</code>, <code class="inl">&gt;</code>, <code class="inl">&lt;=</code> and <code class="inl">&gt;=</code>. And <code class="inl">+=</code> goes through the same <code class="inl">add</code> you already wrote.</p>
+  <p>The <code class="inl">to_string</code> from &sect;15 is doing its job here too: <code class="inl">print(lunch + coffee)</code> needs nothing after it.</p>
   <div class="unit">
     <pre class="code">struct Money with Addable, Equatable, Ordered {
     var cents: Int
@@ -1091,13 +1113,13 @@ swimming for 90 minutes</pre></div>
 var lunch = Money(1250)
 var coffee = Money(450)
 
-print((lunch + coffee).to_string())
+print(lunch + coffee)
 print(lunch &gt; coffee)
 print(lunch == Money(1250))
 
 var total = Money(0)
 total += lunch
-print(total.to_string())</pre>
+print(total)</pre>
     <div class="out"><span class="lab">prints</span><pre>$17.00
 true
 true

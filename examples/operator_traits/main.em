@@ -30,6 +30,7 @@ struct Money with Addable, Subtractable, Multipliable, Equatable, Ordered {
         return self.cents - other.cents            # negative, zero, or positive
     }
 
+    # print and #{ } call this for you, so Money reads as money everywhere.
     func to_string(): String {
         var whole = self.cents // 100
         var part = self.cents % 100
@@ -41,11 +42,11 @@ struct Money with Addable, Subtractable, Multipliable, Equatable, Ordered {
 var lunch = Money(1250)
 var coffee = Money(450)
 
-print("lunch      #{lunch.to_string()}")
-print("coffee     #{coffee.to_string()}")
-print("together   #{(lunch + coffee).to_string()}")
-print("difference #{(lunch - coffee).to_string()}")
-print("three teas #{(coffee * 3).to_string()}")
+print("lunch      #{lunch}")
+print("coffee     #{coffee}")
+print("together   #{lunch + coffee}")
+print("difference #{lunch - coffee}")
+print("three teas #{coffee * 3}")
 
 # One compare method answers all four ordering operators.
 print("dearer?    #{lunch > coffee}")
@@ -55,7 +56,7 @@ print("same?      #{lunch == Money(1250)}")
 var total = Money(0)
 total += lunch
 total += coffee
-print("total      #{total.to_string()}")
+print("total      #{total}")
 
 # Strings order without any trait at all — that one is built in.
 print()

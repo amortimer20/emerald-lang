@@ -41,8 +41,25 @@ class Person with Greeter {
     }
 }
 
+class Teacher {
+    var first_name: String
+    var last_name: String
+
+    constructor(first_name: String, last_name: String) {
+        self.first_name = first_name
+        self.last_name = last_name
+    }
+
+    func to_string(): String {
+        return "#{self.first_name} #{self.last_name}"
+    }
+}
+
 print(Person("Ada").greet())
 
 # Things that might not be there come back as T?, and the checker insists you handle it
 var maybe = "not a number".to_int_maybe()
 print("parsed: #{maybe.or(0)}")
+
+var t = Teacher("Anthony", "Mortimer")
+print(t)
