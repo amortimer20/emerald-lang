@@ -278,6 +278,7 @@
     <tr><td>The shipped runtime library</td><td>Must not <em>reference</em> <code>Reflection.Emit</code> &mdash; referencing it fails an IL2CPP build, used or not</td><td>§5.4</td></tr>
     <tr><td>Target framework</td><td>Modern .NET. Not netstandard2.1 &mdash; Unity's CoreCLR migration lands first</td><td>§5.4</td></tr>
     <tr><td>Debug info</td><td>Portable PDB, or breakpoints never map to <code>.em</code> files</td><td>§7</td></tr>
+    <tr><td>Zeroth milestone</td><td>A trivial program compiles and runs, unmodified by the environment</td><td>Built, in <code>src/Emerald.Compiler</code> and <code>tests/emitcheck.sh</code> &mdash; see the notes below</td></tr>
     <tr><td>First milestone</td><td>An Emerald class subclassing a C# class, with C# calling back in</td><td>§5.2</td></tr>
   </tbody>
 </table>
@@ -428,13 +429,19 @@
 
 <div class="q" style="border-left-color:var(--accent)">
   <h3><span class="n" style="color:var(--accent)">&mdash;</span> The environment may block a freshly emitted assembly</h3>
-  <p>Smart App Control already blocks the compiler's own build on this machine, which is why everything runs under WSL with <code>-p:UseAppHost=false</code>. An assembly the compiler writes and then tries to execute is a new instance of the same class of problem, and it will look like a compiler bug when it is not. Worth provoking deliberately, early, on a trivial assembly &mdash; before there is enough emitted code for the failure to be ambiguous.</p>
+  <p>Smart App Control blocks the compiler's own build on this machine, which is why everything runs under WSL with <code>-p:UseAppHost=false</code>. An assembly the compiler writes and then tries to execute is a new instance of the same class of problem, and it will look like a compiler bug when it is not. <strong>Provoked deliberately, on the trivial assembly below, and it did not happen</strong> &mdash; a from-scratch native Windows build of the spike emitter, its native apphost <code>.exe</code> run directly, and the assembly it wrote run in turn, all from PowerShell rather than WSL, three separate times. Not evidence the risk is gone: the interpreter's own build is still blocked on this machine, so whatever Smart App Control is keying on, a brand-new binary named <code>EmitSpike.exe</code> did not trigger it where <code>Emerald.exe</code> apparently once did. Recorded as a specific negative result rather than as a closed question, and still worth checking again once a real emitter exists and is building something larger.</p>
 </div>
 
 <div class="q" style="border-left-color:var(--accent)">
   <h3><span class="n" style="color:var(--accent)">&mdash;</span> Two implementations, and one of them is the oracle</h3>
-  <p>Once the backend runs anything, every golden test becomes a differential test for free: the same program through the interpreter and through the assembly must print the same thing. That is worth wiring up on the very first program that compiles, rather than after the emitter is large enough to have opinions.</p>
+  <p>Once the backend runs anything, every golden test becomes a differential test for free: the same program through the interpreter and through the assembly must print the same thing. That is worth wiring up on the very first program that compiles, rather than after the emitter is large enough to have opinions. <strong>Built now rather than left as advice</strong>: <code>tests/emitcheck.sh</code> runs a fixture through both and diffs the output, with no fixed golden text at all &mdash; the interpreter's own live output is the oracle, exactly as written above.</p>
   <p>What it cannot see is semantics that are wrong <em>consistently</em> &mdash; the emitter will be written by reading the interpreter, so a shared mistake stays invisible. That is the gap the combination pass exists to cover, and the reason it comes first.</p>
+</div>
+
+<div class="q" style="border-left-color:var(--accent)">
+  <h3><span class="n" style="color:var(--accent)">&mdash;</span> The smallest program that compiles and runs</h3>
+  <p>A milestone rather than the start of a general emitter, and deliberately narrow: <code>src/Emerald.Compiler</code> takes a checked program consisting only of top-level <code>print("a string literal")</code> statements and refuses everything else by name, loudly, with no fallback. <strong>Three questions, and this is what it took to answer each of them</strong> &mdash; does Mono.Cecil produce an assembly the current .NET runtime will load and run; does an emitted call into <code>Emerald.Runtime</code> (the new <code>IO.Print</code>, one line) behave identically to the interpreter's own <code>print</code>; and does anything on this machine object to a freshly emitted assembly being executed, which is the row above. All three: yes, so far, and now checked by a test rather than by memory of having tried it once.</p>
+  <p>One thing this answers that a program-shaped milestone alone would not have: §3.3 says a file becomes a class and the entry file's class carries the assembly's entry point, and the entry file's own statements arrive in the checked program <em>alongside</em> the prelude's operator traits and <code>Error</code>, which are ordinary declarations mixed into the same list. A first attempt handed the whole list to the emitter and it rejected the prelude's <code>class Error</code> as unsupported syntax before ever reaching a <code>print</code>. The fix is filtering to the entry file's own statements by <code>Project.FileOf</code> before emitting &mdash; which is not a workaround so much as the first real evidence that a general emitter's file-to-class mapping needs to walk <em>declarations</em> the way the checker already does, rather than a flat statement list the way this spike does.</p>
 </div>
 
 <footer>

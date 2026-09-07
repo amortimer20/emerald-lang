@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Emerald.Compiler</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    §7's emitter: Mono.Cecil, at build time, never shipped. This project is the compiler
+    side of that split; it references the checked AST and the runtime library, and
+    nothing here ships inside a compiled program. What ships is whatever this writes with
+    Cecil, plus Emerald.Runtime.dll beside it.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <ProjectReference Include="../Emerald/Emerald.csproj" />
+    <ProjectReference Include="../Emerald.Runtime/Emerald.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>
