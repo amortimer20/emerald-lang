@@ -1,0 +1,24 @@
+
+warn_doc_comment_mismatch.em:4  warning: typo has no parameter named raduis.
+
+    4 | func typo(radius: Int) {}
+
+  Did you mean radius?
+
+warn_doc_comment_mismatch.em:7  warning: This @param does not say which parameter it describes.
+
+    7 | func nameless(width: Int) {}
+
+  Name one of them:  @param width  what it is for
+
+warn_doc_comment_mismatch.em:10  warning: bare has no parameter named anything.
+
+   10 | func bare() {}
+
+  bare takes no parameters, so there is nothing for this line to describe.
+
+warn_doc_comment_mismatch.em:13  warning: silent does not give anything back.
+
+   13 | func silent(n: Int) {}
+
+  A function with no return type has no answer to describe. Add one if it should:  func silent(...): Int

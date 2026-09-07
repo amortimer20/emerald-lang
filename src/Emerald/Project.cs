@@ -56,7 +56,7 @@ public sealed class Project(string entryPath)
             _sources[fileName] = source.Replace("\r\n", "\n").Split('\n');
 
             var scanner = new Scanner(source, fileName);
-            var parser = new Parser(scanner.ScanTokens(), fileName);
+            var parser = new Parser(scanner.ScanTokens(), fileName, scanner.DocComments);
             var statements = parser.ParseProgram();
 
             Diagnostics.AddRange(scanner.Diagnostics);

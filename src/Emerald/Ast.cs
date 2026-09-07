@@ -165,7 +165,15 @@ public abstract record Stmt
 
         /// <summary>Declared with the <c>override</c> keyword — a claim that this replaces
         /// an inherited implementation, checked in both directions (§3.2).</summary>
-        bool IsOverride = false) : Stmt;
+        bool IsOverride = false,
+
+        /// <summary>
+        /// The <c>##</c> block immediately above, markdown with <c>@param</c> and
+        /// <c>@returns</c> tags. Null when undocumented, which is not a fault — §2.6 makes
+        /// the compiler a teacher, and nagging every undocumented function is how a
+        /// warning becomes noise people learn to skip.
+        /// </summary>
+        string? Doc = null) : Stmt;
     public sealed record Return(Token Keyword, Expr? Value) : Stmt;
 
     /// <summary>

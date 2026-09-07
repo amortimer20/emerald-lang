@@ -88,7 +88,7 @@ public static class Prelude
     public static List<Stmt> Parse()
     {
         var scanner = new Scanner(Source, FileName);
-        var parser = new Parser(scanner.ScanTokens(), FileName);
+        var parser = new Parser(scanner.ScanTokens(), FileName, scanner.DocComments);
         var statements = parser.ParseProgram();
 
         // The prelude is fixed source that ships with the compiler. If it does not parse,

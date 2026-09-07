@@ -6,9 +6,28 @@ namespace Emerald;
 /// Tokens -> tree. A recursive-descent parser implementing §9 of the design doc.
 /// Each method corresponds to one grammar production, in the same order.
 /// </summary>
-public sealed class Parser(List<Token> tokens, string fileName)
+public sealed class Parser(
+    List<Token> tokens, string fileName, Dictionary<int, string>? docs = null)
 {
     private int _current;
+
+    /// <summary>
+    /// The <c>##</c> block ending on the line above <paramref name="line"/>, joined with
+    /// newlines, or null if there is none.
+    ///
+    /// Walked upward from the declaration rather than collected downward from the comment,
+    /// because that is the rule a reader already believes: a doc comment documents the
+    /// thing under it, and a blank line between them breaks the connection.
+    /// </summary>
+    private string? DocAbove(int line)
+    {
+        if (docs is null) return null;
+
+        List<string> block = [];
+        for (int at = line - 1; docs.TryGetValue(at, out var text); at--) block.Insert(0, text);
+
+        return block.Count == 0 ? null : string.Join("\n", block);
+    }
 
     /// <summary>
     /// True while parsing an if/while condition or a for iterable. In those positions a
@@ -388,6 +407,10 @@ public sealed class Parser(List<Token> tokens, string fileName)
 
     private Stmt FunctionDeclaration(bool isStatic = false)
     {
+        // Read before any modifier is consumed, so the block above `abstract func` and the
+        // block above a plain `func` are found the same way.
+        string? doc = DocAbove(Peek.Line);
+
         bool isAbstract = Match(TokenType.Abstract);
 
         // A modifier, beside abstract and static rather than an attribute: §3.8 reserves
@@ -404,7 +427,7 @@ public sealed class Parser(List<Token> tokens, string fileName)
         // downstream without a separate flag to keep in sync.
         return new Stmt.FuncDecl(name, parameters, returnType,
                                  isAbstract ? null : Block(), isStatic,
-                                 IsOverride: isOverride);
+                                 IsOverride: isOverride, Doc: doc);
     }
 
     private Stmt ThrowStatement()

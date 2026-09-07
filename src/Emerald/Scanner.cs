@@ -53,6 +53,15 @@ public sealed class Scanner(string source, string fileName)
     /// </summary>
     public List<(int From, int To)> BlockComments { get; } = [];
 
+    /// <summary>
+    /// What each <c>##</c> line said, by line number. Ordinary <c>#</c> comments are still
+    /// thrown away -- a doc comment is the one kind that is <em>about</em> the declaration
+    /// below it rather than about the code around it, and §3.1 promised it would carry
+    /// meaning the compiler could use. It had never been kept: both forms went down the
+    /// same path and were skipped to end of line.
+    /// </summary>
+    public Dictionary<int, string> DocComments { get; } = [];
+
     public List<Token> ScanTokens()
     {
         while (!AtEnd)
@@ -153,7 +162,15 @@ public sealed class Scanner(string source, string fileName)
         }
         else                          // # line and ## doc comments
         {
+            bool documenting = Peek() == '#';
+            if (documenting) Advance();
+
+            int from = _current;
             while (!AtEnd && Peek() != '\n') Advance();
+
+            // The text is trimmed, so `## text` and `##text` say the same thing and a
+            // block indented under a class does not arrive carrying the indent.
+            if (documenting) DocComments[_line] = source[from.._current].Trim();
         }
     }
 

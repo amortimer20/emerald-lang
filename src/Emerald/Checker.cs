@@ -1637,6 +1637,62 @@ public sealed class Checker(
         _loopDepth--;
     }
 
+    /// <summary>
+    /// Checks a <c>##</c> block against the signature it sits above.
+    ///
+    /// §3.1 rejected Javadoc's <c>@param</c> for duplicating the signature and going
+    /// stale, and that argument is right about <em>types</em> and wrong about
+    /// <em>meaning</em>: what a radius is for, and that it must be positive, is not in
+    /// the signature and never will be. Javadoc rots because nothing checks it; C# checks
+    /// it and warns, and so does this.
+    ///
+    /// A warning rather than an error, because the program is correct and only the comment
+    /// is wrong. And unlike C#, an undocumented parameter is not reported at all: warning
+    /// on every partly documented function is how a warning becomes noise a reader learns
+    /// to skip past, which is the opposite of what §2.6 asks a diagnostic to be.
+    /// </summary>
+    private void CheckDoc(Stmt.FuncDecl fn)
+    {
+        if (fn.Doc is null) return;
+
+        var named = fn.Params.Select(p => p.Name.Lexeme).ToList();
+        int line = fn.Name.Line;
+
+        foreach (var raw in fn.Doc.Split('\n'))
+        {
+            var text = raw.TrimStart();
+
+            if (text.StartsWith("@param", StringComparison.Ordinal))
+            {
+                // `@param radius  distance from the center` — the name is the first word
+                // after the tag, and everything after it is prose nobody should parse.
+                var rest = text["@param".Length..].TrimStart();
+                var wanted = new string([.. rest.TakeWhile(c => !char.IsWhiteSpace(c))]);
+
+                if (wanted.Length == 0)
+                    Warn(line, "This @param does not say which parameter it describes.",
+                         named.Count > 0
+                             ? $"Name one of them:  @param {named[0]}  what it is for"
+                             : $"{fn.Name.Lexeme} takes no parameters.");
+
+                else if (!named.Contains(wanted))
+                    Warn(line,
+                         $"{fn.Name.Lexeme} has no parameter named {wanted}.",
+                         named.Count == 0
+                             ? $"{fn.Name.Lexeme} takes no parameters, so there is nothing "
+                               + "for this line to describe."
+                             : Suggest(wanted, named)
+                               ?? $"It takes {string.Join(", ", named)}.");
+            }
+
+            else if (text.StartsWith("@returns", StringComparison.Ordinal)
+                     && fn.ReturnType is null)
+                Warn(line, $"{fn.Name.Lexeme} does not give anything back.",
+                     "A function with no return type has no answer to describe. Add one "
+                     + $"if it should:  func {fn.Name.Lexeme}(...): Int");
+        }
+    }
+
     private void CheckFunc(Stmt.FuncDecl fn, Scope scope)
     {
         // Declaring it makes a nested function visible to its own body, which is what
@@ -1648,6 +1704,7 @@ public sealed class Checker(
         CheckAttributes(fn.Attributes, "function");
         CheckCasing(fn.Name, "function");
         CheckPredicateName(fn);
+        CheckDoc(fn);
 
         if (fn.Body is null)
         {
