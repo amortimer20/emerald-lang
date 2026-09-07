@@ -18,6 +18,13 @@ filter="${1:-}"
 pass=0; fail=0; blessed=0
 failed_names=()
 
+# A case named known_* records a defect, not a guarantee: its .expected holds what Emerald
+# does today, which is wrong. Blessing one keeps the suite green, so without this list a
+# recorded hole is indistinguishable from a passing test, and "matches today's output"
+# quietly becomes the standard. They are reported by name on every run instead, and the
+# fix for one is a rewritten .expected, not a deleted file.
+known_names=()
+
 echo "building..."
 # UseAppHost=false skips the native launcher, which cannot be made executable on a Windows
 # drive mounted under WSL. Invoking the DLL directly works on both platforms, and skips
@@ -84,6 +91,7 @@ for case_path in "$cases"/*.em "$cases"/*/; do
 
     if [[ "$actual" == "$expected" ]]; then
         pass=$((pass + 1))
+        [[ "$name" == known_* ]] && known_names+=("$name")
     else
         fail=$((fail + 1)); failed_names+=("$name")
         echo "FAIL     $name"
@@ -99,6 +107,11 @@ if [[ "${BLESS:-}" == "1" ]]; then
 fi
 
 echo "$pass passed, $fail failed"
+if (( ${#known_names[@]} > 0 )); then
+    echo "  ${#known_names[@]} recorded hole(s), passing against known-wrong output:"
+    printf '    %s
+' "${known_names[@]}"
+fi
 if (( fail > 0 )); then
     printf '  failed: %s\n' "${failed_names[*]}"
     exit 1
