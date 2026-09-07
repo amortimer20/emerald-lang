@@ -3835,11 +3835,30 @@ public sealed class Checker(
     }
 
     /// <summary>
-    /// What may be a key. Restricted to the primitives, because looking one up needs
-    /// hashing and equality that the runtime can perform — and a user type's idea of
-    /// sameness lives in <c>equals?</c>, an Emerald method the host dictionary cannot see.
-    /// Allowing it would compare by identity instead, so two equal-looking keys would miss
-    /// each other: a wrong answer with no diagnostic, which is the worst kind.
+    /// What may be a key.
+    ///
+    /// Finding a value again means hashing it, and a hash is only sound where two things
+    /// the language calls equal are guaranteed to hash alike, and where what they hash on
+    /// cannot change while they are stored. Every type allowed here satisfies both by
+    /// construction rather than by a promise someone remembered to keep:
+    ///
+    /// <list type="bullet">
+    /// <item>Int, Float, String and Bool — values, hashed by the runtime.</item>
+    /// <item>An enum value — a closed name, and nothing about it can change.</item>
+    /// <item>A class that has not defined <c>equals?</c> — held by identity, and which
+    /// object something is cannot drift even as its fields do.</item>
+    /// <item>A struct that has not defined <c>equals?</c>, whose fields are themselves
+    /// keys — immutable, so its hash is fixed the moment it is built, and derived from
+    /// exactly the fields <c>==</c> compares.</item>
+    /// </list>
+    ///
+    /// What that leaves out is the one shape where the agreement would have to be
+    /// promised rather than proved: a type that has written its own <c>equals?</c>. The
+    /// runtime cannot read that method while hashing, so it would hash on something else
+    /// and two equal keys would miss each other — a wrong answer with no diagnostic,
+    /// which is the worst kind. Refusing it keeps every key in the language something the
+    /// compiler can vouch for. Letting one in later takes a way to write the matching
+    /// hash, which is a language feature and not a patch.
     /// </summary>
     private void CheckKeyType(EmType key, int line, string role = "key")
     {
@@ -3847,14 +3866,90 @@ public sealed class Checker(
         if (key.Equals(EmType.Int) || key.Equals(EmType.Float)
             || key.Equals(EmType.String) || key.Equals(EmType.Bool)) return;
 
+        if (WhyNotAKey(key, []) is not { } reason) return;
+
         Error(line,
               role == "key"
                   ? $"A dictionary cannot be keyed by {key.Show()}."
                   : $"A set cannot hold {key.Show()}.",
-              $"{(role == "key" ? "Keys" : "Members")} are Int, Float, String, or Bool. "
-              + "Finding a value again needs hashing, and a type's own equals? is not "
-              + "something the lookup can consult yet.");
+              reason);
     }
+
+    /// <summary>
+    /// Why this type cannot be hashed, or null where it can. Separate from the reporting
+    /// so a struct can ask it about its own fields.
+    /// </summary>
+    private string? WhyNotAKey(EmType type, HashSet<ClassInfo> seen)
+    {
+        if (type is EmType.Unknown) return null;
+        if (type.Equals(EmType.Int) || type.Equals(EmType.Float)
+            || type.Equals(EmType.String) || type.Equals(EmType.Bool)) return null;
+
+        if (type is not EmType.Obj obj)
+            return type is EmType.Lst or EmType.SetOf or EmType.Dict
+                ? $"A {type.Show()} can be changed after it is stored, so what it holds "
+                  + "cannot be part of how something is found again. Int, Float, String, "
+                  + "Bool, an enum, an object, or a struct of those."
+                : $"{type.Show()} is not one of the types that can be hashed: Int, Float, "
+                  + "String, Bool, an enum, an object, or a struct of those.";
+
+        var info = obj.Info;
+
+        // An enum value is a name from a closed set. Nothing about it can change and two
+        // of the same name are the same value, so it needs nothing to be a sound key.
+        if (info.Kind == TypeKind.Enum) return null;
+
+        if (info.Kind == TypeKind.Struct)
+        {
+            if (Redefines(info) is { } own)
+                return $"{own} defines its own equals?, and the value would have to be "
+                       + "hashed on its fields instead — which is only right if the two "
+                       + "always agree, and nothing can check that. A struct without "
+                       + "equals? compares by its fields and can be held.";
+
+            // A struct declared inside itself cannot be built, but it can be written, and
+            // walking it without this would not come back.
+            if (!seen.Add(info)) return null;
+
+            foreach (var field in info.Fields)
+                if (WhyNotAKey(field.Value, seen) is not null)
+                    return $"{info.Name} has a field {field.Key} of type "
+                           + $"{field.Value.Show()}, which cannot be part of how something "
+                           + "is found again. Every field of a struct held this way has to "
+                           + "be a value that cannot change underneath it.";
+
+            return null;
+        }
+
+        // A class or trait is held by identity, which is always sound — unless something
+        // has said sameness means something else. That includes anything below it: a
+        // Set<Animal> really holds Dogs, and a Dog with its own equals? would be found by
+        // identity anyway, quietly disagreeing with what == says about the same two.
+        if (Redefines(info) is { } here)
+            return $"{here} defines its own equals?, so two of them can be equal without "
+                   + "being the same object — and this is found by which object it is. "
+                   + "A struct is compared by its fields and can be held.";
+
+        foreach (var other in _classes.Values)
+            if (other != info && other.IsSubclassOf(info) && Redefines(other) is { } below)
+                return $"{below} is a kind of {info.Name} and defines its own equals?, so "
+                       + "a value here would be found by which object it is while == "
+                       + $"asked {below}. Hold the ones compared by fields in a struct.";
+
+        return null;
+    }
+
+    /// <summary>
+    /// The name of the type in this one's chain that says what sameness means, or null
+    /// where none does. Mixing in Equatable counts even before the method is written: the
+    /// abstract declaration is the claim that identity is the wrong answer for it.
+    /// </summary>
+    private static string? Redefines(ClassInfo info) =>
+        info.Methods.ContainsKey(Prelude.EqualsMethod)
+        || info.AbstractNames.Contains(Prelude.EqualsMethod)
+            ? info.Name
+            : (info.Base is not null ? Redefines(info.Base) : null)
+              ?? info.Traits.Select(Redefines).FirstOrDefault(found => found is not null);
 
     /// <summary>
     /// The narrowest type that holds both — for <c>[rex, tweety]</c>, the class they share.

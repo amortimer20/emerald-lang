@@ -1,0 +1,6 @@
+
+err_struct_key_holds_list.em:8  A dictionary cannot be keyed by Basket.
+
+    8 | var counts: Dictionary<Basket, Int> = [:]
+
+  Basket has a field items of type List<Int>, which cannot be part of how something is found again. Every field of a struct held this way has to be a value that cannot change underneath it.

@@ -31,7 +31,6 @@ public sealed class EmDict
     public IReadOnlyList<object> Keys => _order;
 
     public bool Has(object key) => _values.ContainsKey(key);
-    public bool HasValue(object? value) => _order.Any(k => Equals(_values[k], value));
 
     public object? Get(object key) => _values.GetValueOrDefault(key);
 

@@ -274,6 +274,91 @@ public sealed class EmInstance(EmClass cls, Interpreter? runner = null) : ICompa
         runner is not null && cls.FindMethod(Builtins.ToStringMethod) is { } method
             ? runner.CallMethod(method, this, cls.Closure, []) as string ?? $"<{cls.Name}>"
             : $"<{cls.Name}>";
+
+    /// <summary>
+    /// Whether membership compares this by its fields rather than by which object it is.
+    ///
+    /// An immutable struct that has not redefined sameness is the only shape that can be
+    /// hashed with nothing owed by the programmer: its fields cannot change once it is
+    /// built, so the hash it had when it was stored is the hash it still has, and the
+    /// fields it hashes are exactly the ones <see cref="Interpreter.Same"/> compares.
+    ///
+    /// A struct <em>with</em> its own <c>equals?</c> is excluded deliberately. Sameness
+    /// for it is whatever that method says, which this cannot read, so deriving a hash
+    /// from the fields would be inventing an agreement that may not hold — the one
+    /// combination that loses values rather than merely answering oddly. It falls back to
+    /// identity here and the checker refuses it as a key, which are the same decision seen
+    /// from two sides.
+    /// </summary>
+    private bool KeyedByFields =>
+        cls.Kind == TypeKind.Struct && cls.FindMethod(Prelude.EqualsMethod) is null;
+
+    /// <summary>
+    /// Membership, through the CLR method a Dictionary and a HashSet actually call.
+    ///
+    /// Deliberately not the same question as <c>==</c>, which stays with
+    /// <see cref="Interpreter.Same"/>. The two already differ by design in one place — a
+    /// set holds one NaN while <c>NaN == NaN</c> is false — because a hash table that
+    /// disagreed with its own equality loses values instead of answering oddly. A struct
+    /// holding a NaN inherits that same rule here, one level up: it can be stored and
+    /// found again, even though two of them still compare unequal with <c>==</c>.
+    /// </summary>
+    public override bool Equals(object? other)
+    {
+        if (ReferenceEquals(this, other)) return true;
+        if (!KeyedByFields) return false;
+
+        return other is EmInstance them
+               && them.Class == cls
+               && them.KeyedByFields
+               && Fields.Count == them.Fields.Count
+               && Fields.All(f => them.Fields.TryGetValue(f.Key, out var theirs)
+                                  && KeyEquals(f.Value, theirs));
+    }
+
+    public override int GetHashCode()
+    {
+        if (!KeyedByFields)
+            return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
+
+        var hash = new HashCode();
+        hash.Add(cls.Name);
+
+        // By name rather than by insertion order, so two of the same struct hash alike
+        // however their fields happened to be filled in.
+        foreach (var field in Fields.OrderBy(f => f.Key, StringComparer.Ordinal))
+        {
+            hash.Add(field.Key);
+            hash.Add(KeyHash(field.Value));
+        }
+
+        return hash.ToHashCode();
+    }
+
+    /// <summary>
+    /// Sameness for one field of a stored struct. Nested structs recurse through this same
+    /// override; a nested class compares by identity, which is what it means everywhere.
+    ///
+    /// Int and Float are one number line for <c>==</c>, and a Float-declared field can
+    /// still be holding a whole number as an Int — <c>P(1)</c> and <c>P(1.0)</c> compare
+    /// equal and were storing a long beside a double. Both sides go through double here so
+    /// that two fields <c>==</c> calls equal cannot hash apart, which is the difference
+    /// between finding a key again and losing it.
+    /// </summary>
+    private static bool KeyEquals(object? a, object? b) =>
+        a is null || b is null
+            ? a is null && b is null
+            : IsNumber(a) && IsNumber(b)
+                // Equals rather than ==, so two NaNs match: see the note on Equals above.
+                ? AsDouble(a).Equals(AsDouble(b))
+                : a.Equals(b);
+
+    private static int KeyHash(object? value) =>
+        value is null ? 0 : IsNumber(value) ? AsDouble(value).GetHashCode() : value.GetHashCode();
+
+    private static bool IsNumber(object value) => value is long or double;
+
+    private static double AsDouble(object value) => value is long n ? n : (double)value;
 }
 
 /// <summary>

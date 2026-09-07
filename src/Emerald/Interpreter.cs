@@ -1536,9 +1536,10 @@ public sealed class Interpreter
         // lists could not find a list it visibly contained.
         //
         // Safe here in a way it is not everywhere, because these are mutable: the classic
-        // hazard is a container used as a key and then changed underneath the hash, and
-        // §3.7 already restricts keys and set members to Int, Float, String and Bool. The
-        // hazard is structurally out of reach rather than merely unlikely.
+        // hazard is a container used as a key and then changed underneath the hash, and a
+        // container is not among the types allowed to be one — nor is a struct holding a
+        // container, which is the same rule applied one level down. The hazard is
+        // structurally out of reach rather than merely unlikely.
         if (left is EmList first && right is EmList second)
             return first.Items.Count == second.Items.Count
                    && first.Items.Zip(second.Items).All(p => Same(p.First, p.Second));
@@ -1848,6 +1849,11 @@ public sealed class Interpreter
     /// holds one NaN, not two. That is the single place in the language where membership
     /// and == give different answers, and it is exactly where C# puts it, for the same
     /// reason: the hash contract does not survive a value that is not equal to itself.
+    ///
+    /// A struct holding a NaN carries the same split, for the same reason and by the same
+    /// rule: <c>EmInstance.Equals</c> compares its fields reflexively so it can be stored
+    /// and found again, while <c>==</c> here still says two of them differ. One divergence
+    /// with one cause, applied consistently at every depth rather than only at the top.
     /// </summary>
     /// <summary>
     /// Sameness for everything without a rule of its own.

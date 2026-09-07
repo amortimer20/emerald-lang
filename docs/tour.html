@@ -549,6 +549,27 @@ ada, bo, cy
 true
 2</pre></div>
   </div>
+  <p>Keys are not only text and numbers. A <code class="inl">struct</code> works too: it cannot be changed once built and it compares by its fields, so two made the same way are one key &mdash; which is what lets a position, a date or a pair of coordinates be the thing you look something up by.</p>
+  <div class="unit">
+    <pre class="code">struct Point {
+    var x: Int
+    var y: Int
+}
+
+var label: Dictionary&lt;Point, String&gt; = [:]
+label[Point(1, 2)] = "start"
+label[Point(4, 0)] = "corner"
+
+print(label[Point(1, 2)].or("?"))
+print(label.count())
+
+var seen = [Point(1, 2), Point(1, 2)].to_set()
+print(seen.count())</pre>
+    <div class="out"><span class="lab">prints</span><pre>start
+2
+1</pre></div>
+  </div>
+  <div class="aside"><p>An object works as a key as well, but it is held by <em>which object it is</em> rather than by what it contains &mdash; two dogs both named "rex" are two keys. A struct is the one to reach for when you want look-alikes to count as one.</p></div>
   <div class="aside"><p>Things stay in the order you put them in. A program whose output shuffles between runs is miserable to debug, because you cannot tell it from a mistake of your own.</p></div>
 </section>
 

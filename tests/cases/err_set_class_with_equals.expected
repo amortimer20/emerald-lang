@@ -1,0 +1,6 @@
+
+err_set_class_with_equals.em:11  A set cannot hold Customer.
+
+   11 | var seen: Set<Customer> = [].to_set()
+
+  Customer defines its own equals?, so two of them can be equal without being the same object — and this is found by which object it is. A struct is compared by its fields and can be held.

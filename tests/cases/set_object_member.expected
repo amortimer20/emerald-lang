@@ -1,6 +1,1 @@
-
-set_object_member.em:6  A set cannot hold Dog.
-
-    6 | var pack = [Dog("rex")].to_set()
-
-  Members are Int, Float, String, or Bool. Finding a value again needs hashing, and a type's own equals? is not something the lookup can consult yet.
+1
