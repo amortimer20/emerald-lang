@@ -363,8 +363,8 @@ public static class Builtins
             "contains?" => items.Any(x => interp.Same(x, args[0])),
 
             // order
-            "sort" => new EmList([.. items.OrderBy(x => x)]),
-            "sort_by" => new EmList([.. items.OrderBy(x => Block(args).Call(interp, [x]))]),
+            "sort" => new EmList([.. items.OrderBy(x => x, Ordering.Instance)]),
+            "sort_by" => new EmList([.. items.OrderBy(x => Block(args).Call(interp, [x]), Ordering.Instance)]),
             "reverse" => new EmList([.. Enumerable.Reverse(items)]),
 
             // access
@@ -838,8 +838,8 @@ public static class Builtins
                 if (ranked.Count == 0) return null;
 
                 var best = name == "min_by"
-                    ? ranked.MinBy(e => e.Key)
-                    : ranked.MaxBy(e => e.Key);
+                    ? ranked.MinBy(e => e.Key, Ordering.Instance)
+                    : ranked.MaxBy(e => e.Key, Ordering.Instance);
 
                 return Single(target, best.Row, name);
             }
@@ -895,7 +895,9 @@ public static class Builtins
             {
                 var values = rows.Select(r => Single(target, r, name)).ToList();
                 if (values.Count == 0) return null;
-                return name == "min" ? values.Min() : values.Max();
+                return name == "min"
+                    ? values.Min(Ordering.Instance)
+                    : values.Max(Ordering.Instance);
             }
         }
 
@@ -1064,6 +1066,42 @@ public static class Builtins
         _ownDepth++;
         try { return Stringify(value); }
         finally { _ownDepth--; }
+    }
+
+    /// <summary>
+    /// One order, matching what <c>&lt;</c> answers.
+    ///
+    /// <c>sort</c> used <c>OrderBy</c>, which is <c>Comparer&lt;object&gt;.Default</c>,
+    /// which for strings is <em>culture-sensitive</em>. So
+    /// <c>["b", "A", "a", "B"].sort()</c> gave <c>a, A, b, B</c> while <c>"a" &lt; "B"</c>
+    /// answered false: two orders in one language, disagreeing on the same two values.
+    ///
+    /// The sorted one also varied by the machine's locale, which is worse than merely
+    /// inconsistent. A program whose output changes when it moves to another computer is
+    /// the failure §3.7's ordering promise exists to prevent, and a beginner cannot tell
+    /// it from a bug of their own. It would also have been invisible until the emitter
+    /// picked its own comparer and disagreed with the interpreter.
+    /// </summary>
+    public sealed class Ordering : IComparer<object?>
+    {
+        public static readonly Ordering Instance = new();
+
+        public int Compare(object? a, object? b)
+        {
+            if (a is string x && b is string y) return string.CompareOrdinal(x, y);
+
+            // NaN sorts below every number rather than answering no to everything, which
+            // is what a total order needs and what C# does. The operators still say no --
+            // sorting and comparing are different questions.
+            if (a is long or double && b is long or double)
+                return Number(a).CompareTo(Number(b));
+
+            if (a is bool p && b is bool q) return p.CompareTo(q);
+
+            throw new RuntimeError($"Cannot compare {TypeName(a)} with {TypeName(b)}.");
+
+            static double Number(object? v) => v is long i ? i : (double)v!;
+        }
     }
 
     public static string TypeName(object? value) => value switch

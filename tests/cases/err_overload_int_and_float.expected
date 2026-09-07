@@ -1,0 +1,6 @@
+
+err_overload_int_and_float.em:4  f already has an overload matching this one, on line 3.
+
+    4 | func f(n: Float): String { return "took Float" }
+
+  Two of one name have to be told apart by what they take. No argument could choose between these.

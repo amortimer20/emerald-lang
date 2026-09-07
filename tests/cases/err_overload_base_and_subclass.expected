@@ -1,0 +1,6 @@
+
+err_overload_base_and_subclass.em:8  describe already has an overload matching this one, on line 7.
+
+    8 | func describe(d: Dog): String { return "took Dog" }
+
+  Two of one name have to be told apart by what they take. No argument could choose between these.
