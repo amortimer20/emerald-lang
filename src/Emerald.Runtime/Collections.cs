@@ -31,6 +31,28 @@ public static class Collections
     /// </summary>
     public static List<object?> SortBy(IEnumerable<object?> items, Block key,
                                        IComparer<object?> order) =>
-        [.. items.OrderBy(x => key(x), order)];
+        Sorted(() => [.. items.OrderBy(x => key(x), order)]);
+
+    /// <summary><c>sort</c>: the values themselves, by the same order.</summary>
+    public static List<object?> Sort(IEnumerable<object?> items, IComparer<object?> order) =>
+        Sorted(() => [.. items.OrderBy(x => x, order)]);
+
+    /// <summary>
+    /// Runs a sort and lets the caller's own error out of it.
+    ///
+    /// .NET wraps anything a comparer throws in an <c>InvalidOperationException</c> saying
+    /// "Failed to compare two elements in the array" &mdash; so a written diagnostic about
+    /// a type that cannot be ordered arrived as <em>"this is a bug in Emerald, not in your
+    /// program"</em>, which was both unreadable and untrue. The comparer's own exception is
+    /// the one the caller built and the one worth showing.
+    /// </summary>
+    private static List<object?> Sorted(Func<List<object?>> sort)
+    {
+        try { return sort(); }
+        catch (InvalidOperationException wrapped) when (wrapped.InnerException is { } real)
+        {
+            throw real;
+        }
+    }
 
 }

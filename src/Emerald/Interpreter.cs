@@ -1540,21 +1540,9 @@ public sealed class Interpreter
     /// </summary>
     private bool Ordering(object? left, object? right, Token op)
     {
-        if (left is EmInstance instance)
-        {
-            var method = Choose(instance.Class.FindMethods(Prelude.CompareMethod), [right])
-                ?? throw new RuntimeError(
-                    $"{instance.Class.Name} cannot be ordered with {op.Lexeme}.",
-                    $"Mix in {Prelude.OrderedTrait} and define {Prelude.CompareMethod}.");
-
-            object? verdict = CallMethod(method, instance, instance.Class.Closure, [right]);
-            if (verdict is not long sign)
-                throw new RuntimeError(
-                    $"{instance.Class.Name}.{Prelude.CompareMethod} gave back "
-                    + $"{Builtins.TypeName(verdict)}, but ordering reads an Int.");
-
-            return SignSatisfies(sign, op);
-        }
+        // Through the same CompareTo sorting uses, so the operator and the sort cannot
+        // give different answers about the same two values.
+        if (left is EmInstance instance) return SignSatisfies(instance.CompareTo(right), op);
 
         // Strings order lexicographically, by ordinal so the result never depends on the
         // machine's locale — the same program must sort the same way everywhere.
@@ -1562,6 +1550,27 @@ public sealed class Interpreter
             return SignSatisfies(string.CompareOrdinal(a, b), op);
 
         return Compare(left, right, op);
+    }
+
+    /// <summary>
+    /// A user type's <c>compare</c>, run. Public because <c>EmInstance.CompareTo</c> is
+    /// what both the operators and the runtime's comparer now call, and an instance holds
+    /// no way to run Emerald code itself.
+    /// </summary>
+    public int CompareInstances(EmInstance instance, object? other)
+    {
+        var method = Choose(instance.Class.FindMethods(Prelude.CompareMethod), [other])
+            ?? throw new RuntimeError(
+                $"{instance.Class.Name} cannot be ordered.",
+                $"Mix in {Prelude.OrderedTrait} and define {Prelude.CompareMethod}.");
+
+        object? verdict = CallMethod(method, instance, instance.Class.Closure, [other]);
+        if (verdict is not long sign)
+            throw new RuntimeError(
+                $"{instance.Class.Name}.{Prelude.CompareMethod} gave back "
+                + $"{Builtins.TypeName(verdict)}, but ordering reads an Int.");
+
+        return Math.Sign(sign);
     }
 
     private static bool SignSatisfies(long sign, Token op) => op.Type switch
@@ -1647,6 +1656,12 @@ public sealed class Interpreter
             List<object?> received = [.. c.Args.Select(a => Evaluate(a, env))];
             if (c.Trailing is not null) received.Add(new EmLambda(c.Trailing, env));
             _call = c;
+
+            // Stamped again, now that the receiver and the arguments have been evaluated.
+            // It was set before them so a failure inside one reports its own line -- but
+            // evaluating them moves it, so a failure in *this* call reported wherever the
+            // receiver last was. `[Plain(1)].sort()` blamed the line Plain was declared on.
+            _line = get.Name.Line;
 
             // A field holding a function: `button.on_click()` calls what it holds, where
             // `button.on_click` on its own is the function itself. Only a written '(' or a

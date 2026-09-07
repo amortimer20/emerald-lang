@@ -72,3 +72,9 @@ Console.WriteLine(Values.Text(null, v => new InvalidOperationException()) == "")
 Console.WriteLine(Ordering.TryCompare(1L, 2.5) < 0);
 Console.WriteLine(Ordering.TryCompare(1, 2.5) is null);
 Console.WriteLine(Ordering.TryCompare("x", 1L) is null);
+
+// Anything that orders itself is ordered, which is how a user type's compare is reached
+// and how a wrapped .NET type comes for free. DateTime and Version already implement
+// this and would have needed a shim under any rule asking for an interface of ours.
+Console.WriteLine(Ordering.TryCompare(new Version(1, 2), new Version(1, 10)) < 0);
+Console.WriteLine(Ordering.TryCompare(new DateTime(2020, 1, 1), new DateTime(2021, 1, 1)) < 0);

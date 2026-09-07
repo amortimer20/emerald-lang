@@ -363,7 +363,7 @@ public static class Builtins
             "contains?" => items.Any(x => interp.Same(x, args[0])),
 
             // order
-            "sort" => new EmList([.. items.OrderBy(x => x, Ordering)]),
+            "sort" => new EmList(Runtime.Collections.Sort(items, Ordering)),
             // Through the runtime library, with the interpreter's block wrapped into the
             // plain delegate that library takes -- emitted code passes one of those with
             // no adapter, a compiled lambda being a delegate already.

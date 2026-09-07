@@ -48,6 +48,23 @@ public static class Ordering
         (long x, long y) => Compare(x, y),
         (bool x, bool y) => Compare(x, y),
         (long or double, long or double) => Compare(AsDouble(a), AsDouble(b)),
+
+        // Anything that orders itself, which is how a user type's compare is reached and
+        // how a wrapped .NET type comes for free -- DateTime and Version already implement
+        // this, and would need a shim under any rule that asked for an interface of ours.
+        //
+        // Last on purpose. string, long and double all implement IComparable too, and
+        // string's is culture-sensitive: reaching it before the arms above would put back
+        // the locale-dependent ordering those arms exist to remove.
+        // Guarded on the two being the same kind of thing. Written open at first, and the
+        // C# caller caught it within the minute: an int is IComparable, so 1 against 2.5
+        // stopped answering "no order" and started throwing "Object must be of type
+        // Int32" out of the BCL -- a raw host exception where this returns null by
+        // contract. A comparer that throws instead of declining is worse than one that
+        // declines too often.
+        (IComparable x, not null) when a.GetType().IsInstanceOfType(b)
+            => Math.Sign(x.CompareTo(b)),
+
         _ => null,
     };
 

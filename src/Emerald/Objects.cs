@@ -234,10 +234,29 @@ public sealed record EmEnumValue(string Type, string Name, int Ordinal)
     public Interpreter? Runner { get; init; }
 }
 
-public sealed class EmInstance(EmClass cls, Interpreter? runner = null)
+public sealed class EmInstance(EmClass cls, Interpreter? runner = null) : IComparable
 {
     public EmClass Class => cls;
     public Dictionary<string, object?> Fields { get; } = [];
+
+    /// <summary>
+    /// Ordering, through the CLR interface every orderable .NET type already implements.
+    ///
+    /// <c>&lt;</c> and <c>sort</c> used to reach a type's <c>compare</c> by two different
+    /// routes, and only one of them arrived: the operator asked the class for the method,
+    /// while sorting went through a comparer that knew about numbers and strings and
+    /// nothing else. So <c>Money(1) &lt; Money(2)</c> answered, and
+    /// <c>[Money(3), Money(1)].sort()</c> died inside the host's sort with "this is a bug
+    /// in Emerald". One rule reached by one route is the whole point of asking through the
+    /// CLR's own method.
+    /// </summary>
+    public int CompareTo(object? other)
+    {
+        if (runner is null)
+            throw new RuntimeError($"{cls.Name} cannot be ordered here.");
+
+        return runner.CompareInstances(this, other);
+    }
 
     /// <summary>
     /// The object's own text, through the CLR method every .NET value already answers.
