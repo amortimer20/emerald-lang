@@ -1,0 +1,6 @@
+
+err_predicate_needs_bool.em:13  filter needs a yes or no from its block, and this gives back func(): Bool.
+
+   13 | print(numbers.filter { x => x.even? })
+
+  That is the method itself, not its answer. Add parentheses to call it:  x.even?()

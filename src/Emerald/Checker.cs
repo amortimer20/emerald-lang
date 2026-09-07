@@ -3887,6 +3887,38 @@ public sealed class Checker(
                                supplies: takes.Count, given: name.Lexeme)
                     is EmType.Func typed) blockReturn = typed.Return;
 
+                // A predicate has to answer yes or no. Without this a block giving back
+                // anything at all was accepted and then read for truthiness, so
+                // `filter { x => x.even? }` -- the method itself rather than its answer --
+                // kept every element instead of the even ones, `all?` said true, `find`
+                // returned the first item and `reject` gave back nothing. Four plausible
+                // wrong answers from one missing pair of parentheses, and a plausible
+                // wrong answer is worse than an error.
+                //
+                // Made possible by §3.1: a member read now names a method rather than
+                // calling it, which is what makes callbacks work and what puts a callable
+                // one keystroke away from every predicate.
+                if (name.Lexeme is "filter" or "reject" or "find" or "any?" or "all?"
+                    && blockReturn is not EmType.Unknown
+                    && !blockReturn.Equals(EmType.Bool)
+                    && !blockReturn.Equals(EmType.Nothing))
+                {
+                    // The body written out, so the fix names what they typed rather than
+                    // an invented example they then have to translate.
+                    string? shown = block.Body is [Stmt.ExprStmt { Expression: Expr.Get } only]
+                        ? Source.Of(only.Expression)
+                        : null;
+
+                    Error(name.Line,
+                          $"{name.Lexeme} needs a yes or no from its block, and this gives "
+                          + $"back {blockReturn.Show()}.",
+                          blockReturn is EmType.Func
+                              ? "That is the method itself, not its answer. Add parentheses "
+                                + $"to call it:  {shown ?? "x.even?"}()"
+                              : $"A predicate answers yes or no, so the block has to end in "
+                                + "something that is true or false.");
+                }
+
                 // each is the one that does not look at the answer. For the rest the
                 // block's value is the whole point, so a block with none is the mistake.
                 if (name.Lexeme is not ("each" or "each_with_index")
@@ -4288,7 +4320,15 @@ public sealed class Checker(
         if (actual is EmType.Unknown || wanted.Accepts(actual)) return;
         Error(LineOf(where) is var line && line > 0 ? line : fallback,
               $"{context} needs {wanted.Show()}, but this is {actual.Show()}.",
-              actual.IsMaybe ? "Check it against nothing first." : null);
+
+              // A method read sitting one keystroke from its call is the likeliest way to
+              // arrive here holding a function where a value was wanted, and §3.1 made
+              // that read legal on purpose so callbacks could exist. Naming the call is
+              // more use than naming the type it does not have.
+              actual is EmType.Func && where is Expr.Get
+                  ? "That is the method itself, not its answer. Add parentheses to call "
+                    + $"it:  {Source.Of(where)}()"
+                  : actual.IsMaybe ? "Check it against nothing first." : null);
     }
 
     private static string? Widening(EmType declared, EmType actual) =>
