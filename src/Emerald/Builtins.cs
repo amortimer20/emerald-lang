@@ -363,8 +363,8 @@ public static class Builtins
             "contains?" => items.Any(x => interp.Same(x, args[0])),
 
             // order
-            "sort" => new EmList([.. items.OrderBy(x => x, Ordering.Instance)]),
-            "sort_by" => new EmList([.. items.OrderBy(x => Block(args).Call(interp, [x]), Ordering.Instance)]),
+            "sort" => new EmList([.. items.OrderBy(x => x, Ordering)]),
+            "sort_by" => new EmList([.. items.OrderBy(x => Block(args).Call(interp, [x]), Ordering)]),
             "reverse" => new EmList([.. Enumerable.Reverse(items)]),
 
             // access
@@ -504,7 +504,7 @@ public static class Builtins
     private static object? FloatMethod(double value, string name, List<object?> args) =>
         name switch
         {
-            "round" => (long)Math.Round(value, MidpointRounding.AwayFromZero),
+            "round" => Runtime.Numbers.Round(value),
 
             // A separate name rather than round(places), because the answer is a
             // different type: round gives a whole number and round_to gives a Float.
@@ -538,7 +538,7 @@ public static class Builtins
                 $"round_to({places}) has no meaning.",
                 "Round to between 0 and 15 decimal places.");
 
-        return Math.Round(value, (int)places, MidpointRounding.AwayFromZero);
+        return Runtime.Numbers.RoundTo(value, (int)places);
     }
 
     /// <summary>
@@ -556,65 +556,7 @@ public static class Builtins
     /// have; 1e16 is the first round power of ten beyond it. The small one follows
     /// Python, which switches at the same place.
     /// </summary>
-    private static string Float(double d)
-    {
-        if (double.IsInfinity(d) || double.IsNaN(d))
-            return d.ToString(CultureInfo.InvariantCulture);
-
-        double size = Math.Abs(d);
-        if (size != 0 && (size >= 1e16 || size < 1e-4)) return Scientific(d);
-
-        // "R" and nothing else. The whole-number branch used to format with "0.0", which
-        // is fifteen significant digits and therefore not round-trippable: 9007199254740992
-        // printed as 9007199254740990, a wrong answer to a value that had been typed
-        // exactly. A Float is shown at whatever length it takes to read back as itself.
-        string text = d.ToString("R", CultureInfo.InvariantCulture);
-        return text.Contains('.', StringComparison.Ordinal) ? text : text + ".0";
-    }
-
-    /// <summary>
-    /// <c>1.0e-7</c> — the exponent form the scanner accepts, so the round trip closes.
-    ///
-    /// Built from "R" rather than from a fixed width. "E16" asks for seventeen digits
-    /// whether or not they mean anything, so 0.0000001 came out as 9.9999999999999995e-8
-    /// — true of the double, and not what anybody wrote or wants to read. "R" gives the
-    /// shortest text that reads back as the same value, which is the right length by
-    /// definition.
-    /// </summary>
-    private static string Scientific(double d)
-    {
-        string text = d.ToString("R", CultureInfo.InvariantCulture);
-
-        int e = text.IndexOf('E', StringComparison.Ordinal);
-        if (e >= 0)
-        {
-            string found = text[..e];
-            if (!found.Contains('.', StringComparison.Ordinal)) found += ".0";
-            return $"{found}e{int.Parse(text[(e + 1)..], CultureInfo.InvariantCulture)}";
-        }
-
-        // "R" switches to exponent form at its own threshold, not at this one, so 1e16
-        // arrives here as seventeen plain digits. Where the two disagree, the language's
-        // threshold wins and the point is placed here — by moving characters rather than
-        // by arithmetic, so nothing is rounded on the way.
-        bool negative = text.StartsWith('-');
-        if (negative) text = text[1..];
-
-        int point = text.IndexOf('.', StringComparison.Ordinal);
-        string digits = point < 0 ? text : text.Remove(point, 1);
-        if (point < 0) point = text.Length;
-
-        int first = 0;
-        while (first < digits.Length && digits[first] == '0') first++;
-        if (first == digits.Length) return negative ? "-0.0" : "0.0";
-
-        string significant = digits[first..].TrimEnd('0');
-        string mantissa = significant.Length == 1
-            ? significant + ".0"
-            : significant[..1] + "." + significant[1..];
-
-        return $"{(negative ? "-" : "")}{mantissa}e{point - first - 1}";
-    }
+    private static string Float(double d) => Runtime.Numbers.Text(d);
 
     /// <summary>
     /// <c>replace</c>, with the one argument .NET refuses caught first. An empty string to
@@ -838,8 +780,8 @@ public static class Builtins
                 if (ranked.Count == 0) return null;
 
                 var best = name == "min_by"
-                    ? ranked.MinBy(e => e.Key, Ordering.Instance)
-                    : ranked.MaxBy(e => e.Key, Ordering.Instance);
+                    ? ranked.MinBy(e => e.Key, Ordering)
+                    : ranked.MaxBy(e => e.Key, Ordering);
 
                 return Single(target, best.Row, name);
             }
@@ -896,8 +838,8 @@ public static class Builtins
                 var values = rows.Select(r => Single(target, r, name)).ToList();
                 if (values.Count == 0) return null;
                 return name == "min"
-                    ? values.Min(Ordering.Instance)
-                    : values.Max(Ordering.Instance);
+                    ? values.Min(Ordering)
+                    : values.Max(Ordering);
             }
         }
 
@@ -1069,40 +1011,20 @@ public static class Builtins
     }
 
     /// <summary>
-    /// One order, matching what <c>&lt;</c> answers.
+    /// One order for sorting, and the same one <c>&lt;</c> answers with.
     ///
-    /// <c>sort</c> used <c>OrderBy</c>, which is <c>Comparer&lt;object&gt;.Default</c>,
-    /// which for strings is <em>culture-sensitive</em>. So
+    /// The rules live in the runtime library, because emitted code needs them too and a
+    /// second copy is how the two came to disagree in the first place: <c>sort</c> used
+    /// .NET's default comparer, culture-sensitive for strings, so
     /// <c>["b", "A", "a", "B"].sort()</c> gave <c>a, A, b, B</c> while <c>"a" &lt; "B"</c>
-    /// answered false: two orders in one language, disagreeing on the same two values.
+    /// answered false -- and the sorted answer changed with the machine's locale.
     ///
-    /// The sorted one also varied by the machine's locale, which is worse than merely
-    /// inconsistent. A program whose output changes when it moves to another computer is
-    /// the failure §3.7's ordering promise exists to prevent, and a beginner cannot tell
-    /// it from a bug of their own. It would also have been invisible until the emitter
-    /// picked its own comparer and disagreed with the interpreter.
+    /// What stays here is the sentence a reader gets when there is no order. That is a
+    /// diagnostic, and diagnostics are the compiler's job: the runtime ships with every
+    /// program and has no business carrying the vocabulary for explaining a mistake.
     /// </summary>
-    public sealed class Ordering : IComparer<object?>
-    {
-        public static readonly Ordering Instance = new();
-
-        public int Compare(object? a, object? b)
-        {
-            if (a is string x && b is string y) return string.CompareOrdinal(x, y);
-
-            // NaN sorts below every number rather than answering no to everything, which
-            // is what a total order needs and what C# does. The operators still say no --
-            // sorting and comparing are different questions.
-            if (a is long or double && b is long or double)
-                return Number(a).CompareTo(Number(b));
-
-            if (a is bool p && b is bool q) return p.CompareTo(q);
-
-            throw new RuntimeError($"Cannot compare {TypeName(a)} with {TypeName(b)}.");
-
-            static double Number(object? v) => v is long i ? i : (double)v!;
-        }
-    }
+    private static readonly Runtime.Ordering.Values Ordering = new(
+        (a, b) => new RuntimeError($"Cannot compare {TypeName(a)} with {TypeName(b)}."));
 
     public static string TypeName(object? value) => value switch
     {

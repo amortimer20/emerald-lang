@@ -7,4 +7,13 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    The compiler references the runtime, never the reverse. Emitted programs link the
+    runtime alone, so anything it cannot reach is something an emitted program would have
+    had to reimplement.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../Emerald.Runtime/Emerald.Runtime.csproj" />
+  </ItemGroup>
+
 </Project>

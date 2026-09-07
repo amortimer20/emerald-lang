@@ -1710,13 +1710,17 @@ public sealed class Interpreter
                 // `//` and `%` floor toward negative infinity, as a matched pair, so
                 // a // b * b + a % b == a holds. C# truncates toward zero instead, which
                 // makes -7 % 2 come out as -1 and breaks `n % 2 == 1` for negatives.
+                // Through the runtime library, which the emitter will call too -- and
+                // which does the arithmetic in integers. Going via double floored
+                // correctly and lost precision past 2^53, where a long still holds every
+                // value and a double no longer does.
                 case TokenType.SlashSlash:
                     if (b == 0) throw DivideByZero();
-                    return (long)Math.Floor((double)a / b);
+                    return Runtime.Numbers.FloorDiv(a, b);
 
                 case TokenType.Percent:
                     if (b == 0) throw DivideByZero();
-                    return a - b * (long)Math.Floor((double)a / b);
+                    return Runtime.Numbers.FloorMod(a, b);
             }
             throw new RuntimeError($"Unknown operator {token.Lexeme}.");
         }

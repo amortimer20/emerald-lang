@@ -14,6 +14,14 @@ for pair in [Pair(7, 2), Pair(-7, 2), Pair(7, -2), Pair(-7, -2)] {
     print("#{a},#{b}  // #{a // b}  % #{a % b}  identity #{(a // b) * b + (a % b) == a}")
 }
 
+## Floored division done in integers, not through a double. The interpreter used to
+## compute it as Math.Floor((double)a / b), which is correct up to 2^53 and silently wrong
+## above it: 9223372036854775807 // 3 came out as 3074457345618258432, off by 170. A
+## backend emitting the same shortcut would inherit the same wrong answer.
+print(9223372036854775807 // 3)
+print(9223372036854775807 % 3)
+print(-9223372036854775807 // 3)
+
 ## Single slash is always a Float, whatever it divides.
 print(7 / 2)
 print(-7 / 2)
