@@ -15,7 +15,7 @@ var secret_number = random(bottom_number, top_number)
 var tries = 0
 var guess = -1
 
-until secret_number == guess {
+while secret_number != guess {
     guess = read_line("Enter your guess between #{bottom_number} and #{top_number}: ").to_int()
     tries += 1
 

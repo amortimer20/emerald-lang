@@ -1479,6 +1479,16 @@ public sealed class Interpreter
                    && leftDict.Keys.All(k => rightDict.Has(k)
                                              && Same(leftDict.Get(k), rightDict.Get(k)));
 
+        // A pair is two values travelling together, so two holding the same two are the
+        // same pair. Missed when Pair was built: it fell through to host equality, and a
+        // pair of structs was unequal to an identical pair even though the structs
+        // themselves compared equal. The general lesson is worth more than the fix -- a
+        // new composite type has to be added to every shared operation, not only to the
+        // ones its own tests exercise.
+        if (left is EmPair leftPair && right is EmPair rightPair)
+            return Same(leftPair.First, rightPair.First)
+                   && Same(leftPair.Second, rightPair.Second);
+
         return AreEqual(left, right);
     }
 
@@ -1759,6 +1769,10 @@ public sealed class Interpreter
     /// </summary>
     private static bool Matches(TypeRef declared, object? value)
     {
+        // A function-shaped annotation names no type, so the name switch below would
+        // never reach it and every func(...) parameter matched no overload at all.
+        if (declared.Function is not null) return value is ICallable;
+
         string name = declared.Name.Lexeme;
 
         if (value is null) return declared.Nullable || name == "Nothing";
@@ -1776,6 +1790,7 @@ public sealed class Interpreter
             "List" => value is EmList,
             "Dictionary" => value is EmDict,
             "Set" => value is EmSet,
+            "Pair" => value is EmPair,
             "Nothing" => false,
 
             _ => value switch
