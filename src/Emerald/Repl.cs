@@ -92,7 +92,7 @@ public static class Repl
                 // file and another at the prompt.
                 interpreter.ChosenOverload = checker.ChosenOverload;
 
-                try { interpreter.RunInteractive(fresh); }
+                try { DeepStack.Run(() => interpreter.RunInteractive(fresh)); }
                 catch (ExitSignal) { throw; }
                 catch (ThrownError thrown) { Failed(thrown.Message); }
                 catch (RuntimeError error) { Failed(error.Message); }

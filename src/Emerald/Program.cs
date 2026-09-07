@@ -98,7 +98,7 @@ try
 {
     // The checker's overload decisions travel with the program: the interpreter invokes
     // what was type-checked rather than choosing again from the values in hand.
-    new Interpreter { ChosenOverload = chosen }.Run(program);
+    DeepStack.Run(() => new Interpreter { ChosenOverload = chosen }.Run(program));
     return 0;
 }
 catch (ExitSignal stop)

@@ -163,7 +163,10 @@ public static class Commands
 
             try
             {
-                object? result = interpreter.CallNamed(owner, name);
+                // On the same deep stack a run gets, so a recursive function under test
+                // meets the language's limit rather than the host's.
+                object? result = null;
+                DeepStack.Run(() => result = interpreter.CallNamed(owner, name));
 
                 // Returning nothing is a pass: a test that only throws on failure is a
                 // perfectly good test, and demanding `return true` would be ceremony.

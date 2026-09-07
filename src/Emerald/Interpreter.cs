@@ -614,9 +614,42 @@ public sealed class Interpreter
         }
     }
 
+    /// <summary>
+    /// How deep Emerald code may nest before the language says so, rather than before the
+    /// host runs out of stack.
+    ///
+    /// A .NET StackOverflowException cannot be caught — the process is killed and the
+    /// runtime prints its own frames. So an ordinary runaway recursion, which is a thing
+    /// every student writes in the week they meet the topic, produced a wall of
+    /// <c>at Emerald.Interpreter.EvaluateCall</c> and no message at all. §3.6 promises no
+    /// .NET stack trace ever reaches the reader, and this was the loudest way to break it.
+    ///
+    /// Counted rather than measured, because a limit that depends on how much stack is
+    /// left is a limit that moves between machines — the same program failing here and
+    /// working there is exactly what a beginner cannot debug. The interpreter runs on a
+    /// thread with room for this many, with margin.
+    /// </summary>
+    private const int MaxDepth = 10_000;
+
+    private int _depth;
+
+    /// <summary>
+    /// Every call and every nested block passes through here, which is what makes it the
+    /// one place to count. A loop body raises the depth and lowers it again each turn, so
+    /// only real nesting accumulates.
+    /// </summary>
     private void ExecuteBlock(List<Stmt> body, Env env)
     {
-        foreach (var stmt in body) Execute(stmt, env);
+        if (_depth >= MaxDepth)
+            throw new RuntimeError(
+                "This has gone too deep — a function is calling itself with no way to stop.",
+                $"Emerald stops after {MaxDepth:N0} nested calls. A recursive function needs "
+                + "a case that returns without calling itself, and every other case has to "
+                + "get closer to it.");
+
+        _depth++;
+        try { foreach (var stmt in body) Execute(stmt, env); }
+        finally { _depth--; }
     }
 
     /// <summary>

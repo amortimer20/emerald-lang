@@ -1,0 +1,6 @@
+
+err_recursion_too_deep.em:14  This has gone too deep — a function is calling itself with no way to stop.
+
+   14 |     return 1 + forever(n + 1)
+
+  Emerald stops after 10,000 nested calls. A recursive function needs a case that returns without calling itself, and every other case has to get closer to it.
