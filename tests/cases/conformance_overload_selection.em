@@ -16,12 +16,12 @@
 ## surface -- inherited sets, default arguments, callable parameters, collection element
 ## types, nullable arguments -- checked rather than assumed to follow.
 ##
-## It does not all hold. Three shapes break the invariant, and two of them are unsound
-## today rather than only at the boundary:
-##   known_overload_diverges_through_a_base
-##   known_overload_ignores_block_arity
-##   known_overload_ignores_list_elements
-## This file is the part that agrees. Those three are the part that does not.
+## It holds because there is one decision rather than two: the checker records which
+## declaration each call resolved to, and the interpreter invokes that one instead of
+## choosing again from the values it happens to be holding. Three shapes broke the
+## invariant before that, two of them unsound with no backend involved, and each has its
+## own case: overload_through_a_base_reference, overload_chosen_by_block_arity,
+## overload_chosen_by_list_element.
 
 class Animal { }
 class Dog extends Animal { }
@@ -62,17 +62,16 @@ func run_it(g: func(): Int): String { return "no args" }
 func run_it(g: func(Int): Int): String { return "one arg" }
 
 print(run_it({ 1 }))
-## The one-parameter block belongs on the next line and is not here: the interpreter
-## picks the wrong declaration for it. See known_overload_ignores_block_arity.
+print(run_it({ n => n + 1 }))
 
 ## Collection element types. Lists are invariant, so a List<Dog> is not a List<Animal>
 ## and no value is ever both -- the overlap the class case has cannot arise here.
 func each_of(xs: List<Animal>): String { return "animals" }
 func each_of(xs: List<Dog>): String { return "dogs" }
 
-## Likewise only the List<Animal> call is here -- passing a List<Dog> picks the wrong
-## declaration. See known_overload_ignores_list_elements.
+var dogs: List<Dog> = [Dog()]
 var animals: List<Animal> = []
+print(each_of(dogs))
 print(each_of(animals))
 
 ## A nullable argument reaching a parameter that accepts one, with no non-nullable

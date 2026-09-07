@@ -300,10 +300,32 @@ public sealed class Checker(
         return false;
     }
 
+    /// <summary>
+    /// Which declaration each overloaded call resolved to, by call site.
+    ///
+    /// The interpreter reads this instead of choosing again. Its own matcher inspects the
+    /// values it is holding, which cannot reproduce the checker's answer even in
+    /// principle: an empty list carries no element type at run time, so
+    /// <c>each_of([])</c> is unresolvable there and decided here. Where the two rules
+    /// differed, the checker's was the one the program had been type-checked against, so
+    /// the checker's is the one that has to run.
+    ///
+    /// Keyed by reference. <c>Expr.Call</c> is a record, so two identical calls in
+    /// different places are equal by value and would share an entry.
+    /// </summary>
+    public readonly Dictionary<Expr.Call, Stmt.FuncDecl> ChosenOverload =
+        new(ReferenceEqualityComparer.Instance as IEqualityComparer<Expr.Call>
+            ?? EqualityComparer<Expr.Call>.Default);
+
+    private void Choose(Expr.Call call, EmType.Func chosen)
+    {
+        if (chosen.Origin is Stmt.FuncDecl decl) ChosenOverload[call] = decl;
+    }
+
     private EmType.Func SignatureOf(Stmt.FuncDecl fn) =>
         new([.. fn.Params.Select(p => Resolve(p.Type))],
             Resolve(fn.ReturnType),
-            RequiredCount(fn.Params));
+            RequiredCount(fn.Params)) { Origin = fn };
 
     /// <summary>
     /// How many arguments a caller must supply: everything up to the first parameter with
@@ -3350,13 +3372,24 @@ public sealed class Checker(
                 CheckVisibility(obj.Info, get.Name);
                 string what = $"{obj.Info.Name}.{get.Name.Lexeme}";
 
+                // Recorded even with nothing to choose between. The static type is what
+                // decides: through a Base reference the only candidate is Base's, while
+                // the object underneath may be a Sub carrying an inherited set with a
+                // more specific version the interpreter would otherwise reach for.
                 if (candidates.Count == 1)
+                {
+                    Choose(c, candidates[0]);
                     return CheckArguments(candidates[0], c, args, what, get.Name.Line,
                                           obj.Info, get.Name.Lexeme);
+                }
 
                 int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
                 var chosen = candidates.FirstOrDefault(f => Fits(f, supplied, args));
-                if (chosen is not null) return chosen.Return;
+                if (chosen is not null)
+                {
+                    Choose(c, chosen);
+                    return chosen.Return;
+                }
 
                 string has = "It has " + string.Join(", and ", candidates.Select(
                     f => $"({string.Join(", ", f.Params.Select(t => t.Show()))})")) + ".";
@@ -3586,7 +3619,11 @@ public sealed class Checker(
             // At most one can match: §3.2 refused any pair a call could not tell apart, so
             // there is no "best match" rule here and none to explain to anyone.
             var chosen = alternatives.Alternatives.FirstOrDefault(f => Fits(f, supplied, given));
-            if (chosen is not null) return chosen.Return;
+            if (chosen is not null)
+            {
+                Choose(c, chosen);
+                return chosen.Return;
+            }
 
             Error(LineOf(c.Callee),
                   $"No version of {overloaded} takes "
@@ -3606,6 +3643,7 @@ public sealed class Checker(
 
 
         string name = c.Callee is Expr.Variable named ? named.Name.Lexeme : "This";
+        Choose(c, fn);
         return CheckArguments(fn, c, given, name, LineOf(c.Callee));
     }
 

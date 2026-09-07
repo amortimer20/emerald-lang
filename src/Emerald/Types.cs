@@ -19,6 +19,32 @@ public abstract record EmType
     public sealed record Func(List<EmType> Params, EmType Return, int Required = int.MaxValue) : EmType
     {
         public int LeastArgs => Math.Min(Required, Params.Count);
+
+        /// <summary>
+        /// Which declaration this signature was read from, when it was read from one —
+        /// a <c>Stmt.FuncDecl</c>, held as <c>object</c> so the type layer does not
+        /// depend on the syntax tree. Null for a signature with no declaration behind it:
+        /// a lambda's, a built-in's, a constructor's.
+        ///
+        /// It exists so the checker can say <em>which</em> overload a call resolved to,
+        /// rather than only what that overload gives back. The interpreter then invokes
+        /// that one instead of choosing again from the values it happens to be holding —
+        /// two rules reconstructing one decision is what let a call be checked as
+        /// <c>String</c> and evaluated as <c>Int</c>.
+        ///
+        /// Deliberately outside equality. Two signatures are the same type when they take
+        /// and give the same things, whoever wrote them; a parameter declared
+        /// <c>func(Int): Int</c> must still accept any function of that shape.
+        /// </summary>
+        public object? Origin { get; init; }
+
+        public bool Equals(Func? other) =>
+            other is not null
+            && Required == other.Required
+            && Return.Equals(other.Return)
+            && Params.Equals(other.Params);
+
+        public override int GetHashCode() => HashCode.Combine(Params, Return, Required);
     }
 
     /// <summary>

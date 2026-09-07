@@ -87,6 +87,11 @@ public static class Repl
                 history.AddRange(replaced);
                 history.AddRange(fresh);
 
+                // The same handover the file runner does. Without it the REPL would keep
+                // choosing overloads its own way, so a call could mean one thing in a
+                // file and another at the prompt.
+                interpreter.ChosenOverload = checker.ChosenOverload;
+
                 try { interpreter.RunInteractive(fresh); }
                 catch (ExitSignal) { throw; }
                 catch (ThrownError thrown) { Failed(thrown.Message); }

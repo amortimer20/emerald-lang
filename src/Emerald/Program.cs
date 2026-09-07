@@ -52,6 +52,10 @@ var project = new Project(path);
 var program = project.Load();
 var problems = project.Diagnostics;
 
+// Hoisted out of the check below so it can travel to the interpreter: the overload
+// decisions the checker made are what the program was verified against.
+Dictionary<Expr.Call, Stmt.FuncDecl> chosen = [];
+
 // Only type-check code that parsed. Checking a broken tree produces cascades, and
 // §3.6 says one error per cause.
 if (problems.Count == 0)
@@ -66,6 +70,7 @@ if (problems.Count == 0)
     {
         checker.Check(program);
         problems = checker.Diagnostics;
+        chosen = checker.ChosenOverload;
     }
     catch (Exception unexpected)
     {
@@ -91,7 +96,9 @@ if (problems.Count > 0)
 
 try
 {
-    new Interpreter().Run(program);
+    // The checker's overload decisions travel with the program: the interpreter invokes
+    // what was type-checked rather than choosing again from the values in hand.
+    new Interpreter { ChosenOverload = chosen }.Run(program);
     return 0;
 }
 catch (ExitSignal stop)

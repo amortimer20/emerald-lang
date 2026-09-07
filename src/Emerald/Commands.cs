@@ -114,12 +114,14 @@ public static class Commands
         var project = new Project(entry);
         var program = project.Load();
         var problems = project.Diagnostics;
+        Dictionary<Expr.Call, Stmt.FuncDecl> chosen = [];
 
         if (problems.Count == 0)
         {
             var checker = new Checker(Path.GetFileName(entry), project.FileOf, project.LinesOf);
             checker.Check(program);
             problems = checker.Diagnostics;
+            chosen = checker.ChosenOverload;
         }
 
         if (problems.Count > 0)
@@ -149,7 +151,7 @@ public static class Commands
             return 0;
         }
 
-        var interpreter = new Interpreter();
+        var interpreter = new Interpreter { ChosenOverload = chosen };
         interpreter.LoadDeclarations(program);
 
         int failed = 0;

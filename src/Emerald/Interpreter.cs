@@ -105,8 +105,44 @@ public sealed class Interpreter
     /// apart, so the first that fits is the only one that can — this is never choosing a
     /// best match, only finding the one.
     /// </summary>
-    private static Stmt.FuncDecl? Choose(List<Stmt.FuncDecl> overloads, List<object?> args)
+    /// <summary>
+    /// Which declaration each overloaded call resolved to, handed over by the checker.
+    ///
+    /// The interpreter used to choose again from the values it was holding, and the two
+    /// rules disagreed: a call checked as returning String could evaluate to an Int. It
+    /// is not a matter of the matcher being incomplete either -- an empty list carries no
+    /// element type at run time, so the checker's answer cannot be reconstructed here even
+    /// in principle. The program was type-checked against the checker's choice, so the
+    /// checker's choice is the one that runs.
+    /// </summary>
+    public Dictionary<Expr.Call, Stmt.FuncDecl> ChosenOverload { get; set; } = [];
+
+    /// <summary>
+    /// The call being dispatched. Set once its arguments are evaluated, so a nested call
+    /// in an argument position has finished with it before this one needs it.
+    /// </summary>
+    private Expr.Call? _call;
+
+    /// <summary>
+    /// The same question for a free function, whose runtime form is an EmFunction rather
+    /// than a declaration. Matched by the body it holds, which is the declaration's own.
+    /// </summary>
+    internal EmFunction? PreselectedFunction(List<EmFunction> among) =>
+        _call is not null && ChosenOverload.TryGetValue(_call, out var decl)
+            ? among.FirstOrDefault(f => ReferenceEquals(f.Body, decl.Body))
+            : null;
+
+    /// <summary>What the checker picked for the call in hand, if it is one of these.</summary>
+    private Stmt.FuncDecl? Preselected(List<Stmt.FuncDecl> among) =>
+        _call is not null
+        && ChosenOverload.TryGetValue(_call, out var decl)
+        && among.Contains(decl)
+            ? decl
+            : null;
+
+    private Stmt.FuncDecl? Choose(List<Stmt.FuncDecl> overloads, List<object?> args)
     {
+        if (Preselected(overloads) is { } picked) return picked;
         if (overloads.Count == 1) return overloads[0];
 
         foreach (var candidate in overloads)
@@ -1604,6 +1640,7 @@ public sealed class Interpreter
 
             List<object?> received = [.. c.Args.Select(a => Evaluate(a, env))];
             if (c.Trailing is not null) received.Add(new EmLambda(c.Trailing, env));
+            _call = c;
 
             // A field holding a function: `button.on_click()` calls what it holds, where
             // `button.on_click` on its own is the function itself. Only a written '(' or a
@@ -1633,6 +1670,7 @@ public sealed class Interpreter
         if (c.Trailing is not null) args.Add(new EmLambda(c.Trailing, env));
 
         object? callee = Evaluate(c.Callee, env);
+        _call = c;
         if (callee is not ICallable callable)
             throw new RuntimeError($"{Builtins.TypeName(callee)} cannot be called.");
 
@@ -1906,6 +1944,9 @@ public sealed class Interpreter
 
         public object? Call(Interpreter interpreter, List<object?> args)
         {
+            if (interpreter.PreselectedFunction(_alternatives) is { } picked)
+                return picked.Call(interpreter, args);
+
             foreach (var candidate in _alternatives)
                 if (candidate.Fits(args)) return candidate.Call(interpreter, args);
 
@@ -1936,10 +1977,17 @@ public sealed class Interpreter
         public override string ToString() => $"<kernel {name}>";
     }
 
-    private sealed class EmFunction(
+    internal sealed class EmFunction(
         string name, List<Param> parameters, List<Stmt> body, Env closure) : ICallable
     {
         public List<Param> Parameters => parameters;
+
+        /// <summary>
+        /// The declaration's own statement list, by reference. An EmFunction does not hold
+        /// its Stmt.FuncDecl, but it holds this, and no two declarations share one -- so it
+        /// is what matches a runtime function to the declaration the checker picked.
+        /// </summary>
+        public List<Stmt> Body => body;
 
         /// <summary>
         /// Whether this version can take these values. Arity first, since it settles most

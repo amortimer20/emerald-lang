@@ -1,5 +1,0 @@
-1
-
-known_overload_ignores_block_arity.em:24  No method named upper on Int.
-
-   24 | print(answer.upper())
