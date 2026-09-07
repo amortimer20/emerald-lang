@@ -506,6 +506,7 @@ public sealed class Checker(
                     CheckAttributes(method.Attributes, "function");
                     CheckCasing(method.Name, "method");
                     CheckPredicateName(method);
+                    CheckReturnIsDeclared(method);
                     if (!method.IsStatic) CheckToStringShape(method);
                     CheckCallable(method.Params, method.Body, body, method.Name.Lexeme,
                                   Resolve(method.ReturnType), method.Name.Line);
@@ -641,6 +642,7 @@ public sealed class Checker(
                     CheckCasing(method.Name, "method");
                     if (!method.IsStatic) CheckReservedMember(method.Name, "A method");
                     CheckPredicateName(method);
+                    CheckReturnIsDeclared(method);
                     if (!method.IsStatic) CheckToStringShape(method);
                     if (!method.IsStatic) CheckOverride(method, info);
                     if (method.Body is not null)
@@ -1716,6 +1718,7 @@ public sealed class Checker(
         CheckAttributes(fn.Attributes, "function");
         CheckCasing(fn.Name, "function");
         CheckPredicateName(fn);
+        CheckReturnIsDeclared(fn);
         CheckDoc(fn);
 
         if (fn.Body is null)
@@ -4461,6 +4464,67 @@ public sealed class Checker(
                   + $"{Resolve(fn.ReturnType).Show()}, not String.",
                   "It says how a value reads as text, so text is the only thing it can "
                   + $"give back:  func {Builtins.ToStringMethod}(): String");
+    }
+
+    /// <summary>
+    /// A function that hands back a value has to say what kind. Without this the checker
+    /// resolved a missing annotation to <see cref="EmType.Unknown"/>, which is compatible
+    /// with everything, and <c>var word: String = answer()</c> bound an Int to a String
+    /// with nothing said &mdash; <strong>not a conversion, and not a String holding
+    /// digits: the variable held a genuine Int while the checker believed otherwise.</strong>
+    /// The value then travelled, and the failure surfaced inside whatever correct,
+    /// fully annotated function it reached, which is the diagnostic §3.6 exists to stop.
+    ///
+    /// Required rather than inferred. C#, Java and Swift all require it on a function
+    /// with a block body, mutual recursion has no answer inference can reach without
+    /// machinery nothing here needs, and a reader should learn what a function gives back
+    /// from its first line rather than from its last. §3.7's rule for <c>to_string</c> is
+    /// the same rule for the same reason.
+    /// </summary>
+    private void CheckReturnIsDeclared(Stmt.FuncDecl fn)
+    {
+        // An abstract declaration is a contract, and an unannotated one asks for nothing
+        // in particular on purpose: the prelude writes abstract func add(other), and a
+        // type's own add takes and returns itself.
+        if (fn.Body is null || fn.ReturnType is not null) return;
+        if (!ReturnsAValue(fn.Body)) return;
+
+        // to_string is held to the same requirement by CheckToStringShape, which says why
+        // in terms of what to_string is for. Two diagnostics about one line is one too
+        // many, and the general one would offer the wrong type as its example.
+        if (fn.Name.Lexeme == Builtins.ToStringMethod && !fn.IsStatic) return;
+
+        // Named where it can be known for certain. A worked example carrying the wrong
+        // type would teach the reader to write that one, so a guess is worse than none.
+        string shown = FirstReturnedLiteral(fn.Body) is { } known ? known.Show() : "Int";
+
+        Error(fn.Name.Line,
+              $"{fn.Name.Lexeme} gives back a value, so it has to say what kind.",
+              "Write the type after the parentheses:  "
+              + $"func {fn.Name.Lexeme}(...): {shown}\n"
+              + "Without it, a caller assigning the answer to a declared type has nothing "
+              + "to check against, and a wrong one is found somewhere else entirely.");
+    }
+
+    /// <summary>
+    /// The type of the first literal a body returns, where there is one. Enough to make
+    /// the example in the diagnostic above name the right type in the case a beginner
+    /// actually writes, without a scope to type an arbitrary expression against.
+    /// </summary>
+    private static EmType? FirstReturnedLiteral(List<Stmt> body)
+    {
+        foreach (var stmt in body)
+            switch (stmt)
+            {
+                case Stmt.Return { Value: Expr.Literal l }: return LiteralType(l.Value);
+                case Stmt.If i:
+                    if (FirstReturnedLiteral(i.Then) is { } fromThen) return fromThen;
+                    if (i.Else is not null && FirstReturnedLiteral(i.Else) is { } fromElse)
+                        return fromElse;
+                    break;
+            }
+
+        return null;
     }
 
     private void CheckPredicateName(Stmt.FuncDecl fn)

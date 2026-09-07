@@ -166,8 +166,8 @@ generics of their own. Block parameters are inferred from the element type:
 ```
 var numbers = [5, 3, 8]
 
-numbers.map { x => x * 2 }        # x is Int, so x.upper is a compile error
-numbers.filter { x => x.even? }
+numbers.map { x => x * 2 }        # x is Int, so x.upper() is a compile error
+numbers.filter { x => x.even?() }
 numbers.find { x => x > 100 }     # Int? — the checker makes you handle the miss
 ```
 
@@ -273,14 +273,15 @@ nesting level, and nothing to import.
 
 ## What v0 does not do
 
-- **Built-in argument types are unchecked.** The checker knows what a method returns,
-  not what it accepts.
 - **Projects are flat.** Directory-as-namespace (`Shapes.Dog`) is designed but not built,
   so two same-named types in different folders will collide.
 - **No external packages.** `import raylib` does not exist yet.
-- **No macros or attributes.**
-- **No modules or imports.** One file at a time.
-- **No macros or attributes.**
+- **No macros.** Attributes exist -- `@test`, `@export`, `@name` and `@mirrors` -- but a
+  program cannot add to the set.
+- **No user-declared generics.** `List<T>` and friends are the compiler's; a program can
+  use them and cannot write its own.
+- **No compiler yet.** Programs run on a tree-walking interpreter. The CIL backend is
+  designed in `docs/cil-mapping.html` and not built.
 
 Both v0 gaps found on the first run are fixed: runtime errors now carry a line and a
 source excerpt, and `if x = 5 { }` explains `=` versus `==` rather than reporting a
