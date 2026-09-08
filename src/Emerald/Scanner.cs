@@ -32,6 +32,7 @@ public sealed class Scanner(string source, string fileName)
         ["assert"] = TokenType.Assert,
         ["extends"] = TokenType.Extends,   ["override"] = TokenType.Override,
         ["with"] = TokenType.With,      ["constructor"] = TokenType.Constructor,
+        ["type"] = TokenType.Type,
 
         // Deliberately NOT a keyword: `self` stays an ordinary identifier, so `self.name`
         // is plain member access and needs no special node anywhere downstream.

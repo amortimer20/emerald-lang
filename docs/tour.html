@@ -1110,6 +1110,35 @@ print(Duck().swim())</pre>
     <div class="out"><span class="lab">prints</span><pre>swimming for 30 minutes
 swimming for 90 minutes</pre></div>
   </div>
+  <p>A trait can also leave a <em>type</em> open rather than a method — <code class="inl">Iterable</code> below asks for <code class="inl">each</code>, names what <code class="inl">each</code> hands out as <code class="inl">Item</code>, and gives back <code class="inl">map</code>, <code class="inl">filter</code>, <code class="inl">count</code> and more, all written just once. <code class="inl">Deck</code> only ever writes <code class="inl">each</code>; everything else arrives with it.</p>
+  <div class="unit">
+    <pre class="code">class Card {
+    var name: String
+    var value: Int
+    constructor(name: String, value: Int) {
+        self.name = name
+        self.value = value
+    }
+}
+
+class Deck with Iterable {
+    type Item = Card
+    var cards: List&lt;Card&gt;
+    constructor(cards: List&lt;Card&gt;) { self.cards = cards }
+
+    func each(step: func(Card)) {
+        for c in self.cards { step(c) }
+    }
+}
+
+var deck = Deck([Card("Ace", 1), Card("King", 13), Card("Queen", 12)])
+
+print(deck.map { c => c.name }.join(", "))
+print(deck.filter { c => c.value > 10 }.count())</pre>
+    <div class="out"><span class="lab">prints</span><pre>Ace, King, Queen
+2</pre></div>
+  </div>
+  <div class="aside"><p><code class="inl">map</code>'s own answer type is never written down anywhere — <code class="inl">c => c.name</code> is what tells it, the same way a block's own parameter is inferred everywhere else in this tour.</p></div>
 </section>
 
 <section id="s20">

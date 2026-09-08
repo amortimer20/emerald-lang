@@ -38,6 +38,15 @@ public abstract record EmType
         /// </summary>
         public object? Origin { get; init; }
 
+        /// <summary>
+        /// The names from <c>func map&lt;R&gt;(...)</c>, if this signature came from a
+        /// declaration that had any — never bound here, only recorded so a call site knows
+        /// which of its own placeholders it is still allowed to infer. Outside equality for
+        /// the same reason <see cref="Origin"/> is: a shape is the same type whether or not
+        /// a caller could reconstruct one of its own type parameters from it.
+        /// </summary>
+        public List<string>? TypeParams { get; init; }
+
         public bool Equals(Func? other) =>
             other is not null
             && Required == other.Required
@@ -94,6 +103,26 @@ public abstract record EmType
     public sealed record Obj(ClassInfo Info) : EmType;
 
     /// <summary>
+    /// <c>Item</c>, as written inside the trait that declares <c>type Item</c> and nowhere
+    /// else — anyone implementing the trait binds it to something real, and every method
+    /// lookup through that implementer substitutes it away before a caller ever sees it
+    /// (<see cref="ClassInfo.ResolvedMethods"/>). Two of these are equal exactly when they
+    /// name the same associated type on the same trait, which is what lets a trait's own
+    /// default bodies — <c>map</c>'s <c>self.each { item =&gt; f(item) }</c> — type-check
+    /// against a name whose meaning is not yet known.
+    /// </summary>
+    public sealed record AssocType(string Trait, string Name) : EmType;
+
+    /// <summary>
+    /// <c>R</c> in <c>func map&lt;R&gt;(f: func(Item): R): List&lt;R&gt;</c> — unbound at
+    /// the trait, and never bound by a caller either: it exists only to be inferred, once
+    /// per call, from what the caller's own block hands back. Never appears in a resolved
+    /// signature by the time <see cref="Checker.CheckArguments"/> runs; if it does, that
+    /// call was not a shape this could infer, which is reported rather than guessed at.
+    /// </summary>
+    public sealed record MethodTypeParam(string Name) : EmType;
+
+    /// <summary>
     /// An unannotated position — currently only lambda parameters, whose types would
     /// have to be inferred from the method being called. Compatible with everything, so
     /// the checker stays quiet rather than guessing. The honest v0 gap.
@@ -133,6 +162,13 @@ public abstract record EmType
                   + (f.Return.Equals(Nothing) || f.Return is Unknown ? "" : $": {f.Return.Show()}"),
 
         Overloads => "func",
+
+        // Reached only where a bound never bound — an author calling their own
+        // unimplemented trait, or a genuine bug in substitution. Named rather than shown
+        // as "?", which would read as the checker's fault rather than the program's.
+        AssocType a3 => a3.Name,
+        MethodTypeParam m => m.Name,
+
         _ => "?"
     };
 
@@ -168,6 +204,13 @@ public abstract record EmType
         if (this is Unknown) return true;
         if (from is Unknown) return false;
         if (Equals(from)) return true;
+
+        // An inference placeholder is not a real answer yet, so it cannot be the thing a
+        // mismatch is measured against — the same reason Unknown accepts anything, one
+        // step further down the pipeline. A block returning R inside R's own trait, before
+        // any call has said what R is, is exactly this: nothing to compare against until a
+        // caller supplies one.
+        if (this is AssocType or MethodTypeParam) return true;
 
         // nothing is a legal value for any nullable type.
         if (this is Maybe && from is Prim { Name: "Nothing" }) return true;
@@ -230,6 +273,28 @@ public abstract record EmType
 
         return false;
     }
+
+    /// <summary>
+    /// This type, with every <see cref="AssocType"/> named in <paramref name="bindings"/>
+    /// replaced by what it is bound to. Walks every shape that can nest another type;
+    /// anything else — a primitive, an object, an unresolved placeholder not in this
+    /// binding set — comes back unchanged, which is what lets this run on a signature
+    /// that mixes a resolved associated type with a still-unbound method type parameter.
+    /// </summary>
+    public EmType Substitute(IReadOnlyDictionary<string, EmType> bindings) => this switch
+    {
+        AssocType a when bindings.TryGetValue(a.Name, out var bound) => bound,
+        Maybe m => Nullable(m.Inner.Substitute(bindings)),
+        Lst l => new Lst(l.Element.Substitute(bindings)),
+        Dict d => new Dict(d.Key.Substitute(bindings), d.Value.Substitute(bindings)),
+        SetOf s => new SetOf(s.Element.Substitute(bindings)),
+        PairOf p => new PairOf(p.First.Substitute(bindings), p.Second.Substitute(bindings)),
+        Func f => new Func(
+            [.. f.Params.Select(p => p.Substitute(bindings))],
+            f.Return.Substitute(bindings), f.Required)
+            { Origin = f.Origin, TypeParams = f.TypeParams },
+        _ => this,
+    };
 }
 
 /// <summary>
@@ -531,6 +596,21 @@ public sealed class ClassInfo(string name)
     public HashSet<string> PropertyNames { get; } = [];
 
     /// <summary>
+    /// <c>type Item</c>, declared bare — a name this trait's own signatures use and does
+    /// not itself know the meaning of. Only ever non-empty on a trait; a class does not
+    /// declare one of these, it satisfies one belonging to a trait it mixes in.
+    /// </summary>
+    public HashSet<string> AssociatedTypeNames { get; } = [];
+
+    /// <summary>
+    /// <c>type Item = Card</c> — what this type has said an associated type means. Read
+    /// by <see cref="ResolvedMethods"/> to turn a trait's placeholder into something real
+    /// wherever this class's own methods are looked up, and by the checker to resolve a
+    /// bare <c>Item</c> written inside this class's own signatures.
+    /// </summary>
+    public Dictionary<string, EmType> AssociatedTypeBindings { get; } = [];
+
+    /// <summary>
     /// Fields given a value where they are declared. Those run before the constructor, so
     /// the constructor owes them nothing.
     /// </summary>
@@ -622,6 +702,32 @@ public sealed class ClassInfo(string name)
 
         return found;
     }
+
+    /// <summary>
+    /// <see cref="FindMethods"/>, with this class's own associated-type bindings applied.
+    /// A trait's <c>each(step: func(Item))</c> is written and stored with <c>Item</c> as a
+    /// placeholder that means nothing on its own — this is the one place that placeholder
+    /// is replaced by what a particular class said it means, which is why every call-site
+    /// lookup goes through here rather than through <see cref="FindMethods"/> directly.
+    /// Bindings are this class's own: a subclass inheriting a trait through its base still
+    /// resolves through whichever class in the chain actually wrote <c>type Item = ...</c>,
+    /// the same way any other inherited member does.
+    /// </summary>
+    public List<EmType.Func> ResolvedMethods(string wanted)
+    {
+        var found = FindMethods(wanted);
+        var bindings = AssociatedTypeBindings.Count > 0
+            ? AssociatedTypeBindings
+            : Base?.ResolvedBindings() ?? [];
+
+        return bindings.Count == 0
+            ? found
+            : [.. found.Select(f => (EmType.Func)f.Substitute(bindings))];
+    }
+
+    private Dictionary<string, EmType> ResolvedBindings() =>
+        AssociatedTypeBindings.Count > 0 ? AssociatedTypeBindings
+            : Base?.ResolvedBindings() ?? [];
 
     /// <summary>
     /// Whether two overloads take the same thing, which is what makes one a replacement

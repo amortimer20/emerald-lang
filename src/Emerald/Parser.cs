@@ -80,6 +80,7 @@ public sealed class Parser(
         if (Check(TokenType.Static)) return StaticMember();
         if (Check(TokenType.Func, TokenType.Abstract, TokenType.Override))
             return FunctionDeclaration();
+        if (Check(TokenType.Type)) return AssocTypeDeclaration();
         if (Check(TokenType.Try)) return TryStatement();
         if (Check(TokenType.While)) return WhileStatement();
         if (Check(TokenType.Unless)) return UnlessStatement();
@@ -398,6 +399,20 @@ public sealed class Parser(
         throw Error(Peek, "Expected var, const, or func after 'static'.");
     }
 
+    /// <summary>
+    /// <c>type Item</c> on a trait, or <c>type Item = Card</c> on whatever implements it.
+    /// One keyword, distinguished the same way a field already is: <c>=</c> present or
+    /// not, checked rather than parsed, since only the checker knows which side a given
+    /// class is standing on.
+    /// </summary>
+    private Stmt AssocTypeDeclaration()
+    {
+        var keyword = Advance();
+        var name = Consume(TokenType.Identifier, "Expected an associated type name.");
+        TypeRef? value = Match(TokenType.Assign) ? ParseTypeRef() : null;
+        return new Stmt.AssocType(keyword, name, value);
+    }
+
     private Stmt ConstructorDeclaration()
     {
         var keyword = Advance();
@@ -420,6 +435,7 @@ public sealed class Parser(
 
         Consume(TokenType.Func, "Expected 'func'.");
         var name = Consume(TokenType.Identifier, "Expected a function name after 'func'.");
+        var typeParams = MethodTypeParams();
         var parameters = ParameterList();
         TypeRef? returnType = Match(TokenType.Colon) ? ParseTypeRef() : null;
 
@@ -427,7 +443,24 @@ public sealed class Parser(
         // downstream without a separate flag to keep in sync.
         return new Stmt.FuncDecl(name, parameters, returnType,
                                  isAbstract ? null : Block(), isStatic,
-                                 IsOverride: isOverride, Doc: doc);
+                                 IsOverride: isOverride, Doc: doc, TypeParams: typeParams);
+    }
+
+    /// <summary>
+    /// <c>&lt;R&gt;</c> in <c>func map&lt;R&gt;(...)</c>. Unambiguous here in a way it is
+    /// not in an expression: a function's name is always followed by either this or its
+    /// parameter list, never by a comparison, so there is no rewind to write.
+    /// </summary>
+    private List<Token>? MethodTypeParams()
+    {
+        if (!Match(TokenType.Less)) return null;
+
+        List<Token> names = [];
+        do { names.Add(Consume(TokenType.Identifier, "Expected a type parameter name.")); }
+        while (Match(TokenType.Comma));
+
+        Consume(TokenType.Greater, "Expected '>' to close the type parameters.");
+        return names;
     }
 
     private Stmt ThrowStatement()

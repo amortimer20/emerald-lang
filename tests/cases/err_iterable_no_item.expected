@@ -1,0 +1,6 @@
+
+err_iterable_no_item.em:4  Bag mixes in Iterable but never says what Item is.
+
+    4 | class Bag with Iterable {
+
+  Give it a value:  type Item = SomeType

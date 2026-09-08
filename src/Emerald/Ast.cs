@@ -173,7 +173,16 @@ public abstract record Stmt
         /// the compiler a teacher, and nagging every undocumented function is how a
         /// warning becomes noise people learn to skip.
         /// </summary>
-        string? Doc = null) : Stmt;
+        string? Doc = null,
+
+        /// <summary>
+        /// <c>&lt;R&gt;</c> in <c>func map&lt;R&gt;(f: func(Item): R): List&lt;R&gt;</c> —
+        /// a name this one method invents and resolves from how it is called, never from
+        /// what the caller writes. The one place an angle bracket appears in a declaration
+        /// a trait author writes; everywhere else, including every call to this method,
+        /// there is nothing to type. Null everywhere else, which is almost everywhere.
+        /// </summary>
+        List<Token>? TypeParams = null) : Stmt;
     public sealed record Return(Token Keyword, Expr? Value) : Stmt;
 
     /// <summary>
@@ -234,6 +243,15 @@ public abstract record Stmt
 
     public sealed record ConstructorDecl(
         Token Keyword, List<Param> Params, List<Stmt> Body) : Stmt;
+
+    /// <summary>
+    /// <c>type Item</c> inside a trait — a name the trait's own signatures may use, filled
+    /// in by whatever implements it. <c>type Item = Card</c> inside a class is that filling
+    /// in: <c>Value</c> is null for the first form and set for the second, which is the
+    /// same "declared, then given a value" shape a field already has, one level up at the
+    /// type instead of the value.
+    /// </summary>
+    public sealed record AssocType(Token Keyword, Token Name, TypeRef? Value) : Stmt;
 
     /// <summary>
     /// <c>enum Color { RED, GREEN, BLUE }</c> — a closed set of named values, and

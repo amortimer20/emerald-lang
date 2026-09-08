@@ -322,10 +322,41 @@ public sealed class Checker(
         if (chosen.Origin is Stmt.FuncDecl decl) ChosenOverload[call] = decl;
     }
 
-    private EmType.Func SignatureOf(Stmt.FuncDecl fn) =>
-        new([.. fn.Params.Select(p => Resolve(p.Type))],
-            Resolve(fn.ReturnType),
-            RequiredCount(fn.Params)) { Origin = fn };
+    private EmType.Func SignatureOf(Stmt.FuncDecl fn)
+    {
+        using var _ = EnterMethodTypeParams(fn);
+        return new([.. fn.Params.Select(p => Resolve(p.Type))],
+                   Resolve(fn.ReturnType),
+                   RequiredCount(fn.Params))
+            { Origin = fn, TypeParams = fn.TypeParams?.Select(t => t.Lexeme).ToList() };
+    }
+
+    /// <summary>
+    /// A generic method's own <c>&lt;R&gt;</c>, in scope for its header and its body and
+    /// nowhere else — not the rest of its trait, not its caller. Used around both
+    /// <see cref="SignatureOf"/> (the header, described once) and <see cref="CheckCallable"/>
+    /// for the same declaration (the body, checked later against a separately-built scope),
+    /// so both visits to one <c>func map&lt;R&gt;</c> see the same <c>R</c>.
+    /// </summary>
+    private IDisposable EnterMethodTypeParams(Stmt.FuncDecl fn)
+    {
+        var previous = _methodTypeParams;
+        _methodTypeParams = fn.TypeParams?.ToDictionary(
+            t => t.Lexeme, EmType (t) => new EmType.MethodTypeParam(t.Lexeme));
+        return new Restore(() => _methodTypeParams = previous);
+    }
+
+    private sealed class Restore(Action onDispose) : IDisposable
+    {
+        public void Dispose() => onDispose();
+    }
+
+    /// <summary>
+    /// A generic method's own type parameter, live only while its header or body is being
+    /// resolved. Trait-level associated types are looked up separately, from
+    /// <see cref="_currentType"/> directly — see <see cref="Resolve"/>.
+    /// </summary>
+    private Dictionary<string, EmType>? _methodTypeParams;
 
     /// <summary>
     /// How many arguments a caller must supply: everything up to the first parameter with
@@ -374,7 +405,17 @@ public sealed class Checker(
             }
         }
 
-        DescribeMembers(info, decl.Name.Lexeme, decl.Members);
+        // Associated types and their bindings have to exist before any method signature on
+        // this type is resolved — a bare `Item` inside `func each(step: func(Item))` is
+        // meaningless until `type Item` (or `type Item = Card`) has already been recorded,
+        // and members are otherwise described in file order. _currentType is what Resolve
+        // consults for a bare name it does not recognize as a class, and DescribeClass ran
+        // before this existed, so nothing that used to run during this pass could have
+        // depended on it staying null.
+        var previousType = _currentType;
+        _currentType = info;
+        try { DescribeMembers(info, decl.Name.Lexeme, decl.Members); }
+        finally { _currentType = previousType; }
 
         // A class with no constructor of its own inherits its base's, matching EmClass.
         if (!info.HasConstructor && info.Base is not null)
@@ -402,8 +443,50 @@ public sealed class Checker(
     /// What a body declares, recorded on the type. Shared by classes and enums, since an
     /// enum is a ClassInfo with a different Kind and its methods are ordinary ones.
     /// </summary>
+    /// <summary>
+    /// <c>type Item</c> (a trait naming a requirement) or <c>type Item = Card</c> (whatever
+    /// implements it, saying what that requirement means here). Which is legal depends on
+    /// which side of the trait boundary <paramref name="info"/> is standing on — the same
+    /// split <c>abstract func</c> already makes between a trait's requirement and a class's
+    /// answer to it, one level up at the type instead of the value.
+    /// </summary>
+    private void DescribeAssocType(ClassInfo info, string typeName, Stmt.AssocType assoc)
+    {
+        if (assoc.Value is null)
+        {
+            if (info.Kind != TypeKind.Trait)
+                Error(assoc.Name.Line,
+                      $"type {assoc.Name.Lexeme} needs a value here.",
+                      $"Only a trait can leave one open. Say what it is:  "
+                      + $"type {assoc.Name.Lexeme} = SomeType");
+            else
+                info.AssociatedTypeNames.Add(assoc.Name.Lexeme);
+            return;
+        }
+
+        if (!info.Traits.Any(t => t.AssociatedTypeNames.Contains(assoc.Name.Lexeme)))
+        {
+            Error(assoc.Name.Line,
+                  $"{typeName} has no associated type named {assoc.Name.Lexeme} to give a "
+                  + "value to.",
+                  info.Traits.Count == 0
+                      ? "Mix in a trait that declares one:  trait Iterable { type Item ... }"
+                      : "None of what this mixes in declared one by that name.");
+            return;
+        }
+
+        info.AssociatedTypeBindings[assoc.Name.Lexeme] = Resolve(assoc.Value);
+    }
+
     private void DescribeMembers(ClassInfo info, string typeName, List<Stmt> members)
     {
+        // A first pass for `type` alone, so a method above it in the file resolves a bare
+        // Item exactly as one below it does — the same forward-visibility DescribeClass
+        // already gives a class declared later, one level further in.
+        foreach (var member in members)
+            if (member is Stmt.AssocType assoc)
+                DescribeAssocType(info, typeName, assoc);
+
         foreach (var member in members)
         {
             switch (member)
@@ -660,6 +743,13 @@ public sealed class Checker(
                     break;
 
                 case Stmt.FuncDecl method:
+                {
+                    // Spans everything below, not only CheckCallable: CheckPredicateName
+                    // and CheckReturnIsDeclared both call Resolve on this same method's own
+                    // return type, and a generic method's R has to mean the same thing to
+                    // all three or the second one to run reports it as an unknown type.
+                    using var _ = EnterMethodTypeParams(method);
+
                     CheckAttributes(method.Attributes, "function");
                     CheckCasing(method.Name, "method");
                     if (!method.IsStatic) CheckReservedMember(method.Name, "A method");
@@ -671,6 +761,7 @@ public sealed class Checker(
                         CheckCallable(method.Params, method.Body, body, method.Name.Lexeme,
                                       Resolve(method.ReturnType), method.Name.Line);
                     break;
+                }
 
                 case Stmt.ConstructorDecl ctor:
                     _inConstructor = true;
@@ -685,11 +776,17 @@ public sealed class Checker(
                 case Stmt.ClassDecl nested:
                     CheckClass(nested, scope);
                     break;
+
+                // Fully handled during Describe, which had to run before any member's
+                // signature could be resolved (§ above). Nothing left to check here.
+                case Stmt.AssocType:
+                    break;
             }
         }
 
         CheckFieldsGetValues(decl, info);
         CheckRequirementsAreMet(decl, info);
+        CheckAssociatedTypesAreMet(decl, info);
 
         // A module's own top-level code. Its statics are visible unqualified here: they
         // were written as a file's own variables and only became static fields because
@@ -802,6 +899,26 @@ public sealed class Checker(
                   $"{required.Owner.Name} declares {Signature(name, required.Wanted)}, "
                   + $"and this is {Signature(name, first)}.");
         }
+    }
+
+    /// <summary>
+    /// Every associated type a mixed-in trait declared has to be given a meaning here, the
+    /// same way every abstract method does — <c>with Iterable</c> and no <c>type Item</c>
+    /// leaves <c>each</c>'s own parameter type unresolved forever, which nothing else here
+    /// would ever catch, since a trait's placeholder type-checks against itself happily.
+    /// </summary>
+    private void CheckAssociatedTypesAreMet(Stmt.ClassDecl decl, ClassInfo info)
+    {
+        if (info.Kind == TypeKind.Trait) return;
+
+        foreach (var trait in info.Traits)
+            foreach (var name in trait.AssociatedTypeNames)
+                if (!info.AssociatedTypeBindings.ContainsKey(name)
+                    && (info.Base is null || !info.Base.AssociatedTypeBindings.ContainsKey(name)))
+                    Error(decl.Name.Line,
+                          $"{decl.Name.Lexeme} mixes in {trait.Name} but never says what "
+                          + $"{name} is.",
+                          $"Give it a value:  type {name} = SomeType");
     }
 
     /// <summary>Whether one method can stand as the answer to a declared requirement.</summary>
@@ -3090,7 +3207,7 @@ public sealed class Checker(
         {
             CheckVisibility(obj.Info, name);
             if (obj.Info.FindField(name.Lexeme) is { } fieldType) return fieldType;
-            if (obj.Info.FindMethods(name.Lexeme) is { Count: > 0 } overloads)
+            if (obj.Info.ResolvedMethods(name.Lexeme) is { Count: > 0 } overloads)
                 return MethodValue(overloads, obj.Info.Name, name, wanted, written);
 
             Error(name.Line, $"No member named {name.Lexeme} on {obj.Info.Name}.",
@@ -3361,7 +3478,7 @@ public sealed class Checker(
             if (c.Trailing is not null)
             {
                 var wanted = receiver is EmType.Obj holder
-                    ? Wanted(holder.Info.FindMethods(get.Name.Lexeme) is [var only]
+                    ? Wanted(holder.Info.ResolvedMethods(get.Name.Lexeme) is [var only]
                                  ? only
                                  : EmType.Any,
                              args.Count)
@@ -3374,12 +3491,9 @@ public sealed class Checker(
             // the return-type table, which records what it gives back and not what it
             // takes, so there is nothing there to check a call against.
             if (receiver is EmType.Obj obj
-                && obj.Info.FindMethods(get.Name.Lexeme) is { Count: > 0 } candidates)
+                && obj.Info.ResolvedMethods(get.Name.Lexeme) is { Count: > 0 } candidates)
             {
-                if (blockType is not null) args.Add(blockType);
-
                 CheckVisibility(obj.Info, get.Name);
-                string what = $"{obj.Info.Name}.{get.Name.Lexeme}";
 
                 // Recorded even with nothing to choose between. The static type is what
                 // decides: through a Base reference the only candidate is Base's, while
@@ -3387,10 +3501,17 @@ public sealed class Checker(
                 // more specific version the interpreter would otherwise reach for.
                 if (candidates.Count == 1)
                 {
+                    var resolved = InferMethodTypeParams(candidates[0], blockType, get.Name);
+                    if (blockType is not null) args.Add(blockType);
+
                     Choose(c, candidates[0]);
-                    return CheckArguments(candidates[0], c, args, what, get.Name.Line,
+                    return CheckArguments(resolved, c, args,
+                                          $"{obj.Info.Name}.{get.Name.Lexeme}", get.Name.Line,
                                           obj.Info, get.Name.Lexeme);
                 }
+
+                if (blockType is not null) args.Add(blockType);
+                string what = $"{obj.Info.Name}.{get.Name.Lexeme}";
 
                 int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
                 var chosen = candidates.FirstOrDefault(f => Fits(f, supplied, args));
@@ -3739,6 +3860,36 @@ public sealed class Checker(
         }
 
         return fn.Return;
+    }
+
+    /// <summary>
+    /// <c>map</c>'s own <c>R</c>, worked out from the one shape this can infer: a trailing
+    /// block whose <em>answer</em> the method's own declared return type depends on. Every
+    /// other use of a declared type parameter is refused with a plain sentence rather than
+    /// silently mishandled — nothing currently asks for more, and a wrong inference would
+    /// be far worse than an honest refusal.
+    /// </summary>
+    private EmType.Func InferMethodTypeParams(EmType.Func candidate, EmType? blockType, Token name)
+    {
+        if (candidate.TypeParams is not { Count: > 0 } typeParams) return candidate;
+
+        if (candidate.Params.Count > 0
+            && candidate.Params[^1] is EmType.Func lambdaShape
+            && lambdaShape.Return is EmType.MethodTypeParam mtp
+            && typeParams.Contains(mtp.Name)
+            && blockType is EmType.Func actualBlock)
+        {
+            Dictionary<string, EmType> bound = new() { [mtp.Name] = actualBlock.Return };
+            return (EmType.Func)candidate.Substitute(bound);
+        }
+
+        Error(name.Line,
+              $"{name.Lexeme}'s own {typeParams[0]} cannot be worked out from this call.",
+              $"The only shape this can infer is a trailing block whose own answer is what "
+              + $"{typeParams[0]} means, the way map's is — {name.Lexeme} either takes no "
+              + "block, or its declared return does not depend on one.");
+
+        return (EmType.Func)candidate.Substitute(typeParams.ToDictionary(t => t, _ => EmType.Any));
     }
 
     /// <summary>"as its first argument" — a position a reader can find without counting
@@ -4490,6 +4641,19 @@ public sealed class Checker(
             "Bool" => EmType.Bool,
             "Range" => EmType.Range,
             "Nothing" => EmType.Nothing,
+
+            // Checked before an ordinary class name so that a method type parameter
+            // shadows nothing by accident — R is only ever in scope inside the one method
+            // that declared it, which is a narrower reach than any class name has.
+            var other when _methodTypeParams?.TryGetValue(other, out var param) is true =>
+                param,
+
+            // Item, resolved against whichever type is currently being described or
+            // checked: a placeholder inside the trait that owns it, or whatever that
+            // binding names inside something implementing it.
+            var other when _currentType is { } ct && AssocLookup(ct, other) is { } assoc =>
+                assoc,
+
             var other => _classes.TryGetValue(other, out var info)
                 ? new EmType.Obj(info)
                 : Unknown(annotation.Name.Line, other)
@@ -4497,6 +4661,16 @@ public sealed class Checker(
 
         return annotation.Nullable ? EmType.Nullable(baseType) : baseType;
     }
+
+    /// <summary>
+    /// <c>Item</c>, resolved against one type: a bare placeholder inside the trait that
+    /// declared it, or whatever that same type has bound it to. Null for a name that is
+    /// neither — an ordinary word the caller should keep looking for elsewhere.
+    /// </summary>
+    private static EmType? AssocLookup(ClassInfo info, string name) =>
+        info.AssociatedTypeBindings.TryGetValue(name, out var bound) ? bound
+            : info.AssociatedTypeNames.Contains(name) ? new EmType.AssocType(info.Name, name)
+            : null;
 
     private EmType Unknown(int line, string name)
     {

@@ -97,6 +97,61 @@ public static class Prelude
         trait Indexable {
             abstract func at(index)
         }
+
+        ## A type that can walk what it holds, one thing at a time.
+        ##
+        ## each is required and gives every other method here for free — map, filter, find,
+        ## count, to_list and contains? are all written once, against each alone, and every
+        ## class that mixes this in gets all of them without writing any itself. That is the
+        ## whole trick List, Dictionary and Set already have built in, now available to a
+        ## type you write.
+        ##
+        ## Item is this trait's one open question — what each hands its block, one at a
+        ## time. Whatever implements Iterable says what Item is, and every method below
+        ## reads correctly the moment that answer exists.
+        trait Iterable {
+            type Item
+
+            abstract func each(step: func(Item))
+
+            ## Runs f on every item and collects what it gives back. R is never written at
+            ## a call site — deck.map { c => c.name } answers for it, from what the block
+            ## itself returns.
+            func map<R>(f: func(Item): R): List<R> {
+                var result: List<R> = []
+                self.each { item => result.add(f(item)) }
+                return result
+            }
+
+            func filter(keep: func(Item): Bool): List<Item> {
+                var result: List<Item> = []
+                self.each { item => result.add(item) if keep(item) }
+                return result
+            }
+
+            func find(matches: func(Item): Bool): Item? {
+                for item in self.to_list() {
+                    return item if matches(item)
+                }
+                return nothing
+            }
+
+            func count(): Int {
+                var total = 0
+                self.each { item => total += 1 }
+                return total
+            }
+
+            func to_list(): List<Item> {
+                var result: List<Item> = []
+                self.each { item => result.add(item) }
+                return result
+            }
+
+            func contains?(target: Item): Bool {
+                return self.find { item => item == target } != nothing
+            }
+        }
         """;
 
     /// <summary>The prelude's source split into lines, so a diagnostic can quote it.</summary>

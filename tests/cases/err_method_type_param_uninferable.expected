@@ -1,0 +1,6 @@
+
+err_method_type_param_uninferable.em:20  weird's own R cannot be worked out from this call.
+
+   20 | print(b.weird(3))
+
+  The only shape this can infer is a trailing block whose own answer is what R means, the way map's is — weird either takes no block, or its declared return does not depend on one.
