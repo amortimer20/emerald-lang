@@ -1,0 +1,8 @@
+
+err_parser_nesting_too_deep.em:2003  This is nested too deeply for Emerald to parse.
+
+  2003 | if true {
+
+  Emerald stops after 2,000 levels of parentheses, brackets, or blocks inside one another. Real programs never reach this — it usually means a run of punctuation that was never meant to be typed by hand.
+
+  2000 further error(s) suppressed — likely caused by this one.

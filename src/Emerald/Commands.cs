@@ -27,7 +27,8 @@ public static class Commands
         }
 
         var project = new Project(path);
-        var program = project.Load();
+        List<Stmt> program = [];
+        DeepStack.Run(() => program = project.Load());
         var problems = project.Diagnostics;
 
         if (problems.Count == 0)
@@ -112,7 +113,8 @@ public static class Commands
             : testFiles[0];
 
         var project = new Project(entry);
-        var program = project.Load();
+        List<Stmt> program = [];
+        DeepStack.Run(() => program = project.Load());
         var problems = project.Diagnostics;
         Dictionary<Expr.Call, Stmt.FuncDecl> chosen = [];
 

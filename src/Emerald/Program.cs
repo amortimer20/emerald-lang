@@ -49,7 +49,8 @@ if (!File.Exists(path))
 string entryName = Path.GetFileName(path);
 
 var project = new Project(path);
-var program = project.Load();
+List<Stmt> program = [];
+DeepStack.Run(() => program = project.Load());
 var problems = project.Diagnostics;
 
 // Hoisted out of the check below so it can travel to the interpreter: the overload

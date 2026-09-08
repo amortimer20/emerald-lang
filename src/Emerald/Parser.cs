@@ -55,20 +55,26 @@ public sealed class Parser(
 
     private Stmt? Statement()
     {
+        EnterNesting();
         try
         {
-            // Attributes are collected here rather than inside each declaration form,
-            // because class members are parsed through this same method — so one place
-            // covers members, top-level statements, and block-free class bodies alike.
-            var attributes = Attributes();
-            var stmt = Declaration();
-            return attributes.Count == 0 ? stmt : Decorate(attributes, stmt);
+            try
+            {
+                // Attributes are collected here rather than inside each declaration form,
+                // because class members are parsed through this same method — so one
+                // place covers members, top-level statements, and block-free class
+                // bodies alike.
+                var attributes = Attributes();
+                var stmt = Declaration();
+                return attributes.Count == 0 ? stmt : Decorate(attributes, stmt);
+            }
+            catch (ParseError)
+            {
+                Synchronise();
+                return null;
+            }
         }
-        catch (ParseError)
-        {
-            Synchronise();
-            return null;
-        }
+        finally { _nesting--; }
     }
 
     private Stmt Declaration()
@@ -627,9 +633,40 @@ public sealed class Parser(
 
     private Expr Expression()
     {
-        if (Check(TokenType.If)) return IfExpression();
-        return Or();
+        EnterNesting();
+        try
+        {
+            if (Check(TokenType.If)) return IfExpression();
+            return Or();
+        }
+        finally { _nesting--; }
     }
+
+    /// <summary>
+    /// Guards the two places source can nest inside itself with no bound the grammar
+    /// enforces: an expression re-entering itself through parentheses, a list, a dict, or
+    /// a lambda body (here), and a statement re-entering itself through a block (in
+    /// <see cref="Statement"/>). Nobody writes either by hand — this is the parser's own
+    /// analogue of the interpreter's recursion guard, for input rather than for a running
+    /// program, and it exists for the same reason: a native stack overflow cannot be
+    /// caught, prints a .NET trace no diagnostic ever should, and kills the process
+    /// outright. Paired with a larger parsing stack (<see cref="DeepStack"/>) the same way,
+    /// so the count is the thing that trips rather than the stack running out first.
+    /// </summary>
+    private void EnterNesting()
+    {
+        if (_nesting >= MaxNesting)
+            throw Error(Peek,
+                        "This is nested too deeply for Emerald to parse.",
+                        $"Emerald stops after {MaxNesting:N0} levels of parentheses, "
+                        + "brackets, or blocks inside one another. Real programs never "
+                        + "reach this — it usually means a run of punctuation that was "
+                        + "never meant to be typed by hand.");
+        _nesting++;
+    }
+
+    private const int MaxNesting = 2_000;
+    private int _nesting;
 
     private Expr IfExpression()
     {
