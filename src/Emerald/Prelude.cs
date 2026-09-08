@@ -148,8 +148,21 @@ public static class Prelude
                 return result
             }
 
+            ## Walks rather than asking find, and the difference is not style.
+            ##
+            ## find answers with the item or with nothing, so "nothing came back" has to
+            ## stand in for "nothing matched" — and those are the same answer when Item is
+            ## itself nullable. A collection holding nothing then reported that it did not
+            ## hold it, while the list beside it said it did: one question, two answers,
+            ## decided by which family you inherited. find's ambiguity is inherent and
+            ## shared with every language that has the method — C# spells it
+            ## FirstOrDefault — so the rule is that membership must never be built on it.
             func contains?(target: Item): Bool {
-                return self.find { item => item == target } != nothing
+                var found = false
+                self.each { item =>
+                    found = true if item == target
+                }
+                return found
             }
         }
         """;
