@@ -233,6 +233,36 @@ public static class Prelude
                 return total
             }
 
+            ## Ranked by something about each item rather than by the item itself, which is
+            ## why these live here and min and max live on Sortable: what has to have an
+            ## order is K, the block's answer, not Item. A deck of cards with no order of
+            ## its own still has a highest card by value.
+            func max_by<K: Ordered>(of: func(Item): K): Item? {
+                var best: Item? = nothing
+                var top: K? = nothing
+                self.each { item =>
+                    var key = of(item)
+                    if best == nothing or key > top.must() {
+                        best = item
+                        top = key
+                    }
+                }
+                return best
+            }
+
+            func min_by<K: Ordered>(of: func(Item): K): Item? {
+                var best: Item? = nothing
+                var bottom: K? = nothing
+                self.each { item =>
+                    var key = of(item)
+                    if best == nothing or key < bottom.must() {
+                        best = item
+                        bottom = key
+                    }
+                }
+                return best
+            }
+
             func to_list(): List<Item> {
                 var result: List<Item> = []
                 self.each { item => result.add(item) }
@@ -256,6 +286,34 @@ public static class Prelude
                 return found
             }
         }
+
+        ## A collection whose items have an order, which is what min and max need and what
+        ## walking alone cannot give. Mixed in beside Iterable rather than folded into it,
+        ## because most collections have no order and should not be asked to invent one —
+        ## a deck of cards walks perfectly well without being sortable.
+        ##
+        ## `type Item: Ordered` refines what Iterable already declared: the name is still
+        ## Iterable's, and this says what an answer to it has to be.
+        trait Sortable with Iterable {
+            type Item: Ordered
+
+            func max(): Item? {
+                var best: Item? = nothing
+                self.each { item =>
+                    best = item if best == nothing or item > best.must()
+                }
+                return best
+            }
+
+            func min(): Item? {
+                var best: Item? = nothing
+                self.each { item =>
+                    best = item if best == nothing or item < best.must()
+                }
+                return best
+            }
+        }
+
         """;
 
     /// <summary>The prelude's source split into lines, so a diagnostic can quote it.</summary>
@@ -294,6 +352,35 @@ public static class Prelude
         [TokenType.Slash] = ("divide", "Dividable"),
     };
 
+    /// <summary>
+    /// What the primitives implement, written beside the traits themselves so there is one
+    /// place to read what <c>+</c> means rather than a declaration here and a rule in the
+    /// checker that can drift from it.
+    ///
+    /// None of this is new behavior — <c>1 + 2</c>, <c>"a" + "b"</c> and <c>"apple" &lt;
+    /// "banana"</c> all worked before any of it was written down. What was missing was the
+    /// type system agreeing: <c>func f(x: Ordered)</c> refused an <c>Int</c>, so the same
+    /// question had one answer from the operator and the opposite from the checker.
+    ///
+    /// <c>Bool</c> is deliberately not <c>Ordered</c>. There is no meaningful order on true
+    /// and false, and inventing one for symmetry is the kind of tidiness that has to be
+    /// explained to a student later.
+    ///
+    /// Nothing here is <c>Indexable</c>: §3.2 keeps strings out of the index syntax on
+    /// purpose, and the containers that are indexable are not primitives.
+    /// </summary>
+    public static readonly Dictionary<string, HashSet<string>> PrimitiveTraits = new()
+    {
+        ["Int"] = ["Addable", "Subtractable", "Multipliable", "Dividable", "Ordered", "Equatable"],
+        ["Float"] = ["Addable", "Subtractable", "Multipliable", "Dividable", "Ordered", "Equatable"],
+
+        // Concatenation is the only arithmetic a string has. Multiplying one is Ruby's
+        // `"ab" * 3`, which Emerald spells `"ab".repeat(3)` — a method, not an operator.
+        ["String"] = ["Addable", "Ordered", "Equatable"],
+
+        ["Bool"] = ["Equatable"],
+    };
+
     public const string EqualsMethod = "equals?";
     public const string EquatableTrait = "Equatable";
     public const string CompareMethod = "compare";
@@ -314,7 +401,7 @@ public static class Prelude
     public static readonly HashSet<string> TypeNames =
     [
         "Addable", "Subtractable", "Multipliable", "Dividable", "Equatable", "Ordered",
-        "Indexable",
+        "Indexable", "Iterable", "Sortable",
         "Error",
     ];
 }

@@ -415,8 +415,14 @@ public sealed class Parser(
     {
         var keyword = Advance();
         var name = Consume(TokenType.Identifier, "Expected an associated type name.");
+
+        // `type Item: Ordered` — the constraint sits beside the name it governs rather
+        // than trailing the declaration in a clause, which is one of the four things §5.3
+        // named as what actually costs C# generics their readability.
+        TypeRef? constraint = Match(TokenType.Colon) ? ParseTypeRef() : null;
+
         TypeRef? value = Match(TokenType.Assign) ? ParseTypeRef() : null;
-        return new Stmt.AssocType(keyword, name, value);
+        return new Stmt.AssocType(keyword, name, value, constraint);
     }
 
     private Stmt ConstructorDeclaration()
@@ -457,12 +463,17 @@ public sealed class Parser(
     /// not in an expression: a function's name is always followed by either this or its
     /// parameter list, never by a comparison, so there is no rewind to write.
     /// </summary>
-    private List<Token>? MethodTypeParams()
+    private List<TypeParam>? MethodTypeParams()
     {
         if (!Match(TokenType.Less)) return null;
 
-        List<Token> names = [];
-        do { names.Add(Consume(TokenType.Identifier, "Expected a type parameter name.")); }
+        List<TypeParam> names = [];
+        do
+        {
+            var name = Consume(TokenType.Identifier, "Expected a type parameter name.");
+            TypeRef? constraint = Match(TokenType.Colon) ? ParseTypeRef() : null;
+            names.Add(new TypeParam(name, constraint));
+        }
         while (Match(TokenType.Comma));
 
         Consume(TokenType.Greater, "Expected '>' to close the type parameters.");

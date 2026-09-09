@@ -1170,6 +1170,24 @@ print(total(1..10))</pre>
 55</pre></div>
   </div>
   <div class="aside"><p>The set prints <code class="inl">6</code> rather than <code class="inl">9</code> because a set holds one of each — the duplicate <code class="inl">3</code> was never in there. A class of your own fits the same slot: a <code class="inl">Deck</code> whose <code class="inl">Item</code> is <code class="inl">Card</code> goes wherever <code class="inl">Iterable&lt;Item=Card&gt;</code> is asked for.</p></div>
+  <p>Some things need more than walking. <code class="inl">min</code> and <code class="inl">max</code> need the items to have an <em>order</em>, and most collections do not — so they live on <code class="inl">Sortable</code>, which you mix in beside <code class="inl">Iterable</code> when your items can be compared. The trait itself says <code class="inl">type Item: Ordered</code>; you just answer with something that has an order, and the compiler holds you to it.</p>
+  <div class="unit">
+    <pre class="code">class Scores with Sortable {
+    type Item = Int
+
+    func each(step: func(Int)) {
+        step(7)
+        step(2)
+        step(9)
+    }
+}
+
+print(Scores().max().or(0))
+print(Scores().min().or(0))</pre>
+    <div class="out"><span class="lab">prints</span><pre>9
+2</pre></div>
+  </div>
+  <div class="aside"><p>Ranking by something <em>about</em> each item needs no order on the item at all, so <code class="inl">max_by</code> stays on plain <code class="inl">Iterable</code>: a deck of cards with no order of its own still has a highest card by value — <code class="inl">deck.max_by { c => c.value }</code>.</p></div>
 </section>
 
 <section id="s20">

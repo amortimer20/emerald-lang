@@ -287,6 +287,27 @@ public abstract record EmType
     };
 
     /// <summary>
+    /// Whether a value of <paramref name="type"/> satisfies <paramref name="contract"/> —
+    /// the single answer to "does this implement that", asked by a parameter typed as a
+    /// trait and by a constraint on an associated type alike.
+    ///
+    /// A class answers by declaration. A primitive answers from
+    /// <see cref="Prelude.PrimitiveTraits"/>, because <c>Int</c> is not a
+    /// <see cref="ClassInfo"/> and never will be, but it has always <em>behaved</em> as
+    /// <c>Addable</c> and <c>Ordered</c> — <c>1 + 2</c> and <c>1 &lt; 2</c> both work. The
+    /// type system used to say otherwise, which made <c>func f(x: Ordered)</c> refuse a
+    /// number: one question with two answers, decided by which half of the compiler was
+    /// asked.
+    /// </summary>
+    public static bool Satisfies(EmType type, ClassInfo contract) => type switch
+    {
+        Obj o => o.Info.IsSubclassOf(contract),
+        Prim p => Prelude.PrimitiveTraits.TryGetValue(p.Name, out var traits)
+                  && traits.Contains(contract.Name),
+        _ => false,
+    };
+
+    /// <summary>
     /// Whether two parameter types could both accept one argument. §3.2 rejects an
     /// overload that overlaps an existing one, and this is what overlap means: not that
     /// the types are equal, but that no argument could tell them apart. <c>Int</c> and
@@ -350,8 +371,11 @@ public abstract record EmType
         if (this is PairOf p1 && from is PairOf p2)
             return p1.First.Accepts(p2.First) && p1.Second.Accepts(p2.Second);
 
-        // A subclass is usable wherever its base is wanted.
-        if (this is Obj want && from is Obj got) return got.Info.IsSubclassOf(want.Info);
+        // A subclass is usable wherever its base is wanted, and a primitive satisfies the
+        // operator traits it has always behaved as — `1 < 2` works, so an Int fits where an
+        // Ordered is asked for. Both go through Satisfies, because two mechanisms answering
+        // "does this satisfy that" is how they come to disagree.
+        if (this is Obj want) return Satisfies(from, want.Info);
 
         // The one place the compiler-owned containers and the trait system meet. A value
         // satisfies Iterable<Item=Int> when it walks Ints, whether it is a class that said
@@ -734,6 +758,30 @@ public sealed class ClassInfo(string name)
     /// replaces, and merging the two would lose which was which.
     /// </summary>
     public Dictionary<string, EmType> AssociatedTypeDefaults { get; } = [];
+
+    /// <summary>
+    /// <c>type Item: Ordered</c> — what whatever answers this name has to satisfy. Read in
+    /// two places that must agree: at a class, to refuse a binding that does not; and
+    /// inside the trait's own bodies, where <c>item &gt; other</c> has no methods of its own
+    /// to resolve against and borrows the constraint's instead.
+    /// </summary>
+    public Dictionary<string, ClassInfo> AssociatedTypeConstraints { get; } = [];
+
+    /// <summary>
+    /// The constraint on a name, wherever in the trait chain it was written. A trait
+    /// refining another's associated type — <c>trait Sortable with Iterable</c> saying
+    /// <c>type Item: Ordered</c> — puts it here while Iterable keeps the bare declaration,
+    /// so both are found from whichever end the question is asked.
+    /// </summary>
+    public ClassInfo? ConstraintOn(string name)
+    {
+        if (AssociatedTypeConstraints.TryGetValue(name, out var mine)) return mine;
+
+        foreach (var trait in Traits)
+            if (trait.ConstraintOn(name) is { } inherited) return inherited;
+
+        return Base?.ConstraintOn(name);
+    }
 
     /// <summary>
     /// Fields given a value where they are declared. Those run before the constructor, so

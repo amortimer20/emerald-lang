@@ -328,7 +328,7 @@ public sealed class Checker(
         return new([.. fn.Params.Select(p => Resolve(p.Type))],
                    Resolve(fn.ReturnType),
                    RequiredCount(fn.Params))
-            { Origin = fn, TypeParams = fn.TypeParams?.Select(t => t.Lexeme).ToList() };
+            { Origin = fn, TypeParams = fn.TypeParams?.Select(t => t.Name.Lexeme).ToList() };
     }
 
     /// <summary>
@@ -341,9 +341,25 @@ public sealed class Checker(
     private IDisposable EnterMethodTypeParams(Stmt.FuncDecl fn)
     {
         var previous = _methodTypeParams;
+        var previousHeld = _methodTypeParamConstraints;
+
         _methodTypeParams = fn.TypeParams?.ToDictionary(
-            t => t.Lexeme, EmType (t) => new EmType.MethodTypeParam(t.Lexeme));
-        return new Restore(() => _methodTypeParams = previous);
+            t => t.Name.Lexeme, EmType (t) => new EmType.MethodTypeParam(t.Name.Lexeme));
+
+        // What K was held to, kept beside it so `k > best` inside max_by resolves against
+        // Ordered exactly as `item > best` does inside Sortable — one rule, two places a
+        // name can come from.
+        _methodTypeParamConstraints = null;
+        foreach (var declared in fn.TypeParams ?? [])
+            if (declared.Constraint is { } written
+                && Resolve(written) is EmType.Obj { Info.Kind: TypeKind.Trait } contract)
+                (_methodTypeParamConstraints ??= [])[declared.Name.Lexeme] = contract.Info;
+
+        return new Restore(() =>
+        {
+            _methodTypeParams = previous;
+            _methodTypeParamConstraints = previousHeld;
+        });
     }
 
     private sealed class Restore(Action onDispose) : IDisposable
@@ -357,6 +373,9 @@ public sealed class Checker(
     /// <see cref="_currentType"/> directly — see <see cref="Resolve"/>.
     /// </summary>
     private Dictionary<string, EmType>? _methodTypeParams;
+
+    /// <summary>What each of those was held to, where it was held to anything.</summary>
+    private Dictionary<string, ClassInfo>? _methodTypeParamConstraints;
 
     /// <summary>
     /// How many arguments a caller must supply: everything up to the first parameter with
@@ -452,6 +471,26 @@ public sealed class Checker(
     /// </summary>
     private void DescribeAssocType(ClassInfo info, string typeName, Stmt.AssocType assoc)
     {
+        // `type Item: Ordered` is only a trait's to say — it constrains whoever answers,
+        // and a class is the one answering. Recorded before the shapes below, since a
+        // constraint can appear with or without a value.
+        if (assoc.Constraint is { } written)
+        {
+            if (info.Kind != TypeKind.Trait)
+                Error(assoc.Name.Line,
+                      $"Only a trait can say what {assoc.Name.Lexeme} must be.",
+                      $"{typeName} is answering an associated type, not declaring one. "
+                      + $"Write the answer:  type {assoc.Name.Lexeme} = SomeType");
+            else if (Resolve(written) is EmType.Obj { Info.Kind: TypeKind.Trait } contract)
+                info.AssociatedTypeConstraints[assoc.Name.Lexeme] = contract.Info;
+            else
+                Error(assoc.Name.Line,
+                      $"{written.Name.Lexeme} is not a trait, so {assoc.Name.Lexeme} cannot "
+                      + "be held to it.",
+                      "A constraint names something an answer has to implement, which only "
+                      + "a trait can be — Ordered, Addable, or one you wrote.");
+        }
+
         if (assoc.Value is null)
         {
             if (info.Kind != TypeKind.Trait)
@@ -927,6 +966,18 @@ public sealed class Checker(
         if (info.Kind == TypeKind.Trait) return;
 
         var answered = info.EffectiveBindings();
+
+        // What was answered has to satisfy what the trait asked for. Checked here rather
+        // than at the call that trips over it, so `Deck with Sortable` holding an
+        // unorderable card is refused at the declaration that made the claim.
+        foreach (var (name, given) in answered)
+            if (info.ConstraintOn(name) is { } contract && !EmType.Satisfies(given, contract))
+                Error(decl.Name.Line,
+                      $"{decl.Name.Lexeme} says {name} is {given.Show()}, which does not "
+                      + $"implement {contract.Name}.",
+                      $"A trait {decl.Name.Lexeme} mixes in requires it. Give "
+                      + $"{given.Show()} `with {contract.Name}`, or bind {name} to a type "
+                      + "that already has one.");
 
         foreach (var trait in info.Traits)
             foreach (var name in trait.AssociatedTypeNames)
@@ -2843,6 +2894,14 @@ public sealed class Checker(
                     return EmType.Bool;
                 }
 
+                // Inside a trait that constrained its own associated type, Item has no
+                // methods of its own — it borrows the constraint's. `item > other` in
+                // Sortable resolves against Ordered, which is the whole point of writing
+                // `type Item: Ordered` and the only way min and max can be written once.
+                if (ConstrainedTo(left, Prelude.OrderedTrait)
+                    && ConstrainedTo(right, Prelude.OrderedTrait))
+                    return EmType.Bool;
+
                 if (!IsNumeric(left) || !IsNumeric(right))
                     Error(b.Op.Line, $"Cannot compare {left.Show()} with {right.Show()}.");
                 return EmType.Bool;
@@ -4069,6 +4128,34 @@ public sealed class Checker(
                 break;
         }
     }
+
+    /// <summary>
+    /// Whether a type is an associated type held to <paramref name="contract"/>, or is a
+    /// real type that satisfies it outright. The first case is what makes a trait's own
+    /// body checkable: inside <c>Sortable</c>, <c>Item</c> is nobody's answer yet, and all
+    /// that is known about it is what the constraint promised.
+    ///
+    /// The constraint is looked up on the type being checked rather than on the trait that
+    /// declared the name, because they are not always the same one — <c>Iterable</c>
+    /// declares <c>Item</c> and <c>Sortable</c> is what says it must be <c>Ordered</c>.
+    /// </summary>
+    private bool ConstrainedTo(EmType type, string contract) =>
+        type switch
+        {
+            EmType.AssocType a => Held(_currentType?.ConstraintOn(a.Name), contract),
+
+            EmType.MethodTypeParam m =>
+                Held(_methodTypeParamConstraints?.GetValueOrDefault(m.Name), contract),
+
+            _ => _classes.TryGetValue(contract, out var named)
+                 && EmType.Satisfies(type, named),
+        };
+
+    /// <summary>Whether a constraint that was written is the one being asked about.</summary>
+    private bool Held(ClassInfo? given, string contract) =>
+        given is not null
+        && (given.Name == contract
+            || (_classes.TryGetValue(contract, out var wanted) && given.IsSubclassOf(wanted)));
 
     /// <summary>Whether any of these type parameters is still standing in a type.</summary>
     private static bool Mentions(EmType type, List<string> names) => type switch

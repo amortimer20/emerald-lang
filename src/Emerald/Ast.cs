@@ -41,6 +41,14 @@ public sealed record TypeRef(Token Name, bool Nullable, List<TypeRef>? Arguments
 public sealed record AssocArg(Token Name, TypeRef Value);
 
 /// <summary>
+/// <c>R</c> in <c>func map&lt;R&gt;</c>, or <c>K: Ordered</c> in
+/// <c>func max_by&lt;K: Ordered&gt;</c> — a method's own type parameter and, where it has
+/// one, what any answer to it must implement. The constraint sits beside the name for the
+/// same reason an associated type's does.
+/// </summary>
+public sealed record TypeParam(Token Name, TypeRef? Constraint = null);
+
+/// <summary>
 /// <paramref name="Second"/> is set only on a block parameter written <c>(key, value)</c> —
 /// one parameter that comes apart, not two. It is the third place the pair destructure is
 /// wanted, after <c>var (name, score) =</c> and <c>for (key, value) in</c>, and the
@@ -197,7 +205,7 @@ public abstract record Stmt
         /// a trait author writes; everywhere else, including every call to this method,
         /// there is nothing to type. Null everywhere else, which is almost everywhere.
         /// </summary>
-        List<Token>? TypeParams = null) : Stmt;
+        List<TypeParam>? TypeParams = null) : Stmt;
     public sealed record Return(Token Keyword, Expr? Value) : Stmt;
 
     /// <summary>
@@ -266,7 +274,13 @@ public abstract record Stmt
     /// same "declared, then given a value" shape a field already has, one level up at the
     /// type instead of the value.
     /// </summary>
-    public sealed record AssocType(Token Keyword, Token Name, TypeRef? Value) : Stmt;
+    /// <summary>
+    /// <c>type Item</c>, <c>type Item = Card</c>, and <c>type Item: Ordered</c>.
+    /// <paramref name="Constraint"/> is what whatever answers this must satisfy, written
+    /// beside the name rather than trailing the declaration.
+    /// </summary>
+    public sealed record AssocType(Token Keyword, Token Name, TypeRef? Value,
+                                   TypeRef? Constraint = null) : Stmt;
 
     /// <summary>
     /// <c>enum Color { RED, GREEN, BLUE }</c> — a closed set of named values, and
