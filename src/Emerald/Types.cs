@@ -390,6 +390,13 @@ public abstract record EmType
     public EmType Substitute(IReadOnlyDictionary<string, EmType> bindings) => this switch
     {
         AssocType a when bindings.TryGetValue(a.Name, out var bound) => bound,
+
+        // R, once a call has worked out what it is. Missing here until a probe went
+        // looking: map's own R was never replaced, so `deck.map { n => n * 2 }` typed as
+        // List<R> and could not be assigned to List<Int> — nor to List<String>, which is
+        // why nothing caught it. Every call site read correctly only because it went
+        // straight into another method, where a placeholder accepts anything.
+        MethodTypeParam m when bindings.TryGetValue(m.Name, out var chosen) => chosen,
         Maybe m => Nullable(m.Inner.Substitute(bindings)),
         Lst l => new Lst(l.Element.Substitute(bindings)),
         Dict d => new Dict(d.Key.Substitute(bindings), d.Value.Substitute(bindings)),

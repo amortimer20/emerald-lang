@@ -145,6 +145,19 @@ public static class Prelude
                 return result
             }
 
+            ## K is whatever the block answers. Nothing here says it has to be a type a
+            ## dictionary can key on, because inside this trait K means nothing yet — the
+            ## ordinary key rules ask once the call has said what K is.
+            func group_by<K>(key: func(Item): K): Dictionary<K, List<Item>> {
+                var groups: Dictionary<K, List<Item>> = [:]
+                self.each { item =>
+                    var bucket = groups[key(item)].or([])
+                    bucket.add(item)
+                    groups[key(item)] = bucket
+                }
+                return groups
+            }
+
             func find(matches: func(Item): Bool): Item? {
                 for item in self.to_list() {
                     return item if matches(item)
@@ -174,6 +187,17 @@ public static class Prelude
 
             func empty?(): Bool {
                 return self.count() == 0
+            }
+
+            ## R is what the running total is, and it is never written down: reduce(0) says
+            ## Int and reduce("") says String. Unlike map's own R, which the block answers
+            ## for, this one has to be settled before the block is looked at — the block
+            ## takes an R as well as giving one back, so nothing in it can be checked until
+            ## the starting value has said what R means.
+            func reduce<R>(start: R, step: func(R, Item): R): R {
+                var total = start
+                self.each { item => total = step(total, item) }
+                return total
             }
 
 

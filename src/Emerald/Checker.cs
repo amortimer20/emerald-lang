@@ -3604,7 +3604,10 @@ public sealed class Checker(
             if (c.Trailing is not null)
             {
                 var wanted = TraitOrClassMethods(receiver, get.Name.Lexeme) is { } holderMethods
-                    ? Wanted(holderMethods is [var only] ? only : EmType.Any, args.Count)
+                    ? Wanted(holderMethods is [var only]
+                                 ? BindFromArguments(only, args)
+                                 : EmType.Any,
+                             args.Count)
                     : null;
 
                 blockType = TypeOf(c.Trailing, scope, wanted);
@@ -3633,7 +3636,13 @@ public sealed class Checker(
                 // more specific version the interpreter would otherwise reach for.
                 if (candidates.Count == 1)
                 {
-                    var resolved = InferMethodTypeParams(candidates[0], blockType, get.Name);
+                    // Whatever the ordinary arguments already settled, then whatever the
+                    // block settles. Two directions, applied in that order, because the
+                    // block was typed against what the arguments had already decided.
+                    var resolved = InferMethodTypeParams(
+                        BindFromArguments(candidates[0], args), blockType, get.Name);
+
+                    CheckSubstitutedKeys(resolved.Return, get.Name);
                     if (receiver is EmType.BoundTrait asked)
                         CheckTraitAnswerIsKnown(resolved, asked, get.Name);
                     if (blockType is not null) args.Add(blockType);
@@ -4007,6 +4016,12 @@ public sealed class Checker(
     {
         if (candidate.TypeParams is not { Count: > 0 } typeParams) return candidate;
 
+        // Nothing left standing, because an ordinary argument already answered for it —
+        // reduce(0) says R is Int before the block is looked at. Checked before the block
+        // rule rather than after, or a signature that is already complete would be
+        // reported as one that could not be worked out.
+        if (!Mentions(candidate, typeParams)) return candidate;
+
         if (candidate.Params.Count > 0
             && candidate.Params[^1] is EmType.Func lambdaShape
             && lambdaShape.Return is EmType.MethodTypeParam mtp
@@ -4019,12 +4034,54 @@ public sealed class Checker(
 
         Error(name.Line,
               $"{name.Lexeme}'s own {typeParams[0]} cannot be worked out from this call.",
-              $"The only shape this can infer is a trailing block whose own answer is what "
-              + $"{typeParams[0]} means, the way map's is — {name.Lexeme} either takes no "
-              + "block, or its declared return does not depend on one.");
+              $"Two shapes say what {typeParams[0]} is: a trailing block whose own answer "
+              + $"decides it, the way map's does, or an argument written as {typeParams[0]} "
+              + $"itself, the way reduce(0) says Int. {name.Lexeme} is neither — a "
+              + $"{typeParams[0]} nested inside another type would have to be matched "
+              + "against the shape of what arrived, which is guessing rather than reading.");
 
         return (EmType.Func)candidate.Substitute(typeParams.ToDictionary(t => t, _ => EmType.Any));
     }
+
+    /// <summary>
+    /// The key rule, asked where the answer finally exists. A trait writing
+    /// <c>Dictionary&lt;K, List&lt;Item&gt;&gt;</c> cannot be asked whether <c>K</c> hashes,
+    /// because inside the trait <c>K</c> is nobody's answer; <see cref="WhyNotAKey"/>
+    /// therefore lets a bare type parameter through. This is the other half of that, and
+    /// without it <c>group_by { item =&gt; someList }</c> would build a dictionary keyed by a
+    /// list — identity-hashed, so two equal lists would be two different keys, which is the
+    /// exact hole §3.7's key rules exist to close.
+    /// </summary>
+    private void CheckSubstitutedKeys(EmType type, Token name)
+    {
+        switch (type)
+        {
+            case EmType.Dict d:
+                CheckKeyType(d.Key, name.Line);
+                CheckSubstitutedKeys(d.Value, name);
+                break;
+            case EmType.Maybe m: CheckSubstitutedKeys(m.Inner, name); break;
+            case EmType.Lst l: CheckSubstitutedKeys(l.Element, name); break;
+            case EmType.SetOf s: CheckKeyType(s.Element, name.Line, "member"); break;
+            case EmType.PairOf p:
+                CheckSubstitutedKeys(p.First, name);
+                CheckSubstitutedKeys(p.Second, name);
+                break;
+        }
+    }
+
+    /// <summary>Whether any of these type parameters is still standing in a type.</summary>
+    private static bool Mentions(EmType type, List<string> names) => type switch
+    {
+        EmType.MethodTypeParam m => names.Contains(m.Name),
+        EmType.Maybe m => Mentions(m.Inner, names),
+        EmType.Lst l => Mentions(l.Element, names),
+        EmType.SetOf s => Mentions(s.Element, names),
+        EmType.Dict d => Mentions(d.Key, names) || Mentions(d.Value, names),
+        EmType.PairOf p => Mentions(p.First, names) || Mentions(p.Second, names),
+        EmType.Func f => f.Params.Any(p => Mentions(p, names)) || Mentions(f.Return, names),
+        _ => false,
+    };
 
     /// <summary>"as its first argument" — a position a reader can find without counting
     /// commas from zero.</summary>
@@ -4167,6 +4224,14 @@ public sealed class Checker(
     private string? WhyNotAKey(EmType type, HashSet<ClassInfo> seen)
     {
         if (type is EmType.Unknown) return null;
+
+        // A name nobody has answered yet is not a wrong answer. `group_by<K>` declares a
+        // Dictionary<K, ...> inside the trait, where K means nothing — asking there gets
+        // "a dictionary cannot be keyed by K", which is true and useless. The real question
+        // is asked at the call site once K is known, by CheckSubstitutedKeys; skipping it
+        // here without asking it there would let a dictionary be keyed by a list.
+        if (type is EmType.MethodTypeParam or EmType.AssocType) return null;
+
         if (type.Equals(EmType.Int) || type.Equals(EmType.Float)
             || type.Equals(EmType.String) || type.Equals(EmType.Bool)) return null;
 
@@ -4806,6 +4871,33 @@ public sealed class Checker(
         };
 
         return annotation.Nullable ? EmType.Nullable(baseType) : baseType;
+    }
+
+    /// <summary>
+    /// A method's own type parameter, worked out from an ordinary argument before the block
+    /// is typed. <c>reduce(0) { acc, n =&gt; acc + n }</c> is the case: <c>R</c> sits in a
+    /// block <em>parameter</em> there rather than in what the block returns, so the block
+    /// cannot be typed until <c>R</c> is known and <c>R</c> cannot be read off the block.
+    /// <c>0</c> breaks the cycle.
+    ///
+    /// Only a parameter written as the bare type parameter counts. <c>start: R</c> says
+    /// what <c>R</c> is; <c>f: func(Item): R</c> does not, because the argument for it is
+    /// the very thing waiting on the answer. Deliberately as narrow as the block-return
+    /// rule beside it, and for the same reason: a wrong inference costs more than an honest
+    /// refusal, and <see cref="InferMethodTypeParams"/> still reports anything left over.
+    /// </summary>
+    private static EmType.Func BindFromArguments(EmType.Func candidate, List<EmType> args)
+    {
+        if (candidate.TypeParams is not { Count: > 0 } names) return candidate;
+
+        Dictionary<string, EmType> bound = [];
+        for (int i = 0; i < args.Count && i < candidate.Params.Count; i++)
+            if (candidate.Params[i] is EmType.MethodTypeParam p
+                && names.Contains(p.Name)
+                && args[i] is not EmType.Unknown)
+                bound.TryAdd(p.Name, args[i]);
+
+        return bound.Count == 0 ? candidate : (EmType.Func)candidate.Substitute(bound);
     }
 
     /// <summary>
