@@ -29,7 +29,16 @@ public sealed record FuncRef(List<TypeRef> Params, TypeRef? Returns);
 /// <c>func</c> keyword itself, kept only so a diagnostic has a line to point at.
 /// </summary>
 public sealed record TypeRef(Token Name, bool Nullable, List<TypeRef>? Arguments = null,
-                             FuncRef? Function = null);
+                             FuncRef? Function = null, List<AssocArg>? AssocArguments = null);
+
+/// <summary>
+/// <c>Item=Int</c> inside <c>Iterable&lt;Item=Int&gt;</c> — an associated type answered at
+/// the place the trait is being named, rather than by a class declaring it implements one.
+/// Named rather than positional because associated types are not ordered: a trait may
+/// declare several, an implementer answers them by name, and a caller naming them by
+/// position would be relying on the order they happen to appear in the trait.
+/// </summary>
+public sealed record AssocArg(Token Name, TypeRef Value);
 
 public sealed record Param(Token Name, TypeRef? Type, Expr? Default);
 

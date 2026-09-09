@@ -103,6 +103,104 @@ public abstract record EmType
     public sealed record Obj(ClassInfo Info) : EmType;
 
     /// <summary>
+    /// <c>Iterable&lt;Item=Int&gt;</c> — a trait named as a type, with its associated types
+    /// answered at the naming rather than by a class. This is what makes a trait usable as
+    /// a parameter type at all: <c>Iterable</c> alone leaves <c>Item</c> open, so nothing
+    /// could be said about what walking one hands over.
+    ///
+    /// Anything satisfying it is accepted, and that deliberately includes the compiler-owned
+    /// containers, which are not <see cref="ClassInfo"/> at all — <see cref="Accepts"/> is
+    /// the one place the native containers and the trait system meet.
+    ///
+    /// Bindings are compared by content rather than by reference, so two spellings of
+    /// <c>Iterable&lt;Item=Int&gt;</c> written in different files are the same type.
+    /// </summary>
+    public sealed record BoundTrait(ClassInfo Info, Dictionary<string, EmType> Bindings) : EmType
+    {
+        public bool Equals(BoundTrait? other) =>
+            other is not null
+            && Info == other.Info
+            && Bindings.Count == other.Bindings.Count
+            && Bindings.All(b => other.Bindings.TryGetValue(b.Key, out var theirs)
+                                 && theirs.Equals(b.Value));
+
+        public override int GetHashCode() => HashCode.Combine(Info, Bindings.Count);
+
+        /// <summary>
+        /// The trait's methods with this naming's own answers applied — the same job
+        /// <see cref="ClassInfo.ResolvedMethods"/> does for a class, except the bindings
+        /// come from the annotation rather than from a declaration.
+        /// </summary>
+        public List<Func> Methods(string wanted)
+        {
+            var found = Info.FindMethods(wanted);
+            return Bindings.Count == 0
+                ? found
+                : [.. found.Select(f => (Func)f.Substitute(Bindings))];
+        }
+
+        /// <summary>
+        /// What each family walks, in one table rather than scattered through the checker.
+        /// A dictionary's element is a <c>Pair</c> — the answer §3.7 already gave when it
+        /// built the type for <c>to_list</c> and <c>find</c> — and a range walks whole
+        /// numbers. Null for anything that walks nothing.
+        /// </summary>
+        /// <remarks>
+        /// A dictionary is absent on purpose, and only for now. Its element genuinely is a
+        /// <c>Pair</c> — <c>to_list</c> and <c>find</c> have said so since §3.7 built the
+        /// type — but its blocks still take a key beside a value rather than one pair, so a
+        /// one-parameter <c>each</c> would hand a block the key while the checker called it
+        /// a <c>Pair</c>. Measured rather than assumed: it printed "checker says Pair,
+        /// runtime says String". Conformance waits for the block shape, since a conformance
+        /// that lies is worse than one that is missing.
+        /// </remarks>
+        public static EmType? ElementOf(EmType value) => value switch
+        {
+            Lst l => l.Element,
+            SetOf s => s.Element,
+            Prim { Name: "Range" } => Int,
+            _ => null,
+        };
+
+        /// <summary>
+        /// What a narrowed one of these gives back, which is the other half of the contract
+        /// and the reason <c>Filtered</c> exists. Mirrors §3.7's settled rule exactly: a
+        /// filtered set is a set, a filtered range is a list.
+        /// </summary>
+        public static EmType? FilteredOf(EmType value) => value switch
+        {
+            Lst l => new Lst(l.Element),
+            SetOf s => new SetOf(s.Element),
+            Prim { Name: "Range" } => new Lst(Int),
+            _ => null,
+        };
+
+        internal bool SatisfiedBy(EmType from)
+        {
+            // A class says what it walks by declaring it, so its own answers are read back
+            // out and compared against what was asked for.
+            if (from is Obj o)
+                return o.Info.IsSubclassOf(Info) && Agrees(o.Info.EffectiveBindings());
+
+            if (ElementOf(from) is not { } element) return false;
+
+            Dictionary<string, EmType> native = new() { ["Item"] = element };
+            if (FilteredOf(from) is { } filtered) native["Filtered"] = filtered;
+
+            return Agrees(native);
+        }
+
+        /// <summary>
+        /// Every binding asked for is answered the same way. Deliberately one-directional:
+        /// a value answering more than was asked still fits, since what was not asked about
+        /// cannot be relied on. An answer that is missing entirely does not.
+        /// </summary>
+        private bool Agrees(Dictionary<string, EmType> answers) =>
+            Bindings.All(want => answers.TryGetValue(want.Key, out var got)
+                                 && want.Value.Equals(got));
+    }
+
+    /// <summary>
     /// <c>Item</c>, as written inside the trait that declares <c>type Item</c> and nowhere
     /// else — anyone implementing the trait binds it to something real, and every method
     /// lookup through that implementer substitutes it away before a caller ever sees it
@@ -155,6 +253,14 @@ public abstract record EmType
         PairOf p2 => $"Pair<{p2.First.Show()}, {p2.Second.Show()}>",
         Obj o => o.Info.Name,
 
+        // Written back the way it was declared, so a mismatch names the binding that is
+        // wrong rather than only the trait: "expects Iterable<Item=Int>, but this is
+        // Iterable<Item=String>" says which half to change.
+        BoundTrait b => $"{b.Info.Name}<"
+                        + string.Join(", ", b.Bindings.OrderBy(x => x.Key)
+                                                      .Select(x => $"{x.Key}={x.Value.Show()}"))
+                        + ">",
+
         // Written the way it is declared, so a mismatch reads as one: "expects func() but
         // this is func(Int)" says what to change, where two identical "Function"s did not.
         // The return is left off when there is none, matching a declaration with no `: T`.
@@ -181,6 +287,7 @@ public abstract record EmType
         SetOf => "Set",
         PairOf => "Pair",
         Obj o => o.Info.Name,
+        BoundTrait b => b.Info.Name,
         Func => "Function",
         Maybe m => m.Inner.Head,
         _ => "?"
@@ -252,6 +359,12 @@ public abstract record EmType
 
         // A subclass is usable wherever its base is wanted.
         if (this is Obj want && from is Obj got) return got.Info.IsSubclassOf(want.Info);
+
+        // The one place the compiler-owned containers and the trait system meet. A value
+        // satisfies Iterable<Item=Int> when it walks Ints, whether it is a class that said
+        // so with `type Item = Int` or a List<Int>, which never said anything because it
+        // predates the trait and is not a ClassInfo at all.
+        if (this is BoundTrait trait) return trait.SatisfiedBy(from);
 
         // A function value is the one thing here with a whole shape written down, and this
         // compared only how many parameters it had — so func(String): String was accepted
@@ -611,6 +724,18 @@ public sealed class ClassInfo(string name)
     public Dictionary<string, EmType> AssociatedTypeBindings { get; } = [];
 
     /// <summary>
+    /// <c>type Filtered = List&lt;Item&gt;</c> written on the trait itself — a name declared
+    /// and answered in one line, so an implementer that has nothing different to say writes
+    /// nothing at all. Only ever non-empty on a trait, and the value may be written in terms
+    /// of the trait's other associated types, which is the whole reason it is useful:
+    /// <c>List&lt;Item&gt;</c> becomes <c>List&lt;Card&gt;</c> once <c>Item</c> is known.
+    /// Kept apart from <see cref="AssociatedTypeBindings"/> because a default is a fallback
+    /// and a binding is an answer — an implementer's binding must win over the default it
+    /// replaces, and merging the two would lose which was which.
+    /// </summary>
+    public Dictionary<string, EmType> AssociatedTypeDefaults { get; } = [];
+
+    /// <summary>
     /// Fields given a value where they are declared. Those run before the constructor, so
     /// the constructor owes them nothing.
     /// </summary>
@@ -716,18 +841,49 @@ public sealed class ClassInfo(string name)
     public List<EmType.Func> ResolvedMethods(string wanted)
     {
         var found = FindMethods(wanted);
-        var bindings = AssociatedTypeBindings.Count > 0
-            ? AssociatedTypeBindings
-            : Base?.ResolvedBindings() ?? [];
+        var bindings = EffectiveBindings();
 
         return bindings.Count == 0
             ? found
             : [.. found.Select(f => (EmType.Func)f.Substitute(bindings))];
     }
 
-    private Dictionary<string, EmType> ResolvedBindings() =>
-        AssociatedTypeBindings.Count > 0 ? AssociatedTypeBindings
-            : Base?.ResolvedBindings() ?? [];
+    /// <summary>
+    /// Everything this class has said its associated types mean, its own answers first and
+    /// a trait's defaults filling whatever is left. Defaults are substituted <em>through</em>
+    /// what is already known rather than taken literally, which is the point of them:
+    /// <c>Filtered = List&lt;Item&gt;</c> is not an answer until <c>Item</c> has one, and by
+    /// the time this runs it does. Own bindings are added before any default is consulted,
+    /// so a class that says <c>type Filtered = Set&lt;Item&gt;</c> is never overwritten by
+    /// the trait's fallback.
+    /// </summary>
+    public Dictionary<string, EmType> EffectiveBindings()
+    {
+        Dictionary<string, EmType> result = new(AssociatedTypeBindings);
+
+        // An inherited binding counts, the same way any inherited member does — but only
+        // where this class has not answered for itself.
+        if (Base is not null)
+            foreach (var (name, bound) in Base.EffectiveBindings())
+                result.TryAdd(name, bound);
+
+        foreach (var trait in TraitsInScope())
+            foreach (var (name, fallback) in trait.AssociatedTypeDefaults)
+                if (!result.ContainsKey(name))
+                    result[name] = fallback.Substitute(result);
+
+        return result;
+    }
+
+    /// <summary>Every trait reachable from here, a trait's own traits included.</summary>
+    private IEnumerable<ClassInfo> TraitsInScope()
+    {
+        foreach (var trait in Traits)
+        {
+            yield return trait;
+            foreach (var nested in trait.TraitsInScope()) yield return nested;
+        }
+    }
 
     /// <summary>
     /// Whether two overloads take the same thing, which is what makes one a replacement

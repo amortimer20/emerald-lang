@@ -1139,6 +1139,22 @@ print(deck.filter { c => c.value > 10 }.count())</pre>
 2</pre></div>
   </div>
   <div class="aside"><p><code class="inl">map</code>'s own answer type is never written down anywhere — <code class="inl">c => c.name</code> is what tells it, the same way a block's own parameter is inferred everywhere else in this tour.</p></div>
+  <p>And it works the other way round: you can ask for <em>anything</em> that walks. <code class="inl">Iterable&lt;Item=Int&gt;</code> says "something whose items are whole numbers", which a list, a set and a range all are — none of them wrote a line to say so.</p>
+  <div class="unit">
+    <pre class="code">func total(items: Iterable&lt;Item=Int&gt;): Int {
+    var sum = 0
+    items.each { n => sum += n }
+    return sum
+}
+
+print(total([1, 2, 3]))
+print(total([1, 2, 3, 3].to_set()))
+print(total(1..10))</pre>
+    <div class="out"><span class="lab">prints</span><pre>6
+6
+55</pre></div>
+  </div>
+  <div class="aside"><p>The set prints <code class="inl">6</code> rather than <code class="inl">9</code> because a set holds one of each — the duplicate <code class="inl">3</code> was never in there. A class of your own fits the same slot: a <code class="inl">Deck</code> whose <code class="inl">Item</code> is <code class="inl">Card</code> goes wherever <code class="inl">Iterable&lt;Item=Card&gt;</code> is asked for.</p></div>
 </section>
 
 <section id="s20">

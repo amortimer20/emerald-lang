@@ -1,0 +1,8 @@
+
+err_iterable_wrong_answers.em:11  strict expects Iterable<Filtered=List<Int>, Item=Int> as its first argument, but this is Set<Int>.
+
+   11 | print(strict([1, 2, 3].to_set()))
+
+  emerald explain
+
+  1 further error(s) suppressed — likely caused by this one.

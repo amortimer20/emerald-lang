@@ -1,0 +1,8 @@
+
+err_iterable_unknown_assoc.em:5  Iterable has no associated type named Nope.
+
+    5 | func typo(items: Iterable<Nope=Int>): Int {
+
+  It declares Filtered and Item.
+
+  2 further error(s) suppressed — likely caused by this one.

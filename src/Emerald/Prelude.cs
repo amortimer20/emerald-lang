@@ -112,6 +112,14 @@ public static class Prelude
         trait Iterable {
             type Item
 
+            ## What narrowing this gives back. Defaulted rather than required, because the
+            ## answer is only interesting to a type that can hold a narrowed version of
+            ## itself: a Set stays a Set, and everything else — a Deck, a Range, whatever
+            ## someone writes next — becomes a list, since a trait cannot build one of them
+            ## and a list is the honest shape for what it can build. Written in terms of
+            ## Item, so binding one answers both.
+            type Filtered = List<Item>
+
             abstract func each(step: func(Item))
 
             ## Runs f on every item and collects what it gives back. R is never written at
@@ -123,7 +131,7 @@ public static class Prelude
                 return result
             }
 
-            func filter(keep: func(Item): Bool): List<Item> {
+            func filter(keep: func(Item): Bool): Filtered {
                 var result: List<Item> = []
                 self.each { item => result.add(item) if keep(item) }
                 return result

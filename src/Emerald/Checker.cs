@@ -464,7 +464,21 @@ public sealed class Checker(
             return;
         }
 
-        if (!info.Traits.Any(t => t.AssociatedTypeNames.Contains(assoc.Name.Lexeme)))
+        var answeringAMixin = info.Traits.Any(t => t.AssociatedTypeNames.Contains(assoc.Name.Lexeme));
+
+        // A trait writing a value for a name nothing else declared is declaring that name
+        // and answering it in one line — the default an implementer inherits unless it has
+        // something different to say. Read as a binding rather than a default whenever a
+        // mixed-in trait already owns the name, since then there is a requirement present
+        // to answer and answering it is the only thing this could mean.
+        if (!answeringAMixin && info.Kind == TypeKind.Trait)
+        {
+            info.AssociatedTypeNames.Add(assoc.Name.Lexeme);
+            info.AssociatedTypeDefaults[assoc.Name.Lexeme] = Resolve(assoc.Value);
+            return;
+        }
+
+        if (!answeringAMixin)
         {
             Error(assoc.Name.Line,
                   $"{typeName} has no associated type named {assoc.Name.Lexeme} to give a "
@@ -911,10 +925,11 @@ public sealed class Checker(
     {
         if (info.Kind == TypeKind.Trait) return;
 
+        var answered = info.EffectiveBindings();
+
         foreach (var trait in info.Traits)
             foreach (var name in trait.AssociatedTypeNames)
-                if (!info.AssociatedTypeBindings.ContainsKey(name)
-                    && (info.Base is null || !info.Base.AssociatedTypeBindings.ContainsKey(name)))
+                if (!answered.ContainsKey(name))
                     Error(decl.Name.Line,
                           $"{decl.Name.Lexeme} mixes in {trait.Name} but never says what "
                           + $"{name} is.",
@@ -3216,6 +3231,20 @@ public sealed class Checker(
             return EmType.Any;
         }
 
+        // A trait named as a type reaches only what the trait itself declares — never a
+        // field, and never a method belonging to whatever is underneath, which the static
+        // type deliberately does not know.
+        if (receiver is EmType.BoundTrait bound)
+        {
+            if (bound.Methods(name.Lexeme) is { Count: > 0 } fromTrait)
+                return MethodValue(fromTrait, bound.Show(), name, wanted, written);
+
+            Error(name.Line, $"No member named {name.Lexeme} on {bound.Show()}.",
+                  PredicateSwallowed(name, bound.Info.MemberNames())
+                      ?? Suggest(name.Lexeme, bound.Info.MemberNames()));
+            return EmType.Any;
+        }
+
         return BuiltinRead(receiver, name);
     }
 
@@ -3477,11 +3506,8 @@ public sealed class Checker(
             EmType? blockType = null;
             if (c.Trailing is not null)
             {
-                var wanted = receiver is EmType.Obj holder
-                    ? Wanted(holder.Info.ResolvedMethods(get.Name.Lexeme) is [var only]
-                                 ? only
-                                 : EmType.Any,
-                             args.Count)
+                var wanted = TraitOrClassMethods(receiver, get.Name.Lexeme) is { } holderMethods
+                    ? Wanted(holderMethods is [var only] ? only : EmType.Any, args.Count)
                     : null;
 
                 blockType = TypeOf(c.Trailing, scope, wanted);
@@ -3490,10 +3516,19 @@ public sealed class Checker(
             // A user-declared method carries real parameter types. A built-in one lives in
             // the return-type table, which records what it gives back and not what it
             // takes, so there is nothing there to check a call against.
-            if (receiver is EmType.Obj obj
-                && obj.Info.ResolvedMethods(get.Name.Lexeme) is { Count: > 0 } candidates)
+            if (receiver is EmType.Obj or EmType.BoundTrait
+                && TraitOrClassMethods(receiver, get.Name.Lexeme) is { Count: > 0 } candidates)
             {
-                CheckVisibility(obj.Info, get.Name);
+                var holder = receiver is EmType.Obj o ? o.Info : ((EmType.BoundTrait)receiver).Info;
+
+                // Named by the annotation rather than by the trait when the receiver is a
+                // trait, so a diagnostic says Iterable<Item=Int>.filter and not Iterable's
+                // — the second would send the reader to a declaration that cannot be wrong.
+                var label = receiver is EmType.Obj named ? named.Info.Name : receiver.Show();
+
+                // Visibility is a class's own business; a trait's members are its contract
+                // and reaching one through the trait is what the annotation asked for.
+                if (receiver is EmType.Obj) CheckVisibility(holder, get.Name);
 
                 // Recorded even with nothing to choose between. The static type is what
                 // decides: through a Base reference the only candidate is Base's, while
@@ -3502,16 +3537,18 @@ public sealed class Checker(
                 if (candidates.Count == 1)
                 {
                     var resolved = InferMethodTypeParams(candidates[0], blockType, get.Name);
+                    if (receiver is EmType.BoundTrait asked)
+                        CheckTraitAnswerIsKnown(resolved, asked, get.Name);
                     if (blockType is not null) args.Add(blockType);
 
                     Choose(c, candidates[0]);
                     return CheckArguments(resolved, c, args,
-                                          $"{obj.Info.Name}.{get.Name.Lexeme}", get.Name.Line,
-                                          obj.Info, get.Name.Lexeme);
+                                          $"{label}.{get.Name.Lexeme}", get.Name.Line,
+                                          holder, get.Name.Lexeme);
                 }
 
                 if (blockType is not null) args.Add(blockType);
-                string what = $"{obj.Info.Name}.{get.Name.Lexeme}";
+                string what = $"{label}.{get.Name.Lexeme}";
 
                 int supplied = c.Args.Count + (c.Trailing is null ? 0 : 1);
                 var chosen = candidates.FirstOrDefault(f => Fits(f, supplied, args));
@@ -4627,6 +4664,9 @@ public sealed class Checker(
             return annotation.Nullable ? EmType.Nullable(pairType) : pairType;
         }
 
+        if (annotation.AssocArguments is { Count: > 0 } bound)
+            return ResolveBoundTrait(annotation, bound);
+
         if (given is not null)
             Error(annotation.Name.Line,
                   $"{annotation.Name.Lexeme} does not take type arguments.",
@@ -4663,14 +4703,121 @@ public sealed class Checker(
     }
 
     /// <summary>
+    /// Refuses a call whose answer is still a name the annotation never said the meaning of.
+    /// <c>Iterable&lt;Item=Int&gt;</c> says what walking gives, so <c>each</c>, <c>map</c>,
+    /// <c>count</c> and <c>to_list</c> all read correctly through it — but <c>filter</c>
+    /// answers <c>Filtered</c>, and a <c>List</c>, a <c>Set</c> and a <c>Deck</c> disagree
+    /// about what that is. Refused by name rather than guessed at, because guessing here is
+    /// exactly the bug this design exists to prevent: a call checked as <c>List</c> and
+    /// evaluated as <c>Set</c>.
+    /// </summary>
+    private void CheckTraitAnswerIsKnown(EmType.Func resolved, EmType.BoundTrait asked, Token name)
+    {
+        if (FirstUnbound(resolved.Return) is not { } open) return;
+
+        Error(name.Line,
+              $"{name.Lexeme}'s answer depends on {open.Name}, which {asked.Show()} does not say.",
+              $"Different things answer {open.Name} differently — a Set narrows to a Set "
+              + $"where a List narrows to a List. Either say which you mean, as "
+              + $"{asked.Info.Name}<{open.Name}=...>, or take the concrete type instead of "
+              + "the trait.");
+    }
+
+    /// <summary>The first associated type left standing in a type, at any depth.</summary>
+    private static EmType.AssocType? FirstUnbound(EmType type) => type switch
+    {
+        EmType.AssocType a => a,
+        EmType.Maybe m => FirstUnbound(m.Inner),
+        EmType.Lst l => FirstUnbound(l.Element),
+        EmType.SetOf s => FirstUnbound(s.Element),
+        EmType.Dict d => FirstUnbound(d.Key) ?? FirstUnbound(d.Value),
+        EmType.PairOf p => FirstUnbound(p.First) ?? FirstUnbound(p.Second),
+        _ => null,
+    };
+
+    /// <summary>
+    /// The methods a receiver offers, for the two receivers that carry declared signatures:
+    /// a class, and a trait named as a type. Both substitute their associated types away
+    /// first, so a caller never meets a placeholder. Null for anything else — a built-in,
+    /// whose methods live in the return-type table rather than in a <see cref="ClassInfo"/>.
+    /// </summary>
+    private static List<EmType.Func>? TraitOrClassMethods(EmType receiver, string name) =>
+        receiver switch
+        {
+            EmType.Obj o => o.Info.ResolvedMethods(name),
+            EmType.BoundTrait b => b.Methods(name),
+            _ => null,
+        };
+
+    /// <summary>
+    /// <c>Iterable&lt;Item=Int&gt;</c> — a trait named as a type, with the answers a class
+    /// would otherwise have given. Every name is checked against what the trait actually
+    /// declares, so a typo is caught here rather than silently binding nothing and leaving
+    /// the requirement open.
+    /// </summary>
+    private EmType ResolveBoundTrait(TypeRef annotation, List<AssocArg> given)
+    {
+        var name = annotation.Name.Lexeme;
+
+        if (!_classes.TryGetValue(name, out var info))
+            return Unknown(annotation.Name.Line, name);
+
+        if (info.Kind != TypeKind.Trait)
+        {
+            Error(annotation.Name.Line,
+                  $"{name} is not a trait, so it has no associated types to answer.",
+                  $"Write {name} on its own. Only a trait declares a type with "
+                  + "`type Item`, and only those can be answered here.");
+            return new EmType.Obj(info);
+        }
+
+        Dictionary<string, EmType> bindings = [];
+
+        foreach (var arg in given)
+        {
+            if (!info.AssociatedTypeNames.Contains(arg.Name.Lexeme))
+            {
+                Error(arg.Name.Line,
+                      $"{name} has no associated type named {arg.Name.Lexeme}.",
+                      info.AssociatedTypeNames.Count == 0
+                          ? $"{name} declares none, so there is nothing to answer here."
+                          : "It declares "
+                            + string.Join(" and ", info.AssociatedTypeNames.OrderBy(n => n))
+                            + ".");
+                continue;
+            }
+
+            bindings[arg.Name.Lexeme] = Resolve(arg.Value);
+        }
+
+        // Deliberately no defaults here, which is the difference between declaring a type
+        // and describing a requirement. A class binding Item takes Filtered's default
+        // because it must end up with an answer for everything. A caller writing
+        // Iterable<Item=Int> is saying what it needs, and it does not need Filtered — so
+        // filling it in would refuse a Set, whose Filtered is a Set, over a question the
+        // caller never asked. What that costs is that filter cannot be called through this
+        // reference; CheckTraitAnswerIsKnown says so rather than guessing.
+        var trait = new EmType.BoundTrait(info, bindings);
+        return annotation.Nullable ? EmType.Nullable(trait) : trait;
+    }
+
+    /// <summary>
     /// <c>Item</c>, resolved against one type: a bare placeholder inside the trait that
     /// declared it, or whatever that same type has bound it to. Null for a name that is
     /// neither — an ordinary word the caller should keep looking for elsewhere.
     /// </summary>
-    private static EmType? AssocLookup(ClassInfo info, string name) =>
-        info.AssociatedTypeBindings.TryGetValue(name, out var bound) ? bound
-            : info.AssociatedTypeNames.Contains(name) ? new EmType.AssocType(info.Name, name)
-            : null;
+    private static EmType? AssocLookup(ClassInfo info, string name)
+    {
+        if (info.AssociatedTypeBindings.TryGetValue(name, out var bound)) return bound;
+
+        // Checked before any default, and the order is load-bearing. Inside the trait that
+        // declared the name it has to stay a placeholder even when a default exists, or the
+        // default would be baked into the stored signature and an implementer binding it to
+        // something else would have nothing left to substitute.
+        if (info.AssociatedTypeNames.Contains(name)) return new EmType.AssocType(info.Name, name);
+
+        return info.EffectiveBindings().TryGetValue(name, out var viaDefault) ? viaDefault : null;
+    }
 
     private EmType Unknown(int line, string name)
     {

@@ -1,0 +1,8 @@
+
+err_iterable_unbound_answer.em:10  filter's answer depends on Filtered, which Iterable<Item=Int> does not say.
+
+   10 |     return items.filter { n => n > 1 }.count()
+
+  Different things answer Filtered differently — a Set narrows to a Set where a List narrows to a List. Either say which you mean, as Iterable<Filtered=...>, or take the concrete type instead of the trait.
+
+  1 further error(s) suppressed — likely caused by this one.

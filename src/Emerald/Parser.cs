@@ -1176,11 +1176,28 @@ public sealed class Parser(
         //
         // Nesting works without special handling: List<List<Int>> closes with two
         // Greater tokens, since Emerald has no shift operators to confuse them with.
+        // Iterable<Item=Int> answers a trait's associated type where the trait is named,
+        // which is the only way a caller can say what one means — a class says it with
+        // `type Item = Int`, and a caller has no class to say it in. Told apart from a
+        // positional argument by one token of lookahead, since `Item=` cannot begin a type.
         List<TypeRef>? arguments = null;
+        List<AssocArg>? assocArguments = null;
         if (Match(TokenType.Less))
         {
-            arguments = [];
-            do { arguments.Add(ParseTypeRef()); } while (Match(TokenType.Comma));
+            do
+            {
+                if (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.Assign)
+                {
+                    var bound = Advance();
+                    Advance();
+                    (assocArguments ??= []).Add(new AssocArg(bound, ParseTypeRef()));
+                }
+                else
+                {
+                    (arguments ??= []).Add(ParseTypeRef());
+                }
+            } while (Match(TokenType.Comma));
+
             Consume(TokenType.Greater, $"Expected '>' to close {name.Lexeme}<...>.");
         }
 
@@ -1188,7 +1205,7 @@ public sealed class Parser(
         // arrives as its own token: Array<Int>?
         bool nullable = Match(TokenType.Question);
 
-        return new TypeRef(name, nullable, arguments);
+        return new TypeRef(name, nullable, arguments, null, assocArguments);
     }
 
     private List<Param> ParameterList()
