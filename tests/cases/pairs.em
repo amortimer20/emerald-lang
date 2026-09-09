@@ -25,9 +25,9 @@ for (who, mark) in scores {
 # The members that hand an element back work on a dictionary now. This was three
 # separate features waiting on one missing type.
 print(scores.to_list())
-print(scores.find { who, mark => mark < 90 })
+print(scores.find { (who, mark) => mark < 90 })
 
-var (top, highest) = scores.max_by { who, mark => mark }.must()
+var (top, highest) = scores.max_by { (who, mark) => mark }.must()
 print("top: #{top} #{highest}")
 
 # zip had nowhere to put what it joined

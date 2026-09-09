@@ -1,4 +1,5 @@
 <title>A Tour of Emerald</title>
+<link rel="help" href="reference.html" title="Language and API reference">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
@@ -306,6 +307,7 @@
   <p class="eyebrow">Emerald &middot; v0</p>
   <h1>A tour of Emerald</h1>
   <p class="lede">Emerald is meant to be a good first language and a good working one &mdash; the same language, not a teaching version of a real one. This walks through it a feature at a time, with a small program for each.</p>
+  <p><a href="reference.html">Looking something up? Open the language &amp; API reference &rarr;</a></p>
   <p class="verified"><b>Everything here was run.</b> Every program on this page was executed by the compiler, and every output shown is what it actually printed &mdash; including all the mistakes near the end.</p>
 </header>
 
@@ -549,6 +551,19 @@ ada, bo, cy
 true
 2</pre></div>
   </div>
+  <p>A dictionary hands a block one <em>entry</em> at a time, and <code class="inl">(name, age)</code> takes it apart into its two halves &mdash; the same shape as <code class="inl">for (key, value) in</code> above and <code class="inl">var (a, b) =</code> in &sect;9. Narrowing a dictionary gives back a dictionary; mapping it gives back a list.</p>
+  <div class="unit">
+    <pre class="code">ages.each { (name, age) => print("#{name} is #{age}") }
+
+print(ages.filter { (name, age) => age &gt; 10 }.count())
+print(ages.map { (name, age) => name }.join(", "))</pre>
+    <div class="out"><span class="lab">prints</span><pre>ada is 36
+bo is 8
+cy is 12
+2
+ada, bo, cy</pre></div>
+  </div>
+  <div class="aside"><p>Name one thing instead and you get the entry whole: <code class="inl">{ entry => entry.first() }</code>. The parentheses are the difference between one thing coming apart and two things arriving &mdash; which is why <code class="inl">each_with_index</code> still reads <code class="inl">{ (name, age), i => }</code>.</p></div>
   <p>Keys are not only text and numbers. A <code class="inl">struct</code> works too: it cannot be changed once built and it compares by its fields, so two made the same way are one key &mdash; which is what lets a position, a date or a pair of coordinates be the thing you look something up by.</p>
   <div class="unit">
     <pre class="code">struct Point {

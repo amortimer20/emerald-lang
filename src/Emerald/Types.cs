@@ -145,19 +145,11 @@ public abstract record EmType
         /// built the type for <c>to_list</c> and <c>find</c> — and a range walks whole
         /// numbers. Null for anything that walks nothing.
         /// </summary>
-        /// <remarks>
-        /// A dictionary is absent on purpose, and only for now. Its element genuinely is a
-        /// <c>Pair</c> — <c>to_list</c> and <c>find</c> have said so since §3.7 built the
-        /// type — but its blocks still take a key beside a value rather than one pair, so a
-        /// one-parameter <c>each</c> would hand a block the key while the checker called it
-        /// a <c>Pair</c>. Measured rather than assumed: it printed "checker says Pair,
-        /// runtime says String". Conformance waits for the block shape, since a conformance
-        /// that lies is worse than one that is missing.
-        /// </remarks>
         public static EmType? ElementOf(EmType value) => value switch
         {
             Lst l => l.Element,
             SetOf s => s.Element,
+            Dict d => new PairOf(d.Key, d.Value),
             Prim { Name: "Range" } => Int,
             _ => null,
         };
@@ -171,6 +163,7 @@ public abstract record EmType
         {
             Lst l => new Lst(l.Element),
             SetOf s => new SetOf(s.Element),
+            Dict d => new Dict(d.Key, d.Value),
             Prim { Name: "Range" } => new Lst(Int),
             _ => null,
         };

@@ -40,7 +40,13 @@ public sealed record TypeRef(Token Name, bool Nullable, List<TypeRef>? Arguments
 /// </summary>
 public sealed record AssocArg(Token Name, TypeRef Value);
 
-public sealed record Param(Token Name, TypeRef? Type, Expr? Default);
+/// <summary>
+/// <paramref name="Second"/> is set only on a block parameter written <c>(key, value)</c> —
+/// one parameter that comes apart, not two. It is the third place the pair destructure is
+/// wanted, after <c>var (name, score) =</c> and <c>for (key, value) in</c>, and the
+/// parentheses are what tell it from the genuinely-two-parameter <c>{ item, index => }</c>.
+/// </summary>
+public sealed record Param(Token Name, TypeRef? Type, Expr? Default, Token? Second = null);
 
 /// <summary>
 /// <c>@export</c>, <c>@name("Any")</c> — declarative, compiler-known, and generating no

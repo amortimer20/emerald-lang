@@ -48,7 +48,7 @@ print(none.max().or(-1))
 
 ## A block's parameter types come from the receiver, with nothing written down.
 print(["aa", "b"].filter { w => w.count() > 1 }.join(","))
-ages.each { k, v => print("#{k} is #{v}") }
+ages.each { (k, v) => print("#{k} is #{v}") }
 
 ## Math is a module, not a sprinkle on Float.
 print(Math.sqrt(16.0))

@@ -748,17 +748,29 @@ public static class Builtins
     private static object? Single(object? target, List<object?> row, string name) =>
         row.Count > 1 ? new EmPair(row[0], row[1]) : row[0];
 
+    /// <summary>
+    /// What a block is handed, which is always exactly one element. A dictionary yields a
+    /// key and a value internally — <see cref="Rebuild"/> still needs both to put one back
+    /// together — but hands the block the pair of them, so a dictionary's element is one
+    /// thing everywhere rather than two things going into a block and one thing coming out
+    /// of <c>find</c>. That is what <c>{ (key, value) =&gt; ... }</c> comes apart from, and
+    /// what let a dictionary satisfy <c>Iterable</c> at all: a one-parameter <c>each</c>
+    /// used to hand over the key while the checker called it a pair.
+    /// </summary>
+    private static List<object?> Hand(List<object?> row) =>
+        row.Count > 1 ? [new EmPair(row[0], row[1])] : row;
+
     private static object? SharedMethod(
         Interpreter interp, object? target, string name, List<object?> args)
     {
         var rows = Rows(target);
-        bool Test(List<object?> row) => Truthy(Block(args).Call(interp, row));
+        bool Test(List<object?> row) => Truthy(Block(args).Call(interp, Hand(row)));
 
         switch (name)
         {
             case "each":
             {
-                foreach (var row in rows) Block(args).Call(interp, row);
+                foreach (var row in rows) Block(args).Call(interp, Hand(row));
                 return null;
             }
 
@@ -768,7 +780,7 @@ public static class Builtins
             case "each_with_index":
             {
                 long at = 0;
-                foreach (var row in rows) Block(args).Call(interp, [.. row, at++]);
+                foreach (var row in rows) Block(args).Call(interp, [.. Hand(row), at++]);
                 return null;
             }
 
@@ -778,7 +790,7 @@ public static class Builtins
             case "min_by":
             case "max_by":
             {
-                var ranked = rows.Select(r => (Row: r, Key: Block(args).Call(interp, r)))
+                var ranked = rows.Select(r => (Row: r, Key: Block(args).Call(interp, Hand(r))))
                                  .ToList();
                 if (ranked.Count == 0) return null;
 
@@ -794,7 +806,7 @@ public static class Builtins
                 var grouped = new EmDict();
                 foreach (var row in rows)
                 {
-                    object key = Block(args).Call(interp, row)
+                    object key = Block(args).Call(interp, Hand(row))
                         ?? throw new RuntimeError("nothing cannot be a group.");
 
                     if (grouped.Get(key) is not EmList bucket)
@@ -805,7 +817,7 @@ public static class Builtins
                 return grouped;
             }
 
-            case "map": return new EmList([.. rows.Select(r => Block(args).Call(interp, r))]);
+            case "map": return new EmList([.. rows.Select(r => Block(args).Call(interp, Hand(r)))]);
             case "filter": return Rebuild(target, rows.Where(Test));
             case "reject": return Rebuild(target, rows.Where(r => !Test(r)));
 
@@ -819,7 +831,7 @@ public static class Builtins
 
             case "reduce":
                 return rows.Aggregate(
-                    args[0], (acc, row) => Block(args).Call(interp, [acc, .. row]));
+                    args[0], (acc, row) => Block(args).Call(interp, [acc, .. Hand(row)]));
 
             case "to_list": return new EmList([.. rows.Select(r => Single(target, r, "to_list"))]);
 

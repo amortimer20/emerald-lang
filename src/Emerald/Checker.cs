@@ -2942,6 +2942,14 @@ public sealed class Checker(
                 : shape is not null && i < shape.Params.Count ? shape.Params[i]
                 : paramHint ?? EmType.Any);
 
+            // `(key, value)` names one parameter's two halves, so the halves are what go
+            // into scope — never the pair itself, which has no name here to be reached by.
+            if (p.Second is { } second)
+            {
+                DeclarePairParts(inner, p, second, parameters[i]);
+                continue;
+            }
+
             inner.Declare(p.Name.Lexeme, parameters[i]);
         }
 
@@ -2972,6 +2980,40 @@ public sealed class Checker(
         // that nothing complained about, which is the silent nothing the row ruled out.
         return new EmType.Func(parameters,
                                ReturnsAValue(l.Body) ? wanted : EmType.Nothing);
+    }
+
+    /// <summary>
+    /// Puts <c>(key, value)</c>'s two names into scope with the pair's own halves. Refused
+    /// where what arrives is not a pair, since there would be nothing for the second name
+    /// to hold — and a name silently bound to nothing is exactly what §3.2's nullability
+    /// design exists to make impossible.
+    /// </summary>
+    private void DeclarePairParts(Scope inner, Param p, Token second, EmType arriving)
+    {
+        if (arriving.Stripped is EmType.PairOf pair)
+        {
+            inner.Declare(p.Name.Lexeme, pair.First);
+            inner.Declare(second.Lexeme, pair.Second);
+            return;
+        }
+
+        // Unknown means nothing was inferred rather than that something wrong was, so the
+        // two names simply stay open — the same silence an unannotated parameter gets.
+        if (arriving is EmType.Unknown)
+        {
+            inner.Declare(p.Name.Lexeme, EmType.Any);
+            inner.Declare(second.Lexeme, EmType.Any);
+            return;
+        }
+
+        Error(p.Name.Line,
+              $"({p.Name.Lexeme}, {second.Lexeme}) takes a pair apart, but this block is "
+              + $"handed {arriving.Show()}.",
+              "Only a dictionary hands over pairs. For anything else, name the one thing "
+              + $"it gives:  {{ {p.Name.Lexeme} => ... }}");
+
+        inner.Declare(p.Name.Lexeme, EmType.Any);
+        inner.Declare(second.Lexeme, EmType.Any);
     }
 
     /// <summary>
@@ -4240,8 +4282,14 @@ public sealed class Checker(
         // A dictionary's element is the pair of what it yields. Before Pair existed there
         // was no such type, and the members handing an element back were refused on a
         // dictionary outright.
-        bool inPairs = yields.Length > 1;
-        EmType element = inPairs ? new EmType.PairOf(yields[0], yields[1]) : yields[0];
+        EmType element = yields.Length > 1 ? new EmType.PairOf(yields[0], yields[1]) : yields[0];
+
+        // Whether the element is a pair, which is a property of the element and not of how
+        // many values arrive. It was a count until a dictionary started handing its block
+        // one pair rather than two values, at which point counting quietly stopped refusing
+        // min, max and sum on a dictionary. A list of pairs out of zip has the same problem
+        // and is now caught by the same line, which the count never reached.
+        bool inPairs = element is EmType.PairOf;
         EmType blockReturn = EmType.Any;
         EmType firstArg = EmType.Any;
 
@@ -4421,16 +4469,19 @@ public sealed class Checker(
                       + $"but this gives it {given[1].Show()}.",
                       Widening(dict.Value, given[1]));
 
-            // A dictionary hands its block a key beside a value, which is the shape its
-            // each has always had and now the shape map, filter and the rest inherit.
+            // A dictionary hands its block one pair, which `{ (key, value) => ... }` comes
+            // apart from. It used to hand over two separate values — nicer to write, and
+            // the reason a dictionary was the one place §3.7's uniformity stopped: its
+            // element was a pair coming out of find and to_list, and two things going into
+            // a block. One shape everywhere is what lets it satisfy Iterable.
             if (Builtins.Shared.Contains(name.Lexeme))
-                return IterableMemberType(dict, [dict.Key, dict.Value], name, call, scope);
+                return IterableMemberType(dict, [new EmType.PairOf(dict.Key, dict.Value)], name, call, scope);
 
             if (call.Trailing is not null) TypeOf(call.Trailing, scope);
         }
 
         if (Builtins.Shared.Contains(name.Lexeme))
-            return IterableMemberType(dict, [dict.Key, dict.Value], name, call, scope);
+            return IterableMemberType(dict, [new EmType.PairOf(dict.Key, dict.Value)], name, call, scope);
 
         return name.Lexeme switch
         {

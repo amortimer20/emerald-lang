@@ -19,7 +19,7 @@ print([3, 1, 2].to_set().take(2))
 
 # A dictionary hands over a key, a value, and then the index
 var ages = ["ada": 36, "alan": 41]
-ages.each_with_index { name, age, i => print("#{i} #{name} #{age}") }
+ages.each_with_index { (name, age), i => print("#{i} #{name} #{age}") }
 
 var xs = [1, 2, 4]
 xs.insert_at(2, 3)

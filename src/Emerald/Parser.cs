@@ -901,16 +901,35 @@ public sealed class Parser(
         Consume(TokenType.LeftBrace, "Expected '{' to open a lambda.");
         List<Param> parameters = [];
 
-        // { x => ... } and { x, y => ... }; a bare { ... } takes no parameters.
+        // { x => ... }, { x, y => ... } and { (k, v) => ... }; a bare { ... } takes none.
+        //
+        // The parenthesised form is one parameter coming apart rather than two arriving,
+        // which is the distinction that lets a dictionary hand over a single pair and still
+        // read as two names. Everything here is speculative and backtracks: a lambda body
+        // may perfectly well open with a parenthesised expression, and only the arrow at
+        // the end proves these were parameters at all.
         int save = _current;
-        if (Check(TokenType.Identifier))
+        if (Check(TokenType.Identifier) || Check(TokenType.LeftParen))
         {
             List<Param> candidate = [];
             bool ok = true;
             do
             {
-                if (!Check(TokenType.Identifier)) { ok = false; break; }
-                candidate.Add(new Param(Advance(), null, null));
+                if (Match(TokenType.LeftParen))
+                {
+                    if (!Check(TokenType.Identifier)) { ok = false; break; }
+                    var first = Advance();
+                    if (!Match(TokenType.Comma)) { ok = false; break; }
+                    if (!Check(TokenType.Identifier)) { ok = false; break; }
+                    var second = Advance();
+                    if (!Match(TokenType.RightParen)) { ok = false; break; }
+                    candidate.Add(new Param(first, null, null, second));
+                }
+                else if (Check(TokenType.Identifier))
+                {
+                    candidate.Add(new Param(Advance(), null, null));
+                }
+                else { ok = false; break; }
             }
             while (Match(TokenType.Comma));
 

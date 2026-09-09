@@ -18,9 +18,9 @@ var evens = set.filter { n => n % 2 == 0 }
 print(evens.union([9].to_set()))
 
 var scores = ["ada": 90, "grace": 95, "alan": 80]
-print(scores.map { name, score => "#{name}:#{score}" })
-print(scores.filter { name, score => score > 85 })
-print(scores.any? { name, score => score > 90 })
+print(scores.map { (name, score) => "#{name}:#{score}" })
+print(scores.filter { (name, score) => score > 85 })
+print(scores.any? { (name, score) => score > 90 })
 print(scores.count())
 
 # A range filtered is a list, because 1..10 without its odds is not a range

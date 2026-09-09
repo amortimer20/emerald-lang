@@ -33,5 +33,5 @@ for word in "the cat the hat the end".split(" ") {
     counts[word] = counts[word].or(0) + 1
 }
 
-counts.each { word, n => print("#{word}: #{n}") }
+counts.each { (word, n) => print("#{word}: #{n}") }
 print(counts)

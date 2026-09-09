@@ -2109,7 +2109,23 @@ public sealed class Interpreter
         {
             var scope = new Env(closure);
             for (int i = 0; i < node.Params.Count; i++)
-                scope.Declare(node.Params[i].Name.Lexeme, i < args.Count ? args[i] : null);
+            {
+                var param = node.Params[i];
+                object? given = i < args.Count ? args[i] : null;
+
+                // `(key, value)` is one parameter that comes apart, so the pair it was
+                // handed is unpacked into two names rather than bound to one. Anything
+                // that is not a pair leaves the second name holding nothing, which is what
+                // the checker has already refused — this only has to not crash.
+                if (param.Second is { } second)
+                {
+                    scope.Declare(param.Name.Lexeme, (given as EmPair)?.First);
+                    scope.Declare(second.Lexeme, (given as EmPair)?.Second);
+                    continue;
+                }
+
+                scope.Declare(param.Name.Lexeme, given);
+            }
 
             // A single-expression body is its own value; a block of statements produces
             // one only by saying `return`. The same shape as `if … then … else`, which

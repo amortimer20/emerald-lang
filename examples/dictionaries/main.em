@@ -44,7 +44,7 @@ for word in "the quick brown fox jumps over the lazy dog the end".split(" ") {
     counts[word] = counts[word].or(0) + 1
 }
 
-counts.each { word, times =>
+counts.each { (word, times) =>
     print("#{word} appears #{times} time(s)") if times > 1
 }
 
