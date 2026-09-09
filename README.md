@@ -8,6 +8,10 @@ decision in it.
 
 ## Getting started
 
+Open the [language and API reference](docs/reference.html) for searchable types,
+methods, and language examples. It works directly from disk. After language changes,
+refresh it with `node tools/reference.mjs` (or check freshness with `--check`).
+
 ```
 bash tools/install-cli.sh          # once — puts `emerald` on your PATH
 

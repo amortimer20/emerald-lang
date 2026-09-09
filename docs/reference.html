@@ -1,0 +1,2430 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>Emerald — Language & API reference</title><style>
+/* Emerald's documentation palette and typefaces, with an API-browser layout. */
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+:root{--ground:#FAFBF9;--surface:#F1F4F0;--ink:#16201B;--ink-soft:#3D4A44;--muted:#5F6C65;--rule:#DCE3DD;--accent:#0F7B5A;--wash:#E3F0EA;--sans:'IBM Plex Sans',system-ui,sans-serif;--serif:'Newsreader',Georgia,serif;--mono:'IBM Plex Mono',Consolas,monospace;color-scheme:light}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--ground:#101613;--surface:#18201C;--ink:#E4EAE5;--ink-soft:#C2CDC6;--muted:#94A29A;--rule:#28322C;--accent:#4FD1A0;--wash:#163026;color-scheme:dark}}
+:root[data-theme=dark]{--ground:#101613;--surface:#18201C;--ink:#E4EAE5;--ink-soft:#C2CDC6;--muted:#94A29A;--rule:#28322C;--accent:#4FD1A0;--wash:#163026;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--ground);color:var(--ink);font:16px/1.65 var(--sans)}a{color:var(--accent);text-underline-offset:4px}a:hover{text-decoration:underline}button,input{font:inherit}button{cursor:pointer}a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:4px}[hidden]{display:none!important}.skip{position:absolute;left:16px;top:-80px;background:var(--ground);padding:12px;z-index:5}.skip:focus{top:8px}.top{display:flex;justify-content:space-between;align-items:center;padding:22px 36px;border-bottom:1px solid var(--rule);gap:20px}.brand{font:500 26px var(--serif);color:var(--ink);text-decoration:none}.brand span{font:11px var(--mono);letter-spacing:.13em;margin-left:14px;color:var(--accent)}.top nav{display:flex;gap:24px;align-items:center;font-size:13px}.top nav a{text-decoration:none}.top button{border:1px solid var(--rule);border-radius:5px;padding:6px 10px;color:var(--ink-soft);background:var(--surface);font-size:12px}.layout{max-width:1440px;margin:auto;display:grid;grid-template-columns:268px minmax(0,1fr)}aside{position:sticky;top:0;height:100vh;overflow:auto;padding:28px 24px;border-right:1px solid var(--rule)}aside label{font-size:13px;font-weight:600}input{display:block;width:100%;margin-top:8px;border:1px solid var(--rule);border-radius:5px;background:var(--ground);color:var(--ink);padding:10px;font-size:14px}.hint,.meta,.source{font-size:12px;color:var(--muted)}.hint{margin:7px 0 26px}aside nav a{display:block;padding:4px 8px;text-decoration:none;font-size:13px;color:var(--ink-soft);border-radius:4px}aside nav a:hover,aside nav a[aria-current]{background:var(--wash);color:var(--accent)}aside h2{font:600 10px var(--sans);text-transform:uppercase;letter-spacing:.14em;color:var(--accent);margin:26px 8px 10px}main{min-width:0;padding:50px 6vw 70px;max-width:1100px}.eyebrow{font:11px var(--mono);letter-spacing:.14em;color:var(--accent)}h1{font:500 clamp(36px,4vw,58px)/1.1 var(--serif);letter-spacing:-.025em;margin:22px 0}.lede{font:22px/1.5 var(--serif);color:var(--ink-soft)}.welcome{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:30px 0}.welcome a{display:flex;flex-direction:column;padding:20px;background:var(--surface);border:1px solid var(--rule);border-radius:6px;text-decoration:none}.welcome span{color:var(--muted);font-size:13px;margin-top:8px}section{scroll-margin-top:24px}section>h2{font:500 34px var(--serif);margin:48px 0 10px}.api-group{border-top:1px solid var(--rule);margin-top:40px}.api-group>p{color:var(--ink-soft)}.entry{padding:20px 0;border-bottom:1px solid var(--rule);scroll-margin-top:20px}.entry:target{background:var(--wash);box-shadow:-12px 0 var(--wash),12px 0 var(--wash)}h3{font:500 14px/1.6 var(--mono);overflow-wrap:anywhere;margin:0 0 8px}h3 a{text-decoration:none}.entry p{font-size:14px;margin:8px 0}.source{text-decoration:none}.language-topic{padding-top:12px;margin-top:40px;border-top:1px solid var(--rule)}pre{background:var(--surface);border:1px solid var(--rule);border-radius:5px;padding:20px;overflow:auto;font:13px/1.8 var(--mono)}code{font-family:var(--mono);font-size:.88em}pre code{font-size:inherit}.k,.t{color:var(--accent)}.s{color:var(--accent)}.c{color:var(--muted)}.callout,.note{background:var(--wash);padding:14px 18px;border-left:2px solid var(--accent)}table{border-collapse:collapse;display:block;overflow:auto}td,th{padding:8px 12px;border-bottom:1px solid var(--rule);text-align:left}footer{margin-top:60px;border-top:1px solid var(--rule);padding-top:24px;font-size:12px;color:var(--muted)}#results{color:var(--muted);font-size:13px}
+@media(max-width:760px){.top{padding:16px;flex-wrap:wrap}.top nav{gap:16px;flex-wrap:wrap}.layout{display:block}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--rule);padding:18px}aside nav{max-height:180px;overflow:auto;columns:2}aside nav h2{break-after:avoid}aside .hint{margin-bottom:12px}main{padding:26px 20px}.welcome{grid-template-columns:1fr}h1{font-size:40px}}
+@media print{aside,.top button,#results{display:none}.layout{display:block}main{max-width:none;padding:0}.entry,.language-topic{break-inside:avoid}}
+
+</style></head>
+<body><a class="skip" href="#main">Skip to reference</a><header class="top"><a class="brand" href="reference.html">◇ Emerald <span>REFERENCE</span></a><nav aria-label="Documentation"><a href="tour.html">Tour</a><a href="design.html">Design</a><a href="cil-mapping.html">CIL mapping</a><button id="theme" type="button">Toggle theme</button></nav></header>
+<div class="layout"><aside><label for="search">Search the reference</label><input id="search" type="search" placeholder="String, filter, traits…" autocomplete="off"><p class="hint">Press / to search · Esc to clear</p><nav aria-label="Reference index"><a href="#overview">Overview</a><h2>Types</h2><a href="#Bool">Bool</a><a href="#Dictionary">Dictionary</a><a href="#Error">Error</a><a href="#Every-value">Every value</a><a href="#Float">Float</a><a href="#Int">Int</a><a href="#Kernel">Kernel</a><a href="#List">List</a><a href="#Math">Math</a><a href="#Pair">Pair</a><a href="#Range">Range</a><a href="#Set">Set</a><a href="#String">String</a><h2>Contracts</h2><a href="#Addable">Addable</a><a href="#Dividable">Dividable</a><a href="#Equatable">Equatable</a><a href="#Indexable">Indexable</a><a href="#Iterable">Iterable</a><a href="#Multipliable">Multipliable</a><a href="#Ordered">Ordered</a><a href="#Subtractable">Subtractable</a><h2>Language</h2><a href="#language-s01">Hello</a><a href="#language-s02">Variables</a><a href="#language-s03">Numbers, text, and yes-or-no</a><a href="#language-s04">Putting values into text</a><a href="#language-s05">Choosing</a><a href="#language-s06">Repeating</a><a href="#language-s07">Lists</a><a href="#language-s08">Dictionaries</a><a href="#language-s09">Sets</a><a href="#language-s10">Functions</a><a href="#language-s11">Blocks</a><a href="#language-s12">Functions are values</a><a href="#language-s13">Values that might not be there</a><a href="#language-s14">Reaching through a chain</a><a href="#language-s15">Classes</a><a href="#language-s16">A class without the braces</a><a href="#language-s17">Properties, shared values, and private names</a><a href="#language-s18">Building on another class</a><a href="#language-s19">Traits</a><a href="#language-s20">Operators on your own types</a><a href="#language-s21">Square brackets on your own types</a><a href="#language-s22">Structs</a><a href="#language-s23">Enums</a><a href="#language-s24">When something goes wrong on purpose</a><a href="#language-s25">Tests</a><a href="#language-s26">What the compiler says when you get it wrong</a><a href="#language-s27">The tools</a></nav></aside>
+<main id="main"><section id="overview"><p class="eyebrow">EMERALD / LOCAL DOCUMENTATION</p><h1>A small language.<br>A reference close at hand.</h1><p class="lede">Look up a method, explore a type, or find the syntax you need.</p><div class="welcome"><a href="#String"><strong>Core API ↗</strong><span>201 entries across 21 types and contracts</span></a><a href="#language-s01"><strong>Language reference ↗</strong><span>Examples and explanations from the tour</span></a></div><p class="meta">Generated from the current source and tour. This is an experimental API: collection entries with dependent signatures link to their implementation. Open this file directly; no server is needed.</p></section>
+<p id="results" role="status" aria-live="polite"></p><p id="empty" hidden>No matches. Try a type name such as String or a method such as map.</p><section class="api-group" id="Addable"><h2>Addable</h2><p>A built-in contract declared in Emerald source.</p><article class="entry" id="Addable-add" data-search="addable add adds an item to this collection."><h3><a href="#Addable-add">add(other)</a></h3><p>Adds an item to this collection.</p><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article></section><section class="api-group" id="Bool"><h2>Bool</h2><p>The values true and false. Conditions and predicate blocks require Bool.</p><article class="entry" id="Bool-to_string" data-search="bool to_string returns a text representation."><h3><a href="#Bool-to_string">to_string(): String</a></h3><p>Returns a text representation.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article></section><section class="api-group" id="Dictionary"><h2>Dictionary</h2><p>A mutable mapping from keys to values. See the dictionary examples for iteration and entry handling.</p><article class="entry" id="Dictionary-all-predicate" data-search="dictionary all? tests whether every item matches a bool-returning block."><h3><a href="#Dictionary-all-predicate">all? { … }: Bool</a></h3><p>Tests whether every item matches a Bool-returning block.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-any-predicate" data-search="dictionary any? tests whether at least one item matches a bool-returning block."><h3><a href="#Dictionary-any-predicate">any? { … }: Bool</a></h3><p>Tests whether at least one item matches a Bool-returning block.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-clear" data-search="dictionary clear removes all entries from this collection."><h3><a href="#Dictionary-clear">clear(): Nothing</a></h3><p>Removes all entries from this collection.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-count" data-search="dictionary count returns the number of items; strings count graphemes."><h3><a href="#Dictionary-count">count(): Int</a></h3><p>Returns the number of items; strings count graphemes.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-drop" data-search="dictionary drop skips the requested initial items."><h3><a href="#Dictionary-drop">drop</a></h3><p>Skips the requested initial items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-each" data-search="dictionary each calls the block for each item."><h3><a href="#Dictionary-each">each { … }: Nothing</a></h3><p>Calls the block for each item.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-each_with_index" data-search="dictionary each_with_index visits items with their index."><h3><a href="#Dictionary-each_with_index">each_with_index</a></h3><p>Visits items with their index.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-empty-predicate" data-search="dictionary empty? tests whether there are no items."><h3><a href="#Dictionary-empty-predicate">empty?(): Bool</a></h3><p>Tests whether there are no items.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-filter" data-search="dictionary filter keeps items for which the block returns true."><h3><a href="#Dictionary-filter">filter</a></h3><p>Keeps items for which the block returns true.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-find" data-search="dictionary find returns the first matching item, or nothing. a matching nothing is indistinguishable from no match."><h3><a href="#Dictionary-find">find</a></h3><p>Returns the first matching item, or nothing. A matching nothing is indistinguishable from no match.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-get" data-search="dictionary get "><h3><a href="#Dictionary-get">get(K): V?</a></h3><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-group_by" data-search="dictionary group_by groups items using keys returned by a block."><h3><a href="#Dictionary-group_by">group_by</a></h3><p>Groups items using keys returned by a block.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-has_key-predicate" data-search="dictionary has_key? tests whether a dictionary contains a key."><h3><a href="#Dictionary-has_key-predicate">has_key?(K): Bool</a></h3><p>Tests whether a dictionary contains a key.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-has_value-predicate" data-search="dictionary has_value? tests whether a dictionary contains an equal value."><h3><a href="#Dictionary-has_value-predicate">has_value?(V): Bool</a></h3><p>Tests whether a dictionary contains an equal value.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-keys" data-search="dictionary keys returns the dictionary keys in a list."><h3><a href="#Dictionary-keys">keys(): List&lt;K&gt;</a></h3><p>Returns the dictionary keys in a list.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-map" data-search="dictionary map collects the results of the block in a new list."><h3><a href="#Dictionary-map">map</a></h3><p>Collects the results of the block in a new list.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-max_by" data-search="dictionary max_by selects an item by its greatest block result."><h3><a href="#Dictionary-max_by">max_by</a></h3><p>Selects an item by its greatest block result.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-min_by" data-search="dictionary min_by selects an item by its least block result."><h3><a href="#Dictionary-min_by">min_by</a></h3><p>Selects an item by its least block result.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-reduce" data-search="dictionary reduce combines items using an accumulator and a block."><h3><a href="#Dictionary-reduce">reduce</a></h3><p>Combines items using an accumulator and a block.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-reject" data-search="dictionary reject keeps items for which the block returns false."><h3><a href="#Dictionary-reject">reject</a></h3><p>Keeps items for which the block returns false.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-remove" data-search="dictionary remove removes the requested item or key."><h3><a href="#Dictionary-remove">remove</a></h3><p>Removes the requested item or key.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-set" data-search="dictionary set "><h3><a href="#Dictionary-set">set(K, V): Nothing</a></h3><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-take" data-search="dictionary take keeps the requested initial items."><h3><a href="#Dictionary-take">take</a></h3><p>Keeps the requested initial items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-to_list" data-search="dictionary to_list collects items in a list."><h3><a href="#Dictionary-to_list">to_list</a></h3><p>Collects items in a list.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Dictionary-values" data-search="dictionary values returns the dictionary values in a list."><h3><a href="#Dictionary-values">values(): List&lt;V&gt;</a></h3><p>Returns the dictionary values in a list.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article></section><section class="api-group" id="Dividable"><h2>Dividable</h2><p>A built-in contract declared in Emerald source.</p><article class="entry" id="Dividable-divide" data-search="dividable divide "><h3><a href="#Dividable-divide">divide(other)</a></h3><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article></section><section class="api-group" id="Equatable"><h2>Equatable</h2><p>A built-in contract declared in Emerald source.</p><article class="entry" id="Equatable-equals-predicate" data-search="equatable equals? "><h3><a href="#Equatable-equals-predicate">equals?(other): Bool</a></h3><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article></section><section class="api-group" id="Error"><h2>Error</h2><p>A built-in contract declared in Emerald source.</p><article class="entry" id="Error-to_string" data-search="error to_string returns a text representation."><h3><a href="#Error-to_string">to_string(): String</a></h3><p>Returns a text representation.</p><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article></section><section class="api-group" id="Every-value"><h2>Every value</h2><p>Methods available on every Emerald value.</p><article class="entry" id="Every-value-type_name" data-search="every value type_name returns the runtime type name."><h3><a href="#Every-value-type_name">type_name(): String</a></h3><p>Returns the runtime type name.</p><a class="source" href="../src/Emerald/Builtins.cs">Source · Builtins.cs</a></article></section><section class="api-group" id="Float"><h2>Float</h2><p>Floating-point numbers, including infinity and NaN.</p><article class="entry" id="Float-abs" data-search="float abs "><h3><a href="#Float-abs">abs(): Float</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-ceil" data-search="float ceil rounds up to an integer."><h3><a href="#Float-ceil">ceil(): Int</a></h3><p>Rounds up to an integer.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-floor" data-search="float floor rounds down to an integer."><h3><a href="#Float-floor">floor(): Int</a></h3><p>Rounds down to an integer.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-infinite-predicate" data-search="float infinite? "><h3><a href="#Float-infinite-predicate">infinite?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-nan-predicate" data-search="float nan? tests for nan; comparing a nan with itself using == returns false."><h3><a href="#Float-nan-predicate">nan?(): Bool</a></h3><p>Tests for NaN; comparing a NaN with itself using == returns false.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-negative-predicate" data-search="float negative? "><h3><a href="#Float-negative-predicate">negative?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-positive-predicate" data-search="float positive? "><h3><a href="#Float-positive-predicate">positive?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-round" data-search="float round rounds to an integer; midpoints round away from zero."><h3><a href="#Float-round">round(): Int</a></h3><p>Rounds to an integer; midpoints round away from zero.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-round_to" data-search="float round_to "><h3><a href="#Float-round_to">round_to(Int): Float</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-to_int" data-search="float to_int "><h3><a href="#Float-to_int">to_int(): Int</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-to_string" data-search="float to_string returns a text representation."><h3><a href="#Float-to_string">to_string(): String</a></h3><p>Returns a text representation.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Float-zero-predicate" data-search="float zero? "><h3><a href="#Float-zero-predicate">zero?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article></section><section class="api-group" id="Indexable"><h2>Indexable</h2><p>A built-in contract declared in Emerald source.</p><article class="entry" id="Indexable-at" data-search="indexable at "><h3><a href="#Indexable-at">at(index)</a></h3><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article></section><section class="api-group" id="Int"><h2>Int</h2><p>Whole numbers. Arithmetic is checked for overflow.</p><article class="entry" id="Int-abs" data-search="int abs "><h3><a href="#Int-abs">abs(): Int</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-between-predicate" data-search="int between? "><h3><a href="#Int-between-predicate">between?(Int, Int): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-clamp" data-search="int clamp "><h3><a href="#Int-clamp">clamp(Int, Int): Int</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-digits" data-search="int digits "><h3><a href="#Int-digits">digits(): List&lt;Int&gt;</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-downto" data-search="int downto "><h3><a href="#Int-downto">downto(Int) { … }: Nothing</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-even-predicate" data-search="int even? "><h3><a href="#Int-even-predicate">even?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-gcd" data-search="int gcd "><h3><a href="#Int-gcd">gcd(Int): Int</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-lcm" data-search="int lcm "><h3><a href="#Int-lcm">lcm(Int): Int</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-negative-predicate" data-search="int negative? "><h3><a href="#Int-negative-predicate">negative?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-odd-predicate" data-search="int odd? "><h3><a href="#Int-odd-predicate">odd?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-positive-predicate" data-search="int positive? "><h3><a href="#Int-positive-predicate">positive?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-times" data-search="int times "><h3><a href="#Int-times">times() { … }: Nothing</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-to_float" data-search="int to_float "><h3><a href="#Int-to_float">to_float(): Float</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-to_string" data-search="int to_string returns a text representation."><h3><a href="#Int-to_string">to_string(): String</a></h3><p>Returns a text representation.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-upto" data-search="int upto "><h3><a href="#Int-upto">upto(Int) { … }: Nothing</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Int-zero-predicate" data-search="int zero? "><h3><a href="#Int-zero-predicate">zero?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article></section><section class="api-group" id="Iterable"><h2>Iterable</h2><p>Iteration through each, with associated types and default methods. See the source for the current trait contract.</p><article class="entry" id="Iterable-contains-predicate" data-search="iterable contains? tests membership."><h3><a href="#Iterable-contains-predicate">contains?(target: Item): Bool</a></h3><p>Tests membership.</p><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article><article class="entry" id="Iterable-count" data-search="iterable count returns the number of items; strings count graphemes."><h3><a href="#Iterable-count">count(): Int</a></h3><p>Returns the number of items; strings count graphemes.</p><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article><article class="entry" id="Iterable-each" data-search="iterable each calls the block for each item."><h3><a href="#Iterable-each">each(step: func(Item))</a></h3><p>Calls the block for each item.</p><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article><article class="entry" id="Iterable-filter" data-search="iterable filter keeps items for which the block returns true."><h3><a href="#Iterable-filter">filter(keep: func(Item): Bool): Filtered</a></h3><p>Keeps items for which the block returns true.</p><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article><article class="entry" id="Iterable-find" data-search="iterable find returns the first matching item, or nothing. a matching nothing is indistinguishable from no match."><h3><a href="#Iterable-find">find(matches: func(Item): Bool): Item?</a></h3><p>Returns the first matching item, or nothing. A matching nothing is indistinguishable from no match.</p><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article><article class="entry" id="Iterable-map" data-search="iterable map collects the results of the block in a new list."><h3><a href="#Iterable-map">map&lt;R&gt;(f: func(Item): R): List&lt;R&gt;</a></h3><p>Collects the results of the block in a new list.</p><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article><article class="entry" id="Iterable-to_list" data-search="iterable to_list collects items in a list."><h3><a href="#Iterable-to_list">to_list(): List&lt;Item&gt;</a></h3><p>Collects items in a list.</p><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article></section><section class="api-group" id="Kernel"><h2>Kernel</h2><p>Everyday functions available by name, or through Kernel.</p><article class="entry" id="Kernel-exit" data-search="kernel exit "><h3><a href="#Kernel-exit">exit(Int (optional)): Nothing</a></h3><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Kernel-print" data-search="kernel print "><h3><a href="#Kernel-print">print(value (optional)): Nothing</a></h3><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Kernel-random" data-search="kernel random "><h3><a href="#Kernel-random">random(Int, Int): Int</a></h3><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Kernel-read_line" data-search="kernel read_line "><h3><a href="#Kernel-read_line">read_line(value (optional)): String</a></h3><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article></section><section class="api-group" id="List"><h2>List</h2><p>An ordered, mutable collection. Write List&lt;Int&gt; for a list of integers.</p><article class="entry" id="List-add" data-search="list add adds an item to this collection."><h3><a href="#List-add">add</a></h3><p>Adds an item to this collection.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-all-predicate" data-search="list all? tests whether every item matches a bool-returning block."><h3><a href="#List-all-predicate">all? { … }: Bool</a></h3><p>Tests whether every item matches a Bool-returning block.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-any-predicate" data-search="list any? tests whether at least one item matches a bool-returning block."><h3><a href="#List-any-predicate">any? { … }: Bool</a></h3><p>Tests whether at least one item matches a Bool-returning block.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-clear" data-search="list clear removes all entries from this collection."><h3><a href="#List-clear">clear(): Nothing</a></h3><p>Removes all entries from this collection.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-contains-predicate" data-search="list contains? tests membership."><h3><a href="#List-contains-predicate">contains?(T): Bool</a></h3><p>Tests membership.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-count" data-search="list count returns the number of items; strings count graphemes."><h3><a href="#List-count">count(): Int</a></h3><p>Returns the number of items; strings count graphemes.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-drop" data-search="list drop skips the requested initial items."><h3><a href="#List-drop">drop</a></h3><p>Skips the requested initial items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-each" data-search="list each calls the block for each item."><h3><a href="#List-each">each { … }: Nothing</a></h3><p>Calls the block for each item.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-each_with_index" data-search="list each_with_index visits items with their index."><h3><a href="#List-each_with_index">each_with_index</a></h3><p>Visits items with their index.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-empty-predicate" data-search="list empty? tests whether there are no items."><h3><a href="#List-empty-predicate">empty?(): Bool</a></h3><p>Tests whether there are no items.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-filter" data-search="list filter keeps items for which the block returns true."><h3><a href="#List-filter">filter</a></h3><p>Keeps items for which the block returns true.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-find" data-search="list find returns the first matching item, or nothing. a matching nothing is indistinguishable from no match."><h3><a href="#List-find">find</a></h3><p>Returns the first matching item, or nothing. A matching nothing is indistinguishable from no match.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-first" data-search="list first returns the first item."><h3><a href="#List-first">first</a></h3><p>Returns the first item.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-group_by" data-search="list group_by groups items using keys returned by a block."><h3><a href="#List-group_by">group_by</a></h3><p>Groups items using keys returned by a block.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-index_of" data-search="list index_of returns the first matching index, or -1."><h3><a href="#List-index_of">index_of</a></h3><p>Returns the first matching index, or -1.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-insert_at" data-search="list insert_at "><h3><a href="#List-insert_at">insert_at</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-join" data-search="list join joins the text of the items, with an optional separator."><h3><a href="#List-join">join</a></h3><p>Joins the text of the items, with an optional separator.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-last" data-search="list last returns the last item."><h3><a href="#List-last">last</a></h3><p>Returns the last item.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-map" data-search="list map collects the results of the block in a new list."><h3><a href="#List-map">map</a></h3><p>Collects the results of the block in a new list.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-max" data-search="list max returns the greatest value."><h3><a href="#List-max">max</a></h3><p>Returns the greatest value.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-max_by" data-search="list max_by selects an item by its greatest block result."><h3><a href="#List-max_by">max_by</a></h3><p>Selects an item by its greatest block result.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-min" data-search="list min returns the least value."><h3><a href="#List-min">min</a></h3><p>Returns the least value.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-min_by" data-search="list min_by selects an item by its least block result."><h3><a href="#List-min_by">min_by</a></h3><p>Selects an item by its least block result.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-reduce" data-search="list reduce combines items using an accumulator and a block."><h3><a href="#List-reduce">reduce</a></h3><p>Combines items using an accumulator and a block.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-reject" data-search="list reject keeps items for which the block returns false."><h3><a href="#List-reject">reject</a></h3><p>Keeps items for which the block returns false.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-remove" data-search="list remove removes the requested item or key."><h3><a href="#List-remove">remove</a></h3><p>Removes the requested item or key.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-remove_at" data-search="list remove_at "><h3><a href="#List-remove_at">remove_at</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-reverse" data-search="list reverse returns a reversed copy."><h3><a href="#List-reverse">reverse</a></h3><p>Returns a reversed copy.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-sort" data-search="list sort returns a sorted copy. text uses ordinal ordering."><h3><a href="#List-sort">sort</a></h3><p>Returns a sorted copy. Text uses ordinal ordering.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-sort_by" data-search="list sort_by returns a copy ordered by the block results."><h3><a href="#List-sort_by">sort_by</a></h3><p>Returns a copy ordered by the block results.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-sum" data-search="list sum adds the items."><h3><a href="#List-sum">sum</a></h3><p>Adds the items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-take" data-search="list take keeps the requested initial items."><h3><a href="#List-take">take</a></h3><p>Keeps the requested initial items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-to_list" data-search="list to_list collects items in a list."><h3><a href="#List-to_list">to_list(): List&lt;T&gt;</a></h3><p>Collects items in a list.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-to_set" data-search="list to_set "><h3><a href="#List-to_set">to_set</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="List-zip" data-search="list zip "><h3><a href="#List-zip">zip</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article></section><section class="api-group" id="Math"><h2>Math</h2><p>Numeric helpers called through the Math module.</p><article class="entry" id="Math-e" data-search="math e "><h3><a href="#Math-e">e(): Float</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Math-max" data-search="math max returns the greatest value."><h3><a href="#Math-max">max(inferred, inferred): inferred</a></h3><p>Returns the greatest value.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Math-min" data-search="math min returns the least value."><h3><a href="#Math-min">min(inferred, inferred): inferred</a></h3><p>Returns the least value.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Math-pi" data-search="math pi "><h3><a href="#Math-pi">pi(): Float</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Math-pow" data-search="math pow "><h3><a href="#Math-pow">pow(Float, Float): Float</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Math-sqrt" data-search="math sqrt "><h3><a href="#Math-sqrt">sqrt(Float): Float</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article></section><section class="api-group" id="Multipliable"><h2>Multipliable</h2><p>A built-in contract declared in Emerald source.</p><article class="entry" id="Multipliable-multiply" data-search="multipliable multiply "><h3><a href="#Multipliable-multiply">multiply(other)</a></h3><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article></section><section class="api-group" id="Ordered"><h2>Ordered</h2><p>A built-in contract declared in Emerald source.</p><article class="entry" id="Ordered-compare" data-search="ordered compare "><h3><a href="#Ordered-compare">compare(other): Int</a></h3><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article></section><section class="api-group" id="Pair"><h2>Pair</h2><p>Two values held together, written Pair(first, second).</p><article class="entry" id="Pair-first" data-search="pair first returns the first component."><h3><a href="#Pair-first">first()</a></h3><p>Returns the first component.</p><a class="source" href="../src/Emerald/Builtins.cs">Source · Builtins.cs</a></article><article class="entry" id="Pair-second" data-search="pair second returns the second component."><h3><a href="#Pair-second">second()</a></h3><p>Returns the second component.</p><a class="source" href="../src/Emerald/Builtins.cs">Source · Builtins.cs</a></article></section><section class="api-group" id="Range"><h2>Range</h2><p>An inclusive ascending range of integers, written 1..5.</p><article class="entry" id="Range-all-predicate" data-search="range all? tests whether every item matches a bool-returning block."><h3><a href="#Range-all-predicate">all? { … }: Bool</a></h3><p>Tests whether every item matches a Bool-returning block.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-any-predicate" data-search="range any? tests whether at least one item matches a bool-returning block."><h3><a href="#Range-any-predicate">any? { … }: Bool</a></h3><p>Tests whether at least one item matches a Bool-returning block.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-contains-predicate" data-search="range contains? tests membership."><h3><a href="#Range-contains-predicate">contains?(Int): Bool</a></h3><p>Tests membership.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Range-count" data-search="range count returns the number of items; strings count graphemes."><h3><a href="#Range-count">count(): Int</a></h3><p>Returns the number of items; strings count graphemes.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Range-drop" data-search="range drop skips the requested initial items."><h3><a href="#Range-drop">drop</a></h3><p>Skips the requested initial items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-each" data-search="range each calls the block for each item."><h3><a href="#Range-each">each() { … }: Nothing</a></h3><p>Calls the block for each item.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Range-each_with_index" data-search="range each_with_index visits items with their index."><h3><a href="#Range-each_with_index">each_with_index</a></h3><p>Visits items with their index.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-empty-predicate" data-search="range empty? tests whether there are no items."><h3><a href="#Range-empty-predicate">empty?(): Bool</a></h3><p>Tests whether there are no items.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-filter" data-search="range filter keeps items for which the block returns true."><h3><a href="#Range-filter">filter</a></h3><p>Keeps items for which the block returns true.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-find" data-search="range find returns the first matching item, or nothing. a matching nothing is indistinguishable from no match."><h3><a href="#Range-find">find</a></h3><p>Returns the first matching item, or nothing. A matching nothing is indistinguishable from no match.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-first" data-search="range first returns the first item."><h3><a href="#Range-first">first(): Int</a></h3><p>Returns the first item.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Range-group_by" data-search="range group_by groups items using keys returned by a block."><h3><a href="#Range-group_by">group_by</a></h3><p>Groups items using keys returned by a block.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-last" data-search="range last returns the last item."><h3><a href="#Range-last">last(): Int</a></h3><p>Returns the last item.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="Range-map" data-search="range map collects the results of the block in a new list."><h3><a href="#Range-map">map</a></h3><p>Collects the results of the block in a new list.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-max" data-search="range max returns the greatest value."><h3><a href="#Range-max">max</a></h3><p>Returns the greatest value.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-max_by" data-search="range max_by selects an item by its greatest block result."><h3><a href="#Range-max_by">max_by</a></h3><p>Selects an item by its greatest block result.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-min" data-search="range min returns the least value."><h3><a href="#Range-min">min</a></h3><p>Returns the least value.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-min_by" data-search="range min_by selects an item by its least block result."><h3><a href="#Range-min_by">min_by</a></h3><p>Selects an item by its least block result.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-reduce" data-search="range reduce combines items using an accumulator and a block."><h3><a href="#Range-reduce">reduce</a></h3><p>Combines items using an accumulator and a block.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-reject" data-search="range reject keeps items for which the block returns false."><h3><a href="#Range-reject">reject</a></h3><p>Keeps items for which the block returns false.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-sum" data-search="range sum adds the items."><h3><a href="#Range-sum">sum</a></h3><p>Adds the items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-take" data-search="range take keeps the requested initial items."><h3><a href="#Range-take">take</a></h3><p>Keeps the requested initial items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Range-to_list" data-search="range to_list collects items in a list."><h3><a href="#Range-to_list">to_list(): List&lt;Int&gt;</a></h3><p>Collects items in a list.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article></section><section class="api-group" id="Set"><h2>Set</h2><p>A mutable collection of distinct members. Membership uses key equality.</p><article class="entry" id="Set-add" data-search="set add adds an item to this collection."><h3><a href="#Set-add">add</a></h3><p>Adds an item to this collection.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-all-predicate" data-search="set all? tests whether every item matches a bool-returning block."><h3><a href="#Set-all-predicate">all? { … }: Bool</a></h3><p>Tests whether every item matches a Bool-returning block.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-any-predicate" data-search="set any? tests whether at least one item matches a bool-returning block."><h3><a href="#Set-any-predicate">any? { … }: Bool</a></h3><p>Tests whether at least one item matches a Bool-returning block.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-clear" data-search="set clear removes all entries from this collection."><h3><a href="#Set-clear">clear(): Nothing</a></h3><p>Removes all entries from this collection.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-contains-predicate" data-search="set contains? tests membership."><h3><a href="#Set-contains-predicate">contains?(T): Bool</a></h3><p>Tests membership.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-count" data-search="set count returns the number of items; strings count graphemes."><h3><a href="#Set-count">count(): Int</a></h3><p>Returns the number of items; strings count graphemes.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-difference" data-search="set difference "><h3><a href="#Set-difference">difference</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-disjoint-predicate" data-search="set disjoint? "><h3><a href="#Set-disjoint-predicate">disjoint?</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-drop" data-search="set drop skips the requested initial items."><h3><a href="#Set-drop">drop</a></h3><p>Skips the requested initial items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-each" data-search="set each calls the block for each item."><h3><a href="#Set-each">each { … }: Nothing</a></h3><p>Calls the block for each item.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-each_with_index" data-search="set each_with_index visits items with their index."><h3><a href="#Set-each_with_index">each_with_index</a></h3><p>Visits items with their index.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-empty-predicate" data-search="set empty? tests whether there are no items."><h3><a href="#Set-empty-predicate">empty?(): Bool</a></h3><p>Tests whether there are no items.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-filter" data-search="set filter keeps items for which the block returns true."><h3><a href="#Set-filter">filter</a></h3><p>Keeps items for which the block returns true.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-find" data-search="set find returns the first matching item, or nothing. a matching nothing is indistinguishable from no match."><h3><a href="#Set-find">find</a></h3><p>Returns the first matching item, or nothing. A matching nothing is indistinguishable from no match.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-group_by" data-search="set group_by groups items using keys returned by a block."><h3><a href="#Set-group_by">group_by</a></h3><p>Groups items using keys returned by a block.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-intersect" data-search="set intersect "><h3><a href="#Set-intersect">intersect</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-map" data-search="set map collects the results of the block in a new list."><h3><a href="#Set-map">map</a></h3><p>Collects the results of the block in a new list.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-max" data-search="set max returns the greatest value."><h3><a href="#Set-max">max</a></h3><p>Returns the greatest value.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-max_by" data-search="set max_by selects an item by its greatest block result."><h3><a href="#Set-max_by">max_by</a></h3><p>Selects an item by its greatest block result.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-min" data-search="set min returns the least value."><h3><a href="#Set-min">min</a></h3><p>Returns the least value.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-min_by" data-search="set min_by selects an item by its least block result."><h3><a href="#Set-min_by">min_by</a></h3><p>Selects an item by its least block result.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-reduce" data-search="set reduce combines items using an accumulator and a block."><h3><a href="#Set-reduce">reduce</a></h3><p>Combines items using an accumulator and a block.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-reject" data-search="set reject keeps items for which the block returns false."><h3><a href="#Set-reject">reject</a></h3><p>Keeps items for which the block returns false.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-remove" data-search="set remove removes the requested item or key."><h3><a href="#Set-remove">remove</a></h3><p>Removes the requested item or key.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-subset_of-predicate" data-search="set subset_of? "><h3><a href="#Set-subset_of-predicate">subset_of?</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-sum" data-search="set sum adds the items."><h3><a href="#Set-sum">sum</a></h3><p>Adds the items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-superset_of-predicate" data-search="set superset_of? "><h3><a href="#Set-superset_of-predicate">superset_of?</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-take" data-search="set take keeps the requested initial items."><h3><a href="#Set-take">take</a></h3><p>Keeps the requested initial items.</p><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-to_list" data-search="set to_list collects items in a list."><h3><a href="#Set-to_list">to_list(): List&lt;T&gt;</a></h3><p>Collects items in a list.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article><article class="entry" id="Set-union" data-search="set union "><h3><a href="#Set-union">union</a></h3><p class="meta">Arguments and result depend on the collection and item types. See the implementation and language examples.</p><a class="source" href="../src/Emerald/Checker.cs">Source · Checker.cs</a></article></section><section class="api-group" id="String"><h2>String</h2><p>Unicode text. count(), chars(), reverse(), and slice() work in graphemes.</p><article class="entry" id="String-blank-predicate" data-search="string blank? "><h3><a href="#String-blank-predicate">blank?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-capitalize" data-search="string capitalize "><h3><a href="#String-capitalize">capitalize(): String</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-chars" data-search="string chars returns a list of grapheme strings."><h3><a href="#String-chars">chars(): List&lt;String&gt;</a></h3><p>Returns a list of grapheme strings.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-contains-predicate" data-search="string contains? tests membership."><h3><a href="#String-contains-predicate">contains?(String): Bool</a></h3><p>Tests membership.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-count" data-search="string count returns the number of items; strings count graphemes."><h3><a href="#String-count">count(): Int</a></h3><p>Returns the number of items; strings count graphemes.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-digit-predicate" data-search="string digit? "><h3><a href="#String-digit-predicate">digit?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-empty-predicate" data-search="string empty? tests whether there are no items."><h3><a href="#String-empty-predicate">empty?(): Bool</a></h3><p>Tests whether there are no items.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-ends_with-predicate" data-search="string ends_with? "><h3><a href="#String-ends_with-predicate">ends_with?(String): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-index_of" data-search="string index_of returns the first matching index, or -1."><h3><a href="#String-index_of">index_of(String): Int</a></h3><p>Returns the first matching index, or -1.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-letter-predicate" data-search="string letter? "><h3><a href="#String-letter-predicate">letter?(): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-lower" data-search="string lower returns lowercase text."><h3><a href="#String-lower">lower(): String</a></h3><p>Returns lowercase text.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-pad_center" data-search="string pad_center "><h3><a href="#String-pad_center">pad_center(Int, String (optional)): String</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-pad_left" data-search="string pad_left "><h3><a href="#String-pad_left">pad_left(Int, String (optional)): String</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-pad_right" data-search="string pad_right "><h3><a href="#String-pad_right">pad_right(Int, String (optional)): String</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-repeat" data-search="string repeat "><h3><a href="#String-repeat">repeat(Int): String</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-replace" data-search="string replace "><h3><a href="#String-replace">replace(String, String): String</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-reverse" data-search="string reverse returns a reversed copy."><h3><a href="#String-reverse">reverse(): String</a></h3><p>Returns a reversed copy.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-slice" data-search="string slice "><h3><a href="#String-slice">slice(Int, Int (optional)): String</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-split" data-search="string split splits text using a separator."><h3><a href="#String-split">split(String): List&lt;String&gt;</a></h3><p>Splits text using a separator.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-starts_with-predicate" data-search="string starts_with? "><h3><a href="#String-starts_with-predicate">starts_with?(String): Bool</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-to_float" data-search="string to_float "><h3><a href="#String-to_float">to_float(): Float</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-to_float_maybe" data-search="string to_float_maybe parses a float, returning nothing on failure."><h3><a href="#String-to_float_maybe">to_float_maybe(): Float?</a></h3><p>Parses a float, returning nothing on failure.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-to_float_or" data-search="string to_float_or "><h3><a href="#String-to_float_or">to_float_or(Float): Float</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-to_int" data-search="string to_int "><h3><a href="#String-to_int">to_int(): Int</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-to_int_maybe" data-search="string to_int_maybe parses an integer, returning nothing on failure."><h3><a href="#String-to_int_maybe">to_int_maybe(): Int?</a></h3><p>Parses an integer, returning nothing on failure.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-to_int_or" data-search="string to_int_or "><h3><a href="#String-to_int_or">to_int_or(Int): Int</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-to_string" data-search="string to_string returns a text representation."><h3><a href="#String-to_string">to_string(): String</a></h3><p>Returns a text representation.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-trim" data-search="string trim removes surrounding whitespace."><h3><a href="#String-trim">trim(): String</a></h3><p>Removes surrounding whitespace.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-trim_end" data-search="string trim_end "><h3><a href="#String-trim_end">trim_end(): String</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-trim_start" data-search="string trim_start "><h3><a href="#String-trim_start">trim_start(): String</a></h3><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article><article class="entry" id="String-upper" data-search="string upper returns uppercase text."><h3><a href="#String-upper">upper(): String</a></h3><p>Returns uppercase text.</p><a class="source" href="../src/Emerald/Types.cs">Source · Types.cs</a></article></section><section class="api-group" id="Subtractable"><h2>Subtractable</h2><p>A built-in contract declared in Emerald source.</p><article class="entry" id="Subtractable-subtract" data-search="subtractable subtract "><h3><a href="#Subtractable-subtract">subtract(other)</a></h3><a class="source" href="../src/Emerald/Prelude.cs">Source · Prelude.cs</a></article></section><div id="language"><section class="language-topic" id="language-s01" data-search="hello 
+   a program is a list of things to do. there is no setup, no  main  function to write, and nothing to import &amp;mdash; every  .em  file in the folder is part of the same program. 
+   
+     # a program is just statements, run from the top down.
+
+print(&quot;hello, emerald.&quot;)
+
+# this is a comment.
+#[ and this one
+   spans lines ]# 
+      prints  hello, emerald.  
+   
+"><h2>Hello</h2><a class="source" href="tour.html#s01">Read in the tour ↗</a>
+  <p>A program is a list of things to do. There is no setup, no <code class="inl">main</code> function to write, and nothing to import &mdash; every <code class="inl">.em</code> file in the folder is part of the same program.</p>
+  <div class="unit">
+    <pre class="code"># A program is just statements, run from the top down.
+
+print("Hello, Emerald.")
+
+# This is a comment.
+#[ and this one
+   spans lines ]#</pre>
+    <div class="out"><span class="lab">prints</span><pre>Hello, Emerald.</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s02" data-search="variables 
+   a  var  can change later. a  const  cannot &amp;mdash; if you try, the program will not run, which is usually what you wanted. 
+   you can write down what kind of thing a variable holds, or leave it out and let emerald work it out from the value. both are equally checked; the type is there either way. 
+   
+     var name = &quot;ada&quot;        # a var can change
+const year = 1843       # a const cannot
+
+var score: int = 0      # you can write the type
+var ratio = 0.5         # or let emerald work it out
+
+score = score + 10
+score += 5
+
+print(&quot;#{name}, #{year}, #{score}, #{ratio}&quot;) 
+      prints  ada, 1843, 15, 0.5  
+   
+"><h2>Variables</h2><a class="source" href="tour.html#s02">Read in the tour ↗</a>
+  <p>A <code class="inl">var</code> can change later. A <code class="inl">const</code> cannot &mdash; if you try, the program will not run, which is usually what you wanted.</p>
+  <p>You can write down what kind of thing a variable holds, or leave it out and let Emerald work it out from the value. Both are equally checked; the type is there either way.</p>
+  <div class="unit">
+    <pre class="code">var name = "Ada"        # a var can change
+const YEAR = 1843       # a const cannot
+
+var score: Int = 0      # you can write the type
+var ratio = 0.5         # or let Emerald work it out
+
+score = score + 10
+score += 5
+
+print("#{name}, #{YEAR}, #{score}, #{ratio}")</pre>
+    <div class="out"><span class="lab">prints</span><pre>Ada, 1843, 15, 0.5</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s03" data-search="numbers, text, and yes-or-no 
+   four kinds of value to start with:  int  for whole numbers,  float  for numbers with a decimal point,  string  for text, and  bool  for true or false. 
+   everything is an object, so you ask a number a question the same way you ask anything else &amp;mdash; with a dot. there are no separate global functions to remember. 
+   
+     var whole = 7           # int
+var exact = 7.5         # float
+var word = &quot;seven&quot;      # string
+var yes = true          # bool
+
+print(7 + 2)
+print(7 - 2)
+print(7 * 2)
+print(7 / 2)            # gives a float
+print(7 // 2)           # whole-number division
+print(7 % 2)            # remainder
+print(7 ** 2)           # power
+
+print(word.count())
+print(word.upper())
+print(word.reverse())
+print(whole.even?())
+print(yes and not false) 
+      prints  9
+5
+14
+3.5
+3
+1
+49
+5
+seven
+neves
+false
+true  
+   
+    a method whose name ends in  ?  always answers true or false. you can tell what  even?  gives back without looking it up, and emerald checks that the promise is kept.  
+"><h2>Numbers, text, and yes-or-no</h2><a class="source" href="tour.html#s03">Read in the tour ↗</a>
+  <p>Four kinds of value to start with: <code class="inl">Int</code> for whole numbers, <code class="inl">Float</code> for numbers with a decimal point, <code class="inl">String</code> for text, and <code class="inl">Bool</code> for true or false.</p>
+  <p>Everything is an object, so you ask a number a question the same way you ask anything else &mdash; with a dot. There are no separate global functions to remember.</p>
+  <div class="unit">
+    <pre class="code">var whole = 7           # Int
+var exact = 7.5         # Float
+var word = "seven"      # String
+var yes = true          # Bool
+
+print(7 + 2)
+print(7 - 2)
+print(7 * 2)
+print(7 / 2)            # gives a Float
+print(7 // 2)           # whole-number division
+print(7 % 2)            # remainder
+print(7 ** 2)           # power
+
+print(word.count())
+print(word.upper())
+print(word.reverse())
+print(whole.even?())
+print(yes and not false)</pre>
+    <div class="out"><span class="lab">prints</span><pre>9
+5
+14
+3.5
+3
+1
+49
+5
+SEVEN
+neves
+false
+true</pre></div>
+  </div>
+  <div class="aside"><p>A method whose name ends in <code class="inl">?</code> always answers true or false. You can tell what <code class="inl">even?</code> gives back without looking it up, and Emerald checks that the promise is kept.</p></div>
+</section><section class="language-topic" id="language-s04" data-search="putting values into text 
+   write  #{ }  inside a string and whatever is in the braces gets worked out and dropped in. anything can go in there, not just a name. 
+   
+     var name = &quot;grace&quot;
+var ships = 3
+
+print(&quot;#{name} has #{ships} ships.&quot;)
+print(&quot;next year: #{ships + 1}&quot;)
+print(&quot;shouted: #{name.upper()}&quot;) 
+      prints  grace has 3 ships.
+next year: 4
+shouted: grace  
+   
+"><h2>Putting values into text</h2><a class="source" href="tour.html#s04">Read in the tour ↗</a>
+  <p>Write <code class="inl">#{ }</code> inside a string and whatever is in the braces gets worked out and dropped in. Anything can go in there, not just a name.</p>
+  <div class="unit">
+    <pre class="code">var name = "Grace"
+var ships = 3
+
+print("#{name} has #{ships} ships.")
+print("Next year: #{ships + 1}")
+print("Shouted: #{name.upper()}")</pre>
+    <div class="out"><span class="lab">prints</span><pre>Grace has 3 ships.
+Next year: 4
+Shouted: GRACE</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s05" data-search="choosing 
+    if  works how you would expect.  unless  is the opposite, for when writing  if not  would be harder to read than the thing it means. 
+   an  if  can also  produce  a value rather than doing something, and it can sit at the end of a line as a guard. 
+   
+     var score = 82
+
+if score &gt;= 90 {
+    print(&quot;a&quot;)
+}
+else if score &gt;= 80 {
+    print(&quot;b&quot;)
+}
+else {
+    print(&quot;something else&quot;)
+}
+
+unless score &gt; 100 {
+    print(&quot;that is a believable score&quot;)
+}
+
+# if can produce a value
+var grade = if score &gt;= 80 then &quot;pass&quot; else &quot;resit&quot;
+print(grade)
+
+# and it can guard a single line
+print(&quot;nearly an a&quot;) if score &gt; 80 
+      prints  b
+that is a believable score
+pass
+nearly an a  
+   
+"><h2>Choosing</h2><a class="source" href="tour.html#s05">Read in the tour ↗</a>
+  <p><code class="inl">if</code> works how you would expect. <code class="inl">unless</code> is the opposite, for when writing <code class="inl">if not</code> would be harder to read than the thing it means.</p>
+  <p>An <code class="inl">if</code> can also <em>produce</em> a value rather than doing something, and it can sit at the end of a line as a guard.</p>
+  <div class="unit">
+    <pre class="code">var score = 82
+
+if score >= 90 {
+    print("A")
+}
+else if score >= 80 {
+    print("B")
+}
+else {
+    print("something else")
+}
+
+unless score > 100 {
+    print("that is a believable score")
+}
+
+# if can produce a value
+var grade = if score >= 80 then "pass" else "resit"
+print(grade)
+
+# and it can guard a single line
+print("nearly an A") if score > 80</pre>
+    <div class="out"><span class="lab">prints</span><pre>B
+that is a believable score
+pass
+nearly an A</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s06" data-search="repeating 
+    for  walks a range, a list, a set, or a string &amp;mdash; and a dictionary in pairs,  for (key, value) in scores . there is no three-part c-style loop, so there is nothing else for it to be confused with. 
+    while  is the other loop, and it takes the condition the plain way round.  break  leaves a loop and  continue  skips to the next turn, and both take the one-line guard. 
+   
+     for i in 1..3 {
+    print(&quot;count #{i}&quot;)
+}
+
+for animal in [&quot;cat&quot;, &quot;dog&quot;] {
+    print(animal)
+}
+
+for letter in &quot;hi&quot; {
+    print(letter)
+}
+
+var left = 3
+while not left.zero?() {
+    print(&quot;t-minus #{left}&quot;)
+    left -= 1
+}
+
+3.times { print(&quot;again&quot;) }
+
+for n in 1..10 {
+    continue if n % 3 != 0
+    break if n &gt; 6
+    print(&quot;multiple of three: #{n}&quot;)
+} 
+      prints  count 1
+count 2
+count 3
+cat
+dog
+h
+i
+t-minus 3
+t-minus 2
+t-minus 1
+again
+again
+again
+multiple of three: 3
+multiple of three: 6  
+   
+"><h2>Repeating</h2><a class="source" href="tour.html#s06">Read in the tour ↗</a>
+  <p><code class="inl">for</code> walks a range, a list, a set, or a string &mdash; and a dictionary in pairs, <code class="inl">for (key, value) in scores</code>. There is no three-part C-style loop, so there is nothing else for it to be confused with.</p>
+  <p><code class="inl">while</code> is the other loop, and it takes the condition the plain way round. <code class="inl">break</code> leaves a loop and <code class="inl">continue</code> skips to the next turn, and both take the one-line guard.</p>
+  <div class="unit">
+    <pre class="code">for i in 1..3 {
+    print("count #{i}")
+}
+
+for animal in ["cat", "dog"] {
+    print(animal)
+}
+
+for letter in "hi" {
+    print(letter)
+}
+
+var left = 3
+while not left.zero?() {
+    print("t-minus #{left}")
+    left -= 1
+}
+
+3.times { print("again") }
+
+for n in 1..10 {
+    continue if n % 3 != 0
+    break if n > 6
+    print("multiple of three: #{n}")
+}</pre>
+    <div class="out"><span class="lab">prints</span><pre>count 1
+count 2
+count 3
+cat
+dog
+h
+i
+t-minus 3
+t-minus 2
+t-minus 1
+again
+again
+again
+multiple of three: 3
+multiple of three: 6</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s07" data-search="lists 
+   a list holds many of one kind of thing, in order. it grows and shrinks as you go, and it knows what it contains &amp;mdash; a list of numbers will not let a word in. 
+   
+     var numbers = [5, 3, 8, 1]
+
+print(numbers.count())
+print(numbers[0])
+print(numbers.sum())
+print(numbers.sort().join(&quot;, &quot;))
+
+numbers.add(10)
+print(numbers.join(&quot; &quot;))
+
+numbers[0] = 99
+print(numbers[0])
+
+var names: list&amp;lt;string&amp;gt; = [&quot;ada&quot;, &quot;alan&quot;]
+print(names.join(&quot; and &quot;)) 
+      prints  4
+5
+17
+1, 3, 5, 8
+5 3 8 1 10
+99
+ada and alan  
+   
+    when you do write the type down, it is  list&amp;lt;string&amp;gt;  &amp;mdash; a list, and then what is in it.  
+"><h2>Lists</h2><a class="source" href="tour.html#s07">Read in the tour ↗</a>
+  <p>A list holds many of one kind of thing, in order. It grows and shrinks as you go, and it knows what it contains &mdash; a list of numbers will not let a word in.</p>
+  <div class="unit">
+    <pre class="code">var numbers = [5, 3, 8, 1]
+
+print(numbers.count())
+print(numbers[0])
+print(numbers.sum())
+print(numbers.sort().join(", "))
+
+numbers.add(10)
+print(numbers.join(" "))
+
+numbers[0] = 99
+print(numbers[0])
+
+var names: List&lt;String&gt; = ["ada", "alan"]
+print(names.join(" and "))</pre>
+    <div class="out"><span class="lab">prints</span><pre>4
+5
+17
+1, 3, 5, 8
+5 3 8 1 10
+99
+ada and alan</pre></div>
+  </div>
+  <div class="aside"><p>When you do write the type down, it is <code class="inl">List&lt;String&gt;</code> &mdash; a list, and then what is in it.</p></div>
+</section><section class="language-topic" id="language-s08" data-search="dictionaries 
+   a dictionary maps keys to values &amp;mdash; a name to an age, a word to how often it appeared. looking one up gives back &quot;the value, or nothing&quot;, because a key that is not there is an ordinary thing to happen rather than a mistake. 
+   that is why  .or(0)  appears below: it says what a miss should count as. counting things is what dictionaries are mostly for, and it comes out as one line. 
+   
+     var ages = [&quot;ada&quot;: 36, &quot;bo&quot;: 7]
+
+print(ages[&quot;ada&quot;].or(0))
+print(ages[&quot;nobody&quot;].or(0))
+print(ages.count())
+
+ages[&quot;cy&quot;] = 12
+ages[&quot;bo&quot;] += 1
+
+print(ages.keys().join(&quot;, &quot;))
+print(ages.has_key?(&quot;cy&quot;))
+
+var counts: dictionary&amp;lt;string, int&amp;gt; = [:]
+for word in &quot;the cat the mat&quot;.split(&quot; &quot;) {
+    counts[word] = counts[word].or(0) + 1
+}
+print(counts[&quot;the&quot;].or(0)) 
+      prints  36
+0
+2
+ada, bo, cy
+true
+2  
+   
+   a dictionary hands a block one  entry  at a time, and  (name, age)  takes it apart into its two halves &amp;mdash; the same shape as  for (key, value) in  above and  var (a, b) =  in &amp;sect;9. narrowing a dictionary gives back a dictionary; mapping it gives back a list. 
+   
+     ages.each { (name, age) =&gt; print(&quot;#{name} is #{age}&quot;) }
+
+print(ages.filter { (name, age) =&gt; age &amp;gt; 10 }.count())
+print(ages.map { (name, age) =&gt; name }.join(&quot;, &quot;)) 
+      prints  ada is 36
+bo is 8
+cy is 12
+2
+ada, bo, cy  
+   
+    name one thing instead and you get the entry whole:  { entry =&gt; entry.first() } . the parentheses are the difference between one thing coming apart and two things arriving &amp;mdash; which is why  each_with_index  still reads  { (name, age), i =&gt; } .  
+   keys are not only text and numbers. a  struct  works too: it cannot be changed once built and it compares by its fields, so two made the same way are one key &amp;mdash; which is what lets a position, a date or a pair of coordinates be the thing you look something up by. 
+   
+     struct point {
+    var x: int
+    var y: int
+}
+
+var label: dictionary&amp;lt;point, string&amp;gt; = [:]
+label[point(1, 2)] = &quot;start&quot;
+label[point(4, 0)] = &quot;corner&quot;
+
+print(label[point(1, 2)].or(&quot;?&quot;))
+print(label.count())
+
+var seen = [point(1, 2), point(1, 2)].to_set()
+print(seen.count()) 
+      prints  start
+2
+1  
+   
+    an object works as a key as well, but it is held by  which object it is  rather than by what it contains &amp;mdash; two dogs both named &quot;rex&quot; are two keys. a struct is the one to reach for when you want look-alikes to count as one.  
+    things stay in the order you put them in. a program whose output shuffles between runs is miserable to debug, because you cannot tell it from a mistake of your own.  
+"><h2>Dictionaries</h2><a class="source" href="tour.html#s08">Read in the tour ↗</a>
+  <p>A dictionary maps keys to values &mdash; a name to an age, a word to how often it appeared. Looking one up gives back "the value, or nothing", because a key that is not there is an ordinary thing to happen rather than a mistake.</p>
+  <p>That is why <code class="inl">.or(0)</code> appears below: it says what a miss should count as. Counting things is what dictionaries are mostly for, and it comes out as one line.</p>
+  <div class="unit">
+    <pre class="code">var ages = ["ada": 36, "bo": 7]
+
+print(ages["ada"].or(0))
+print(ages["nobody"].or(0))
+print(ages.count())
+
+ages["cy"] = 12
+ages["bo"] += 1
+
+print(ages.keys().join(", "))
+print(ages.has_key?("cy"))
+
+var counts: Dictionary&lt;String, Int&gt; = [:]
+for word in "the cat the mat".split(" ") {
+    counts[word] = counts[word].or(0) + 1
+}
+print(counts["the"].or(0))</pre>
+    <div class="out"><span class="lab">prints</span><pre>36
+0
+2
+ada, bo, cy
+true
+2</pre></div>
+  </div>
+  <p>A dictionary hands a block one <em>entry</em> at a time, and <code class="inl">(name, age)</code> takes it apart into its two halves &mdash; the same shape as <code class="inl">for (key, value) in</code> above and <code class="inl">var (a, b) =</code> in &sect;9. Narrowing a dictionary gives back a dictionary; mapping it gives back a list.</p>
+  <div class="unit">
+    <pre class="code">ages.each { (name, age) => print("#{name} is #{age}") }
+
+print(ages.filter { (name, age) => age &gt; 10 }.count())
+print(ages.map { (name, age) => name }.join(", "))</pre>
+    <div class="out"><span class="lab">prints</span><pre>ada is 36
+bo is 8
+cy is 12
+2
+ada, bo, cy</pre></div>
+  </div>
+  <div class="aside"><p>Name one thing instead and you get the entry whole: <code class="inl">{ entry => entry.first() }</code>. The parentheses are the difference between one thing coming apart and two things arriving &mdash; which is why <code class="inl">each_with_index</code> still reads <code class="inl">{ (name, age), i => }</code>.</p></div>
+  <p>Keys are not only text and numbers. A <code class="inl">struct</code> works too: it cannot be changed once built and it compares by its fields, so two made the same way are one key &mdash; which is what lets a position, a date or a pair of coordinates be the thing you look something up by.</p>
+  <div class="unit">
+    <pre class="code">struct Point {
+    var x: Int
+    var y: Int
+}
+
+var label: Dictionary&lt;Point, String&gt; = [:]
+label[Point(1, 2)] = "start"
+label[Point(4, 0)] = "corner"
+
+print(label[Point(1, 2)].or("?"))
+print(label.count())
+
+var seen = [Point(1, 2), Point(1, 2)].to_set()
+print(seen.count())</pre>
+    <div class="out"><span class="lab">prints</span><pre>start
+2
+1</pre></div>
+  </div>
+  <div class="aside"><p>An object works as a key as well, but it is held by <em>which object it is</em> rather than by what it contains &mdash; two dogs both named "rex" are two keys. A struct is the one to reach for when you want look-alikes to count as one.</p></div>
+  <div class="aside"><p>Things stay in the order you put them in. A program whose output shuffles between runs is miserable to debug, because you cannot tell it from a mistake of your own.</p></div>
+</section><section class="language-topic" id="language-s09" data-search="sets 
+   a set remembers  whether  something is in it, not how many times or in what position. duplicates collapse on the way in. write one as a list and convert. 
+   
+     var vowels = [&quot;a&quot;, &quot;e&quot;, &quot;i&quot;, &quot;o&quot;, &quot;u&quot;].to_set()
+
+print(vowels.count())
+print(vowels.contains?(&quot;e&quot;))
+
+var rolls = [3, 1, 3, 2, 1].to_set()
+print(rolls.to_list().join(&quot;, &quot;))
+
+var monday = [&quot;ada&quot;, &quot;bo&quot;].to_set()
+var tuesday = [&quot;bo&quot;, &quot;cy&quot;].to_set()
+print(monday.union(tuesday).to_list().join(&quot;, &quot;))
+print(monday.intersect(tuesday).to_list().join(&quot;, &quot;)) 
+      prints  5
+true
+3, 1, 2
+ada, bo, cy
+bo  
+   
+"><h2>Sets</h2><a class="source" href="tour.html#s09">Read in the tour ↗</a>
+  <p>A set remembers <em>whether</em> something is in it, not how many times or in what position. Duplicates collapse on the way in. Write one as a list and convert.</p>
+  <div class="unit">
+    <pre class="code">var vowels = ["a", "e", "i", "o", "u"].to_set()
+
+print(vowels.count())
+print(vowels.contains?("e"))
+
+var rolls = [3, 1, 3, 2, 1].to_set()
+print(rolls.to_list().join(", "))
+
+var monday = ["ada", "bo"].to_set()
+var tuesday = ["bo", "cy"].to_set()
+print(monday.union(tuesday).to_list().join(", "))
+print(monday.intersect(tuesday).to_list().join(", "))</pre>
+    <div class="out"><span class="lab">prints</span><pre>5
+true
+3, 1, 2
+ada, bo, cy
+bo</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s10" data-search="functions 
+   a function says what it takes and what it gives back. a parameter can have a default, so the common call stays short. two functions can share a name as long as a call could always tell them apart. 
+   
+     func double(n: int): int {
+    return n * 2
+}
+
+func greet(name: string, greeting: string = &quot;hello&quot;): string {
+    return &quot;#{greeting}, #{name}!&quot;
+}
+
+# a function that answers yes or no ends in ?
+func old_enough?(age: int): bool {
+    return age &gt;= 18
+}
+
+# two functions can share a name if a call can tell them apart
+func area(side: int): int { return side * side }
+func area(width: int, height: int): int { return width * height }
+
+print(double(21))
+print(greet(&quot;ana&quot;))
+print(greet(&quot;bo&quot;, &quot;welcome&quot;))
+print(old_enough?(20))
+print(area(4))
+print(area(4, 5)) 
+      prints  42
+hello, ana!
+welcome, bo!
+true
+16
+20  
+   
+"><h2>Functions</h2><a class="source" href="tour.html#s10">Read in the tour ↗</a>
+  <p>A function says what it takes and what it gives back. A parameter can have a default, so the common call stays short. Two functions can share a name as long as a call could always tell them apart.</p>
+  <div class="unit">
+    <pre class="code">func double(n: Int): Int {
+    return n * 2
+}
+
+func greet(name: String, greeting: String = "Hello"): String {
+    return "#{greeting}, #{name}!"
+}
+
+# A function that answers yes or no ends in ?
+func old_enough?(age: Int): Bool {
+    return age >= 18
+}
+
+# Two functions can share a name if a call can tell them apart
+func area(side: Int): Int { return side * side }
+func area(width: Int, height: Int): Int { return width * height }
+
+print(double(21))
+print(greet("Ana"))
+print(greet("Bo", "Welcome"))
+print(old_enough?(20))
+print(area(4))
+print(area(4, 5))</pre>
+    <div class="out"><span class="lab">prints</span><pre>42
+Hello, Ana!
+Welcome, Bo!
+true
+16
+20</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s11" data-search="blocks 
+   a block is a piece of code you hand to something else to run.  map  makes a new list by running your block on each item,  filter  keeps the ones your block says yes to, and  each  just runs it. 
+   you never have to say what  n  is below. the list is a list of  int , so  n  is an  int , and  n.even?()  is checked like anything else. 
+   
+     var numbers = [5, 3, 8, 1, 9]
+
+print(numbers.map { n =&amp;gt; n * 2 }.join(&quot;, &quot;))
+print(numbers.filter { n =&amp;gt; n.even?() }.join(&quot;, &quot;))
+print(numbers.any? { n =&amp;gt; n &amp;gt; 8 })
+
+# find might not find anything, so it hands back &quot;an int or nothing&quot;
+print(numbers.find { n =&amp;gt; n &amp;gt; 100 }.or(0))
+
+var total = 0
+numbers.each { n =&amp;gt; total += n }
+print(total) 
+      prints  10, 6, 16, 2, 18
+8
+true
+0
+26  
+   
+"><h2>Blocks</h2><a class="source" href="tour.html#s11">Read in the tour ↗</a>
+  <p>A block is a piece of code you hand to something else to run. <code class="inl">map</code> makes a new list by running your block on each item, <code class="inl">filter</code> keeps the ones your block says yes to, and <code class="inl">each</code> just runs it.</p>
+  <p>You never have to say what <code class="inl">n</code> is below. The list is a list of <code class="inl">Int</code>, so <code class="inl">n</code> is an <code class="inl">Int</code>, and <code class="inl">n.even?()</code> is checked like anything else.</p>
+  <div class="unit">
+    <pre class="code">var numbers = [5, 3, 8, 1, 9]
+
+print(numbers.map { n =&gt; n * 2 }.join(", "))
+print(numbers.filter { n =&gt; n.even?() }.join(", "))
+print(numbers.any? { n =&gt; n &gt; 8 })
+
+# find might not find anything, so it hands back "an Int or nothing"
+print(numbers.find { n =&gt; n &gt; 100 }.or(0))
+
+var total = 0
+numbers.each { n =&gt; total += n }
+print(total)</pre>
+    <div class="out"><span class="lab">prints</span><pre>10, 6, 16, 2, 18
+8
+true
+0
+26</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s12" data-search="functions are values 
+   everything in the last section was a built-in taking a block. your own functions can take one too, and the type you write for it is just the function's header with the name taken off. 
+   
+     func greet(name: string): string { return &quot;hi #{name}&quot; }
+#                    the function above has the type below
+#        func(string): string 
+   
+   so a function that wants a block says what shape of block it wants. if there is nothing to hand in and nothing to give back, that is just  func() . 
+   
+     func do_twice(action: func()) {
+    action()
+    action()
+}
+
+do_twice { print(&quot;hi&quot;) } 
+      prints  hi
+hi  
+   
+   you do not have to say what  n  is here either.  transform  said its block takes an  int , so  n  is an  int  — the same help the built-in list methods give, now on a function you wrote yourself. 
+   
+     func transform(items: list&amp;lt;int&amp;gt;, change: func(int): int): list&amp;lt;int&amp;gt; {
+    return items.map { n =&amp;gt; change(n) }
+}
+
+print(transform([1, 2, 3]) { n =&amp;gt; n * 2 }.join(&quot;, &quot;))
+
+# a function you already have goes where a block does
+func double(n: int): int { return n * 2 }
+
+func apply(n: int, change: func(int): int): int { return change(n) }
+
+print(apply(21, double)) 
+      prints  2, 4, 6
+42  
+   
+   and because a function is a value, it goes in a variable, in a list, or in a field — which is how something remembers what to do later. 
+   
+     class button {
+    var label: string
+    var on_click: func()
+
+    constructor(label: string, on_click: func()) {
+        self.label = label
+        self.on_click = on_click
+    }
+
+    func press() {
+        print(&quot;pressing #{self.label}&quot;)
+        self.on_click()
+    }
+}
+
+button(&quot;ok&quot;) { print(&quot;clicked&quot;) }.press() 
+      prints  pressing ok
+clicked  
+   
+     button.on_click  is the function itself;  button.on_click()  runs it. the brackets are what tell them apart.  
+   that rule is not only for fields. a  method  named without its brackets is the method itself, with the object it belongs to already attached — so you can hand one over the same way, and it remembers which object it came from. 
+   
+     class dog {
+    var name: string
+
+    constructor(name: string) { self.name = name }
+
+    func speak(): string { return &quot;#{self.name} says woof&quot; }
+}
+
+func announce(what: func(): string) { print(what()) }
+
+var rex = dog(&quot;rex&quot;)
+var fido = dog(&quot;fido&quot;)
+
+# no brackets: the method itself, not what it answers
+announce(rex.speak)
+announce(fido.speak)
+
+# with brackets: the answer
+print(rex.speak()) 
+      prints  rex says woof
+fido says woof
+rex says woof  
+   
+   the methods that came with the language work the same way. there is no separate rule for them, which is the point &amp;mdash; you should not have to know whether something was written by you or shipped with emerald in order to know how to write it down. 
+   
+     func shout(f: func(): string): string { return f() }
+
+var word = &quot;seven&quot;
+print(shout(word.upper))
+print(shout(word.reverse)) 
+      prints  seven
+neves  
+   
+   the one exception is a method that takes a block, like  map . what  map  gives back is whatever your block gives back, so until there is a block there is nothing to say about it &amp;mdash; and emerald says exactly that rather than guessing. 
+   this is the reason brackets are required on every call, even one with nothing to pass. if  rex.speak  ran the method, there would be no way left to write down the method itself — and connecting something up later, like a button to the thing it should do, is a large part of what you use a class for. 
+   forgetting them is the mistake the rule creates, so the compiler is direct about it. 
+   
+     class cat {
+    func speak(): string { return &quot;meow&quot; }
+}
+
+print(cat().speak) 
+      emerald run  main.em:5  this shows cat().speak itself, not what it answers.
+
+    5 | print(cat().speak)
+
+  it is func(): string. add parentheses to call it:  cat().speak()  
+   
+"><h2>Functions are values</h2><a class="source" href="tour.html#s12">Read in the tour ↗</a>
+  <p>Everything in the last section was a built-in taking a block. Your own functions can take one too, and the type you write for it is just the function's header with the name taken off.</p>
+  <div class="unit">
+    <pre class="code">func greet(name: String): String { return "hi #{name}" }
+#                    the function above has the type below
+#        func(String): String</pre>
+  </div>
+  <p>So a function that wants a block says what shape of block it wants. If there is nothing to hand in and nothing to give back, that is just <code class="inl">func()</code>.</p>
+  <div class="unit">
+    <pre class="code">func do_twice(action: func()) {
+    action()
+    action()
+}
+
+do_twice { print("hi") }</pre>
+    <div class="out"><span class="lab">prints</span><pre>hi
+hi</pre></div>
+  </div>
+  <p>You do not have to say what <code class="inl">n</code> is here either. <code class="inl">transform</code> said its block takes an <code class="inl">Int</code>, so <code class="inl">n</code> is an <code class="inl">Int</code> — the same help the built-in list methods give, now on a function you wrote yourself.</p>
+  <div class="unit">
+    <pre class="code">func transform(items: List&lt;Int&gt;, change: func(Int): Int): List&lt;Int&gt; {
+    return items.map { n =&gt; change(n) }
+}
+
+print(transform([1, 2, 3]) { n =&gt; n * 2 }.join(", "))
+
+# a function you already have goes where a block does
+func double(n: Int): Int { return n * 2 }
+
+func apply(n: Int, change: func(Int): Int): Int { return change(n) }
+
+print(apply(21, double))</pre>
+    <div class="out"><span class="lab">prints</span><pre>2, 4, 6
+42</pre></div>
+  </div>
+  <p>And because a function is a value, it goes in a variable, in a list, or in a field — which is how something remembers what to do later.</p>
+  <div class="unit">
+    <pre class="code">class Button {
+    var label: String
+    var on_click: func()
+
+    constructor(label: String, on_click: func()) {
+        self.label = label
+        self.on_click = on_click
+    }
+
+    func press() {
+        print("pressing #{self.label}")
+        self.on_click()
+    }
+}
+
+Button("OK") { print("clicked") }.press()</pre>
+    <div class="out"><span class="lab">prints</span><pre>pressing OK
+clicked</pre></div>
+  </div>
+  <div class="aside"><p><code class="inl">button.on_click</code> is the function itself; <code class="inl">button.on_click()</code> runs it. The brackets are what tell them apart.</p></div>
+  <p>That rule is not only for fields. A <em>method</em> named without its brackets is the method itself, with the object it belongs to already attached — so you can hand one over the same way, and it remembers which object it came from.</p>
+  <div class="unit">
+    <pre class="code">class Dog {
+    var name: String
+
+    constructor(name: String) { self.name = name }
+
+    func speak(): String { return "#{self.name} says woof" }
+}
+
+func announce(what: func(): String) { print(what()) }
+
+var rex = Dog("Rex")
+var fido = Dog("Fido")
+
+# no brackets: the method itself, not what it answers
+announce(rex.speak)
+announce(fido.speak)
+
+# with brackets: the answer
+print(rex.speak())</pre>
+    <div class="out"><span class="lab">prints</span><pre>Rex says woof
+Fido says woof
+Rex says woof</pre></div>
+  </div>
+  <p>The methods that came with the language work the same way. There is no separate rule for them, which is the point &mdash; you should not have to know whether something was written by you or shipped with Emerald in order to know how to write it down.</p>
+  <div class="unit">
+    <pre class="code">func shout(f: func(): String): String { return f() }
+
+var word = "seven"
+print(shout(word.upper))
+print(shout(word.reverse))</pre>
+    <div class="out"><span class="lab">prints</span><pre>SEVEN
+neves</pre></div>
+  </div>
+  <p>The one exception is a method that takes a block, like <code class="inl">map</code>. What <code class="inl">map</code> gives back is whatever your block gives back, so until there is a block there is nothing to say about it &mdash; and Emerald says exactly that rather than guessing.</p>
+  <p>This is the reason brackets are required on every call, even one with nothing to pass. If <code class="inl">rex.speak</code> ran the method, there would be no way left to write down the method itself — and connecting something up later, like a button to the thing it should do, is a large part of what you use a class for.</p>
+  <p>Forgetting them is the mistake the rule creates, so the compiler is direct about it.</p>
+  <div class="unit">
+    <pre class="code">class Cat {
+    func speak(): String { return "meow" }
+}
+
+print(Cat().speak)</pre>
+    <div class="diag"><span class="lab">emerald run</span><pre>main.em:5  This shows Cat().speak itself, not what it answers.
+
+    5 | print(Cat().speak)
+
+  It is func(): String. Add parentheses to call it:  Cat().speak()</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s13" data-search="values that might not be there 
+   a  string  always holds a string. sometimes you need &quot;or nothing at all&quot; &amp;mdash; so you add a  ? . 
+   emerald will not let you use a  string?  until you have checked it. that is the whole point: the crash where something turned out to be empty cannot happen, because the program will not run until you have said what to do about it. 
+   
+     var certain: string = &quot;ada&quot;     # always a string
+var unsure: string? = nothing   # a string, or nothing at all
+
+# emerald will not let you read unsure until you have checked it
+if unsure != nothing {
+    print(unsure.count())
+}
+else {
+    print(&quot;there was nothing there&quot;)
+}
+
+# .or supplies a fallback
+print(unsure.or(&quot;nobody&quot;))
+
+# .must says &quot;i know this is there&quot; — and stops the program if it is not
+var found: int? = &quot;42&quot;.to_int_maybe()
+print(found.must()) 
+      prints  there was nothing there
+nobody
+42  
+   
+    after  if unsure != nothing ,  unsure  is an ordinary  string  for the rest of that block &amp;mdash; you do not unwrap it or write anything extra. the check  is  the unwrapping.  
+"><h2>Values that might not be there</h2><a class="source" href="tour.html#s13">Read in the tour ↗</a>
+  <p>A <code class="inl">String</code> always holds a string. Sometimes you need "or nothing at all" &mdash; so you add a <code class="inl">?</code>.</p>
+  <p>Emerald will not let you use a <code class="inl">String?</code> until you have checked it. That is the whole point: the crash where something turned out to be empty cannot happen, because the program will not run until you have said what to do about it.</p>
+  <div class="unit">
+    <pre class="code">var certain: String = "Ada"     # always a String
+var unsure: String? = nothing   # a String, or nothing at all
+
+# Emerald will not let you read unsure until you have checked it
+if unsure != nothing {
+    print(unsure.count())
+}
+else {
+    print("there was nothing there")
+}
+
+# .or supplies a fallback
+print(unsure.or("nobody"))
+
+# .must says "I know this is there" — and stops the program if it is not
+var found: Int? = "42".to_int_maybe()
+print(found.must())</pre>
+    <div class="out"><span class="lab">prints</span><pre>there was nothing there
+nobody
+42</pre></div>
+  </div>
+  <div class="aside"><p>After <code class="inl">if unsure != nothing</code>, <code class="inl">unsure</code> is an ordinary <code class="inl">String</code> for the rest of that block &mdash; you do not unwrap it or write anything extra. The check <em>is</em> the unwrapping.</p></div>
+</section><section class="language-topic" id="language-s14" data-search="reaching through a chain 
+   checking works on a name, not on a path, so when several steps in a row might be missing you use  ?.  instead. it reads through the  ?  and stops at the first step that is not there. 
+   
+     class city {
+    var name: string
+    constructor(name: string) { self.name = name }
+}
+
+class trip {
+    var destination: city?
+    constructor(destination: city?) { self.destination = destination }
+}
+
+var booked = trip(city(&quot;leeds&quot;))
+var unbooked = trip(nothing)
+
+# ?. reads through the ?, and stops at the first step that is missing
+print(booked.destination?.name.or(&quot;nowhere yet&quot;))
+print(unbooked.destination?.name.or(&quot;nowhere yet&quot;)) 
+      prints  leeds
+nowhere yet  
+   
+"><h2>Reaching through a chain</h2><a class="source" href="tour.html#s14">Read in the tour ↗</a>
+  <p>Checking works on a name, not on a path, so when several steps in a row might be missing you use <code class="inl">?.</code> instead. It reads through the <code class="inl">?</code> and stops at the first step that is not there.</p>
+  <div class="unit">
+    <pre class="code">class City {
+    var name: String
+    constructor(name: String) { self.name = name }
+}
+
+class Trip {
+    var destination: City?
+    constructor(destination: City?) { self.destination = destination }
+}
+
+var booked = Trip(City("Leeds"))
+var unbooked = Trip(nothing)
+
+# ?. reads through the ?, and stops at the first step that is missing
+print(booked.destination?.name.or("nowhere yet"))
+print(unbooked.destination?.name.or("nowhere yet"))</pre>
+    <div class="out"><span class="lab">prints</span><pre>Leeds
+nowhere yet</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s15" data-search="classes 
+   a class describes a kind of thing: what it knows, and what it can do. the  constructor  is what runs when you make one. inside,  self  means &quot;this one&quot;. 
+   
+     class dog {
+    var name: string
+    var legs: int = 4
+
+    constructor(name: string) {
+        self.name = name
+    }
+
+    func speak(): string {
+        return &quot;woof&quot;
+    }
+
+    func introduce(): string {
+        return &quot;#{self.name} says #{self.speak()}&quot;
+    }
+}
+
+var rex = dog(&quot;rex&quot;)
+print(rex.introduce())
+print(rex.legs)
+
+rex.name = &quot;rexington&quot;
+print(rex.name) 
+      prints  rex says woof
+4
+rexington  
+   
+    every field has to have a value by the time the constructor finishes. forget one and the program will not run &amp;mdash; which is the mistake this catches most often in practice.  
+
+   printing  rex  itself would show  &amp;lt;dog&amp;gt; , which tells you nothing. give the class a  to_string  and it says what you wrote instead &amp;mdash; everywhere a value turns into text, without you asking. 
+   
+     class cat {
+    var name: string
+    constructor(name: string) { self.name = name }
+
+    func to_string(): string {
+        return &quot;#{self.name} the cat&quot;
+    }
+}
+
+var kit = cat(&quot;kit&quot;)
+print(kit)
+print(&quot;i met #{kit}&quot;)
+print([kit, cat(&quot;moss&quot;)]) 
+      prints  kit the cat
+i met kit the cat
+[kit the cat, moss the cat]  
+   
+    it has to be written  func to_string(): string  with nothing in the brackets. it is the one method the language calls on your behalf, so it is the one whose shape is fixed.  
+"><h2>Classes</h2><a class="source" href="tour.html#s15">Read in the tour ↗</a>
+  <p>A class describes a kind of thing: what it knows, and what it can do. The <code class="inl">constructor</code> is what runs when you make one. Inside, <code class="inl">self</code> means "this one".</p>
+  <div class="unit">
+    <pre class="code">class Dog {
+    var name: String
+    var legs: Int = 4
+
+    constructor(name: String) {
+        self.name = name
+    }
+
+    func speak(): String {
+        return "Woof"
+    }
+
+    func introduce(): String {
+        return "#{self.name} says #{self.speak()}"
+    }
+}
+
+var rex = Dog("Rex")
+print(rex.introduce())
+print(rex.legs)
+
+rex.name = "Rexington"
+print(rex.name)</pre>
+    <div class="out"><span class="lab">prints</span><pre>Rex says Woof
+4
+Rexington</pre></div>
+  </div>
+  <div class="aside"><p>Every field has to have a value by the time the constructor finishes. Forget one and the program will not run &mdash; which is the mistake this catches most often in practice.</p></div>
+
+  <p>Printing <code class="inl">rex</code> itself would show <code class="inl">&lt;Dog&gt;</code>, which tells you nothing. Give the class a <code class="inl">to_string</code> and it says what you wrote instead &mdash; everywhere a value turns into text, without you asking.</p>
+  <div class="unit">
+    <pre class="code">class Cat {
+    var name: String
+    constructor(name: String) { self.name = name }
+
+    func to_string(): String {
+        return "#{self.name} the cat"
+    }
+}
+
+var kit = Cat("Kit")
+print(kit)
+print("I met #{kit}")
+print([kit, Cat("Moss")])</pre>
+    <div class="out"><span class="lab">prints</span><pre>Kit the cat
+I met Kit the cat
+[Kit the cat, Moss the cat]</pre></div>
+  </div>
+  <div class="aside"><p>It has to be written <code class="inl">func to_string(): String</code> with nothing in the brackets. It is the one method the language calls on your behalf, so it is the one whose shape is fixed.</p></div>
+</section><section class="language-topic" id="language-s16" data-search="a class without the braces 
+   most of the time a file holds one class, and then the braces around it are wrapping the entire file and indenting every line inside it for no gain. so you can leave them off: name the class on the first line, and everything below is its body, all the way to the end of the file. 
+   it is the same declaration &amp;mdash;  extends  and  with  work exactly as they do above &amp;mdash; with the body implied instead of written out. 
+   
+     # rect.em — one class, so no braces and no extra indenting
+class rect
+
+var width: int
+var height: int
+
+constructor(width: int, height: int) {
+    self.width = width
+    self.height = height
+}
+
+func area(): int { return self.width * self.height }
+
+func square?(): bool { return self.width == self.height } 
+   
+   
+     # main.em — every .em file in the folder is part of the same program,
+# so there is nothing to import
+var r = rect(3, 4)
+print(r.area())
+print(r.square?())
+print(rect(5, 5).square?()) 
+      prints  12
+false
+true  
+   
+   a file has one shape or the other: either one class written this way, or braces throughout. because the body runs to the end of the file with nothing that stops it, a second class written underneath is a class  inside  the first &amp;mdash; which is occasionally what you want for a small helper, and otherwise a sign the second one belongs in its own file. 
+    godot names the type after the file instead. emerald does not, so that  class rect  is a thing you can search for, and renaming a file cannot quietly rename a type.  
+"><h2>A class without the braces</h2><a class="source" href="tour.html#s16">Read in the tour ↗</a>
+  <p>Most of the time a file holds one class, and then the braces around it are wrapping the entire file and indenting every line inside it for no gain. So you can leave them off: name the class on the first line, and everything below is its body, all the way to the end of the file.</p>
+  <p>It is the same declaration &mdash; <code class="inl">extends</code> and <code class="inl">with</code> work exactly as they do above &mdash; with the body implied instead of written out.</p>
+  <div class="unit">
+    <pre class="code"># rect.em — one class, so no braces and no extra indenting
+class Rect
+
+var width: Int
+var height: Int
+
+constructor(width: Int, height: Int) {
+    self.width = width
+    self.height = height
+}
+
+func area(): Int { return self.width * self.height }
+
+func square?(): Bool { return self.width == self.height }</pre>
+  </div>
+  <div class="unit">
+    <pre class="code"># main.em — every .em file in the folder is part of the same program,
+# so there is nothing to import
+var r = Rect(3, 4)
+print(r.area())
+print(r.square?())
+print(Rect(5, 5).square?())</pre>
+    <div class="out"><span class="lab">prints</span><pre>12
+false
+true</pre></div>
+  </div>
+  <p>A file has one shape or the other: either one class written this way, or braces throughout. Because the body runs to the end of the file with nothing that stops it, a second class written underneath is a class <em>inside</em> the first &mdash; which is occasionally what you want for a small helper, and otherwise a sign the second one belongs in its own file.</p>
+  <div class="aside"><p>Godot names the type after the file instead. Emerald does not, so that <code class="inl">class Rect</code> is a thing you can search for, and renaming a file cannot quietly rename a type.</p></div>
+</section><section class="language-topic" id="language-s17" data-search="properties, shared values, and private names 
+   a property looks like a field from the outside but runs code when you read it.  static  means the value or function belongs to the class itself rather than to any one of them. 
+   a name beginning with  _  can only be used inside the class and anything that extends it. there is no keyword to learn, and you can see that it is private at the place it is used rather than having to go and look at where it was declared. 
+   
+     class circle {
+    static const pi = 3.14159
+    static var made: int = 0
+
+    var radius: float
+
+    # a property looks like a field from the outside, but runs code.
+    var area: float {
+        get { return circle.pi * self._squared() }
+    }
+
+    constructor(radius: float) {
+        self.radius = radius
+        circle.made += 1
+    }
+
+    # a name starting with _ belongs to the class. code outside cannot call it.
+    func _squared(): float { return self.radius * self.radius }
+
+    static func unit(): circle { return circle(1.0) }
+}
+
+var c = circle(2.0)
+print(c.area)
+print(circle.unit().area)
+print(circle.made) 
+      prints  12.56636
+3.14159
+2  
+   
+"><h2>Properties, shared values, and private names</h2><a class="source" href="tour.html#s17">Read in the tour ↗</a>
+  <p>A property looks like a field from the outside but runs code when you read it. <code class="inl">static</code> means the value or function belongs to the class itself rather than to any one of them.</p>
+  <p>A name beginning with <code class="inl">_</code> can only be used inside the class and anything that extends it. There is no keyword to learn, and you can see that it is private at the place it is used rather than having to go and look at where it was declared.</p>
+  <div class="unit">
+    <pre class="code">class Circle {
+    static const PI = 3.14159
+    static var made: Int = 0
+
+    var radius: Float
+
+    # A property looks like a field from the outside, but runs code.
+    var area: Float {
+        get { return Circle.PI * self._squared() }
+    }
+
+    constructor(radius: Float) {
+        self.radius = radius
+        Circle.made += 1
+    }
+
+    # A name starting with _ belongs to the class. Code outside cannot call it.
+    func _squared(): Float { return self.radius * self.radius }
+
+    static func unit(): Circle { return Circle(1.0) }
+}
+
+var c = Circle(2.0)
+print(c.area)
+print(Circle.unit().area)
+print(Circle.made)</pre>
+    <div class="out"><span class="lab">prints</span><pre>12.56636
+3.14159
+2</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s18" data-search="building on another class 
+    extends  means &quot;everything that one has, plus this&quot;. to replace a method the other class already has, say  override  &amp;mdash; you are taking something over, so you say so. 
+   
+     class animal {
+    var name: string
+
+    constructor(name: string) { self.name = name }
+
+    func speak(): string { return &quot;...&quot; }
+
+    func introduce(): string { return &quot;#{self.name} says #{self.speak()}&quot; }
+}
+
+class dog extends animal {
+    override func speak(): string { return &quot;woof&quot; }
+}
+
+class cat extends animal {
+    override func speak(): string { return &quot;meow&quot; }
+}
+
+var pets = [dog(&quot;rex&quot;), cat(&quot;momo&quot;)]
+for pet in pets {
+    print(pet.introduce())
+} 
+      prints  rex says woof
+momo says meow  
+   
+     introduce  was written once, in  animal , and it calls  self.speak()  &amp;mdash; which finds whichever version belongs to the actual animal. a class can only extend one other class.  
+   the word is not decoration. leave it off and emerald stops you, because replacing a method by accident is a real and nasty mistake &amp;mdash; you can break a class you never opened, just by picking a common name for your own method. 
+   
+     class timer {
+    var ticks: int = 0
+
+    func reset() { self.ticks = 0 }
+
+    func run() {
+        self.ticks = 5
+        self.reset()
+    }
+}
+
+class racetimer extends timer {
+    var laps: int = 0
+
+    func reset() { self.laps = 0 }        # written without knowing timer has one
+} 
+   
+    emerald run  main.em:15  reset replaces timer.reset, so it says override.
+
+   15 |     func reset() { self.laps = 0 }        # written without knowing timer has one
+
+  write:  override func reset(...)
+  if you did not mean to replace it, timer already has a reset taking the same things, and calling it will now reach this one instead. rename yours, or give it different parameters so the two are overloads.  
+   when the new class has something of its own to set up, it writes its own  constructor  and starts it by calling the one above with  super . that is how the base gets to fill in its own part &amp;mdash; you say what to pass it, and it does the rest. 
+   
+     class vehicle {
+    var wheels: int
+    var name: string
+
+    constructor(name: string, wheels: int) {
+        self.name = name
+        self.wheels = wheels
+    }
+
+    func describe(): string { return &quot;#{self.name}, #{self.wheels} wheels&quot; }
+}
+
+class bike extends vehicle {
+    var gears: int
+
+    constructor(name: string, gears: int) {
+        super(name, 2)          # build the vehicle part first
+        self.gears = gears
+    }
+
+    override func describe(): string {
+        return &quot;#{super.describe()}, #{self.gears} gears&quot;
+    }
+}
+
+print(bike(&quot;commuter&quot;, 8).describe()) 
+      prints  commuter, 2 wheels, 8 gears  
+   
+     super  means one thing &amp;mdash; the class above &amp;mdash; and you can do two things with it.  super(...)  runs its constructor;  super.describe()  calls a method it wrote.  
+    super(...)  has to be the first line. until it has run, the fields the base looks after are still empty, so nothing else can safely go before it. and you only need to write it when the base's constructor wants something &amp;mdash; if it takes nothing, it is called for you. 
+   what you must not do is fill in the base's fields yourself. emerald will not let you, and the reason is worth seeing:  vehicle  might do something with the values on the way in, and a class that sets the fields directly quietly skips all of it. 
+   
+     class vehicle {
+    var wheels: int
+    var name: string
+
+    constructor(name: string, wheels: int) {
+        self.name = name
+        self.wheels = wheels
+    }
+}
+
+class bike extends vehicle {
+    var gears: int
+
+    constructor(name: string, gears: int) {
+        self.gears = gears
+    }
+} 
+   
+    emerald run  main.em:14  vehicle's constructor needs 2 arguments, so bike has to say what to pass it.
+
+   14 |     constructor(name: string, gears: int) {
+
+  call it first:  super(...)
+  vehicle's constructor takes (string, int).  
+   and when you do replace a method,  super  is the one you replaced &amp;mdash; useful when you want to add to it rather than throw it away. 
+   
+     class greeter {
+    func greet(): string { return &quot;hello&quot; }
+}
+
+class loudgreeter extends greeter {
+    override func greet(): string { return &quot;#{super.greet()}!!!&quot; }
+}
+
+print(loudgreeter().greet()) 
+      prints  hello!!!  
+   
+"><h2>Building on another class</h2><a class="source" href="tour.html#s18">Read in the tour ↗</a>
+  <p><code class="inl">extends</code> means "everything that one has, plus this". To replace a method the other class already has, say <code class="inl">override</code> &mdash; you are taking something over, so you say so.</p>
+  <div class="unit">
+    <pre class="code">class Animal {
+    var name: String
+
+    constructor(name: String) { self.name = name }
+
+    func speak(): String { return "..." }
+
+    func introduce(): String { return "#{self.name} says #{self.speak()}" }
+}
+
+class Dog extends Animal {
+    override func speak(): String { return "Woof" }
+}
+
+class Cat extends Animal {
+    override func speak(): String { return "Meow" }
+}
+
+var pets = [Dog("Rex"), Cat("Momo")]
+for pet in pets {
+    print(pet.introduce())
+}</pre>
+    <div class="out"><span class="lab">prints</span><pre>Rex says Woof
+Momo says Meow</pre></div>
+  </div>
+  <div class="aside"><p><code class="inl">introduce</code> was written once, in <code class="inl">Animal</code>, and it calls <code class="inl">self.speak()</code> &mdash; which finds whichever version belongs to the actual animal. A class can only extend one other class.</p></div>
+  <p>The word is not decoration. Leave it off and Emerald stops you, because replacing a method by accident is a real and nasty mistake &mdash; you can break a class you never opened, just by picking a common name for your own method.</p>
+  <div class="unit">
+    <pre class="code">class Timer {
+    var ticks: Int = 0
+
+    func reset() { self.ticks = 0 }
+
+    func run() {
+        self.ticks = 5
+        self.reset()
+    }
+}
+
+class RaceTimer extends Timer {
+    var laps: Int = 0
+
+    func reset() { self.laps = 0 }        # written without knowing Timer has one
+}</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:15  reset replaces Timer.reset, so it says override.
+
+   15 |     func reset() { self.laps = 0 }        # written without knowing Timer has one
+
+  Write:  override func reset(...)
+  If you did not mean to replace it, Timer already has a reset taking the same things, and calling it will now reach this one instead. Rename yours, or give it different parameters so the two are overloads.</pre></div>
+  <p>When the new class has something of its own to set up, it writes its own <code class="inl">constructor</code> and starts it by calling the one above with <code class="inl">super</code>. That is how the base gets to fill in its own part &mdash; you say what to pass it, and it does the rest.</p>
+  <div class="unit">
+    <pre class="code">class Vehicle {
+    var wheels: Int
+    var name: String
+
+    constructor(name: String, wheels: Int) {
+        self.name = name
+        self.wheels = wheels
+    }
+
+    func describe(): String { return "#{self.name}, #{self.wheels} wheels" }
+}
+
+class Bike extends Vehicle {
+    var gears: Int
+
+    constructor(name: String, gears: Int) {
+        super(name, 2)          # build the Vehicle part first
+        self.gears = gears
+    }
+
+    override func describe(): String {
+        return "#{super.describe()}, #{self.gears} gears"
+    }
+}
+
+print(Bike("commuter", 8).describe())</pre>
+    <div class="out"><span class="lab">prints</span><pre>commuter, 2 wheels, 8 gears</pre></div>
+  </div>
+  <div class="aside"><p><code class="inl">super</code> means one thing &mdash; the class above &mdash; and you can do two things with it. <code class="inl">super(...)</code> runs its constructor; <code class="inl">super.describe()</code> calls a method it wrote.</p></div>
+  <p><code class="inl">super(...)</code> has to be the first line. Until it has run, the fields the base looks after are still empty, so nothing else can safely go before it. And you only need to write it when the base's constructor wants something &mdash; if it takes nothing, it is called for you.</p>
+  <p>What you must not do is fill in the base's fields yourself. Emerald will not let you, and the reason is worth seeing: <code class="inl">Vehicle</code> might do something with the values on the way in, and a class that sets the fields directly quietly skips all of it.</p>
+  <div class="unit">
+    <pre class="code">class Vehicle {
+    var wheels: Int
+    var name: String
+
+    constructor(name: String, wheels: Int) {
+        self.name = name
+        self.wheels = wheels
+    }
+}
+
+class Bike extends Vehicle {
+    var gears: Int
+
+    constructor(name: String, gears: Int) {
+        self.gears = gears
+    }
+}</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:14  Vehicle's constructor needs 2 arguments, so Bike has to say what to pass it.
+
+   14 |     constructor(name: String, gears: Int) {
+
+  Call it first:  super(...)
+  Vehicle's constructor takes (String, Int).</pre></div>
+  <p>And when you do replace a method, <code class="inl">super</code> is the one you replaced &mdash; useful when you want to add to it rather than throw it away.</p>
+  <div class="unit">
+    <pre class="code">class Greeter {
+    func greet(): String { return "hello" }
+}
+
+class LoudGreeter extends Greeter {
+    override func greet(): String { return "#{super.greet()}!!!" }
+}
+
+print(LoudGreeter().greet())</pre>
+    <div class="out"><span class="lab">prints</span><pre>hello!!!</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s19" data-search="traits 
+   a trait says what a type must have, and can hand it things in return. unlike  extends , a class can mix in as many traits as it likes. 
+   below,  swimmer  demands a  stamina  and gives back a  swim . neither class writes  swim ; both get it. 
+   
+     # a trait says what a type must have, and can hand it things in return.
+trait swimmer {
+    abstract func stamina(): int        # you must write this
+
+    func swim(): string {               # you get this for free
+        return &quot;swimming for #{self.stamina()} minutes&quot;
+    }
+}
+
+class dog with swimmer {
+    func stamina(): int { return 30 }
+}
+
+class duck with swimmer {
+    func stamina(): int { return 90 }
+}
+
+print(dog().swim())
+print(duck().swim()) 
+      prints  swimming for 30 minutes
+swimming for 90 minutes  
+   
+   a trait can also leave a  type  open rather than a method —  iterable  below asks for  each , names what  each  hands out as  item , and gives back  map ,  filter ,  count  and more, all written just once.  deck  only ever writes  each ; everything else arrives with it. 
+   
+     class card {
+    var name: string
+    var value: int
+    constructor(name: string, value: int) {
+        self.name = name
+        self.value = value
+    }
+}
+
+class deck with iterable {
+    type item = card
+    var cards: list&amp;lt;card&amp;gt;
+    constructor(cards: list&amp;lt;card&amp;gt;) { self.cards = cards }
+
+    func each(step: func(card)) {
+        for c in self.cards { step(c) }
+    }
+}
+
+var deck = deck([card(&quot;ace&quot;, 1), card(&quot;king&quot;, 13), card(&quot;queen&quot;, 12)])
+
+print(deck.map { c =&gt; c.name }.join(&quot;, &quot;))
+print(deck.filter { c =&gt; c.value &gt; 10 }.count()) 
+      prints  ace, king, queen
+2  
+   
+     map 's own answer type is never written down anywhere —  c =&gt; c.name  is what tells it, the same way a block's own parameter is inferred everywhere else in this tour.  
+   and it works the other way round: you can ask for  anything  that walks.  iterable&amp;lt;item=int&amp;gt;  says &quot;something whose items are whole numbers&quot;, which a list, a set and a range all are — none of them wrote a line to say so. 
+   
+     func total(items: iterable&amp;lt;item=int&amp;gt;): int {
+    var sum = 0
+    items.each { n =&gt; sum += n }
+    return sum
+}
+
+print(total([1, 2, 3]))
+print(total([1, 2, 3, 3].to_set()))
+print(total(1..10)) 
+      prints  6
+6
+55  
+   
+    the set prints  6  rather than  9  because a set holds one of each — the duplicate  3  was never in there. a class of your own fits the same slot: a  deck  whose  item  is  card  goes wherever  iterable&amp;lt;item=card&amp;gt;  is asked for.  
+"><h2>Traits</h2><a class="source" href="tour.html#s19">Read in the tour ↗</a>
+  <p>A trait says what a type must have, and can hand it things in return. Unlike <code class="inl">extends</code>, a class can mix in as many traits as it likes.</p>
+  <p>Below, <code class="inl">Swimmer</code> demands a <code class="inl">stamina</code> and gives back a <code class="inl">swim</code>. Neither class writes <code class="inl">swim</code>; both get it.</p>
+  <div class="unit">
+    <pre class="code"># A trait says what a type must have, and can hand it things in return.
+trait Swimmer {
+    abstract func stamina(): Int        # you must write this
+
+    func swim(): String {               # you get this for free
+        return "swimming for #{self.stamina()} minutes"
+    }
+}
+
+class Dog with Swimmer {
+    func stamina(): Int { return 30 }
+}
+
+class Duck with Swimmer {
+    func stamina(): Int { return 90 }
+}
+
+print(Dog().swim())
+print(Duck().swim())</pre>
+    <div class="out"><span class="lab">prints</span><pre>swimming for 30 minutes
+swimming for 90 minutes</pre></div>
+  </div>
+  <p>A trait can also leave a <em>type</em> open rather than a method — <code class="inl">Iterable</code> below asks for <code class="inl">each</code>, names what <code class="inl">each</code> hands out as <code class="inl">Item</code>, and gives back <code class="inl">map</code>, <code class="inl">filter</code>, <code class="inl">count</code> and more, all written just once. <code class="inl">Deck</code> only ever writes <code class="inl">each</code>; everything else arrives with it.</p>
+  <div class="unit">
+    <pre class="code">class Card {
+    var name: String
+    var value: Int
+    constructor(name: String, value: Int) {
+        self.name = name
+        self.value = value
+    }
+}
+
+class Deck with Iterable {
+    type Item = Card
+    var cards: List&lt;Card&gt;
+    constructor(cards: List&lt;Card&gt;) { self.cards = cards }
+
+    func each(step: func(Card)) {
+        for c in self.cards { step(c) }
+    }
+}
+
+var deck = Deck([Card("Ace", 1), Card("King", 13), Card("Queen", 12)])
+
+print(deck.map { c => c.name }.join(", "))
+print(deck.filter { c => c.value > 10 }.count())</pre>
+    <div class="out"><span class="lab">prints</span><pre>Ace, King, Queen
+2</pre></div>
+  </div>
+  <div class="aside"><p><code class="inl">map</code>'s own answer type is never written down anywhere — <code class="inl">c => c.name</code> is what tells it, the same way a block's own parameter is inferred everywhere else in this tour.</p></div>
+  <p>And it works the other way round: you can ask for <em>anything</em> that walks. <code class="inl">Iterable&lt;Item=Int&gt;</code> says "something whose items are whole numbers", which a list, a set and a range all are — none of them wrote a line to say so.</p>
+  <div class="unit">
+    <pre class="code">func total(items: Iterable&lt;Item=Int&gt;): Int {
+    var sum = 0
+    items.each { n => sum += n }
+    return sum
+}
+
+print(total([1, 2, 3]))
+print(total([1, 2, 3, 3].to_set()))
+print(total(1..10))</pre>
+    <div class="out"><span class="lab">prints</span><pre>6
+6
+55</pre></div>
+  </div>
+  <div class="aside"><p>The set prints <code class="inl">6</code> rather than <code class="inl">9</code> because a set holds one of each — the duplicate <code class="inl">3</code> was never in there. A class of your own fits the same slot: a <code class="inl">Deck</code> whose <code class="inl">Item</code> is <code class="inl">Card</code> goes wherever <code class="inl">Iterable&lt;Item=Card&gt;</code> is asked for.</p></div>
+</section><section class="language-topic" id="language-s20" data-search="operators on your own types 
+   there is no special syntax for making  +  work on something you wrote.  a + b   is   a.add(b) , so you write an ordinary method and mix in the trait that names it. 
+   one  compare  answers all four of  &amp;lt; ,  &amp;gt; ,  &amp;lt;=  and  &amp;gt;= . and  +=  goes through the same  add  you already wrote. 
+   the  to_string  from &amp;sect;15 is doing its job here too:  print(lunch + coffee)  needs nothing after it. 
+   
+     struct money with addable, equatable, ordered {
+    var cents: int
+
+    func add(other: money): money { return money(self.cents + other.cents) }
+    func equals?(other: money): bool { return self.cents == other.cents }
+    func compare(other: money): int { return self.cents - other.cents }
+
+    func to_string(): string {
+        var pennies = self.cents % 100
+        return &quot;$#{self.cents // 100}.#{if pennies &amp;lt; 10 then &quot;0#{pennies}&quot; else &quot;#{pennies}&quot;}&quot;
+    }
+}
+
+var lunch = money(1250)
+var coffee = money(450)
+
+print(lunch + coffee)
+print(lunch &amp;gt; coffee)
+print(lunch == money(1250))
+
+var total = money(0)
+total += lunch
+print(total) 
+      prints  $17.00
+true
+true
+$12.50  
+   
+"><h2>Operators on your own types</h2><a class="source" href="tour.html#s20">Read in the tour ↗</a>
+  <p>There is no special syntax for making <code class="inl">+</code> work on something you wrote. <code class="inl">a + b</code> <em>is</em> <code class="inl">a.add(b)</code>, so you write an ordinary method and mix in the trait that names it.</p>
+  <p>One <code class="inl">compare</code> answers all four of <code class="inl">&lt;</code>, <code class="inl">&gt;</code>, <code class="inl">&lt;=</code> and <code class="inl">&gt;=</code>. And <code class="inl">+=</code> goes through the same <code class="inl">add</code> you already wrote.</p>
+  <p>The <code class="inl">to_string</code> from &sect;15 is doing its job here too: <code class="inl">print(lunch + coffee)</code> needs nothing after it.</p>
+  <div class="unit">
+    <pre class="code">struct Money with Addable, Equatable, Ordered {
+    var cents: Int
+
+    func add(other: Money): Money { return Money(self.cents + other.cents) }
+    func equals?(other: Money): Bool { return self.cents == other.cents }
+    func compare(other: Money): Int { return self.cents - other.cents }
+
+    func to_string(): String {
+        var pennies = self.cents % 100
+        return "$#{self.cents // 100}.#{if pennies &lt; 10 then "0#{pennies}" else "#{pennies}"}"
+    }
+}
+
+var lunch = Money(1250)
+var coffee = Money(450)
+
+print(lunch + coffee)
+print(lunch &gt; coffee)
+print(lunch == Money(1250))
+
+var total = Money(0)
+total += lunch
+print(total)</pre>
+    <div class="out"><span class="lab">prints</span><pre>$17.00
+true
+true
+$12.50</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s21" data-search="square brackets on your own types 
+   same idea.  indexable  gives you  board[0]  for reading if you write  at , and writing as well if you also write  set_at . leave  set_at  out and the type is read-only. 
+   
+     class board with indexable {
+    var squares: list&amp;lt;string&amp;gt;
+
+    constructor(size: int) {
+        self.squares = []
+        size.times { self.squares.add(&quot;.&quot;) }
+    }
+
+    func at(square: int): string { return self.squares[square] }
+    func set_at(square: int, mark: string) { self.squares[square] = mark }
+}
+
+var board = board(3)
+board[0] = &quot;x&quot;
+board[2] = &quot;o&quot;
+
+print(board[0])
+print(board.squares.join(&quot; &quot;)) 
+      prints  x
+x . o  
+   
+"><h2>Square brackets on your own types</h2><a class="source" href="tour.html#s21">Read in the tour ↗</a>
+  <p>Same idea. <code class="inl">Indexable</code> gives you <code class="inl">board[0]</code> for reading if you write <code class="inl">at</code>, and writing as well if you also write <code class="inl">set_at</code>. Leave <code class="inl">set_at</code> out and the type is read-only.</p>
+  <div class="unit">
+    <pre class="code">class Board with Indexable {
+    var squares: List&lt;String&gt;
+
+    constructor(size: Int) {
+        self.squares = []
+        size.times { self.squares.add(".") }
+    }
+
+    func at(square: Int): String { return self.squares[square] }
+    func set_at(square: Int, mark: String) { self.squares[square] = mark }
+}
+
+var board = Board(3)
+board[0] = "X"
+board[2] = "O"
+
+print(board[0])
+print(board.squares.join(" "))</pre>
+    <div class="out"><span class="lab">prints</span><pre>X
+X . O</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s22" data-search="structs 
+   a struct is a small value that never changes once it is made &amp;mdash; a point, an amount of money, a color. because it cannot change, you do not have to write a constructor: emerald builds one from the fields, in the order you declared them. 
+   you &quot;change&quot; a struct by making a new one, which is why  moved_by  returns a  point  rather than editing this one. 
+   
+     # a struct is a small value that never changes once it is made.
+struct point {
+    var x: int
+    var y: int
+
+    # no constructor written — emerald builds one from the fields, in order.
+
+    func moved_by(dx: int, dy: int): point {
+        return point(self.x + dx, self.y + dy)
+    }
+}
+
+var here = point(2, 3)
+var there = here.moved_by(1, 1)
+
+print(&quot;#{here.x}, #{here.y}&quot;)
+print(&quot;#{there.x}, #{there.y}&quot;) 
+      prints  2, 3
+3, 4  
+   
+   and because a struct  is  its contents, two structs holding the same things are the same thing. you do not have to write that; it is what being a value means. 
+   
+     print(point(2, 3) == point(2, 3))
+print(point(2, 3) == point(9, 9))
+
+var route = [point(0, 0), point(2, 3)]
+print(route.contains?(point(2, 3))) 
+      prints  true
+false
+true  
+   
+    a class is different: two classes are the same only if they are the  same one . that is the honest answer when nothing has said otherwise &amp;mdash; and a class can say otherwise, which is the next section but one.  
+"><h2>Structs</h2><a class="source" href="tour.html#s22">Read in the tour ↗</a>
+  <p>A struct is a small value that never changes once it is made &mdash; a point, an amount of money, a color. Because it cannot change, you do not have to write a constructor: Emerald builds one from the fields, in the order you declared them.</p>
+  <p>You "change" a struct by making a new one, which is why <code class="inl">moved_by</code> returns a <code class="inl">Point</code> rather than editing this one.</p>
+  <div class="unit">
+    <pre class="code"># A struct is a small value that never changes once it is made.
+struct Point {
+    var x: Int
+    var y: Int
+
+    # No constructor written — Emerald builds one from the fields, in order.
+
+    func moved_by(dx: Int, dy: Int): Point {
+        return Point(self.x + dx, self.y + dy)
+    }
+}
+
+var here = Point(2, 3)
+var there = here.moved_by(1, 1)
+
+print("#{here.x}, #{here.y}")
+print("#{there.x}, #{there.y}")</pre>
+    <div class="out"><span class="lab">prints</span><pre>2, 3
+3, 4</pre></div>
+  </div>
+  <p>And because a struct <em>is</em> its contents, two structs holding the same things are the same thing. You do not have to write that; it is what being a value means.</p>
+  <div class="unit">
+    <pre class="code">print(Point(2, 3) == Point(2, 3))
+print(Point(2, 3) == Point(9, 9))
+
+var route = [Point(0, 0), Point(2, 3)]
+print(route.contains?(Point(2, 3)))</pre>
+    <div class="out"><span class="lab">prints</span><pre>true
+false
+true</pre></div>
+  </div>
+  <div class="aside"><p>A class is different: two classes are the same only if they are the <em>same one</em>. That is the honest answer when nothing has said otherwise &mdash; and a class can say otherwise, which is the next section but one.</p></div>
+</section><section class="language-topic" id="language-s23" data-search="enums 
+   an enum is a closed set of names. the alternative is passing strings around, and then  red?(&quot;haerts&quot;)  compiles happily and quietly does the wrong thing.  suit.haerts  cannot be spelled at all. 
+   
+     enum suit { hearts, diamonds, clubs, spades }
+
+var card = suit.hearts
+
+print(card)
+print(card.name)
+print(card == suit.hearts)
+
+for suit in suit.values {
+    print(suit.name)
+}
+
+# a function taking a suit cannot be handed anything else —
+# a misspelled string would have compiled and then misbehaved.
+func red?(s: suit): bool {
+    return s == suit.hearts or s == suit.diamonds
+}
+
+print(red?(suit.clubs)) 
+      prints  suit.hearts
+hearts
+true
+hearts
+diamonds
+clubs
+spades
+false  
+   
+"><h2>Enums</h2><a class="source" href="tour.html#s23">Read in the tour ↗</a>
+  <p>An enum is a closed set of names. The alternative is passing strings around, and then <code class="inl">red?("HAERTS")</code> compiles happily and quietly does the wrong thing. <code class="inl">Suit.HAERTS</code> cannot be spelled at all.</p>
+  <div class="unit">
+    <pre class="code">enum Suit { HEARTS, DIAMONDS, CLUBS, SPADES }
+
+var card = Suit.HEARTS
+
+print(card)
+print(card.name)
+print(card == Suit.HEARTS)
+
+for suit in Suit.values {
+    print(suit.name)
+}
+
+# A function taking a Suit cannot be handed anything else —
+# a misspelled string would have compiled and then misbehaved.
+func red?(s: Suit): Bool {
+    return s == Suit.HEARTS or s == Suit.DIAMONDS
+}
+
+print(red?(Suit.CLUBS))</pre>
+    <div class="out"><span class="lab">prints</span><pre>Suit.HEARTS
+HEARTS
+true
+HEARTS
+DIAMONDS
+CLUBS
+SPADES
+false</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s24" data-search="when something goes wrong on purpose 
+   when a function cannot do what it was asked, it can  throw . whoever called it can  catch  that and decide what to do. notice  throw ... if ...  using the same one-line guard as everything else. 
+   the guard also does the work of a check. a  throw  leaves the function, so everything below it is the case where the check held &amp;mdash;  age  is an  int  from there on, and needs no  .must()  to say so. 
+   
+     func age_from(text: string): int {
+    var age = text.to_int_maybe()
+    throw &quot;\&quot;#{text}\&quot; is not a number&quot; if age == nothing
+    return age
+}
+
+for input in [&quot;42&quot;, &quot;banana&quot;] {
+    try {
+        print(&quot;age: #{age_from(input)}&quot;)
+    }
+    catch e {
+        print(&quot;could not read that: #{e.message}&quot;)
+    }
+} 
+      prints  age: 42
+could not read that: &quot;banana&quot; is not a number  
+   
+
+   a program can say what  kind  of thing went wrong.  error  is an ordinary class, so you declare your own by extending it &amp;mdash; and then a  catch  can name the one it handles. 
+   the clauses are tried in the order you write them, so put the specific one first. the last  catch  here has no type, which means it takes anything the ones above it did not. 
+   
+     class tooold extends error { }
+
+func age_in_range(text: string): int {
+    var age = text.to_int_maybe()
+    throw &quot;that is not a number&quot; if age == nothing
+    throw tooold(&quot;#{age} is not a believable age&quot;) unless age.between?(0, 130)
+    return age
+}
+
+for input in [&quot;42&quot;, &quot;900&quot;, &quot;banana&quot;] {
+    try {
+        print(&quot;age: #{age_in_range(input)}&quot;)
+    }
+    catch e: tooold {
+        print(&quot;out of range: #{e.message}&quot;)
+    }
+    catch e {
+        print(&quot;could not read that: #{e.message}&quot;)
+    }
+} 
+      prints  age: 42
+out of range: 900 is not a believable age
+could not read that: that is not a number  
+   
+"><h2>When something goes wrong on purpose</h2><a class="source" href="tour.html#s24">Read in the tour ↗</a>
+  <p>When a function cannot do what it was asked, it can <code class="inl">throw</code>. Whoever called it can <code class="inl">catch</code> that and decide what to do. Notice <code class="inl">throw ... if ...</code> using the same one-line guard as everything else.</p>
+  <p>The guard also does the work of a check. A <code class="inl">throw</code> leaves the function, so everything below it is the case where the check held &mdash; <code class="inl">age</code> is an <code class="inl">Int</code> from there on, and needs no <code class="inl">.must()</code> to say so.</p>
+  <div class="unit">
+    <pre class="code">func age_from(text: String): Int {
+    var age = text.to_int_maybe()
+    throw "\"#{text}\" is not a number" if age == nothing
+    return age
+}
+
+for input in ["42", "banana"] {
+    try {
+        print("age: #{age_from(input)}")
+    }
+    catch e {
+        print("could not read that: #{e.message}")
+    }
+}</pre>
+    <div class="out"><span class="lab">prints</span><pre>age: 42
+could not read that: "banana" is not a number</pre></div>
+  </div>
+
+  <p>A program can say what <em>kind</em> of thing went wrong. <code class="inl">Error</code> is an ordinary class, so you declare your own by extending it &mdash; and then a <code class="inl">catch</code> can name the one it handles.</p>
+  <p>The clauses are tried in the order you write them, so put the specific one first. The last <code class="inl">catch</code> here has no type, which means it takes anything the ones above it did not.</p>
+  <div class="unit">
+    <pre class="code">class TooOld extends Error { }
+
+func age_in_range(text: String): Int {
+    var age = text.to_int_maybe()
+    throw "that is not a number" if age == nothing
+    throw TooOld("#{age} is not a believable age") unless age.between?(0, 130)
+    return age
+}
+
+for input in ["42", "900", "banana"] {
+    try {
+        print("age: #{age_in_range(input)}")
+    }
+    catch e: TooOld {
+        print("out of range: #{e.message}")
+    }
+    catch e {
+        print("could not read that: #{e.message}")
+    }
+}</pre>
+    <div class="out"><span class="lab">prints</span><pre>age: 42
+out of range: 900 is not a believable age
+could not read that: that is not a number</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s25" data-search="tests 
+   a test is a function marked  @test , in a file whose name ends in  _test.em .  assert  states something you believe is true. 
+   when an assertion fails it shows you the line you wrote  and  both sides of it, so you do not have to go back and add prints to find out what the values actually were. 
+   
+     # main.em
+func double(n: int): int { return n * 2 }
+
+print(double(21)) 
+   
+   
+     # double_test.em
+@test
+func doubling_works?(): bool {
+    assert double(4) == 8
+    assert double(0) == 0
+    return true
+}
+
+@test
+func doubling_is_wrong_on_purpose?(): bool {
+    assert double(3) == 7
+    return true
+} 
+      emerald&amp;nbsp;test    ok    doubletest.doubling_works?
+  fail  doubletest.doubling_is_wrong_on_purpose?
+        assertion failed:  double(3) == 7
+        left  was 6
+        right was 7
+
+2 tests, 1 failing.  
+   
+"><h2>Tests</h2><a class="source" href="tour.html#s25">Read in the tour ↗</a>
+  <p>A test is a function marked <code class="inl">@test</code>, in a file whose name ends in <code class="inl">_test.em</code>. <code class="inl">assert</code> states something you believe is true.</p>
+  <p>When an assertion fails it shows you the line you wrote <em>and</em> both sides of it, so you do not have to go back and add prints to find out what the values actually were.</p>
+  <div class="unit">
+    <pre class="code"># main.em
+func double(n: Int): Int { return n * 2 }
+
+print(double(21))</pre>
+  </div>
+  <div class="unit">
+    <pre class="code"># double_test.em
+@test
+func doubling_works?(): Bool {
+    assert double(4) == 8
+    assert double(0) == 0
+    return true
+}
+
+@test
+func doubling_is_wrong_on_purpose?(): Bool {
+    assert double(3) == 7
+    return true
+}</pre>
+    <div class="out"><span class="lab">emerald&nbsp;test</span><pre>  ok    DoubleTest.doubling_works?
+  FAIL  DoubleTest.doubling_is_wrong_on_purpose?
+        Assertion failed:  double(3) == 7
+        left  was 6
+        right was 7
+
+2 tests, 1 failing.</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s26" data-search="what the compiler says when you get it wrong 
+   this is the part of a language you actually spend your time with, so it is the part emerald spends the most effort on. an error names one cause, quotes the line, and where it can, says what to do instead. there is no jargon and no stack trace. 
+   every message below is real output, from the programs shown above them. 
+
+   
+     var name: string? = nothing
+print(name.count) 
+   
+    emerald run  main.em:2  this is string?, not string, so count may not exist.
+
+    2 | print(name.count)
+
+  a string? holds either a string or nothing. check it first, or supply a fallback with .or(...)
+
+  emerald explain  
+
+   
+     class player {
+    var name: string
+    var score: int
+
+    constructor(name: string) {
+        self.name = name
+    }
+} 
+   
+    emerald run  main.em:5  this constructor leaves score without a value.
+
+    5 |     constructor(name: string) {
+
+  assign it here:  self.score = ...
+  only assignments written directly in the constructor count — a helper method cannot be seen to have done it.
+
+  emerald explain  
+
+   
+     func double(n: int): int { return n * 2 }
+print(double(&quot;four&quot;)) 
+   
+    emerald run  main.em:2  double expects int as its first argument, but this is string.
+
+    2 | print(double(&quot;four&quot;))
+
+  emerald explain  
+
+   
+     var x = 5
+if x = 6 {
+    print(&quot;hm&quot;)
+} 
+   
+    emerald run  main.em:2  assignment cannot appear in a condition.
+
+    2 | if x = 6 {
+
+  emerald uses = to assign a value and == to compare two values. did you mean ==?  
+
+   
+     var words = [&quot;apple&quot;, &quot;fig&quot;]
+print(words.cont) 
+   
+    emerald run  main.em:2  no method named cont on list&amp;lt;string&amp;gt;.
+
+    2 | print(words.cont)
+
+  did you mean count?  
+
+   
+     class circle {
+    var radius: float
+    constructor(radius: float) { self.radius = radius }
+    func _squared(): float { return self.radius * self.radius }
+}
+print(circle(2.0)._squared()) 
+   
+    emerald run  main.em:6  _squared belongs to circle — that is what the _ says.
+
+    6 | print(circle(2.0)._squared())
+
+  a name starting with _ can be used inside circle, and inside any class that extends it. drop the _ to let the rest of the program use it.  
+
+   
+     func area(side: int): int { return side * side }
+func area(length: int): int { return length } 
+   
+    emerald run  main.em:2  area already has an overload matching this one, on line 1.
+
+    2 | func area(length: int): int { return length }
+
+  two of one name have to be told apart by what they take. no argument could choose between these.  
+
+   some things are worth mentioning but not worth stopping for. those are warnings: they are printed, and then the program runs anyway. 
+
+   
+     func getscore(): int {
+    return 10
+}
+print(getscore()) 
+   
+    emerald run  main.em:1  warning: a function is written in snake_case, so getscore reads as a type.
+
+    1 | func getscore(): int {
+
+  rename it to get_score. capitalized names mean types in emerald.
+10  
+
+   when a message mentions  emerald explain , that is an offer. run it and you get the same mistake shown as a small worked example &amp;mdash; the broken version, the fixed version, and why. 
+
+   
+      explain  reaching through a value that might be nothing
+
+  this does not work:
+
+      var name: string? = nothing
+      print(name.count())
+
+  this does:
+
+      var name: string? = nothing
+      if name != nothing {
+          print(name.count())
+      }
+
+  a string? holds either a string or nothing, and nothing cannot be counted.
+  checking it first is what tells the compiler which one it has — after that
+  check, name is an ordinary string for the rest of the block.
+
+  when any answer will do, ask for one:  name.or(&quot;unknown&quot;).count()
+
+  the check works on a name, not on a path, so a chain gets ?. instead. it
+  reads through the ? and puts it back on the answer, stopping at the first
+  step that is missing:
+
+      print(user.address?.city?.name.or(&quot;unknown&quot;))  
+   
+"><h2>What the compiler says when you get it wrong</h2><a class="source" href="tour.html#s26">Read in the tour ↗</a>
+  <p>This is the part of a language you actually spend your time with, so it is the part Emerald spends the most effort on. An error names one cause, quotes the line, and where it can, says what to do instead. There is no jargon and no stack trace.</p>
+  <p>Every message below is real output, from the programs shown above them.</p>
+
+  <div class="unit">
+    <pre class="code">var name: String? = nothing
+print(name.count)</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  This is String?, not String, so count may not exist.
+
+    2 | print(name.count)
+
+  A String? holds either a String or nothing. Check it first, or supply a fallback with .or(...)
+
+  emerald explain</pre></div>
+
+  <div class="unit">
+    <pre class="code">class Player {
+    var name: String
+    var score: Int
+
+    constructor(name: String) {
+        self.name = name
+    }
+}</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:5  This constructor leaves score without a value.
+
+    5 |     constructor(name: String) {
+
+  Assign it here:  self.score = ...
+  Only assignments written directly in the constructor count — a helper method cannot be seen to have done it.
+
+  emerald explain</pre></div>
+
+  <div class="unit">
+    <pre class="code">func double(n: Int): Int { return n * 2 }
+print(double("four"))</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  double expects Int as its first argument, but this is String.
+
+    2 | print(double("four"))
+
+  emerald explain</pre></div>
+
+  <div class="unit">
+    <pre class="code">var x = 5
+if x = 6 {
+    print("hm")
+}</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  Assignment cannot appear in a condition.
+
+    2 | if x = 6 {
+
+  Emerald uses = to assign a value and == to compare two values. Did you mean ==?</pre></div>
+
+  <div class="unit">
+    <pre class="code">var words = ["apple", "fig"]
+print(words.cont)</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  No method named cont on List&lt;String&gt;.
+
+    2 | print(words.cont)
+
+  Did you mean count?</pre></div>
+
+  <div class="unit">
+    <pre class="code">class Circle {
+    var radius: Float
+    constructor(radius: Float) { self.radius = radius }
+    func _squared(): Float { return self.radius * self.radius }
+}
+print(Circle(2.0)._squared())</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:6  _squared belongs to Circle — that is what the _ says.
+
+    6 | print(Circle(2.0)._squared())
+
+  A name starting with _ can be used inside Circle, and inside any class that extends it. Drop the _ to let the rest of the program use it.</pre></div>
+
+  <div class="unit">
+    <pre class="code">func area(side: Int): Int { return side * side }
+func area(length: Int): Int { return length }</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:2  area already has an overload matching this one, on line 1.
+
+    2 | func area(length: Int): Int { return length }
+
+  Two of one name have to be told apart by what they take. No argument could choose between these.</pre></div>
+
+  <p>Some things are worth mentioning but not worth stopping for. Those are warnings: they are printed, and then the program runs anyway.</p>
+
+  <div class="unit">
+    <pre class="code">func GetScore(): Int {
+    return 10
+}
+print(GetScore())</pre>
+  </div>
+  <div class="diag"><span class="lab">emerald run</span><pre>main.em:1  warning: A function is written in snake_case, so GetScore reads as a type.
+
+    1 | func GetScore(): Int {
+
+  Rename it to get_score. Capitalized names mean types in Emerald.
+10</pre></div>
+
+  <p>When a message mentions <code class="inl">emerald explain</code>, that is an offer. Run it and you get the same mistake shown as a small worked example &mdash; the broken version, the fixed version, and why.</p>
+
+  <div class="unit">
+    <div class="out"><span class="lab">explain</span><pre>Reaching through a value that might be nothing
+
+  This does not work:
+
+      var name: String? = nothing
+      print(name.count())
+
+  This does:
+
+      var name: String? = nothing
+      if name != nothing {
+          print(name.count())
+      }
+
+  A String? holds either a String or nothing, and nothing cannot be counted.
+  Checking it first is what tells the compiler which one it has — after that
+  check, name is an ordinary String for the rest of the block.
+
+  When any answer will do, ask for one:  name.or("unknown").count()
+
+  The check works on a name, not on a path, so a chain gets ?. instead. It
+  reads through the ? and puts it back on the answer, stopping at the first
+  step that is missing:
+
+      print(user.address?.city?.name.or("unknown"))</pre></div>
+  </div>
+</section><section class="language-topic" id="language-s27" data-search="the tools 
+   one command, a handful of things it does. there is no project file to configure and no build to set up &amp;mdash;  emerald new  makes a folder with one file in it, and every  .em  file you add beside it joins the same program. 
+   
+      emerald  emerald — v0 prototype
+
+  emerald new &amp;lt;name&amp;gt;        start a project
+  emerald run &amp;lt;file.em&amp;gt;     run a program
+  emerald check &amp;lt;file.em&amp;gt;   look for problems without running
+  emerald repl              try code a line at a time
+  emerald test [path]       run every @test function
+  emerald fmt [path]        format code, one way, no settings
+  emerald explain           explain the last error
+  emerald &amp;lt;file.em&amp;gt;         same as run
+
+  build, ship, add          named, and not buildable yet — try one to see why
+
+every .em file beside the entry file is part of the project — no imports needed.  
+   
+
+    emerald fmt  lays code out one way, with nothing to configure and so nothing to argue about. 
+   
+     class dog {
+var name: string
+constructor(name: string) {
+self.name = name
+}
+func speak(): string {
+return &quot;woof&quot;
+}
+}
+print(dog(&quot;rex&quot;).speak()) 
+      becomes  class dog {
+    var name: string
+    constructor(name: string) {
+        self.name = name
+    }
+    func speak(): string {
+        return &quot;woof&quot;
+    }
+}
+print(dog(&quot;rex&quot;).speak())  
+   
+
+    emerald repl  lets you try one line at a time. type an expression and it shows you what it comes to; define a name again and the new one replaces it. 
+   
+      repl  emerald. type an expression to see it, :help for more.
+
+&amp;gt; var x = 21
+&amp;gt; x * 2
+42
+&amp;gt; func shout(s: string): string { return s.upper() }
+&amp;gt; shout(&quot;hello&quot;)
+hello
+&amp;gt; var n: int? = nothing
+&amp;gt; n.count
+  this is int?, not int, so count may not exist.
+    an int? holds either an int or nothing. check it first, or supply a fallback with .or(...)
+&amp;gt; :what
+  x, shout, n  
+   
+"><h2>The tools</h2><a class="source" href="tour.html#s27">Read in the tour ↗</a>
+  <p>One command, a handful of things it does. There is no project file to configure and no build to set up &mdash; <code class="inl">emerald new</code> makes a folder with one file in it, and every <code class="inl">.em</code> file you add beside it joins the same program.</p>
+  <div class="unit">
+    <div class="out"><span class="lab">emerald</span><pre>emerald — v0 prototype
+
+  emerald new &lt;name&gt;        start a project
+  emerald run &lt;file.em&gt;     run a program
+  emerald check &lt;file.em&gt;   look for problems without running
+  emerald repl              try code a line at a time
+  emerald test [path]       run every @test function
+  emerald fmt [path]        format code, one way, no settings
+  emerald explain           explain the last error
+  emerald &lt;file.em&gt;         same as run
+
+  build, ship, add          named, and not buildable yet — try one to see why
+
+Every .em file beside the entry file is part of the project — no imports needed.</pre></div>
+  </div>
+
+  <p><code class="inl">emerald fmt</code> lays code out one way, with nothing to configure and so nothing to argue about.</p>
+  <div class="unit">
+    <pre class="code">class Dog {
+var name: String
+constructor(name: String) {
+self.name = name
+}
+func speak(): String {
+return "Woof"
+}
+}
+print(Dog("Rex").speak())</pre>
+    <div class="out"><span class="lab">becomes</span><pre>class Dog {
+    var name: String
+    constructor(name: String) {
+        self.name = name
+    }
+    func speak(): String {
+        return "Woof"
+    }
+}
+print(Dog("Rex").speak())</pre></div>
+  </div>
+
+  <p><code class="inl">emerald repl</code> lets you try one line at a time. Type an expression and it shows you what it comes to; define a name again and the new one replaces it.</p>
+  <div class="unit">
+    <div class="out"><span class="lab">repl</span><pre>Emerald. Type an expression to see it, :help for more.
+
+&gt; var x = 21
+&gt; x * 2
+42
+&gt; func shout(s: String): String { return s.upper() }
+&gt; shout("hello")
+HELLO
+&gt; var n: Int? = nothing
+&gt; n.count
+  This is Int?, not Int, so count may not exist.
+    An Int? holds either an Int or nothing. Check it first, or supply a fallback with .or(...)
+&gt; :what
+  x, shout, n</pre></div>
+  </div>
+</section></div><footer>Emerald reference · Rebuild with <code>node tools/reference.mjs</code>.<br>Navigation inspired by <a href="https://docs.ruby-lang.org/en/4.0/">Ruby’s documentation</a>; content and styling from Emerald.</footer></main></div>
+<script>
+const search = document.querySelector('#search');
+const entries = [...document.querySelectorAll('.entry, .language-topic')];
+const groups = [...document.querySelectorAll('.api-group')];
+function filter() {
+  const words = search.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  let count = 0;
+  for (const entry of entries) {
+    entry.hidden = !words.every(word => entry.dataset.search.includes(word));
+    if (!entry.hidden) count++;
+  }
+  for (const group of groups) group.hidden = ![...group.querySelectorAll('.entry')].some(e => !e.hidden);
+  document.querySelector('#overview').hidden = words.length > 0;
+  document.querySelector('#empty').hidden = count > 0;
+  document.querySelector('#results').textContent = words.length ? `${count} matching entries and topics` : '';
+}
+search.addEventListener('input', filter);
+document.addEventListener('keydown', event => {
+  if (event.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { event.preventDefault(); search.focus(); }
+  if (event.key === 'Escape' && document.activeElement === search) { search.value = ''; filter(); }
+});
+function revealHash() {
+  if (search.value) { search.value = ''; filter(); }
+  const current = decodeURIComponent(location.hash.slice(1));
+  for (const a of document.querySelectorAll('aside a')) {
+    if (a.hash === location.hash) a.setAttribute('aria-current', 'location'); else a.removeAttribute('aria-current');
+  }
+  document.getElementById(current)?.scrollIntoView();
+}
+window.addEventListener('hashchange', revealHash);
+document.querySelector('aside').addEventListener('click', event => {
+  if (event.target.closest('a') && search.value) { search.value = ''; filter(); }
+});
+document.querySelector('#theme').addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+});
+revealHash();
+
+</script></body></html>
