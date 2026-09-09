@@ -1125,7 +1125,7 @@ print(Duck().swim())</pre>
     <div class="out"><span class="lab">prints</span><pre>swimming for 30 minutes
 swimming for 90 minutes</pre></div>
   </div>
-  <p>A trait can also leave a <em>type</em> open rather than a method — <code class="inl">Iterable</code> below asks for <code class="inl">each</code>, names what <code class="inl">each</code> hands out as <code class="inl">Item</code>, and gives back <code class="inl">map</code>, <code class="inl">filter</code>, <code class="inl">count</code> and more, all written just once. <code class="inl">Deck</code> only ever writes <code class="inl">each</code>; everything else arrives with it.</p>
+  <p>A trait can also leave a <em>type</em> open rather than a method — <code class="inl">Iterable</code> below asks for <code class="inl">each</code>, names what <code class="inl">each</code> hands out as <code class="inl">Item</code>, and gives back <code class="inl">map</code>, <code class="inl">filter</code>, <code class="inl">reject</code>, <code class="inl">find</code>, <code class="inl">any?</code>, <code class="inl">all?</code>, <code class="inl">count</code>, <code class="inl">take</code>, <code class="inl">drop</code> and the rest, all written just once. <code class="inl">Deck</code> only ever writes <code class="inl">each</code>; everything else arrives with it.</p>
   <div class="unit">
     <pre class="code">class Card {
     var name: String

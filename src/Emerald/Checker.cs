@@ -801,6 +801,7 @@ public sealed class Checker(
         CheckFieldsGetValues(decl, info);
         CheckRequirementsAreMet(decl, info);
         CheckAssociatedTypesAreMet(decl, info);
+        CheckReboundAnswersAreSupplied(decl, info);
 
         // A module's own top-level code. Its statics are visible unqualified here: they
         // were written as a file's own variables and only became static fields because
@@ -934,6 +935,60 @@ public sealed class Checker(
                           $"{decl.Name.Lexeme} mixes in {trait.Name} but never says what "
                           + $"{name} is.",
                           $"Give it a value:  type {name} = SomeType");
+    }
+
+    /// <summary>
+    /// Answering an associated type differently obliges you to answer the methods that
+    /// hand one back. A trait's own <c>filter</c> builds a <c>List&lt;Item&gt;</c> and can
+    /// build nothing else — it cannot construct whatever implements it — so a class saying
+    /// <c>type Filtered = Set&lt;Item&gt;</c> and then inheriting that body is typed
+    /// <c>Set</c> and evaluates to a <c>List</c>. Measured, not reasoned: before this it
+    /// printed "checker says Set, runtime says List".
+    ///
+    /// This is the rule the design named as the cheaper half of the fork — one check
+    /// instead of a builder protocol every implementer has to satisfy. The cost is that it
+    /// has to be stated, which is what this is.
+    /// </summary>
+    private void CheckReboundAnswersAreSupplied(Stmt.ClassDecl decl, ClassInfo info)
+    {
+        if (info.Kind == TypeKind.Trait) return;
+
+        foreach (var trait in info.Traits)
+        {
+            // Only a name this class answered *differently* is a problem. Taking the
+            // default is exactly what the trait's own body was written against.
+            var rebound = trait.AssociatedTypeDefaults
+                .Where(d => info.AssociatedTypeBindings.TryGetValue(d.Key, out var mine)
+                            && !mine.Equals(d.Value))
+                .Select(d => d.Key)
+                .ToHashSet();
+
+            if (rebound.Count == 0) continue;
+
+            foreach (var (name, overloads) in trait.Methods)
+            {
+                // An abstract one has no body to inherit, so there is nothing to be wrong;
+                // one this class declared itself is the answer this asks for.
+                if (trait.AbstractNames.Contains(name) || info.Methods.ContainsKey(name))
+                    continue;
+
+                foreach (var signature in overloads)
+                {
+                    if (FirstUnbound(signature.Return) is not { } gives) continue;
+                    if (!rebound.Contains(gives.Name)) continue;
+
+                    Error(decl.Name.Line,
+                          $"{decl.Name.Lexeme} says {gives.Name} is "
+                          + $"{info.AssociatedTypeBindings[gives.Name].Show()}, but it takes "
+                          + $"{trait.Name}'s own {name}, which can only build "
+                          + $"{trait.AssociatedTypeDefaults[gives.Name].Substitute(info.EffectiveBindings()).Show()}.",
+                          $"A trait cannot build one of your types. Write {name} here, or "
+                          + $"drop the `type {gives.Name} =` line and take "
+                          + $"{trait.Name}'s answer.");
+                    break;
+                }
+            }
+        }
     }
 
     /// <summary>Whether one method can stand as the answer to a declared requirement.</summary>

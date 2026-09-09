@@ -137,11 +137,70 @@ public static class Prelude
                 return result
             }
 
+            ## The other half of filter, and it answers Filtered for the same reason:
+            ## narrowing a collection should not change what it is.
+            func reject(drop: func(Item): Bool): Filtered {
+                var result: List<Item> = []
+                self.each { item => result.add(item) if not drop(item) }
+                return result
+            }
+
             func find(matches: func(Item): Bool): Item? {
                 for item in self.to_list() {
                     return item if matches(item)
                 }
                 return nothing
+            }
+
+            ## Walks the whole collection rather than stopping at the first answer, because
+            ## a block cannot break out of an each (§3.1) — the same reason find has to
+            ## build a list before it can return early. Correct either way; the cost is
+            ## work, not answers.
+            func any?(matches: func(Item): Bool): Bool {
+                var found = false
+                self.each { item =>
+                    found = true if matches(item)
+                }
+                return found
+            }
+
+            func all?(matches: func(Item): Bool): Bool {
+                var every = true
+                self.each { item =>
+                    every = false if not matches(item)
+                }
+                return every
+            }
+
+            func empty?(): Bool {
+                return self.count() == 0
+            }
+
+
+            ## The index goes last, so a block wanting only the item is unchanged and
+            ## naming the position is opt-in. Ruby and JavaScript both put it there.
+            func each_with_index(step: func(Item, Int)) {
+                var at = 0
+                self.each { item =>
+                    step(item, at)
+                    at += 1
+                }
+            }
+
+            func take(many: Int): Filtered {
+                var result: List<Item> = []
+                self.each { item => result.add(item) if result.count() < many }
+                return result
+            }
+
+            func drop(many: Int): Filtered {
+                var result: List<Item> = []
+                var seen = 0
+                self.each { item =>
+                    result.add(item) if seen >= many
+                    seen += 1
+                }
+                return result
             }
 
             func count(): Int {
