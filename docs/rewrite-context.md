@@ -1,0 +1,2398 @@
+# Emerald rewrite context
+
+Status: single working design baseline for the Zig rewrite.
+
+This is the only rewrite context document. It exists so Emerald does not depend on
+conversational memory. It consolidates the complete exported rewrite discussion, its
+decision ledger and sanity-check audit, and deliberate changes from the .NET prototype.
+The old C# code and `design.html` remain valuable experiments, tests, and historical
+reasoning. They do not override this document.
+
+The labels used here are:
+
+- **Settled** — use this rule when designing and implementing the rewrite.
+- **Deferred** — preserve room for it but do not implement it initially.
+- **Provisional** — a reversible choice made to keep progress possible. Revisit only when
+  code or teaching experience supplies evidence.
+
+## Contents
+
+1. Position
+2. A first program
+3. Source text and names
+4. Values and types
+5. Expressions and operators
+6. Statements and control flow
+7. Functions and callable values
+8. Collections and compound values
+9. Strings and numbers
+10. Structs, classes, and members
+11. Traits and operators
+12. Enums and branching
+13. Errors and resources
+14. Program and project structure
+15. Standard library organization
+16. Annotations, assertions, and tests
+17. Diagnostics
+18. Command-line and editor tooling
+19. Zig implementation architecture
+20. Implementation sequence
+21. Deferred features
+22. Reconstruction decisions and history
+23. Consistency rules for future work
+24. Evidence-driven roadmap
+25. Definition of ready for implementation
+
+## 1. Position
+
+Emerald is a statically typed, inferred, garbage-collected programming language intended
+to be approachable as a first language and enjoyable after the introductory course ends.
+It borrows Ruby's delight in expressive libraries, Python's readable surface, C#'s useful
+distinction between value and reference types, and traits as a composition mechanism.
+
+The governing principles are settled:
+
+1. A beginner should be able to explain every character in an introductory program.
+2. Static checking should prevent mistakes and teach the correction.
+3. Expressiveness belongs in regular, discoverable language and library features rather
+   than runtime magic.
+4. The core syntax stays small while the standard library may be rich.
+5. The implementation host must adapt to Emerald. Emerald must not distort itself around
+   Zig, .NET, or a future backend.
+6. Optionals and generics grow only from demonstrated needs. They are not general-purpose
+   escape hatches for library implementation.
+7. Reversible choices may begin simply. Irreversible surface area needs evidence.
+8. Errors are pedagogy: wording, locations, examples, and recovery suggestions are part of
+   the product.
+
+Emerald is experimental. Compatibility is valuable once users depend on a release, but
+the pre-1.0 language may remove ideas that do not survive real programs.
+
+## 2. A first program
+
+The introductory surface is settled:
+
+```emerald
+var name = input("What is your name? ")
+print("Hello, #{name}!")
+```
+
+There is no class wrapper, `public`, `static`, `void`, namespace declaration, manifest, or
+import in the first program. `input`, `print`, and `write` are prelude functions callable
+without qualification.
+
+```emerald
+print("This includes a newline.")
+write("This does not. ")
+write("The next text stays on this line.")
+```
+
+`input(prompt)` writes the optional prompt, reads one line, removes its line ending, and
+returns a `String`. End of input raises `InputError`. The settled
+`input_maybe(prompt)` alternative returns an optional `String` and produces `nothing` at
+end of input.
+
+## 3. Source text and names
+
+### 3.1 Files and encoding
+
+- Source files use the `.em` extension.
+- Source is UTF-8. Unix and Windows line endings and an optional UTF-8 byte-order mark are
+  accepted. Malformed input is reported at the offending byte span. The formatter writes
+  UTF-8 without a byte-order mark and uses one consistent line-ending style.
+- Newlines terminate ordinary statements. They are ignored while parentheses or brackets
+  remain open and after a token that cannot end an expression, including a binary
+  operator, comma, or member dot. Expression-position collection literals follow the same
+  rule; statement blocks retain normal newline termination. Continuation is determined
+  from the preceding tokens rather than indentation or the next line. There is no
+  backslash continuation syntax.
+- Semicolons are unnecessary and should not become a parallel statement syntax.
+
+The grammar owns the exact continuation-token list, and lexer/parser conformance tests
+cover every member of it.
+
+### 3.2 Comments
+
+The forms are settled:
+
+```emerald
+# A line comment
+
+## Documentation for the declaration below.
+func greet() {
+    print("Hello")
+}
+
+#[
+A block comment may span lines.
+]#
+```
+
+Block comments nest. An unclosed block comment reports its opening `#[` rather than only
+the end of the file.
+
+`#`, `##`, and `#[` are distinguished by the next character rather than by counting an
+arbitrary run of hashes. Documentation text is Markdown. The initial tag set is
+deliberately empty: parameters, returns, and expected errors are described naturally in
+prose until tooling demonstrates a need for structured tags. An orphaned `##` block
+produces a warning because it does not describe a declaration.
+
+An override or trait implementation uses its own documentation when present. Otherwise,
+documentation tools inherit the text from the overridden declaration or satisfied trait
+requirement and label its source. If several requirements contribute different text, the
+tool presents each source rather than silently choosing one. Private helper documentation
+does not become part of an adopter's public API.
+
+### 3.3 Naming
+
+The casing rules are settled:
+
+| Declaration | Convention |
+| --- | --- |
+| Types and traits | `PascalCase` |
+| Variables, fields, parameters | `snake_case` |
+| Functions and methods | `snake_case` |
+| Constants and enum values | `snake_case` |
+
+Violations are style warnings rather than syntax errors. American English is the standard
+library spelling convention: `Color`, `center`, and `initialize`.
+
+Methods returning `Bool` conventionally end in `?`. Omitting the suffix from a Boolean
+function produces a style warning; a name ending in `?` with a non-`Bool` result is a type
+error. The compiler remains capable of describing an external API that cannot follow
+Emerald's convention.
+
+```emerald
+func empty?(): Bool {
+    return self.count == 0
+}
+```
+
+A leading underscore marks a private member:
+
+```emerald
+var _cached_total = 0
+```
+
+There is no `private` keyword. `protected` is deferred.
+
+Identifiers follow Unicode identifier rules with NFC normalization, are case-sensitive,
+and exclude emoji. Canonically equivalent spellings denote the same name. Keywords remain
+English; casing conventions apply only to writing systems that have case.
+
+### 3.4 Braces and parentheses
+
+Braces delimit blocks. Whitespace is not semantic.
+
+Stroustrup braces are the teaching and formatter convention: an opening brace ends its
+header line, a closing brace begins a line, and `else`, `catch`, and `finally` begin their
+own lines.
+
+```emerald
+if score >= 10 {
+    print("You win!")
+}
+else {
+    print("Keep trying.")
+}
+```
+
+Conditions conventionally omit parentheses:
+
+```emerald
+if ready?() {
+    start()
+}
+```
+
+Parentheses remain legal when they clarify grouping. A formatter must not remove grouping
+that changes meaning.
+
+Ordinary calls use parentheses, including zero-argument calls. A trailing lambda may serve
+as the final argument without an empty `()` before it. Otherwise, a bare function or method
+name obtains the callable value:
+
+```emerald
+player.greet()       # call
+const greet = player.greet # bound method value
+```
+
+Braces appear only where a declared construct expects a block or where expression context
+admits a set or lambda. A bare anonymous block is not a standalone scoping statement; use
+a named function or an existing control-flow construct when a separate scope is needed.
+Keywords remain reserved after `.`, just as they are elsewhere, so member declarations do
+not create a second identifier grammar.
+
+An implementation accepts at least 256 nested syntactic delimiters or declarations and
+checks its nesting budget before consuming the host stack. Excess reports a normal source
+diagnostic at the delimiter that crosses the documented limit. Programs must not depend
+on a particular implementation accepting deeper pathological nesting.
+
+## 4. Values and types
+
+### 4.1 Static typing and inference
+
+Every expression has a static type before execution. Local types are inferred when the
+initializer determines one:
+
+```emerald
+var score = 0
+var title = "Emerald"
+```
+
+An uninitialized variable is allowed only with an explicit type:
+
+```emerald
+var winner: Player
+```
+
+Reading it before definite assignment is an error. The checker proves definite assignment
+through control flow rather than inserting a default value.
+
+```emerald
+var message: String
+
+if won?() {
+    message = "You won"
+}
+else {
+    message = "Try again"
+}
+
+print(message)
+```
+
+If any reachable branch leaves `message` unassigned, its later read fails during checking.
+
+### 4.2 Initial built-in types
+
+The initial semantic vocabulary is:
+
+- `Bool`
+- `Int`
+- `Float`
+- `String`
+- `Nothing`
+- list, dictionary, set, tuple, and range types
+- functions
+- user structs, classes, enums, and traits
+
+`Nothing` is the absence-only type. The value is written `nothing`.
+
+```emerald
+const missing: Nothing = nothing
+```
+
+Emerald needs a way to express “a `T` or `nothing`,” but `T?` is not the settled spelling.
+It is visually unattractive and competes with the established `?` suffix and `?.`
+optional-chaining punctuation. Keep the semantics while leaving the type syntax open:
+
+```emerald
+var result = "42".to_int_maybe()  # inferred as an optional Int
+```
+
+Only this one optional relationship is required initially. Optionals do not make all
+references nullable, and the replacement syntax must not create a general generic system
+by accident.
+
+### 4.3 `var` and `const`
+
+`var` permits rebinding; `const` does not:
+
+```emerald
+var score = 1
+score = 2
+
+const max_score = 100
+```
+
+`const` is shallow. It protects the binding, not all state reachable through the value.
+This deliberately follows the behavior familiar from C# collection and object variables:
+
+```emerald
+const players = ["Ava"]
+players.append("Noah")    # allowed
+players = ["Mia"]         # error
+```
+
+Fields also use `var` and `const`. A `const` field is assigned during construction and is
+not later rebound. A `var` field may be updated by methods.
+
+### 4.4 Type relationships and conversion
+
+Conditions require `Bool`; values do not become truthy or falsey implicitly.
+
+Numeric widening from `Int` to `Float` is allowed where arithmetic requires it. Other
+conversions are explicit and use descriptive method names:
+
+```emerald
+"42".to_int()
+"42".to_int_or(0)
+"42".to_int_maybe()
+```
+
+The three forms mean raise on failure, use a supplied fallback, or return an optional
+`Int`.
+Equivalent conversion families may be added only when the conversion itself belongs.
+
+Mixed `Int`/`Float` comparisons compare their mathematical values without first rounding
+the integer into `Float`. Widening a large `Int` to `Float` may lose precision, but that
+loss must not make two distinct numeric values compare equal accidentally.
+
+Mutable collection types are invariant: `[Dog]` is not assignable to `[Animal]`. A mixed
+list of sibling classes requires an explicit common superclass or trait annotation, while
+the established numeric widening still allows `[1, 2.5]` to infer `[Float]`.
+
+`is` tests a runtime type and narrows a name within the proven branch. Explicit casts use
+normal control-flow narrowing; explicit downcast operators such as `as`, forced casts, and
+optional casts are deferred.
+
+An `is` test that static analysis can prove always true or always false remains valid and
+produces that `Bool`, but receives a warning explaining the known result. The tested
+expression is still evaluated exactly once even when its result is known. Tests through a
+base class or trait receive no warning when the runtime value could genuinely have the
+target type. No binding-pattern extension to `is` is included initially.
+
+Every value exposes a read-only `type_name` property using Emerald's source spelling for
+its concrete runtime type:
+
+```emerald
+var animal: Animal = Dog()
+print(animal.type_name)  # "Dog"
+print([1, 2].type_name)  # "[Int]"
+```
+
+This universal property does not imply that values inherit from a common `Object` class.
+First-class type values and general reflection are deferred; programs use `is` for
+type-dependent control flow. `type_name` is intended for learning, diagnostics, and
+debugging rather than durable program identifiers.
+
+### 4.5 Optional handling
+
+Optional behavior remains deliberately small:
+
+```emerald
+var number = text.to_int_maybe()
+var usable = number.or(0)
+```
+
+Comparison with `nothing` narrows a stable local name:
+
+```emerald
+if number != nothing {
+    print(number + 1)
+}
+```
+
+Narrowing does not assume that a mutable property remains unchanged between reads. Binding
+the property to a local makes the proof explicit.
+
+A narrowed mutable binding loses that fact when it is reassigned or when a called closure
+could reassign its captured binding. `const` bindings and read-only parameters retain
+narrowing because they cannot be rebound. Overload selection uses the type known at the
+call site after any such narrowing.
+
+Optional chaining uses `?.`:
+
+```emerald
+var city = user?.address?.city.or("Unknown")
+```
+
+Each potentially absent link is written explicitly. An optional result does not make the
+rest of the chain implicitly optional, so `user?.address.city` is rejected when `address`
+may be absent; write the second `?.`. The completed chain still produces an optional value
+that can be narrowed or handled with `.or(...)`.
+
+Optional chaining is permitted for reads and calls. Assignment through a chain is
+disallowed because `user?.name = "Ava"` hides whether the mutation happened. `??` remains
+rejected. APIs should not manufacture optional results merely to avoid designing a useful
+failure mode.
+
+Optional placement is structural: an optional collection and a collection of optional
+elements are different types. A literal containing `nothing` requires contextual element
+type information. Functions returning `nothing` on any path require an explicit optional
+or `Nothing` return type and never acquire an implicit `nothing` by falling off the end.
+
+## 5. Expressions and operators
+
+### 5.1 Literals
+
+Settled literal forms include decimal integers, decimal floating-point numbers, `true`,
+`false`, `nothing`, strings, and collection literals. Underscores may separate digits but
+may not lead, trail, or repeat. A decimal point or exponent makes a literal a `Float`;
+scientific notation accepts signed exponents. Additional numeric bases and suffixes are
+deferred.
+
+Tokens beginning with familiar unsupported base prefixes such as `0x`, `0o`, or `0b`
+receive a targeted diagnostic rather than splitting into misleading decimal and identifier
+tokens. Malformed separators, decimal points, and exponents likewise report one numeric
+literal error spanning the attempted token.
+
+Double-quoted strings process escapes and interpolation:
+
+```emerald
+var count = 3
+print("There are #{count} gems.\n")
+print("\#{count}") # literal #{count}
+```
+
+Single-quoted strings are raw: they do not interpolate and do not process backslash
+escapes.
+
+```emerald
+var windows_path = 'C:\Users\student\game'
+var pattern = '\d+'
+```
+
+Triple double quotes form multiline strings. The opening newline is omitted, indentation
+matching the closing delimiter is removed from each content line, and there is no implicit
+trailing newline. Interpolation and escapes retain their double-quoted meanings.
+
+### 5.2 Boolean and comparison operators
+
+Use the word operators `not`, `and`, and `or`. Symbolic duplicates such as `!`, `&&`, and
+`||` are not a second spelling.
+
+Comparison operators are `==`, `!=`, `<`, `<=`, `>`, and `>=`. Chained comparisons are
+supported: `0 <= score <= 100` evaluates the middle expression once and short-circuits as
+if the comparisons were joined by `and`.
+
+Assignment is a statement, never an expression. Therefore `if x = 5` is rejected instead
+of assigning accidentally.
+
+Chained assignment is rejected, and declarations introduce one binding at a time except
+for tuple destructuring. Compound assignment evaluates its receiver and index, checks and
+reads the current value, then evaluates the right side; every subexpression runs at most
+once. Function arguments and other ordered expression lists evaluate left to right.
+
+A function call may discard its result when invoked for side effects. A standalone pure
+expression with an unused result is an error; diagnostics should suggest the likely update,
+such as replacing `score + 1` with `score += 1`.
+
+### 5.3 Arithmetic
+
+Arithmetic uses ordinary precedence. Exponentiation binds more tightly than unary minus
+and is right-associative, so `2 ** 3 ** 2` means `2 ** (3 ** 2)` and `-2 ** 2` means
+`-(2 ** 2)`.
+
+The operators are:
+
+- `+`, `-`, `*`
+- `/` for ordinary division
+- `//` for floor division
+- `%` for the remainder paired with the chosen division rule
+- `**` for exponentiation
+
+Integer overflow is checked and reported. Division by zero is an error for both numeric
+types. Floating-point overflow may produce infinity and invalid floating operations may
+produce NaN; NaN follows IEEE comparison behavior and is inspected with `nan?()`. NaN is
+invalid as a dictionary key, set element, or recursively contained part of either. Sorting,
+`min`, and `max` report an error when they encounter NaN. Infinity orders normally.
+
+`/` always returns `Float`. `//` rounds toward negative infinity; two `Int` operands return
+`Int`, while either `Float` operand makes the result a whole-number-valued `Float`. `%`
+uses the matching floor-division law `a == (a // b) * b + (a % b)`; for finite operands a
+nonzero remainder has the divisor's sign. Two `Int` operands return `Int`, otherwise it
+returns `Float`. A NaN or infinite remainder operand produces NaN.
+
+`**` always returns `Float`, including for integer operands. It binds more tightly than
+unary minus and associates right to left.
+
+Compound assignment includes `+=`, `-=`, `*=`, `/=`, and `//=` and lowers through the same
+operation as the corresponding binary operator. `++` and `--` are omitted.
+
+### 5.4 Calls, member access, and indexing
+
+Ordinary calls use parentheses; the trailing-lambda form is the one exception:
+
+```emerald
+move(3, 4)
+player.rename("Ava")
+player.save()
+numbers.map { number => number * 2 }
+```
+
+Square brackets perform zero-based indexing on indexable values. Out-of-range access is an
+error with the requested index and valid range in the diagnostic.
+
+Lists and strings also slice with range syntax, producing independent values:
+
+```emerald
+text[1..<4]       # exclusive end
+text[1..4]        # inclusive end
+items[2..<]       # through the end
+items[..<3]       # from the beginning
+```
+
+String boundaries count graphemes. Endpoints outside valid boundaries are errors rather
+than silently clamped; an exclusive endpoint may equal the length, and `items[i..<i]` is
+empty at any valid boundary. Omitted endpoints exist only inside slicing brackets and do
+not create unbounded range values.
+
+Method chaining is the pipeline notation:
+
+```emerald
+input("Age: ").trim().to_int_maybe().or(0)
+```
+
+No separate pipeline operator is needed.
+
+A property uses no parentheses. Omitting parentheses from a method obtains a bound callable
+value. Class receivers remain shared; struct receivers are copied into the bound method
+and retain their private evolving copy across calls. An explicit closure captures a struct
+binding when calls should update that surrounding binding.
+
+## 6. Statements and control flow
+
+### 6.1 Blocks and scope
+
+Every control-flow or callable block creates a lexical scope. A local declared inside the
+block does not leak out. A loop variable is a fresh binding for each iteration so closures
+created in the loop capture that iteration's value.
+
+Shadowing a visible local within the same function is an error because beginners usually
+meant assignment. Sibling scopes may reuse names. Crossing a function boundary is allowed:
+a parameter or local may reuse a module-level name.
+
+### 6.2 Conditional statements and expressions
+
+The statement form is:
+
+```emerald
+if temperature < 0 {
+    print("Freezing")
+}
+else if temperature < 20 {
+    print("Cool")
+}
+else {
+    print("Warm")
+}
+```
+
+The single-expression form is available for developer happiness:
+
+```emerald
+var label = if score >= 10 then "winner" else "playing"
+```
+
+Teaching material begins with statement blocks. The expression form requires both answers
+and both answers must have a compatible type.
+
+Modifier guards are permitted on one line:
+
+```emerald
+return unless valid?()
+print("Bonus") if score > 100
+```
+
+There is also a block form:
+
+```emerald
+unless ready?() {
+    prepare()
+}
+```
+
+`unless` means `if not` in both forms. It has no `else`, and `unless not condition`
+receives a style diagnostic suggesting `if condition`.
+
+### 6.3 `case` and `when`
+
+`case`/`when` is settled as a real construct, with a narrow and readable initial model:
+
+```emerald
+case direction {
+    when Direction.north {
+        move_up()
+    }
+    when Direction.south {
+        move_down()
+    }
+    else {
+        stay_still()
+    }
+}
+```
+
+Subject cases evaluate their subject once, test alternatives from top to bottom using
+`==`, execute the first match, and never fall through. Commas allow several alternatives
+in one arm. A statement case may omit `else`, in which case no match does nothing. Range,
+destructuring, class, and user-defined matching remain deferred.
+
+A value-producing case uses `then` and requires exhaustive coverage:
+
+```emerald
+var label = case score {
+    when 1 then "First"
+    when 2, 3 then "Placed"
+    else then "Unplaced"
+}
+```
+
+A subjectless `case` is also supported; each `when` is a `Bool` condition. Value-producing
+enum cases may omit `else` when all values are covered. Nonexhaustive enum statement cases
+produce a warning unless an explicit `else` acknowledges the remainder. Known duplicate
+alternatives are errors. Each arm has its own lexical scope.
+
+### 6.4 Loops
+
+The core loops are `while` and `for`:
+
+```emerald
+while lives > 0 {
+    play_turn()
+}
+
+for name in names {
+    print(name)
+}
+```
+
+`break` exits the nearest loop and `continue` starts its next iteration. Guard forms may
+be used where the resulting control flow stays obvious. Loop bindings are read-only and
+fresh for every iteration. Range endpoints are evaluated once before iteration begins.
+
+`..` includes both bounds and `..<` excludes the upper bound. A range travels from its
+left endpoint toward its right endpoint:
+
+```emerald
+for number in 1..5 {
+    print(number)
+}
+
+for index in 0..<count {
+    print(index)
+}
+
+for number in 5..1 {
+    print(number) # 5, 4, 3, 2, 1
+}
+```
+
+Ruby-style library alternatives are welcome:
+
+```emerald
+5.times { index => print(index) }
+1.up_to(5) { number => print(number) }
+5.down_to(1) { number => print(number) }
+
+for number in (0..10).step(2) {
+    print(number)
+}
+```
+
+`step(distance)` takes a strictly positive distance; the range supplies the direction.
+Thus `(1..7).step(2)` produces `1, 3, 5, 7`, while `(7..1).step(2)` produces
+`7, 5, 3, 1`. Zero and negative distances are errors.
+
+`up_to` only counts upward and `down_to` only counts downward. A target contradicting the
+method name is an error rather than a silent empty iteration. Equal inclusive endpoints,
+`up_to`, and `down_to` visit once. An equal half-open range is empty.
+
+User-defined integration with `for` through an `Iterable` trait is deferred. Initial
+`for` supports the built-in iterable types.
+
+### 6.5 Returns and guards
+
+`return` leaves the nearest function or lambda. It does not leave an enclosing function
+when written inside a lambda.
+
+A function returning no value may omit its return type and may use bare `return`. `Nothing`
+can be written explicitly when useful. Recursive functions require an explicit return type
+so checking does not depend on circular inference.
+
+## 7. Functions and callable values
+
+### 7.1 Declaration
+
+The intended shape is:
+
+```emerald
+func add(left: Int, right: Int): Int {
+    return left + right
+}
+```
+
+`func` is settled. A colon introduces a return type. Function types reuse declaration
+syntax—`func(Int): String`, `func(Int)`, and `func()`—while lambdas use `=>`. `->` is not
+part of the callable surface.
+
+Parameters are read-only bindings. Mutating an object received through a parameter is
+allowed; assigning a different value to the parameter name is not.
+
+```emerald
+func add_guest(guests: [String], guest: String) {
+    guests.append(guest) # allowed on the function's collection value
+    guests = []         # error: parameter binding is read-only
+}
+```
+
+There is no `ref` or `inout`. Reference-type objects naturally expose shared state. A
+struct argument is passed according to value semantics and is returned when a changed copy
+is desired. Collections are also passed by value; classes preserve shared references.
+
+Function declarations are hoisted within their lexical scope; variables are visible only
+from their declarations. Nested named functions are allowed, capture surrounding bindings
+like lambdas, and are hoisted within their containing scope. Hoisting never permits reading
+an uninitialized captured variable.
+
+### 7.2 Inference and annotations
+
+Parameter annotations are normally explicit on named functions. Lambda parameter types
+may be inferred from the expected callable type or the receiving collection method.
+Return types may be inferred for nonrecursive functions when the body provides a clear
+answer. Public API guidance may later recommend explicit return types without making them
+syntax requirements.
+
+Every reachable path in a value-producing function returns a value. Recursive functions
+and mutually recursive cycles require explicit return types. A function that returns only
+`nothing` may explicitly return `Nothing`; this remains distinct from a function with no
+result, whose annotation is omitted.
+
+Every implementation supports at least 1,000 active Emerald calls and detects excessive
+recursion before exhausting its host stack. Crossing an implementation's documented limit
+raises a catchable `RecursionError`, preserves ordinary unwinding and `finally` behavior,
+and reports the repeating source call with repeated frames summarized. The precise limit
+above the portable minimum is a resource boundary rather than program semantics. There is
+no initial API for changing it, and tail-call optimization is permitted but not
+guaranteed.
+
+### 7.3 Defaults, named arguments, and overloads
+
+Function and method overloading is supported. Selection happens statically from the
+argument types and must choose one best candidate or report the ambiguity with candidates.
+
+Default-valued parameters follow required parameters:
+
+```emerald
+func greet(name: String, punctuation: String = "!") {
+    print("Hello, #{name}#{punctuation}")
+}
+```
+
+Named arguments may skip defaulted parameters and document call sites. A call must not
+supply the same parameter twice or place positional arguments after named arguments. The
+parameter name is part of public override and trait contracts. Explicit arguments evaluate
+left to right as written, followed by omitted defaults in parameter order. A default may
+read earlier parameters but not itself or later parameters. An override inherits the
+original declaration's default and cannot replace it.
+
+Overloads may differ by parameter type or count, never solely by return type or parameter
+names. Ranking prefers exact parameter types, followed by a uniquely more-specific
+compatible class or trait type, followed by `Int`-to-`Float` widening. Otherwise-equivalent
+candidates are ranked by fewer consumed defaults. Named arguments first eliminate
+candidates whose parameter names do not match. There is no optional lifting, user-defined
+implicit conversion, or return-type contribution to overload selection. If the remaining
+parameter types are unrelated or these rules otherwise leave a tie, the compiler reports
+the ambiguity and every competing signature.
+
+A subclass retains inherited overloads when it adds a different signature. A matching
+signature requires `@override` and replaces only that implementation rather than hiding
+the rest of the overload set.
+
+Variadic parameters are deferred.
+
+### 7.4 Lambdas, trailing blocks, and capture
+
+Lambdas are values and use the settled `=>` spelling:
+
+```emerald
+var double = { value => value * 2 }
+var doubled = numbers.map { value => value * 2 }
+```
+
+A single-expression lambda returns its expression. A block-bodied lambda uses explicit
+`return` when it produces a value. `return` exits the lambda itself.
+
+A zero-argument lambda retains the arrow: `{ => do_work() }`. Standalone lambda parameters
+must receive types either on the parameter or from an expected function type. `_` discards
+an argument without introducing a binding and may appear more than once.
+
+Lambdas accept the same finite parameter arities as named functions and have no separate
+small maximum. Tuple destructuring may appear recursively in any lambda parameter
+position; its shape and the overall callable arity are checked statically, and every bound
+name remains read-only. This does not spread a dictionary entry into two parameters: an
+entry is still one tuple item unless the method explicitly promises another argument.
+
+Every method remains capturable. When a built-in higher-order method has an output type
+that depends on a future block, a bare capture requires an expected callable type:
+
+```emerald
+const mapper: func(func(Int): String): [String] = numbers.map
+```
+
+A capture such as `const mapper = numbers.map` lacks enough evidence to choose the mapped
+element type and receives an inference diagnostic showing the needed annotation. Emerald
+does not create an implicitly generic callable or defer the binding's type decision until
+a later call. Methods whose signatures are already concrete infer normally.
+
+Trailing lambdas provide Ruby-like block expressiveness without making blocks a second
+calling convention. Parameter types are inferred when the receiver determines them.
+
+Closures capture lexical variables by reference, allowing a block to update surrounding
+state. Loop bindings remain fresh per iteration.
+
+`return` inside a lambda exits only that lambda invocation. `break` and `continue` cannot
+reach out of a lambda to control an enclosing loop or an `each` call. A struct method may
+not create a closure that later mutates its original `self`; explicitly copy `self` into a
+local for private captured state. Class methods may capture shared `self` normally.
+
+When a trailing lambda appears inside an `if`, `while`, or `for` header, parentheses group
+the complete call before the statement body begins:
+
+```emerald
+if (items.any? { item => item.valid?() }) {
+    print("Found one")
+}
+```
+
+### 7.5 Method values
+
+Methods are first-class callable values. `player.greet()` invokes the method and
+`player.greet` captures it. Capturing any method is allowed. A class receiver remains the
+shared object; a struct receiver is copied and the captured copy persists across calls.
+
+## 8. Collections and compound values
+
+### 8.1 Design
+
+Collections behave familiarly: lists preserve order and duplicates, dictionaries map
+unique keys to values, sets retain unique elements, and tuples hold two or more values.
+Lists, dictionaries, and sets are mutable values: assignment and ordinary parameter
+passing produce independent collection values. A `const` binding prevents replacing the
+collection but may still mutate its contents.
+
+The beginner vocabulary is intentionally small. A richer standard vocabulary remains
+available through completion and documentation rather than being taught all at once.
+
+### 8.2 Surface syntax
+
+List syntax is settled:
+
+```emerald
+var scores = [10, 20, 30]
+var names: [String] = []
+```
+
+The compact type is `[String]`, not `List<String>`.
+
+Dictionary and set syntax is settled:
+
+```emerald
+var ages: [String: Int] = [
+    "Ava": 12,
+    "Noah": 13,
+]
+
+var seen: {String} = {
+    "red",
+    "green",
+}
+```
+
+Nonempty literals normally infer their types. Empty literals require an explicit type
+because their elements cannot establish one:
+
+```emerald
+var names: [String] = []
+var ages: [String: Int] = []
+var seen: {String} = {}
+```
+
+Braces after control-flow and declaration headers begin blocks. Braces in expression
+position begin a set literal or lambda; the lambda's `=>` distinguishes its parameter
+list. An empty `{}` in expression position is an empty set and still needs contextual
+element type information.
+
+A set literal used directly in a `for` header is grouped so its closing brace is not
+confused with the loop body:
+
+```emerald
+for number in ({1, 2, 3}) {
+    print(number)
+}
+```
+
+Tuple syntax is settled and follows its arity:
+
+```emerald
+var entry: (String, Int) = ("score", 10)
+var result: (String, Int, Bool) = ("Ada", 36, true)
+var (name, age, active) = result
+```
+
+Tuples require at least two elements. `(value)` and `(value,)` are grouped expressions;
+a trailing comma never changes an expression's type. `()` is not a tuple or unit value.
+Functions with no result already use `Nothing`.
+
+Tuple positions use zero-based member access such as `entry.0` and `entry.1`; an invalid
+position is a compile-time error. Destructuring must match the arity and works in
+declarations and `for` bindings. Existing local bindings may be updated together:
+
+```emerald
+(left, right) = (right, left)
+```
+
+The complete right side is evaluated before any destination changes. Initial assignment
+targets are mutable local names or `_`; field and index destinations are deferred.
+
+### 8.3 Indexing and dictionary misses
+
+List and string indexing is zero-based. Negative indexing is not assumed for v1; add it
+only after deciding how it interacts with ranges and out-of-bounds diagnostics.
+
+Dictionary bracket lookup can miss and therefore produces an optional value:
+
+```emerald
+var score = scores["Ava"].or(0)
+```
+
+Bracket assignment inserts a new entry or replaces the existing value. A dictionary whose
+value type is already optional does not produce a nested optional on lookup: both a missing
+entry and a stored `nothing` read as `nothing`, while `contains_key?` distinguishes them.
+Assigning `nothing` stores an entry when the value type permits it and never means deletion.
+
+Dictionary keys must have stable equality and hashing. Built-in scalar values, strings,
+enums, and structs or tuples whose contents recursively qualify are initial candidates.
+Stored value-type keys are copied, so later mutation of the original cannot invalidate
+lookup. Classes and collections are not initial dictionary keys, and custom hashing is
+deferred. NaN is rejected directly or recursively.
+
+### 8.4 Equality and order
+
+Lists compare element-by-element in order. Sets compare by membership. Dictionaries
+compare by key/value contents rather than insertion order. Tuples compare their values
+position by position.
+All recursive comparisons use Emerald's `==`.
+
+Dictionaries and sets preserve insertion order for iteration and stable printing, even
+though order is not part of their equality. Replacing a dictionary value keeps its
+position; removing and reinserting a key moves it to the end. A `for` loop iterates the
+collection snapshot captured when the loop begins, so later mutation never changes the
+visited sequence.
+
+Repeated set literal elements collapse to one. A statically known duplicate dictionary
+literal key is an error; when calculated keys collide at runtime, the later value wins
+without changing its insertion position.
+
+Hash values and the hashing algorithm are runtime details, not stable Emerald output.
+Equal eligible keys must hash compatibly within a process, but implementations may seed or
+replace their algorithms between runs and releases. Observable dictionary and set order
+comes from the specified insertion order rather than hash-table layout. Serialization,
+tests, and user-facing identity must never depend on a hash value.
+
+### 8.5 Essential methods
+
+The first teaching vocabulary is:
+
+| Family | Essential methods |
+| --- | --- |
+| All collections | `count`, `empty?`, `each` |
+| List | `contains?`, `append`, `insert`, `remove`, `remove_at`, `remove_first`, `remove_last`, `clear`, indexed access |
+| Dictionary | bracket lookup and assignment, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, `merge` |
+| Set | `add`, `remove` |
+
+Collection size is the read-only `count` property rather than a zero-argument method.
+`first` and `last` are also read-only properties on ordered collections.
+
+`List.remove(element)` removes the first equal value and quietly does nothing when the
+value is absent. `remove_all(element)` removes every equal value. Both return `Nothing`.
+`remove_if` may remove all values matching a block. Index removal remains the distinct
+`remove_at(index)` operation.
+
+### 8.6 Rich vocabulary
+
+The accepted discoverable vocabulary includes the following families, subject to their
+natural applicability and exact return-type review:
+
+- traversal: `each`, `each_with_index`, `reverse_each`;
+- questions: `empty?`, `contains?`, `any?`, `all?`, `none?`, `one?`, `count_where`;
+- searching: `find`, `find_index`, `first`, `last`;
+- transformation: `map`, `filter`, `reject`, `flat_map`, `filter_map`;
+- portions: `take`, `drop`, `take_while`, `drop_while`;
+- grouping: `group_by`, `partition`, `frequencies`;
+- aggregation: `reduce`, `sum`, `average`, `min`, `max`, `min_by`, `max_by`, `min_max`;
+- combining and shapes: `zip`, `chain`, `chunks`, `windows`, `pairs`;
+- ordering: `sort`, `sort_by`, `reverse`, `shuffle`;
+- uniqueness: `unique`, `unique_by`;
+- conversion: `to_list`, `to_set`, `to_dictionary`.
+
+Dictionary-specific transformation includes `map_keys`, `map_values`, and tuple-aware
+`filter`. Sequence-to-dictionary construction includes `associate` and `associate_by`.
+Set operations use the explicit names `union`, `intersection`, `difference`,
+`symmetric_difference`, `subset?`, `superset?`, and `disjoint?`; comparison operators do
+not stand for subset relationships.
+
+Every ordinary collection block receives one logical item. A dictionary's item is a
+two-element `(key, value)` tuple, which may be destructured directly:
+
+```emerald
+ages.each { (name, age) =>
+    print("#{name} is #{age}")
+}
+```
+
+There is no second implicit `key, value` calling convention. A method such as
+`each_with_index` explicitly promises its additional parameter:
+
+```emerald
+ages.each_with_index { (name, age), index =>
+    print("#{index}: #{name}")
+}
+```
+
+The entry-tuple rule also applies to `map`, `filter`, `find`, and other general dictionary
+operations. Dedicated methods such as `map_keys` and `map_values` receive only the part
+named by the method.
+
+Ordinary collection pipelines are eager. Transformations preserve input order unless
+they explicitly sort or reverse, evaluate blocks from left to right exactly once per
+visited value, and produce new collections. `find`, `any?`, `all?`, `none?`, and `one?`
+stop as soon as their answers are known. Dictionary and set iteration is deterministic.
+Invalid indices and sizes produce clear errors rather than being silently adjusted.
+Looping over a range need not allocate a list, but an eager transformation such as
+`range.map` returns a completed list before the next operation begins.
+
+`each` is for side effects and returns `Nothing`. `reduce` requires an initial value, so
+empty input is defined and the accumulator may differ from the element type. `filter_map`
+takes a block returning an optional, discards `nothing`, and returns a list of the present
+values.
+
+Methods that can miss, such as `find`, `first`, `last`, `min`, and `max`, return an
+optional. Membership must not be implemented by comparing `find` with `nothing`, because a
+collection may itself contain `nothing`.
+
+`filter` and `reject` preserve the receiver's collection kind for lists, dictionaries,
+and sets. `take(count)` and `drop(count)` do the same, using insertion order for
+dictionaries and sets. The corresponding operations on a range return a completed list.
+Strings and heterogeneous tuples do not receive these general collection operations
+initially.
+
+A negative `take` or `drop` count is an error. Zero is valid. A count beyond the available
+items is not an error: `take` returns every item and `drop` returns an empty collection.
+This deliberately differs from the strict bounds of `substring(start, count)` because
+`take` and `drop` describe portions rather than exact indexed spans.
+
+The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
+method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
+`unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs
+such as `append`, `insert`, `remove`, `clear`, and filesystem `delete` remain plain because
+there is no value-producing method of the same name.
+
+Queries that may have no answer—`first`, `last`, `find`, `find_index`, `min`, `max`, and
+`average`—return an optional. `count` remains `0` and `sum()` returns the additive identity
+for a statically known element type on empty input.
+
+User-defined `Iterable` conformance and `for` integration are deferred. Built-in
+collections may share internal implementation without exposing a general generic protocol
+prematurely.
+
+## 9. Strings and numbers
+
+### 9.1 Unicode strings
+
+`String` is immutable and Unicode-aware. User-facing character operations use extended
+grapheme clusters, so a displayed character such as an accented letter or family emoji is
+not split accidentally.
+
+The user-friendliness tradeoff is settled in favor of direct zero-based indexing despite
+the fact that locating a grapheme may be linear time:
+
+```emerald
+var greeting = "héllo 👋"
+print(greeting[0])
+```
+
+Documentation must state the cost honestly. The implementation may build internal indexes
+or caches later without changing semantics.
+
+Iteration yields grapheme strings. Separate advanced conversions expose Unicode code
+points and encoded bytes when required; beginner APIs should not call those “characters.”
+
+Substring work is method-based so its cost is not disguised as constant-time indexing:
+
+```emerald
+word.substring(start)
+word.substring(start, count)
+```
+
+Indices and counts are measured in graphemes. `substring(start)` continues through the end
+of the string. A start equal to the string's grapheme count is valid and produces `""`;
+zero is a valid count. Negative arguments, a start beyond the end, or a requested count
+that extends past the end raise a clear bounds error rather than being silently clamped.
+
+### 9.2 Initial string vocabulary
+
+The accepted vocabulary should be normalized to full descriptive names:
+
+- size and conversion: `count`, `empty?`, `chars`, `code_points`, `bytes`, `to_string`;
+- casing: `upper`, `lower`, `capitalize`;
+- whitespace: `trim`, `trim_start`, `trim_end`, `blank?`;
+- search: `contains?`, `starts_with?`, `ends_with?`, `index_of`;
+- editing by result: `replace`, `insert_at`, `substring`, `reverse`, `repeat`,
+  `remove_prefix`, `remove_suffix`, `collapse_repeats`;
+- layout: `pad_start`, `pad_end`, `pad_center`;
+- decomposition: `split`, `lines`;
+- structural helpers: `partition`;
+- classification: `letter?`, `digit?`;
+- parsing families: `to_int`, `to_int_or`, `to_int_maybe`, and corresponding float
+  forms.
+
+String methods do not mutate the receiver. `capitalize()` applies Unicode's
+locale-independent uppercase mapping to the first grapheme and preserves the remainder
+exactly. It returns an empty string unchanged. A future operation that also lowercases the
+tail must use a name that promises that broader transformation.
+
+`count` is a property and measures graphemes. `index_of` returns an optional index.
+`lines()` omits newline characters by default.
+`pad_start` and `pad_end` describe logical placement more clearly than left and right in a
+Unicode language. `words`, `title_case`, and case-insensitive Unicode comparison remain
+deferred until their locale and boundary behavior can be designed correctly.
+
+String equality uses canonical Unicode normalization, remains case-sensitive, and feeds
+the same normalized equality into dictionary keys and sets. Ordinary string ordering is
+deterministic and locale-independent, comparing normalized code points. Locale-aware
+collation belongs in a later library facility.
+
+### 9.3 Numeric vocabulary
+
+Useful value methods include:
+
+```text
+abs, clamp, between?, zero?, positive?, negative?, to_string
+```
+
+`Int` additionally supports:
+
+```text
+even?, odd?, multiple_of?, digits, gcd, lcm, factorial, times, up_to, down_to, to_float
+```
+
+`Float` additionally supports:
+
+```text
+floor, ceil, round, round_to, truncate, finite?, infinite?, nan?, to_int
+```
+
+`round_to(places)` rounds to a requested number of decimal places and returns a `Float`.
+Positive places address digits after the decimal point, zero produces a whole-number-valued
+`Float`, and negative places round to tens, hundreds, and so on. Halfway values round away
+from zero, consistently with `round`. It changes the number and does not preserve display
+zeros; `2.0.round_to(2)` is a numeric `2.0`, not the text `"2.00"`.
+
+Operations naturally performed by one value are methods, including `square_root()` and
+angle conversion such as `to_radians()`. `Math` holds broader operations and constants,
+including `pi`, `e`, `sin`, `cos`, logarithms, and explicit power helpers. Angles use
+radians by default. The language operator `**` remains the natural ordinary power
+expression.
+
+Randomness is a standard-library service, not syntax. The beginner form chooses from a
+range, making its bounds visible in the range itself:
+
+```emerald
+var die = random(1..6)
+var index = random(0..<10)
+var winner = players.random()       # optional when the collection is empty
+var shuffled = cards.shuffle()
+cards.shuffle!()
+```
+
+Repeatable work uses `Random(seed: 42)` with `next(range)`, `choose(collection)`, and
+`shuffle!(collection)`. The global form delegates to a runtime-managed generator. Range
+bounds retain the ordinary inclusive or exclusive meaning of their syntax.
+
+### 9.4 Standard-library recovery audit
+
+The recovered conversation settles the library philosophy and the following public
+vocabulary. It also resolves several names that were previously reconstructed from the
+historical implementation.
+
+| Family | Recovered rewrite decisions |
+| --- | --- |
+| `String` | The complete vocabulary in 9.2, including logical `pad_start`/`pad_end`, optional `index_of`, and the three-policy parsing families |
+| `Int` | `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `times`, `up_to`, `down_to`, `to_float`, `to_string` |
+| `Float` | `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `floor`, `ceil`, `round`, `round_to`, `truncate`, `finite?`, `infinite?`, `nan?`, `to_int`, `to_string` |
+| `List` | `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, `clear`, plus applicable rich collection operations |
+| `Dictionary` | bracket lookup and assignment, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_keys`, `map_values`, plus applicable rich collection operations |
+| `Set` | `add`, `remove`, `union`, `intersection`, `difference`, `symmetric_difference`, `subset?`, `superset?`, `disjoint?`, plus applicable rich collection operations |
+| Tuple | two or more heterogeneous positions, positional structural equality, and destructuring |
+| `Range` | ordinary iteration, `step`, eager rich transformations, and `times`, `up_to`, and `down_to` on integers |
+| `Math` | `pi`, `e`, trigonometry, logarithms, and explicit power helpers; receiver methods cover natural single-number operations such as `square_root` |
+
+The three parsing forms intentionally express three different failure policies:
+
+```emerald
+"42".to_int()          # return Int or raise a conversion error
+"42".to_int_or(0)      # return Int or the supplied fallback
+"42".to_int_maybe()    # return Int or nothing
+```
+
+The same family applies to floating-point parsing. The spelling of the optional return
+type remains unsettled even though the runtime result of the `_maybe` form is settled.
+Parsing accepts surrounding whitespace but otherwise requires the entire string. Malformed
+or out-of-range input raises for the strict form, returns the fallback for `_or`, and
+returns `nothing` for `_maybe`.
+
+`Float.to_int()` truncates toward zero. NaN, infinity, and values outside the `Int` range
+raise a conversion error. This is deliberately distinct from `floor()` and `round()`.
+
+Default `Float` display uses the shortest locale-independent decimal representation that
+parses back to the same value. A finite whole value retains the marker needed to identify
+it as a `Float`, such as `2.0`, and signed zero displays as `-0.0`. Scientific notation
+uses lowercase `e` with an explicit exponent sign for nonzero magnitudes below `1e-6` or
+at least `1e16`; the boundary values themselves therefore display in fixed and scientific
+form respectively. Special values display as `Infinity`, `-Infinity`, and `NaN`. Explicit
+numeric formatting remains the tool for fixed decimal places or other presentation needs.
+
+The historical spellings that conflict with recovered rewrite decisions remain rejected:
+`read_line` became `input`, `slice` became `substring`, `pad_left`/`pad_right` became
+`pad_start`/`pad_end`, `has_key?` became `contains_key?`, `intersect` became
+`intersection`, copy-sorting is `sort()`, and the old `Kernel` namespace is gone.
+
+Before implementing a family, write a compact conformance table for parameter types,
+return types, mutation, failure, empty-input behavior, Unicode or numeric boundary rules,
+and one representative example. This is still required for a few collection lambda shapes
+and nondecimal parsing bases. The recovered conversation already settles range direction,
+eager evaluation, empty-query optionals, seeded reduction, parsing whitespace,
+float-to-integer conversion, substring boundaries, rounding ties, and random bounds.
+
+## 10. Structs, classes, and members
+
+### 10.1 Value and reference semantics
+
+Structs are value types. Assigning or passing a struct produces independent value
+semantics. Classes are reference types. Assigning or passing a class value shares the same
+object.
+
+Structs may contain mutable `var` fields. This deliberately replaces the historical
+prototype's immutable-struct rule. The language must implement real copying rather than
+relying on immutability to make copying unobservable.
+
+Classes compare by identity. Class values may be compared when their static types have an
+inheritance relationship, so a subclass and base-typed reference can be recognized as the
+same object; unrelated concrete class types are a compile-time mismatch. Structs compare
+field-by-field by default:
+
+```emerald
+Vector2(1, 1) == Vector2(1, 1)   # true
+```
+
+A class stored inside a struct still compares according to class identity. User-defined
+equality and hashing are deferred because they must be designed together with dictionary
+keys and set membership.
+
+### 10.2 Fields and construction
+
+Fields visibly use `var` or `const`:
+
+```emerald
+struct Vector2
+    var x: Float
+    var y: Float
+
+    constructor(x: Float, y: Float) {
+        self.x = x
+        self.y = y
+    }
+```
+
+Parameters are read-only, while fields may mutate. `self.` makes field access distinct
+from locals and parameters.
+
+Shallow `const` applies to fields too: a `const position` field cannot be replaced, but a
+mutable member such as `position.x` may change. Stored nested-field assignment updates the
+value in place; nested assignment through a computed property is rejected as described
+below.
+
+Default field values are allowed and run in declaration order, once per construction.
+They may read earlier initialized fields but not later ones. An explicitly supplied
+generated-constructor argument replaces that field's default, which then does not run.
+Every remaining field must be definitely initialized before construction completes.
+
+Custom constructors replace the generated constructor and may be overloaded. A derived
+constructor calls `super(...)` first when the base constructor requires arguments; a
+zero-argument base call is inserted when possible. Base construction finishes before
+derived field defaults and the rest of the derived constructor. `self(...)` delegates to
+another constructor of the same type, must be first, cannot be combined with `super(...)`,
+and may not form a cycle. A bare constructor `return` is allowed only after all fields are
+initialized; constructors never return replacement values.
+
+A fieldless type receives the ordinary generated zero-argument constructor. A subclass
+without an explicit constructor receives one only when its base constructor and all
+subclass fields can be initialized without arguments.
+
+Before all fields are ready, `self` may not escape or be passed elsewhere and instance
+methods may not be called. Calls to overridable methods through `self` are forbidden
+throughout construction.
+
+Primary-constructor shorthand is deferred. One explicit constructor form is sufficient
+initially.
+
+### 10.3 Properties
+
+A property presents field-shaped access while computing or validating its value:
+
+```emerald
+const area: Float {
+    return self.width * self.height
+}
+```
+
+A read-only computed property uses `const` and a direct body. It runs on every read and is
+not cached. A writable computed property uses `var` with explicit `get` and `set` blocks:
+
+```emerald
+var diameter: Float {
+    get {
+        return self.radius * 2
+    }
+    set {
+        self.radius = value / 2
+    }
+}
+```
+
+The setter receives the proposed value through the read-only `value` binding. Compound
+assignment evaluates the receiver and getter once, calculates the result, then invokes the
+setter once. Nested mutation through a computed value is rejected rather than silently
+copying and writing back. Properties should have no surprising observable side effects;
+this is an API convention rather than a purity type system.
+
+### 10.4 Type-level members
+
+Type-level state and methods are supported, but the keyword `static` is removed. Call sites
+make the ownership visible:
+
+```emerald
+var origin = Vector2.origin()
+print(Player.count)
+```
+
+An explicit type receiver in the declaration marks a type-level member:
+
+```emerald
+func Vector2.origin(): Vector2 {
+    return Vector2(0, 0)
+}
+
+var Player.count = 0
+```
+
+This adds no keyword, is locally visible, and cannot change meaning when a method body is
+edited. Type-level fields may be `var` or `const`, require initial values, and use a leading
+underscore for privacy.
+
+### 10.5 Privacy
+
+A leading underscore marks a private member. Privacy is enforced by the checker and does
+not depend on convention alone. Public is the default; there is no `public` keyword.
+`protected` is deferred.
+
+Type-level visibility across directories is deferred until larger projects provide a
+concrete need.
+
+### 10.6 Block-free types
+
+Classes, structs, traits, and enums may use a block-free top-level form inspired by
+GDScript:
+
+```emerald
+class Dog extends Animal with Speaker
+    var name: String
+
+    func speak() {
+        print("Woof")
+    }
+```
+
+The body runs to end of file. A file using this form has one block-free outer type; sibling
+outer types require the braced form or separate files. Nested helper types remain possible
+only where their ownership is unambiguous.
+
+Braced forms remain valid for files containing sibling types:
+
+```emerald
+struct Point {
+    var x: Float
+    var y: Float
+}
+```
+
+### 10.7 Inheritance and overriding
+
+Classes support single inheritance: at most one base class. “Base class” and “subclass”
+are the teaching terms; `super` refers to the base implementation at a call site.
+
+Traits provide additional composition without additional class inheritance.
+
+Overrides are explicit through `@override`:
+
+```emerald
+@override
+func speak() {
+    super.speak()
+    print("Woof")
+}
+```
+
+An override must match a real overridable base member. A same-named method without
+`@override` receives a diagnostic rather than silently hiding it.
+
+Abstract classes should be visually explicit through `@abstract`:
+
+```emerald
+@abstract
+class Shape
+```
+
+In a class, `@abstract` may also mark a bodyless method. The initial language avoids an
+additional `abstract` keyword. A nonabstract subclass must implement every remaining
+abstract member. Constructors are not inherited; a subclass without one receives a
+zero-argument constructor only when its base and all its fields can be initialized without
+arguments. An `@abstract` class cannot be constructed even when it implements every
+requirement, allowing an intentionally base-only class to state that purpose explicitly.
+
+## 11. Traits and operators
+
+### 11.1 Trait purpose
+
+Traits are Emerald's primary composition mechanism. They begin deliberately small:
+
+- no stored trait state;
+- method and readable-member requirements;
+- default method bodies;
+- explicit conformance on a class or struct;
+- static checking without runtime structural guessing;
+- no higher-kinded types, variance, or broad generic machinery.
+
+Trait requirements need no `@abstract`: a signature without a body is a requirement, while
+a body supplies a default. Member requirements use Emerald's existing `const` and `var`
+distinction without C# getter markers:
+
+```emerald
+trait Named
+    const name: String
+
+    func introduction(): String {
+        return "I am #{self.name}."
+    }
+```
+
+A `const` requirement promises readable access and may be satisfied by a public `const` or
+`var` field or readable computed property. A `var` requirement promises reading and
+assignment and therefore needs a public writable field or get/set property. A writable
+member satisfies a read-only requirement, never the reverse. Neither form stores trait
+state. Private members cannot satisfy public requirements.
+
+### 11.2 Composition and conflicts
+
+A class has one optional base class and may adopt multiple traits:
+
+```emerald
+class Duck extends Animal with Swimmer, Flyer
+```
+
+Adoption is explicit: merely having matching members does not establish conformance.
+Trait membership is inherited by subclasses. Traits may build on other traits with the
+same `with` spelling. Structs may adopt traits but do not inherit from classes or other
+structs.
+
+An implementation supplied directly by the class wins over trait defaults. If two traits
+supply the same member and the class does not resolve the conflict explicitly, the checker
+reports the ambiguity and names both traits. Trait order must not silently select behavior.
+
+Trait requirements are checked eagerly for the entire project.
+
+Class methods, including inherited ones, outrank trait defaults. Two distinct trait
+defaults with the same signature require an explicit implementation; trait order never
+selects one. Compatible duplicate requirements need one implementation. A writable
+property requirement subsumes a read-only one of the same type; different required types
+conflict. `TraitName.method(self, ...)` explicitly invokes that trait's default. Private
+trait helpers may have bodies, do not become public, cannot be overridden, and do not
+conflict across traits. Traits may also provide computed-property defaults.
+
+Implementing a required method uses `@override`; a stored or computed property satisfying
+a member requirement does not. Parameter names and declared defaults belong to the trait
+contract, so implementations preserve the names and cannot replace defaults. An abstract
+class may defer trait requirements to subclasses only when the class is explicitly marked
+`@abstract`; structs must satisfy them immediately.
+
+Using a trait as a parameter or binding type exposes only that contract and never changes
+the underlying representation: a struct remains an independently copied value and a class
+remains a shared reference. Equality through a trait type is deferred because the
+underlying value and reference models differ.
+
+### 11.3 Associated types and generics boundary
+
+Associated types and general user generics are deferred. Built-in collections may carry
+element types and users may consume concrete collection types without exposing a general
+generic declaration system. Any future extension must begin with real Emerald programs
+that the simple trait model cannot express.
+
+### 11.4 `Self`
+
+`Self` has a narrow meaning: the concrete type implementing the trait. It exists for
+contracts where another operand or result must be that same concrete type.
+
+```emerald
+trait Addable
+    func add(other: Self): Self
+```
+
+It does not introduce F-bounded polymorphism or an unrestricted metatype system. Uses
+outside trait and type-member contracts require a demonstrated need.
+
+### 11.5 Operator overloading
+
+Operators lower to ordinary named trait methods so behavior remains discoverable:
+
+```emerald
+a + b       # a.add(b)
+a < b       # a.compare(b) < 0
+```
+
+The initial overloadable set is narrow:
+
+- arithmetic: addition, subtraction, multiplication, and division;
+- ordering through one `Ordered.compare(other: Self): Int` contract.
+
+Assignment, boolean short-circuit operators, member access, calls, and language control
+flow are not overloadable. Custom equality, hashing, and indexing are deferred. Operators
+should use `Self` when both operands and the result are the implementing type. Mixed-type
+operators require an explicit contract rather than an implicit widening invented by the
+runtime. `Ordered` does not redefine equality.
+
+## 12. Enums and branching
+
+Enums are simple closed sets of explicitly named values:
+
+```emerald
+enum Direction {
+    north
+    east
+    south
+    west
+}
+```
+
+Enum values have their enum type, compare for equality, print their names unless a method
+provides another representation, and work naturally with exhaustive `case`. Their default
+display includes the type, such as `Direction.north`. Declaration order does not create
+ordering; an enum must explicitly adopt `Ordered` when its domain needs it. Enums may have
+methods, computed properties, and trait conformance, but no stored instance fields.
+
+An enum statement case that omits members and has no `else` produces a warning. An explicit
+empty `else` acknowledges intentional omission. Duplicate known alternatives are errors.
+
+Associated values, per-case payloads, raw integer backing controls, flags enums, and
+implicit integer conversions are deferred. This keeps `enum` understandable as a closed
+set before considering algebraic data types.
+
+## 13. Errors and resources
+
+### 13.1 Error model
+
+Errors are ordinary typed values rooted in an `Error` class. Programs may define their own
+error subclasses. Failures use `raise`:
+
+```emerald
+class InvalidScore extends Error
+
+raise InvalidScore("Score cannot be negative")
+```
+
+There is no `raises` annotation on function signatures. Error effects are dynamic in that
+narrow sense; error values and catch bindings remain statically typed.
+
+### 13.2 Handling
+
+```emerald
+try {
+    load_game()
+}
+catch error: FileError {
+    print(error.message)
+}
+finally {
+    print("Finished loading")
+}
+```
+
+`finally` runs whether the protected body returns, raises, or completes. A `try` may have
+`finally` without `catch`. Typed catches are tested top to bottom and only the first match
+runs; an untyped catch handles any `Error`. Bare `raise` inside a catch re-raises the same
+value with its original failure location and is invalid elsewhere.
+
+`return` and any `break` or `continue` that exits a `finally` are forbidden, so cleanup
+cannot replace a result or suppress an error. A loop wholly inside it retains ordinary
+loop control. If cleanup raises while another error is propagating, diagnostics preserve
+both failures.
+
+Unhandled errors produce Emerald stack traces containing source file, line, function, and
+a concise message. Zig frames and implementation details must not appear in ordinary
+diagnostics.
+
+### 13.3 Resources
+
+Garbage collection manages memory, not timely release of files, sockets, locks, or similar
+resources. A developer may close a resource explicitly:
+
+```emerald
+var file = File.open("scores.txt")
+
+try {
+    print(file.read())
+}
+finally {
+    file.close()
+}
+```
+
+High-level helpers close automatically. A library-scoped helper can make the common
+streaming case safe without adding a language keyword:
+
+```emerald
+File.with_open("scores.txt") { file =>
+    print(file.read())
+}
+```
+
+`with_open` guarantees closure after normal completion, return, or error. A GC fallback
+may close a forgotten handle eventually, but correctness must not depend on when that
+happens. There is no user-visible object destructor in the initial language.
+
+## 14. Program and project structure
+
+### 14.1 Projects and entry points
+
+A project is initially a directory tree. Every `.em` file under the project root is
+included; no imports are needed merely to make project files exist.
+
+`main.em` is the conventional entry file. `emerald run path/to/file.em` may select another
+entry explicitly. Until a project manifest exists, the entry file's directory is the
+project root, independent of the terminal's working directory.
+
+The rewrite adopts the clearer top-level boundary suggested in the discussion:
+
+- the entry file may contain executable top-level statements and declarations;
+- other files contain declarations and initialization attached explicitly to those
+  declarations;
+- loading a project does not run arbitrary code from every file.
+
+This replaces the historical prototype's “top-level statements in every file” behavior
+and avoids hidden file-order or import-order effects.
+
+A non-entry module file may declare functions and module-level bindings. It is named from
+the file, initializes once when one of its members is first accessed, and processes
+bindings in declaration order. Including it or naming it in `using` does not initialize
+it. A cycle reaching an unfinished binding is an initialization-cycle error. If
+initialization raises, later access reports the original failure without retrying it.
+
+Type-level fields follow the same lazy rule, initializing once in declaration order when
+the type is first constructed or a type-level member is accessed. Merely mentioning the
+type in an annotation or `using` does not initialize it.
+
+`Program.arguments` is the provisional library name for a list of only the program
+arguments, excluding the Emerald executable and entry-file paths. On the CLI, `--`
+separates Emerald options from program arguments. A bare top-level `return` is allowed
+only in the selected entry file and ends the program successfully after pending `finally`
+blocks run. It cannot return a value; use `exit(code)` to choose a status. Unreachable
+executable statements after unconditional `return`, `raise`, loop exit, or `exit()`
+produce a warning, while hoisted declarations remain valid.
+
+### 14.2 Namespaces and `using`
+
+Directories form namespaces. Same-directory names are directly visible; another directory
+is reached through its path-derived namespace:
+
+```text
+game/
+  main.em
+  shapes/
+    circle.em       → Shapes.Circle
+```
+
+An optional `using` declaration shortens repeated qualification:
+
+```emerald
+using Shapes
+```
+
+Aliases resolve collisions explicitly:
+
+```emerald
+using UiColor = Graphics.Color
+```
+
+`using` is file-local, imports only direct public names, and does not include or execute
+files. Ambiguity is reported when a conflicting short name is used; a focused alias or
+fully qualified name resolves it. Project inclusion remains independent from `using`.
+
+A leading underscore on a module-level declaration makes it private to that module, just
+as it does for a type member. Other public same-directory declarations are directly
+visible; names across subdirectories use their namespace unless shortened by `using`.
+
+### 14.3 File shapes
+
+A file may use one block-free outer class, struct, trait, or enum whose body continues to
+EOF. Files needing sibling outer types use braced forms. Braced nested types are naming and
+visibility relationships only; they do not capture an enclosing class instance. A leading
+underscore makes a nested type private.
+
+The old filename-as-implicit-type rule is not assumed. Type declarations state their own
+names so search, rename, and diagnostics remain direct.
+
+### 14.4 Packages and foreign code
+
+External packages and a package manager are deferred until there is a stable language and
+runtime. A future `emerald.toml` appears only when a project needs configuration,
+dependencies, distribution metadata, or nondefault warning policy.
+
+C compatibility belongs behind explicit library bindings. Foreign values do not weaken
+Emerald's static rules, optional rules, ownership model, or naming diagnostics. The C ABI
+is the first interoperability target because it is portable across Zig and future native
+backends.
+
+## 15. Standard library organization
+
+### 15.1 Philosophy
+
+The settled library principle is:
+
+> A small essential vocabulary plus a rich standard vocabulary. Beginners learn the first
+> dozen operations; experienced developers discover the rest through completion.
+
+Methods live on values when they are naturally discovered from that value. Cohesive
+operations without one natural receiver live in named modules. Prelude functions are
+reserved for universal, frequent actions.
+
+The old `Kernel` name is not carried forward. `input`, `print`, `write`, `random`, and
+process-exit behavior are described as prelude functions even if the implementation stores
+them in an internal namespace.
+
+New convenience methods should meet at least one of these tests:
+
+1. It replaces awkward syntax or a common error-prone pattern.
+2. Correct implementation requires Unicode, numeric, platform, or runtime knowledge users
+   should not reproduce.
+3. It is established vocabulary across several relevant languages.
+4. It has repeated naturally in actual Emerald programs.
+5. It has clear educational value at very low semantic cost; such exceptions are recorded
+   honestly.
+
+`gcd`, `lcm`, `factorial`, `multiple_of?`, and `digits` are accepted educational
+conveniences. Ruby is a source of inspiration, while clearer names from Kotlin, Python,
+C#, Swift, or common practice win when Ruby abbreviates or overloads a word.
+
+A simple `Textual` trait with `to_string(): String` controls deliberate user-facing
+display in printing and interpolation. Structs without it retain a useful field-based
+debug representation. Enums default to their qualified names. Display customization does
+not alter equality or identity.
+
+### 15.2 Prelude
+
+Initial bare functions include:
+
+```text
+input, input_maybe, print, write, random, exit
+```
+
+`input(prompt)` writes the optional prompt, reads one line, removes its line ending while
+preserving other whitespace, and returns `String`. Pressing Enter returns `""`; end of
+input raises `InputError`. `input_maybe(prompt)` instead returns `nothing` at end of input.
+
+`print` and `write` accept zero or more ordinary values through their display
+representation. Multiple arguments evaluate left to right and are separated by one space.
+`print` appends a newline; `write` does not. Separator customization is deferred, and
+interpolation remains the primary way to construct deliberate prose.
+
+`exit()` ends the program successfully; `exit(code)` uses a process status. Invalid codes
+should be diagnosed. `exit` unwinds pending `finally` blocks but is not caught as an error.
+Reaching the end of the entry file exits successfully; an uncaught error uses a nonzero
+status.
+
+### 15.3 Files, directories, and paths
+
+These names are settled:
+
+```emerald
+File.read(path)
+File.write(path, contents)
+File.append(path, contents)
+File.read_lines(path)
+File.write_lines(path, lines)
+File.exists?(path)
+File.copy(source, destination)
+File.move(source, destination)
+File.delete(path)
+
+Directory.exists?(path)
+Directory.create(path)
+Directory.delete(path)
+
+Path.join(first, second)
+Path.name(path)
+Path.stem(path)
+Path.extension(path)
+Path.parent(path)
+Path.absolute?(path)
+Path.absolute(path)
+```
+
+`File` touches files, `Directory` touches directories, and `Path` performs lexical path
+work. `File.file?` and `File.directory?` are rejected as redundant or misplaced. `move`
+initially covers renaming. File deletion is `delete`, not `delete!`, because the verb is
+already explicit and has no harmless counterpart.
+
+Whole-file helpers close their handles automatically. Streaming adds `File.open`, handle
+methods, explicit `close`, and `File.with_open` only when required by a real program.
+
+File APIs raise typed errors for missing paths, access failures, invalid encodings, and
+short writes rather than returning misleading empty values. Optional discovery methods
+may be added only where absence is ordinary.
+
+### 15.4 Regular expressions
+
+Regular expressions are a standard-library roadmap facility, not part of the first
+interpreter milestone, new literal syntax, or a macro. Raw single-quoted strings keep
+patterns readable. The intended focused API is:
+
+```emerald
+var digits = Regex('\d+')
+
+digits.matches?(text)                    # entire string
+digits.contains_match?(text)
+digits.find(text)                        # optional Match
+digits.find_all(text)                    # list of Match
+digits.replace(text, replacement)        # first match
+digits.replace_all(text, replacement)
+digits.split(text)
+```
+
+Construction validates the pattern and raises a `RegexError` with the location inside the
+pattern. A `Match` exposes at least `text`, `start`, and `end`; capture groups remain a
+later addition. Literal string methods never interpret their argument as a pattern. The
+implementation may wrap a proven C library, but Emerald owns the Unicode behavior, API,
+and diagnostics.
+
+### 15.5 Formatting
+
+String interpolation handles ordinary formatting. A simple explicit formatting facility
+may cover reusable templates and numeric presentation, but it should not become a second
+mini-language prematurely.
+
+Numbers use readable named arguments rather than compact format codes:
+
+```emerald
+12.5.format(decimal_places: 2)       # "12.50"
+1234567.format(group_digits: true)   # "1,234,567"
+255.to_string(base: 16)              # "ff"
+255.to_string(base: 2)               # "11111111"
+```
+
+`format()` returns a `String`; `round_to()` changes a numeric value. Default formatting is
+locale-independent. Locale-aware formatting is a separate later facility. Infinity and
+NaN render plainly as `"Infinity"` and `"NaN"`, and are exposed as type-level `Float`
+constants.
+
+Dates, time zones, durations, serialization, networking, and concurrency belong in later
+standard-library passes. Their absence must not be patched with premature general-purpose
+generics.
+
+## 16. Annotations, assertions, and tests
+
+### 16.1 Annotations
+
+Annotations use the `@name` surface and attach declarative metadata to the declaration
+below them. They do not rewrite arbitrary user code.
+
+The clean initial set is intentionally small:
+
+- `@test` marks a test function;
+- `@override` confirms an inherited override;
+- `@abstract` marks an abstract class or a bodyless abstract class method. Trait
+  requirements are already identified by their missing bodies and do not use it.
+
+Interop-specific annotations such as the former `.NET`-oriented `@export`, `@mirrors`,
+and emitted-name controls are not carried forward automatically. Add a portable annotation
+only when the C boundary or another backend demonstrates the need.
+
+Unknown annotations are errors with spelling suggestions. Annotation arguments, where
+allowed, must be compile-time literals or other deliberately supported constants. User
+defined annotations and macros are deferred.
+
+### 16.2 `assert`
+
+`assert` is a compiler-known statement rather than a macro or ordinary function. It can
+observe the condition's syntax and evaluated operands without evaluating either side
+twice:
+
+```emerald
+assert clamp(15, 0, 10) == 10
+```
+
+A failure reports the source expression, relevant actual values, and location. It raises a
+test/assertion error that normal test reporting understands.
+
+Assertions remain active in ordinary and optimized builds. An optional message may explain
+the expectation. Equality assertions show both operands while evaluating each exactly once.
+
+`check` is not a second assertion spelling. One clear construct is enough.
+
+### 16.3 Test discovery
+
+`emerald test` discovers functions marked `@test`. A test accepts no parameters and
+produces no result. Tests use ordinary Emerald code and `assert`; there is no separate
+testing language. A filename convention such as `*_test.em` remains a tooling question,
+not an additional discovery requirement.
+
+Test loading checks project declarations without running the application's top-level entry
+statements. Tests run independently enough that one failure can be reported without hiding
+the remainder. Ordering should be deterministic, and test output should identify the file,
+test name, failure expression, and stack trace.
+
+Entry-file types and functions remain visible to tests under the ordinary namespace rules.
+In test mode, an entry-file binding initializer is lazy and runs only if a test reaches
+that binding, using the same initialize-once and cycle rules as a module binding. Other
+entry-file statements never run. This lets tests reuse declarations without starting the
+application while preserving explicit side effects when a test deliberately accesses
+initialized program state.
+
+Filtering tests by a name or path is useful tooling and does not require language syntax.
+
+## 17. Diagnostics
+
+### 17.1 Default shape
+
+Diagnostics are concise by default and answer four questions:
+
+1. Where is the problem?
+2. What did the compiler understand?
+3. Why is that invalid?
+4. What concrete correction is likely?
+
+```text
+main.em:7:9: `score` may not have been assigned
+  print(score)
+        ^^^^^
+Assign `score` on every branch before reading it.
+```
+
+Locations include file, line, and useful column spans. The lexer, parser, checker, lowering,
+interpreter, and future backends preserve source spans rather than reconstructing them.
+
+### 17.2 Pedagogical behavior
+
+- Prefer the user's vocabulary over implementation terminology.
+- Never expose Zig types, stack frames, allocation details, or parser-internal names.
+- Detect common mistakes such as `=` in a condition and explain `==` directly.
+- Suggest close spellings for names, methods, types, and annotations.
+- Show one primary error clearly, then related notes; avoid cascades caused by the first
+  parse or type failure.
+- Warnings should be scarce enough to be read.
+- Errors and warning text receive behavioral tests.
+
+Because braces determine scope, indentation remains nonsemantic. The checker warns only
+when indentation strongly depicts a different brace scope—for example, a line visually
+nested beneath a statement that opened no block. The warning explains the scope the parser
+actually used and offers the formatter's indentation. Ordinary personal spacing does not
+produce semantic warnings.
+
+`emerald explain` expands a diagnostic into a short worked example. Bare invocation may
+explain the most recent diagnostic; an explicit diagnostic identifier should work in CI,
+documentation, and shared troubleshooting.
+
+An eventual `emerald.toml` may adjust warning levels. Defaults remain simple and
+instructional.
+
+## 18. Command-line and editor tooling
+
+### 18.1 Initial CLI
+
+One `emerald` executable provides full-word commands:
+
+```text
+emerald run
+emerald check
+emerald test
+emerald format
+emerald repl
+emerald new project_name
+emerald explain
+emerald help
+```
+
+There is no `fmt` alias. `run` checks the complete project before executing; `check`
+performs the same analysis without initializing modules or executing user code. This is
+useful when a program would prompt, open a window, modify files, or run indefinitely.
+
+All diagnostic-producing commands accept `--diagnostic-format=json`. The initial
+versioned JSON object contains a schema version and a diagnostics list; each diagnostic
+includes its stable code, severity, message, source path, byte span, one-based display
+line and Unicode-scalar column, related notes, and machine-applicable fixes when available.
+Machine mode writes only that object to standard output. The LSP adapter converts canonical
+source spans to the position encoding negotiated with the editor.
+
+Process statuses are stable: `0` means success, `1` means source or formatting diagnostics,
+`2` means an uncaught runtime error, `3` means tests completed with failures, `64` means
+invalid command usage, and `70` means an internal Emerald failure. An explicit
+`exit(code)` from a running program uses the requested valid code.
+
+`build`, `debug`, package `add`, and a distribution command are later tooling. Names should
+describe user goals in full words.
+
+Commands use stable nonzero exit codes for source errors, runtime errors, test failures,
+tool misuse, and internal compiler failures. The exact table belongs in the CLI contract.
+
+### 18.2 New projects and manifests
+
+```text
+emerald new guessing_game
+```
+
+creates a directory with a readable `main.em` and no mandatory manifest. A manifest named
+`emerald.toml` appears only when configuration, dependencies, distribution, or warning
+policy requires it. Build configuration is data, not executable Emerald code.
+
+### 18.3 Formatter
+
+`emerald format` has one canonical output and no style configuration. It applies the
+settled Stroustrup brace layout, indentation, spacing, final newlines, and comment-preserving
+rules. It must understand tokens so braces inside strings and interpolation do not affect
+indentation.
+
+The formatter refuses to rewrite a file it cannot parse safely. Block-comment interiors
+retain deliberate diagrams and formatting. Format-on-save uses the same implementation as
+the CLI.
+
+### 18.4 REPL
+
+`emerald repl` keeps declarations and values across entries. A bare expression prints its
+value; a statement follows normal statement behavior. Multiline input continues while a
+delimiter or declaration body remains incomplete.
+
+The REPL keeps ordinary binding rules: a `var` may be reassigned, while a name may not be
+redeclared and a `const` may not be replaced. The `:reset` REPL command clears the session.
+An invalid entry does not partially mutate the session.
+
+### 18.5 Language server
+
+The LSP server reuses the compiler's lexer, parser, resolver, and type checker. It does not
+maintain a second parser or approximate type system.
+
+The first useful feature set is:
+
+- live diagnostics;
+- inferred-type hover information;
+- go to definition and find references;
+- context-aware completion;
+- safe rename;
+- document symbols;
+- format on save.
+
+Quick fixes correspond to known diagnostics and deterministic edits. The official VS Code
+extension comes first, while the server remains editor-independent.
+
+### 18.6 Debugging
+
+Preserve runtime hooks and source spans for a later Debug Adapter Protocol server. Initial
+debugging should support breakpoints, step in/over/out, call stacks, locals, and expression
+evaluation in `.em` source. The same debugger core should serve the CLI and editors.
+
+## 19. Zig implementation architecture
+
+### 19.1 Toolchain discipline
+
+- Pin one exact Zig release in the repository and CI configuration before implementation
+  begins. Record the complete `zig version` output and do not track `master` implicitly.
+- Keep that release's standard-library source locally searchable through the paths reported
+  by `zig env`.
+- Treat compiling probes and the pinned standard-library declarations as authoritative for
+  Zig APIs.
+- Upgrade intentionally in a dedicated compatibility change that runs all probes and
+  Emerald tests.
+- Prefer a conservative Zig subset: structs, tagged unions, slices, explicit allocators,
+  error unions, and straightforward standard-library containers.
+- Introduce `comptime`, reflection, or generic helpers only for a concrete implementation
+  need and only after a compiled probe establishes the exact behavior.
+
+When a Zig behavior is uncertain, write a minimal program under an
+`implementation-probes` directory, compile it with the pinned toolchain, and record the
+result. If a pattern cannot be pointed to in the pinned source or demonstrated compiling,
+it is not accepted implementation knowledge.
+
+### 19.2 Frontend pipeline
+
+The initial architecture is:
+
+```text
+source manager
+    → lexer
+    → parser
+    → syntax tree
+    → name resolution
+    → type checking and flow analysis
+    → tree-walking interpreter
+```
+
+Stages communicate through explicit data structures. The syntax tree does not contain
+Zig runtime values, and semantic types do not depend on the interpreter. This keeps a
+future bytecode, C-emitting, LLVM, or other backend replaceable.
+
+### 19.3 Source model
+
+Every token and syntax node carries a source span into an immutable source-file record.
+Diagnostics, stack traces, formatter integration, LSP navigation, assertions, and future
+debugging all consume the same span model.
+
+Identifiers should be interned only when measurement or implementation simplicity
+justifies it. The first version may use explicit strings and maps if that makes correctness
+easier to inspect.
+
+### 19.4 Allocation domains
+
+Keep allocation purposes explicit:
+
+```text
+source storage       files and stable source text
+syntax arena         tokens and syntax nodes
+semantic arena       symbols and types
+scratch allocation   temporary formatting and analysis
+Emerald heap         runtime objects traced by the GC
+```
+
+Bounded frontend phases may use arenas owned by the compilation session. Critical
+subsystem and runtime boundaries receive explicit Zig allocator values or owned allocator
+fields so the code reveals which lifetime is intended. Allocator choice stays out of
+Emerald's language semantics.
+
+### 19.5 Runtime values and garbage collection
+
+The interpreter begins with a tagged runtime value representation for immediate values and
+references to managed objects. Emerald programmers do not allocate or free ordinary
+objects manually.
+
+The first collector is a custom, nonmoving, stop-the-world mark-and-sweep collector. It is
+deliberately simple and unoptimized. Likely managed objects include strings where not
+represented immediately, lists, dictionaries, sets, class instances, closures, captured
+environments, and error objects.
+
+Roots include:
+
+- active interpreter stack frames and locals;
+- module and type-level variables;
+- closure environments reachable from those values;
+- temporary values held across an allocation or call;
+- host handles that deliberately retain an Emerald value.
+
+The root API must be explicit. A native pointer hidden in arbitrary Zig memory must not
+silently keep an object alive.
+
+Collection may initially occur at predictable allocation thresholds. The collector does
+not move objects, finalize resources, expose manual collection to ordinary Emerald code,
+or attempt concurrency. Weak references, generations, compaction, concurrent marking, and
+precise performance tuning are deferred.
+
+### 19.6 Runtime and backend boundary
+
+Define language semantics once in backend-neutral tests. Arithmetic, equality, ordering,
+Unicode, closure capture, initialization, exceptions, and evaluation order are common
+places for a backend to inherit its host's wrong behavior.
+
+The interpreter is the first executable specification, supported by conformance programs.
+A future backend is acceptable only when it passes the same programs without changing
+expected output or diagnostics where the phase is shared.
+
+The runtime may expose a C ABI internally for portability, but Emerald-facing wrappers own
+types, errors, and names. A backend switch should preserve source, tests, syntax trees,
+semantic rules, and public library contracts.
+
+## 20. Implementation sequence
+
+The rewrite should advance through small vertical slices:
+
+1. **Repository and pinned Zig toolchain** — version record, build command, one passing
+   program, and one compiled Zig probe.
+2. **Source manager and diagnostics** — load UTF-8, retain spans, print one excellent error.
+3. **Lexer slice** — identifiers, integers, strings, comments, newline, and EOF.
+4. **Expression slice** — parse and evaluate integer arithmetic with precedence.
+5. **Statement slice** — `var`, assignment, `print`, blocks, and `if`.
+6. **Static checker slice** — inferred locals, annotations, definite assignment, and
+   operand errors before execution.
+7. **Functions slice** — calls, returns, scopes, recursion, and stack traces.
+8. **Collection slice** — list literal, indexing, mutation, and one higher-order method.
+9. **Managed heap slice** — class instance or closure allocation with the simple collector.
+10. **Project slice** — `main.em`, multiple files, namespaces, and `using`.
+11. **Object model** — structs, classes, construction, properties, inheritance, traits,
+    operators, and enums in dependency order.
+12. **Errors and tests** — typed errors, `raise`, `try`/`catch`/`finally`, `assert`, and
+    `emerald test`.
+13. **Standard-library growth** — add methods only alongside behavioral tests and examples.
+14. **Tooling** — canonical formatter, REPL, LSP, then debugger protocol.
+
+Each slice ends with a runnable Emerald example and behavioral tests. Do not scaffold every
+future subsystem before the first expression runs.
+
+## 21. Deferred features
+
+The following are deliberately outside the initial implementation:
+
+- broad user-declared generics;
+- a source-visible `Any` top type;
+- immutable collection views and collection covariance;
+- variadic functions;
+- `protected` and type-level visibility controls;
+- enum payloads and algebraic pattern matching;
+- general user-defined `Iterable` and `for` integration;
+- a package registry and package manager;
+- concurrency, async, and parallel execution;
+- user-defined macros and advanced annotations;
+- runtime metaprogramming;
+- primary constructors;
+- implicit destructors and deterministic finalization syntax;
+- weak references, generational, moving, or concurrent GC;
+- an optimizing native compiler;
+- broad automatic foreign-library exposure.
+
+Deferred means the design leaves room without reserving unnecessary syntax. A future
+feature still has to justify itself.
+
+Concurrency is the nearest major post-runtime design pass: consider it after the
+single-threaded interpreter and core runtime stabilize, before packages or advanced
+metaprogramming. Native libraries may use threads internally, but Emerald callbacks obey
+the single-threaded language model until that pass defines otherwise.
+
+## 22. Reconstruction decisions and history
+
+### Full-conversation recovery
+
+The complete exported design conversation was recovered and audited after the first
+compact reconstruction. It confirms that the following were explicit decisions rather
+than provisional guesses:
+
+- failures use `raise`, with bare re-raise inside `catch`;
+- only the selected entry file executes arbitrary top-level statements;
+- resources support explicit `close`, `finally`, and library-managed helpers, while GC
+  manages object memory and only provides eventual resource fallback;
+- type-level declarations use an explicit type receiver such as
+  `func Vector2.origin()`;
+- ordinary calls require parentheses, while trailing lambdas may occupy the final argument
+  position without empty parentheses;
+- read-only computed properties use a direct `const` body, while writable properties use
+  `var` with `get` and `set`;
+- trait requirements omit `@abstract` and use `const` for readable access or `var` for
+  readable and writable access; and
+- the initial CLI includes `run`, `check`, `test`, `format`, `repl`, `new`, `explain`, and
+  `help`.
+
+### Confirmed departures from the historical prototype
+
+These newer decisions supersede the existing C# implementation and old design document:
+
+| Area | Historical prototype | Zig rewrite |
+| --- | --- | --- |
+| Host | C#/.NET with a planned CIL backend | Zig interpreter with replaceable backend boundaries |
+| Constants | `SCREAMING_SNAKE_CASE` | `snake_case` |
+| Struct mutation | Structs were immutable | Struct fields may mutate; `const` prevents rebinding |
+| String indexing | No integer indexing | Zero-based grapheme indexing |
+| Optional type spelling | `T?` | Unsettled; `T?` is currently disliked |
+| `Self` | Deferred | Narrowly supported in trait/type contracts |
+| User `Iterable` | Implemented | Deferred and retained on the roadmap |
+| `case`/`when` | Deferred | Accepted with a controlled initial matching model |
+| `finally` | Deliberately absent | Accepted |
+| `!` methods | Rejected wholesale | Marks an in-place counterpart to a value-producing plain method |
+| Console input | `read_line` | `input` |
+| Return types | `:` | `:` retained |
+| Lambdas | `=>` | `=>` retained; `->` rejected |
+| Formatter command | `fmt` | `format` |
+| Macros/annotations | Accumulated .NET-oriented set | Restarted from a minimal portable set |
+
+### Reconstruction corrections already applied
+
+The first compact reconstruction was too aggressive. Subsequent review corrected it in
+place:
+
+- ordinary calls require parentheses, with trailing lambdas as the explicit final-argument
+  exception;
+- inline `if` expressions are supported;
+- block and one-line guard forms of `unless` are both supported, without `else`;
+- string indexing itself is allowed and operates on grapheme units;
+- explicit resource closing is confirmed while GC is only a fallback;
+- constants and enum values use `snake_case`;
+- return annotations use `:` and lambdas use `=>`;
+- optional chaining was first deferred during reconstruction and was later restored as
+  `?.`, while the optional type spelling remains open;
+- tuple syntax supports two or more elements, with no empty or one-element tuple;
+- integer iteration methods are `up_to` and `down_to`, not the historical abbreviations;
+- `count` is a property, collection pipelines are eager, `each` returns `Nothing`, and
+  `reduce` requires an initial value;
+- collection copy/in-place pairs use `sort`/`sort!`, `reverse`/`reverse!`,
+  `unique`/`unique!`, and `shuffle`/`shuffle!`;
+- logical string padding uses `pad_start` and `pad_end`; and
+- regex is an ordinary roadmap library with no special literal syntax;
+- ranges follow their written endpoint direction and use a positive step magnitude.
+
+This history is retained because it identifies exactly where confident reconstruction has
+already failed. Future corrections belong here and in the affected normative section, in
+the same change.
+
+## 23. Consistency rules for future work
+
+Before adding or changing a feature:
+
+1. Check this document.
+2. Identify whether the old prototype agrees or conflicts.
+3. Write a canonical source example and its expected type or behavior.
+4. Record interactions with optionals, mutation, equality, errors, and source diagnostics.
+5. Prefer ordinary library code over syntax when both are equally clear.
+6. Do not introduce a generic abstraction solely to implement several built-ins.
+7. Add the decision and rationale in the same change as its implementation.
+8. Add an end-to-end behavioral test for semantics that a future backend could inherit
+   incorrectly from its host.
+
+The language grammar must eventually be generated or checked against these examples. The
+standard-library reference must be generated from authoritative signatures rather than
+maintained as a second handwritten list.
+
+## 24. Evidence-driven roadmap
+
+The complete conversation audit and the final uncertainty pass leave no known semantic
+question blocking the first interpreter slices. The following decisions intentionally wait
+for working Emerald programs, implementation measurements, or a dedicated design pass:
+
+- the optional type spelling that replaces the disliked `T?` form;
+- nondecimal numeric literals and numeric suffixes;
+- immutable collection views, covariance, `Any`, user generics, and user `Iterable`;
+- stable C ABI declarations and ownership rules based on an actual library binding;
+- project templates and the eventual build, distribution, and package commands;
+- generated documentation and its searchable reference interface;
+- serialization, filesystem encoding policy, clocks, dates, time zones, and networking;
+- the first TUI, 2D, GUI, or game-engine library used to exercise Emerald's APIs; and
+- concurrency and async as a dedicated design project after the single-threaded runtime.
+
+Macros remain deferred as a separate language-design problem. If real boilerplate later
+justifies them, hygiene, expansion visibility, diagnostics, and whether derivation is their
+first use must be designed together. No synthetic-source or expansion contract is reserved
+now.
+
+These questions are roadmap inputs rather than gaps to fill speculatively. Each receives a
+small proposal and representative program when its implementation slice becomes current.
+
+## 25. Definition of ready for implementation
+
+The project is ready for its first Zig slice when:
+
+- this document and README agree that this is the only current rewrite context;
+- the exact Zig version is selected and recorded;
+- first-program syntax has no provisional tokens;
+- source spans and diagnostic output have one canonical example;
+- integer literal and basic arithmetic semantics are pinned by examples;
+- `var`, `const`, assignment, `print`, and block syntax are exact enough for a parser;
+- a minimal directory layout and build command are documented;
+- the first end-to-end expected-output test is written before or with the implementation.
+
+Later slices have their own readiness gate: choose any relevant roadmap item from section
+24, write its examples, then implement it. This prevents an unrelated future feature—such
+as async or generic traits—from blocking an arithmetic interpreter while also preventing
+implementation accident from deciding the feature prematurely.
