@@ -9,10 +9,18 @@ implementation architecture, staged plan, and evidence-driven roadmap live in
 
 ## Rewrite status
 
-The source manager, diagnostics, and lexer are implemented. There is no parser, checker, or
-interpreter yet, so `emerald check` currently verifies that a file is well-formed UTF-8 and
-that it tokenizes, reporting lexical problems such as unsupported number bases, malformed
-literals, unterminated strings, and unclosed block comments.
+Emerald runs arithmetic. The source manager, diagnostics, lexer, expression parser, and
+interpreter are implemented, so `emerald run` executes a program and `emerald check`
+analyses one without running it.
+
+A program is currently a sequence of calls, and `print` is the only callable. Named
+bindings, control flow, name resolution, and type checking arrive with later slices.
+
+```emerald
+print(2 + 3 * 4)   # 14
+print(2 ** 3 ** 2) # 512.0
+print(7 // 2)      # 3
+```
 
 The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify
 the exact version and compile and run the toolchain probe with:
@@ -26,7 +34,7 @@ Build, test, and run:
 ```bash
 zig build                              # build zig-out/bin/emerald
 zig build test                         # unit tests and command-line contract tests
-zig build run -- check examples/arithmetic.em
+zig build run -- run examples/arithmetic.em
 ```
 
 ### Layout
@@ -40,6 +48,10 @@ src/
   Diagnostic.zig     one reported problem and its canonical rendering
   Token.zig          token kinds, keywords, and the continuation-token list
   Lexer.zig          source text to tokens
+  Ast.zig            the syntax tree
+  Parser.zig         tokens to a syntax tree
+  Value.zig          runtime values and how they display
+  Interpreter.zig    evaluates a syntax tree
   conformance.zig    runs the Emerald conformance suite
 conformance/         Emerald cases and their expected results
 examples/            Emerald programs used as fixtures and targets

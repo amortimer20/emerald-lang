@@ -7,13 +7,19 @@
 //! inherit incorrectly from its host. A replacement backend is acceptable only
 //! when it passes these same files unchanged.
 //!
-//! Two directories, distinguished by what they assert:
+//! The top directory of a case decides what is asserted:
 //!
-//!   conformance/valid/        must produce no diagnostics
-//!   conformance/diagnostics/  must produce exactly the text in its `.expected`
+//!   conformance/lexical/         tokenizes with no diagnostics
+//!   conformance/diagnostics/     `check` reports exactly its `.expected`
+//!   conformance/run/             runs, and prints exactly its `.expected`
+//!   conformance/runtime-errors/  runs, then fails with exactly its `.expected`
 //!
-//! To add a case, drop in a `.em` file. A case under `diagnostics/` also needs a
-//! `.expected` file holding the exact rendered output; run the suite once to see
+//! `lexical/` exists because the lexer accepts far more of the language than the
+//! parser does yet. Those cases hold real lexical rules that are worth protecting
+//! now, and they graduate to `run/` as the stages behind them land.
+//!
+//! To add a case, drop in a `.em` file. Every directory except `lexical/` also
+//! needs a `.expected` file holding the exact output; run the suite once to see
 //! what the compiler produces, then read it carefully before saving it, because a
 //! golden file that was never read only records what the compiler did, not what
 //! it should do.
@@ -58,12 +64,33 @@ fn collectCases(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir) ![]Case {
     return cases.toOwnedSlice(gpa);
 }
 
-/// Renders every diagnostic a case produced, in order, exactly as the command
-/// line would print them.
-fn renderReport(gpa: std.mem.Allocator, source: Source, report: emerald.Report) ![]u8 {
+/// What a case asserts, taken from the directory it sits in.
+const Kind = enum {
+    lexical,
+    diagnostics,
+    run,
+    runtime_errors,
+
+    fn fromPath(relative_path: []const u8) ?Kind {
+        const separator = std.mem.indexOfScalar(u8, relative_path, '/') orelse return null;
+        const directory = relative_path[0..separator];
+        if (std.mem.eql(u8, directory, "lexical")) return .lexical;
+        if (std.mem.eql(u8, directory, "diagnostics")) return .diagnostics;
+        if (std.mem.eql(u8, directory, "run")) return .run;
+        if (std.mem.eql(u8, directory, "runtime-errors")) return .runtime_errors;
+        return null;
+    }
+};
+
+/// Renders diagnostics in order, exactly as the command line prints them.
+fn renderDiagnostics(
+    gpa: std.mem.Allocator,
+    source: Source,
+    diagnostics: []const emerald.Diagnostic,
+) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
-    for (report.diagnostics) |diagnostic| {
+    for (diagnostics) |diagnostic| {
         diagnostic.render(source, &out.writer) catch return error.OutOfMemory;
     }
     return out.toOwnedSlice();
@@ -101,6 +128,14 @@ test "conformance suite" {
 /// Returns 1 when the case failed. Every case runs even after one fails, so a
 /// single run reports the whole picture rather than only the first problem.
 fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !usize {
+    const kind = Kind.fromPath(case.relative_path) orelse {
+        std.debug.print(
+            "\n{s}: not in a recognized directory. See conformance/README.md.\n",
+            .{case.relative_path},
+        );
+        return 1;
+    };
+
     const bytes = try root.readFileAlloc(io, case.relative_path, gpa, .limited(Source.max_bytes));
     defer gpa.free(bytes);
 
@@ -108,14 +143,11 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
     var source = try Source.init(gpa, case.relative_path, bytes);
     defer source.deinit(gpa);
 
-    var report = try emerald.check(gpa, &source);
-    defer report.deinit(gpa);
-
-    const actual = try renderReport(gpa, source, report);
+    const actual = try produce(gpa, &source, kind) orelse return 1;
     defer gpa.free(actual);
 
-    if (std.mem.startsWith(u8, case.relative_path, "valid")) {
-        if (report.ok()) return 0;
+    if (kind == .lexical) {
+        if (actual.len == 0) return 0;
         std.debug.print(
             "\n{s}: expected no diagnostics, got:\n{s}",
             .{ case.relative_path, actual },
@@ -123,6 +155,72 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
         return 1;
     }
 
+    return compareWithExpected(gpa, io, root, case, actual);
+}
+
+/// Produces the output a case is judged on, or null when the case failed in a
+/// way that has already been reported.
+fn produce(gpa: std.mem.Allocator, source: *const Source, kind: Kind) !?[]u8 {
+    switch (kind) {
+        .lexical => {
+            var tokenized = try emerald.Lexer.tokenize(gpa, source);
+            defer tokenized.deinit(gpa);
+            return try renderDiagnostics(gpa, source.*, tokenized.diagnostics);
+        },
+        .diagnostics => {
+            var report = try emerald.check(gpa, source);
+            defer report.deinit();
+            return try renderDiagnostics(gpa, source.*, report.diagnostics);
+        },
+        .run, .runtime_errors => {
+            var out: std.Io.Writer.Allocating = .init(gpa);
+            defer out.deinit();
+
+            var report = try emerald.run(gpa, source, &out.writer);
+            defer report.deinit();
+
+            if (report.diagnostics.len != 0) {
+                const rendered = try renderDiagnostics(gpa, source.*, report.diagnostics);
+                defer gpa.free(rendered);
+                std.debug.print(
+                    "\n{s}: expected to run, but it did not check:\n{s}",
+                    .{ source.path, rendered },
+                );
+                return null;
+            }
+
+            if (kind == .run) {
+                if (report.failure) |failure| {
+                    const rendered = try renderDiagnostics(gpa, source.*, &.{failure});
+                    defer gpa.free(rendered);
+                    std.debug.print(
+                        "\n{s}: expected to run to completion, but it failed:\n{s}",
+                        .{ source.path, rendered },
+                    );
+                    return null;
+                }
+                return try gpa.dupe(u8, out.written());
+            }
+
+            const failure = report.failure orelse {
+                std.debug.print(
+                    "\n{s}: expected a runtime error, but it ran to completion.\n",
+                    .{source.path},
+                );
+                return null;
+            };
+            return try renderDiagnostics(gpa, source.*, &.{failure});
+        },
+    }
+}
+
+fn compareWithExpected(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    root: std.Io.Dir,
+    case: Case,
+    actual: []const u8,
+) !usize {
     const expected_path = try std.fmt.allocPrint(gpa, "{s}.expected", .{
         case.relative_path[0 .. case.relative_path.len - ".em".len],
     });

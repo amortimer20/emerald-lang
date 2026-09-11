@@ -1,8 +1,8 @@
 //! The `emerald` command-line entry point.
 //!
-//! Section 18.1 defines the full command set. Only `check` exists so far: it
-//! analyses a source file without running it. Commands join this file as the
-//! stages behind them are built.
+//! Section 18.1 defines the full command set. `check` analyses a file without
+//! executing it, and `run` checks it and then executes it. The rest of the
+//! commands join this file as the stages behind them are built.
 
 const std = @import("std");
 const emerald = @import("emerald");
@@ -11,29 +11,38 @@ const emerald = @import("emerald");
 const ExitCode = enum(u8) {
     success = 0,
     source_diagnostics = 1,
+    runtime_error = 2,
     invalid_usage = 64,
 };
 
 const usage =
-    \\usage: emerald check <file.em>
+    \\usage: emerald <command> <file.em>
+    \\
+    \\commands:
+    \\  check   report problems without running the program
+    \\  run     report problems, then run the program
     \\
 ;
+
+const Command = enum { check, run };
 
 pub fn main(init: std.process.Init) !u8 {
     const gpa = init.gpa;
     const io = init.io;
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len != 3) return misuse(io);
 
-    if (args.len != 3 or !std.mem.eql(u8, args[1], "check")) {
-        try writeAll(io, .stderr, usage);
-        return @intFromEnum(ExitCode.invalid_usage);
-    }
-
-    return check(gpa, io, args[2]);
+    const command = std.meta.stringToEnum(Command, args[1]) orelse return misuse(io);
+    return execute(gpa, io, command, args[2]);
 }
 
-fn check(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !u8 {
+fn misuse(io: std.Io) !u8 {
+    try writeAll(io, .stderr, usage);
+    return @intFromEnum(ExitCode.invalid_usage);
+}
+
+fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8) !u8 {
     var source = emerald.Source.load(gpa, io, path) catch |err| {
         var buffer: [512]u8 = undefined;
         const message = std.fmt.bufPrint(&buffer, "emerald: cannot read '{s}': {t}\n", .{
@@ -45,20 +54,44 @@ fn check(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !u8 {
     };
     defer source.deinit(gpa);
 
-    var report = try emerald.check(gpa, &source);
-    defer report.deinit(gpa);
+    // Program output is written straight through, so it interleaves with
+    // anything the program itself prints in the order it happened.
+    var out_buffer: [4096]u8 = undefined;
+    var out = std.Io.File.stdout().writerStreaming(io, &out_buffer);
 
-    if (!report.ok()) {
-        for (report.diagnostics) |diagnostic| {
-            const rendered = try diagnostic.renderAlloc(gpa, source);
-            defer gpa.free(rendered);
-            try writeAll(io, .stderr, rendered);
-        }
+    var report = switch (command) {
+        .check => try emerald.check(gpa, &source),
+        .run => try emerald.run(gpa, &source, &out.interface),
+    };
+    defer report.deinit();
+
+    try out.interface.flush();
+
+    if (report.diagnostics.len != 0) {
+        try writeDiagnostics(gpa, io, source, report.diagnostics);
         return @intFromEnum(ExitCode.source_diagnostics);
     }
 
-    try writeAll(io, .stdout, "No problems found.\n");
+    if (report.failure) |failure| {
+        try writeDiagnostics(gpa, io, source, &.{failure});
+        return @intFromEnum(ExitCode.runtime_error);
+    }
+
+    if (command == .check) try writeAll(io, .stdout, "No problems found.\n");
     return @intFromEnum(ExitCode.success);
+}
+
+fn writeDiagnostics(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    source: emerald.Source,
+    diagnostics: []const emerald.Diagnostic,
+) !void {
+    for (diagnostics) |diagnostic| {
+        const rendered = try diagnostic.renderAlloc(gpa, source);
+        defer gpa.free(rendered);
+        try writeAll(io, .stderr, rendered);
+    }
 }
 
 const Stream = enum { stdout, stderr };

@@ -1,0 +1,4 @@
+diagnostics/unused-result.em:4:1: this result is never used
+  2 + 3
+  ^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.

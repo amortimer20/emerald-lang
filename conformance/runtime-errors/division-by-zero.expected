@@ -1,0 +1,4 @@
+runtime-errors/division-by-zero.em:3:7: division by zero
+  print(1 / 0)
+        ^^^^^
+Check the divisor before dividing. Division by zero has no result for either numeric type.

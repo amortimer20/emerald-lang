@@ -12,26 +12,30 @@ Run them with `zig build test`. The runner is [`src/conformance.zig`](../src/con
 
 | Directory | Assertion |
 | --- | --- |
-| `valid/` | The program produces no diagnostics. |
-| `diagnostics/` | The program produces exactly the text in its `.expected` file. |
+| `lexical/` | The program tokenizes with no diagnostics. |
+| `diagnostics/` | `check` reports exactly the text in its `.expected` file. |
+| `run/` | The program runs and prints exactly its `.expected` file. |
+| `runtime-errors/` | The program runs, then fails with exactly its `.expected` file. |
 
 Cases run in sorted order, and every case runs even after one fails, so a single run
 reports the whole picture.
 
+`lexical/` exists because the lexer accepts far more of the language than the parser does
+yet. Those cases protect real lexical rules now, and graduate to `run/` as the stages
+behind them land.
+
 ## Adding a case
 
-For a program that should be accepted, add a `.em` file to `valid/`. Write a complete,
-plausible program rather than a fragment: as the parser and checker land, these files are
-held to more of the language, and a fragment will start failing for reasons that have
-nothing to do with what the case was written to prove.
-
-For a program that should be rejected, add a `.em` file to `diagnostics/` and a `.expected`
-file beside it holding the exact output. Generate it by running the compiler from this
-directory, so the paths in the expected text stay relative and machine-independent:
+Add a `.em` file to the directory matching what you want to assert. Every directory except
+`lexical/` also needs a `.expected` file beside it holding the exact output. Generate it by
+running the compiler from this directory, so the paths in the expected text stay relative
+and machine-independent:
 
 ```bash
 cd conformance
 ../zig-out/bin/emerald check diagnostics/your-case.em 2> diagnostics/your-case.expected
+../zig-out/bin/emerald run run/your-case.em > run/your-case.expected
+../zig-out/bin/emerald run runtime-errors/your-case.em 2> runtime-errors/your-case.expected
 ```
 
 Then read what was generated before committing it. A golden file that was never read only
@@ -41,7 +45,7 @@ who hit it — section 17 treats diagnostic text as part of the product, not as 
 
 ## Coverage so far
 
-Only encoding and lexical structure are checked, because the parser, checker, and
-interpreter do not exist yet. Programs under `valid/` are therefore only proven to
-tokenize. As later slices land, these same files start proving more, and cases that assert
-program output belong here too.
+Encoding, lexical structure, expression syntax, and integer and floating-point arithmetic.
+Programs are a sequence of calls, since `print` is the only callable and `var` arrives with
+the statement slice. There is no name resolution or type checking, so an undefined name is
+a runtime error rather than something `check` catches.

@@ -1,12 +1,13 @@
 # Current handoff
 
-Updated: 2026-09-10. Prepared by Claude after the lexer slice.
+Updated: 2026-09-10. Prepared by Claude after the expression slice.
 
 ## Current milestone
 
-Slices 1 through 3 of section 20 are complete: the build layout exists, source loading and
-diagnostics work end to end, and the lexer produces tokens with spans. There is no parser,
-checker, or interpreter yet.
+Slices 1 through 4 of section 20 are complete. Emerald runs arithmetic: `emerald run`
+executes a program and `emerald check` analyses one without running it. A program is a
+sequence of calls, and `print` is the only callable. There is no name resolution or type
+checking, so an undefined name is a runtime error rather than something `check` catches.
 
 ## Completed foundation
 
@@ -54,13 +55,32 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   kind cannot be added without classifying it.
 - `src/Lexer.zig` produces tokens with spans: names, keywords, numbers, the three string
   forms, comments, operators, statement-terminating newlines, and EOF.
-- `src/emerald.zig` is the library root and holds `check`, which reports encoding and
-  lexical problems. It returns a `Report` of every diagnostic rather than only the first.
-- `src/main.zig` implements `emerald check <file>` with the section 18.1 exit codes.
+- `src/Ast.zig` is the syntax tree, free of runtime values so a future backend consumes the
+  same tree the interpreter does.
+- `src/Parser.zig` parses expressions with section 5.3's precedence.
+- `src/Value.zig` holds `Int` and `Float` and implements section 9.4's display rules.
+- `src/Interpreter.zig` evaluates, applying section 5.3's result types and failure modes.
+- `src/emerald.zig` is the library root. `check` and `run` share one pipeline that stops at
+  the first stage to report anything, which is section 17.2's rule against cascades.
+- `src/main.zig` implements `emerald check` and `emerald run` with the section 18.1 exit
+  codes, including `2` for an uncaught runtime error.
 - `conformance/` holds the suite required by sections 19.6 and 23: cases written in Emerald
   with expected results, run by `src/conformance.zig` under `zig build test`. Cases in
   `valid/` must produce no diagnostics; cases in `diagnostics/` must match their `.expected`
   file exactly. See [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Expression decisions worth knowing
+
+- The right operand of `**` is parsed as a unary expression rather than as another power.
+  That one rule gives the operator its right associativity, lets `2 ** -3` parse, and still
+  leaves `-2 ** 2` meaning `-(2 ** 2)` because unary sits above it.
+- Section 9.4's float display is written out in `Value.zig` rather than inherited. The host
+  disagrees on every interesting case: it renders `2.0` as `2`, `-0.0` as `-0`, `1e16` in
+  fixed form, and the special values as `inf` and `nan`.
+- Zig's `@divFloor` and `@mod` were verified by probe to match section 5.3 exactly,
+  including negative divisors and the law `a == (a // b) * b + (a % b)`.
+- Section 5.2's rule that a standalone pure expression is an error is enforced in the
+  parser, which is why a program is currently a sequence of calls.
 
 ### Lexical decisions worth knowing
 
@@ -79,20 +99,33 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 
 ## Next concrete step
 
-Slice 4 of section 20: parse and evaluate integer arithmetic with precedence. Section 5.3
-fixes the operator set and the two rules most easily got wrong — `**` binds tighter than
-unary minus and is right-associative, so `-2 ** 2` is `-(2 ** 2)` and `2 ** 3 ** 2` is
-`2 ** (3 ** 2)`. Overflow is checked against the 64-bit range settled in 4.2.
+Slice 5 of section 20: the statement slice. `var`, `const`, assignment, blocks, and `if`,
+which finally makes the first milestone program run:
 
-The first runnable Emerald milestone remains integer arithmetic, `var`/`const`, name and
-type checking, and `print`, as in `examples/arithmetic.em`.
+```emerald
+var score = 2 + 3 * 4
+print(score) # 14
+```
+
+That slice needs comparison operators and `Bool`, so section 5.2 comes with it, including
+chained comparison, which evaluates the middle expression exactly once. Section 6.1 also
+forbids shadowing a visible local within the same function, because beginners usually meant
+assignment.
+
+Two things should move alongside it. Cases in `conformance/lexical/` graduate to `run/` as
+the parser reaches them, and the leading-dot question below wants an answer before the
+parser settles the behavior by accident.
 
 ## Validation and blockers
 
-- `zig build test` passes: 54 unit tests, 13 conformance cases, and 5 command-line contract
-  tests asserting the section 18.1 exit codes against the real binary. Both the conformance
-  suite and the command-line tests were confirmed to fail when a case is broken, so they are
-  not vacuous.
+- `zig build test` passes: 75 unit tests, 20 conformance cases, and 7 command-line contract
+  tests asserting the section 18.1 exit codes against the real binary. Every case kind was
+  confirmed to fail when a case is broken, so none of them are vacuous.
+- Writing this slice found a leak worth remembering. Returning a struct that owns an
+  `ArenaAllocator` by value copies the arena, and the copy snapshots the list of blocks it
+  owns. Allocating into the arena inside the same struct literal that copies it therefore
+  strands that allocation in the dead local. Finish every allocation before constructing
+  the result; `analyze` and `Parser.parse` both do this deliberately.
 - Writing the conformance suite immediately found a real defect. The standard streams were
   opened in positional mode, which starts at offset zero, so with output redirected to a
   file each diagnostic overwrote the one before it and only the last survived. Standard

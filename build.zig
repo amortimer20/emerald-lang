@@ -104,6 +104,22 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
 
     const misused = b.addRunArtifact(exe);
     misused.expectExitCode(64);
-    misused.addCheck(.{ .expect_stderr_match = "usage: emerald check" });
+    misused.addCheck(.{ .expect_stderr_match = "usage: emerald" });
     test_step.dependOn(&misused.step);
+
+    // `run` executes and prints; a runtime error exits 2 rather than 1.
+    const runs = b.addRunArtifact(exe);
+    runs.addArg("run");
+    runs.addFileArg(b.path("examples/arithmetic.em"));
+    runs.expectStdOutEqual("14\n20\n512.0\n-4.0\n3 1 3.5\n");
+    runs.expectExitCode(0);
+    test_step.dependOn(&runs.step);
+
+    const overflows = fixtures.add("overflow.em", "print(9223372036854775807 + 1)\n");
+    const reports_runtime = b.addRunArtifact(exe);
+    reports_runtime.addArg("run");
+    reports_runtime.addFileArg(overflows);
+    reports_runtime.expectExitCode(2);
+    reports_runtime.addCheck(.{ .expect_stderr_match = "overflows Int" });
+    test_step.dependOn(&reports_runtime.step);
 }
