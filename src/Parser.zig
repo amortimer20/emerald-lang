@@ -155,12 +155,39 @@ fn peekPastNewlines(self: *Parser) Token {
     return self.tokens[self.tokens.len - 1];
 }
 
+/// Recovery after a failed statement: skip to the start of the next one.
+///
+/// Usually that is the next line. When the failed line opened a block, as a
+/// broken loop or `if` header does, the whole block goes with it; otherwise its
+/// closing brace would surface later as a second, unrelated error. A `}` that
+/// closes an enclosing block is left for that block to consume.
 fn skipToNextStatement(self: *Parser) void {
-    while (true) {
-        const token = self.peek();
-        if (token.kind == .eof) return;
+    // A stray `}` at the top level is itself the failed statement.
+    if (self.check(.right_brace)) {
         _ = self.advance();
-        if (token.kind == .newline) return;
+        return;
+    }
+
+    var depth: usize = 0;
+    while (true) {
+        switch (self.peek().kind) {
+            .eof => return,
+            .newline => if (depth == 0) {
+                _ = self.advance();
+                return;
+            },
+            .left_brace => depth += 1,
+            .right_brace => {
+                if (depth == 0) return;
+                depth -= 1;
+                if (depth == 0) {
+                    _ = self.advance();
+                    return;
+                }
+            },
+            else => {},
+        }
+        _ = self.advance();
     }
 }
 
@@ -214,6 +241,7 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
             for (call.arguments) |argument| deepest = @max(deepest, argument.depth);
             break :blk deepest;
         },
+        .range => |range| @max(range.start.depth, range.end.depth),
     };
 }
 
@@ -279,7 +307,100 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             break :blk statement;
         },
         .keyword_return => self.parseReturn(),
+        .keyword_while => self.parseWhile(),
+        .keyword_for => self.parseFor(),
+        .keyword_break => self.parseLoopExit(.break_statement),
+        .keyword_continue => self.parseLoopExit(.continue_statement),
+        // Only reachable at the top level: a block stops at its own `}`.
+        .right_brace => self.report(
+            self.peek().span,
+            "this `}` does not close anything",
+            "Remove it, or look above for a block that is missing its opening `{`.",
+        ),
         else => self.parseSimpleStatement(),
+    };
+}
+
+/// Section 6.4: `while condition { body }`.
+fn parseWhile(self: *Parser) Error!Ast.Statement {
+    const keyword = self.advance();
+    const condition = try self.parseExpression();
+    const body = try self.parseBlock();
+    return .{
+        .span = spanning(keyword.span, body.span),
+        .data = .{ .while_loop = .{ .condition = condition, .body = body } },
+    };
+}
+
+/// Section 6.4: `for name in iterable { body }`.
+fn parseFor(self: *Parser) Error!Ast.Statement {
+    const keyword = self.advance();
+
+    // `_` visits each value without naming it.
+    const name = self.peek();
+    if (name.kind != .identifier and name.kind != .underscore) {
+        return self.reportFmt(
+            name.span,
+            "expected a name after `for`, found {s}",
+            .{name.kind.describe()},
+            "A `for` loop names each value it visits, as in `for number in 1..5`.",
+        );
+    }
+    _ = self.advance();
+
+    if (self.match(.keyword_in) == null) {
+        return self.reportFmt(
+            self.peek().span,
+            "expected `in` after `{s}`, found {s}",
+            .{ self.text(name), self.peek().kind.describe() },
+            "Write what to loop over after `in`, as in `for number in 1..5`.",
+        );
+    }
+
+    const iterable = try self.parseExpression();
+    const body = try self.parseBlock();
+    return .{
+        .span = spanning(keyword.span, body.span),
+        .data = .{ .for_loop = .{
+            .name = self.text(name),
+            .name_span = name.span,
+            .iterable = iterable,
+            .body = body,
+        } },
+    };
+}
+
+/// `break` or `continue`. Whether one is inside a loop is the checker's
+/// question, as whether a `return` is inside a function is.
+fn parseLoopExit(self: *Parser, comptime kind: std.meta.Tag(Ast.Statement.Data)) Error!Ast.Statement {
+    const keyword = self.advance();
+    const data = @unionInit(Ast.Statement.Data, @tagName(kind), keyword.span);
+    return self.finishSimpleStatement(.{ .span = keyword.span, .data = data });
+}
+
+/// Ends a statement that may carry section 6.2's trailing `if`, which guards
+/// exactly one simple statement: `return if not valid?()` or
+/// `print("Bonus") if score > 100`. It becomes an ordinary `if` with no `else`
+/// whose block holds that statement, so no later pass needs to know about it.
+fn finishSimpleStatement(self: *Parser, statement: Ast.Statement) Error!Ast.Statement {
+    if (self.match(.keyword_if) == null) {
+        try self.expectStatementEnd();
+        return statement;
+    }
+
+    const condition = try self.parseExpression();
+    try self.expectStatementEnd();
+
+    const guarded = try self.arena.alloc(Ast.Statement, 1);
+    guarded[0] = statement;
+    return .{
+        .span = spanning(statement.span, condition.span),
+        .data = .{ .conditional = .{
+            .condition = condition,
+            .then_block = .{ .span = statement.span, .statements = guarded },
+            .otherwise = null,
+            .trailing = true,
+        } },
     };
 }
 
@@ -385,17 +506,17 @@ fn parseParameter(self: *Parser) Error!Ast.Parameter {
 fn parseReturn(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
 
+    // `return if not ready` is a bare return guarded by a trailing `if`.
     const next = self.peek();
     const value = switch (next.kind) {
-        .newline, .eof, .right_brace => null,
+        .newline, .eof, .right_brace, .keyword_if => null,
         else => try self.parseExpression(),
     };
 
-    try self.expectStatementEnd();
-    return .{
+    return self.finishSimpleStatement(.{
         .span = if (value) |v| spanning(keyword.span, v.span) else keyword.span,
         .data = .{ .return_statement = .{ .keyword_span = keyword.span, .value = value } },
-    };
+    });
 }
 
 /// Section 4.3: `var` permits rebinding, `const` does not. Both introduce one
@@ -420,6 +541,7 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
     // Section 4.1: an uninitialized variable is allowed only with an explicit
     // type, because there is nothing else to infer one from.
     if (annotation != null and !self.check(.equal)) {
+        try self.rejectGuardedDeclaration(name);
         try self.expectStatementEnd();
         return .{
             .span = spanning(keyword.span, annotation.?.span),
@@ -445,6 +567,7 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
     _ = self.advance();
 
     const initializer = try self.parseExpression();
+    try self.rejectGuardedDeclaration(name);
     try self.expectStatementEnd();
 
     return .{
@@ -457,6 +580,19 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
             .initializer = initializer,
         } },
     };
+}
+
+/// A trailing `if` would put the declaration inside a block of its own, where
+/// section 6.1 would end its scope on the same line, so it could never be used.
+fn rejectGuardedDeclaration(self: *Parser, name: Token) Error!void {
+    const keyword = self.peek();
+    if (keyword.kind != .keyword_if) return;
+    const help = try std.fmt.allocPrint(
+        self.arena,
+        "Declare `{s}` on its own line first, then assign it with the trailing `if`, as in `{s} = value if condition`.",
+        .{ self.text(name), self.text(name) },
+    );
+    return self.report(keyword.span, "a declaration cannot have a trailing `if`", help);
 }
 
 /// Parses a type.
@@ -611,9 +747,8 @@ fn parseSimpleStatement(self: *Parser) Error!Ast.Statement {
                 "Write each assignment on its own line.",
             );
         }
-        try self.expectStatementEnd();
 
-        return .{
+        return self.finishSimpleStatement(.{
             .span = spanning(start.span, value.span),
             .data = .{ .assignment = .{
                 .name = expression.data.name,
@@ -621,7 +756,7 @@ fn parseSimpleStatement(self: *Parser) Error!Ast.Statement {
                 .operation = assignment.operation,
                 .value = value,
             } },
-        };
+        });
     }
 
     return self.finishExpressionStatement(expression);
@@ -655,8 +790,7 @@ fn finishExpressionStatement(self: *Parser, expression: *const Ast.Expression) E
         );
     }
 
-    try self.expectStatementEnd();
-    return .{ .span = expression.span, .data = .{ .expression = expression } };
+    return self.finishSimpleStatement(.{ .span = expression.span, .data = .{ .expression = expression } });
 }
 
 /// A statement ends at a newline, at the end of the file, or just before the
@@ -725,7 +859,7 @@ fn parseNegation(self: *Parser) Error!*const Ast.Expression {
 /// A whole comparison chain becomes one node, so `0 <= score <= 100` can
 /// evaluate `score` once and short-circuit, as section 5.2 requires.
 fn parseComparison(self: *Parser) Error!*const Ast.Expression {
-    const first = try self.parseAdditive();
+    const first = try self.parseRange();
     if (comparisonOperator(self.peek().kind) == null) return first;
 
     var operands: std.ArrayList(*const Ast.Expression) = .empty;
@@ -735,7 +869,7 @@ fn parseComparison(self: *Parser) Error!*const Ast.Expression {
     var end = first.span;
     while (comparisonOperator(self.peek().kind)) |operator| {
         _ = self.advance();
-        const operand = try self.parseAdditive();
+        const operand = try self.parseRange();
         try operators.append(self.arena, operator);
         try operands.append(self.arena, operand);
         end = operand.span;
@@ -744,6 +878,36 @@ fn parseComparison(self: *Parser) Error!*const Ast.Expression {
     return self.node(spanning(first.span, end), .{ .comparison = .{
         .operands = try operands.toOwnedSlice(self.arena),
         .operators = try operators.toOwnedSlice(self.arena),
+    } });
+}
+
+/// Section 6.4's `start..end` and `start..<end`. Looser than arithmetic, so
+/// `0..count - 1` ends at `count - 1`, and tighter than comparison. A range has
+/// exactly one start and one end, so `1..2..3` is rejected rather than read
+/// either way.
+fn parseRange(self: *Parser) Error!*const Ast.Expression {
+    const start = try self.parseAdditive();
+    const inclusive = switch (self.peek().kind) {
+        .dot_dot => true,
+        .dot_dot_less => false,
+        else => return start,
+    };
+    _ = self.advance();
+    const end = try self.parseAdditive();
+
+    switch (self.peek().kind) {
+        .dot_dot, .dot_dot_less => return self.report(
+            self.peek().span,
+            "a range has one start and one end",
+            "Write a single range, as in `1..10`.",
+        ),
+        else => {},
+    }
+
+    return self.node(spanning(start.span, end.span), .{ .range = .{
+        .start = start,
+        .end = end,
+        .inclusive = inclusive,
     } });
 }
 

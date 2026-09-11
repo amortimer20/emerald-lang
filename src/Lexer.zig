@@ -6,7 +6,9 @@
 //! newline while a parenthesis or bracket is open, and after any token that
 //! cannot end an expression. `Token.Kind.canEndExpression` owns that list.
 //! Because `.newline` itself cannot end an expression, runs of blank lines
-//! collapse into a single terminator without any special handling.
+//! collapse into a single terminator without any special handling. The one
+//! rule that looks forward instead is the leading dot: a line that begins with
+//! `.` or `?.` continues the one before it, so a method chain can wrap.
 //!
 //! Section 3.3 lets a name end in `?` or `!`, which collides with the `?.`
 //! operator and the `!=` operator. Maximal munch would turn `user?.name` into
@@ -84,7 +86,9 @@ pub fn next(self: *Lexer) std.mem.Allocator.Error!Token {
         switch (self.peek()) {
             '\n' => {
                 self.index += 1;
-                if (self.group_depth == 0 and self.previous.canEndExpression()) {
+                if (self.group_depth == 0 and self.previous.canEndExpression() and
+                    !self.nextLineLeadsWithDot())
+                {
                     return self.emit(.newline, start, self.index);
                 }
                 continue;
@@ -96,6 +100,35 @@ pub fn next(self: *Lexer) std.mem.Allocator.Error!Token {
             else => return self.lexToken(),
         }
     }
+}
+
+/// Section 3.1: a line whose first token is a member dot continues the line
+/// before it, so a chain can put each step on its own line:
+///
+///     var count = numbers
+///         .filter { number => number > 0 }
+///         .count
+///
+/// Blank lines and line comments between the two are skipped. `..` is a range,
+/// not a member dot, so a line beginning with it does not continue anything.
+fn nextLineLeadsWithDot(self: Lexer) bool {
+    var at = self.index;
+    const text = self.source.text;
+    while (at < text.len) {
+        switch (text[at]) {
+            ' ', '\t', '\r', '\n' => at += 1,
+            '#' => {
+                // Documentation and block comments end the search; only an
+                // ordinary line comment is skipped.
+                if (at + 1 < text.len and (text[at + 1] == '#' or text[at + 1] == '[')) return false;
+                while (at < text.len and text[at] != '\n') at += 1;
+            },
+            '.' => return at + 1 >= text.len or text[at + 1] != '.',
+            '?' => return at + 1 < text.len and text[at + 1] == '.',
+            else => return false,
+        }
+    }
+    return false;
 }
 
 // Scanning primitives.
@@ -611,6 +644,16 @@ test "a newline after a comma or member dot continues the statement" {
         .int_literal, .right_paren, .eof,
     });
     try expectKinds("value.\nfield", &.{ .identifier, .dot, .identifier, .eof });
+}
+
+test "a line that begins with a member dot continues the line before it" {
+    try expectKinds("numbers\n    .count\n", &.{ .identifier, .dot, .identifier, .newline, .eof });
+    try expectKinds("user\n    ?.name\n", &.{ .identifier, .question_dot, .identifier, .newline, .eof });
+    // Blank lines and ordinary comments between do not break the chain.
+    try expectKinds("a\n\n    # why\n    .b\n", &.{ .identifier, .dot, .identifier, .newline, .eof });
+    // A range and a documentation comment do not continue anything.
+    try expectKinds("a\n..b", &.{ .identifier, .newline, .dot_dot, .identifier, .eof });
+    try expectKinds("a\n## doc\n.b", &.{ .identifier, .newline, .doc_comment, .dot, .identifier, .eof });
 }
 
 test "newlines are suppressed while parentheses or brackets are open" {

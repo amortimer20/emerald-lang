@@ -5,6 +5,7 @@
 //! commands join this file as the stages behind them are built.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const emerald = @import("emerald");
 
 /// Section 18.1 fixes these, so they are named rather than written as bare numbers.
@@ -27,8 +28,16 @@ const usage =
 
 const Command = enum { check, run };
 
+/// The allocator a program's runtime work goes through. Zig's default for a
+/// ReleaseSafe build without libc is its leak-checking debug allocator, which
+/// made a loop that declares a local 100 times slower than one that does not.
+/// Leak checking stays in Debug builds, where the tests run.
+fn runtimeAllocator(init: std.process.Init) std.mem.Allocator {
+    return if (builtin.mode == .Debug) init.gpa else std.heap.smp_allocator;
+}
+
 pub fn main(init: std.process.Init) !u8 {
-    const gpa = init.gpa;
+    const gpa = runtimeAllocator(init);
     const io = init.io;
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());

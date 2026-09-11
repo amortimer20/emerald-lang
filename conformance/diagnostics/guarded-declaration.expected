@@ -1,0 +1,4 @@
+diagnostics/guarded-declaration.em:4:16: a declaration cannot have a trailing `if`
+  var bonus = 10 if true
+                 ^^
+Declare `bonus` on its own line first, then assign it with the trailing `if`, as in `bonus = value if condition`.

@@ -1,0 +1,4 @@
+diagnostics/loop-variable-read-only.em:4:5: `number` cannot be reassigned
+      number = number * 2
+      ^^^^^^
+A loop variable takes each value in turn. Copy it into a `var` if you need one that changes.

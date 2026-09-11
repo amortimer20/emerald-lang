@@ -31,9 +31,32 @@ pub const Statement = struct {
         declaration: Declaration,
         assignment: Assignment,
         conditional: If,
+        while_loop: While,
+        for_loop: For,
+        /// Section 6.4's `break`, holding its keyword's span.
+        break_statement: Source.Span,
+        /// Section 6.4's `continue`, holding its keyword's span.
+        continue_statement: Source.Span,
         function_declaration: FunctionDeclaration,
         return_statement: Return,
     };
+};
+
+/// Section 6.4: `while condition { body }`.
+pub const While = struct {
+    condition: *const Expression,
+    body: Block,
+};
+
+/// Section 6.4: `for name in iterable { body }`. The binding is read-only and
+/// fresh for every iteration. Only a range can be looped over so far;
+/// collections arrive with the collection slice.
+pub const For = struct {
+    /// `_` discards each value without introducing a binding.
+    name: []const u8,
+    name_span: Source.Span,
+    iterable: *const Expression,
+    body: Block,
 };
 
 /// Section 7.1. Parameters are read-only, and require an explicit type this
@@ -44,8 +67,8 @@ pub const FunctionDeclaration = struct {
     name: []const u8,
     name_span: Source.Span,
     parameters: []const Parameter,
-    /// Omitted for a function with no result, per section 7.2's distinction
-    /// between "no result" and an explicit `Nothing` return type.
+    /// Omitted for a function with no result, whose return type is then
+    /// `Nothing`, exactly as if `: Nothing` were written (section 7.2).
     return_annotation: ?TypeExpression,
     body: Block,
 };
@@ -97,6 +120,11 @@ pub const If = struct {
     condition: *const Expression,
     then_block: Block,
     otherwise: ?Else,
+    /// Section 6.2's trailing form, `statement if condition`, which guards one
+    /// statement and has no `else`. Its `then_block` holds that one statement.
+    /// Kept distinct so the source shape survives for the formatter; nothing
+    /// else treats it differently from a block `if`.
+    trailing: bool = false,
 };
 
 pub const Else = union(enum) {
@@ -126,6 +154,15 @@ pub const Expression = struct {
         logical: Logical,
         comparison: Comparison,
         call: Call,
+        range: Range,
+    };
+
+    /// Section 6.4's `start..end`, which includes both bounds, or
+    /// `start..<end`, which excludes the end. Ranges count upward only.
+    pub const Range = struct {
+        start: *const Expression,
+        end: *const Expression,
+        inclusive: bool,
     };
 
     pub const Unary = struct {
@@ -241,7 +278,7 @@ pub const BinaryOperator = enum {
     floor_divide,
     /// `%`, paired with floor division by the law `a == (a // b) * b + (a % b)`.
     remainder,
-    /// `**`, which always produces a `Float` and associates right to left.
+    /// `**`, which gives an `Int` for two `Int`s and associates right to left.
     power,
 
     pub fn lexeme(self: BinaryOperator) []const u8 {

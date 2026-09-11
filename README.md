@@ -13,29 +13,30 @@ Emerald runs and type-checks. The whole frontend of section 19.2 exists — sour
 lexer, parser, name resolver, type checker, interpreter — so `emerald run` executes a
 program and `emerald check` reports its problems without running it.
 
-Named bindings, type annotations, assignment, conditionals, comparison, arithmetic, and
-functions work. Definite assignment is proved through control flow, and an unhandled error
-inside a function reports the calls that led to it. Loops, strings, and collections arrive
-with later slices.
+Named bindings, type annotations, assignment, conditionals, comparison, arithmetic,
+functions, and loops work. Definite assignment is proved through control flow, including
+loops, and an unhandled error inside a function reports the calls that led to it. Strings
+and collections arrive with later slices.
 
 ```emerald
-const passing_score = 60
-
-func grade(score: Int): Int {
-    if score >= passing_score {
-        return 1
+func collatz_steps(start: Int): Int {
+    var number = start
+    var steps = 0
+    while number != 1 {
+        if number % 2 == 0 {
+            number = number // 2
+        }
+        else {
+            number = 3 * number + 1
+        }
+        steps += 1
     }
-    return 2
+    return steps
 }
 
-func factorial(n: Int): Int {
-    if n <= 1 {
-        return 1
-    }
-    return n * factorial(n - 1)
+for start in 1..5 {
+    print(start, collatz_steps(start))
 }
-
-print(grade(75), factorial(10))
 ```
 
 The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify
@@ -50,7 +51,7 @@ Build, test, and run:
 ```bash
 zig build                              # build zig-out/bin/emerald
 zig build test                         # unit tests and command-line contract tests
-zig build run -- run examples/arithmetic.em
+zig build run -- run examples/loops.em
 ```
 
 ### Layout

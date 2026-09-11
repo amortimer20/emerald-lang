@@ -1,0 +1,4 @@
+diagnostics/break-outside-loop.em:5:5: `break` can only be used inside a loop
+      break
+      ^^^^^
+A function cannot end the loop that called it. Return a value the caller can check instead.

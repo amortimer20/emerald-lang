@@ -66,6 +66,10 @@ const Binding = struct {
     /// A function's name. Its `type` is unused; a call goes through
     /// `signatureFor` instead.
     is_function: bool = false,
+    /// Assigned inside a loop and not before it, so unassigned after the loop
+    /// only because the loop might not run. Changes the correction a read
+    /// before assignment offers, since "every branch" would not describe it.
+    assigned_in_loop: bool = false,
 };
 
 const Scope = std.StringHashMapUnmanaged(Binding);
@@ -101,6 +105,22 @@ current_return_type: ?Type = null,
 /// ends the program, is deferred, so it is rejected outside a function.
 in_function: bool = false,
 pending_return_types: std.ArrayList(Type) = .empty,
+/// The loops enclosing the statement being checked, innermost last. Empty at
+/// the start of every function body, since a `break` cannot leave a function.
+loops: std.ArrayList(Loop) = .empty,
+
+/// What the checker tracks about one enclosing loop.
+const Loop = struct {
+    /// How many scopes were in force outside the loop. A `break` records the
+    /// assignment state of exactly these, the ones that outlive the loop.
+    depth: usize,
+    /// `while true`, which only a `break` can end. What is assigned after it is
+    /// what every `break` saw assigned, rather than what was assigned before it.
+    infinite: bool,
+    /// For an infinite loop, the intersection of the state at every `break`
+    /// so far; null until the first.
+    exits: ?Snapshot = null,
+};
 
 pub fn check(gpa: std.mem.Allocator, program: Ast.Program, facts: Resolver.Facts) !Checked {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
@@ -215,10 +235,118 @@ fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
         .declaration => |declaration| try self.checkDeclaration(declaration),
         .assignment => |assignment| try self.checkAssignment(assignment),
         .conditional => |conditional| try self.checkConditional(conditional),
+        .while_loop => |loop| try self.checkWhile(loop),
+        .for_loop => |loop| try self.checkFor(loop),
+        .break_statement => |span| try self.checkBreak(span),
+        .continue_statement => |span| _ = try self.enclosingLoop(span, "continue"),
         // Checked after the top level; see the module comment.
         .function_declaration => {},
         .return_statement => |return_statement| try self.checkReturn(return_statement),
     }
+}
+
+/// Section 6.4, with section 4.1's definite assignment. The body is checked
+/// from the state before the loop. That is exactly right for the first
+/// iteration, and later ones only know more, since nothing becomes unassigned.
+///
+/// The body may also run zero times, so after the loop only what was assigned
+/// before it is known. `while true` is the exception: it can end only through a
+/// `break`, so what follows it knows whatever every `break` knew, and when it
+/// has no `break` at all, nothing after it is reachable.
+fn checkWhile(self: *Checker, loop: Ast.While) Error!void {
+    try self.requireCondition(loop.condition);
+    const before = try self.snapshot();
+    const infinite = isLiteralTrue(loop.condition);
+
+    try self.loops.append(self.arena, .{ .depth = self.scopes.items.len, .infinite = infinite });
+    try self.checkBlock(loop.body);
+    const finished = self.loops.pop().?;
+
+    if (!infinite) return self.restoreAfterLoop(before);
+    if (finished.exits) |exits| self.restore(exits) else self.markAllAssigned();
+}
+
+/// Section 6.4. The loop variable is read-only and assigned for the whole body,
+/// and a range may be empty, so as with `while`, only what was assigned before
+/// the loop is known after it.
+fn checkFor(self: *Checker, loop: Ast.For) Error!void {
+    const element = try self.typeOfIterable(loop.iterable);
+    const before = try self.snapshot();
+
+    try self.loops.append(self.arena, .{ .depth = self.scopes.items.len, .infinite = false });
+    try self.pushScope();
+    if (!std.mem.eql(u8, loop.name, "_")) {
+        const scope = self.scopes.items[self.scopes.items.len - 1];
+        try scope.put(self.arena, loop.name, .{ .type = element, .assigned = true });
+    }
+    try self.checkStatements(loop.body.statements);
+    _ = self.scopes.pop();
+    _ = self.loops.pop();
+
+    // After the scope is gone, so the snapshot and the scopes line up again.
+    self.restoreAfterLoop(before);
+}
+
+/// The type of each value a `for` loop visits. Only ranges so far, and a range
+/// counts whole numbers.
+fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
+    if (iterable.data == .range) {
+        const range = iterable.data.range;
+        for ([_]*const Ast.Expression{ range.start, range.end }) |end| {
+            const actual = try self.typeOf(end);
+            if (actual.kind == .int or actual.kind == .invalid) continue;
+            try self.report(
+                end.span,
+                "a range counts whole numbers, but this is {s}",
+                .{actual.name()},
+                "Both ends of a range are Ints, as in `1..10`.",
+            );
+        }
+        return .int;
+    }
+
+    const actual = try self.typeOf(iterable);
+    if (actual.kind == .invalid) return .invalid;
+    try self.report(
+        iterable.span,
+        "a `for` loop cannot visit {s}",
+        .{actual.name()},
+        "So far a `for` loop can only visit a range, as in `for i in 1..10`.",
+    );
+    return .invalid;
+}
+
+fn checkBreak(self: *Checker, span: Source.Span) Error!void {
+    const loop = try self.enclosingLoop(span, "break") orelse return;
+    if (!loop.infinite) return;
+
+    const here = try self.snapshotOf(loop.depth);
+    if (loop.exits) |exits| {
+        for (exits, here) |known, now| {
+            for (known, now) |*flag, assigned| flag.* = flag.* and assigned;
+        }
+    } else {
+        loop.exits = here;
+    }
+}
+
+/// The innermost loop, or a report that there is none. Loops do not reach
+/// across a function boundary, because `loops` starts empty in every body.
+fn enclosingLoop(self: *Checker, span: Source.Span, comptime keyword: []const u8) Error!?*Loop {
+    if (self.loops.items.len == 0) {
+        try self.report(
+            span,
+            "`" ++ keyword ++ "` can only be used inside a loop",
+            .{},
+            // Inside a function, the likely intent is ending the caller's loop.
+            if (self.in_function)
+                "A function cannot end the loop that called it. Return a value the caller can check instead."
+            else
+                "Put it inside a `while` or `for` loop, or remove it.",
+        );
+        return null;
+    }
+    return &self.loops.items[self.loops.items.len - 1];
 }
 
 fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
@@ -270,7 +398,7 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
     if (assignment.operation) |operation| {
         // Section 5.3 lowers a compound assignment through the same operation,
         // so its result type is the operation's, not the right-hand side's.
-        if (!binding.assigned) try self.reportUnassigned(assignment.name_span, assignment.name);
+        if (!binding.assigned) try self.reportUnassigned(assignment.name_span, assignment.name, binding.*);
         const result = try self.arithmetic(assignment.name_span, operation, binding.type, value);
 
         if (!result.assignableTo(binding.type)) {
@@ -309,8 +437,9 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
 /// `then` and an `else` that each assign it. Without an `else` there is a path
 /// that skips the block entirely, so nothing is proved.
 ///
-/// A branch that always returns is left out of the merge rather than
-/// intersected into it. Otherwise a guard clause like
+/// A branch that cannot fall through — it returns, breaks, or continues — is
+/// left out of the merge rather than intersected into it. Otherwise a guard
+/// clause like
 ///
 ///     var x: Int
 ///     if cond { x = 1 } else { return }
@@ -324,7 +453,7 @@ fn checkConditional(self: *Checker, conditional: Ast.If) Error!void {
     const before = try self.snapshot();
     try self.checkBlock(conditional.then_block);
     const after_then = try self.snapshot();
-    const then_returns = blockAlwaysReturns(conditional.then_block.statements);
+    const then_returns = !blockCompletes(conditional.then_block.statements);
 
     const otherwise = conditional.otherwise orelse {
         // No else: the block may not have run at all. This holds even when the
@@ -337,11 +466,11 @@ fn checkConditional(self: *Checker, conditional: Ast.If) Error!void {
     const otherwise_returns = switch (otherwise) {
         .block => |block| blk: {
             try self.checkBlock(block);
-            break :blk blockAlwaysReturns(block.statements);
+            break :blk !blockCompletes(block.statements);
         },
         .chained => |chained| blk: {
             try self.checkStatement(chained.*);
-            break :blk stmtAlwaysReturns(chained.*);
+            break :blk !stmtCompletes(chained.*);
         },
     };
 
@@ -524,13 +653,16 @@ fn checkFunctionBody(
     const outer_scopes = self.scopes;
     const outer_return_type = self.current_return_type;
     const outer_in_function = self.in_function;
+    const outer_loops = self.loops;
     defer {
         self.scopes = outer_scopes;
         self.current_return_type = outer_return_type;
         self.in_function = outer_in_function;
+        self.loops = outer_loops;
     }
 
     self.scopes = .empty;
+    self.loops = .empty;
     try self.scopes.append(self.arena, view);
     try self.scopes.append(self.arena, parameters);
     self.current_return_type = expected_return_type;
@@ -576,7 +708,9 @@ fn checkAllPathsReturn(self: *Checker, declaration: Ast.FunctionDeclaration, ret
     // type is already broken would only get a second report of the same
     // mistake.
     if (return_type.kind == .nothing or return_type.kind == .invalid) return;
-    if (blockAlwaysReturns(declaration.body.statements)) return;
+    // A body that cannot fall off its end returns on every path, or loops
+    // forever, and either way never produces a missing value.
+    if (!blockCompletes(declaration.body.statements)) return;
     try self.report(
         declaration.name_span,
         "not every path in `{s}` returns a value",
@@ -679,7 +813,16 @@ fn requireCondition(self: *Checker, expression: *const Ast.Expression) Error!voi
 
 /// The canonical diagnostic of section 17.1, reproduced exactly, including the
 /// name in its correction.
-fn reportUnassigned(self: *Checker, span: Source.Span, name: []const u8) Error!void {
+fn reportUnassigned(self: *Checker, span: Source.Span, name: []const u8, binding: Binding) Error!void {
+    if (binding.assigned_in_loop) {
+        return self.reportWithHelp(
+            span,
+            "`{s}` may not have been assigned",
+            .{name},
+            "The loop that assigns `{s}` might not run at all. Give it a value before the loop.",
+            .{name},
+        );
+    }
     try self.reportWithHelp(
         span,
         "`{s}` may not have been assigned",
@@ -717,8 +860,14 @@ fn resolveTypeExpression(self: *Checker, annotation: Ast.TypeExpression) Error!T
 const Snapshot = [][]bool;
 
 fn snapshot(self: *Checker) Error!Snapshot {
-    const result = try self.arena.alloc([]bool, self.scopes.items.len);
-    for (self.scopes.items, result) |scope, *flags| {
+    return self.snapshotOf(self.scopes.items.len);
+}
+
+/// The state of only the outermost `depth` scopes, which is what a `break`
+/// carries out of a loop.
+fn snapshotOf(self: *Checker, depth: usize) Error!Snapshot {
+    const result = try self.arena.alloc([]bool, depth);
+    for (self.scopes.items[0..depth], result) |scope, *flags| {
         flags.* = try self.arena.alloc(bool, scope.count());
         var index: usize = 0;
         var entries = scope.valueIterator();
@@ -732,6 +881,18 @@ fn restore(self: *Checker, state: Snapshot) void {
         var index: usize = 0;
         var entries = scope.valueIterator();
         while (entries.next()) |binding| : (index += 1) binding.assigned = flags[index];
+    }
+}
+
+/// `restore`, noting which names only the loop assigned.
+fn restoreAfterLoop(self: *Checker, before: Snapshot) void {
+    for (self.scopes.items, before) |scope, flags| {
+        var index: usize = 0;
+        var entries = scope.valueIterator();
+        while (entries.next()) |binding| : (index += 1) {
+            if (binding.assigned and !flags[index]) binding.assigned_in_loop = true;
+            binding.assigned = flags[index];
+        }
     }
 }
 
@@ -778,7 +939,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
                 break :blk .invalid;
             }
             if (!binding.assigned) {
-                try self.reportUnassigned(expression.span, name);
+                try self.reportUnassigned(expression.span, name, binding.*);
                 // Treated as assigned from here so one unassigned read does not
                 // report again at every later use.
                 binding.assigned = true;
@@ -791,6 +952,20 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .logical => |logical| self.typeOfLogical(logical),
         .comparison => |comparison| self.typeOfComparison(comparison),
         .call => |call| self.typeOfCall(expression, call),
+        .range => |range| blk: {
+            // Ranges have no type of their own yet: they are values in section
+            // 6.4, but everything a program could do with one besides looping
+            // arrives with the collection vocabulary.
+            _ = try self.typeOf(range.start);
+            _ = try self.typeOf(range.end);
+            try self.report(
+                expression.span,
+                "a range can only be looped over so far",
+                .{},
+                "Use it in a `for` loop, as in `for i in 1..10`.",
+            );
+            break :blk .invalid;
+        },
     };
 }
 
@@ -975,28 +1150,62 @@ fn typeArguments(self: *Checker, arguments: []const *const Ast.Expression) Error
 
 // Control-flow shape, computed from the AST alone.
 
-/// Whether every path through a block ends in `return`. Once one statement
-/// definitely returns, what follows it cannot change the answer.
-fn blockAlwaysReturns(statements: []const Ast.Statement) bool {
+/// Whether control can reach the end of a block, rather than leaving it
+/// through `return`, `break`, or `continue`, or looping forever. Once one
+/// statement cannot complete, nothing after it runs.
+fn blockCompletes(statements: []const Ast.Statement) bool {
     for (statements) |statement| {
-        if (stmtAlwaysReturns(statement)) return true;
+        if (!stmtCompletes(statement)) return false;
+    }
+    return true;
+}
+
+fn stmtCompletes(statement: Ast.Statement) bool {
+    return switch (statement.data) {
+        .return_statement, .break_statement, .continue_statement => false,
+        .conditional => |conditional| blk: {
+            if (blockCompletes(conditional.then_block.statements)) break :blk true;
+            const otherwise = conditional.otherwise orelse break :blk true;
+            break :blk switch (otherwise) {
+                .block => |block| blockCompletes(block.statements),
+                .chained => |chained| stmtCompletes(chained.*),
+            };
+        },
+        // Only a `break` ends `while true`. Any other loop can end on its own.
+        .while_loop => |loop| !isLiteralTrue(loop.condition) or blockBreaks(loop.body.statements),
+        .for_loop, .expression, .declaration, .assignment, .function_declaration => true,
+    };
+}
+
+/// Whether a block contains a `break` belonging to the loop it is the body of.
+/// A `break` inside a nested loop belongs to that loop instead.
+fn blockBreaks(statements: []const Ast.Statement) bool {
+    for (statements) |statement| {
+        if (stmtBreaks(statement)) return true;
     }
     return false;
 }
 
-fn stmtAlwaysReturns(statement: Ast.Statement) bool {
+fn stmtBreaks(statement: Ast.Statement) bool {
     return switch (statement.data) {
-        .return_statement => true,
+        .break_statement => true,
         .conditional => |conditional| blk: {
-            if (!blockAlwaysReturns(conditional.then_block.statements)) break :blk false;
+            if (blockBreaks(conditional.then_block.statements)) break :blk true;
             const otherwise = conditional.otherwise orelse break :blk false;
             break :blk switch (otherwise) {
-                .block => |block| blockAlwaysReturns(block.statements),
-                .chained => |chained| stmtAlwaysReturns(chained.*),
+                .block => |block| blockBreaks(block.statements),
+                .chained => |chained| stmtBreaks(chained.*),
             };
         },
+        .while_loop, .for_loop, .return_statement, .continue_statement => false,
         .expression, .declaration, .assignment, .function_declaration => false,
     };
+}
+
+/// `while true`, written literally. Nothing subtler is recognized, so the rule
+/// stays one a reader can apply by eye.
+fn isLiteralTrue(expression: *const Ast.Expression) bool {
+    return expression.data == .bool_literal and expression.data.bool_literal;
 }
 
 /// Whether a body contains a `return` carrying a value anywhere, which decides
@@ -1019,6 +1228,9 @@ fn statementHasValueReturn(statement: Ast.Statement) bool {
                 .chained => |chained| statementHasValueReturn(chained.*),
             };
         },
+        .while_loop => |loop| blockHasValueReturn(loop.body.statements),
+        .for_loop => |loop| blockHasValueReturn(loop.body.statements),
         .expression, .declaration, .assignment, .function_declaration => false,
+        .break_statement, .continue_statement => false,
     };
 }

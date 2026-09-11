@@ -1,0 +1,4 @@
+diagnostics/assigned-in-loop.em:8:7: `last` may not have been assigned
+  print(last)
+        ^^^^
+The loop that assigns `last` might not run at all. Give it a value before the loop.

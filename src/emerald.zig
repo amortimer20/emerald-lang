@@ -622,6 +622,175 @@ test "one mistake produces one diagnostic rather than a cascade" {
     try testing.expectEqual(@as(usize, 1), report.diagnostics.len);
 }
 
+// Section 6.4: loops.
+
+test "a for loop visits a range in order, and a range only counts upward" {
+    try expectOutput("for i in 1..3 {\n    print(i)\n}\n", "1\n2\n3\n");
+    try expectOutput("for i in 0..<3 {\n    print(i)\n}\n", "0\n1\n2\n");
+    // A start past the end is empty, so computed bounds cannot reverse.
+    try expectOutput("var count = 0\nfor i in 0..count - 1 {\n    print(i)\n}\nprint(9)\n", "9\n");
+    try expectOutput("for i in 5..1 {\n    print(i)\n}\nprint(9)\n", "9\n");
+    try expectOutput("for i in 3..<3 {\n    print(i)\n}\nprint(9)\n", "9\n");
+    try expectOutput("for i in 3..3 {\n    print(i)\n}\n", "3\n");
+}
+
+test "a range may end at the largest Int without overflowing" {
+    try expectOutput(
+        "for i in 9223372036854775806..9223372036854775807 {\n    print(i)\n}\n",
+        "9223372036854775806\n9223372036854775807\n",
+    );
+}
+
+test "range endpoints are evaluated once, before the first iteration" {
+    const program =
+        \\var calls = 0
+        \\func limit(): Int {
+        \\    calls += 1
+        \\    return 3
+        \\}
+        \\for i in 1..limit() {
+        \\    print(i)
+        \\}
+        \\print(calls)
+        \\
+    ;
+    try expectOutput(program, "1\n2\n3\n1\n");
+}
+
+test "an underscore visits each value without naming it" {
+    try expectOutput("for _ in 1..3 {\n    print(0)\n}\n", "0\n0\n0\n");
+}
+
+test "while repeats until its condition is false" {
+    try expectOutput("var n = 3\nwhile n > 0 {\n    print(n)\n    n -= 1\n}\n", "3\n2\n1\n");
+    try expectOutput("while false {\n    print(1)\n}\nprint(2)\n", "2\n");
+}
+
+test "break and continue act on the innermost loop" {
+    const program =
+        \\for row in 1..3 {
+        \\    for column in 1..3 {
+        \\        continue if column == 2
+        \\        break if column > row
+        \\        print(row * 10 + column)
+        \\    }
+        \\}
+        \\
+    ;
+    try expectOutput(program, "11\n21\n31\n33\n");
+}
+
+test "a local declared in a loop body is fresh every iteration" {
+    try expectOutput("for i in 1..2 {\n    var doubled = i * 2\n    print(doubled)\n}\n", "2\n4\n");
+}
+
+test "after while true, a name is assigned when every break assigned it" {
+    const assigned =
+        \\var found: Int
+        \\var n = 0
+        \\while true {
+        \\    n += 1
+        \\    if n * n > 50 {
+        \\        found = n
+        \\        break
+        \\    }
+        \\}
+        \\print(found)
+        \\
+    ;
+    try expectOutput(assigned, "8\n");
+
+    const not_on_every_break =
+        \\var found: Int
+        \\var n = 0
+        \\while true {
+        \\    n += 1
+        \\    break if n > 9
+        \\    found = n
+        \\    break if n > 3
+        \\}
+        \\print(found)
+        \\
+    ;
+    try expectFailure(not_on_every_break, "`found` may not have been assigned");
+}
+
+test "a loop may run zero times, so what it assigns is not known after it" {
+    try expectFailure(
+        "var x: Int\nvar n = 0\nwhile n < 3 {\n    x = n\n    n += 1\n}\nprint(x)\n",
+        "`x` may not have been assigned",
+    );
+    try expectFailure(
+        "var x: Int\nfor i in 1..3 {\n    x = i\n}\nprint(x)\n",
+        "`x` may not have been assigned",
+    );
+}
+
+test "a function may end in a loop that only a return leaves" {
+    const program =
+        \\func first_multiple(of: Int, above: Int): Int {
+        \\    var n = above + 1
+        \\    while true {
+        \\        return n if n % of == 0
+        \\        n += 1
+        \\    }
+        \\}
+        \\print(first_multiple(7, 20))
+        \\
+    ;
+    try expectOutput(program, "21\n");
+
+    // Any other loop can finish, so the path after it still needs a return.
+    try expectFailure(
+        "func f(n: Int): Int {\n    while n > 0 {\n        return 1\n    }\n}\n",
+        "not every path in `f` returns a value",
+    );
+}
+
+test "break and continue only work inside a loop" {
+    try expectFailure("break\n", "`break` can only be used inside a loop");
+    try expectFailure("func f() {\n    continue\n}\n", "`continue` can only be used inside a loop");
+    // A function body is not inside the loop that calls it.
+    try expectFailure("func f() {\n    break\n}\nfor i in 1..2 {\n    f()\n}\n", "`break` can only be used inside a loop");
+}
+
+test "a loop variable is read-only and does not outlive its loop" {
+    try expectFailure("for i in 1..3 {\n    i = 2\n}\n", "`i` cannot be reassigned");
+    try expectFailure("for i in 1..3 {\n    print(i)\n}\nprint(i)\n", "`i` is not defined");
+    try expectFailure("var i = 0\nfor i in 1..3 {\n    print(i)\n}\n", "`i` is already declared");
+}
+
+test "only an Int range can be looped over so far" {
+    try expectFailure("for i in 1..2.5 {\n    print(i)\n}\n", "a range counts whole numbers, but this is Float");
+    try expectFailure("for i in 5 {\n    print(i)\n}\n", "a `for` loop cannot visit Int");
+    try expectFailure("var r = 1..3\n", "a range can only be looped over so far");
+    try expectFailure("for i in 1..2..3 {\n    print(i)\n}\n", "a range has one start and one end");
+}
+
+test "memory stays flat however many times a loop runs" {
+    const program = "var total = 0\nfor i in 1..{d} {{\n    var part = i * 2\n    total += part\n}}\nprint(total)\n";
+    var buffer: [256]u8 = undefined;
+    const few = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{3}));
+    const many = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{20_000}));
+    try testing.expect(many < few + 16 * 1024);
+}
+
+// Section 6.2: the trailing `if`.
+
+test "a trailing if guards one statement" {
+    try expectOutput("print(1) if true\nprint(2) if false\n", "1\n");
+    try expectOutput("var score = 5\nscore += 10 if score > 3\nprint(score)\n", "15\n");
+    try expectOutput(
+        "func sign(n: Int): Int {\n    return -1 if n < 0\n    return 0 if n == 0\n    return 1\n}\nprint(sign(-4), sign(0), sign(9))\n",
+        "-1 0 1\n",
+    );
+    try expectOutput("func greet(ready: Bool) {\n    return if not ready\n    print(1)\n}\ngreet(false)\ngreet(true)\n", "1\n");
+}
+
+test "a declaration cannot have a trailing if" {
+    try expectFailure("var x = 1 if true\n", "a declaration cannot have a trailing `if`");
+}
+
 // Section 7: functions.
 
 test "a function takes arguments and returns a value" {

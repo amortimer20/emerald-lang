@@ -90,7 +90,10 @@ pub const StackLimit = struct {
 
 pub const RunError = std.mem.Allocator.Error || std.Io.Writer.Error;
 
-const Error = error{ Raised, Returned } || RunError;
+/// `Returned`, `Broke`, and `Continued` are control flow rather than failures:
+/// each unwinds through `execute` to the construct that handles it, the way
+/// `Raised` unwinds to the top. The checker guarantees every one has a handler.
+const Error = error{ Raised, Returned, Broke, Continued } || RunError;
 
 /// Lives as long as the run: hoisted functions, module bindings, and the
 /// failure that ends the program.
@@ -111,6 +114,10 @@ module: Scope = .empty,
 /// during a call, innermost last, from `gpa`. A call replaces this stack for its duration,
 /// so a function never sees the block-local names of whoever called it.
 scopes: std.ArrayList(Scope) = .empty,
+/// Emptied scopes kept for reuse. A loop body opens a scope every iteration,
+/// and taking one from here instead of allocating makes a loop that declares a
+/// local cost no allocation at all once it is running.
+spare_scopes: std.ArrayList(Scope) = .empty,
 
 functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// What the checker proved about each function, including return types it
@@ -155,12 +162,17 @@ pub fn run(
     // error unwinds through it, so only the lists themselves are left.
     defer interpreter.scopes.deinit(gpa);
     defer interpreter.call_stack.deinit(gpa);
+    defer {
+        for (interpreter.spare_scopes.items) |*scope| scope.deinit(gpa);
+        interpreter.spare_scopes.deinit(gpa);
+    }
 
     interpreter.executeAll(program.statements) catch |err| switch (err) {
         error.Raised => {},
         // The checker rejects `return` outside a function, and section 14.1's
-        // top-level `return` is deferred.
-        error.Returned => unreachable,
+        // top-level `return` is deferred. It rejects `break` and `continue`
+        // outside a loop.
+        error.Returned, error.Broke, error.Continued => unreachable,
         else => |other| return other,
     };
 
@@ -198,12 +210,25 @@ fn executeAll(self: *Interpreter, statements: []const Ast.Statement) Error!void 
 /// Section 6.1 gives every block its own scope, and a local declared inside does
 /// not leak out.
 fn executeBlock(self: *Interpreter, block: Ast.Block) Error!void {
-    try self.scopes.append(self.gpa, .empty);
-    defer {
-        var scope = self.scopes.pop().?;
-        scope.deinit(self.gpa);
-    }
+    _ = try self.pushScope();
+    defer self.popScope();
     try self.executeAll(block.statements);
+}
+
+fn pushScope(self: *Interpreter) Error!*Scope {
+    var scope = self.spare_scopes.pop() orelse Scope.empty;
+    self.scopes.append(self.gpa, scope) catch |err| {
+        scope.deinit(self.gpa);
+        return err;
+    };
+    return &self.scopes.items[self.scopes.items.len - 1];
+}
+
+/// Keeps the scope's table for the next block, emptied.
+fn popScope(self: *Interpreter) void {
+    var scope = self.scopes.pop().?;
+    scope.clearRetainingCapacity();
+    self.spare_scopes.append(self.gpa, scope) catch scope.deinit(self.gpa);
 }
 
 fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
@@ -251,6 +276,10 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
         },
 
         .conditional => |conditional| try self.executeConditional(conditional),
+        .while_loop => |loop| try self.executeWhile(loop),
+        .for_loop => |loop| try self.executeFor(loop),
+        .break_statement => return error.Broke,
+        .continue_statement => return error.Continued,
 
         // Hoisted into `self.functions` before anything runs.
         .function_declaration => {},
@@ -263,6 +292,59 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
             return error.Returned;
         },
     }
+}
+
+/// Section 6.4. Each pass through the body is a block of its own, so its locals
+/// are fresh every time.
+fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
+    while (try self.condition(loop.condition)) {
+        self.executeBlock(loop.body) catch |err| switch (err) {
+            error.Broke => return,
+            error.Continued => continue,
+            else => return err,
+        };
+    }
+}
+
+/// Section 6.4's `for` over a range. The endpoints are evaluated once, before
+/// the first iteration, and a range only counts upward, so one whose start is
+/// past its end visits nothing.
+///
+/// The loop stops by comparing with the last value rather than by stepping past
+/// it, because stepping past `9223372036854775807` would overflow.
+fn executeFor(self: *Interpreter, loop: Ast.For) Error!void {
+    // The checker allows only a range here, with `Int` endpoints.
+    const range = loop.iterable.data.range;
+    const start = (try self.evaluate(range.start)).data.int;
+    const end = (try self.evaluate(range.end)).data.int;
+
+    if (start > end or (!range.inclusive and start == end)) return;
+    const last = if (range.inclusive) end else end - 1;
+
+    var current = start;
+    while (try self.executeIteration(loop, current)) {
+        if (current == last) return;
+        current += 1;
+    }
+}
+
+/// One pass through a `for` body with the loop variable bound to `value`, in a
+/// scope of its own, which is what makes the binding fresh every iteration.
+/// False when a `break` ended the loop.
+fn executeIteration(self: *Interpreter, loop: Ast.For, value: i64) Error!bool {
+    const scope = try self.pushScope();
+    defer self.popScope();
+
+    if (!std.mem.eql(u8, loop.name, "_")) {
+        try scope.put(self.gpa, loop.name, .{ .kind = .int, .value = .initInt(value) });
+    }
+
+    self.executeAll(loop.body.statements) catch |err| switch (err) {
+        error.Broke => return false,
+        error.Continued => {},
+        else => return err,
+    };
+    return true;
 }
 
 fn executeConditional(self: *Interpreter, conditional: Ast.If) Error!void {
@@ -345,6 +427,9 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .logical => |logical| self.evaluateLogical(logical),
         .comparison => |comparison| self.evaluateComparison(expression, comparison),
         .call => |call| self.evaluateCall(expression, call),
+        // The checker allows a range only as what a `for` loop visits, which
+        // `executeFor` reads directly.
+        .range => unreachable,
     };
 }
 
@@ -652,13 +737,12 @@ fn callFunction(
     const outer_scopes = self.scopes;
     self.scopes = .empty;
     defer {
-        for (self.scopes.items) |*scope| scope.deinit(self.gpa);
+        while (self.scopes.items.len > 0) self.popScope();
         self.scopes.deinit(self.gpa);
         self.scopes = outer_scopes;
     }
 
-    try self.scopes.append(self.gpa, .empty);
-    const frame = &self.scopes.items[0];
+    const frame = try self.pushScope();
     for (function.parameters, arguments, signature.parameters) |parameter, argument, parameter_type| {
         // An `Int` passed to a `Float` parameter arrives as a `Float`.
         const kind = kindOf(parameter_type);

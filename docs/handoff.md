@@ -1,15 +1,16 @@
 # Current handoff
 
-Updated: 2026-09-11. Prepared by Claude after fixing an external review of the functions
-slice.
+Updated: 2026-09-11. Prepared by Claude after the loop slice.
 
 ## Current milestone
 
-Slices 1 through 7 of section 20 are complete. The whole frontend pipeline of section 19.2
-exists: source manager, lexer, parser, name resolver, type checker, interpreter.
+Slices 1 through 7 of section 20 are complete, plus a loop slice the user approved
+inserting before section 20's slice 8. The whole frontend pipeline of section 19.2 exists:
+source manager, lexer, parser, name resolver, type checker, interpreter.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
-and stack traces on runtime errors. Every expression has a static type before execution and
+and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
+`continue`, and the trailing `if` guard. Every expression has a static type before execution and
 definite assignment is proved through control flow. What remains at runtime is only what
 cannot be known statically: integer overflow, division by zero, and exceeding the
 recursion limit.
@@ -77,17 +78,59 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - `src/Value.zig` holds `Nothing`, `Bool`, `Int`, and `Float`, implements section 9.4's
   display rules, and orders values.
 - `src/Interpreter.zig` evaluates, applying section 5.3's result types and failure modes,
-  and guards the host stack.
+  and guards the host stack. Block and call scopes come from the general allocator and are
+  reused once emptied, so a running loop does not allocate.
 - `src/emerald.zig` is the library root. `check` and `run` share one pipeline that stops at
   the first stage to report anything, which is section 17.2's rule against cascades. The
   pipeline runs on a thread with a large reserved stack.
 - `src/main.zig` implements `emerald check` and `emerald run` with the section 18.1 exit
-  codes, including `2` for an uncaught runtime error.
+  codes, including `2` for an uncaught runtime error and `70` for an internal failure. It
+  chooses the fast `smp_allocator` outside Debug builds; see the loop decisions below.
 - `conformance/` holds the suite required by sections 19.6 and 23: cases written in Emerald
   with expected results, run by `src/conformance.zig` under `zig build test`. Cases in
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Loop decisions worth knowing
+
+- **Definite assignment through loops** (recorded in 6.4). A body is checked from the state
+  before the loop, which is exact for the first iteration and conservative for later ones,
+  since nothing becomes unassigned. After a loop, only what was assigned before it is known,
+  because the body may run zero times; a name lost that way gets its own correction ("the
+  loop that assigns `x` might not run at all"). A literal `while true` is the exception:
+  after it, a name is assigned when every `break` assigned it (`Checker.Loop.exits`), and
+  one with no `break` never completes, so a function may end in it.
+- **"Always returns" became "completes".** The checker's control-flow shape now asks
+  whether a block can fall off its end (`blockCompletes`), so a branch ending in `break` or
+  `continue` is left out of the merge after an `if` exactly as a returning one was, and the
+  every-path-returns check accepts a body ending in `while true`.
+- **Trailing `if` is parsed into an ordinary `if`** with no `else` whose block holds the one
+  statement, flagged `trailing` for the future formatter. No pass after the parser treats it
+  differently. It is accepted after calls, assignments, `return`, `break`, and `continue`, and
+  rejected after a declaration. `return if cond` is a bare return with a guard; when the
+  `if ... then ... else` expression lands, `return if a then b else c` will need to be told
+  apart by looking for `then` on the same line.
+- **Ranges are ordinary expressions** at their own precedence level, between comparison and
+  arithmetic, so `0..count - 1` ends at `count - 1`. The checker accepts one only as what a
+  `for` loop visits, and the interpreter reads its endpoints there directly rather than
+  building a range value. `for` stops by comparing with the last value, so a range ending at
+  the largest `Int` does not overflow.
+- **`break` and `continue` unwind as Zig errors** (`Broke`, `Continued`), the same way
+  `return` already did; the checker guarantees a handler for each, and a function body starts
+  with no enclosing loop.
+- **Parse recovery skips a whole block** when the failed line opened one, so a broken loop or
+  `if` header no longer reports its closing brace as a second error. A stray top-level `}`
+  now says it closes nothing.
+- **Performance, found by timing the first long loops.** Zig 0.16 gives a ReleaseSafe build
+  without libc its leak-checking `DebugAllocator` as `init.gpa`, which made a loop that
+  declares a local about 7 µs per iteration. `main` now uses `std.heap.smp_allocator` outside
+  Debug, and the interpreter reuses emptied scope tables. Ten million iterations went from
+  39 s to about 1 s in ReleaseSafe, with flat memory. The remaining cost is name lookup
+  through hash maps; resolving names to slots is the obvious next step if it matters.
+- **The leading dot** (recorded in 3.1) is implemented in the lexer
+  (`nextLineLeadsWithDot`). Member access itself is not parsed yet, so it is covered by a
+  lexical conformance case until the collection slice.
 
 ### Function decisions worth knowing
 
@@ -232,7 +275,7 @@ still open.
 - Section 3.3 lets a name end in `?` or `!`, which collides with `?.` and `!=`. A trailing
   marker joins the name unless the next character forms the operator, so `user?.name` and
   `a!=b` lex correctly while `empty?()` and `sort!()` keep their markers. The section 4.2
-  conformance case `func valid?(): Bool?` is covered by a test.
+  conformance case `func valid?(input: Int?): Bool` is covered by a test.
 - A `.` is a decimal point only when a digit follows, which is what keeps `5.times` a method
   call and `1..5` a range rather than malformed numbers.
 - Documentation comments are tokens because the parser needs them. Line and block comments
@@ -240,60 +283,40 @@ still open.
 
 ## Next concrete step
 
-Per-call memory was the one prerequisite a review flagged for loops, and it is done.
-
-A design review after slice 7 changed several rules, all recorded in the "Decisions made
-during implementation" table of section 22. The ones that bear on upcoming slices: ranges
-count upward only and a start past the end is empty (6.4), which the loop slice must
-follow, including the warning for a descending literal range; `**` on two `Int`s is now an
-`Int` (implemented); and a directory is a project only when it contains `main.em` (14.1),
-with the rest of the project rules on the roadmap in section 24.
-
-The user then removed `unless` in both forms, keeping block `if`, trailing `if` as the
-guard form, and the `if` expression (6.2). `unless` was also dropped from the keyword table.
-Set literals now use square brackets, with the expected set type deciding and `{T}` kept as
-the type spelling (8.2), so braces in expression position mean only a lambda. The
-collection slice should build list, dictionary, and set literals from one bracket parser
-that consults the expected type, and only literals take their kind from context.
-
 Section 20's slice 8 is collections: a list literal, indexing, mutation, and one
-higher-order method. Two things stand in front of it, and the order is worth deciding
-before starting:
+higher-order method. What bears on it:
 
-- **Loops.** No slice in section 20 names `while` or `for`, yet a collection slice without
-  them is awkward, and definite assignment needs a rule for loops when they land. A small
-  loop slice first is the recommendation.
-- **Lambdas.** "One higher-order method" needs a block argument, which is section 7.4's
-  lambda — deferred from this slice — and with it function values, capture by reference, and
-  the trailing-lambda call form.
-
-Collections are values, and the user confirmed that and tightened it (recorded in 4.3,
-7.1, 8.1, 10.2, and a new "Decisions made during implementation" table in section 22):
-`const` freezes a value entirely rather than only its binding, stopping at class
-references; and parameters are read-only the same way, so mutating a collection parameter
-is an error rather than a silent change to a discarded copy. What this means for slice 8:
-
-- Store each collection as a reference-counted buffer with copy-on-write. Assignment and
-  argument passing share the buffer; a mutation copies first only when it is shared. The
-  checker already makes parameters read-only, so no new runtime rule is needed there.
-- Nested updates such as `grid[0][1] = 5` must update in place, which needs assignable
-  location paths in the interpreter; indexing needs them anyway.
-- Reference counting reclaims collection storage completely until classes exist, because
-  value-typed data cannot form a cycle. Once a class can hold a list that holds the class,
-  a cycle can pass through the list, so the slice 9 collector must trace inside collection
-  buffers too.
-- Struct methods that mutate `self` must be identified from their bodies (no `mutating`
-  keyword) so that calling one on a `const` or a parameter is rejected. That belongs to the
-  object-model slice, but the collection mutators (`append` and the rest) need the same
-  "mutates its receiver" flag from the start.
-
-Still open: the leading-dot question below.
+- **Lambdas are out of this slice** (the user approved the plan). "One higher-order method"
+  needs a block argument, which is section 7.4's lambda, and a closure that outlives its
+  scope needs heap storage, so lambdas, function values, capture by reference, the
+  trailing-lambda call form, and the first higher-order method move to the slice 9 heap
+  slice. The collection slice covers literals, indexing, mutation, `count`, and `for`.
+- **One bracket parser for all three collections** (8.2): list, dictionary, and set literals
+  are all square brackets, a dictionary is recognized by its `key: value` entries, and a set
+  by an expected set type. Only literals take their kind from context.
+- **Collections are values** (4.3, 7.1, 8.1, 10.2): `const` freezes a value entirely,
+  stopping at class references, and parameters are read-only the same way. So:
+  - Store each collection as a reference-counted buffer with copy-on-write. Assignment and
+    argument passing share the buffer; a mutation copies first only when it is shared.
+  - Nested updates such as `grid[0][1] = 5` must update in place, which needs assignable
+    location paths in the interpreter; indexing needs them anyway.
+  - Reference counting reclaims collection storage completely until classes exist, because
+    value-typed data cannot form a cycle. Once a class can hold a list that holds the class,
+    the slice 9 collector must trace inside collection buffers too.
+  - Collection mutators (`append` and the rest) need a "mutates its receiver" flag, so that
+    calling one on a `const` or a parameter is rejected. Struct methods will need the same
+    flag, inferred from their bodies, in the object-model slice.
+- **`for` over a collection** replaces the "only a range so far" diagnostic, and iterates the
+  snapshot taken when the loop begins (8.4), which copy-on-write makes free.
+- **Member access** (`list.count`, `list.append(x)`) is not parsed yet. The leading-dot
+  continuation is already in the lexer waiting for it.
 
 ## Validation and blockers
 
-- `zig build test` passes in Debug and ReleaseSafe: 155 unit tests, 52 conformance cases,
-  and 7 command-line contract tests asserting the section 18.1 exit codes against the real binary. Every case kind was
-  confirmed to fail when a case is broken, so none of them are vacuous.
+- `zig build test` passes in Debug and ReleaseSafe: 172 unit tests, 60 conformance cases,
+  and 7 command-line contract tests asserting the section 18.1 exit codes against the real
+  binary. Every case kind was confirmed to fail when a case is broken, so none of them are
+  vacuous.
 - Every host-stack probe — 100,000 nested parentheses, 100,000 prefix minuses, a
   1,000,000-term flat sum, unbounded recursion, and 1,000 calls at 250 levels of nesting —
   ends in the right answer or a clean diagnostic, identically in Debug and ReleaseSafe.
@@ -323,28 +346,6 @@ Still open: the leading-dot question below.
   `main` instead takes a `std.process.Init` supplying the allocator, `Io`, and arguments;
   `addExecutable` and `addTest` take a `root_module` built by `b.createModule`.
 
-### Open question raised by writing the conformance cases
-
-Section 3.1 decides continuation from the preceding tokens only, explicitly "rather than
-indentation or the next line". That rules out the leading-dot method chain that Kotlin,
-Swift, and C# all allow:
-
-```emerald
-var count = numbers
-    .filter { number => number > 0 }
-    .count
-```
-
-As written, the newline after `numbers` ends the statement, because an identifier can end an
-expression. This matters more for Emerald than for most languages, because section 5.4 makes
-method chaining the pipeline notation and declines a separate pipeline operator, so long
-chains are the idiomatic style and will want to wrap. Supporting it means letting a leading
-`.` on the next line continue the previous statement, which is a deliberate exception to the
-"preceding tokens only" rule rather than an oversight in it. A conformance case was written
-using this form and then removed, since the rule as written rejects it.
-
-This needs a decision before the parser slice fixes the behavior by accident.
-
 ### Deferred
 
 - From section 7: nested functions (rejected with one diagnostic), lambdas and trailing
@@ -355,15 +356,17 @@ This needs a decision before the parser slice fixes the behavior by accident.
 - Section 14.1's warning for unreachable code after a `return`. Diagnostics have no
   severity yet; until they do, code after two branches that both return is treated as
   assigned everything rather than reported.
-- Section 6.2's trailing `if` guard and the `if ... then ... else` expression. `unless` is
-  no longer part of the language and is not a keyword.
+- Section 6.2's `if ... then ... else` expression. `unless` is no longer part of the language
+  and is not a keyword.
+- Section 6.4's warning for a range whose literal endpoints descend, such as `5..1`, which
+  can only be a mistake. It needs diagnostic severity, like the unreachable-code warning.
+- Range values: `(1..7).step(2)`, `random(1..6)`, and ranges stored in names are rejected
+  with "a range can only be looped over so far" until the collection vocabulary lands.
 - Optional types. The parser splits the `?` in type position as section 4.2 requires, and
   the checker reports that optionals are not available yet, so the rule is exercised without
   the semantics existing.
 - String literals in expressions. The lexer produces the tokens, but nothing consumes them,
   so `conformance/lexical/strings.em` has not graduated.
-- Loops. Section 20 does not name them in a slice of their own; they belong with or just
-  after functions, and definite assignment will need a loop rule when they land.
 
 ### Known rough edges
 
@@ -373,8 +376,6 @@ This needs a decision before the parser slice fixes the behavior by accident.
 - Definite assignment at the top level does not see assignments made inside a called
   function. `var total: Int`, then a call to a function that sets it, then a read, is
   rejected as possibly unassigned. Initializing the variable is the fix.
-- Past the 256th brace, parse recovery can report the unconsumed closing braces as further
-  errors. Only a program that is already rejected for its nesting can see this.
 - A diagnostic that quotes a line containing invalid UTF-8 prints the offending bytes raw,
   so a terminal shows a replacement glyph. Escaping them is a small refinement worth doing
   when the lexer starts reporting byte-level problems more often.

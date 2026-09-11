@@ -65,15 +65,15 @@ pub const Resolved = struct {
 /// declared by any program, so they live in a scope of their own.
 pub const prelude = [_][]const u8{"print"};
 
-pub const BindingKind = enum { variable, parameter, function };
+pub const BindingKind = enum { variable, parameter, loop_variable, function };
 
 const Binding = struct {
     mutable: bool,
     /// Where the name was declared, so a later diagnostic can point at it.
     span: Source.Span,
     /// Decides the reason a reassignment diagnostic gives: section 4.3 makes a
-    /// `const` read-only, section 7.1 makes a parameter read-only, and a
-    /// function is not a variable at all.
+    /// `const` read-only, section 7.1 makes a parameter read-only, section 6.4
+    /// makes a loop variable read-only, and a function is not a variable at all.
     kind: BindingKind = .variable,
 };
 
@@ -321,6 +321,12 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     .{assignment.name},
                     "Parameters are read-only. Assign it to a local variable first if you need a version that can change.",
                 ),
+                .loop_variable => try self.report(
+                    assignment.name_span,
+                    "`{s}` cannot be reassigned",
+                    .{assignment.name},
+                    "A loop variable takes each value in turn. Copy it into a `var` if you need one that changes.",
+                ),
                 .function => try self.report(
                     assignment.name_span,
                     "`{s}` is a function and cannot be assigned to",
@@ -339,12 +345,51 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             };
         },
 
+        .while_loop => |loop| {
+            try self.walkExpression(loop.condition);
+            try self.walkBlock(loop.body);
+        },
+
+        .for_loop => |loop| try self.walkFor(loop),
+
+        .break_statement, .continue_statement => {},
+
         .function_declaration => |function| try self.walkFunctionBody(function),
 
         .return_statement => |return_statement| {
             if (return_statement.value) |value| try self.walkExpression(value);
         },
     }
+}
+
+/// The loop variable lives in the body's scope, which section 6.4 makes fresh
+/// for every iteration. The iterable is resolved outside it, before the
+/// variable exists, since it is evaluated once before the loop begins.
+fn walkFor(self: *Resolver, loop: Ast.For) Error!void {
+    try self.walkExpression(loop.iterable);
+
+    try self.push();
+    defer self.pop();
+
+    // `_` visits each value without naming it.
+    if (!std.mem.eql(u8, loop.name, "_")) {
+        if (self.visibleLocal(loop.name) != null) {
+            try self.report(
+                loop.name_span,
+                "`{s}` is already declared",
+                .{loop.name},
+                "Give the loop variable a name of its own.",
+            );
+        } else {
+            try self.scopes.items[self.scopes.items.len - 1].put(self.arena, loop.name, .{
+                .mutable = false,
+                .span = loop.name_span,
+                .kind = .loop_variable,
+            });
+        }
+    }
+
+    try self.walkStatements(loop.body.statements);
 }
 
 /// Walks a function body where it is written. The module scope stays visible
@@ -431,6 +476,10 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                 }
             }
             for (call.arguments) |argument| try self.walkExpression(argument);
+        },
+        .range => |range| {
+            try self.walkExpression(range.start);
+            try self.walkExpression(range.end);
         },
     }
 }

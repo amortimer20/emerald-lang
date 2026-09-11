@@ -104,8 +104,24 @@ end of input.
   remain open and after a token that cannot end an expression, including a binary
   operator, comma, or member dot. Expression-position collection literals follow the same
   rule; statement blocks retain normal newline termination. Continuation is determined
-  from the preceding tokens rather than indentation or the next line. There is no
+  from the preceding tokens rather than indentation, with one exception that looks at the
+  next line: a line whose first token is a member dot, `.` or `?.`, continues the line
+  before it. Blank lines and ordinary comments between them are skipped. There is no
   backslash continuation syntax.
+
+The leading dot exists because method chaining is the pipeline notation (5.4), so long
+chains are idiomatic and need to wrap, and a dot at the start of a line reads as "and
+then" in a way a dot at the end of the previous one does not:
+
+```emerald
+var count = numbers
+    .filter { number => number > 0 }
+    .count
+```
+
+A line cannot otherwise begin with `.`, so the exception never changes the meaning of a
+program that would have been valid without it. `..` is a range operator rather than a
+member dot and does not continue a line.
 - Semicolons are unnecessary and should not become a parallel statement syntax.
 
 The grammar owns the exact continuation-token list, and lexer/parser conformance tests
@@ -384,8 +400,12 @@ be updated by methods.
 
 Conditions require `Bool`; values do not become truthy or falsey implicitly.
 
-Numeric widening from `Int` to `Float` is allowed where arithmetic requires it. Other
-conversions are explicit and use descriptive method names:
+Numeric widening from `Int` to `Float` happens wherever a `Float` is expected: an
+arithmetic operand beside a `Float`, a declaration or assignment to a `Float`, an argument
+to a `Float` parameter, a returned value, and an element of a literal whose inferred
+element type is `Float`. It is the only implicit conversion, and it always actually
+converts, so `var rate: Float = 1` holds and prints `1.0`. Other conversions are explicit
+and use descriptive method names:
 
 ```emerald
 "42".to_int()
@@ -683,7 +703,9 @@ return if not valid?()
 print("Bonus") if score > 100
 ```
 
-The trailing form has no `else` and applies to exactly one simple statement. The three
+The trailing form has no `else` and applies to exactly one simple statement: a call, an
+assignment, `return`, `break`, or `continue`. A declaration cannot take one, since the
+name would be scoped to a block that ends on the same line. The three
 forms have distinct jobs: the block `if` branches, the trailing `if` guards one action, and
 `if ... then ... else` chooses a value.
 
@@ -747,6 +769,14 @@ for name in names {
 `break` exits the nearest loop and `continue` starts its next iteration. Guard forms may
 be used where the resulting control flow stays obvious. Loop bindings are read-only and
 fresh for every iteration. Range endpoints are evaluated once before iteration begins.
+`for _ in 1..3` repeats without naming the value.
+
+Definite assignment (4.1) treats a loop body as something that may run zero times, so a
+name assigned only inside a loop is not known to be assigned after it, and the diagnostic
+says the loop might not run. `while true` is the exception, because only `break` ends it:
+after it, a name is assigned when every `break` assigned it, and a `while true` with no
+`break` never completes, so a function may end in one that only `return` leaves. Only a
+literal `true` counts, so the rule is one a reader can apply by eye.
 
 `..` includes both bounds and `..<` excludes the upper bound. Ranges only count upward. A
 range whose start is past its end is empty:
@@ -2583,6 +2613,9 @@ recorded in their normative sections:
 | `?` predicates (3.3, 4.2) | Always return plain `Bool`; the conformance example changed | The earlier example `func valid?(): Bool?` contradicted 3.3's rule. |
 | `unless` (6.2) | Removed in both forms; trailing `if` is the guard form | It only ever meant `if not`. Removing it leaves three conditional forms with distinct jobs: block `if`, trailing `if`, and the `if` expression. |
 | Set literals (8.2) | Square brackets, with the set type deciding; `{T}` stays the type spelling | Braces in expression position meant a block, a lambda, or a set, which forced `for n in ({1, 2, 3})` and made `{}` ambiguous. Brackets already build empty dictionaries from context, so sets follow the same rule. |
+| Leading-dot continuation (3.1) | A line beginning with `.` or `?.` continues the previous line | Method chaining is the pipeline notation, so chains need to wrap, and no valid line could begin with a member dot anyway. The one exception to deciding continuation from preceding tokens. |
+| Widening (4.4) | `Int` widens to `Float` wherever a `Float` is expected, not only in arithmetic | The section relied on it for `[1, 2.5]` already, and `var rate: Float = 1` being an error would teach nothing. |
+| Loops and definite assignment (6.4) | A loop may run zero times; only a literal `while true` is known to end through `break` | Precise enough that the common `while true` search with a `break` needs no dummy initial value, while staying a rule a reader can check by eye. |
 | Value-type mutability (4.3, 7.1, 8.1, 10.2) | `const` and parameters freeze values; the rule stops at class references | Under value semantics, mutating and replacing are indistinguishable, so a shallow `const` protected nothing coherent, and mutating a parameter's copy was a silent no-op that a beginner would write and never understand. Replaces the earlier shallow `const`, which followed C# reference-type variables. |
 
 ## 23. Consistency rules for future work
