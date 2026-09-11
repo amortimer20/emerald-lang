@@ -45,10 +45,15 @@ fn check(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !u8 {
     };
     defer source.deinit(gpa);
 
-    if (emerald.check(source)) |diagnostic| {
-        const rendered = try diagnostic.renderAlloc(gpa, source);
-        defer gpa.free(rendered);
-        try writeAll(io, .stderr, rendered);
+    var report = try emerald.check(gpa, &source);
+    defer report.deinit(gpa);
+
+    if (!report.ok()) {
+        for (report.diagnostics) |diagnostic| {
+            const rendered = try diagnostic.renderAlloc(gpa, source);
+            defer gpa.free(rendered);
+            try writeAll(io, .stderr, rendered);
+        }
         return @intFromEnum(ExitCode.source_diagnostics);
     }
 

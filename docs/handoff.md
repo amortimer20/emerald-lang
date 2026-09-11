@@ -1,11 +1,12 @@
 # Current handoff
 
-Updated: 2026-09-10. Prepared by Claude after the source manager and diagnostics slice.
+Updated: 2026-09-10. Prepared by Claude after the lexer slice.
 
 ## Current milestone
 
-Slices 1 and 2 of section 20 are complete: the build layout exists, and source loading and
-diagnostics work end to end. There is no lexer, parser, checker, or interpreter yet.
+Slices 1 through 3 of section 20 are complete: the build layout exists, source loading and
+diagnostics work end to end, and the lexer produces tokens with spans. There is no parser,
+checker, or interpreter yet.
 
 ## Completed foundation
 
@@ -48,29 +49,43 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   mapping. It also locates the first invalid UTF-8 sequence and its span.
 - `src/Diagnostic.zig` renders the canonical four-part shape from section 17.1, with the
   underline measured in scalars so it aligns past multi-byte characters.
-- `src/emerald.zig` is the library root and holds `check`, which currently reports only
-  encoding problems because no later stage exists.
+- `src/Token.zig` holds the token kinds, the keyword table, and `canEndExpression`, which
+  is the continuation-token list section 3.1 refers to. The switch is exhaustive, so a new
+  kind cannot be added without classifying it.
+- `src/Lexer.zig` produces tokens with spans: names, keywords, numbers, the three string
+  forms, comments, operators, statement-terminating newlines, and EOF.
+- `src/emerald.zig` is the library root and holds `check`, which reports encoding and
+  lexical problems. It returns a `Report` of every diagnostic rather than only the first.
 - `src/main.zig` implements `emerald check <file>` with the section 18.1 exit codes.
+
+### Lexical decisions worth knowing
+
+- A newline is emitted only when the previous token can end an expression and no `(` or `[`
+  is open. Braces deliberately do not open a group, so statements inside a block still end
+  at a newline. Because `.newline` itself cannot end an expression, runs of blank lines
+  collapse with no special handling.
+- Section 3.3 lets a name end in `?` or `!`, which collides with `?.` and `!=`. A trailing
+  marker joins the name unless the next character forms the operator, so `user?.name` and
+  `a!=b` lex correctly while `empty?()` and `sort!()` keep their markers. The section 4.2
+  conformance case `func valid?(): Bool?` is covered by a test.
+- A `.` is a decimal point only when a digit follows, which is what keeps `5.times` a method
+  call and `1..5` a range rather than malformed numbers.
+- Documentation comments are tokens because the parser needs them. Line and block comments
+  are skipped, which the formatter slice will have to revisit.
 
 ## Next concrete step
 
-Slice 3 of section 20: the lexer. Identifiers, integers, strings, comments, newline, and
-EOF, each carrying a `Source.Span`. Two rules already settled deserve tests from the start:
-the newline-continuation token list in 3.1, and the `T?` split described in 4.2, whose
-conformance case is
-
-```emerald
-func valid?(): Bool? {
-    return nothing
-}
-```
+Slice 4 of section 20: parse and evaluate integer arithmetic with precedence. Section 5.3
+fixes the operator set and the two rules most easily got wrong — `**` binds tighter than
+unary minus and is right-associative, so `-2 ** 2` is `-(2 ** 2)` and `2 ** 3 ** 2` is
+`2 ** (3 ** 2)`. Overflow is checked against the 64-bit range settled in 4.2.
 
 The first runnable Emerald milestone remains integer arithmetic, `var`/`const`, name and
 type checking, and `print`, as in `examples/arithmetic.em`.
 
 ## Validation and blockers
 
-- `zig build test` passes: 14 unit tests plus 3 command-line contract tests asserting the
+- `zig build test` passes: 54 unit tests plus 4 command-line contract tests asserting the
   section 18.1 exit codes against the real binary. The command-line tests were confirmed to
   fail when the example is broken, so they are not vacuous.
 - `bash tools/check-toolchain.sh` passes.
@@ -92,6 +107,15 @@ type checking, and `print`, as in `examples/arithmetic.em`.
   when the lexer starts reporting byte-level problems more often.
 - `emerald check` on a missing file exits `64`. Section 18.1 does not cover that case; `64`
   was chosen because there is no source to diagnose. Confirm or change deliberately.
+- String interpolation is not scanned yet, so a `"` inside `#{...}` ends the string early.
+  Strings are lexed as whole tokens and left uncooked; escape processing, indentation
+  stripping for triple-quoted strings, and interpolation all belong to one later slice.
+- Identifier characters are currently any ASCII letter, digit, underscore, or any non-ASCII
+  byte. Section 3.3 specifies Unicode XID classes with NFC normalization and no emoji, which
+  needs the tables section 19.1 schedules for the string slice. Accepting too much now and
+  tightening later keeps valid programs valid.
+- A multi-line block comment joins the lines around it rather than terminating a statement,
+  matching how C-family languages treat their block comments.
 
 ## Pending changes
 

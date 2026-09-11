@@ -62,6 +62,14 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     rejects.addCheck(.{ .expect_stderr_match = "this is not valid UTF-8 text" });
     test_step.dependOn(&rejects.step);
 
+    const lexical = fixtures.add("lexical.em", "var count = 0xFF\n");
+    const reports_lexical = b.addRunArtifact(exe);
+    reports_lexical.addArg("check");
+    reports_lexical.addFileArg(lexical);
+    reports_lexical.expectExitCode(1);
+    reports_lexical.addCheck(.{ .expect_stderr_match = "Emerald writes numbers in decimal only" });
+    test_step.dependOn(&reports_lexical.step);
+
     const misused = b.addRunArtifact(exe);
     misused.expectExitCode(64);
     misused.addCheck(.{ .expect_stderr_match = "usage: emerald check" });

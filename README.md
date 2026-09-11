@@ -9,9 +9,10 @@ implementation architecture, staged plan, and evidence-driven roadmap live in
 
 ## Rewrite status
 
-The source manager and diagnostics are implemented. There is no lexer, parser, checker, or
-interpreter yet, so `emerald check` currently verifies only that a file is well-formed
-UTF-8 — enough to exercise source spans and the canonical diagnostic format end to end.
+The source manager, diagnostics, and lexer are implemented. There is no parser, checker, or
+interpreter yet, so `emerald check` currently verifies that a file is well-formed UTF-8 and
+that it tokenizes, reporting lexical problems such as unsupported number bases, malformed
+literals, unterminated strings, and unclosed block comments.
 
 The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify
 the exact version and compile and run the toolchain probe with:
@@ -37,6 +38,8 @@ src/
   emerald.zig        frontend library root
   Source.zig         immutable source files, spans, and line/column mapping
   Diagnostic.zig     one reported problem and its canonical rendering
+  Token.zig          token kinds, keywords, and the continuation-token list
+  Lexer.zig          source text to tokens
 examples/            Emerald programs used as fixtures and targets
 toolchain/           pinned Zig version and compiled probes
 tools/               repository check scripts
