@@ -249,15 +249,12 @@ follow, including the warning for a descending literal range; `**` on two `Int`s
 `Int` (implemented); and a directory is a project only when it contains `main.em` (14.1),
 with the rest of the project rules on the roadmap in section 24.
 
-Two proposals from that review await the user's answer and are not yet in the spec:
-
-- Drop `unless` in both forms and keep trailing `if` as the guard form (`return if not
-  valid?()`), leaving three conditional forms with distinct jobs: block `if`, trailing `if`
-  for one statement, and `if ... then ... else` for a value.
-- Remove set literal braces. Brackets become the literal for lists, dictionaries, and sets
-  alike, with the type deciding (`var seen: {String} = ["red"]`, as the empty dictionary
-  `[]` already works), `.to_set()` converting, and `{String}` kept as the type spelling.
-  Braces in expression position would then mean only a lambda.
+The user then removed `unless` in both forms, keeping block `if`, trailing `if` as the
+guard form, and the `if` expression (6.2). `unless` was also dropped from the keyword table.
+Set literals now use square brackets, with the expected set type deciding and `{T}` kept as
+the type spelling (8.2), so braces in expression position mean only a lambda. The
+collection slice should build list, dictionary, and set literals from one bracket parser
+that consults the expected type, and only literals take their kind from context.
 
 Section 20's slice 8 is collections: a list literal, indexing, mutation, and one
 higher-order method. Two things stand in front of it, and the order is worth deciding
@@ -358,9 +355,8 @@ This needs a decision before the parser slice fixes the behavior by accident.
 - Section 14.1's warning for unreachable code after a `return`. Diagnostics have no
   severity yet; until they do, code after two branches that both return is treated as
   assigned everything rather than reported.
-- Section 6.2's `unless` block form, the one-line modifier guards, and the
-  `if ... then ... else` expression. The `unless not condition` style diagnostic also needs
-  a severity on `Diagnostic`, which does not exist yet.
+- Section 6.2's trailing `if` guard and the `if ... then ... else` expression. `unless` is
+  no longer part of the language and is not a keyword.
 - Optional types. The parser splits the `?` in type position as section 4.2 requires, and
   the checker reports that optionals are not available yet, so the rule is exercised without
   the semantics existing.

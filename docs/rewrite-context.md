@@ -218,7 +218,7 @@ const greet = player.greet # bound method value
 ```
 
 Braces appear only where a declared construct expects a block or where expression context
-admits a set or lambda. A bare anonymous block is not a standalone scoping statement; use
+admits a lambda. A bare anonymous block is not a standalone scoping statement; use
 a named function or an existing control-flow construct when a separate scope is needed.
 Keywords remain reserved after `.`, just as they are elsewhere, so member declarations do
 not create a second identifier grammar.
@@ -676,23 +676,21 @@ var label = if score >= 10 then "winner" else "playing"
 Teaching material begins with statement blocks. The expression form requires both answers
 and both answers must have a compatible type.
 
-Modifier guards are permitted on one line:
+A trailing `if` makes one statement conditional, on one line. It is the guard form:
 
 ```emerald
-return unless valid?()
+return if not valid?()
 print("Bonus") if score > 100
 ```
 
-There is also a block form:
+The trailing form has no `else` and applies to exactly one simple statement. The three
+forms have distinct jobs: the block `if` branches, the trailing `if` guards one action, and
+`if ... then ... else` chooses a value.
 
-```emerald
-unless ready?() {
-    prepare()
-}
-```
-
-`unless` means `if not` in both forms. It has no `else`, and `unless not condition`
-receives a style diagnostic suggesting `if condition`.
+There is no `unless`. It only ever meant `if not`, and a second spelling of the same
+condition is the kind of choice principle 4 keeps out of the core syntax; negated compound
+conditions such as `unless done or not ready` are also notoriously hard to read. `if not`
+says the same thing in words a beginner already knows.
 
 ### 6.3 `case` and `when`
 
@@ -1023,7 +1021,9 @@ var names: [String] = []
 
 The compact type is `[String]`, not `List<String>`.
 
-Dictionary and set syntax is settled:
+Dictionary and set syntax is settled. Square brackets are the literal for all three
+collections; a dictionary literal is recognized by its `key: value` entries, and a set
+literal is a bracketed list of elements in a place whose type is a set:
 
 ```emerald
 var ages: [String: Int] = [
@@ -1031,31 +1031,37 @@ var ages: [String: Int] = [
     "Noah": 13,
 ]
 
-var seen: {String} = {
+var seen: {String} = [
     "red",
     "green",
-}
+]
 ```
 
-Nonempty literals normally infer their types. Empty literals require an explicit type
-because their elements cannot establish one:
+`{String}` remains the set type's spelling. Braces are unambiguous there because a type
+only appears in a type position, such as after `:`.
+
+Nonempty list and dictionary literals normally infer their types. Without an expected set
+type, a bracketed list of elements is a list, so a set needs its type written or a
+conversion: `["red", "green"].to_set()`. A parameter or return type supplies the expected
+type as well as an annotation does, so `colors.union(["blue"])` passes a set. Empty
+literals require an explicit type because their elements cannot establish one:
 
 ```emerald
 var names: [String] = []
 var ages: [String: Int] = []
-var seen: {String} = {}
+var seen: {String} = []
 ```
 
-Braces after control-flow and declaration headers begin blocks. Braces in expression
-position begin a set literal or lambda; the lambda's `=>` distinguishes its parameter
-list. An empty `{}` in expression position is an empty set and still needs contextual
-element type information.
+Only a literal takes its kind from the expected type. A list already stored in a binding
+stays a list, so `var seen: {String} = names` is a type error whose correction is
+`names.to_set()`.
 
-A set literal used directly in a `for` header is grouped so its closing brace is not
-confused with the loop body:
+Braces after control-flow and declaration headers begin blocks. Braces in expression
+position begin a lambda, and nothing else, so a lambda is never confused with a
+collection and a literal in a `for` header needs no grouping:
 
 ```emerald
-for number in ({1, 2, 3}) {
+for number in [1, 2, 3] {
     print(number)
 }
 ```
@@ -1119,7 +1125,7 @@ position; removing and reinserting a key moves it to the end. A `for` loop itera
 collection snapshot captured when the loop begins, so later mutation never changes the
 visited sequence.
 
-Repeated set literal elements collapse to one. A statically known duplicate dictionary
+Repeated elements in a set literal collapse to one. A statically known duplicate dictionary
 literal key is an error; when calculated keys collide at runtime, the later value wins
 without changing its insertion position.
 
@@ -2518,7 +2524,8 @@ place:
 - ordinary calls require parentheses, with trailing lambdas as the explicit final-argument
   exception;
 - inline `if` expressions are supported;
-- block and one-line guard forms of `unless` are both supported, without `else`;
+- block and one-line guard forms of `unless` are both supported, without `else` (since
+  superseded: `unless` is removed, and trailing `if` is the guard form);
 - string indexing itself is allowed and operates on grapheme units;
 - explicit resource closing is confirmed while GC is only a fallback;
 - constants and enum values use `snake_case`;
@@ -2574,6 +2581,8 @@ recorded in their normative sections:
 | Integer exponentiation (5.3) | Two `Int`s give an `Int`; a negative `Int` exponent raises | Squares and cubes are the common case, and `side ** 2` printing `49.0` or failing to fit an `Int` was a papercut. Matches `//`. |
 | Functions with no result (6.5, 7.2) | They return `Nothing`; no separate "no result" category | The distinction had no observable difference. Unifying them also settles that a recursive function with no result needs no annotation, since there is nothing to infer. |
 | `?` predicates (3.3, 4.2) | Always return plain `Bool`; the conformance example changed | The earlier example `func valid?(): Bool?` contradicted 3.3's rule. |
+| `unless` (6.2) | Removed in both forms; trailing `if` is the guard form | It only ever meant `if not`. Removing it leaves three conditional forms with distinct jobs: block `if`, trailing `if`, and the `if` expression. |
+| Set literals (8.2) | Square brackets, with the set type deciding; `{T}` stays the type spelling | Braces in expression position meant a block, a lambda, or a set, which forced `for n in ({1, 2, 3})` and made `{}` ambiguous. Brackets already build empty dictionaries from context, so sets follow the same rule. |
 | Value-type mutability (4.3, 7.1, 8.1, 10.2) | `const` and parameters freeze values; the rule stops at class references | Under value semantics, mutating and replacing are indistinguishable, so a shallow `const` protected nothing coherent, and mutating a parameter's copy was a silent no-op that a beginner would write and never understand. Replaces the earlier shallow `const`, which followed C# reference-type variables. |
 
 ## 23. Consistency rules for future work
