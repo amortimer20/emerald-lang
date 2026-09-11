@@ -371,6 +371,4 @@ This needs a decision before the parser slice fixes the behavior by accident.
 
 ## Pending changes
 
-The review fixes above are uncommitted, on top of `fbd417d`. They touch `src/` (Ast,
-Checker, Interpreter, Parser, Resolver, Value, emerald, main), six new conformance cases, and
-this file and the rewrite context. Verify against Git before continuing.
+None. The review fixes are committed as `825066c`; verify against Git before continuing.
