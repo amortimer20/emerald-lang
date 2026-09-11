@@ -387,5 +387,4 @@ This needs a decision before the parser slice fixes the behavior by accident.
 
 ## Pending changes
 
-The value-semantics decision is written into `docs/rewrite-context.md` and this file,
-uncommitted. No code changes. Verify against Git before continuing.
+None. Verify against Git before continuing.
