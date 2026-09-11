@@ -1,0 +1,4 @@
+diagnostics/argument-type.em:5:14: this is Bool, but parameter `right` of `add` needs Int
+  print(add(1, true))
+               ^^^^
+Pass a value of the expected type, or convert it first.

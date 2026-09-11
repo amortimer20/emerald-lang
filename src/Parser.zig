@@ -41,6 +41,28 @@ source: *const Source,
 tokens: []const Token,
 index: usize = 0,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
+/// Nested function declarations are deferred, so `func` is legal only while
+/// this is true. Set false for the duration of any block body.
+at_top_level: bool = true,
+/// Open parentheses and braces. Section 3.4 guarantees at least 256.
+nesting: u32 = 0,
+/// Recursion that opens no delimiter: prefix `-` and `not`, the right side of
+/// `**`, and `else if`. Bounded separately so that it cannot eat into the 256
+/// delimiters section 3.4 promises, and so a very long chain of any of them is
+/// still a diagnostic rather than a crash.
+recursion: u32 = 0,
+
+/// Section 3.4: "An implementation accepts at least 256 nested syntactic
+/// delimiters or declarations and checks its nesting budget before consuming
+/// the host stack." Exactly the minimum, so no program can come to depend on
+/// more here than every implementation accepts.
+pub const max_nesting = 256;
+
+/// Every later pass walks an expression recursively, and a long flat chain
+/// such as `1 + 1 + ... + 1` builds a tree as tall as it is long without
+/// nesting anything, so height is bounded here too. Far beyond anything written
+/// by hand, and well within the stack every pass runs on.
+pub const max_expression_depth = 10_000;
 
 const Error = error{ParseFailed} || std.mem.Allocator.Error;
 
@@ -154,9 +176,70 @@ fn reportFmt(
 }
 
 fn node(self: *Parser, span: Source.Span, data: Ast.Expression.Data) Error!*const Ast.Expression {
+    const depth = 1 + deepestChild(data);
+    if (depth > max_expression_depth) {
+        return self.report(
+            span,
+            "this expression is too long",
+            "Split it across several variables.",
+        );
+    }
     const result = try self.arena.create(Ast.Expression);
-    result.* = .{ .span = span, .data = data };
+    result.* = .{ .span = span, .data = data, .depth = depth };
     return result;
+}
+
+fn deepestChild(data: Ast.Expression.Data) u32 {
+    return switch (data) {
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name => 0,
+        .unary => |unary| unary.operand.depth,
+        .binary => |binary| @max(binary.left.depth, binary.right.depth),
+        .logical => |logical| @max(logical.left.depth, logical.right.depth),
+        .comparison => |comparison| blk: {
+            var deepest: u32 = 0;
+            for (comparison.operands) |operand| deepest = @max(deepest, operand.depth);
+            break :blk deepest;
+        },
+        .call => |call| blk: {
+            var deepest = call.callee.depth;
+            for (call.arguments) |argument| deepest = @max(deepest, argument.depth);
+            break :blk deepest;
+        },
+    };
+}
+
+/// Opens one level of section 3.4 nesting at a delimiter, reporting at that
+/// delimiter if it would cross the limit. Pair with `defer self.unnest()`.
+fn nest(self: *Parser, delimiter: Source.Span) Error!void {
+    if (self.nesting >= max_nesting) {
+        return self.report(
+            delimiter,
+            "this is nested too deeply",
+            "Emerald accepts 256 levels of nesting. Move part of it into a local variable or a function.",
+        );
+    }
+    self.nesting += 1;
+}
+
+fn unnest(self: *Parser) void {
+    self.nesting -= 1;
+}
+
+/// The same for recursion that opens no delimiter. Pair with
+/// `defer self.unrecurse()`.
+fn recurse(self: *Parser, at: Source.Span) Error!void {
+    if (self.recursion >= max_expression_depth) {
+        return self.report(
+            at,
+            "this is nested too deeply",
+            "Split it into smaller pieces, such as local variables.",
+        );
+    }
+    self.recursion += 1;
+}
+
+fn unrecurse(self: *Parser) void {
+    self.recursion -= 1;
 }
 
 fn spanning(from: Source.Span, to: Source.Span) Source.Span {
@@ -170,7 +253,139 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
         .keyword_var => self.parseDeclaration(true),
         .keyword_const => self.parseDeclaration(false),
         .keyword_if => self.parseIf(),
+        .keyword_func => blk: {
+            const nested = !self.at_top_level;
+            const keyword = self.peek().span;
+            // Parsed in full even when it will be rejected, so recovery
+            // resumes after its closing brace instead of reporting that brace
+            // as a second, unrelated error.
+            const statement = try self.parseFunctionDeclaration();
+            if (nested) {
+                return self.report(
+                    keyword,
+                    "nested functions are not available yet",
+                    "Move this function to the top level.",
+                );
+            }
+            break :blk statement;
+        },
+        .keyword_return => self.parseReturn(),
         else => self.parseSimpleStatement(),
+    };
+}
+
+/// Section 7.1's shape: `func name(params): ReturnType { body }`. Parameter
+/// defaults and nested declarations are deferred; every parameter needs an
+/// explicit type, which section 7.2 calls the normal case for named functions.
+fn parseFunctionDeclaration(self: *Parser) Error!Ast.Statement {
+    const keyword = self.advance();
+
+    const name = self.peek();
+    if (name.kind != .identifier) {
+        return self.reportFmt(
+            name.span,
+            "expected a name after `func`, found {s}",
+            .{name.kind.describe()},
+            "A function declaration needs a name, as in `func greet() { }`.",
+        );
+    }
+    _ = self.advance();
+
+    const opening = self.peek();
+    if (opening.kind != .left_paren) {
+        return self.reportFmt(
+            opening.span,
+            "expected `(` after `{s}`, found {s}",
+            .{ self.text(name), opening.kind.describe() },
+            "Every function declares its parameters in parentheses, even when there are none.",
+        );
+    }
+    _ = self.advance();
+
+    var parameters: std.ArrayList(Ast.Parameter) = .empty;
+    if (!self.check(.right_paren)) {
+        while (true) {
+            try parameters.append(self.arena, try self.parseParameter());
+            if (self.match(.comma) == null) break;
+        }
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_paren) {
+        return self.reportFmt(
+            closing.span,
+            "expected `)` to close this parameter list, found {s}",
+            .{closing.kind.describe()},
+            "Add the closing parenthesis, or check for a missing comma between parameters.",
+        );
+    }
+    _ = self.advance();
+
+    var return_annotation: ?Ast.TypeExpression = null;
+    if (self.match(.colon) != null) return_annotation = try self.parseTypeExpression();
+
+    const body = try self.parseBlock();
+
+    return .{
+        .span = spanning(keyword.span, body.span),
+        .data = .{ .function_declaration = .{
+            .name = self.text(name),
+            .name_span = name.span,
+            .parameters = try parameters.toOwnedSlice(self.arena),
+            .return_annotation = return_annotation,
+            .body = body,
+        } },
+    };
+}
+
+fn parseParameter(self: *Parser) Error!Ast.Parameter {
+    const name = self.peek();
+    if (name.kind != .identifier) {
+        return self.reportFmt(
+            name.span,
+            "expected a parameter name, found {s}",
+            .{name.kind.describe()},
+            "A parameter is a name and a type, as in `count: Int`.",
+        );
+    }
+    _ = self.advance();
+
+    if (self.check(.equal)) {
+        return self.report(
+            self.peek().span,
+            "default parameter values are not available yet",
+            "Give this parameter a value at every call site for now.",
+        );
+    }
+
+    if (self.match(.colon) == null) {
+        return self.reportFmt(
+            self.peek().span,
+            "expected `:` and a type after `{s}`, found {s}",
+            .{ self.text(name), self.peek().kind.describe() },
+            "Every parameter needs an explicit type, as in `count: Int`.",
+        );
+    }
+
+    const annotation = try self.parseTypeExpression();
+    return .{ .name = self.text(name), .name_span = name.span, .annotation = annotation };
+}
+
+/// Section 7.1 allows a bare `return` for a function with no result. Whether a
+/// value follows is decided by the same tokens that end an ordinary statement.
+fn parseReturn(self: *Parser) Error!Ast.Statement {
+    const keyword = self.advance();
+
+    const next = self.peek();
+    const value = switch (next.kind) {
+        .newline, .eof, .right_brace => null,
+        else => try self.parseExpression(),
+    };
+
+    try self.expectStatementEnd();
+    return .{
+        .span = if (value) |v| spanning(keyword.span, v.span) else keyword.span,
+        .data = .{ .return_statement = .{ .keyword_span = keyword.span, .value = value } },
     };
 }
 
@@ -286,6 +501,8 @@ fn parseIf(self: *Parser) Error!Ast.Statement {
         self.skipSeparators();
         _ = self.advance();
         if (self.check(.keyword_if)) {
+            try self.recurse(self.peek().span);
+            defer self.unrecurse();
             const chained = try self.arena.create(Ast.Statement);
             chained.* = try self.parseIf();
             otherwise = .{ .chained = chained };
@@ -316,10 +533,18 @@ fn parseBlock(self: *Parser) Error!Ast.Block {
             opening.span,
             "expected `{{` to open a block, found {s}",
             .{opening.kind.describe()},
-            "The body of an `if` is written in braces on the same line as its condition.",
+            "A body is written in braces, opening on the same line as the line that introduces it.",
         );
     }
+    try self.nest(opening.span);
+    defer self.unnest();
     _ = self.advance();
+
+    // Every block, not only a function body: nested function declarations are
+    // deferred, and one inside a top-level `if` is just as nested.
+    const saved_top_level = self.at_top_level;
+    self.at_top_level = false;
+    defer self.at_top_level = saved_top_level;
 
     var statements: std.ArrayList(Ast.Statement) = .empty;
     while (true) {
@@ -477,6 +702,8 @@ fn parseConjunction(self: *Parser) Error!*const Ast.Expression {
 
 fn parseNegation(self: *Parser) Error!*const Ast.Expression {
     if (self.match(.keyword_not)) |token| {
+        try self.recurse(token.span);
+        defer self.unrecurse();
         const operand = try self.parseNegation();
         return self.node(spanning(token.span, operand.span), .{ .unary = .{
             .operator = .not,
@@ -563,6 +790,8 @@ fn parseMultiplicative(self: *Parser) Error!*const Ast.Expression {
 
 fn parseUnary(self: *Parser) Error!*const Ast.Expression {
     if (self.match(.minus)) |token| {
+        try self.recurse(token.span);
+        defer self.unrecurse();
         const operand = try self.parseUnary();
         return self.node(spanning(token.span, operand.span), .{ .unary = .{
             .operator = .negate,
@@ -578,7 +807,9 @@ fn parseUnary(self: *Parser) Error!*const Ast.Expression {
 fn parsePower(self: *Parser) Error!*const Ast.Expression {
     const left = try self.parsePostfix();
     if (!self.check(.star_star)) return left;
-    _ = self.advance();
+    const operator = self.advance();
+    try self.recurse(operator.span);
+    defer self.unrecurse();
     const right = try self.parseUnary();
     return self.node(spanning(left.span, right.span), .{ .binary = .{
         .operator = .power,
@@ -590,6 +821,8 @@ fn parsePower(self: *Parser) Error!*const Ast.Expression {
 fn parsePostfix(self: *Parser) Error!*const Ast.Expression {
     var callee = try self.parsePrimary();
     while (self.check(.left_paren)) {
+        try self.nest(self.peek().span);
+        defer self.unnest();
         _ = self.advance();
 
         var arguments: std.ArrayList(*const Ast.Expression) = .empty;
@@ -643,6 +876,8 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
             return self.node(token.span, .{ .nothing_literal = {} });
         },
         .left_paren => {
+            try self.nest(token.span);
+            defer self.unnest();
             _ = self.advance();
             const inner = try self.parseExpression();
             const closing = self.peek();

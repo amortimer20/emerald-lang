@@ -1,0 +1,4 @@
+diagnostics/missing-return-path.em:4:6: not every path in `sign` returns a value
+  func sign(n: Int): Int {
+       ^^^^
+Add a `return` on every path, or restructure so every branch returns.

@@ -22,6 +22,26 @@ pub const Kind = enum {
 
 kind: Kind,
 
+/// A function's checked shape: each parameter's type, its name for diagnostics
+/// that name a mismatched one, and the return type, whether written or
+/// inferred.
+///
+/// Not a `Type` itself. No value of function type can be formed yet — bare
+/// function references and lambdas are both deferred — so there is no
+/// assignability question a structural function type would have to answer.
+///
+/// The interpreter reads these too, because section 4.4's widening has to
+/// happen at runtime wherever the checker allowed it: an `Int` passed to a
+/// `Float` parameter, or returned from a function whose return type is `Float`,
+/// including one the checker inferred.
+pub const Signature = struct {
+    parameters: []const Type,
+    parameter_names: []const []const u8,
+    return_type: Type,
+};
+
+pub const Signatures = std.StringHashMapUnmanaged(Signature);
+
 pub const nothing: Type = .{ .kind = .nothing };
 pub const @"bool": Type = .{ .kind = .bool };
 pub const int: Type = .{ .kind = .int };

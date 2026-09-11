@@ -3,8 +3,15 @@
 //! The pipeline described in section 19.2 is source manager, lexer, parser,
 //! resolver, checker, interpreter. All of them exist now, wired together by
 //! `check` and `run` below.
+//!
+//! Every stage after the lexer recurses over the tree, so the whole pipeline
+//! runs on a thread with a large stack, sized for section 7.2's 1,000 active
+//! calls at section 3.4's deepest guaranteed nesting in a Debug build, where
+//! frames are largest. The parser bounds how tall any tree can grow before a
+//! later stage walks it, and the interpreter guards the stack as it goes.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const Source = @import("Source.zig");
 pub const Diagnostic = @import("Diagnostic.zig");
@@ -36,22 +43,66 @@ pub const Report = struct {
     }
 };
 
+pub const Error = Interpreter.RunError;
+
 /// Analyses a source file without running it, as section 18.1 requires of
 /// `emerald check`: the same analysis as `run`, with nothing executed.
-pub fn check(gpa: std.mem.Allocator, source: *const Source) !Report {
-    return analyze(gpa, source, null);
+pub fn check(gpa: std.mem.Allocator, source: *const Source) Error!Report {
+    return onLargeStack(gpa, source, null);
 }
 
 /// Checks a source file and then executes it, writing program output to `out`.
-pub fn run(gpa: std.mem.Allocator, source: *const Source, out: *std.Io.Writer) !Report {
-    return analyze(gpa, source, out);
+pub fn run(gpa: std.mem.Allocator, source: *const Source, out: *std.Io.Writer) Error!Report {
+    return onLargeStack(gpa, source, out);
+}
+
+/// Reserved rather than committed: the host maps a thread's stack lazily, so
+/// the unused part costs address space and nothing else.
+///
+/// In a Debug build, a function body nested 250 operations deep reached only
+/// about 800 calls in 256 MiB, so this is twice that. Release builds reach the
+/// full 1,000 in half the space.
+const stack_size: usize = if (@sizeOf(usize) >= 8) 512 * 1024 * 1024 else 32 * 1024 * 1024;
+
+/// If the large-stack thread cannot be created, the pipeline runs on the
+/// calling thread, whose stack is typically 8 MiB. The interpreter's guard still
+/// holds; only the headroom shrinks.
+const fallback_stack_size: usize = 7 * 1024 * 1024;
+
+fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Writer) Error!Report {
+    const Task = struct {
+        gpa: std.mem.Allocator,
+        source: *const Source,
+        out: ?*std.Io.Writer,
+        result: Error!Report = undefined,
+
+        fn go(task: *@This(), available: usize) void {
+            task.result = analyze(task.gpa, task.source, task.out, .here(available));
+        }
+    };
+
+    // The calling thread only waits, so nothing is touched from two threads at
+    // once.
+    var task: Task = .{ .gpa = gpa, .source = source, .out = out };
+    const thread: ?std.Thread = if (builtin.single_threaded)
+        null
+    else
+        std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch null;
+
+    if (thread) |spawned| spawned.join() else task.go(fallback_stack_size);
+    return task.result;
 }
 
 /// Runs each stage in order, stopping at the first that reports anything.
 ///
 /// Stopping is deliberate. Section 17.2 asks for one primary error rather than a
 /// cascade, and a parser fed a broken token stream produces exactly that cascade.
-fn analyze(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Writer) !Report {
+fn analyze(
+    gpa: std.mem.Allocator,
+    source: *const Source,
+    out: ?*std.Io.Writer,
+    stack: Interpreter.StackLimit,
+) Error!Report {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -91,7 +142,9 @@ fn analyze(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Writer) 
         return .{ .arena_state = arena_state, .diagnostics = copies };
     }
 
-    var checked = try Checker.check(gpa, parsed.program);
+    // The resolver's facts stay valid here: `resolved` is released only when
+    // this function returns.
+    var checked = try Checker.check(gpa, parsed.program, resolved.facts);
     defer checked.deinit();
     if (!checked.ok()) {
         const copies = try dupeDiagnostics(arena, checked.diagnostics);
@@ -100,7 +153,7 @@ fn analyze(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Writer) 
 
     const writer = out orelse return .{ .arena_state = arena_state, .diagnostics = &.{} };
 
-    var outcome = try Interpreter.run(gpa, source, parsed.program, writer);
+    var outcome = try Interpreter.run(gpa, source, parsed.program, &checked.signatures, writer, stack);
     defer outcome.deinit();
 
     const failure = if (outcome.failure) |raised|
@@ -115,10 +168,15 @@ fn analyze(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Writer) 
 /// stage is released as soon as the next one starts, so they are copied into the
 /// report's own arena.
 fn dupeDiagnostic(arena: std.mem.Allocator, diagnostic: Diagnostic) !Diagnostic {
+    const trace = try arena.alloc(Diagnostic.Frame, diagnostic.trace.len);
+    for (diagnostic.trace, trace) |frame, *copy| {
+        copy.* = .{ .function = try arena.dupe(u8, frame.function), .call_span = frame.call_span };
+    }
     return .{
         .message = try arena.dupe(u8, diagnostic.message),
         .span = diagnostic.span,
         .help = try arena.dupe(u8, diagnostic.help),
+        .trace = trace,
     };
 }
 
@@ -524,4 +582,307 @@ test "one mistake produces one diagnostic rather than a cascade" {
 
     // The invalid type flows outward without being reported again.
     try testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+}
+
+// Section 7: functions.
+
+test "a function takes arguments and returns a value" {
+    try expectOutput("func add(left: Int, right: Int): Int {\n    return left + right\n}\nprint(add(2, 3))\n", "5\n");
+}
+
+test "a function with no result may omit its return type" {
+    try expectOutput("func greet(n: Int) {\n    print(n)\n}\ngreet(7)\n", "7\n");
+    try expectOutput("func early(n: Int) {\n    if n > 0 {\n        return\n    }\n    print(n)\n}\nearly(1)\nearly(0)\n", "0\n");
+}
+
+test "a call with no result evaluates to nothing" {
+    try expectOutput("func f() {\n    print(1)\n}\nvar result = f()\nprint(result)\n", "1\nnothing\n");
+}
+
+test "recursion and mutual recursion run when annotated" {
+    const factorial =
+        \\func factorial(n: Int): Int {
+        \\    if n <= 1 {
+        \\        return 1
+        \\    }
+        \\    return n * factorial(n - 1)
+        \\}
+        \\print(factorial(10))
+        \\
+    ;
+    try expectOutput(factorial, "3628800\n");
+
+    const parity =
+        \\func even?(n: Int): Bool {
+        \\    if n == 0 {
+        \\        return true
+        \\    }
+        \\    return odd?(n - 1)
+        \\}
+        \\func odd?(n: Int): Bool {
+        \\    if n == 0 {
+        \\        return false
+        \\    }
+        \\    return even?(n - 1)
+        \\}
+        \\print(even?(10), odd?(7))
+        \\
+    ;
+    try expectOutput(parity, "true true\n");
+}
+
+test "functions are hoisted, so a call may come before the declaration" {
+    try expectOutput("print(double(21))\nfunc double(n: Int): Int {\n    return n * 2\n}\n", "42\n");
+}
+
+test "a recursive function needs an explicit return type" {
+    const program =
+        \\func factorial(n: Int) {
+        \\    if n <= 1 {
+        \\        return 1
+        \\    }
+        \\    return n * factorial(n - 1)
+        \\}
+        \\
+    ;
+    try expectFailure(program, "`factorial` is recursive and needs an explicit return type");
+
+    // The same holds through a cycle of two.
+    const cycle = "func a(n: Int) {\n    return b(n)\n}\nfunc b(n: Int) {\n    return a(n)\n}\n";
+    try expectFailure(cycle, "`a` is recursive and needs an explicit return type");
+}
+
+test "a recursive function with no result needs no annotation" {
+    // Nothing is inferred, so section 7.2's reason for the rule does not apply.
+    try expectOutput("func countdown(n: Int) {\n    if n < 0 {\n        return\n    }\n    print(n)\n    countdown(n - 1)\n}\ncountdown(2)\n", "2\n1\n0\n");
+}
+
+test "a return type is inferred from a non-recursive body" {
+    try expectOutput("func square(n: Int) {\n    return n * n\n}\nprint(square(6) + 1)\n", "37\n");
+    // Section 4.4's widening applies when merging returns.
+    try expectOutput("func pick(flag: Bool) {\n    if flag {\n        return 1\n    }\n    return 2.5\n}\nprint(pick(true), pick(false))\n", "1.0 2.5\n");
+}
+
+test "incompatible returns make an inferred type ambiguous" {
+    try expectFailure(
+        "func f(flag: Bool) {\n    if flag {\n        return 1\n    }\n    return true\n}\n",
+        "the return type of `f` is ambiguous",
+    );
+    // A bare return alongside a valued one is Nothing beside a value.
+    try expectFailure(
+        "func f(flag: Bool) {\n    if flag {\n        return\n    }\n    return 1\n}\n",
+        "the return type of `f` is ambiguous",
+    );
+}
+
+test "every path in a value-producing function must return" {
+    try expectFailure("func f(n: Int): Int {\n    if n > 0 {\n        return 1\n    }\n}\n", "not every path in `f` returns a value");
+    try expectOutput("func sign(n: Int): Int {\n    if n > 0 {\n        return 1\n    }\n    else if n < 0 {\n        return -1\n    }\n    else {\n        return 0\n    }\n}\nprint(sign(-5))\n", "-1\n");
+}
+
+test "return is checked against the function's type" {
+    try expectFailure("func f(): Int {\n    return true\n}\n", "this is Bool, but the function returns Int");
+    try expectFailure("func f(): Int {\n    return\n}\n", "this function must return a value");
+    try expectFailure("func f(): Nothing {\n    return 1\n}\n", "this function returns Nothing, so `return` cannot produce a value");
+    try expectFailure("print(1)\nreturn\n", "`return` can only be used inside a function");
+    try expectOutput("func half(n: Int): Float {\n    return n\n}\nprint(half(3))\n", "3.0\n");
+}
+
+test "calls are checked for arity and argument types" {
+    const add = "func add(a: Int, b: Int): Int {\n    return a + b\n}\n";
+    try expectFailure(add ++ "print(add(1))\n", "`add` takes 2 arguments, but this call passes 1");
+    try expectFailure(add ++ "print(add(1, true))\n", "this is Bool, but parameter `b` of `add` needs Int");
+    // Int widens to a Float parameter.
+    try expectOutput("func show(x: Float) {\n    print(x)\n}\nshow(2)\n", "2.0\n");
+}
+
+test "only a function can be called, and a function cannot yet be a value" {
+    try expectFailure("var x = 5\nprint(x())\n", "`x` is not a function");
+    try expectFailure("func f(): Int {\n    return 1\n}\nvar g = f\n", "`f` is a function, and functions cannot be used as values yet");
+}
+
+test "parameters are read-only and share the body's scope" {
+    try expectFailure("func f(n: Int) {\n    n = 5\n}\n", "`n` cannot be reassigned");
+    try expectFailure("func f(n: Int) {\n    var n = 5\n}\n", "`n` is already declared");
+    try expectFailure("func f(n: Int, n: Int) {\n}\n", "`n` is already a parameter");
+}
+
+test "a function sees module variables declared above it" {
+    try expectOutput("const limit = 10\nfunc clamp(n: Int): Int {\n    if n > limit {\n        return limit\n    }\n    return n\n}\nprint(clamp(25), clamp(3))\n", "10 3\n");
+    try expectFailure("func show() {\n    print(limit)\n}\nconst limit = 10\n", "`limit` is not declared until later in the file");
+}
+
+test "a function may update module state" {
+    try expectOutput("var count = 0\nfunc bump() {\n    count += 1\n}\nbump()\nbump()\nprint(count)\n", "2\n");
+    try expectFailure("const limit = 1\nfunc f() {\n    limit = 2\n}\n", "`limit` cannot be reassigned");
+}
+
+test "crossing a function boundary allows reusing a module-level name" {
+    try expectOutput("const n = 100\nfunc twice(n: Int): Int {\n    return n * 2\n}\nprint(twice(4), n)\n", "8 100\n");
+}
+
+test "functions and variables share one namespace" {
+    try expectFailure("var greet = 1\nfunc greet() {\n}\n", "`greet` is already declared");
+    try expectFailure("func f() {\n}\nfunc f() {\n}\n", "`f` is already declared");
+    try expectFailure("func f() {\n}\nf = 1\n", "`f` is a function and cannot be assigned to");
+}
+
+test "a program function shadows a prelude function" {
+    try expectOutput("func print(n: Int) {\n}\nprint(1)\n", "");
+}
+
+test "hoisting never permits reading an uninitialized captured variable" {
+    try expectFailure(
+        "print(area(2.0))\nconst pi = 3.14159\nfunc area(r: Float): Float {\n    return pi * r * r\n}\n",
+        "`area` reads `pi`, which is not assigned yet here",
+    );
+    // Through another function.
+    try expectFailure(
+        "func outer(): Int {\n    return inner()\n}\nprint(outer())\nvar limit = 5\nfunc inner(): Int {\n    return limit\n}\n",
+        "`outer` reads `limit`, which is not assigned yet here",
+    );
+    // A variable assigned on the path that makes the call.
+    try expectOutput(
+        "var ready: Int\nif 1 > 0 {\n    ready = 1\n    report()\n}\nfunc report() {\n    print(ready)\n}\n",
+        "1\n",
+    );
+    // A plain assignment in the function needs no earlier value.
+    try expectOutput("var total: Int\nfunc reset() {\n    total = 0\n}\nreset()\nprint(1)\n", "1\n");
+}
+
+test "nested functions are deferred, with one diagnostic" {
+    var source = try Source.init(testing.allocator, "test.em", "if true {\n    func helper() {\n        print(1)\n    }\n}\n");
+    defer source.deinit(testing.allocator);
+    var report = try check(testing.allocator, &source);
+    defer report.deinit();
+
+    try testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try testing.expectEqualStrings("nested functions are not available yet", report.diagnostics[0].message);
+}
+
+test "an early return leaves a branch out of definite assignment" {
+    const program =
+        \\func classify(n: Int): Int {
+        \\    var label: Int
+        \\    if n > 0 {
+        \\        label = 1
+        \\    }
+        \\    else {
+        \\        return 0
+        \\    }
+        \\    return label
+        \\}
+        \\print(classify(5), classify(-5))
+        \\
+    ;
+    try expectOutput(program, "1 0\n");
+}
+
+test "a runtime error inside a function carries its stack trace" {
+    const program =
+        \\func divide(left: Int, right: Int): Float {
+        \\    return left / right
+        \\}
+        \\func ratio(n: Int): Float {
+        \\    return divide(n, 0)
+        \\}
+        \\print(ratio(4))
+        \\
+    ;
+    var source = try Source.init(testing.allocator, "main.em", program);
+    defer source.deinit(testing.allocator);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var report = try run(testing.allocator, &source, &out.writer);
+    defer report.deinit();
+
+    const rendered = try report.failure.?.renderAlloc(testing.allocator, source);
+    defer testing.allocator.free(rendered);
+    try testing.expectEqualStrings(
+        \\main.em:2:12: division by zero
+        \\      return left / right
+        \\             ^^^^^^^^^^^^
+        \\Check the divisor before dividing. Division by zero has no result for either numeric type.
+        \\in `divide`, called at main.em:5:12
+        \\in `ratio`, called at main.em:7:7
+        \\
+    , rendered);
+}
+
+test "unbounded recursion is caught at the limit, with repeated frames summarized" {
+    const program =
+        \\func forever(n: Int): Int {
+        \\    return forever(n + 1)
+        \\}
+        \\print(forever(0))
+        \\
+    ;
+    var source = try Source.init(testing.allocator, "main.em", program);
+    defer source.deinit(testing.allocator);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var report = try run(testing.allocator, &source, &out.writer);
+    defer report.deinit();
+
+    const failure = report.failure.?;
+    try testing.expectEqualStrings("too much recursion calling `forever`", failure.message);
+    // Exactly the 1,000 active calls section 7.2 guarantees.
+    try testing.expectEqual(@as(usize, 1000), failure.trace.len);
+
+    const rendered = try failure.renderAlloc(testing.allocator, source);
+    defer testing.allocator.free(rendered);
+    try testing.expect(std.mem.endsWith(u8, rendered,
+        \\in `forever`, called at main.em:2:12 (999 times)
+        \\in `forever`, called at main.em:4:7
+        \\
+    ));
+}
+
+test "a body nested 250 deep still supports 1,000 calls" {
+    // Section 7.2's call guarantee has to hold at section 3.4's nesting
+    // guarantee, in whichever build mode the tests run.
+    var expression: std.ArrayList(u8) = .empty;
+    defer expression.deinit(testing.allocator);
+    for (0..250) |_| try expression.appendSlice(testing.allocator, "0 + (");
+    try expression.appendSlice(testing.allocator, "deep(n - 1)");
+    for (0..250) |_| try expression.append(testing.allocator, ')');
+
+    const program = try std.fmt.allocPrint(
+        testing.allocator,
+        "func deep(n: Int): Int {{\n    if n == 0 {{\n        return 0\n    }}\n    return {s}\n}}\nprint(deep(999))\n",
+        .{expression.items},
+    );
+    defer testing.allocator.free(program);
+    try expectOutput(program, "0\n");
+}
+
+test "section 3.4: 256 levels of nesting are accepted and the 257th is reported" {
+    const allocator = testing.allocator;
+    for ([_]usize{ 255, 256 }) |depth| {
+        // `print(` is one level, so this makes `depth` in total.
+        var text: std.ArrayList(u8) = .empty;
+        defer text.deinit(allocator);
+        try text.appendSlice(allocator, "print(");
+        for (0..depth - 1) |_| try text.append(allocator, '(');
+        try text.append(allocator, '1');
+        for (0..depth) |_| try text.append(allocator, ')');
+        try text.append(allocator, '\n');
+
+        if (depth == 256) {
+            try expectOutput(text.items, "1\n");
+            // One more level.
+            try text.insert(allocator, 6, '(');
+            try text.insert(allocator, text.items.len - 1, ')');
+            try expectFailure(text.items, "this is nested too deeply");
+        }
+    }
+}
+
+test "a long flat chain is a diagnostic, not a crash" {
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(testing.allocator);
+    try text.appendSlice(testing.allocator, "print(1");
+    for (0..Parser.max_expression_depth) |_| try text.appendSlice(testing.allocator, " + 1");
+    try text.appendSlice(testing.allocator, ")\n");
+    try expectFailure(text.items, "this expression is too long");
 }

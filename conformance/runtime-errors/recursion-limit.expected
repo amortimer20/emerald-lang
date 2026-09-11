@@ -1,0 +1,6 @@
+runtime-errors/recursion-limit.em:5:12: too much recursion calling `forever`
+      return forever(n + 1)
+             ^^^^^^^^^^^^^^
+Emerald supports at least 1,000 active calls. Check that the recursion has a case that stops it.
+in `forever`, called at runtime-errors/recursion-limit.em:5:12 (999 times)
+in `forever`, called at runtime-errors/recursion-limit.em:8:7

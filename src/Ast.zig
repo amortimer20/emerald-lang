@@ -31,7 +31,36 @@ pub const Statement = struct {
         declaration: Declaration,
         assignment: Assignment,
         conditional: If,
+        function_declaration: FunctionDeclaration,
+        return_statement: Return,
     };
+};
+
+/// Section 7.1. Parameters are read-only, and require an explicit type this
+/// slice rather than the defaults section 7.2 allows for public API guidance.
+/// Nested function declarations, lambdas, defaults, and named arguments are all
+/// deferred; a name declares at most one function, per section 7.3.
+pub const FunctionDeclaration = struct {
+    name: []const u8,
+    name_span: Source.Span,
+    parameters: []const Parameter,
+    /// Omitted for a function with no result, per section 7.2's distinction
+    /// between "no result" and an explicit `Nothing` return type.
+    return_annotation: ?TypeExpression,
+    body: Block,
+};
+
+pub const Parameter = struct {
+    name: []const u8,
+    name_span: Source.Span,
+    annotation: TypeExpression,
+};
+
+pub const Return = struct {
+    keyword_span: Source.Span,
+    /// Null for a bare `return`, which section 7.1 allows for a function with
+    /// no result.
+    value: ?*const Expression,
 };
 
 pub const Declaration = struct {
@@ -80,6 +109,10 @@ pub const Else = union(enum) {
 pub const Expression = struct {
     span: Source.Span,
     data: Data,
+    /// The height of this expression's tree. Every pass walks expressions
+    /// recursively, so the parser bounds this to keep them all within the host
+    /// stack; see `Parser.max_expression_depth`.
+    depth: u32 = 1,
 
     pub const Data = union(enum) {
         int_literal: i64,

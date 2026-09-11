@@ -1,0 +1,4 @@
+diagnostics/declared-later.em:5:11: `limit` is not declared until later in the file
+      print(limit)
+            ^^^^^
+A variable can only be used below its declaration. Move the declaration above this line.

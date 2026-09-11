@@ -13,24 +13,29 @@ Emerald runs and type-checks. The whole frontend of section 19.2 exists — sour
 lexer, parser, name resolver, type checker, interpreter — so `emerald run` executes a
 program and `emerald check` reports its problems without running it.
 
-Named bindings, type annotations, assignment, conditionals, comparison, and arithmetic
-work, and definite assignment is proved through control flow. Loops, functions, strings,
-and collections arrive with later slices.
+Named bindings, type annotations, assignment, conditionals, comparison, arithmetic, and
+functions work. Definite assignment is proved through control flow, and an unhandled error
+inside a function reports the calls that led to it. Loops, strings, and collections arrive
+with later slices.
 
 ```emerald
-var score = 2 + 3 * 4
-print(score) # 14
+const passing_score = 60
 
-var message: Int
-
-if 0 <= score <= 100 {
-    message = 1
-}
-else {
-    message = 2
+func grade(score: Int): Int {
+    if score >= passing_score {
+        return 1
+    }
+    return 2
 }
 
-print(message)
+func factorial(n: Int): Int {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+print(grade(75), factorial(10))
 ```
 
 The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify

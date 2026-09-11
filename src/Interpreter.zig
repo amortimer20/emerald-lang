@@ -12,6 +12,19 @@
 //!
 //! Division by zero is an error for both numeric types, and integer overflow
 //! raises rather than wrapping.
+//!
+//! # The host stack
+//!
+//! This is a tree-walking interpreter, so every Emerald call and every level of
+//! nesting inside one is recursion on the host stack. Section 7.2 requires at
+//! least 1,000 active calls, and requires excessive recursion to be detected
+//! "before exhausting its host stack". The default stack does not meet the
+//! first requirement: a probe with a modestly nested body crashed on 8 MiB
+//! between 600 and 800 calls in a Debug build. So `emerald.zig` runs the whole
+//! pipeline on a thread whose stack is reserved large enough for 1,000 calls
+//! even at the deepest nesting section 3.4 guarantees, and `guardStack` meets
+//! the second requirement for any body at all by raising before the
+//! reservation runs out.
 
 const std = @import("std");
 const Ast = @import("Ast.zig");
@@ -39,18 +52,6 @@ pub const Outcome = struct {
     }
 };
 
-arena: std.mem.Allocator,
-source: *const Source,
-out: *std.Io.Writer,
-failure: ?Diagnostic = null,
-/// One map per lexical scope, innermost last. The resolver has already proven
-/// every name reaches a binding, so lookups here cannot miss.
-///
-/// A slot holds null between a declaration without an initializer and the
-/// assignment that fills it. The checker proves that gap is never read, so the
-/// guard in `evaluate` is a safety net rather than a language rule.
-scopes: std.ArrayList(Scope) = .empty,
-
 /// A name and the kind it holds.
 ///
 /// The kind is carried because section 4.4's widening has to actually happen,
@@ -65,14 +66,66 @@ const Binding = struct {
 
 const Scope = std.StringHashMapUnmanaged(Binding);
 
-const Error = error{Raised} || std.mem.Allocator.Error || std.Io.Writer.Error;
+/// Section 7.2's portable minimum, exactly. The limit above it is a resource
+/// boundary rather than language semantics, and the spec gives programs no way
+/// to change it.
+const max_call_depth = 1000;
+
+/// How much of the host stack this run may use, measured from `base`, the
+/// address of a local near the bottom of the thread running the pipeline.
+pub const StackLimit = struct {
+    base: usize,
+    budget: usize,
+
+    /// Room left beneath the budget for whatever runs between two checks, and
+    /// for raising the error itself.
+    const margin: usize = 1024 * 1024;
+
+    /// Call at the base of the thread, with the size of its stack.
+    pub fn here(available: usize) StackLimit {
+        var marker: u8 = 0;
+        return .{ .base = @intFromPtr(&marker), .budget = available - margin };
+    }
+};
+
+pub const RunError = std.mem.Allocator.Error || std.Io.Writer.Error;
+
+const Error = error{ Raised, Returned } || RunError;
+
+arena: std.mem.Allocator,
+source: *const Source,
+out: *std.Io.Writer,
+failure: ?Diagnostic = null,
+
+/// Top-level bindings. A function sees these, and it sees them as they are
+/// when it runs; the checker has already proved that everything a call reads
+/// is assigned by then.
+module: Scope = .empty,
+/// Block scopes at the top level, or the current function's own scopes
+/// during a call, innermost last. A call replaces this stack for its duration,
+/// so a function never sees the block-local names of whoever called it.
+scopes: std.ArrayList(Scope) = .empty,
+
+functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
+/// What the checker proved about each function, including return types it
+/// inferred, which are needed to widen results the way it allowed.
+signatures: *const Type.Signatures,
+call_stack: std.ArrayList(Diagnostic.Frame) = .empty,
+/// Set by a `return` for `callFunction` to collect. `return` unwinds through
+/// `execute` as `error.Returned`, and this carries its value, the way
+/// `failure` carries `error.Raised`'s.
+return_value: ?Value = null,
+
+stack: StackLimit,
 
 pub fn run(
     gpa: std.mem.Allocator,
     source: *const Source,
     program: Ast.Program,
+    signatures: *const Type.Signatures,
     out: *std.Io.Writer,
-) !Outcome {
+    stack: StackLimit,
+) RunError!Outcome {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
 
@@ -80,17 +133,51 @@ pub fn run(
         .arena = arena_state.allocator(),
         .source = source,
         .out = out,
+        .signatures = signatures,
+        .stack = stack,
     };
 
-    try interpreter.scopes.append(interpreter.arena, .empty);
+    // Hoisted, matching the resolver and checker.
+    for (program.statements) |statement| {
+        if (statement.data != .function_declaration) continue;
+        const function = statement.data.function_declaration;
+        try interpreter.functions.put(interpreter.arena, function.name, function);
+    }
+
     interpreter.executeAll(program.statements) catch |err| switch (err) {
         error.Raised => {},
-        else => return err,
+        // The checker rejects `return` outside a function, and section 14.1's
+        // top-level `return` is deferred.
+        error.Returned => unreachable,
+        else => |other| return other,
     };
 
     const failure = interpreter.failure;
     return .{ .arena_state = arena_state, .failure = failure };
 }
+
+/// Raises before the host stack runs out, whatever the shape of the program.
+/// Called on every statement and expression, which between them are every
+/// point where the evaluator recurses.
+fn guardStack(self: *Interpreter, span: Source.Span) Error!void {
+    var here: u8 = 0;
+    const address = @intFromPtr(&here);
+    const base = self.stack.base;
+    const used = if (base > address) base - address else address - base;
+    if (used <= self.stack.budget) return;
+
+    const innermost = if (self.call_stack.items.len > 0)
+        self.call_stack.items[self.call_stack.items.len - 1].function
+    else
+        return self.raise(
+            span,
+            "this is nested too deeply to run",
+            "Break the expression or block into smaller named pieces.",
+        );
+    return self.raiseTooMuchRecursion(span, innermost, false);
+}
+
+// Statements.
 
 fn executeAll(self: *Interpreter, statements: []const Ast.Statement) Error!void {
     for (statements) |statement| try self.execute(statement);
@@ -105,6 +192,8 @@ fn executeBlock(self: *Interpreter, block: Ast.Block) Error!void {
 }
 
 fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
+    try self.guardStack(statement.span);
+
     switch (statement.data) {
         .expression => |expression| _ = try self.evaluate(expression),
 
@@ -123,7 +212,10 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
             else
                 .nothing;
 
-            const current = &self.scopes.items[self.scopes.items.len - 1];
+            const current = if (self.scopes.items.len > 0)
+                &self.scopes.items[self.scopes.items.len - 1]
+            else
+                &self.module;
             try current.put(self.arena, declaration.name, .{
                 .kind = kind,
                 .value = if (initial) |value| widen(value, kind) else null,
@@ -145,16 +237,22 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
             slot.value = widen(value, slot.kind);
         },
 
-        .conditional => |conditional| try self.executeConditional(statement, conditional),
+        .conditional => |conditional| try self.executeConditional(conditional),
+
+        // Hoisted into `self.functions` before anything runs.
+        .function_declaration => {},
+
+        .return_statement => |return_statement| {
+            self.return_value = if (return_statement.value) |value|
+                try self.evaluate(value)
+            else
+                Value.nothing;
+            return error.Returned;
+        },
     }
 }
 
-fn executeConditional(
-    self: *Interpreter,
-    statement: Ast.Statement,
-    conditional: Ast.If,
-) Error!void {
-    _ = statement;
+fn executeConditional(self: *Interpreter, conditional: Ast.If) Error!void {
     if (try self.condition(conditional.condition)) {
         return self.executeBlock(conditional.then_block);
     }
@@ -179,15 +277,6 @@ fn condition(self: *Interpreter, expression: *const Ast.Expression) Error!bool {
     };
 }
 
-fn raiseUnassigned(self: *Interpreter, span: Source.Span, name: []const u8) Error {
-    return self.raiseFmt(
-        span,
-        "`{s}` may not have been assigned",
-        .{name},
-        "Assign it on every branch before reading it.",
-    );
-}
-
 /// Applies section 4.4's widening, which is the only implicit conversion in the
 /// language. Anything else is already a type error the checker reported.
 fn widen(value: Value, kind: Value.Kind) Value {
@@ -199,8 +288,13 @@ fn widen(value: Value, kind: Value.Kind) Value {
 }
 
 fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
-    const declared = Type.fromName(annotation.name) orelse return .nothing;
-    return switch (declared.kind) {
+    return kindOf(Type.fromName(annotation.name) orelse .invalid);
+}
+
+/// The runtime kind for a checked type. `.invalid` never reaches a program that
+/// passed checking.
+fn kindOf(checked: Type) Value.Kind {
+    return switch (checked.kind) {
         .nothing, .invalid => .nothing,
         .bool => .bool,
         .int => .int,
@@ -214,10 +308,14 @@ fn find(self: *Interpreter, name: []const u8) ?*Binding {
         index -= 1;
         if (self.scopes.items[index].getPtr(name)) |slot| return slot;
     }
-    return null;
+    return self.module.getPtr(name);
 }
 
+// Expressions.
+
 fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
+    try self.guardStack(expression.span);
+
     return switch (expression.data) {
         .int_literal => |value| .initInt(value),
         .float_literal => |value| .initFloat(value),
@@ -226,11 +324,9 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .name => |name| if (self.find(name)) |slot|
             slot.value orelse self.raiseUnassigned(expression.span, name)
         else
-            self.raise(
-                expression.span,
-                "this name cannot be used as a value",
-                "`print` is a prelude function and can only be called.",
-            ),
+            // The checker proves every name read here is bound and assigned,
+            // so this is a safety net rather than a language rule.
+            self.raiseUnassigned(expression.span, name),
         .unary => |unary| self.evaluateUnary(expression, unary),
         .binary => |binary| self.evaluateBinary(expression, binary),
         .logical => |logical| self.evaluateLogical(logical),
@@ -442,21 +538,21 @@ fn evaluateFloatBinary(
     }
 }
 
+// Calls.
+
 fn evaluateCall(
     self: *Interpreter,
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Value {
-    // `print` is the only callable that exists. Ordinary functions, and the name
-    // resolution that would find them, arrive with their own slices.
-    if (call.callee.data != .name or !std.mem.eql(u8, call.callee.data.name, "print")) {
-        return self.raise(
-            call.callee.span,
-            "this is not something that can be called",
-            "`print` is the only function available so far.",
-        );
-    }
+    // The checker has proved the callee is a function: a program function,
+    // which shadows the prelude as any declaration would, or `print`.
+    const name = call.callee.data.name;
+    if (self.functions.contains(name)) return self.callFunction(expression.span, name, call.arguments);
+    return self.evaluatePrint(call);
+}
 
+fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
     for (call.arguments, 0..) |argument, position| {
         const value = try self.evaluate(argument);
         // Section 15.2 separates multiple arguments with one space.
@@ -464,26 +560,72 @@ fn evaluateCall(
         try value.display(self.out);
     }
     try self.out.writeAll("\n");
-
-    _ = expression;
     // Section 15.2 gives `print` no result, which is section 4.2's `Nothing`.
     return Value.nothing;
 }
 
-/// Callers check `isNumber` first, so a `Bool` never reaches here.
-fn toFloat(value: Value) f64 {
-    return switch (value.data) {
-        .int => |number| @floatFromInt(number),
-        .float => |number| number,
-        .nothing, .bool => unreachable,
+/// Section 7.1's calling convention. The checker has already proved arity and
+/// argument types, so nothing here checks them again.
+fn callFunction(
+    self: *Interpreter,
+    call_span: Source.Span,
+    name: []const u8,
+    argument_expressions: []const *const Ast.Expression,
+) Error!Value {
+    // Arguments evaluate in the caller's scopes, left to right per section 5.2,
+    // before the callee's replace them.
+    const arguments = try self.arena.alloc(Value, argument_expressions.len);
+    for (argument_expressions, arguments) |expression, *value| {
+        value.* = try self.evaluate(expression);
+    }
+
+    if (self.call_stack.items.len >= max_call_depth) {
+        return self.raiseTooMuchRecursion(call_span, name, true);
+    }
+
+    const function = self.functions.get(name).?;
+    const signature = self.signatures.get(name).?;
+
+    const outer_scopes = self.scopes;
+    self.scopes = .empty;
+    defer self.scopes = outer_scopes;
+
+    try self.scopes.append(self.arena, .empty);
+    const frame = &self.scopes.items[0];
+    for (function.parameters, arguments, signature.parameters) |parameter, argument, parameter_type| {
+        // An `Int` passed to a `Float` parameter arrives as a `Float`.
+        const kind = kindOf(parameter_type);
+        try frame.put(self.arena, parameter.name, .{ .kind = kind, .value = widen(argument, kind) });
+    }
+
+    try self.call_stack.append(self.arena, .{ .function = name, .call_span = call_span });
+    defer _ = self.call_stack.pop();
+
+    self.executeAll(function.body.statements) catch |err| switch (err) {
+        error.Returned => {},
+        else => return err,
     };
+
+    const result = self.return_value orelse Value.nothing;
+    self.return_value = null;
+    // As with parameters, and including a return type the checker inferred:
+    // `return 1` from a function whose returns merged to `Float` yields `1.0`.
+    return widen(result, kindOf(signature.return_type));
 }
+
+// Raising.
 
 const integer_range_help =
     "`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807.";
 
+/// Every runtime error carries the calls active when it was raised, innermost
+/// first, which is section 13.2's stack trace.
 fn raise(self: *Interpreter, span: Source.Span, message: []const u8, help: []const u8) Error {
-    self.failure = .{ .message = message, .span = span, .help = help };
+    const trace = try self.arena.alloc(Diagnostic.Frame, self.call_stack.items.len);
+    for (trace, 0..) |*frame, index| {
+        frame.* = self.call_stack.items[self.call_stack.items.len - 1 - index];
+    }
+    self.failure = .{ .message = message, .span = span, .help = help, .trace = trace };
     return error.Raised;
 }
 
@@ -498,6 +640,11 @@ fn raiseFmt(
     return self.raise(span, message, help);
 }
 
+fn raiseUnassigned(self: *Interpreter, span: Source.Span, name: []const u8) Error {
+    const help = try std.fmt.allocPrint(self.arena, "Assign `{s}` before reading it.", .{name});
+    return self.raise(span, try std.fmt.allocPrint(self.arena, "`{s}` is not assigned yet", .{name}), help);
+}
+
 fn raiseDivisionByZero(
     self: *Interpreter,
     span: Source.Span,
@@ -509,4 +656,29 @@ fn raiseDivisionByZero(
         .{operator.describe()},
         "Check the divisor before dividing. Division by zero has no result for either numeric type.",
     );
+}
+
+/// Section 7.2: crossing the limit raises rather than exhausting the host
+/// stack, and the trace attached by `raise` summarizes the repeating frames.
+/// `at_limit` distinguishes reaching the 1,000-call guarantee from running out
+/// of stack before it, which only a pathologically nested body can do.
+fn raiseTooMuchRecursion(self: *Interpreter, span: Source.Span, name: []const u8, at_limit: bool) Error {
+    return self.raiseFmt(
+        span,
+        "too much recursion calling `{s}`",
+        .{name},
+        if (at_limit)
+            "Emerald supports at least 1,000 active calls. Check that the recursion has a case that stops it."
+        else
+            "These calls nest too deeply for the stack available. Check that the recursion has a case that stops it.",
+    );
+}
+
+/// Callers check `isNumber` first, so a `Bool` never reaches here.
+fn toFloat(value: Value) f64 {
+    return switch (value.data) {
+        .int => |number| @floatFromInt(number),
+        .float => |number| number,
+        .nothing, .bool => unreachable,
+    };
 }

@@ -1,0 +1,4 @@
+diagnostics/parameter-read-only.em:4:5: `score` cannot be reassigned
+      score = 0
+      ^^^^^
+Parameters are read-only. Assign it to a local variable first if you need a version that can change.

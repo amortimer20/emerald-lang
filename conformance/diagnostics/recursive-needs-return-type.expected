@@ -1,0 +1,4 @@
+diagnostics/recursive-needs-return-type.em:4:6: `factorial` is recursive and needs an explicit return type
+  func factorial(n: Int) {
+       ^^^^^^^^^
+Add a return type, so checking does not depend on inferring it from a call to itself.

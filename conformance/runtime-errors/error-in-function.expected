@@ -1,0 +1,6 @@
+runtime-errors/error-in-function.em:5:12: division by zero
+      return left / right
+             ^^^^^^^^^^^^
+Check the divisor before dividing. Division by zero has no result for either numeric type.
+in `divide`, called at runtime-errors/error-in-function.em:9:12
+in `ratio`, called at runtime-errors/error-in-function.em:12:7

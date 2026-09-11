@@ -1,0 +1,4 @@
+diagnostics/capture-before-assignment.em:5:7: `area` reads `pi`, which is not assigned yet here
+  print(area(2.0))
+        ^^^^^^^^^
+Move this call below the line that assigns `pi`.

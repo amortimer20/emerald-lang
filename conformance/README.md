@@ -46,6 +46,6 @@ who hit it — section 17 treats diagnostic text as part of the product, not as 
 ## Coverage so far
 
 Encoding, lexical structure, syntax, name resolution, type checking, definite assignment,
-arithmetic, comparison, bindings, and conditionals. What remains at runtime is what cannot
-be known statically: integer overflow, division by zero, and reading a name the checker
-could not prove assigned.
+arithmetic, comparison, bindings, conditionals, and functions, including stack traces for
+runtime errors raised inside them. What remains at runtime is what cannot be known
+statically: integer overflow, division by zero, and exceeding the recursion limit.

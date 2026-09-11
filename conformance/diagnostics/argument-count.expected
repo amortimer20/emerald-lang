@@ -1,0 +1,4 @@
+diagnostics/argument-count.em:5:7: `add` takes 2 arguments, but this call passes 1
+  print(add(1))
+        ^^^
+Match the number of arguments to the function's parameters.

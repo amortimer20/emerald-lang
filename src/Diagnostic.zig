@@ -11,11 +11,30 @@
 //!
 //! The format is covered by tests because section 17.2 requires diagnostic text
 //! itself to receive behavioral tests.
+//!
+//! A runtime error raised inside a function also carries its stack trace, which
+//! section 13.2 asks for: each active call, innermost first, with where it was
+//! called from.
+//!
+//!     main.em:2:12: division by zero
+//!       return left / right
+//!              ^^^^^^^^^^^^
+//!     Check the divisor before dividing. ...
+//!     in `divide`, called at main.em:6:7
+//!
+//! Section 7.2 asks for repeated frames to be summarized, so a run of identical
+//! frames prints once with a count: `in `loop`, called at main.em:2:12 (999 times)`.
 
 const std = @import("std");
 const Source = @import("Source.zig");
 
 const Diagnostic = @This();
+
+/// One active call when a runtime error was raised.
+pub const Frame = struct {
+    function: []const u8,
+    call_span: Source.Span,
+};
 
 /// What is wrong, in the user's vocabulary. Never names an implementation detail.
 message: []const u8,
@@ -23,6 +42,9 @@ message: []const u8,
 span: Source.Span,
 /// The concrete correction to suggest.
 help: []const u8,
+/// The calls active when a runtime error was raised, innermost first. Empty for
+/// every diagnostic reported before a program runs.
+trace: []const Frame = &.{},
 
 /// The indentation applied to the quoted source line and its underline.
 const gutter = "  ";
@@ -45,6 +67,31 @@ pub fn render(self: Diagnostic, source: Source, writer: *std.Io.Writer) std.Io.W
     try writer.writeAll("\n");
 
     try writer.print("{s}\n", .{self.help});
+
+    var index: usize = 0;
+    while (index < self.trace.len) {
+        const frame = self.trace[index];
+        var repeats: usize = 1;
+        while (index + repeats < self.trace.len and sameFrame(self.trace[index + repeats], frame)) {
+            repeats += 1;
+        }
+
+        const called_at = source.location(frame.call_span.start);
+        try writer.print("in `{s}`, called at {s}:{d}:{d}", .{
+            frame.function,
+            source.path,
+            called_at.line,
+            called_at.column,
+        });
+        if (repeats > 1) try writer.print(" ({d} times)", .{repeats});
+        try writer.writeAll("\n");
+
+        index += repeats;
+    }
+}
+
+fn sameFrame(a: Frame, b: Frame) bool {
+    return a.call_span.start == b.call_span.start and std.mem.eql(u8, a.function, b.function);
 }
 
 /// The underline covers the span, measured in scalars so it lines up with the

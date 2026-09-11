@@ -581,9 +581,9 @@ fn expectNoDiagnostics(text: []const u8) !void {
 
 test "the first milestone program" {
     try expectKinds("var score = 2 + 3 * 4\nprint(score) # 14\n", &.{
-        .keyword_var,    .identifier, .equal,       .int_literal, .plus,
-        .int_literal,    .star,       .int_literal, .newline,     .identifier,
-        .left_paren,     .identifier, .right_paren, .newline,     .eof,
+        .keyword_var, .identifier, .equal,       .int_literal, .plus,
+        .int_literal, .star,       .int_literal, .newline,     .identifier,
+        .left_paren,  .identifier, .right_paren, .newline,     .eof,
     });
 }
 
@@ -607,7 +607,7 @@ test "a newline after a binary operator continues the statement" {
 
 test "a newline after a comma or member dot continues the statement" {
     try expectKinds("f(1,\n2)", &.{
-        .identifier,  .left_paren, .int_literal, .comma,
+        .identifier,  .left_paren,  .int_literal, .comma,
         .int_literal, .right_paren, .eof,
     });
     try expectKinds("value.\nfield", &.{ .identifier, .dot, .identifier, .eof });
@@ -615,8 +615,8 @@ test "a newline after a comma or member dot continues the statement" {
 
 test "newlines are suppressed while parentheses or brackets are open" {
     try expectKinds("print(\n  1,\n  2\n)\n", &.{
-        .identifier,  .left_paren, .int_literal, .comma,
-        .int_literal, .right_paren, .newline,    .eof,
+        .identifier,  .left_paren,  .int_literal, .comma,
+        .int_literal, .right_paren, .newline,     .eof,
     });
     try expectKinds("[\n1,\n2\n]\n", &.{
         .left_bracket, .int_literal, .comma, .int_literal, .right_bracket, .newline, .eof,
@@ -628,7 +628,7 @@ test "statement blocks keep normal newline termination" {
     // newline. The newline directly after `{` is suppressed only because `{`
     // cannot end an expression, which is the same rule every other token follows.
     try expectKinds("if a {\nb\n}\n", &.{
-        .keyword_if, .identifier, .left_brace,  .identifier,
+        .keyword_if, .identifier,  .left_brace, .identifier,
         .newline,    .right_brace, .newline,    .eof,
     });
 }
@@ -678,8 +678,8 @@ test "the optional type conformance case from section 4.2" {
 
 test "an optional collection type puts the question mark on its own" {
     try expectKinds("var a: [String]?", &.{
-        .keyword_var,   .identifier,     .colon,    .left_bracket,
-        .identifier,    .right_bracket,  .question, .eof,
+        .keyword_var, .identifier,    .colon,    .left_bracket,
+        .identifier,  .right_bracket, .question, .eof,
     });
 }
 
@@ -768,7 +768,7 @@ test "an unterminated string is reported at its opening quote" {
 test "line comments are skipped and documentation comments are kept" {
     try expectKinds("1 # trailing\n", &.{ .int_literal, .newline, .eof });
     try expectKinds("## docs\nfunc f() {}", &.{
-        .doc_comment, .keyword_func, .identifier, .left_paren,
+        .doc_comment, .keyword_func, .identifier,  .left_paren,
         .right_paren, .left_brace,   .right_brace, .eof,
     });
 }

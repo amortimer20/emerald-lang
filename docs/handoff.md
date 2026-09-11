@@ -1,16 +1,17 @@
 # Current handoff
 
-Updated: 2026-09-10. Prepared by Claude after the static checker slice.
+Updated: 2026-09-11. Prepared by Claude after the functions slice.
 
 ## Current milestone
 
-Slices 1 through 6 of section 20 are complete. The whole frontend pipeline of section 19.2
-now exists: source manager, lexer, parser, name resolver, type checker, interpreter.
+Slices 1 through 7 of section 20 are complete. The whole frontend pipeline of section 19.2
+exists: source manager, lexer, parser, name resolver, type checker, interpreter.
 
-Every expression has a static type before execution, locals are inferred from their
-initializers, annotations are checked, and definite assignment is proved through control
-flow. What remains at runtime is only what cannot be known statically: integer overflow,
-division by zero, and reading a name the checker could not prove assigned.
+Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
+and stack traces on runtime errors. Every expression has a static type before execution and
+definite assignment is proved through control flow. What remains at runtime is only what
+cannot be known statically: integer overflow, division by zero, and exceeding the
+recursion limit.
 
 ## Completed foundation
 
@@ -52,7 +53,9 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   LF and CRLF line handling, byte-offset spans, and one-based line and scalar-column
   mapping. It also locates the first invalid UTF-8 sequence and its span.
 - `src/Diagnostic.zig` renders the canonical four-part shape from section 17.1, with the
-  underline measured in scalars so it aligns past multi-byte characters.
+  underline measured in scalars so it aligns past multi-byte characters. A runtime error
+  also carries a stack trace, innermost call first, with runs of identical frames
+  summarized.
 - `src/Token.zig` holds the token kinds, the keyword table, and `canEndExpression`, which
   is the continuation-token list section 3.1 refers to. The switch is exhaustive, so a new
   kind cannot be added without classifying it.
@@ -60,18 +63,23 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   forms, comments, operators, statement-terminating newlines, and EOF.
 - `src/Ast.zig` is the syntax tree, free of runtime values so a future backend consumes the
   same tree the interpreter does.
-- `src/Parser.zig` parses statements and expressions with section 5.3's precedence.
-- `src/Resolver.zig` is name resolution: scopes, declarations, and the section 6.1 rules.
-  These belong here rather than in the interpreter because they are properties of the text
-  rather than of a run. A name declared inside `if false { }` still shadows.
-- `src/Type.zig` is the static type representation and its compatibility rules.
+- `src/Parser.zig` parses statements and expressions with section 5.3's precedence, and
+  bounds nesting and tree height so no later pass can exhaust the host stack.
+- `src/Resolver.zig` is name resolution: scopes, declarations, hoisting, and the section 6.1
+  rules. These belong here rather than in the interpreter because they are properties of
+  the text rather than of a run. It also records, per function, which module variables it
+  reads and which functions it calls, for the checker.
+- `src/Type.zig` is the static type representation, its compatibility rules, and function
+  signatures.
 - `src/Checker.zig` is type checking and flow analysis: inference, annotations, operand
-  errors, and section 4.1's definite assignment.
+  errors, section 4.1's definite assignment, and everything section 7 asks of functions.
 - `src/Value.zig` holds `Nothing`, `Bool`, `Int`, and `Float`, implements section 9.4's
   display rules, and orders values.
-- `src/Interpreter.zig` evaluates, applying section 5.3's result types and failure modes.
+- `src/Interpreter.zig` evaluates, applying section 5.3's result types and failure modes,
+  and guards the host stack.
 - `src/emerald.zig` is the library root. `check` and `run` share one pipeline that stops at
-  the first stage to report anything, which is section 17.2's rule against cascades.
+  the first stage to report anything, which is section 17.2's rule against cascades. The
+  pipeline runs on a thread with a large reserved stack.
 - `src/main.zig` implements `emerald check` and `emerald run` with the section 18.1 exit
   codes, including `2` for an uncaught runtime error.
 - `conformance/` holds the suite required by sections 19.6 and 23: cases written in Emerald
@@ -79,6 +87,51 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Function decisions worth knowing
+
+This slice was first built with function bodies isolated from the module scope entirely, to
+sidestep the problem that a hoisted function can run before a variable it reads is assigned.
+That design was replaced before commit, because it contradicts section 6.1 (which presumes
+module names are visible inside functions) and section 7.1 (functions capture surrounding
+bindings), and because it rejected one of the most common programs a beginner writes: a
+module-level `const` read by a function. Section 7.1 names the actual problem and the
+actual rule — "hoisting never permits reading an uninitialized captured variable" — so
+that rule is what is enforced instead. Do not reintroduce the isolation.
+
+- **Visibility follows the text.** Functions are hoisted; variables are visible only below
+  their declaration, inside function bodies too (section 7.1). A function sees the module
+  variables declared above it. Using one declared below gets a diagnostic that says exactly
+  that, rather than a generic "not defined".
+- **Section 7.1's capture rule is checked statically, at each call made from top-level
+  code.** Every module variable the callee reads, directly or through the functions it
+  calls, must already be assigned there. Calls inside function bodies need no check of their
+  own, since a caller's captures include its callees'.
+- **Function bodies are checked after the top level**, against a view of the module scope in
+  which everything counts as assigned: a function can run at any point, so the state at the
+  place it happens to be written means nothing inside it. A body is checked early only when a
+  call needs its inferred return type, and any gap in its view at that point is guaranteed to
+  coincide with a capture error at that call.
+- **Functions and variables share one namespace**, as section 7.3's "a name declares one
+  function" implies. A program function may shadow a prelude function, as a variable may.
+- Section 7.2 requires an explicit return type on a recursive function "so checking does not
+  depend on circular inference". That is read here as applying only when there is something
+  to infer: a recursive function with no value-returning `return` needs no annotation, since
+  its type is "no result" without looking inside. **Worth confirming**, since it is an
+  interpretation; the alternative reading would demand an annotation a no-result function
+  has no way to write.
+- Widening happens at calls too. The checker exports its signatures, including return types
+  it inferred, and the interpreter widens arguments to parameter types and results to return
+  types, so `return 1` from a function whose returns merged to `Float` yields `1.0`.
+- **The host stack.** A probe showed the default stack exhausted between 600 and 800 calls
+  in Debug, short of section 7.2's 1,000, so the whole pipeline runs on a thread with a
+  512 MiB reserved stack (address space, not memory), and the interpreter raises before
+  exhausting it whatever the program's shape. The parser bounds everything upstream: exactly
+  256 levels of delimiter nesting (section 3.4, reported at the delimiter that crosses it),
+  a separate budget for recursion that opens no delimiter, and a tree height of 10,000 so a
+  long flat chain such as `1 + 1 + ... + 1` is a diagnostic rather than a crash. One unit
+  test proves 1,000 calls at 250 levels of nesting in Debug; it peaks around 340 MB resident
+  while it runs.
 
 ### Checker decisions worth knowing
 
@@ -152,28 +205,31 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 
 ## Next concrete step
 
-Slice 7 of section 20: functions. Calls, returns, scopes, recursion, and stack traces.
+Section 20's slice 8 is collections: a list literal, indexing, mutation, and one
+higher-order method. Two things stand in front of it, and the order is worth deciding
+before starting:
 
-This is the first slice where several settled rules finally have somewhere to live.
-Section 7.1 makes parameters read-only bindings and hoists function declarations within
-their scope. Section 6.1's shadowing rule gains its "within the same function" clause, which
-the resolver currently has no boundary for: a parameter or local may reuse a module-level
-name. Section 7.2 requires an explicit return type on recursive and mutually recursive
-functions so checking does not depend on circular inference, and requires every reachable
-path in a value-producing function to return. Section 7.2 also sets a portable minimum of
-1,000 active calls with a catchable `RecursionError` above it.
+- **Loops.** No slice in section 20 names `while` or `for`, yet a collection slice without
+  them is awkward, and definite assignment needs a rule for loops when they land. A small
+  loop slice first is the recommendation.
+- **Lambdas.** "One higher-order method" needs a block argument, which is section 7.4's
+  lambda — deferred from this slice — and with it function values, capture by reference, and
+  the trailing-lambda call form.
 
-Functions also make `Type` structural for the first time, since a function type is its
-parameters and result rather than a name.
+Section 8.1 also makes collections values: assignment and parameter passing copy them. That
+interacts with section 9's managed heap, which is slice 9, so slice 8 will need a stated
+position on how collections are stored until the collector exists.
 
-Still open alongside it: the leading-dot question below, and the deferred forms listed under
-"Deferred within this slice".
+Still open: the leading-dot question below.
 
 ## Validation and blockers
 
-- `zig build test` passes: 123 unit tests, 31 conformance cases, and 7 command-line contract
+- `zig build test` passes: 150 unit tests, 44 conformance cases, and 7 command-line contract
   tests asserting the section 18.1 exit codes against the real binary. Every case kind was
   confirmed to fail when a case is broken, so none of them are vacuous.
+- Every host-stack probe — 100,000 nested parentheses, 100,000 prefix minuses, a
+  1,000,000-term flat sum, unbounded recursion, and 1,000 calls at 250 levels of nesting —
+  ends in the right answer or a clean diagnostic, identically in Debug and ReleaseSafe.
 - `conformance/diagnostics/definite-assignment.expected` reproduces the canonical diagnostic
   printed in section 17.1 character for character, apart from the path and position.
 - Writing this slice found a leak worth remembering. Returning a struct that owns an
@@ -224,6 +280,14 @@ This needs a decision before the parser slice fixes the behavior by accident.
 
 ### Deferred
 
+- From section 7: nested functions (rejected with one diagnostic), lambdas and trailing
+  blocks, function values (a bare function name is rejected, though section 3.4 makes it the
+  callable value), default parameters and named arguments, and variadics (already deferred
+  in the spec). A top-level `return`, which section 14.1 uses to end the program, is
+  rejected outside a function for now.
+- Section 14.1's warning for unreachable code after a `return`. Diagnostics have no
+  severity yet; until they do, code after two branches that both return is treated as
+  assigned everything rather than reported.
 - Section 6.2's `unless` block form, the one-line modifier guards, and the
   `if ... then ... else` expression. The `unless not condition` style diagnostic also needs
   a severity on `Diagnostic`, which does not exist yet.
@@ -237,6 +301,14 @@ This needs a decision before the parser slice fixes the behavior by accident.
 
 ### Known rough edges
 
+- The capture check is conservative. It flags a call if the callee could read an
+  unassigned variable on any path, even one this particular call cannot take. Moving the
+  call below the variable is always the fix, and the diagnostic says so.
+- Definite assignment at the top level does not see assignments made inside a called
+  function. `var total: Int`, then a call to a function that sets it, then a read, is
+  rejected as possibly unassigned. Initializing the variable is the fix.
+- Past the 256th brace, parse recovery can report the unconsumed closing braces as further
+  errors. Only a program that is already rejected for its nesting can see this.
 - A diagnostic that quotes a line containing invalid UTF-8 prints the offending bytes raw,
   so a terminal shows a replacement glyph. Escaping them is a small refinement worth doing
   when the lexer starts reporting byte-level problems more often.
