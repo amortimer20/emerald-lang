@@ -350,17 +350,34 @@ score = 2
 const max_score = 100
 ```
 
-`const` is shallow. It protects the binding, not all state reachable through the value.
-This deliberately follows the behavior familiar from C# collection and object variables:
+`const` freezes a value. A `const` list, dictionary, set, tuple, or struct cannot change at
+all: it can be neither replaced nor mutated in place. For a value type the two are the same
+thing, since `players.append("Noah")` and `players = players + ["Noah"]` leave the same
+observable result, so forbidding one while allowing the other would protect nothing.
+
+A class instance is different. The binding holds a reference to a shared object, so `const`
+fixes which object the binding refers to, while the object's own `var` fields may still
+change through it. The rule stops at the first reference, which is exactly where sharing
+begins. This is Swift's `let`.
 
 ```emerald
 const players = ["Ava"]
-players.append("Noah")    # allowed
+players.append("Noah")    # error: `players` is a const list
 players = ["Mia"]         # error
+
+const window = Window()   # a class
+window.title = "Emerald"  # allowed: the object is shared
+window = Window()         # error
 ```
 
+Mutating a struct includes calling one of its methods that assigns to a field of `self`,
+directly or through another method. The checker determines which struct methods mutate
+`self` from their bodies, so there is no `mutating` keyword. A diagnostic for mutating a
+`const` suggests `var` when a changing copy is what was meant.
+
 Fields also use `var` and `const`. A `const` field is assigned during construction and is
-not later rebound. A `var` field may be updated by methods.
+not later rebound, and it freezes a value it holds under the same rule. A `var` field may
+be updated by methods.
 
 ### 4.4 Type relationships and conversion
 
@@ -793,19 +810,29 @@ func add(left: Int, right: Int): Int {
 syntax—`func(Int): String`, `func(Int)`, and `func()`—while lambdas use `=>`. `->` is not
 part of the callable surface.
 
-Parameters are read-only bindings. Mutating an object received through a parameter is
-allowed; assigning a different value to the parameter name is not.
+Parameters are read-only bindings under the `const` rule of 4.3. A collection or struct
+argument is the function's own copy, so a change to it would be lost when the function
+returns; mutating it is therefore rejected rather than silently discarded. A class object
+received through a parameter is shared, so mutating it is allowed and visible to the
+caller. Assigning a different value to any parameter name is an error.
 
 ```emerald
-func add_guest(guests: [String], guest: String) {
-    guests.append(guest) # allowed on the function's collection value
-    guests = []         # error: parameter binding is read-only
+func add_guest(guests: [String], guest: String): [String] {
+    guests.append(guest)    # error: `guests` is a copy, so the change would be lost
+    guests = []             # error: parameters are read-only
+
+    var updated = guests    # an explicit working copy
+    updated.append(guest)   # allowed
+    return updated
 }
+
+party = add_guest(party, "Ava")
 ```
 
 There is no `ref` or `inout`. Reference-type objects naturally expose shared state. A
-struct argument is passed according to value semantics and is returned when a changed copy
-is desired. Collections are also passed by value; classes preserve shared references.
+struct or collection argument is passed according to value semantics, and a function that
+changes one returns the changed value. The diagnostic for mutating a parameter says that
+the change would be lost and suggests returning the changed value.
 
 Function declarations are hoisted within their lexical scope; variables are visible only
 from their declarations. Nested named functions are allowed, capture surrounding bindings
@@ -957,8 +984,13 @@ same framing and suggest the explicit local, which makes the copy visible in the
 Collections behave familiarly: lists preserve order and duplicates, dictionaries map
 unique keys to values, sets retain unique elements, and tuples hold two or more values.
 Lists, dictionaries, and sets are mutable values: assignment and ordinary parameter
-passing produce independent collection values. A `const` binding prevents replacing the
-collection but may still mutate its contents.
+passing produce independent collection values. A `var` collection may be mutated in place.
+A `const` collection cannot change at all (4.3), and a collection parameter is read-only in
+the same way (7.1).
+
+Copies are a semantic guarantee, not a physical one. An implementation shares storage
+between copies until one of them is mutated, so passing a large list to a function costs
+nothing unless the function copies it into a `var` and changes it.
 
 The beginner vocabulary is intentionally small. A richer standard vocabulary remains
 available through completion and documentation rather than being taught all at once.
@@ -1416,10 +1448,10 @@ struct Vector2 {
 Parameters are read-only, while fields may mutate. `self.` makes field access distinct
 from locals and parameters.
 
-Shallow `const` applies to fields too: a `const position` field cannot be replaced, but a
-mutable member such as `position.x` may change. Stored nested-field assignment updates the
-value in place; nested assignment through a computed property is rejected as described
-below.
+The `const` rule of 4.3 applies to fields: a `const position` field holding a struct can be
+neither replaced nor changed, so `self.position.x = 1` is rejected, while a `var position`
+field may change. Stored nested-field assignment updates the value in place; nested
+assignment through a computed property is rejected as described below.
 
 Default field values are allowed and run in declaration order, once per construction.
 They may read earlier initialized fields but not later ones. An explicitly supplied
@@ -2434,7 +2466,7 @@ These newer decisions supersede the existing C# implementation and old design do
 | --- | --- | --- |
 | Host | C#/.NET with a planned CIL backend | Zig interpreter with replaceable backend boundaries |
 | Constants | `SCREAMING_SNAKE_CASE` | `snake_case` |
-| Struct mutation | Structs were immutable | Struct fields may mutate; `const` prevents rebinding |
+| Struct mutation | Structs were immutable | Struct fields may mutate through a `var`; `const` freezes the value |
 | String indexing | No integer indexing | Zero-based grapheme indexing |
 | Optional type spelling | `T?` | `T?` retained |
 | Overloading | Supported | Deferred; names are unique within a scope |
@@ -2500,6 +2532,17 @@ they are collected here with the reasoning that produced them.
 These supersede conflicting statements elsewhere in this document. The optional spelling and
 `Int` width were previously listed as open roadmap items in section 24 and have been removed
 from it.
+
+### Decisions made during implementation
+
+Questions that surfaced while building a slice, settled with the same priorities and
+recorded in their normative sections:
+
+| Decision | Resolution | Reasoning |
+| --- | --- | --- |
+| Ordering (5.2) | Only numbers and strings are ordered; every type has `==` and `!=` | `true < false` has no meaning a reader would guess, so it is rejected rather than given one. |
+| Uninitialized `const` (4.1) | Rejected at the declaration | A `const` can never be assigned afterward, so it would stay unassigned forever. |
+| Value-type mutability (4.3, 7.1, 8.1, 10.2) | `const` and parameters freeze values; the rule stops at class references | Under value semantics, mutating and replacing are indistinguishable, so a shallow `const` protected nothing coherent, and mutating a parameter's copy was a silent no-op that a beginner would write and never understand. Replaces the earlier shallow `const`, which followed C# reference-type variables. |
 
 ## 23. Consistency rules for future work
 

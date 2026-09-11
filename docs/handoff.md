@@ -261,9 +261,25 @@ before starting:
   lambda — deferred from this slice — and with it function values, capture by reference, and
   the trailing-lambda call form.
 
-Section 8.1 also makes collections values: assignment and parameter passing copy them. That
-interacts with section 9's managed heap, which is slice 9, so slice 8 will need a stated
-position on how collections are stored until the collector exists.
+Collections are values, and the user confirmed that and tightened it (recorded in 4.3,
+7.1, 8.1, 10.2, and a new "Decisions made during implementation" table in section 22):
+`const` freezes a value entirely rather than only its binding, stopping at class
+references; and parameters are read-only the same way, so mutating a collection parameter
+is an error rather than a silent change to a discarded copy. What this means for slice 8:
+
+- Store each collection as a reference-counted buffer with copy-on-write. Assignment and
+  argument passing share the buffer; a mutation copies first only when it is shared. The
+  checker already makes parameters read-only, so no new runtime rule is needed there.
+- Nested updates such as `grid[0][1] = 5` must update in place, which needs assignable
+  location paths in the interpreter; indexing needs them anyway.
+- Reference counting reclaims collection storage completely until classes exist, because
+  value-typed data cannot form a cycle. Once a class can hold a list that holds the class,
+  a cycle can pass through the list, so the slice 9 collector must trace inside collection
+  buffers too.
+- Struct methods that mutate `self` must be identified from their bodies (no `mutating`
+  keyword) so that calling one on a `const` or a parameter is rejected. That belongs to the
+  object-model slice, but the collection mutators (`append` and the rest) need the same
+  "mutates its receiver" flag from the start.
 
 Still open: the leading-dot question below.
 
@@ -371,4 +387,5 @@ This needs a decision before the parser slice fixes the behavior by accident.
 
 ## Pending changes
 
-None. The review fixes are committed as `825066c`; verify against Git before continuing.
+The value-semantics decision is written into `docs/rewrite-context.md` and this file,
+uncommitted. No code changes. Verify against Git before continuing.
