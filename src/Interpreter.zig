@@ -401,27 +401,94 @@ fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
     }
 }
 
-/// Section 6.4's `for` over a range. The endpoints are evaluated once, before
-/// the first iteration, and a range only counts upward, so one whose start is
-/// past its end visits nothing.
+/// Section 6.4's counting loops: `a..b`, `a..<b`, `a.up_to(b)`, and
+/// `a.down_to(b)`, with an optional `.step(n)` and `.reverse()`. Everything
+/// is evaluated once, before the first iteration.
 ///
-/// The loop stops by comparing with the last value rather than by stepping past
-/// it, because stepping past `9223372036854775807` would overflow.
+/// The loop stops by comparing with the last value it will visit rather than
+/// by stepping past it, because stepping past either end of the `Int` range
+/// would overflow. `Counting` keeps that last value exact.
 fn executeFor(self: *Interpreter, loop: Ast.For) Error!void {
-    if (loop.iterable.data != .range) return self.executeForList(loop);
+    if (!Checker.isCounting(loop.iterable)) return self.executeForList(loop);
 
-    const range = loop.iterable.data.range;
-    const start = (try self.evaluate(range.start)).data.int;
-    const end = (try self.evaluate(range.end)).data.int;
-
-    if (start > end or (!range.inclusive and start == end)) return;
-    const last = if (range.inclusive) end else end - 1;
-
-    var current = start;
+    const counting = try self.evaluateCounting(loop.iterable) orelse return;
+    var current = counting.first;
     while (try self.executeIteration(loop, .initInt(current))) {
-        if (current == last) return;
-        current += 1;
+        if (current == counting.last) return;
+        // Cannot overflow: `last` is reachable from `current` in whole steps.
+        current = if (counting.descending) current - counting.step else current + counting.step;
     }
+}
+
+/// A nonempty run of whole numbers: from `first` to `last`, both visited, `step`
+/// apart, counting down when `descending`. `last` is always a value the count
+/// actually reaches, which is what lets `reverse` swap the ends exactly.
+const Counting = struct {
+    first: i64,
+    last: i64,
+    step: i64 = 1,
+    descending: bool,
+
+    /// The last value reached from `first` in whole steps without passing
+    /// `bound`, which the caller guarantees lies in the counting direction.
+    fn reaching(first: i64, bound: i64, step: i64, descending: bool) Counting {
+        const difference = @as(i128, bound) - first;
+        const distance: i128 = if (difference < 0) -difference else difference;
+        const whole = distance - @rem(distance, step);
+        const last: i64 = @intCast(if (descending) @as(i128, first) - whole else @as(i128, first) + whole);
+        return .{ .first = first, .last = last, .step = step, .descending = descending };
+    }
+};
+
+/// Null for a count that visits nothing.
+fn evaluateCounting(self: *Interpreter, expression: *const Ast.Expression) Error!?Counting {
+    if (expression.data == .range) {
+        const range = expression.data.range;
+        const start = (try self.evaluate(range.start)).data.int;
+        const end = (try self.evaluate(range.end)).data.int;
+        if (range.inclusive) {
+            return if (start > end) null else .{ .first = start, .last = end, .descending = false };
+        }
+        return if (start >= end) null else .{ .first = start, .last = end - 1, .descending = false };
+    }
+
+    const call = expression.data.call;
+    const member = call.callee.data.member;
+    const name = member.name;
+
+    if (std.mem.eql(u8, name, "up_to") or std.mem.eql(u8, name, "down_to")) {
+        const start = (try self.evaluate(member.base)).data.int;
+        const end = (try self.evaluate(call.arguments[0])).data.int;
+        // A target on the wrong side counts nothing, as `0..count - 1` does
+        // for an empty list.
+        const descending = std.mem.eql(u8, name, "down_to");
+        if (if (descending) start < end else start > end) return null;
+        return .{ .first = start, .last = end, .descending = descending };
+    }
+
+    const base = try self.evaluateCounting(member.base);
+
+    if (std.mem.eql(u8, name, "reverse")) {
+        const counting = base orelse return null;
+        return .{
+            .first = counting.last,
+            .last = counting.first,
+            .step = counting.step,
+            .descending = !counting.descending,
+        };
+    }
+
+    // `step`, evaluated even when the count is empty, so a bad step is always
+    // reported.
+    const distance = (try self.evaluate(call.arguments[0])).data.int;
+    if (distance < 1) return self.raiseFmt(
+        call.arguments[0].span,
+        "a step must be at least 1, but this is {d}",
+        .{distance},
+        "The range says which way to count; the step says only how far, as in `10.down_to(0).step(2)`.",
+    );
+    const counting = base orelse return null;
+    return Counting.reaching(counting.first, counting.last, distance, counting.descending);
 }
 
 /// Section 8.4: the loop visits the list as it was when the loop began. Holding

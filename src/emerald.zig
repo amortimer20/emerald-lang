@@ -644,6 +644,74 @@ test "a for loop visits a range in order, and a range only counts upward" {
     try expectOutput("for i in 3..3 {\n    print(i)\n}\n", "3\n");
 }
 
+test "counting down, stepping, and reversing say their direction in words" {
+    const program =
+        \\var out: [Int] = []
+        \\for i in 5.down_to(1) {
+        \\    out.append(i)
+        \\}
+        \\print(out)
+        \\out.clear()
+        \\for i in 10.down_to(0).step(4) {
+        \\    out.append(i)
+        \\}
+        \\print(out)
+        \\out.clear()
+        \\for i in (0..10).step(3) {
+        \\    out.append(i)
+        \\}
+        \\print(out)
+        \\out.clear()
+        \\for i in (1..4).reverse() {
+        \\    out.append(i)
+        \\}
+        \\print(out)
+        \\out.clear()
+        \\for i in 2.up_to(4) {
+        \\    out.append(i)
+        \\}
+        \\print(out)
+        \\
+    ;
+    try expectOutput(program, "[5, 4, 3, 2, 1]\n[10, 6, 2]\n[0, 3, 6, 9]\n[4, 3, 2, 1]\n[2, 3, 4]\n");
+}
+
+test "reverse and step apply in the order written" {
+    try expectOutput("for i in (0..10).step(3).reverse() {\n    print(i)\n}\n", "9\n6\n3\n0\n");
+    try expectOutput("for i in (0..10).reverse().step(3) {\n    print(i)\n}\n", "10\n7\n4\n1\n");
+}
+
+test "a computed count on the wrong side is empty, so walking backwards is safe" {
+    try expectOutput("var count = 0\nfor i in count.down_to(1) {\n    print(i)\n}\nprint(9)\n", "9\n");
+    try expectOutput(
+        "var items: [Int] = []\nfor i in (0..<items.count).reverse() {\n    print(items[i])\n}\nprint(9)\n",
+        "9\n",
+    );
+}
+
+test "counting reaches both ends of the Int range without overflowing" {
+    try expectOutput(
+        "for i in 9223372036854775807.down_to(9223372036854775804).step(2) {\n    print(i)\n}\n",
+        "9223372036854775807\n9223372036854775805\n",
+    );
+    try expectOutput(
+        "for i in (-9223372036854775807).down_to(-9223372036854775807 - 1) {\n    print(i)\n}\n",
+        "-9223372036854775807\n-9223372036854775808\n",
+    );
+}
+
+test "a count written with literals that can only be empty is an error" {
+    try expectFailure("for i in 1.down_to(10) {\n    print(i)\n}\n", "this is empty, because `down_to` only counts down");
+    try expectFailure("for i in 10.up_to(1) {\n    print(i)\n}\n", "this is empty, because `up_to` only counts up");
+}
+
+test "a step is at least 1 and given once" {
+    try expectFailure("for i in (1..5).step(0) {\n    print(i)\n}\n", "a step must be at least 1");
+    try expectFailure("var n = -2\nfor i in (1..5).step(n) {\n    print(i)\n}\n", "a step must be at least 1, but this is -2");
+    try expectFailure("for i in (1..9).step(2).reverse().step(2) {\n    print(i)\n}\n", "this already has a step");
+    try expectFailure("var countdown = 10.down_to(1)\n", "a range can only be looped over so far");
+}
+
 test "a range may end at the largest Int without overflowing" {
     try expectOutput(
         "for i in 9223372036854775806..9223372036854775807 {\n    print(i)\n}\n",
@@ -771,7 +839,7 @@ test "a loop variable is read-only and does not outlive its loop" {
 }
 
 test "only an Int range can be looped over so far" {
-    try expectFailure("for i in 1..2.5 {\n    print(i)\n}\n", "a range counts whole numbers, but this is Float");
+    try expectFailure("for i in 1..2.5 {\n    print(i)\n}\n", "counting works with whole numbers, but this is Float");
     try expectFailure("for i in 5 {\n    print(i)\n}\n", "a `for` loop cannot visit Int");
     try expectFailure("var r = 1..3\n", "a range can only be looped over so far");
     try expectFailure("for i in 1..2..3 {\n    print(i)\n}\n", "a range has one start and one end");

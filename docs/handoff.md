@@ -133,6 +133,14 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `length` → `count`), and `count()` and a bare `append` explain properties versus methods.
 - **`5..1` is now an error** (the user chose error over warning, recorded in 6.4), for two
   literal endpoints only.
+- **Counting down** (user-approved, recorded in 6.4): `a.down_to(b)`, `a.up_to(b)`,
+  `.step(n)`, and `.reverse()` are loopable directly, alongside ranges. A wrong-side target
+  counts nothing, which replaced the spec's earlier "error on a wrong-side target" rule so
+  computed bounds stay safe in both directions; two literals that can only be empty are an
+  error. `Checker.isCounting` recognizes these forms by shape, since none is a value a
+  program can hold yet, and the interpreter normalizes each to a `Counting` whose `last` is
+  a value the count actually reaches, so the loop stops by comparing and never steps past
+  either end of the `Int` range, and `reverse` swaps ends exactly.
 - **Member access and indexing** are postfix operators chained with calls, so
   `grid[0].append(1)` and `make()[0]` parse; `?.` reports that optional chaining is not
   available yet.
@@ -344,7 +352,7 @@ Two candidates, and the order is worth asking the user about:
 
 ## Validation and blockers
 
-- `zig build test` passes in Debug and ReleaseSafe: 191 unit tests, 71 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 197 unit tests, 73 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -393,8 +401,9 @@ Two candidates, and the order is worth asking the user about:
   available yet" at a `:`), `first` and `last` (need optionals), `each` and the rest of the
   rich vocabulary (need lambdas), slicing with ranges, `type_name`, and a mutating method
   through a struct field, which arrives with structs.
-- Range values: `(1..7).step(2)`, `random(1..6)`, and ranges stored in names are rejected
-  with "a range can only be looped over so far" until the collection vocabulary lands.
+- Range values: ranges and counts stored in names, `random(1..6)`, and the block forms of
+  `up_to`, `down_to`, and `times` are rejected ("a range can only be looped over so far")
+  until range values and lambdas land. In a `for` header every counting form works.
 - Optional types. The parser splits the `?` in type position as section 4.2 requires, and
   the checker reports that optionals are not available yet, so the rule is exercised without
   the semantics existing.

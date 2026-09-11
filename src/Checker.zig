@@ -313,19 +313,8 @@ fn checkFor(self: *Checker, loop: Ast.For) Error!void {
 /// The type of each value a `for` loop visits. Only ranges so far, and a range
 /// counts whole numbers.
 fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
-    if (iterable.data == .range) {
-        const range = iterable.data.range;
-        for ([_]*const Ast.Expression{ range.start, range.end }) |end| {
-            const actual = try self.typeOf(end);
-            if (actual.kind == .int or actual.kind == .invalid) continue;
-            try self.report(
-                end.span,
-                "a range counts whole numbers, but this is {f}",
-                .{actual},
-                "Both ends of a range are Ints, as in `1..10`.",
-            );
-        }
-        try self.rejectDescendingLiteralRange(iterable, range);
+    if (isCounting(iterable)) {
+        try self.checkCounting(iterable);
         return .int;
     }
 
@@ -340,6 +329,102 @@ fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
         "A `for` loop visits a range, as in `for i in 1..10`, or the elements of a list.",
     );
     return .invalid;
+}
+
+/// Section 6.4's ways of counting: `a..b`, `a..<b`, `a.up_to(b)`, and
+/// `a.down_to(b)`, optionally followed by `.step(n)` and `.reverse()`. Decided
+/// from the shape of the expression, since none of them is a value a program
+/// can hold yet; a `for` loop is the only place they are accepted.
+pub fn isCounting(expression: *const Ast.Expression) bool {
+    return switch (expression.data) {
+        .range => true,
+        .call => |call| switch (call.callee.data) {
+            .member => |member| countingStart(member.name) or
+                (countingAdapter(member.name) and isCounting(member.base)),
+            else => false,
+        },
+        else => false,
+    };
+}
+
+fn countingStart(name: []const u8) bool {
+    return std.mem.eql(u8, name, "up_to") or std.mem.eql(u8, name, "down_to");
+}
+
+fn countingAdapter(name: []const u8) bool {
+    return std.mem.eql(u8, name, "step") or std.mem.eql(u8, name, "reverse");
+}
+
+/// Types every part of a counting expression and reports what can be seen
+/// from the source alone: a literal range or `down_to` that can only be empty,
+/// a literal step below 1, and a second step.
+fn checkCounting(self: *Checker, expression: *const Ast.Expression) Error!void {
+    if (expression.data == .range) {
+        const range = expression.data.range;
+        try self.requireCountingInt(range.start);
+        try self.requireCountingInt(range.end);
+        return self.rejectDescendingLiteralRange(expression, range);
+    }
+
+    const call = expression.data.call;
+    const member = call.callee.data.member;
+    const wanted: usize = if (std.mem.eql(u8, member.name, "reverse")) 0 else 1;
+    if (call.arguments.len != wanted) {
+        try self.report(
+            member.name_span,
+            "`{s}` takes {d} argument{s}, but this call passes {d}",
+            .{ member.name, wanted, if (wanted == 1) "" else "s", call.arguments.len },
+            "Write it as in `10.down_to(1)`, `(0..10).step(2)`, or `(1..5).reverse()`.",
+        );
+        try self.typeArguments(call.arguments);
+        if (!countingStart(member.name)) try self.checkCounting(member.base);
+        return;
+    }
+
+    if (countingStart(member.name)) {
+        try self.requireCountingInt(member.base);
+        try self.requireCountingInt(call.arguments[0]);
+        return self.rejectContradictingLiteralCount(expression, member, call.arguments[0]);
+    }
+
+    try self.checkCounting(member.base);
+    if (std.mem.eql(u8, member.name, "reverse")) return;
+
+    // `step`.
+    try self.requireCountingInt(call.arguments[0]);
+    if (literalInt(call.arguments[0])) |distance| {
+        if (distance < 1) try self.report(
+            call.arguments[0].span,
+            "a step must be at least 1",
+            .{},
+            "The range says which way to count; the step says only how far, as in `10.down_to(0).step(2)`.",
+        );
+    }
+    if (hasStep(member.base)) try self.report(
+        member.name_span,
+        "this already has a step",
+        .{},
+        "Give it a single `step` with the distance you want.",
+    );
+}
+
+fn hasStep(expression: *const Ast.Expression) bool {
+    if (expression.data != .call) return false;
+    const member = expression.data.call.callee.data.member;
+    if (std.mem.eql(u8, member.name, "step")) return true;
+    if (std.mem.eql(u8, member.name, "reverse")) return hasStep(member.base);
+    return false;
+}
+
+fn requireCountingInt(self: *Checker, expression: *const Ast.Expression) Error!void {
+    const actual = try self.typeOf(expression);
+    if (actual.kind == .int or actual.kind == .invalid) return;
+    try self.report(
+        expression.span,
+        "counting works with whole numbers, but this is {f}",
+        .{actual},
+        "Count with Ints, as in `1..10` or `10.down_to(1)`.",
+    );
 }
 
 /// Section 6.4: ranges count upward, so one written with two literal endpoints
@@ -359,8 +444,28 @@ fn rejectDescendingLiteralRange(
         iterable.span,
         "this range is empty, because ranges count upward",
         .{},
-        "Write `{d}..{d}` to count up. Counting down with `{d}.down_to({d})` is not available yet.",
-        .{ end, start, start, end },
+        "Count down with `{d}.down_to({d})`, or up with `{d}..{d}`.",
+        .{ start, end, end, start },
+    );
+}
+
+/// The same for `up_to` and `down_to`, which count only the way they are named.
+fn rejectContradictingLiteralCount(
+    self: *Checker,
+    expression: *const Ast.Expression,
+    member: Ast.Expression.Member,
+    target: *const Ast.Expression,
+) Error!void {
+    const start = literalInt(member.base) orelse return;
+    const end = literalInt(target) orelse return;
+    const down = std.mem.eql(u8, member.name, "down_to");
+    if (if (down) start >= end else start <= end) return;
+    try self.reportWithHelp(
+        expression.span,
+        "this is empty, because `{s}` only counts {s}",
+        .{ member.name, if (down) "down" else "up" },
+        "Write `{d}.{s}({d})` instead.",
+        .{ start, if (down) "up_to" else "down_to", end },
     );
 }
 
@@ -1142,20 +1247,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .list_literal => self.typeOfList(expression, null),
         .index => |index| self.typeOfIndex(index),
         .member => |member| self.typeOfMember(member),
-        .range => |range| blk: {
-            // Ranges have no type of their own yet: they are values in section
-            // 6.4, but everything a program could do with one besides looping
-            // arrives with the collection vocabulary.
-            _ = try self.typeOf(range.start);
-            _ = try self.typeOf(range.end);
-            try self.report(
-                expression.span,
-                "a range can only be looped over so far",
-                .{},
-                "Use it in a `for` loop, as in `for i in 1..10`.",
-            );
-            break :blk .invalid;
-        },
+        .range => self.rejectCountingValue(expression),
     };
 }
 
@@ -1397,6 +1489,20 @@ fn familiarListName(name: []const u8) ?[]const u8 {
     return familiar.get(name);
 }
 
+/// Ranges and the other ways of counting have no type of their own yet: they
+/// are values in section 6.4, but everything a program could do with one
+/// besides looping arrives with the collection vocabulary.
+fn rejectCountingValue(self: *Checker, expression: *const Ast.Expression) Error!Type {
+    try self.checkCounting(expression);
+    try self.report(
+        expression.span,
+        "a range can only be looped over so far",
+        .{},
+        "Use it in a `for` loop, as in `for i in 10.down_to(1)`.",
+    );
+    return .invalid;
+}
+
 fn typeOfUnary(
     self: *Checker,
     expression: *const Ast.Expression,
@@ -1524,6 +1630,7 @@ fn typeOfCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Type {
+    if (isCounting(expression)) return self.rejectCountingValue(expression);
     if (call.callee.data == .member) return self.typeOfMethodCall(call, call.callee.data.member);
     if (call.callee.data != .name) {
         try self.report(

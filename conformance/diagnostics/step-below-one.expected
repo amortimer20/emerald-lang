@@ -1,0 +1,4 @@
+diagnostics/step-below-one.em:4:34: a step must be at least 1
+  for number in 10.down_to(0).step(-2) {
+                                   ^^
+The range says which way to count; the step says only how far, as in `10.down_to(0).step(2)`.
