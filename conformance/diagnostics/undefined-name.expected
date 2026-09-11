@@ -1,0 +1,4 @@
+diagnostics/undefined-name.em:9:7: `inner` is not defined
+  print(inner)
+        ^^^^^
+Check the spelling, or declare it before this line.

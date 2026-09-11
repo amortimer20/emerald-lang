@@ -1,21 +1,30 @@
 //! Runtime values and how they display.
 //!
-//! Only the two numeric types exist so far. Section 4.2 settles their widths as
-//! language semantics rather than host details: `Int` is 64-bit signed and
-//! `Float` is IEEE-754 binary64, and every backend must agree.
+//! `Nothing`, `Bool`, `Int`, and `Float` exist so far. Section 4.2 settles the numeric
+//! widths as language semantics rather than host details: `Int` is 64-bit signed
+//! and `Float` is IEEE-754 binary64, and every backend must agree.
 
 const std = @import("std");
 
 const Value = @This();
 
-pub const Kind = enum { int, float };
+pub const Kind = enum { nothing, bool, int, float };
 
 data: Data,
 
 pub const Data = union(Kind) {
+    /// Section 4.2's absence-only type. Its single value is written `nothing`.
+    nothing: void,
+    bool: bool,
     int: i64,
     float: f64,
 };
+
+pub const nothing: Value = .{ .data = .nothing };
+
+pub fn initBool(value: bool) Value {
+    return .{ .data = .{ .bool = value } };
+}
 
 pub fn initInt(value: i64) Value {
     return .{ .data = .{ .int = value } };
@@ -33,17 +42,75 @@ pub fn kind(self: Value) Kind {
 /// section 4.4.
 pub fn typeName(self: Value) []const u8 {
     return switch (self.data) {
+        .nothing => "Nothing",
+        .bool => "Bool",
         .int => "Int",
         .float => "Float",
+    };
+}
+
+/// Whether two values are numbers, which is what arithmetic and ordering need.
+pub fn isNumber(self: Value) bool {
+    return switch (self.data) {
+        .nothing, .bool => false,
+        .int, .float => true,
     };
 }
 
 /// Writes the value as `print` would.
 pub fn display(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     switch (self.data) {
+        .nothing => try writer.writeAll("nothing"),
+        .bool => |value| try writer.writeAll(if (value) "true" else "false"),
         .int => |value| try writer.print("{d}", .{value}),
         .float => |value| try displayFloat(value, writer),
     }
+}
+
+/// Orders two numbers, or reports that they are unordered because one is NaN.
+///
+/// Section 4.4 requires a mixed comparison to compare mathematical values
+/// "without first rounding the integer into `Float`". That rules out the obvious
+/// implementation. Widening an `Int` to `Float` loses precision above 2^53, so
+/// converting first would make `9007199254740993 == 9007199254740992.0` true,
+/// which is exactly the accidental equality the rule forbids.
+pub fn order(left: Value, right: Value) ?std.math.Order {
+    return switch (left.data) {
+        .int => |a| switch (right.data) {
+            .int => |b| std.math.order(a, b),
+            .float => |b| orderIntFloat(a, b),
+            .nothing, .bool => null,
+        },
+        .float => |a| switch (right.data) {
+            .int => |b| if (orderIntFloat(b, a)) |result| result.invert() else null,
+            .float => |b| if (std.math.isNan(a) or std.math.isNan(b))
+                null
+            else
+                std.math.order(a, b),
+            .nothing, .bool => null,
+        },
+        .nothing, .bool => null,
+    };
+}
+
+/// Compares an `Int` against a `Float` exactly, by splitting the float rather
+/// than widening the integer.
+fn orderIntFloat(a: i64, b: f64) ?std.math.Order {
+    if (std.math.isNan(b)) return null;
+    if (std.math.isPositiveInf(b)) return .lt;
+    if (std.math.isNegativeInf(b)) return .gt;
+
+    // Outside the Int range the float wins on magnitude alone. The bounds are
+    // exact powers of two, so these comparisons are themselves exact.
+    const whole = @floor(b);
+    if (whole >= 9223372036854775808.0) return .lt; // 2^63, one past max Int
+    if (whole < -9223372036854775808.0) return .gt; // -2^63 is min Int itself
+
+    const truncated: i64 = @intFromFloat(whole);
+    if (a != truncated) return std.math.order(a, truncated);
+
+    // Whole parts agree, so any fraction makes the float the larger value.
+    return if (b > whole) .lt else .eq;
 }
 
 /// Section 9.4's float display, which the host does not provide.
@@ -144,4 +211,60 @@ test "special values have spelled-out names" {
 test "type names use Emerald's spelling" {
     try testing.expectEqualStrings("Int", Value.initInt(1).typeName());
     try testing.expectEqualStrings("Float", Value.initFloat(1).typeName());
+}
+
+test "booleans display as the words they are written with" {
+    try expectDisplay(.initBool(true), "true");
+    try expectDisplay(.initBool(false), "false");
+    try testing.expectEqualStrings("Bool", Value.initBool(true).typeName());
+}
+
+test "integers order against each other exactly" {
+    try testing.expectEqual(std.math.Order.lt, Value.order(.initInt(1), .initInt(2)).?);
+    try testing.expectEqual(std.math.Order.eq, Value.order(.initInt(2), .initInt(2)).?);
+    try testing.expectEqual(std.math.Order.gt, Value.order(.initInt(3), .initInt(2)).?);
+}
+
+test "a mixed comparison does not widen the integer first" {
+    // 9007199254740993 is 2^53 + 1, the smallest integer f64 cannot represent.
+    // Widening it would round to 9007199254740992.0 and make these equal, which
+    // is the accidental equality section 4.4 forbids.
+    const big: i64 = 9007199254740993;
+    const rounded: f64 = 9007199254740992.0;
+    try testing.expectEqual(std.math.Order.gt, Value.order(.initInt(big), .initFloat(rounded)).?);
+    try testing.expectEqual(std.math.Order.lt, Value.order(.initFloat(rounded), .initInt(big)).?);
+}
+
+test "a mixed comparison respects the fractional part" {
+    try testing.expectEqual(std.math.Order.lt, Value.order(.initInt(2), .initFloat(2.5)).?);
+    try testing.expectEqual(std.math.Order.gt, Value.order(.initInt(3), .initFloat(2.5)).?);
+    try testing.expectEqual(std.math.Order.eq, Value.order(.initInt(2), .initFloat(2.0)).?);
+    try testing.expectEqual(std.math.Order.gt, Value.order(.initInt(-2), .initFloat(-2.5)).?);
+    try testing.expectEqual(std.math.Order.lt, Value.order(.initInt(-3), .initFloat(-2.5)).?);
+}
+
+test "a mixed comparison handles values beyond the Int range" {
+    try testing.expectEqual(std.math.Order.lt, Value.order(.initInt(std.math.maxInt(i64)), .initFloat(1e30)).?);
+    try testing.expectEqual(std.math.Order.gt, Value.order(.initInt(std.math.minInt(i64)), .initFloat(-1e30)).?);
+    try testing.expectEqual(std.math.Order.lt, Value.order(.initInt(0), .initFloat(std.math.inf(f64))).?);
+    try testing.expectEqual(std.math.Order.gt, Value.order(.initInt(0), .initFloat(-std.math.inf(f64))).?);
+}
+
+test "the minimum Int compares exactly against its own float value" {
+    const min: i64 = std.math.minInt(i64);
+    try testing.expectEqual(std.math.Order.eq, Value.order(.initInt(min), .initFloat(-9223372036854775808.0)).?);
+}
+
+test "NaN is unordered against everything, including itself" {
+    const nan = Value.initFloat(std.math.nan(f64));
+    try testing.expect(Value.order(nan, .initFloat(1.0)) == null);
+    try testing.expect(Value.order(.initFloat(1.0), nan) == null);
+    try testing.expect(Value.order(nan, .initInt(1)) == null);
+    try testing.expect(Value.order(.initInt(1), nan) == null);
+    try testing.expect(Value.order(nan, nan) == null);
+}
+
+test "a Bool is not ordered against a number" {
+    try testing.expect(Value.order(.initBool(true), .initInt(1)) == null);
+    try testing.expect(Value.order(.initInt(1), .initBool(true)) == null);
 }

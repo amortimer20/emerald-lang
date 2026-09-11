@@ -111,6 +111,19 @@ fn skipSeparators(self: *Parser) void {
     while (self.check(.newline)) _ = self.advance();
 }
 
+/// The next token that is neither a newline nor a documentation comment, without
+/// consuming anything.
+fn peekPastNewlines(self: *Parser) Token {
+    var at = self.index;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .newline, .doc_comment => {},
+            else => return self.tokens[at],
+        }
+    }
+    return self.tokens[self.tokens.len - 1];
+}
+
 fn skipToNextStatement(self: *Parser) void {
     while (true) {
         const token = self.peek();
@@ -153,8 +166,205 @@ fn spanning(from: Source.Span, to: Source.Span) Source.Span {
 // Statements.
 
 fn parseStatement(self: *Parser) Error!Ast.Statement {
+    return switch (self.peek().kind) {
+        .keyword_var => self.parseDeclaration(true),
+        .keyword_const => self.parseDeclaration(false),
+        .keyword_if => self.parseIf(),
+        else => self.parseSimpleStatement(),
+    };
+}
+
+/// Section 4.3: `var` permits rebinding, `const` does not. Both introduce one
+/// binding at a time, which section 5.2 states directly.
+fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
+    const keyword = self.advance();
+
+    const name = self.peek();
+    if (name.kind != .identifier) {
+        return self.reportFmt(
+            name.span,
+            "expected a name after `{s}`, found {s}",
+            .{ if (mutable) "var" else "const", name.kind.describe() },
+            "A declaration introduces one name, as in `var score = 0`.",
+        );
+    }
+    _ = self.advance();
+
+    // Type annotations arrive with the checker slice, which is the first stage
+    // that can do anything with them.
+    if (self.check(.colon)) {
+        return self.report(
+            self.peek().span,
+            "type annotations are not available yet",
+            "Leave the type out for now; it is inferred from the value.",
+        );
+    }
+
+    const equals = self.peek();
+    if (equals.kind != .equal) {
+        return self.reportFmt(
+            equals.span,
+            "expected `=` after `{s}`, found {s}",
+            .{ self.text(name), equals.kind.describe() },
+            "A declaration needs a value, as in `var score = 0`.",
+        );
+    }
+    _ = self.advance();
+
+    const initializer = try self.parseExpression();
+    try self.expectStatementEnd();
+
+    return .{
+        .span = spanning(keyword.span, initializer.span),
+        .data = .{ .declaration = .{
+            .mutable = mutable,
+            .name = self.text(name),
+            .name_span = name.span,
+            .initializer = initializer,
+        } },
+    };
+}
+
+fn parseIf(self: *Parser) Error!Ast.Statement {
+    const keyword = self.advance();
+    const condition = try self.parseExpression();
+    const then_block = try self.parseBlock();
+
+    var otherwise: ?Ast.Else = null;
+    var end = then_block.span;
+
+    // Section 3.4's brace style puts `else` on its own line, so a newline always
+    // separates it from the `}` above. That newline is a statement terminator
+    // everywhere else, so it is only stepped over once an `else` is known to
+    // follow; otherwise the `if` ends here and the newline still terminates it.
+    if (self.peekPastNewlines().kind == .keyword_else) {
+        self.skipSeparators();
+        _ = self.advance();
+        if (self.check(.keyword_if)) {
+            const chained = try self.arena.create(Ast.Statement);
+            chained.* = try self.parseIf();
+            otherwise = .{ .chained = chained };
+            end = chained.span;
+        } else {
+            const block = try self.parseBlock();
+            otherwise = .{ .block = block };
+            end = block.span;
+        }
+    }
+
+    return .{
+        .span = spanning(keyword.span, end),
+        .data = .{ .conditional = .{
+            .condition = condition,
+            .then_block = then_block,
+            .otherwise = otherwise,
+        } },
+    };
+}
+
+/// Section 3.4: braces delimit blocks, and a block is only ever part of a
+/// declared construct. There is no standalone anonymous block.
+fn parseBlock(self: *Parser) Error!Ast.Block {
+    const opening = self.peek();
+    if (opening.kind != .left_brace) {
+        return self.reportFmt(
+            opening.span,
+            "expected `{{` to open a block, found {s}",
+            .{opening.kind.describe()},
+            "The body of an `if` is written in braces on the same line as its condition.",
+        );
+    }
+    _ = self.advance();
+
+    var statements: std.ArrayList(Ast.Statement) = .empty;
+    while (true) {
+        self.skipSeparators();
+        if (self.check(.right_brace) or self.check(.eof)) break;
+
+        if (self.parseStatement()) |statement| {
+            try statements.append(self.arena, statement);
+        } else |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.ParseFailed => self.skipToNextStatement(),
+        }
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_brace) {
+        return self.report(
+            opening.span,
+            "this block is never closed",
+            "Add the closing `}` that ends it.",
+        );
+    }
+    _ = self.advance();
+
+    return .{
+        .span = spanning(opening.span, closing.span),
+        .statements = try statements.toOwnedSlice(self.arena),
+    };
+}
+
+/// An assignment or an expression statement. The two are told apart by what
+/// follows the first expression, because section 5.2 makes assignment a
+/// statement rather than an expression.
+fn parseSimpleStatement(self: *Parser) Error!Ast.Statement {
+    const start = self.peek();
     const expression = try self.parseExpression();
 
+    if (assignmentOperator(self.peek().kind)) |assignment| {
+        _ = self.advance();
+        if (expression.data != .name) {
+            return self.report(
+                expression.span,
+                "this cannot be assigned to",
+                "Only a name can be assigned to, as in `score = 1`.",
+            );
+        }
+
+        const value = try self.parseExpression();
+
+        // Section 5.2 rejects chained assignment outright.
+        if (assignmentOperator(self.peek().kind) != null) {
+            return self.report(
+                self.peek().span,
+                "assignments cannot be chained",
+                "Write each assignment on its own line.",
+            );
+        }
+        try self.expectStatementEnd();
+
+        return .{
+            .span = spanning(start.span, value.span),
+            .data = .{ .assignment = .{
+                .name = expression.data.name,
+                .name_span = expression.span,
+                .operation = assignment.operation,
+                .value = value,
+            } },
+        };
+    }
+
+    return self.finishExpressionStatement(expression);
+}
+
+/// A plain `=` carries no operation; a compound form carries the operation it
+/// lowers through. Section 5.3 lists the compound forms, and `**=` is not one.
+const AssignmentForm = struct { operation: ?Ast.BinaryOperator };
+
+fn assignmentOperator(kind: Token.Kind) ?AssignmentForm {
+    return switch (kind) {
+        .equal => .{ .operation = null },
+        .plus_equal => .{ .operation = .add },
+        .minus_equal => .{ .operation = .subtract },
+        .star_equal => .{ .operation = .multiply },
+        .slash_equal => .{ .operation = .divide },
+        .slash_slash_equal => .{ .operation = .floor_divide },
+        else => null,
+    };
+}
+
+fn finishExpressionStatement(self: *Parser, expression: *const Ast.Expression) Error!Ast.Statement {
     // Section 5.2: a call may discard its result, but a pure expression whose
     // result is unused is a mistake, and the diagnostic should suggest the
     // update the writer probably meant.
@@ -166,24 +376,106 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
         );
     }
 
+    try self.expectStatementEnd();
+    return .{ .span = expression.span, .data = .{ .expression = expression } };
+}
+
+/// A statement ends at a newline, at the end of the file, or just before the
+/// `}` that closes the block it sits in.
+fn expectStatementEnd(self: *Parser) Error!void {
     const terminator = self.peek();
-    if (terminator.kind != .newline and terminator.kind != .eof) {
-        return self.reportFmt(
+    switch (terminator.kind) {
+        .newline => _ = self.advance(),
+        .eof, .right_brace => {},
+        else => return self.reportFmt(
             terminator.span,
             "expected the end of the line, found {s}",
             .{terminator.kind.describe()},
             "Statements end at a new line. Check for a missing operator or closing bracket.",
-        );
+        ),
     }
-    _ = self.match(.newline);
-
-    return .{ .span = expression.span, .data = .{ .expression = expression } };
 }
 
 // Expressions, loosest binding first.
 
 fn parseExpression(self: *Parser) Error!*const Ast.Expression {
-    return self.parseAdditive();
+    return self.parseDisjunction();
+}
+
+fn parseDisjunction(self: *Parser) Error!*const Ast.Expression {
+    var left = try self.parseConjunction();
+    while (self.check(.keyword_or)) {
+        _ = self.advance();
+        const right = try self.parseConjunction();
+        left = try self.node(spanning(left.span, right.span), .{ .logical = .{
+            .operator = .disjunction,
+            .left = left,
+            .right = right,
+        } });
+    }
+    return left;
+}
+
+fn parseConjunction(self: *Parser) Error!*const Ast.Expression {
+    var left = try self.parseNegation();
+    while (self.check(.keyword_and)) {
+        _ = self.advance();
+        const right = try self.parseNegation();
+        left = try self.node(spanning(left.span, right.span), .{ .logical = .{
+            .operator = .conjunction,
+            .left = left,
+            .right = right,
+        } });
+    }
+    return left;
+}
+
+fn parseNegation(self: *Parser) Error!*const Ast.Expression {
+    if (self.match(.keyword_not)) |token| {
+        const operand = try self.parseNegation();
+        return self.node(spanning(token.span, operand.span), .{ .unary = .{
+            .operator = .not,
+            .operand = operand,
+        } });
+    }
+    return self.parseComparison();
+}
+
+/// A whole comparison chain becomes one node, so `0 <= score <= 100` can
+/// evaluate `score` once and short-circuit, as section 5.2 requires.
+fn parseComparison(self: *Parser) Error!*const Ast.Expression {
+    const first = try self.parseAdditive();
+    if (comparisonOperator(self.peek().kind) == null) return first;
+
+    var operands: std.ArrayList(*const Ast.Expression) = .empty;
+    var operators: std.ArrayList(Ast.ComparisonOperator) = .empty;
+    try operands.append(self.arena, first);
+
+    var end = first.span;
+    while (comparisonOperator(self.peek().kind)) |operator| {
+        _ = self.advance();
+        const operand = try self.parseAdditive();
+        try operators.append(self.arena, operator);
+        try operands.append(self.arena, operand);
+        end = operand.span;
+    }
+
+    return self.node(spanning(first.span, end), .{ .comparison = .{
+        .operands = try operands.toOwnedSlice(self.arena),
+        .operators = try operators.toOwnedSlice(self.arena),
+    } });
+}
+
+fn comparisonOperator(kind: Token.Kind) ?Ast.ComparisonOperator {
+    return switch (kind) {
+        .equal_equal => .equal,
+        .bang_equal => .not_equal,
+        .less => .less,
+        .less_equal => .less_equal,
+        .greater => .greater,
+        .greater_equal => .greater_equal,
+        else => null,
+    };
 }
 
 fn parseAdditive(self: *Parser) Error!*const Ast.Expression {
@@ -296,6 +588,14 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
         .identifier => {
             _ = self.advance();
             return self.node(token.span, .{ .name = self.text(token) });
+        },
+        .keyword_true, .keyword_false => {
+            _ = self.advance();
+            return self.node(token.span, .{ .bool_literal = token.kind == .keyword_true });
+        },
+        .keyword_nothing => {
+            _ = self.advance();
+            return self.node(token.span, .{ .nothing_literal = {} });
         },
         .left_paren => {
             _ = self.advance();

@@ -1,0 +1,4 @@
+diagnostics/const-reassignment.em:4:1: `limit` cannot be reassigned
+  limit = 20
+  ^^^^^
+It was declared with `const`. Use `var` if the value needs to change.

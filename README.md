@@ -9,17 +9,20 @@ implementation architecture, staged plan, and evidence-driven roadmap live in
 
 ## Rewrite status
 
-Emerald runs arithmetic. The source manager, diagnostics, lexer, expression parser, and
+Emerald runs. The source manager, diagnostics, lexer, parser, name resolver, and
 interpreter are implemented, so `emerald run` executes a program and `emerald check`
 analyses one without running it.
 
-A program is currently a sequence of calls, and `print` is the only callable. Named
-bindings, control flow, name resolution, and type checking arrive with later slices.
+Named bindings, assignment, conditionals, comparison, and arithmetic work. Loops,
+functions, strings, collections, and type checking arrive with later slices.
 
 ```emerald
-print(2 + 3 * 4)   # 14
-print(2 ** 3 ** 2) # 512.0
-print(7 // 2)      # 3
+var score = 2 + 3 * 4
+print(score) # 14
+
+if 0 <= score <= 100 {
+    print(score >= 10 and not (score == 3))
+}
 ```
 
 The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify
@@ -50,6 +53,7 @@ src/
   Lexer.zig          source text to tokens
   Ast.zig            the syntax tree
   Parser.zig         tokens to a syntax tree
+  Resolver.zig       scopes, declarations, and assignment rules
   Value.zig          runtime values and how they display
   Interpreter.zig    evaluates a syntax tree
   conformance.zig    runs the Emerald conformance suite

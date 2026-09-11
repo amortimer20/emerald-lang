@@ -1,10 +1,21 @@
-# Integer arithmetic with the precedence from section 5.3.
-#
-# `var` and named bindings arrive with the statement slice; until then a program
-# is a sequence of calls.
+# The first runnable milestone from section 20, plus the statements around it.
 
-print(2 + 3 * 4)
-print((2 + 3) * 4)
-print(2 ** 3 ** 2)
-print(-2 ** 2)
-print(7 // 2, 7 % 2, 7 / 2)
+var score = 2 + 3 * 4
+print(score) # 14
+
+const limit = 10
+
+if score >= 20 {
+    print(1)
+}
+else if score > limit {
+    print(2)
+}
+else {
+    print(3)
+}
+
+print(0 <= score <= 100)
+
+score += 6
+print(score)

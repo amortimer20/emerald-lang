@@ -111,7 +111,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     const runs = b.addRunArtifact(exe);
     runs.addArg("run");
     runs.addFileArg(b.path("examples/arithmetic.em"));
-    runs.expectStdOutEqual("14\n20\n512.0\n-4.0\n3 1 3.5\n");
+    runs.expectStdOutEqual("14\n2\ntrue\n20\n");
     runs.expectExitCode(0);
     test_step.dependOn(&runs.step);
 

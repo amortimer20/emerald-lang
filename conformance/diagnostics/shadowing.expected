@@ -1,0 +1,4 @@
+diagnostics/shadowing.em:7:9: `score` is already declared
+      var score = 2
+          ^^^^^
+Assign to the existing name instead of declaring it again, or choose a different name.

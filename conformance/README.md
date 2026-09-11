@@ -45,7 +45,6 @@ who hit it — section 17 treats diagnostic text as part of the product, not as 
 
 ## Coverage so far
 
-Encoding, lexical structure, expression syntax, and integer and floating-point arithmetic.
-Programs are a sequence of calls, since `print` is the only callable and `var` arrives with
-the statement slice. There is no name resolution or type checking, so an undefined name is
-a runtime error rather than something `check` catches.
+Encoding, lexical structure, syntax, name resolution, arithmetic, comparison, bindings, and
+conditionals. There is no type checking yet, so a condition that is not a `Bool` and
+arithmetic on mismatched kinds are runtime errors rather than something `check` catches.

@@ -12,6 +12,7 @@ pub const Token = @import("Token.zig");
 pub const Lexer = @import("Lexer.zig");
 pub const Ast = @import("Ast.zig");
 pub const Parser = @import("Parser.zig");
+pub const Resolver = @import("Resolver.zig");
 pub const Value = @import("Value.zig");
 pub const Interpreter = @import("Interpreter.zig");
 
@@ -81,6 +82,13 @@ fn analyze(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Writer) 
         return .{ .arena_state = arena_state, .diagnostics = copies };
     }
 
+    var resolved = try Resolver.resolve(gpa, parsed.program);
+    defer resolved.deinit();
+    if (!resolved.ok()) {
+        const copies = try dupeDiagnostics(arena, resolved.diagnostics);
+        return .{ .arena_state = arena_state, .diagnostics = copies };
+    }
+
     const writer = out orelse return .{ .arena_state = arena_state, .diagnostics = &.{} };
 
     var outcome = try Interpreter.run(gpa, source, parsed.program, writer);
@@ -120,6 +128,7 @@ test {
     _ = Lexer;
     _ = Ast;
     _ = Parser;
+    _ = Resolver;
     _ = Value;
     _ = Interpreter;
 }
@@ -251,4 +260,144 @@ test "a number outside the Int range is rejected at its literal" {
 
 test "underscores in a literal carry no value" {
     try expectOutput("print(1_000_000)\n", "1000000\n");
+}
+
+// Section 4.3 and 6.1: bindings, assignment, and scope.
+
+test "the first milestone program" {
+    try expectOutput("var score = 2 + 3 * 4\nprint(score)\n", "14\n");
+}
+
+test "var rebinds and const does not" {
+    try expectOutput("var n = 1\nn = 2\nprint(n)\n", "2\n");
+    try expectFailure("const n = 1\nn = 2\n", "`n` cannot be reassigned");
+}
+
+test "compound assignment lowers through the matching operation" {
+    try expectOutput("var n = 10\nn += 5\nprint(n)\n", "15\n");
+    try expectOutput("var n = 10\nn -= 5\nprint(n)\n", "5\n");
+    try expectOutput("var n = 10\nn *= 3\nprint(n)\n", "30\n");
+    try expectOutput("var n = 7\nn //= 2\nprint(n)\n", "3\n");
+    // `/=` follows `/`, which always produces a Float.
+    try expectOutput("var n = 10\nn /= 4\nprint(n)\n", "2.5\n");
+}
+
+test "assignment is a statement and cannot be chained" {
+    try expectFailure("var a = 1\nvar b = 2\na = b = 3\n", "assignments cannot be chained");
+}
+
+test "shadowing a visible local is rejected, including across a block" {
+    try expectFailure("var n = 1\nvar n = 2\n", "`n` is already declared");
+    try expectFailure("var n = 1\nif true {\n  var n = 2\n}\n", "`n` is already declared");
+}
+
+test "sibling scopes may reuse a name" {
+    try expectOutput(
+        "if true {\n  var n = 1\n  print(n)\n}\nif true {\n  var n = 2\n  print(n)\n}\n",
+        "1\n2\n",
+    );
+}
+
+test "a local does not leak out of its block" {
+    try expectFailure("if true {\n  var inner = 1\n}\nprint(inner)\n", "`inner` is not defined");
+}
+
+test "a name must be declared before it is used" {
+    try expectFailure("print(missing)\n", "`missing` is not defined");
+    try expectFailure("missing = 1\n", "`missing` is not defined");
+    // The initializer resolves before the name is introduced, so this reports
+    // the right-hand side rather than quietly seeing itself.
+    try expectFailure("var n = n\n", "`n` is not defined");
+}
+
+// Section 6.2: conditionals.
+
+test "if, else if, and else select one branch" {
+    const program =
+        \\var n = 5
+        \\if n > 10 {
+        \\    print(1)
+        \\}
+        \\else if n > 3 {
+        \\    print(2)
+        \\}
+        \\else {
+        \\    print(3)
+        \\}
+        \\
+    ;
+    try expectOutput(program, "2\n");
+}
+
+test "a condition must be a Bool" {
+    try expectFailure("if 1 {\n  print(1)\n}\n", "a condition must be a Bool, but this is Int");
+    try expectFailure("if nothing {\n  print(1)\n}\n", "a condition must be a Bool, but this is Nothing");
+}
+
+// Section 5.2: comparison and the word operators.
+
+test "comparisons produce a Bool" {
+    try expectOutput("print(1 < 2)\n", "true\n");
+    try expectOutput("print(1 > 2)\n", "false\n");
+    try expectOutput("print(2 == 2)\n", "true\n");
+    try expectOutput("print(2 != 2)\n", "false\n");
+    try expectOutput("print(2 <= 2, 2 >= 3)\n", "true false\n");
+}
+
+test "a chained comparison reads as the conjunction of its links" {
+    try expectOutput("print(0 <= 5 <= 100)\n", "true\n");
+    try expectOutput("print(0 <= 500 <= 100)\n", "false\n");
+    try expectOutput("print(1 < 2 < 3 < 4)\n", "true\n");
+}
+
+test "a chained comparison short-circuits before evaluating the next operand" {
+    // Dividing by zero raises. Reaching it would fail the program, so a plain
+    // `false` proves the chain stopped at the first false link.
+    try expectOutput("print(2 < 1 < 1 // 0)\n", "false\n");
+}
+
+test "and and or short-circuit" {
+    try expectOutput("print(false and 1 // 0 == 0)\n", "false\n");
+    try expectOutput("print(true or 1 // 0 == 0)\n", "true\n");
+    try expectOutput("print(true and false)\n", "false\n");
+    try expectOutput("print(false or true)\n", "true\n");
+}
+
+test "not inverts a Bool and rejects anything else" {
+    try expectOutput("print(not true)\n", "false\n");
+    try expectOutput("print(not (1 > 2))\n", "true\n");
+    try expectFailure("print(not 1)\n", "`not` needs a Bool, but this is Int");
+}
+
+test "a mixed comparison compares mathematical values" {
+    // Widening the Int would round it to the Float and make these equal.
+    try expectOutput("print(9007199254740993 == 9007199254740992.0)\n", "false\n");
+    try expectOutput("print(9007199254740993 > 9007199254740992.0)\n", "true\n");
+    try expectOutput("print(2 == 2.0)\n", "true\n");
+    try expectOutput("print(2 < 2.5)\n", "true\n");
+}
+
+test "NaN follows IEEE comparison behavior" {
+    const nan = "var nan = 1e308 * 10 - 1e308 * 10\n";
+    try expectOutput(nan ++ "print(nan == nan)\n", "false\n");
+    try expectOutput(nan ++ "print(nan != nan)\n", "true\n");
+    try expectOutput(nan ++ "print(nan < 1.0)\n", "false\n");
+    try expectOutput(nan ++ "print(nan >= 1.0)\n", "false\n");
+}
+
+test "values of different kinds cannot be compared or added" {
+    try expectFailure("print(1 < true)\n", "Int and Bool cannot be compared");
+    try expectFailure("print(1 + true)\n", "addition needs numbers, but this is Int and Bool");
+}
+
+// Section 4.2 and 15.2: `nothing`.
+
+test "nothing is a value and print has no result" {
+    try expectOutput("print(nothing)\n", "nothing\n");
+    try expectOutput("var result = print(1)\nprint(result)\n", "1\nnothing\n");
+}
+
+test "a program may declare a name matching a prelude function" {
+    // The prelude is not a local, so this is not the shadowing section 6.1 forbids.
+    try expectOutput("var print_count = 0\nprint(print_count)\n", "0\n");
 }

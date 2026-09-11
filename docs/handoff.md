@@ -1,13 +1,15 @@
 # Current handoff
 
-Updated: 2026-09-10. Prepared by Claude after the expression slice.
+Updated: 2026-09-10. Prepared by Claude after the statement slice.
 
 ## Current milestone
 
-Slices 1 through 4 of section 20 are complete. Emerald runs arithmetic: `emerald run`
-executes a program and `emerald check` analyses one without running it. A program is a
-sequence of calls, and `print` is the only callable. There is no name resolution or type
-checking, so an undefined name is a runtime error rather than something `check` catches.
+Slices 1 through 5 of section 20 are complete, and the first milestone program from
+section 20 runs. `emerald run` executes a program and `emerald check` analyses one without
+running it. Named bindings, assignment, conditionals, comparison, and arithmetic all work.
+
+There is no type checking yet, so a condition that is not a `Bool`, and arithmetic on
+mismatched kinds, are runtime errors rather than something `check` catches.
 
 ## Completed foundation
 
@@ -57,8 +59,12 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   forms, comments, operators, statement-terminating newlines, and EOF.
 - `src/Ast.zig` is the syntax tree, free of runtime values so a future backend consumes the
   same tree the interpreter does.
-- `src/Parser.zig` parses expressions with section 5.3's precedence.
-- `src/Value.zig` holds `Int` and `Float` and implements section 9.4's display rules.
+- `src/Parser.zig` parses statements and expressions with section 5.3's precedence.
+- `src/Resolver.zig` is name resolution: scopes, declarations, and the section 6.1 rules.
+  These belong here rather than in the interpreter because they are properties of the text
+  rather than of a run. A name declared inside `if false { }` still shadows.
+- `src/Value.zig` holds `Nothing`, `Bool`, `Int`, and `Float`, implements section 9.4's
+  display rules, and orders values.
 - `src/Interpreter.zig` evaluates, applying section 5.3's result types and failure modes.
 - `src/emerald.zig` is the library root. `check` and `run` share one pipeline that stops at
   the first stage to report anything, which is section 17.2's rule against cascades.
@@ -66,8 +72,29 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   codes, including `2` for an uncaught runtime error.
 - `conformance/` holds the suite required by sections 19.6 and 23: cases written in Emerald
   with expected results, run by `src/conformance.zig` under `zig build test`. Cases in
-  `valid/` must produce no diagnostics; cases in `diagnostics/` must match their `.expected`
-  file exactly. See [conformance/README.md](../conformance/README.md) for how to add one.
+  `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
+  `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
+  [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Statement decisions worth knowing
+
+- Name resolution is its own pass, so shadowing, undefined names, and assigning to a `const`
+  are reported by `check` rather than only when a line happens to run.
+- Section 3.4's brace style puts `else` on its own line, so a newline always sits between
+  `}` and `else`. That newline terminates a statement everywhere else, so the parser looks
+  past it only once an `else` is known to follow.
+- The prelude is a scope of its own, below the program's. That is what lets a program
+  declare a name matching a prelude function without it counting as the shadowing section
+  6.1 forbids, matching the rule that a local may reuse a module-level name.
+- A comparison chain is one node holding all its operands. That is what makes "evaluate the
+  middle expression once" and "short-circuit as if joined by `and`" fall out naturally
+  rather than being reconstructed by the evaluator.
+- Section 4.4's mixed comparison rule rules out the obvious implementation: widening the
+  `Int` to a `Float` first would make `9007199254740993 == 9007199254740992.0` true, which
+  is the accidental equality the rule exists to prevent. `Value.order` splits the float
+  instead.
+- `Nothing` arrived with this slice rather than later, because `print` had been returning a
+  placeholder `Int` that `var x = print(1)` would have exposed as a lie.
 
 ### Expression decisions worth knowing
 
@@ -99,26 +126,25 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 
 ## Next concrete step
 
-Slice 5 of section 20: the statement slice. `var`, `const`, assignment, blocks, and `if`,
-which finally makes the first milestone program run:
+Slice 6 of section 20: the static checker. Inferred locals, type annotations, definite
+assignment, and operand errors reported before execution rather than during it. Everything
+currently deferred to runtime moves here: a condition that is not a `Bool`, arithmetic on
+mismatched kinds, and comparing values that have no ordering.
 
-```emerald
-var score = 2 + 3 * 4
-print(score) # 14
-```
+Two pieces of groundwork are already in place. `Resolver.zig` has the scope structure a type
+environment needs, and `parseDeclaration` currently rejects a `:` annotation with a
+"not available yet" message that the checker slice should replace with real parsing.
 
-That slice needs comparison operators and `Bool`, so section 5.2 comes with it, including
-chained comparison, which evaluates the middle expression exactly once. Section 6.1 also
-forbids shadowing a visible local within the same function, because beginners usually meant
-assignment.
+Section 4.1 is the specification: every expression has a static type before execution, a
+local is inferred from its initializer, an uninitialized variable needs an explicit type,
+and definite assignment is proved through control flow rather than by inserting a default.
 
-Two things should move alongside it. Cases in `conformance/lexical/` graduate to `run/` as
-the parser reaches them, and the leading-dot question below wants an answer before the
-parser settles the behavior by accident.
+Still open alongside it: the leading-dot question below, and the deferred conditional forms
+(`unless`, the modifier guards, and the `if ... then ... else` expression from section 6.2).
 
 ## Validation and blockers
 
-- `zig build test` passes: 75 unit tests, 20 conformance cases, and 7 command-line contract
+- `zig build test` passes: 103 unit tests, 29 conformance cases, and 7 command-line contract
   tests asserting the section 18.1 exit codes against the real binary. Every case kind was
   confirmed to fail when a case is broken, so none of them are vacuous.
 - Writing this slice found a leak worth remembering. Returning a struct that owns an
@@ -166,6 +192,16 @@ chains are the idiomatic style and will want to wrap. Supporting it means lettin
 using this form and then removed, since the rule as written rejects it.
 
 This needs a decision before the parser slice fixes the behavior by accident.
+
+### Deferred within this slice
+
+- Section 6.2's `unless` block form, the one-line modifier guards, and the
+  `if ... then ... else` expression. The `unless not condition` style diagnostic also needs
+  a severity on `Diagnostic`, which does not exist yet.
+- Type annotations on declarations. `parseDeclaration` rejects a `:` with a clear
+  "not available yet" message rather than parsing and ignoring it.
+- String literals in expressions. The lexer produces the tokens, but nothing consumes them,
+  so `conformance/lexical/strings.em` has not graduated.
 
 ### Known rough edges
 
