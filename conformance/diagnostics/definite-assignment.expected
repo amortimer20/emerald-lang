@@ -1,0 +1,4 @@
+diagnostics/definite-assignment.em:13:7: `score` may not have been assigned
+  print(score)
+        ^^^^^
+Assign `score` on every branch before reading it.

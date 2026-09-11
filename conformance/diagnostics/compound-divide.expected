@@ -1,0 +1,4 @@
+diagnostics/compound-divide.em:6:1: `/` produces Float, which `count` cannot hold because it is Int
+  count /= 2
+  ^^^^^
+`/` always produces a Float. Use `//=` to keep whole numbers, or declare the name as a Float.

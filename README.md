@@ -9,20 +9,28 @@ implementation architecture, staged plan, and evidence-driven roadmap live in
 
 ## Rewrite status
 
-Emerald runs. The source manager, diagnostics, lexer, parser, name resolver, and
-interpreter are implemented, so `emerald run` executes a program and `emerald check`
-analyses one without running it.
+Emerald runs and type-checks. The whole frontend of section 19.2 exists — source manager,
+lexer, parser, name resolver, type checker, interpreter — so `emerald run` executes a
+program and `emerald check` reports its problems without running it.
 
-Named bindings, assignment, conditionals, comparison, and arithmetic work. Loops,
-functions, strings, collections, and type checking arrive with later slices.
+Named bindings, type annotations, assignment, conditionals, comparison, and arithmetic
+work, and definite assignment is proved through control flow. Loops, functions, strings,
+and collections arrive with later slices.
 
 ```emerald
 var score = 2 + 3 * 4
 print(score) # 14
 
+var message: Int
+
 if 0 <= score <= 100 {
-    print(score >= 10 and not (score == 3))
+    message = 1
 }
+else {
+    message = 2
+}
+
+print(message)
 ```
 
 The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify
@@ -54,6 +62,8 @@ src/
   Ast.zig            the syntax tree
   Parser.zig         tokens to a syntax tree
   Resolver.zig       scopes, declarations, and assignment rules
+  Type.zig           static types and their compatibility
+  Checker.zig        type checking and definite assignment
   Value.zig          runtime values and how they display
   Interpreter.zig    evaluates a syntax tree
   conformance.zig    runs the Emerald conformance suite

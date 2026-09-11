@@ -1,15 +1,16 @@
 # Current handoff
 
-Updated: 2026-09-10. Prepared by Claude after the statement slice.
+Updated: 2026-09-10. Prepared by Claude after the static checker slice.
 
 ## Current milestone
 
-Slices 1 through 5 of section 20 are complete, and the first milestone program from
-section 20 runs. `emerald run` executes a program and `emerald check` analyses one without
-running it. Named bindings, assignment, conditionals, comparison, and arithmetic all work.
+Slices 1 through 6 of section 20 are complete. The whole frontend pipeline of section 19.2
+now exists: source manager, lexer, parser, name resolver, type checker, interpreter.
 
-There is no type checking yet, so a condition that is not a `Bool`, and arithmetic on
-mismatched kinds, are runtime errors rather than something `check` catches.
+Every expression has a static type before execution, locals are inferred from their
+initializers, annotations are checked, and definite assignment is proved through control
+flow. What remains at runtime is only what cannot be known statically: integer overflow,
+division by zero, and reading a name the checker could not prove assigned.
 
 ## Completed foundation
 
@@ -63,6 +64,9 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - `src/Resolver.zig` is name resolution: scopes, declarations, and the section 6.1 rules.
   These belong here rather than in the interpreter because they are properties of the text
   rather than of a run. A name declared inside `if false { }` still shadows.
+- `src/Type.zig` is the static type representation and its compatibility rules.
+- `src/Checker.zig` is type checking and flow analysis: inference, annotations, operand
+  errors, and section 4.1's definite assignment.
 - `src/Value.zig` holds `Nothing`, `Bool`, `Int`, and `Float`, implements section 9.4's
   display rules, and orders values.
 - `src/Interpreter.zig` evaluates, applying section 5.3's result types and failure modes.
@@ -75,6 +79,28 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Checker decisions worth knowing
+
+- Section 4.4 describes numeric widening as applying "where arithmetic requires it", but
+  the same section relies on it to infer `[Float]` for `[1, 2.5]`, which is not arithmetic.
+  It is read here as applying wherever a value meets an expected numeric type, so
+  `var rate: Float = 1` is accepted. **Worth confirming**, since it is an interpretation
+  rather than a quotation.
+- Widening has to actually happen, not merely be permitted. Accepting `var rate: Float = 1`
+  statically while storing an `Int` made `rate` print as `1` rather than `1.0`, with the
+  static type and the runtime value disagreeing. The interpreter now carries the kind each
+  name holds and converts on declaration and assignment.
+- `count /= 2` where `count` is an `Int` can never type-check, because section 5.3 lowers
+  `/=` through `/` and `/` always produces a `Float`. That is a consequence of two settled
+  rules rather than a bug, but the cause is far from the line that fails, so it gets its own
+  diagnostic naming the operator and suggesting `//=`.
+- An expression whose type could not be determined becomes `Type.invalid`, which is
+  compatible with everything. One mistake therefore produces one diagnostic instead of one
+  per enclosing expression, which is section 17.2's rule against cascades.
+- Definite assignment merges branches by intersection: a name is assigned after an `if` only
+  when both a `then` and an `else` assign it. An `else if` chain without a final `else`
+  proves nothing, because a path through it assigns nothing.
 
 ### Statement decisions worth knowing
 
@@ -126,27 +152,30 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 
 ## Next concrete step
 
-Slice 6 of section 20: the static checker. Inferred locals, type annotations, definite
-assignment, and operand errors reported before execution rather than during it. Everything
-currently deferred to runtime moves here: a condition that is not a `Bool`, arithmetic on
-mismatched kinds, and comparing values that have no ordering.
+Slice 7 of section 20: functions. Calls, returns, scopes, recursion, and stack traces.
 
-Two pieces of groundwork are already in place. `Resolver.zig` has the scope structure a type
-environment needs, and `parseDeclaration` currently rejects a `:` annotation with a
-"not available yet" message that the checker slice should replace with real parsing.
+This is the first slice where several settled rules finally have somewhere to live.
+Section 7.1 makes parameters read-only bindings and hoists function declarations within
+their scope. Section 6.1's shadowing rule gains its "within the same function" clause, which
+the resolver currently has no boundary for: a parameter or local may reuse a module-level
+name. Section 7.2 requires an explicit return type on recursive and mutually recursive
+functions so checking does not depend on circular inference, and requires every reachable
+path in a value-producing function to return. Section 7.2 also sets a portable minimum of
+1,000 active calls with a catchable `RecursionError` above it.
 
-Section 4.1 is the specification: every expression has a static type before execution, a
-local is inferred from its initializer, an uninitialized variable needs an explicit type,
-and definite assignment is proved through control flow rather than by inserting a default.
+Functions also make `Type` structural for the first time, since a function type is its
+parameters and result rather than a name.
 
-Still open alongside it: the leading-dot question below, and the deferred conditional forms
-(`unless`, the modifier guards, and the `if ... then ... else` expression from section 6.2).
+Still open alongside it: the leading-dot question below, and the deferred forms listed under
+"Deferred within this slice".
 
 ## Validation and blockers
 
-- `zig build test` passes: 103 unit tests, 29 conformance cases, and 7 command-line contract
+- `zig build test` passes: 123 unit tests, 31 conformance cases, and 7 command-line contract
   tests asserting the section 18.1 exit codes against the real binary. Every case kind was
   confirmed to fail when a case is broken, so none of them are vacuous.
+- `conformance/diagnostics/definite-assignment.expected` reproduces the canonical diagnostic
+  printed in section 17.1 character for character, apart from the path and position.
 - Writing this slice found a leak worth remembering. Returning a struct that owns an
   `ArenaAllocator` by value copies the arena, and the copy snapshots the list of blocks it
   owns. Allocating into the arena inside the same struct literal that copies it therefore
@@ -193,15 +222,18 @@ using this form and then removed, since the rule as written rejects it.
 
 This needs a decision before the parser slice fixes the behavior by accident.
 
-### Deferred within this slice
+### Deferred
 
 - Section 6.2's `unless` block form, the one-line modifier guards, and the
   `if ... then ... else` expression. The `unless not condition` style diagnostic also needs
   a severity on `Diagnostic`, which does not exist yet.
-- Type annotations on declarations. `parseDeclaration` rejects a `:` with a clear
-  "not available yet" message rather than parsing and ignoring it.
+- Optional types. The parser splits the `?` in type position as section 4.2 requires, and
+  the checker reports that optionals are not available yet, so the rule is exercised without
+  the semantics existing.
 - String literals in expressions. The lexer produces the tokens, but nothing consumes them,
   so `conformance/lexical/strings.em` has not graduated.
+- Loops. Section 20 does not name them in a slice of their own; they belong with or just
+  after functions, and definite assignment will need a loop rule when they land.
 
 ### Known rough edges
 

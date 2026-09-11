@@ -190,14 +190,23 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
     }
     _ = self.advance();
 
-    // Type annotations arrive with the checker slice, which is the first stage
-    // that can do anything with them.
-    if (self.check(.colon)) {
-        return self.report(
-            self.peek().span,
-            "type annotations are not available yet",
-            "Leave the type out for now; it is inferred from the value.",
-        );
+    var annotation: ?Ast.TypeExpression = null;
+    if (self.match(.colon) != null) annotation = try self.parseTypeExpression();
+
+    // Section 4.1: an uninitialized variable is allowed only with an explicit
+    // type, because there is nothing else to infer one from.
+    if (annotation != null and !self.check(.equal)) {
+        try self.expectStatementEnd();
+        return .{
+            .span = spanning(keyword.span, annotation.?.span),
+            .data = .{ .declaration = .{
+                .mutable = mutable,
+                .name = self.text(name),
+                .name_span = name.span,
+                .annotation = annotation,
+                .initializer = null,
+            } },
+        };
     }
 
     const equals = self.peek();
@@ -206,7 +215,7 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
             equals.span,
             "expected `=` after `{s}`, found {s}",
             .{ self.text(name), equals.kind.describe() },
-            "A declaration needs a value, as in `var score = 0`.",
+            "A declaration needs a value, as in `var score = 0`, or a type, as in `var score: Int`.",
         );
     }
     _ = self.advance();
@@ -220,9 +229,45 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
             .mutable = mutable,
             .name = self.text(name),
             .name_span = name.span,
+            .annotation = annotation,
             .initializer = initializer,
         } },
     };
+}
+
+/// Parses a type.
+///
+/// Section 4.2 records the rule that matters here. Because section 3.3 lets a
+/// name end in `?`, the lexer applies maximal munch and hands over `Int?` as a
+/// single identifier token. In type position the parser splits that trailing `?`
+/// back off, adjusting the span by its final byte. The split is safe because
+/// optionality is only ever written in a type, never at a use site.
+fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
+    const token = self.peek();
+    if (token.kind != .identifier) {
+        return self.reportFmt(
+            token.span,
+            "expected a type, found {s}",
+            .{token.kind.describe()},
+            "Write a type name such as `Int`, `Float`, or `Bool`.",
+        );
+    }
+    _ = self.advance();
+
+    var written = self.text(token);
+    var span = token.span;
+    var question: ?Source.Span = null;
+
+    if (std.mem.endsWith(u8, written, "?")) {
+        question = .{ .start = span.end - 1, .end = span.end };
+        written = written[0 .. written.len - 1];
+        span = .{ .start = span.start, .end = span.end - 1 };
+    } else if (self.check(.question)) {
+        // A `?` that could not attach to a name, as in `[String]?`.
+        question = self.advance().span;
+    }
+
+    return .{ .span = span, .name = written, .question_span = question };
 }
 
 fn parseIf(self: *Parser) Error!Ast.Statement {

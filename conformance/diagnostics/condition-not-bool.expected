@@ -1,4 +1,4 @@
-runtime-errors/condition-not-bool.em:5:4: a condition must be a Bool, but this is Int
+diagnostics/condition-not-bool.em:5:4: a condition must be a Bool, but this is Int
   if count {
      ^^^^^
 Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.

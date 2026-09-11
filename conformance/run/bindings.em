@@ -7,8 +7,8 @@ total -= 3
 total *= 2
 print(total)
 
-# `/=` follows `/`, which always produces a Float.
-var share = 10
+# `/=` follows `/`, which always produces a Float, so the name must hold one.
+var share = 10.0
 share /= 4
 print(share)
 

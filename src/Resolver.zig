@@ -140,7 +140,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         .declaration => |declaration| {
             // The initializer is resolved first, so `var x = x` reports the
             // right-hand `x` as undefined rather than quietly seeing itself.
-            try self.walkExpression(declaration.initializer);
+            if (declaration.initializer) |initializer| try self.walkExpression(initializer);
 
             if (self.visibleLocal(declaration.name) != null) {
                 try self.report(

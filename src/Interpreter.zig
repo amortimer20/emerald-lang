@@ -17,6 +17,7 @@ const std = @import("std");
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Source = @import("Source.zig");
+const Type = @import("Type.zig");
 const Value = @import("Value.zig");
 
 const Interpreter = @This();
@@ -44,9 +45,25 @@ out: *std.Io.Writer,
 failure: ?Diagnostic = null,
 /// One map per lexical scope, innermost last. The resolver has already proven
 /// every name reaches a binding, so lookups here cannot miss.
+///
+/// A slot holds null between a declaration without an initializer and the
+/// assignment that fills it. The checker proves that gap is never read, so the
+/// guard in `evaluate` is a safety net rather than a language rule.
 scopes: std.ArrayList(Scope) = .empty,
 
-const Scope = std.StringHashMapUnmanaged(Value);
+/// A name and the kind it holds.
+///
+/// The kind is carried because section 4.4's widening has to actually happen,
+/// not merely be permitted. The checker accepts `var rate: Float = 1` because an
+/// `Int` is assignable to a `Float`; if the interpreter then stored the `Int`,
+/// the static type and the runtime value would disagree and `rate` would print
+/// as `1` rather than `1.0`.
+const Binding = struct {
+    kind: Value.Kind,
+    value: ?Value,
+};
+
+const Scope = std.StringHashMapUnmanaged(Binding);
 
 const Error = error{Raised} || std.mem.Allocator.Error || std.Io.Writer.Error;
 
@@ -92,20 +109,40 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
         .expression => |expression| _ = try self.evaluate(expression),
 
         .declaration => |declaration| {
-            const value = try self.evaluate(declaration.initializer);
+            const initial: ?Value = if (declaration.initializer) |initializer|
+                try self.evaluate(initializer)
+            else
+                null;
+
+            // An annotation fixes the kind; otherwise it comes from the value,
+            // which section 4.1 infers the type from.
+            const kind: Value.Kind = if (declaration.annotation) |annotation|
+                declaredKind(annotation)
+            else if (initial) |value|
+                value.kind()
+            else
+                .nothing;
+
             const current = &self.scopes.items[self.scopes.items.len - 1];
-            try current.put(self.arena, declaration.name, value);
+            try current.put(self.arena, declaration.name, .{
+                .kind = kind,
+                .value = if (initial) |value| widen(value, kind) else null,
+            });
         },
 
         .assignment => |assignment| {
             const slot = self.find(assignment.name).?;
-            const value = if (assignment.operation) |operation|
+            const value = if (assignment.operation) |operation| blk: {
                 // Section 5.3 lowers a compound assignment through the same
                 // operation as its binary form. The current value is read once.
-                try self.applyBinary(statement.span, operation, slot.*, try self.evaluate(assignment.value))
-            else
-                try self.evaluate(assignment.value);
-            slot.* = value;
+                const current = slot.value orelse return self.raiseUnassigned(
+                    assignment.name_span,
+                    assignment.name,
+                );
+                const right = try self.evaluate(assignment.value);
+                break :blk try self.applyBinary(statement.span, operation, current, right);
+            } else try self.evaluate(assignment.value);
+            slot.value = widen(value, slot.kind);
         },
 
         .conditional => |conditional| try self.executeConditional(statement, conditional),
@@ -142,7 +179,36 @@ fn condition(self: *Interpreter, expression: *const Ast.Expression) Error!bool {
     };
 }
 
-fn find(self: *Interpreter, name: []const u8) ?*Value {
+fn raiseUnassigned(self: *Interpreter, span: Source.Span, name: []const u8) Error {
+    return self.raiseFmt(
+        span,
+        "`{s}` may not have been assigned",
+        .{name},
+        "Assign it on every branch before reading it.",
+    );
+}
+
+/// Applies section 4.4's widening, which is the only implicit conversion in the
+/// language. Anything else is already a type error the checker reported.
+fn widen(value: Value, kind: Value.Kind) Value {
+    if (kind != .float) return value;
+    return switch (value.data) {
+        .int => |number| .initFloat(@floatFromInt(number)),
+        else => value,
+    };
+}
+
+fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
+    const declared = Type.fromName(annotation.name) orelse return .nothing;
+    return switch (declared.kind) {
+        .nothing, .invalid => .nothing,
+        .bool => .bool,
+        .int => .int,
+        .float => .float,
+    };
+}
+
+fn find(self: *Interpreter, name: []const u8) ?*Binding {
     var index = self.scopes.items.len;
     while (index > 0) {
         index -= 1;
@@ -157,11 +223,14 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .float_literal => |value| .initFloat(value),
         .bool_literal => |value| .initBool(value),
         .nothing_literal => Value.nothing,
-        .name => |name| if (self.find(name)) |slot| slot.* else self.raise(
-            expression.span,
-            "this name cannot be used as a value",
-            "`print` is a prelude function and can only be called.",
-        ),
+        .name => |name| if (self.find(name)) |slot|
+            slot.value orelse self.raiseUnassigned(expression.span, name)
+        else
+            self.raise(
+                expression.span,
+                "this name cannot be used as a value",
+                "`print` is a prelude function and can only be called.",
+            ),
         .unary => |unary| self.evaluateUnary(expression, unary),
         .binary => |binary| self.evaluateBinary(expression, binary),
         .logical => |logical| self.evaluateLogical(logical),

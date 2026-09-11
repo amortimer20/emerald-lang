@@ -1,8 +1,8 @@
 //! The Emerald frontend library.
 //!
 //! The pipeline described in section 19.2 is source manager, lexer, parser,
-//! resolver, checker, interpreter. Name resolution and type checking do not
-//! exist yet; the others are wired together by `check` and `run` below.
+//! resolver, checker, interpreter. All of them exist now, wired together by
+//! `check` and `run` below.
 
 const std = @import("std");
 
@@ -13,6 +13,8 @@ pub const Lexer = @import("Lexer.zig");
 pub const Ast = @import("Ast.zig");
 pub const Parser = @import("Parser.zig");
 pub const Resolver = @import("Resolver.zig");
+pub const Type = @import("Type.zig");
+pub const Checker = @import("Checker.zig");
 pub const Value = @import("Value.zig");
 pub const Interpreter = @import("Interpreter.zig");
 
@@ -89,6 +91,13 @@ fn analyze(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Writer) 
         return .{ .arena_state = arena_state, .diagnostics = copies };
     }
 
+    var checked = try Checker.check(gpa, parsed.program);
+    defer checked.deinit();
+    if (!checked.ok()) {
+        const copies = try dupeDiagnostics(arena, checked.diagnostics);
+        return .{ .arena_state = arena_state, .diagnostics = copies };
+    }
+
     const writer = out orelse return .{ .arena_state = arena_state, .diagnostics = &.{} };
 
     var outcome = try Interpreter.run(gpa, source, parsed.program, writer);
@@ -129,6 +138,8 @@ test {
     _ = Ast;
     _ = Parser;
     _ = Resolver;
+    _ = Type;
+    _ = Checker;
     _ = Value;
     _ = Interpreter;
 }
@@ -278,8 +289,12 @@ test "compound assignment lowers through the matching operation" {
     try expectOutput("var n = 10\nn -= 5\nprint(n)\n", "5\n");
     try expectOutput("var n = 10\nn *= 3\nprint(n)\n", "30\n");
     try expectOutput("var n = 7\nn //= 2\nprint(n)\n", "3\n");
-    // `/=` follows `/`, which always produces a Float.
-    try expectOutput("var n = 10\nn /= 4\nprint(n)\n", "2.5\n");
+    // `/=` follows `/`, which always produces a Float, so it needs a Float name.
+    try expectOutput("var n = 10.0\nn /= 4\nprint(n)\n", "2.5\n");
+    try expectFailure(
+        "var n = 10\nn /= 4\n",
+        "`/` produces Float, which `n` cannot hold because it is Int",
+    );
 }
 
 test "assignment is a statement and cannot be chained" {
@@ -400,4 +415,113 @@ test "nothing is a value and print has no result" {
 test "a program may declare a name matching a prelude function" {
     // The prelude is not a local, so this is not the shadowing section 6.1 forbids.
     try expectOutput("var print_count = 0\nprint(print_count)\n", "0\n");
+}
+
+// Section 4.1: static types, inference, and definite assignment.
+
+test "a local is inferred from its initializer" {
+    try expectOutput("var n = 1\nprint(n + 1)\n", "2\n");
+    try expectFailure("var n = 1\nprint(not n)\n", "`not` needs a Bool, but this is Int");
+}
+
+test "an annotation is checked against the initializer" {
+    try expectOutput("var n: Int = 1\nprint(n)\n", "1\n");
+    try expectFailure("var n: Int = 1.5\n", "this is Float, but `n` was declared as Int");
+    try expectFailure("var flag: Bool = 1\n", "this is Int, but `flag` was declared as Bool");
+}
+
+test "Int widens to Float in a declaration but Float does not narrow" {
+    try expectOutput("var rate: Float = 1\nprint(rate)\n", "1.0\n");
+    try expectFailure("var count: Int = 1.0\n", "this is Float, but `count` was declared as Int");
+}
+
+test "an unknown type name is rejected" {
+    try expectFailure("var winner: Player\n", "`Player` is not a type");
+}
+
+test "an optional annotation is recognized but not yet available" {
+    // The lexer hands over `Int?` as one identifier; the parser splits the
+    // trailing `?` in type position, which is what makes this reachable.
+    try expectFailure("var maybe: Int?\n", "optional types are not available yet");
+}
+
+test "an uninitialized variable needs an explicit type" {
+    try expectFailure("var winner\n", "expected `=` after `winner`, found the end of the line");
+}
+
+test "reading before definite assignment is rejected" {
+    try expectFailure("var n: Int\nprint(n)\n", "`n` may not have been assigned");
+}
+
+test "assignment on every branch proves definite assignment" {
+    const program =
+        \\var message: Int
+        \\if 1 > 0 {
+        \\    message = 1
+        \\}
+        \\else {
+        \\    message = 2
+        \\}
+        \\print(message)
+        \\
+    ;
+    try expectOutput(program, "1\n");
+}
+
+test "assignment on only one branch does not" {
+    const program =
+        \\var message: Int
+        \\if 1 > 0 {
+        \\    message = 1
+        \\}
+        \\print(message)
+        \\
+    ;
+    try expectFailure(program, "`message` may not have been assigned");
+}
+
+test "an else-if chain without a final else proves nothing" {
+    const program =
+        \\var m: Int
+        \\if 1 > 0 {
+        \\    m = 1
+        \\}
+        \\else if 2 > 1 {
+        \\    m = 2
+        \\}
+        \\print(m)
+        \\
+    ;
+    try expectFailure(program, "`m` may not have been assigned");
+}
+
+test "operand errors are reported before execution rather than during it" {
+    // Nothing is printed, because the program never starts.
+    try expectFailure("print(1)\nprint(1 + true)\n", "addition needs numbers, but this is Int and Bool");
+    try expectFailure("print(1)\nif 1 {\n  print(2)\n}\n", "a condition must be a Bool, but this is Int");
+}
+
+test "assignment checks the declared type" {
+    try expectFailure("var n = 1\nn = true\n", "this is Bool, but `n` holds Int");
+    try expectOutput("var rate = 1.0\nrate = 2\nprint(rate)\n", "2.0\n");
+}
+
+test "a compound assignment is checked through the operation it lowers to" {
+    // `/` always produces a Float, so `/=` can never store into an Int.
+    try expectFailure(
+        "var count = 10\ncount /= 2\n",
+        "`/` produces Float, which `count` cannot hold because it is Int",
+    );
+    try expectFailure("var n = 1\nn += true\n", "addition needs numbers, but this is Int and Bool");
+}
+
+test "one mistake produces one diagnostic rather than a cascade" {
+    var source = try Source.init(testing.allocator, "test.em", "var n = 1 + true\nprint(n + 1)\nprint(n * 2)\n");
+    defer source.deinit(testing.allocator);
+
+    var report = try check(testing.allocator, &source);
+    defer report.deinit();
+
+    // The invalid type flows outward without being reported again.
+    try testing.expectEqual(@as(usize, 1), report.diagnostics.len);
 }

@@ -39,7 +39,20 @@ pub const Declaration = struct {
     mutable: bool,
     name: []const u8,
     name_span: Source.Span,
-    initializer: *const Expression,
+    /// Section 4.1 infers the type from the initializer when there is no
+    /// annotation, and requires an annotation when there is no initializer.
+    annotation: ?TypeExpression,
+    initializer: ?*const Expression,
+};
+
+/// A type as written in the source. Only a name so far; section 4.2's `[T]`,
+/// `[K: V]`, `{T}`, and function types arrive with the features that need them.
+pub const TypeExpression = struct {
+    span: Source.Span,
+    name: []const u8,
+    /// The `?` that marks an optional, split from the name by the parser as
+    /// section 4.2 describes. Null when the type is not optional.
+    question_span: ?Source.Span,
 };
 
 pub const Assignment = struct {
