@@ -1,0 +1,4 @@
+diagnostics/const-list-mutation.em:5:1: `players` is a `const`, so its contents cannot change
+  players.append(3)
+  ^^^^^^^
+Declare `players` with `var` if it needs to change.

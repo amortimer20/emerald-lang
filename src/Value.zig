@@ -1,14 +1,20 @@
 //! Runtime values and how they display.
 //!
-//! `Nothing`, `Bool`, `Int`, and `Float` exist so far. Section 4.2 settles the numeric
-//! widths as language semantics rather than host details: `Int` is 64-bit signed
-//! and `Float` is IEEE-754 binary64, and every backend must agree.
+//! `Nothing`, `Bool`, `Int`, `Float`, and lists exist so far. Section 4.2
+//! settles the numeric widths as language semantics rather than host details:
+//! `Int` is 64-bit signed and `Float` is IEEE-754 binary64, and every backend
+//! must agree.
+//!
+//! A list is a reference to a counted buffer in `Heap`, so copying a `Value`
+//! is cheap, but only `Heap.retain` records that the copy exists. See `Heap`
+//! for the rules that keep section 8.1's value semantics intact.
 
 const std = @import("std");
+const Heap = @import("Heap.zig");
 
 const Value = @This();
 
-pub const Kind = enum { nothing, bool, int, float };
+pub const Kind = enum { nothing, bool, int, float, list };
 
 data: Data,
 
@@ -18,6 +24,7 @@ pub const Data = union(Kind) {
     bool: bool,
     int: i64,
     float: f64,
+    list: *Heap.List,
 };
 
 pub const nothing: Value = .{ .data = .nothing };
@@ -40,36 +47,53 @@ pub fn kind(self: Value) Kind {
 
 /// The source spelling of this value's type, as `type_name` reports it in
 /// section 4.4.
+///
+/// A list's element type is static and not carried at runtime, so a list is
+/// described only as a list. This appears only in safety-net errors the checker
+/// already rules out.
 pub fn typeName(self: Value) []const u8 {
     return switch (self.data) {
         .nothing => "Nothing",
         .bool => "Bool",
         .int => "Int",
         .float => "Float",
+        .list => "a list",
     };
 }
 
 /// Whether two values are numbers, which is what arithmetic and ordering need.
 pub fn isNumber(self: Value) bool {
     return switch (self.data) {
-        .nothing, .bool => false,
+        .nothing, .bool, .list => false,
         .int, .float => true,
     };
 }
 
-/// Writes the value as `print` would.
+/// Writes the value as `print` would. A list writes its elements the same way,
+/// between brackets and separated by a comma and a space, as it would be
+/// written in source: `[1, 2, 3]`.
 pub fn display(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     switch (self.data) {
         .nothing => try writer.writeAll("nothing"),
         .bool => |value| try writer.writeAll(if (value) "true" else "false"),
         .int => |value| try writer.print("{d}", .{value}),
         .float => |value| try displayFloat(value, writer),
+        .list => |list| {
+            try writer.writeAll("[");
+            for (list.items.items, 0..) |item, position| {
+                if (position != 0) try writer.writeAll(", ");
+                try item.display(writer);
+            }
+            try writer.writeAll("]");
+        },
     }
 }
 
 /// Emerald's `==`. Numbers compare by mathematical value, as `order` does, so
-/// a NaN equals nothing, itself included. Values of different kinds are never
-/// equal; the checker rejects comparing them, so that answer is a safety net.
+/// a NaN equals nothing, itself included. Lists are equal when they hold equal
+/// elements in the same order (8.4), using this same `==` for each. Values of
+/// different kinds are never equal; the checker rejects comparing them, so that
+/// answer is a safety net.
 pub fn equals(left: Value, right: Value) bool {
     return switch (left.data) {
         .nothing => right.data == .nothing,
@@ -78,6 +102,16 @@ pub fn equals(left: Value, right: Value) bool {
             else => false,
         },
         .int, .float => order(left, right) == .eq,
+        .list => |a| switch (right.data) {
+            .list => |b| blk: {
+                if (a.items.items.len != b.items.items.len) break :blk false;
+                for (a.items.items, b.items.items) |x, y| {
+                    if (!equals(x, y)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        },
     };
 }
 
@@ -93,7 +127,7 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
         .int => |a| switch (right.data) {
             .int => |b| std.math.order(a, b),
             .float => |b| orderIntFloat(a, b),
-            .nothing, .bool => null,
+            .nothing, .bool, .list => null,
         },
         .float => |a| switch (right.data) {
             .int => |b| if (orderIntFloat(b, a)) |result| result.invert() else null,
@@ -101,9 +135,9 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
                 null
             else
                 std.math.order(a, b),
-            .nothing, .bool => null,
+            .nothing, .bool, .list => null,
         },
-        .nothing, .bool => null,
+        .nothing, .bool, .list => null,
     };
 }
 

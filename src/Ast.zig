@@ -97,19 +97,30 @@ pub const Declaration = struct {
     initializer: ?*const Expression,
 };
 
-/// A type as written in the source. Only a name so far; section 4.2's `[T]`,
-/// `[K: V]`, `{T}`, and function types arrive with the features that need them.
+/// A type as written in the source: a name, or section 8.2's `[T]`. The
+/// dictionary, set, and function type spellings arrive with their features.
 pub const TypeExpression = struct {
     span: Source.Span,
+    /// The name, or empty for a list type.
     name: []const u8,
+    /// The element type of a list type, `T` in `[T]`; null for a name.
+    element: ?*const TypeExpression = null,
     /// The `?` that marks an optional, split from the name by the parser as
     /// section 4.2 describes. Null when the type is not optional.
     question_span: ?Source.Span,
 };
 
+/// `name = value`, or an assignment into a list, `name[i][j] = value`.
 pub const Assignment = struct {
+    /// The binding assigned, or the one whose list is changed through
+    /// `indices`.
     name: []const u8,
     name_span: Source.Span,
+    /// The index expressions from outermost to innermost, empty for a plain
+    /// assignment. `grid[0][1] = 5` has `[0, 1]`.
+    indices: []const *const Expression = &.{},
+    /// The whole destination as written, for diagnostics.
+    target_span: Source.Span,
     /// The operation a compound assignment applies, or null for a plain `=`.
     /// Section 5.3 lowers `a += b` through the same operation as `a + b`.
     operation: ?BinaryOperator,
@@ -155,6 +166,24 @@ pub const Expression = struct {
         comparison: Comparison,
         call: Call,
         range: Range,
+        /// Section 8.2's `[a, b, c]`. Dictionary and set literals share the
+        /// bracket spelling and arrive with those collections.
+        list_literal: []const *const Expression,
+        /// Section 5.4's zero-based `base[index]`.
+        index: Index,
+        /// `base.name`: a property, or a method when it is the callee of a call.
+        member: Member,
+    };
+
+    pub const Index = struct {
+        base: *const Expression,
+        index: *const Expression,
+    };
+
+    pub const Member = struct {
+        base: *const Expression,
+        name: []const u8,
+        name_span: Source.Span,
     };
 
     /// Section 6.4's `start..end`, which includes both bounds, or

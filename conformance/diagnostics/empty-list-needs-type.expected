@@ -1,0 +1,4 @@
+diagnostics/empty-list-needs-type.em:3:13: an empty list needs a type
+  var names = []
+              ^^
+Say what it will hold, as in `var names: [Int] = []`.

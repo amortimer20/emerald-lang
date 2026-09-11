@@ -1,0 +1,4 @@
+diagnostics/familiar-list-names.em:4:8: [Int] has no method `push`
+  scores.push(3)
+         ^^^^
+Emerald calls this `append`.

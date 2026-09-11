@@ -1,16 +1,20 @@
 # Current handoff
 
-Updated: 2026-09-11. Prepared by Claude after the loop slice.
+Updated: 2026-09-11. Prepared by Claude after the list slice.
 
 ## Current milestone
 
 Slices 1 through 7 of section 20 are complete, plus a loop slice the user approved
-inserting before section 20's slice 8. The whole frontend pipeline of section 19.2 exists:
-source manager, lexer, parser, name resolver, type checker, interpreter.
+inserting before slice 8, and slice 8 itself as the user scoped it: lists, without the
+higher-order method, which moves to the heap slice with lambdas. The whole frontend
+pipeline of section 19.2 exists: source manager, lexer, parser, name resolver, type
+checker, interpreter.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
-`continue`, and the trailing `if` guard. Every expression has a static type before execution and
+`continue`, and the trailing `if` guard. Lists work: literals, indexing, element assignment,
+the essential methods, equality, printing, and `for`, with value semantics through
+copy-on-write. Every expression has a static type before execution and
 definite assignment is proved through control flow. What remains at runtime is only what
 cannot be known statically: integer overflow, division by zero, and exceeding the
 recursion limit.
@@ -71,12 +75,14 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   rules. These belong here rather than in the interpreter because they are properties of
   the text rather than of a run. It also records, per function, which module variables it
   reads and which functions it calls, for the checker.
-- `src/Type.zig` is the static type representation, its compatibility rules, and function
-  signatures.
+- `src/Type.zig` is the static type representation, its compatibility rules, function
+  signatures, and the list method table the checker and interpreter share.
 - `src/Checker.zig` is type checking and flow analysis: inference, annotations, operand
   errors, section 4.1's definite assignment, and everything section 7 asks of functions.
-- `src/Value.zig` holds `Nothing`, `Bool`, `Int`, and `Float`, implements section 9.4's
-  display rules, and orders values.
+- `src/Value.zig` holds `Nothing`, `Bool`, `Int`, `Float`, and lists, implements section
+  9.4's display rules, and compares and orders values.
+- `src/Heap.zig` owns list buffers: reference counts, copy-on-write, and the list of every
+  live buffer that the run frees at the end and the slice 9 collector will walk.
 - `src/Interpreter.zig` evaluates, applying section 5.3's result types and failure modes,
   and guards the host stack. Block and call scopes come from the general allocator and are
   reused once emptied, so a running loop does not allocate.
@@ -91,6 +97,45 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### List decisions worth knowing
+
+- **Scope** (user-approved): lists only. Dictionaries and sets need string keys to be
+  useful, and `first`, `last`, and `each` need optionals and lambdas.
+- **Value semantics are reference counts with copy-on-write** (`Heap.zig`), as planned. A
+  "shared bit" cleared only by a future collector was considered and rejected: passing a list
+  to a function would mark it shared for good, so a loop calling `f(xs)` then
+  `xs.append(i)` would copy the whole list every iteration. With counts, 200,000 such
+  iterations take 0.09 s. The rule the interpreter follows: every new holder retains (a name
+  read, a retained element, a loop snapshot), every holder that ends releases (a scope
+  closing, an overwritten binding, a consumed temporary). Counts may run high, which only
+  costs a copy; they must never run low. Every buffer is also linked into `Heap.live`, and
+  `Heap.deinit` frees whatever is left, so error paths cannot leak. A unit test pins flat
+  memory, and was confirmed to fail when `popScope` stops releasing.
+- **A buffer records its element kind**, because runtime has no static types but a `[Float]`
+  must store `rates.append(2)` as `2.0`. List literals get their element type from the
+  checker's `literal_types` table, which is how `var rates: [Float] = [1, 2]` stores
+  Floats.
+- **Expected types flow into list literals** (`typeOfExpected`): from annotations,
+  assignment targets, parameters, method arguments, return types, and the other side of a
+  comparison. Only literals use them. Without context, a literal infers its element type and
+  widens `Int` beside `Float`; `[[1], [2.5]]` without an annotation is rejected, since the
+  inner lists are typed before they meet. Lists are invariant everywhere else, with their
+  own correction.
+- **Where a list changes**: element assignment and mutating methods evaluate their indices
+  and arguments first, then walk to the target, making each list on the way unique. Walking
+  afterwards is what keeps a pointer valid when evaluating the value itself changes the list.
+- **Mutation is checked in the checker, not the resolver**, because whether a method mutates
+  depends on the receiver's type. Checker bindings carry a `Mutability`, and each reason a
+  change is refused has its own correction: `const`, parameter, loop variable, or a temporary
+  like `make().append(1)`.
+- **Unknown members suggest Emerald's name** for another language's (`push` → `append`,
+  `length` → `count`), and `count()` and a bare `append` explain properties versus methods.
+- **`5..1` is now an error** (the user chose error over warning, recorded in 6.4), for two
+  literal endpoints only.
+- **Member access and indexing** are postfix operators chained with calls, so
+  `grid[0].append(1)` and `make()[0]` parse; `?.` reports that optional chaining is not
+  available yet.
 
 ### Loop decisions worth knowing
 
@@ -283,37 +328,23 @@ still open.
 
 ## Next concrete step
 
-Section 20's slice 8 is collections: a list literal, indexing, mutation, and one
-higher-order method. What bears on it:
+Two candidates, and the order is worth asking the user about:
 
-- **Lambdas are out of this slice** (the user approved the plan). "One higher-order method"
-  needs a block argument, which is section 7.4's lambda, and a closure that outlives its
-  scope needs heap storage, so lambdas, function values, capture by reference, the
-  trailing-lambda call form, and the first higher-order method move to the slice 9 heap
-  slice. The collection slice covers literals, indexing, mutation, `count`, and `for`.
-- **One bracket parser for all three collections** (8.2): list, dictionary, and set literals
-  are all square brackets, a dictionary is recognized by its `key: value` entries, and a set
-  by an expected set type. Only literals take their kind from context.
-- **Collections are values** (4.3, 7.1, 8.1, 10.2): `const` freezes a value entirely,
-  stopping at class references, and parameters are read-only the same way. So:
-  - Store each collection as a reference-counted buffer with copy-on-write. Assignment and
-    argument passing share the buffer; a mutation copies first only when it is shared.
-  - Nested updates such as `grid[0][1] = 5` must update in place, which needs assignable
-    location paths in the interpreter; indexing needs them anyway.
-  - Reference counting reclaims collection storage completely until classes exist, because
-    value-typed data cannot form a cycle. Once a class can hold a list that holds the class,
-    the slice 9 collector must trace inside collection buffers too.
-  - Collection mutators (`append` and the rest) need a "mutates its receiver" flag, so that
-    calling one on a `const` or a parameter is rejected. Struct methods will need the same
-    flag, inferred from their bodies, in the object-model slice.
-- **`for` over a collection** replaces the "only a range so far" diagnostic, and iterates the
-  snapshot taken when the loop begins (8.4), which copy-on-write makes free.
-- **Member access** (`list.count`, `list.append(x)`) is not parsed yet. The leading-dot
-  continuation is already in the lexer waiting for it.
+- **Section 20's slice 9, the heap slice, with lambdas** (the approved plan). Lambdas and
+  closures, function values, capture by reference, the trailing-lambda call form, the
+  higher-order method slice 8 deferred (`each` or `map`), and section 19.5's mark-and-sweep
+  collector, which must trace inside list buffers once anything can form a cycle. `Heap.live`
+  is already the object list it walks.
+- **Strings.** No slice in section 20 is devoted to them, yet the first program in section 2
+  prints a greeting, and dictionaries and sets need string keys. The slice would cook string
+  literals (escapes, triple-quoted indentation, interpolation), add the `String` type and
+  its values, and vendor the UAX #29 and UAX #15 tables that 9.1 and 9.2 need. It is the
+  larger of the two but the more visible for beginners. The recommendation is strings
+  first, since lambdas are more useful once there is text to transform.
 
 ## Validation and blockers
 
-- `zig build test` passes in Debug and ReleaseSafe: 172 unit tests, 60 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 191 unit tests, 71 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -358,8 +389,10 @@ higher-order method. What bears on it:
   assigned everything rather than reported.
 - Section 6.2's `if ... then ... else` expression. `unless` is no longer part of the language
   and is not a keyword.
-- Section 6.4's warning for a range whose literal endpoints descend, such as `5..1`, which
-  can only be a mistake. It needs diagnostic severity, like the unreachable-code warning.
+- From section 8: dictionaries and sets (the bracket parser reports "dictionaries are not
+  available yet" at a `:`), `first` and `last` (need optionals), `each` and the rest of the
+  rich vocabulary (need lambdas), slicing with ranges, `type_name`, and a mutating method
+  through a struct field, which arrives with structs.
 - Range values: `(1..7).step(2)`, `random(1..6)`, and ranges stored in names are rejected
   with "a range can only be looped over so far" until the collection vocabulary lands.
 - Optional types. The parser splits the `?` in type position as section 4.2 requires, and

@@ -1,9 +1,12 @@
 //! Static types.
 //!
-//! Section 4.1 requires every expression to have a type before execution. Only
-//! the built-in scalars exist so far; optionals, collections, and user types
-//! arrive with their own slices, which is why this is an enum rather than a
-//! structured representation.
+//! Section 4.1 requires every expression to have a type before execution. The
+//! built-in scalars are plain kinds; a list carries its element type, allocated
+//! by whoever builds it, so `[[Int]]` is a list whose element is `[Int]`.
+//! Optionals, the other collections, and user types arrive with their slices.
+//!
+//! Types print through `format`, so a diagnostic writes `{f}` and gets the
+//! spelling a program would write, such as `[Float]`.
 
 const std = @import("std");
 
@@ -14,6 +17,8 @@ pub const Kind = enum {
     bool,
     int,
     float,
+    /// Section 8.2's `[T]`. `element` holds `T`.
+    list,
     /// A type that could not be determined because something was already
     /// reported. It is compatible with everything, so one mistake produces one
     /// diagnostic instead of a cascade through every expression containing it.
@@ -21,6 +26,8 @@ pub const Kind = enum {
 };
 
 kind: Kind,
+/// The element type of a list, and null for every other kind.
+element: ?*const Type = null,
 
 /// A function's checked shape: each parameter's type, its name for diagnostics
 /// that name a mismatched one, and the return type, whether written or
@@ -48,15 +55,25 @@ pub const int: Type = .{ .kind = .int };
 pub const float: Type = .{ .kind = .float };
 pub const invalid: Type = .{ .kind = .invalid };
 
-/// The name a program writes for this type, and the name diagnostics use.
-pub fn name(self: Type) []const u8 {
-    return switch (self.kind) {
-        .nothing => "Nothing",
-        .bool => "Bool",
-        .int => "Int",
-        .float => "Float",
-        .invalid => "an unknown type",
-    };
+/// `[element]`, with the element allocated from `allocator`, which must outlive
+/// the result.
+pub fn listOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.Error!Type {
+    const stored = try allocator.create(Type);
+    stored.* = element;
+    return .{ .kind = .list, .element = stored };
+}
+
+/// Writes the name a program writes for this type, which is also the name
+/// diagnostics use.
+pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    switch (self.kind) {
+        .nothing => try writer.writeAll("Nothing"),
+        .bool => try writer.writeAll("Bool"),
+        .int => try writer.writeAll("Int"),
+        .float => try writer.writeAll("Float"),
+        .list => try writer.print("[{f}]", .{self.element.?.*}),
+        .invalid => try writer.writeAll("an unknown type"),
+    }
 }
 
 pub fn fromName(text: []const u8) ?Type {
@@ -70,28 +87,73 @@ pub fn fromName(text: []const u8) ?Type {
 pub fn isNumber(self: Type) bool {
     return switch (self.kind) {
         .int, .float => true,
-        .nothing, .bool, .invalid => false,
+        .nothing, .bool, .list, .invalid => false,
     };
+}
+
+/// Whether the type is, or contains, one that could not be determined.
+pub fn isInvalid(self: Type) bool {
+    return switch (self.kind) {
+        .invalid => true,
+        .list => self.element.?.isInvalid(),
+        else => false,
+    };
+}
+
+/// Structural equality, under which an undetermined part matches anything so
+/// that one mistake does not produce a second report.
+pub fn same(self: Type, other: Type) bool {
+    if (self.kind == .invalid or other.kind == .invalid) return true;
+    if (self.kind != other.kind) return false;
+    if (self.kind == .list) return self.element.?.same(other.element.?.*);
+    return true;
 }
 
 /// Whether a value of this type may be used where `target` is expected.
 ///
-/// Section 4.4 allows numeric widening from `Int` to `Float`. It describes the
-/// allowance as applying "where arithmetic requires it", but the same section
-/// also relies on it to infer `[Float]` for `[1, 2.5]`, which is not arithmetic.
-/// The rule is read here as applying wherever a value meets an expected numeric
-/// type, so `var rate: Float = 1` is accepted. Narrowing never is.
+/// Section 4.4 widens `Int` to `Float` wherever a `Float` is expected. Lists are
+/// invariant (4.4): `[Int]` is not a `[Float]`, because a list is mutable and
+/// its elements would have to change type to become one. A list literal can
+/// still be built as `[Float]` from whole numbers, because the checker gives it
+/// the expected element type before its elements are stored.
 pub fn assignableTo(self: Type, target: Type) bool {
     if (self.kind == .invalid or target.kind == .invalid) return true;
-    if (self.kind == target.kind) return true;
-    return self.kind == .int and target.kind == .float;
+    if (self.kind == .int and target.kind == .float) return true;
+    return self.same(target);
 }
+
+/// What a list method takes and gives, in terms of the list's element type.
+/// Section 8.5's essential vocabulary; `first`, `last`, and `each` wait for
+/// optionals and lambdas.
+pub const ListMethod = struct {
+    parameters: []const Operand,
+    result: Result,
+    /// Whether it changes the list it is called on, which a `const`, a
+    /// parameter, a loop variable, or a temporary value cannot allow (4.3, 7.1).
+    mutates: bool,
+
+    pub const Operand = enum { element, index };
+    pub const Result = enum { nothing, bool, element };
+};
+
+pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
+    .{ "append", ListMethod{ .parameters = &.{.element}, .result = .nothing, .mutates = true } },
+    .{ "insert", ListMethod{ .parameters = &.{ .index, .element }, .result = .nothing, .mutates = true } },
+    .{ "remove", ListMethod{ .parameters = &.{.element}, .result = .nothing, .mutates = true } },
+    .{ "remove_all", ListMethod{ .parameters = &.{.element}, .result = .nothing, .mutates = true } },
+    .{ "remove_at", ListMethod{ .parameters = &.{.index}, .result = .element, .mutates = true } },
+    .{ "remove_first", ListMethod{ .parameters = &.{}, .result = .element, .mutates = true } },
+    .{ "remove_last", ListMethod{ .parameters = &.{}, .result = .element, .mutates = true } },
+    .{ "clear", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
+    .{ "contains?", ListMethod{ .parameters = &.{.element}, .result = .bool, .mutates = false } },
+    .{ "empty?", ListMethod{ .parameters = &.{}, .result = .bool, .mutates = false } },
+});
 
 /// The type of an arithmetic result, given both operand types, or null when the
 /// operands are not numbers.
 ///
-/// Section 5.3 fixes these: `/` and `**` always produce a `Float`, while the
-/// others produce an `Int` only when both operands are `Int`.
+/// Section 5.3 fixes these: `/` always produces a `Float`, while the others
+/// produce an `Int` only when both operands are `Int`.
 pub fn arithmeticResult(left: Type, right: Type, always_float: bool) ?Type {
     if (left.kind == .invalid or right.kind == .invalid) return invalid;
     if (!left.isNumber() or !right.isNumber()) return null;
@@ -124,13 +186,37 @@ test "an invalid type is compatible with everything so errors do not cascade" {
     try testing.expect(Type.int.assignableTo(.invalid));
 }
 
+test "lists are invariant, so an Int list is not a Float list" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const ints = try Type.listOf(arena, .int);
+    const floats = try Type.listOf(arena, .float);
+    try testing.expect(ints.assignableTo(ints));
+    try testing.expect(!ints.assignableTo(floats));
+    try testing.expect(!floats.assignableTo(ints));
+    try testing.expect(!ints.assignableTo(.int));
+    try testing.expect(ints.assignableTo(try Type.listOf(arena, .invalid)));
+}
+
 test "arithmetic keeps Int only when both operands are Int" {
     try testing.expectEqual(Type.Kind.int, Type.arithmeticResult(.int, .int, false).?.kind);
     try testing.expectEqual(Type.Kind.float, Type.arithmeticResult(.int, .float, false).?.kind);
     try testing.expectEqual(Type.Kind.float, Type.arithmeticResult(.float, .float, false).?.kind);
-    // `/` and `**` produce a Float even for two Ints.
+    // `/` produces a Float even for two Ints.
     try testing.expectEqual(Type.Kind.float, Type.arithmeticResult(.int, .int, true).?.kind);
     try testing.expect(Type.arithmeticResult(.bool, .int, false) == null);
+}
+
+test "types print with their source spelling" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const nested = try Type.listOf(arena, try Type.listOf(arena, .float));
+    try testing.expectEqualStrings("[[Float]]", try std.fmt.allocPrint(arena, "{f}", .{nested}));
+    try testing.expectEqualStrings("Int", try std.fmt.allocPrint(arena, "{f}", .{Type.int}));
 }
 
 test "type names round-trip through their source spelling" {
@@ -139,5 +225,4 @@ test "type names round-trip through their source spelling" {
     try testing.expectEqual(Type.Kind.bool, Type.fromName("Bool").?.kind);
     try testing.expectEqual(Type.Kind.nothing, Type.fromName("Nothing").?.kind);
     try testing.expect(Type.fromName("Player") == null);
-    try testing.expectEqualStrings("Int", Type.int.name());
 }

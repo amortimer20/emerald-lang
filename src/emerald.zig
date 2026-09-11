@@ -160,7 +160,15 @@ fn analyze(
 
     const writer = out orelse return .{ .arena_state = arena_state, .diagnostics = &.{} };
 
-    var outcome = try Interpreter.run(gpa, source, parsed.program, &checked.signatures, writer, stack);
+    var outcome = try Interpreter.run(
+        gpa,
+        source,
+        parsed.program,
+        &checked.signatures,
+        &checked.literal_types,
+        writer,
+        stack,
+    );
     defer outcome.deinit();
 
     const failure = if (outcome.failure) |raised|
@@ -629,7 +637,9 @@ test "a for loop visits a range in order, and a range only counts upward" {
     try expectOutput("for i in 0..<3 {\n    print(i)\n}\n", "0\n1\n2\n");
     // A start past the end is empty, so computed bounds cannot reverse.
     try expectOutput("var count = 0\nfor i in 0..count - 1 {\n    print(i)\n}\nprint(9)\n", "9\n");
-    try expectOutput("for i in 5..1 {\n    print(i)\n}\nprint(9)\n", "9\n");
+    // Written with two literals, a descending range can only be a mistake.
+    try expectFailure("for i in 5..1 {\n    print(i)\n}\n", "this range is empty, because ranges count upward");
+    try expectFailure("for i in -1..-3 {\n    print(i)\n}\n", "this range is empty, because ranges count upward");
     try expectOutput("for i in 3..<3 {\n    print(i)\n}\nprint(9)\n", "9\n");
     try expectOutput("for i in 3..3 {\n    print(i)\n}\n", "3\n");
 }
@@ -789,6 +799,157 @@ test "a trailing if guards one statement" {
 
 test "a declaration cannot have a trailing if" {
     try expectFailure("var x = 1 if true\n", "a declaration cannot have a trailing `if`");
+}
+
+// Section 8: lists.
+
+test "a list literal, indexing, and count" {
+    try expectOutput("var scores = [10, 20, 30]\nprint(scores, scores.count, scores[0], scores[2])\n", "[10, 20, 30] 3 10 30\n");
+    try expectOutput("print([[1, 2], [3]], [[1, 2], [3]][1][0])\n", "[[1, 2], [3]] 3\n");
+    // A trailing comma is allowed, and newlines inside the brackets continue it.
+    try expectOutput("var xs = [\n    1,\n    2,\n]\nprint(xs)\n", "[1, 2]\n");
+}
+
+test "an empty list takes its type from context" {
+    try expectOutput("var names: [Int] = []\nprint(names, names.empty?())\n", "[] true\n");
+    try expectOutput("func none(): [Int] {\n    return []\n}\nprint(none())\n", "[]\n");
+    try expectOutput("var xs = [1]\nprint(xs == [], [] != xs)\n", "false true\n");
+    try expectFailure("var names = []\n", "an empty list needs a type");
+}
+
+test "a list of Ints and Floats is a list of Floats, and a Float list widens what it stores" {
+    try expectOutput("print([1, 2.5])\n", "[1.0, 2.5]\n");
+    try expectOutput("var rates: [Float] = [1, 2]\nrates.append(3)\nrates[0] = 4\nprint(rates)\n", "[4.0, 2.0, 3.0]\n");
+    try expectOutput("var grid: [[Float]] = [[1], [2]]\nprint(grid)\n", "[[1.0], [2.0]]\n");
+    try expectFailure("var xs = [1, true]\n", "this is Bool, but the list holds Int");
+}
+
+test "lists are invariant, so an Int list is not a Float list" {
+    try expectFailure("var ints = [1]\nvar floats: [Float] = ints\n", "this is [Int], but `floats` was declared as [Float]");
+    try expectFailure("print([1] == [1.0])\n", "[Int] and [Float] cannot be compared");
+}
+
+test "assigning a list gives an independent copy" {
+    try expectOutput(
+        "var original = [1, 2]\nvar copy = original\ncopy.append(3)\ncopy[0] = 9\nprint(original, copy)\n",
+        "[1, 2] [9, 2, 3]\n",
+    );
+    // Nested lists are copied too, at whatever depth the change happens.
+    try expectOutput(
+        "var rows = [[1], [2]]\nvar copy = rows\ncopy[0].append(9)\ncopy[1][0] = 5\nprint(rows, copy)\n",
+        "[[1], [2]] [[1, 9], [5]]\n",
+    );
+}
+
+test "a list passed to a function is independent of the caller's" {
+    const program =
+        \\var scores = [1]
+        \\func show(items: [Int]) {
+        \\    scores.append(2)
+        \\    print(items)
+        \\}
+        \\show(scores)
+        \\print(scores)
+        \\
+    ;
+    try expectOutput(program, "[1]\n[1, 2]\n");
+
+    const returned =
+        \\func with_guest(guests: [Int], guest: Int): [Int] {
+        \\    var updated = guests
+        \\    updated.append(guest)
+        \\    return updated
+        \\}
+        \\var party = [1, 2]
+        \\var bigger = with_guest(party, 3)
+        \\print(party, bigger)
+        \\
+    ;
+    try expectOutput(returned, "[1, 2] [1, 2, 3]\n");
+}
+
+test "a loop visits the list as it was when the loop began" {
+    try expectOutput(
+        "var items = [1, 2]\nfor item in items {\n    items.append(item * 10)\n}\nprint(items)\n",
+        "[1, 2, 10, 20]\n",
+    );
+    try expectOutput("var total = 0\nfor value in [5, 6, 7] {\n    total += value\n}\nprint(total)\n", "18\n");
+}
+
+test "element assignment, including compound" {
+    try expectOutput("var xs = [1, 2]\nxs[1] += 10\nxs[0] *= 3\nprint(xs)\n", "[3, 12]\n");
+    try expectOutput("var grid = [[1, 2], [3, 4]]\ngrid[1][0] = 30\nprint(grid)\n", "[[1, 2], [30, 4]]\n");
+}
+
+test "the essential list methods" {
+    const program =
+        \\var xs = [3, 1, 3, 2, 3]
+        \\xs.remove(3)
+        \\print(xs)
+        \\xs.remove_all(3)
+        \\print(xs)
+        \\xs.insert(0, 7)
+        \\xs.insert(xs.count, 8)
+        \\print(xs)
+        \\print(xs.remove_at(1), xs)
+        \\print(xs.remove_first(), xs.remove_last(), xs)
+        \\print(xs.contains?(2), xs.contains?(9))
+        \\xs.clear()
+        \\print(xs, xs.count, xs.empty?())
+        \\xs.remove(4)
+        \\print(xs)
+        \\
+    ;
+    try expectOutput(program, "[1, 3, 2, 3]\n[1, 2]\n[7, 1, 2, 8]\n1 [7, 2, 8]\n7 8 [2]\ntrue false\n[] 0 true\n[]\n");
+}
+
+test "lists compare element by element and print as they are written" {
+    try expectOutput("print([1, 2] == [1, 2], [1, 2] != [2, 1], [[1]] == [[1]])\n", "true true true\n");
+    try expectOutput("print([true, false], [0.5])\n", "[true, false] [0.5]\n");
+}
+
+test "an index outside the list names the index and the valid range" {
+    try expectFailure("var xs = [1, 2, 3]\nprint(xs[3])\n", "index 3 is outside this list, which has 3 elements");
+    try expectFailure("var xs = [1]\nxs[-1] = 0\n", "index -1 is outside this list, which has 1 element");
+    try expectFailure("var xs: [Int] = []\nprint(xs[0])\n", "index 0 is outside this list, which is empty");
+    try expectFailure("var xs = [1]\nxs.insert(3, 2)\n", "cannot insert at index 3 in a list of 1 element");
+    try expectFailure("var xs: [Int] = []\nprint(xs.remove_last())\n", "cannot remove an element from an empty list");
+}
+
+test "a const, a parameter, a loop variable, and a temporary cannot change" {
+    try expectFailure("const xs = [1]\nxs.append(2)\n", "`xs` is a `const`, so its contents cannot change");
+    try expectFailure("const xs = [1]\nxs[0] = 2\n", "`xs` is a `const`, so its contents cannot change");
+    try expectFailure(
+        "func f(guests: [Int]) {\n    guests.append(1)\n}\n",
+        "`guests` is a parameter, so a change to it would be lost when the function returns",
+    );
+    try expectFailure(
+        "var grid = [[1]]\nfor row in grid {\n    row[0] = 2\n}\n",
+        "`row` is a loop variable, so a change to it would be lost",
+    );
+    try expectFailure(
+        "func make(): [Int] {\n    return [1]\n}\nmake().append(2)\n",
+        "`append` changes a list, but this list is a temporary value, so the change would be lost",
+    );
+    // Reading through a const or a parameter is fine.
+    try expectOutput("const xs = [1, 2]\nprint(xs.contains?(2), xs[1], xs.count)\n", "true 2 2\n");
+}
+
+test "a misspelled member names what Emerald calls it" {
+    try expectFailure("var xs = [1]\nxs.push(2)\n", "[Int] has no method `push`");
+    try expectFailure("var xs = [1]\nprint(xs.length)\n", "[Int] has no property `length`");
+    try expectFailure("var xs = [1]\nprint(xs.count())\n", "`count` is a property, so it takes no parentheses");
+    try expectFailure("var xs = [1]\nprint(xs.append)\n", "`append` is a method, so it needs parentheses");
+    try expectFailure("var n = 5\nprint(n[0])\n", "Int cannot be indexed");
+    try expectFailure("var xs = [1]\nprint(xs[true])\n", "an index must be an Int, but this is Bool");
+}
+
+test "memory stays flat however many lists a loop builds and drops" {
+    const program = "var total = 0\nfor i in 1..{d} {{\n    var row = [i, i, i]\n    row.append(i)\n    var copy = row\n    copy[0] = 0\n    total += copy.count\n}}\nprint(total)\n";
+    var buffer: [256]u8 = undefined;
+    const few = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{3}));
+    const many = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{5_000}));
+    try testing.expect(many < few + 16 * 1024);
 }
 
 // Section 7: functions.

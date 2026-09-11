@@ -1,0 +1,4 @@
+runtime-errors/remove-from-empty.em:5:7: cannot remove an element from an empty list
+  print(pending.remove_last())
+        ^^^^^^^^^^^^^^^^^^^^^
+Check `empty?()` first.

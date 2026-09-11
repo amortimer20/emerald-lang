@@ -294,6 +294,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         },
 
         .assignment => |assignment| {
+            for (assignment.indices) |index| try self.walkExpression(index);
             try self.walkExpression(assignment.value);
 
             const found = self.lookup(assignment.name) orelse {
@@ -305,8 +306,15 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             };
 
             // A compound assignment reads the current value first, so it needs
-            // the variable to be assigned already; a plain one does not.
-            if (assignment.operation != null) try self.noteRead(found, assignment.name);
+            // the variable to be assigned already; a plain one does not. An
+            // assignment into a list reads the list it changes.
+            if (assignment.operation != null or assignment.indices.len > 0) {
+                try self.noteRead(found, assignment.name);
+            }
+
+            // Changing a list's contents is a question about its type, which
+            // the checker answers, since section 4.3's `const` covers both.
+            if (assignment.indices.len > 0) return;
 
             if (!found.binding.mutable) switch (found.binding.kind) {
                 .variable => try self.report(
@@ -481,5 +489,11 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             try self.walkExpression(range.start);
             try self.walkExpression(range.end);
         },
+        .list_literal => |elements| for (elements) |element| try self.walkExpression(element),
+        .index => |index| {
+            try self.walkExpression(index.base);
+            try self.walkExpression(index.index);
+        },
+        .member => |member| try self.walkExpression(member.base),
     }
 }

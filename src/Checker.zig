@@ -46,6 +46,10 @@ pub const Checked = struct {
     diagnostics: []const Diagnostic,
     /// Every function's checked signature, for the interpreter.
     signatures: Type.Signatures,
+    /// The type of every list literal. A literal can be built as a `[Float]`
+    /// from whole numbers when that is what is expected, and the interpreter
+    /// needs to know so that it can widen them as it stores them.
+    literal_types: LiteralTypes,
 
     pub fn ok(self: Checked) bool {
         return self.diagnostics.len == 0;
@@ -70,7 +74,16 @@ const Binding = struct {
     /// only because the loop might not run. Changes the correction a read
     /// before assignment offers, since "every branch" would not describe it.
     assigned_in_loop: bool = false,
+    /// Section 4.3 and 7.1: a `const`, a parameter, and a loop variable can
+    /// be neither replaced nor, when they hold a list, changed in place.
+    mutability: Mutability = .variable,
 };
+
+pub const LiteralTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
+
+/// Why a binding may or may not change. Each reason gets its own correction,
+/// because the fix for a `const` is not the fix for a parameter.
+const Mutability = enum { variable, constant, parameter, loop_variable };
 
 const Scope = std.StringHashMapUnmanaged(Binding);
 
@@ -105,6 +118,7 @@ current_return_type: ?Type = null,
 /// ends the program, is deferred, so it is rejected outside a function.
 in_function: bool = false,
 pending_return_types: std.ArrayList(Type) = .empty,
+literal_types: LiteralTypes = .empty,
 /// The loops enclosing the statement being checked, innermost last. Empty at
 /// the start of every function body, since a `break` cannot leave a function.
 loops: std.ArrayList(Loop) = .empty,
@@ -165,7 +179,12 @@ pub fn check(gpa: std.mem.Allocator, program: Ast.Program, facts: Resolver.Facts
     // order of the file.
     const owned = try checker.diagnostics.toOwnedSlice(arena);
     std.mem.sort(Diagnostic, owned, {}, earlierInSource);
-    return .{ .arena_state = arena_state, .diagnostics = owned, .signatures = checker.signatures };
+    return .{
+        .arena_state = arena_state,
+        .diagnostics = owned,
+        .signatures = checker.signatures,
+        .literal_types = checker.literal_types,
+    };
 }
 
 fn earlierInSource(_: void, a: Diagnostic, b: Diagnostic) bool {
@@ -277,7 +296,11 @@ fn checkFor(self: *Checker, loop: Ast.For) Error!void {
     try self.pushScope();
     if (!std.mem.eql(u8, loop.name, "_")) {
         const scope = self.scopes.items[self.scopes.items.len - 1];
-        try scope.put(self.arena, loop.name, .{ .type = element, .assigned = true });
+        try scope.put(self.arena, loop.name, .{
+            .type = element,
+            .assigned = true,
+            .mutability = .loop_variable,
+        });
     }
     try self.checkStatements(loop.body.statements);
     _ = self.scopes.pop();
@@ -297,23 +320,60 @@ fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
             if (actual.kind == .int or actual.kind == .invalid) continue;
             try self.report(
                 end.span,
-                "a range counts whole numbers, but this is {s}",
-                .{actual.name()},
+                "a range counts whole numbers, but this is {f}",
+                .{actual},
                 "Both ends of a range are Ints, as in `1..10`.",
             );
         }
+        try self.rejectDescendingLiteralRange(iterable, range);
         return .int;
     }
 
     const actual = try self.typeOf(iterable);
     if (actual.kind == .invalid) return .invalid;
+    // Section 8.4: a loop visits the list as it was when the loop began.
+    if (actual.kind == .list) return actual.element.?.*;
     try self.report(
         iterable.span,
-        "a `for` loop cannot visit {s}",
-        .{actual.name()},
-        "So far a `for` loop can only visit a range, as in `for i in 1..10`.",
+        "a `for` loop cannot visit {f}",
+        .{actual},
+        "A `for` loop visits a range, as in `for i in 1..10`, or the elements of a list.",
     );
     return .invalid;
+}
+
+/// Section 6.4: ranges count upward, so one written with two literal endpoints
+/// in descending order can only be empty, which can only be a mistake. A
+/// computed bound is never reported, since `0..count - 1` being empty for an
+/// empty list is exactly what makes upward-only ranges safe.
+fn rejectDescendingLiteralRange(
+    self: *Checker,
+    iterable: *const Ast.Expression,
+    range: Ast.Expression.Range,
+) Error!void {
+    const start = literalInt(range.start) orelse return;
+    const end = literalInt(range.end) orelse return;
+    const empty = if (range.inclusive) start > end else start >= end;
+    if (!empty or (!range.inclusive and start == end)) return;
+    try self.reportWithHelp(
+        iterable.span,
+        "this range is empty, because ranges count upward",
+        .{},
+        "Write `{d}..{d}` to count up. Counting down with `{d}.down_to({d})` is not available yet.",
+        .{ end, start, start, end },
+    );
+}
+
+/// The value of an integer literal, including a negated one such as `-3`.
+fn literalInt(expression: *const Ast.Expression) ?i64 {
+    return switch (expression.data) {
+        .int_literal => |value| value,
+        .unary => |unary| if (unary.operator == .negate and unary.operand.data == .int_literal)
+            std.math.negate(unary.operand.data.int_literal) catch null
+        else
+            null,
+        else => null,
+    };
 }
 
 fn checkBreak(self: *Checker, span: Source.Span) Error!void {
@@ -358,14 +418,15 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
     }
 
     if (declaration.initializer) |initializer| {
-        const actual = try self.typeOf(initializer);
+        const expected: ?Type = if (declaration.annotation != null) declared else null;
+        const actual = try self.typeOfExpected(initializer, expected);
         if (declaration.annotation != null) {
             if (!actual.assignableTo(declared)) {
                 try self.report(
                     initializer.span,
-                    "this is {s}, but `{s}` was declared as {s}",
-                    .{ actual.name(), declaration.name, declared.name() },
-                    "Give the declaration the type of its value, or convert the value to match.",
+                    "this is {f}, but `{s}` was declared as {f}",
+                    .{ actual, declaration.name, declared },
+                    mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
                 );
             }
         } else {
@@ -387,12 +448,25 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
     }
 
     const current = self.scopes.items[self.scopes.items.len - 1];
-    try current.put(self.arena, declaration.name, .{ .type = declared, .assigned = assigned });
+    try current.put(self.arena, declaration.name, .{
+        .type = declared,
+        .assigned = assigned,
+        .mutability = if (declaration.mutable) .variable else .constant,
+    });
 }
 
 fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
-    const value = try self.typeOf(assignment.value);
-    const binding = self.find(assignment.name) orelse return; // the resolver reported it
+    if (assignment.indices.len > 0) return self.checkElementAssignment(assignment);
+
+    const binding = self.find(assignment.name) orelse {
+        // The resolver reported it.
+        _ = try self.typeOf(assignment.value);
+        return;
+    };
+    const value = try self.typeOfExpected(
+        assignment.value,
+        if (assignment.operation == null) binding.type else null,
+    );
     if (binding.is_function) return; // so did this
 
     if (assignment.operation) |operation| {
@@ -407,8 +481,8 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
             // the reason is two sections away from the line that failed.
             try self.report(
                 assignment.name_span,
-                "`{s}` produces {s}, which `{s}` cannot hold because it is {s}",
-                .{ operation.lexeme(), result.name(), assignment.name, binding.type.name() },
+                "`{s}` produces {f}, which `{s}` cannot hold because it is {f}",
+                .{ operation.lexeme(), result, assignment.name, binding.type },
                 if (operation == .divide)
                     "`/` always produces a Float. Use `//=` to keep whole numbers, or declare the name as a Float."
                 else
@@ -423,13 +497,117 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
     if (!value.assignableTo(binding.type)) {
         try self.report(
             assignment.value.span,
-            "this is {s}, but `{s}` holds {s}",
-            .{ value.name(), assignment.name, binding.type.name() },
-            "Assign a value of the declared type, or convert it first.",
+            "this is {f}, but `{s}` holds {f}",
+            .{ value, assignment.name, binding.type },
+            mismatchHelp(value, binding.type, "Assign a value of the declared type, or convert it first."),
         );
     }
 
     binding.assigned = true;
+}
+
+/// `scores[0] = 1`, or `grid[i][j] += 1`: a change to a list's contents, which
+/// section 4.3 forbids for a `const` just as it forbids replacing the list,
+/// and which the list's binding must already hold.
+fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
+    for (assignment.indices) |index| try self.requireIndex(index);
+    const binding = self.find(assignment.name) orelse {
+        _ = try self.typeOf(assignment.value);
+        return;
+    };
+    if (binding.is_function) {
+        try self.report(assignment.name_span, "`{s}` is a function, so it has no elements", .{assignment.name}, "Only a list can be indexed.");
+        _ = try self.typeOf(assignment.value);
+        return;
+    }
+
+    try self.requireMutable(assignment.name, assignment.name_span, binding.*);
+    if (!binding.assigned) {
+        try self.reportUnassigned(assignment.name_span, assignment.name, binding.*);
+        binding.assigned = true;
+    }
+
+    // Walk down to the type of the element being replaced.
+    var element = binding.type;
+    for (assignment.indices) |_| {
+        if (element.kind == .invalid) break;
+        if (element.kind != .list) {
+            try self.report(
+                assignment.target_span,
+                "{f} cannot be indexed",
+                .{element},
+                "Only a list has elements to assign to.",
+            );
+            element = .invalid;
+            break;
+        }
+        element = element.element.?.*;
+    }
+
+    if (assignment.operation) |operation| {
+        const value = try self.typeOf(assignment.value);
+        const result = try self.arithmetic(assignment.target_span, operation, element, value);
+        if (!result.assignableTo(element)) {
+            try self.report(
+                assignment.target_span,
+                "`{s}` produces {f}, but this element is {f}",
+                .{ operation.lexeme(), result, element },
+                if (operation == .divide)
+                    "`/` always produces a Float. Use `//=` to keep whole numbers."
+                else
+                    "Use an operation whose result the element can hold.",
+            );
+        }
+        return;
+    }
+
+    const value = try self.typeOfExpected(assignment.value, element);
+    if (!value.assignableTo(element)) {
+        try self.report(
+            assignment.value.span,
+            "this is {f}, but the elements of `{s}` are {f}",
+            .{ value, assignment.name, element },
+            "A list holds one type of value. Assign one of that type, or convert it first.",
+        );
+    }
+}
+
+/// The correction for a value that does not fit where it is used. Two list
+/// types get their own, because section 4.4's invariance is a surprise to
+/// anyone used to a language where an `[Int]` can pass for a `[Float]`.
+fn mismatchHelp(actual: Type, expected: Type, general: []const u8) []const u8 {
+    if (actual.kind == .list and expected.kind == .list) {
+        return "A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: [Float] = [1, 2]`.";
+    }
+    return general;
+}
+
+/// Section 4.3 and 7.1: only a `var` may change. Each other reason for a
+/// binding to be fixed gets the correction that fits it.
+fn requireMutable(self: *Checker, name: []const u8, span: Source.Span, binding: Binding) Error!void {
+    switch (binding.mutability) {
+        .variable => {},
+        .constant => try self.reportWithHelp(
+            span,
+            "`{s}` is a `const`, so its contents cannot change",
+            .{name},
+            "Declare `{s}` with `var` if it needs to change.",
+            .{name},
+        ),
+        .parameter => try self.reportWithHelp(
+            span,
+            "`{s}` is a parameter, so a change to it would be lost when the function returns",
+            .{name},
+            "Copy it into a `var`, change the copy, and return it, as in `var changed = {s}`.",
+            .{name},
+        ),
+        .loop_variable => try self.report(
+            span,
+            "`{s}` is a loop variable, so a change to it would be lost",
+            .{name},
+            "It holds a copy of one element. To change the list itself, loop over its indices and assign through them.",
+        ),
+    }
 }
 
 /// Section 4.1 proves definite assignment through control flow. A name counts as
@@ -520,7 +698,7 @@ fn checkReturn(self: *Checker, return_statement: Ast.Return) Error!void {
         return;
     };
 
-    const actual = try self.typeOf(value);
+    const actual = try self.typeOfExpected(value, self.current_return_type);
     const expected = self.current_return_type orelse {
         try self.pending_return_types.append(self.arena, actual);
         return;
@@ -540,9 +718,9 @@ fn checkReturn(self: *Checker, return_statement: Ast.Return) Error!void {
     } else if (expected.kind != .invalid and !actual.assignableTo(expected)) {
         try self.report(
             value.span,
-            "this is {s}, but the function returns {s}",
-            .{ actual.name(), expected.name() },
-            "Return a value of the declared type, or convert it first.",
+            "this is {f}, but the function returns {f}",
+            .{ actual, expected },
+            mismatchHelp(actual, expected, "Return a value of the declared type, or convert it first."),
         );
     }
 }
@@ -647,7 +825,11 @@ fn checkFunctionBody(
     const parameters = try self.arena.create(Scope);
     parameters.* = .empty;
     for (declaration.parameters, parameter_types) |parameter, parameter_type| {
-        try parameters.put(self.arena, parameter.name, .{ .type = parameter_type, .assigned = true });
+        try parameters.put(self.arena, parameter.name, .{
+            .type = parameter_type,
+            .assigned = true,
+            .mutability = .parameter,
+        });
     }
 
     const outer_scopes = self.scopes;
@@ -805,8 +987,8 @@ fn requireCondition(self: *Checker, expression: *const Ast.Expression) Error!voi
     if (actual.kind == .invalid or actual.kind == .bool) return;
     try self.report(
         expression.span,
-        "a condition must be a Bool, but this is {s}",
-        .{actual.name()},
+        "a condition must be a Bool, but this is {f}",
+        .{actual},
         "Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.",
     );
 }
@@ -843,12 +1025,17 @@ fn resolveTypeExpression(self: *Checker, annotation: Ast.TypeExpression) Error!T
         return .invalid;
     }
 
+    if (annotation.element) |element| {
+        const inner = try self.resolveTypeExpression(element.*);
+        return Type.listOf(self.arena, inner);
+    }
+
     return Type.fromName(annotation.name) orelse {
         try self.report(
             annotation.span,
             "`{s}` is not a type",
             .{annotation.name},
-            "The types available so far are `Int`, `Float`, `Bool`, and `Nothing`.",
+            "The types available so far are `Int`, `Float`, `Bool`, `Nothing`, and lists of them, such as `[Int]`.",
         );
         return .invalid;
     };
@@ -952,6 +1139,9 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .logical => |logical| self.typeOfLogical(logical),
         .comparison => |comparison| self.typeOfComparison(comparison),
         .call => |call| self.typeOfCall(expression, call),
+        .list_literal => self.typeOfList(expression, null),
+        .index => |index| self.typeOfIndex(index),
+        .member => |member| self.typeOfMember(member),
         .range => |range| blk: {
             // Ranges have no type of their own yet: they are values in section
             // 6.4, but everything a program could do with one besides looping
@@ -969,6 +1159,244 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
     };
 }
 
+/// `typeOf`, for a place where a value of `expected` is wanted. Only a list
+/// literal uses it, to take its element type from context: `[]` gets one at
+/// all, and `[1, 2]` becomes a `[Float]` where one is expected.
+fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
+    if (expression.data == .list_literal) return self.typeOfList(expression, expected);
+    return self.typeOf(expression);
+}
+
+/// Section 8.2. Nonempty literals infer their element type, widening `Int` to
+/// `Float` when both appear (4.4); an empty one needs the type from context.
+fn typeOfList(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
+    const elements = expression.data.list_literal;
+    const expected_element: ?Type = if (expected) |list|
+        (if (list.kind == .list) list.element.?.* else null)
+    else
+        null;
+
+    if (elements.len == 0) {
+        const element = expected_element orelse {
+            try self.report(
+                expression.span,
+                "an empty list needs a type",
+                .{},
+                "Say what it will hold, as in `var names: [Int] = []`.",
+            );
+            return .invalid;
+        };
+        return self.recordLiteral(expression, element);
+    }
+
+    const types = try self.arena.alloc(Type, elements.len);
+    for (elements, types) |element, *element_type| {
+        element_type.* = try self.typeOfExpected(element, expected_element);
+    }
+
+    // The element type: the one expected, or the one the elements agree on.
+    var target = expected_element orelse types[0];
+    if (expected_element == null) {
+        for (types[1..]) |candidate| {
+            if (candidate.assignableTo(target)) continue;
+            if (target.assignableTo(candidate)) target = candidate;
+        }
+    }
+
+    for (elements, types) |element, element_type| {
+        if (element_type.assignableTo(target)) continue;
+        try self.report(
+            element.span,
+            "this is {f}, but the list holds {f}",
+            .{ element_type, target },
+            "A list holds one type of value.",
+        );
+    }
+    return self.recordLiteral(expression, target);
+}
+
+fn recordLiteral(self: *Checker, expression: *const Ast.Expression, element: Type) Error!Type {
+    const list = try Type.listOf(self.arena, element);
+    try self.literal_types.put(self.arena, expression, list);
+    return list;
+}
+
+/// Section 5.4's zero-based indexing.
+fn typeOfIndex(self: *Checker, index: Ast.Expression.Index) Error!Type {
+    const base = try self.typeOf(index.base);
+    try self.requireIndex(index.index);
+    if (base.kind == .invalid) return .invalid;
+    if (base.kind != .list) {
+        try self.report(
+            index.base.span,
+            "{f} cannot be indexed",
+            .{base},
+            "Only a list has elements to index.",
+        );
+        return .invalid;
+    }
+    return base.element.?.*;
+}
+
+fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
+    const actual = try self.typeOf(index);
+    if (actual.kind == .int or actual.kind == .invalid) return;
+    try self.report(
+        index.span,
+        "an index must be an Int, but this is {f}",
+        .{actual},
+        "Indices count whole positions, starting from 0.",
+    );
+}
+
+/// A property: `count` is the only one so far (8.5).
+fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
+    const base = try self.typeOf(member.base);
+    if (base.kind == .invalid) return .invalid;
+
+    if (base.kind == .list) {
+        if (std.mem.eql(u8, member.name, "count")) return .int;
+        if (Type.list_methods.has(member.name)) {
+            try self.reportWithHelp(
+                member.name_span,
+                "`{s}` is a method, so it needs parentheses",
+                .{member.name},
+                "Call it, as in `.{s}()`. Methods cannot be used as values yet.",
+                .{member.name},
+            );
+            return .invalid;
+        }
+    }
+    try self.reportUnknownMember(base, member, "property");
+    return .invalid;
+}
+
+/// A method call such as `scores.append(10)`.
+fn typeOfMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    const base = try self.typeOf(member.base);
+    if (base.kind == .invalid) {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+
+    if (base.kind == .list and std.mem.eql(u8, member.name, "count")) {
+        try self.report(
+            member.name_span,
+            "`count` is a property, so it takes no parentheses",
+            .{},
+            "Write `.count` without `()`.",
+        );
+        try self.typeArguments(call.arguments);
+        return .int;
+    }
+
+    const method = (if (base.kind == .list) Type.list_methods.get(member.name) else null) orelse {
+        try self.reportUnknownMember(base, member, "method");
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    };
+    const element = base.element.?.*;
+
+    if (call.arguments.len != method.parameters.len) {
+        const expected = method.parameters.len;
+        try self.report(
+            member.name_span,
+            "`{s}` takes {d} argument{s}, but this call passes {d}",
+            .{ member.name, expected, if (expected == 1) "" else "s", call.arguments.len },
+            "Match the number of arguments to what the method needs.",
+        );
+        try self.typeArguments(call.arguments);
+    } else {
+        for (call.arguments, method.parameters) |argument, operand| {
+            const wanted: Type = switch (operand) {
+                .element => element,
+                .index => .int,
+            };
+            const actual = try self.typeOfExpected(argument, wanted);
+            if (actual.assignableTo(wanted)) continue;
+            try self.report(
+                argument.span,
+                "this is {f}, but `{s}` needs {f}",
+                .{ actual, member.name, wanted },
+                "Pass a value of the type the list holds, or convert it first.",
+            );
+        }
+    }
+
+    if (method.mutates) try self.requireChangeable(member);
+
+    return switch (method.result) {
+        .nothing => .nothing,
+        .bool => .bool,
+        .element => element,
+    };
+}
+
+/// A mutating method changes the list it is called on, so that list has to be
+/// one a program can see again: held by a `var`, directly or through indexing.
+/// Changing a temporary, such as the result of a call, would be lost at once.
+fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
+    var receiver = member.base;
+    while (receiver.data == .index) receiver = receiver.data.index.base;
+
+    if (receiver.data != .name) {
+        return self.reportWithHelp(
+            member.base.span,
+            "`{s}` changes a list, but this list is a temporary value, so the change would be lost",
+            .{member.name},
+            "Store the list in a `var` first, then call `{s}` on it.",
+            .{member.name},
+        );
+    }
+    const binding = self.find(receiver.data.name) orelse return;
+    try self.requireMutable(receiver.data.name, receiver.span, binding.*);
+}
+
+/// A member that does not exist, with the Emerald name for what the writer
+/// probably meant when they reached for another language's.
+fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member, comptime what: []const u8) Error!void {
+    const suggestion: ?[]const u8 = if (base.kind == .list) familiarListName(member.name) else null;
+    if (suggestion) |name| {
+        return self.reportWithHelp(
+            member.name_span,
+            "{f} has no " ++ what ++ " `{s}`",
+            .{ base, member.name },
+            "Emerald calls this `{s}`.",
+            .{name},
+        );
+    }
+    try self.report(
+        member.name_span,
+        "{f} has no " ++ what ++ " `{s}`",
+        .{ base, member.name },
+        if (base.kind == .list)
+            "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, and `clear`."
+        else
+            "Check the spelling, or what kind of value this is.",
+    );
+}
+
+/// Names other languages use for list operations Emerald spells differently.
+fn familiarListName(name: []const u8) ?[]const u8 {
+    const familiar = std.StaticStringMap([]const u8).initComptime(.{
+        .{ "length", "count" },
+        .{ "size", "count" },
+        .{ "len", "count" },
+        .{ "push", "append" },
+        .{ "add", "append" },
+        .{ "pop", "remove_last" },
+        .{ "shift", "remove_first" },
+        .{ "includes", "contains?" },
+        .{ "contains", "contains?" },
+        .{ "has", "contains?" },
+        .{ "empty", "empty?" },
+        .{ "is_empty", "empty?" },
+        .{ "delete", "remove" },
+        .{ "delete_at", "remove_at" },
+    });
+    return familiar.get(name);
+}
+
 fn typeOfUnary(
     self: *Checker,
     expression: *const Ast.Expression,
@@ -982,8 +1410,8 @@ fn typeOfUnary(
             if (operand.isNumber()) return operand;
             try self.report(
                 expression.span,
-                "`-` needs a number, but this is {s}",
-                .{operand.name()},
+                "`-` needs a number, but this is {f}",
+                .{operand},
                 "Use `not` to invert a Bool.",
             );
         },
@@ -991,8 +1419,8 @@ fn typeOfUnary(
             if (operand.kind == .bool) return .bool;
             try self.report(
                 expression.span,
-                "`not` needs a Bool, but this is {s}",
-                .{operand.name()},
+                "`not` needs a Bool, but this is {f}",
+                .{operand},
                 "Compare it to something first, as in `not (count > 0)`.",
             );
         },
@@ -1021,8 +1449,8 @@ fn arithmetic(
     return Type.arithmeticResult(left, right, operator == .divide) orelse {
         try self.report(
             span,
-            "{s} needs numbers, but this is {s} and {s}",
-            .{ operator.describe(), left.name(), right.name() },
+            "{s} needs numbers, but this is {f} and {f}",
+            .{ operator.describe(), left, right },
             "Arithmetic works on Int and Float.",
         );
         return .invalid;
@@ -1043,28 +1471,44 @@ fn typeOfLogical(self: *Checker, logical: Ast.Expression.Logical) Error!Type {
 /// false` has no meaning a reader would guess, so it is rejected rather than
 /// given one.
 fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error!Type {
-    var left_node = comparison.operands[0];
-    var left = try self.typeOf(left_node);
+    // Everything but list literals first, so that `scores == []` and `[] ==
+    // scores` can both give the literal its element type from the other side.
+    const operand_types = try self.arena.alloc(Type, comparison.operands.len);
+    for (comparison.operands, operand_types) |operand, *operand_type| {
+        if (operand.data != .list_literal) operand_type.* = try self.typeOf(operand);
+    }
+    for (comparison.operands, operand_types, 0..) |operand, *operand_type, position| {
+        if (operand.data != .list_literal) continue;
+        const neighbor: ?Type = if (position > 0 and comparison.operands[position - 1].data != .list_literal)
+            operand_types[position - 1]
+        else if (position + 1 < comparison.operands.len and comparison.operands[position + 1].data != .list_literal)
+            operand_types[position + 1]
+        else
+            null;
+        operand_type.* = try self.typeOfList(operand, neighbor);
+    }
 
-    for (comparison.operators, comparison.operands[1..]) |operator, operand_node| {
-        const right = try self.typeOf(operand_node);
+    var left_node = comparison.operands[0];
+    var left = operand_types[0];
+
+    for (comparison.operators, comparison.operands[1..], operand_types[1..]) |operator, operand_node, right| {
         // The pair is the problem, so both sides are underlined.
         const pair: Source.Span = .{ .start = left_node.span.start, .end = operand_node.span.end };
         const numeric = left.isNumber() and right.isNumber();
         const unknown = left.kind == .invalid or right.kind == .invalid;
 
-        if (!unknown and !numeric and left.kind != right.kind) {
+        if (!unknown and !numeric and !left.same(right)) {
             try self.report(
                 pair,
-                "{s} and {s} cannot be compared",
-                .{ left.name(), right.name() },
+                "{f} and {f} cannot be compared",
+                .{ left, right },
                 "`==` and `!=` compare two values of the same type, and Int and Float compare with each other.",
             );
         } else if (!unknown and !numeric and !operator.isEquality()) {
             try self.report(
                 pair,
-                "`{s}` needs numbers, but these are {s} values",
-                .{ operator.lexeme(), left.name() },
+                "`{s}` needs numbers, but these are {f} values",
+                .{ operator.lexeme(), left },
                 "Only numbers are ordered. Use `==` or `!=` to compare other values.",
             );
         }
@@ -1080,6 +1524,7 @@ fn typeOfCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Type {
+    if (call.callee.data == .member) return self.typeOfMethodCall(call, call.callee.data.member);
     if (call.callee.data != .name) {
         try self.report(
             call.callee.span,
@@ -1128,13 +1573,13 @@ fn typeOfCall(
         try self.typeArguments(call.arguments);
     } else {
         for (call.arguments, signature.parameters, signature.parameter_names) |argument, expected, parameter_name| {
-            const actual = try self.typeOf(argument);
+            const actual = try self.typeOfExpected(argument, expected);
             if (!actual.assignableTo(expected)) {
                 try self.report(
                     argument.span,
-                    "this is {s}, but parameter `{s}` of `{s}` needs {s}",
-                    .{ actual.name(), parameter_name, name, expected.name() },
-                    "Pass a value of the expected type, or convert it first.",
+                    "this is {f}, but parameter `{s}` of `{s}` needs {f}",
+                    .{ actual, parameter_name, name, expected },
+                    mismatchHelp(actual, expected, "Pass a value of the expected type, or convert it first."),
                 );
             }
         }

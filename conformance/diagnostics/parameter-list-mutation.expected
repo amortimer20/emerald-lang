@@ -1,0 +1,4 @@
+diagnostics/parameter-list-mutation.em:6:5: `guests` is a parameter, so a change to it would be lost when the function returns
+      guests.append(guest)
+      ^^^^^^
+Copy it into a `var`, change the copy, and return it, as in `var changed = guests`.

@@ -242,6 +242,13 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
             break :blk deepest;
         },
         .range => |range| @max(range.start.depth, range.end.depth),
+        .list_literal => |elements| blk: {
+            var deepest: u32 = 0;
+            for (elements) |element| deepest = @max(deepest, element.depth);
+            break :blk deepest;
+        },
+        .index => |index| @max(index.base.depth, index.index.depth),
+        .member => |member| member.base.depth,
     };
 }
 
@@ -604,6 +611,7 @@ fn rejectGuardedDeclaration(self: *Parser, name: Token) Error!void {
 /// optionality is only ever written in a type, never at a use site.
 fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     const token = self.peek();
+    if (token.kind == .left_bracket) return self.parseListType();
     if (token.kind != .identifier) {
         return self.reportFmt(
             token.span,
@@ -628,6 +636,42 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     }
 
     return .{ .span = span, .name = written, .question_span = question };
+}
+
+/// Section 8.2's `[T]`, and `[T]?` for an optional list.
+fn parseListType(self: *Parser) Error!Ast.TypeExpression {
+    const opening = self.advance();
+    try self.nest(opening.span);
+    defer self.unnest();
+
+    const element = try self.arena.create(Ast.TypeExpression);
+    element.* = try self.parseTypeExpression();
+
+    if (self.check(.colon)) {
+        return self.report(
+            self.peek().span,
+            "dictionary types are not available yet",
+            "Only list types, such as `[Int]`, can be written so far.",
+        );
+    }
+    const closing = self.peek();
+    if (closing.kind != .right_bracket) {
+        return self.reportFmt(
+            closing.span,
+            "expected `]` to close this list type, found {s}",
+            .{closing.kind.describe()},
+            "A list type is an element type in brackets, as in `[Int]`.",
+        );
+    }
+    _ = self.advance();
+
+    const question: ?Source.Span = if (self.match(.question)) |token| token.span else null;
+    return .{
+        .span = spanning(opening.span, closing.span),
+        .name = "",
+        .element = element,
+        .question_span = question,
+    };
 }
 
 fn parseIf(self: *Parser) Error!Ast.Statement {
@@ -729,13 +773,7 @@ fn parseSimpleStatement(self: *Parser) Error!Ast.Statement {
 
     if (assignmentOperator(self.peek().kind)) |assignment| {
         _ = self.advance();
-        if (expression.data != .name) {
-            return self.report(
-                expression.span,
-                "this cannot be assigned to",
-                "Only a name can be assigned to, as in `score = 1`.",
-            );
-        }
+        const target = try self.assignmentTarget(expression);
 
         const value = try self.parseExpression();
 
@@ -751,8 +789,10 @@ fn parseSimpleStatement(self: *Parser) Error!Ast.Statement {
         return self.finishSimpleStatement(.{
             .span = spanning(start.span, value.span),
             .data = .{ .assignment = .{
-                .name = expression.data.name,
-                .name_span = expression.span,
+                .name = target.name,
+                .name_span = target.name_span,
+                .indices = target.indices,
+                .target_span = expression.span,
                 .operation = assignment.operation,
                 .value = value,
             } },
@@ -760,6 +800,37 @@ fn parseSimpleStatement(self: *Parser) Error!Ast.Statement {
     }
 
     return self.finishExpressionStatement(expression);
+}
+
+const Target = struct {
+    name: []const u8,
+    name_span: Source.Span,
+    indices: []const *const Ast.Expression,
+};
+
+/// What can be assigned to: a name, or an element of a list reached from a
+/// name through indexing, as in `grid[0][1] = 5`.
+fn assignmentTarget(self: *Parser, expression: *const Ast.Expression) Error!Target {
+    var indices: std.ArrayList(*const Ast.Expression) = .empty;
+    var current = expression;
+    while (current.data == .index) {
+        try indices.append(self.arena, current.data.index.index);
+        current = current.data.index.base;
+    }
+    if (current.data != .name) {
+        return self.report(
+            expression.span,
+            "this cannot be assigned to",
+            "Assign to a name, as in `score = 1`, or to an element of a list, as in `scores[0] = 1`.",
+        );
+    }
+    // Collected innermost first; stored outermost first, the order they apply.
+    std.mem.reverse(*const Ast.Expression, indices.items);
+    return .{
+        .name = current.data.name,
+        .name_span = current.span,
+        .indices = try indices.toOwnedSlice(self.arena),
+    };
 }
 
 /// A plain `=` carries no operation; a compound form carries the operation it
@@ -994,43 +1065,137 @@ fn parsePower(self: *Parser) Error!*const Ast.Expression {
     } });
 }
 
+/// Calls, indexing, and member access, which all bind tighter than any
+/// operator and chain left to right: `grid[0].count`, `list.contains?(3)`.
 fn parsePostfix(self: *Parser) Error!*const Ast.Expression {
-    var callee = try self.parsePrimary();
-    while (self.check(.left_paren)) {
-        try self.nest(self.peek().span);
-        defer self.unnest();
-        _ = self.advance();
+    var base = try self.parsePrimary();
+    while (true) {
+        base = switch (self.peek().kind) {
+            .left_paren => try self.finishCall(base),
+            .left_bracket => try self.finishIndex(base),
+            .dot => try self.finishMember(base),
+            .question_dot => return self.report(
+                self.peek().span,
+                "optional chaining is not available yet",
+                "Optional values arrive with a later version of Emerald.",
+            ),
+            else => return base,
+        };
+    }
+}
 
-        var arguments: std.ArrayList(*const Ast.Expression) = .empty;
-        if (!self.check(.right_paren)) {
-            while (true) {
-                try arguments.append(self.arena, try self.parseExpression());
-                if (self.match(.comma) == null) break;
-            }
+fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Expression {
+    try self.nest(self.peek().span);
+    defer self.unnest();
+    _ = self.advance();
+
+    var arguments: std.ArrayList(*const Ast.Expression) = .empty;
+    if (!self.check(.right_paren)) {
+        while (true) {
+            try arguments.append(self.arena, try self.parseExpression());
+            if (self.match(.comma) == null) break;
         }
+    }
 
-        const closing = self.peek();
-        if (closing.kind != .right_paren) {
-            return self.reportFmt(
-                closing.span,
-                "expected `)` to close this call, found {s}",
-                .{closing.kind.describe()},
-                "Add the closing parenthesis, or check for a missing comma between arguments.",
+    const closing = self.peek();
+    if (closing.kind != .right_paren) {
+        return self.reportFmt(
+            closing.span,
+            "expected `)` to close this call, found {s}",
+            .{closing.kind.describe()},
+            "Add the closing parenthesis, or check for a missing comma between arguments.",
+        );
+    }
+    _ = self.advance();
+
+    return self.node(spanning(callee.span, closing.span), .{ .call = .{
+        .callee = callee,
+        .arguments = try arguments.toOwnedSlice(self.arena),
+    } });
+}
+
+fn finishIndex(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expression {
+    try self.nest(self.peek().span);
+    defer self.unnest();
+    _ = self.advance();
+
+    const index = try self.parseExpression();
+    const closing = self.peek();
+    if (closing.kind != .right_bracket) {
+        return self.reportFmt(
+            closing.span,
+            "expected `]` to close this index, found {s}",
+            .{closing.kind.describe()},
+            "An index is one expression in brackets, as in `scores[0]`.",
+        );
+    }
+    _ = self.advance();
+
+    return self.node(spanning(base.span, closing.span), .{ .index = .{ .base = base, .index = index } });
+}
+
+/// Section 3.4 keeps keywords reserved after `.`, so only a name may follow.
+fn finishMember(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expression {
+    _ = self.advance();
+    const name = self.peek();
+    if (name.kind != .identifier) {
+        return self.reportFmt(
+            name.span,
+            "expected a property or method name after `.`, found {s}",
+            .{name.kind.describe()},
+            "Write the name of what to use, as in `scores.count`.",
+        );
+    }
+    _ = self.advance();
+
+    return self.node(spanning(base.span, name.span), .{ .member = .{
+        .base = base,
+        .name = self.text(name),
+        .name_span = name.span,
+    } });
+}
+
+/// Section 8.2's list literal. A trailing comma is allowed, which keeps a
+/// literal written one element per line uniform. Newlines inside the brackets
+/// never end the statement, which the lexer already arranges.
+fn parseListLiteral(self: *Parser) Error!*const Ast.Expression {
+    const opening = self.advance();
+    try self.nest(opening.span);
+    defer self.unnest();
+
+    var elements: std.ArrayList(*const Ast.Expression) = .empty;
+    while (!self.check(.right_bracket)) {
+        try elements.append(self.arena, try self.parseExpression());
+        if (self.check(.colon)) {
+            return self.report(
+                self.peek().span,
+                "dictionaries are not available yet",
+                "Only lists, such as `[1, 2, 3]`, can be written so far.",
             );
         }
-        _ = self.advance();
-
-        callee = try self.node(spanning(callee.span, closing.span), .{ .call = .{
-            .callee = callee,
-            .arguments = try arguments.toOwnedSlice(self.arena),
-        } });
+        if (self.match(.comma) == null) break;
     }
-    return callee;
+
+    const closing = self.peek();
+    if (closing.kind != .right_bracket) {
+        return self.reportFmt(
+            closing.span,
+            "expected `]` to close this list, found {s}",
+            .{closing.kind.describe()},
+            "Separate the elements with commas and close the list with `]`.",
+        );
+    }
+    _ = self.advance();
+
+    return self.node(spanning(opening.span, closing.span), .{
+        .list_literal = try elements.toOwnedSlice(self.arena),
+    });
 }
 
 fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
     const token = self.peek();
     switch (token.kind) {
+        .left_bracket => return self.parseListLiteral(),
         .int_literal => {
             _ = self.advance();
             return self.node(token.span, .{ .int_literal = try self.parseIntLiteral(token) });

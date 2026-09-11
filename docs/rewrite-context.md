@@ -800,7 +800,9 @@ visits nothing for an empty list, and `for i in 1..n` visits nothing when `n` is
 range that reversed itself would visit `0, -1` and `1, 0` instead, failing only at the edge
 case where a beginner is least likely to look. Counting down is spelled out with
 `5.down_to(1)` or `(1..5).reverse()`. A range whose endpoints are both literals and in
-descending order receives a warning suggesting `down_to`, because it can only be a mistake.
+descending order, such as `5..1`, is an error suggesting `down_to`: it can only be empty,
+so it can only be a mistake, and an error is harder to overlook than a warning. Computed
+endpoints are never reported, since an empty `0..count - 1` is the point of the rule.
 
 Ruby-style library alternatives are welcome:
 
@@ -1183,6 +1185,17 @@ Collection size is the read-only `count` property rather than a zero-argument me
 value is absent. `remove_all(element)` removes every equal value. Both return `Nothing`.
 `remove_if` may remove all values matching a block. Index removal remains the distinct
 `remove_at(index)` operation.
+
+`remove_at(index)`, `remove_first()`, and `remove_last()` return the element they remove,
+and removing from an empty list is an error rather than an optional result, matching the
+strict bounds of indexing. `insert(index, element)` accepts any index from `0` through
+`count`; inserting at `count` appends. `append`, `insert`, `remove`, `remove_all`,
+`remove_at`, `remove_first`, `remove_last`, and `clear` change the list they are called on,
+so they are rejected on a `const`, a parameter, or a loop variable (4.3, 7.1), and on a
+temporary such as `make_list().append(1)`, where the change could never be seen.
+
+A list displays the way it is written, with its elements displayed in turn: `[1, 2, 3]`,
+`[[1.0], []]`.
 
 ### 8.6 Rich vocabulary
 
@@ -2606,6 +2619,8 @@ recorded in their normative sections:
 | --- | --- | --- |
 | Ordering (5.2) | Only numbers and strings are ordered; every type has `==` and `!=` | `true < false` has no meaning a reader would guess, so it is rejected rather than given one. |
 | Uninitialized `const` (4.1) | Rejected at the declaration | A `const` can never be assigned afterward, so it would stay unassigned forever. |
+| Descending literal ranges (6.4) | `5..1` is an error, not a warning | It can only be empty, so it can only be a mistake, and an error cannot be scrolled past. Computed endpoints are never reported. |
+| List method results (8.5) | `remove_at`, `remove_first`, and `remove_last` return the removed element; removing from an empty list is an error; a list displays as it is written | The spec named the methods but not their results. Returning the element is the common expectation, and an error on empty matches indexing's strict bounds until optionals exist. |
 | Range direction (6.4) | Ranges count upward only; a start past the end is empty | A self-reversing range turns every computed bound into an edge-case bug: `0..items.count - 1` visits `0, -1` for an empty list. `down_to` and `reverse()` already spell counting down. Supersedes the recovered endpoint-direction rule. |
 | Project detection (14.1) | A directory is a project only when it contains `main.em`; otherwise a file runs alone | Including every file in the entry's directory broke the most common beginner layout, a folder of independent exercises. |
 | Integer exponentiation (5.3) | Two `Int`s give an `Int`; a negative `Int` exponent raises | Squares and cubes are the common case, and `side ** 2` printing `49.0` or failing to fit an `Int` was a papercut. Matches `//`. |

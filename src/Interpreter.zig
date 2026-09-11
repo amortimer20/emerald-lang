@@ -28,7 +28,9 @@
 
 const std = @import("std");
 const Ast = @import("Ast.zig");
+const Checker = @import("Checker.zig");
 const Diagnostic = @import("Diagnostic.zig");
+const Heap = @import("Heap.zig");
 const Source = @import("Source.zig");
 const Type = @import("Type.zig");
 const Value = @import("Value.zig");
@@ -123,6 +125,13 @@ functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// What the checker proved about each function, including return types it
 /// inferred, which are needed to widen results the way it allowed.
 signatures: *const Type.Signatures,
+/// The type the checker gave each list literal, so `[1, 2]` where a `[Float]`
+/// is expected is built from `1.0` and `2.0`.
+literal_types: *const Checker.LiteralTypes,
+/// Every list buffer. See `Heap` for the counting rules this file follows:
+/// every new holder of a list retains it, and every holder that ends releases
+/// it.
+heap: Heap,
 call_stack: std.ArrayList(Diagnostic.Frame) = .empty,
 /// Set by a `return` for `callFunction` to collect. `return` unwinds through
 /// `execute` as `error.Returned`, and this carries its value, the way
@@ -136,6 +145,7 @@ pub fn run(
     source: *const Source,
     program: Ast.Program,
     signatures: *const Type.Signatures,
+    literal_types: *const Checker.LiteralTypes,
     out: *std.Io.Writer,
     stack: StackLimit,
 ) RunError!Outcome {
@@ -148,8 +158,13 @@ pub fn run(
         .source = source,
         .out = out,
         .signatures = signatures,
+        .literal_types = literal_types,
+        .heap = .init(gpa),
         .stack = stack,
     };
+    // Whatever the counts did not reclaim, including lists still held by
+    // module bindings and anything an error skipped releasing.
+    defer interpreter.heap.deinit();
 
     // Hoisted, matching the resolver and checker.
     for (program.statements) |statement| {
@@ -224,9 +239,14 @@ fn pushScope(self: *Interpreter) Error!*Scope {
     return &self.scopes.items[self.scopes.items.len - 1];
 }
 
-/// Keeps the scope's table for the next block, emptied.
+/// Keeps the scope's table for the next block, emptied, after releasing
+/// everything its bindings held.
 fn popScope(self: *Interpreter) void {
     var scope = self.scopes.pop().?;
+    var bindings = scope.valueIterator();
+    while (bindings.next()) |binding| {
+        if (binding.value) |value| self.heap.release(value);
+    }
     scope.clearRetainingCapacity();
     self.spare_scopes.append(self.gpa, scope) catch scope.deinit(self.gpa);
 }
@@ -235,7 +255,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
     try self.guardStack(statement.span);
 
     switch (statement.data) {
-        .expression => |expression| _ = try self.evaluate(expression),
+        .expression => |expression| self.heap.release(try self.evaluate(expression)),
 
         .declaration => |declaration| {
             const initial: ?Value = if (declaration.initializer) |initializer|
@@ -261,6 +281,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
         },
 
         .assignment => |assignment| {
+            if (assignment.indices.len > 0) return self.assignElement(assignment);
             const slot = self.find(assignment.name).?;
             const value = if (assignment.operation) |operation| blk: {
                 // Section 5.3 lowers a compound assignment through the same
@@ -272,6 +293,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
                 const right = try self.evaluate(assignment.value);
                 break :blk try self.applyBinary(statement.span, operation, current, right);
             } else try self.evaluate(assignment.value);
+            if (slot.value) |old| self.heap.release(old);
             slot.value = widen(value, slot.kind);
         },
 
@@ -294,6 +316,79 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
     }
 }
 
+/// `scores[i] = value`, or `grid[i][j] += 1`.
+///
+/// The indices are evaluated first and then the value, left to right as
+/// section 5.2 requires. Only then is the list walked, because evaluating the
+/// value can change it: a function it calls can append to the same list. Each
+/// list on the way down is made unique first, which is copy-on-write: a list
+/// another binding also holds is copied before anything in it changes.
+fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
+    const indices = try self.gpa.alloc(i64, assignment.indices.len);
+    defer self.gpa.free(indices);
+    for (assignment.indices, indices) |expression, *index| {
+        index.* = (try self.evaluate(expression)).data.int;
+    }
+
+    const binding = self.find(assignment.name).?;
+    const root = &binding.value.?;
+
+    if (assignment.operation) |operation| {
+        // Section 5.2: the current value is read once, before the right side.
+        const current = (try self.elementSlot(root, indices, assignment.indices)).slot.*;
+        const right = try self.evaluate(assignment.value);
+        const result = try self.applyBinary(assignment.target_span, operation, current, right);
+        const place = try self.elementSlot(root, indices, assignment.indices);
+        place.slot.* = widen(result, place.list.element);
+        return;
+    }
+
+    const value = try self.evaluate(assignment.value);
+    const place = try self.elementSlot(root, indices, assignment.indices);
+    self.heap.release(place.slot.*);
+    place.slot.* = widen(value, place.list.element);
+}
+
+const Place = struct { list: *Heap.List, slot: *Value };
+
+/// Walks from the list in `root` through `indices` to one element, making each
+/// list on the way safe to change and checking every index against it.
+fn elementSlot(
+    self: *Interpreter,
+    root: *Value,
+    indices: []const i64,
+    expressions: []const *const Ast.Expression,
+) Error!Place {
+    var slot = root;
+    var list: *Heap.List = undefined;
+    for (indices, expressions) |index, expression| {
+        list = try self.heap.unique(slot);
+        const position = try self.checkIndex(list, index, expression.span);
+        slot = &list.items.items[position];
+    }
+    return .{ .list = list, .slot = slot };
+}
+
+/// Section 5.4: an index outside the list is an error that names the index and
+/// the valid range.
+fn checkIndex(self: *Interpreter, list: *const Heap.List, index: i64, span: Source.Span) Error!usize {
+    const count = list.items.items.len;
+    if (index >= 0 and index < count) return @intCast(index);
+    if (count == 0) return self.raiseFmt(
+        span,
+        "index {d} is outside this list, which is empty",
+        .{index},
+        "Check `empty?()` before indexing, or add an element first.",
+    );
+    const help = try std.fmt.allocPrint(self.arena, "Valid indices are 0 through {d}.", .{count - 1});
+    return self.raiseFmt(
+        span,
+        "index {d} is outside this list, which has {d} element{s}",
+        .{ index, count, if (count == 1) "" else "s" },
+        help,
+    );
+}
+
 /// Section 6.4. Each pass through the body is a block of its own, so its locals
 /// are fresh every time.
 fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
@@ -313,7 +408,8 @@ fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
 /// The loop stops by comparing with the last value rather than by stepping past
 /// it, because stepping past `9223372036854775807` would overflow.
 fn executeFor(self: *Interpreter, loop: Ast.For) Error!void {
-    // The checker allows only a range here, with `Int` endpoints.
+    if (loop.iterable.data != .range) return self.executeForList(loop);
+
     const range = loop.iterable.data.range;
     const start = (try self.evaluate(range.start)).data.int;
     const end = (try self.evaluate(range.end)).data.int;
@@ -322,21 +418,39 @@ fn executeFor(self: *Interpreter, loop: Ast.For) Error!void {
     const last = if (range.inclusive) end else end - 1;
 
     var current = start;
-    while (try self.executeIteration(loop, current)) {
+    while (try self.executeIteration(loop, .initInt(current))) {
         if (current == last) return;
         current += 1;
     }
 }
 
+/// Section 8.4: the loop visits the list as it was when the loop began. Holding
+/// the buffer for the whole loop is what guarantees it: a change the body makes
+/// through the list's own binding finds the buffer shared and copies it first.
+fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
+    const iterable = try self.evaluate(loop.iterable);
+    defer self.heap.release(iterable);
+
+    for (iterable.data.list.items.items) |item| {
+        if (!try self.executeIteration(loop, Heap.retain(item))) return;
+    }
+}
+
 /// One pass through a `for` body with the loop variable bound to `value`, in a
 /// scope of its own, which is what makes the binding fresh every iteration.
-/// False when a `break` ended the loop.
-fn executeIteration(self: *Interpreter, loop: Ast.For, value: i64) Error!bool {
+/// `value` is owned: the binding takes it, and `_` releases it. False when a
+/// `break` ended the loop.
+fn executeIteration(self: *Interpreter, loop: Ast.For, value: Value) Error!bool {
     const scope = try self.pushScope();
     defer self.popScope();
 
-    if (!std.mem.eql(u8, loop.name, "_")) {
-        try scope.put(self.gpa, loop.name, .{ .kind = .int, .value = .initInt(value) });
+    if (std.mem.eql(u8, loop.name, "_")) {
+        self.heap.release(value);
+    } else {
+        scope.put(self.gpa, loop.name, .{ .kind = value.kind(), .value = value }) catch |err| {
+            self.heap.release(value);
+            return err;
+        };
     }
 
     self.executeAll(loop.body.statements) catch |err| switch (err) {
@@ -383,6 +497,7 @@ fn widen(value: Value, kind: Value.Kind) Value {
 }
 
 fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
+    if (annotation.element != null) return .list;
     return kindOf(Type.fromName(annotation.name) orelse .invalid);
 }
 
@@ -394,6 +509,7 @@ fn kindOf(checked: Type) Value.Kind {
         .bool => .bool,
         .int => .int,
         .float => .float,
+        .list => .list,
     };
 }
 
@@ -416,8 +532,9 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .float_literal => |value| .initFloat(value),
         .bool_literal => |value| .initBool(value),
         .nothing_literal => Value.nothing,
+        // Reading a name makes a new holder of what it holds.
         .name => |name| if (self.find(name)) |slot|
-            slot.value orelse self.raiseUnassigned(expression.span, name)
+            (if (slot.value) |value| Heap.retain(value) else self.raiseUnassigned(expression.span, name))
         else
             // The checker proves every name read here is bound and assigned,
             // so this is a safety net rather than a language rule.
@@ -430,7 +547,37 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         // The checker allows a range only as what a `for` loop visits, which
         // `executeFor` reads directly.
         .range => unreachable,
+        .list_literal => |elements| self.evaluateList(expression, elements),
+        .index => |index| self.evaluateIndex(expression, index),
+        // `count` is the only property so far; the checker allows nothing else.
+        .member => |member| blk: {
+            const base = try self.evaluate(member.base);
+            defer self.heap.release(base);
+            break :blk .initInt(@intCast(base.data.list.items.items.len));
+        },
     };
+}
+
+/// Section 8.2. The checker recorded the literal's type, which says whether
+/// whole numbers in it are to be stored as `Float`s.
+fn evaluateList(self: *Interpreter, expression: *const Ast.Expression, elements: []const *const Ast.Expression) Error!Value {
+    const checked = self.literal_types.get(expression).?;
+    const element = kindOf(checked.element.?.*);
+
+    const list = try self.heap.createList(element, elements.len);
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+    for (elements) |item| list.items.appendAssumeCapacity(widen(try self.evaluate(item), element));
+    return result;
+}
+
+fn evaluateIndex(self: *Interpreter, expression: *const Ast.Expression, index: Ast.Expression.Index) Error!Value {
+    const base = try self.evaluate(index.base);
+    defer self.heap.release(base);
+    const position = (try self.evaluate(index.index)).data.int;
+    const list = base.data.list;
+    const at = try self.checkIndex(list, position, expression.span);
+    return Heap.retain(list.items.items[at]);
 }
 
 /// Section 5.2's `and` and `or`, which short-circuit: the right side is not
@@ -456,7 +603,10 @@ fn evaluateComparison(
     expression: *const Ast.Expression,
     comparison: Ast.Expression.Comparison,
 ) Error!Value {
+    // Each operand is released once the comparison after it is decided. The
+    // `defer` reads `left` when it runs, so it releases whichever is current.
     var left = try self.evaluate(comparison.operands[0]);
+    defer self.heap.release(left);
 
     for (comparison.operators, comparison.operands[1..]) |operator, operand_node| {
         const right = try self.evaluate(operand_node);
@@ -477,8 +627,9 @@ fn evaluateComparison(
                 "Comparison needs two values of the same kind.",
             );
 
-        if (!holds) return .initBool(false);
+        self.heap.release(left);
         left = right;
+        if (!holds) return .initBool(false);
     }
 
     return .initBool(true);
@@ -505,7 +656,7 @@ fn evaluateUnary(
                 return .initInt(result[0]);
             },
             .float => |value| return .initFloat(-value),
-            .nothing, .bool => return self.raiseFmt(
+            .nothing, .bool, .list => return self.raiseFmt(
                 expression.span,
                 "`-` needs a number, but this is {s}",
                 .{operand.typeName()},
@@ -687,6 +838,8 @@ fn evaluateCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Value {
+    if (call.callee.data == .member) return self.callMethod(expression, call, call.callee.data.member);
+
     // The checker has proved the callee is a function: a program function,
     // which shadows the prelude as any declaration would, or `print`.
     const name = call.callee.data.name;
@@ -700,7 +853,10 @@ fn evaluateCall(
 /// failed would leave half a line behind.
 fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
     const values = try self.evaluateArguments(call.arguments);
-    defer self.gpa.free(values);
+    defer {
+        for (values) |value| self.heap.release(value);
+        self.gpa.free(values);
+    }
 
     for (values, 0..) |value, position| {
         // Section 15.2 separates multiple arguments with one space.
@@ -762,6 +918,129 @@ fn callFunction(
     // As with parameters, and including a return type the checker inferred:
     // `return 1` from a function whose returns merged to `Float` yields `1.0`.
     return widen(result, kindOf(signature.return_type));
+}
+
+/// Section 8.5's list methods. The checker has proved the receiver is a list,
+/// the method exists, and the arguments fit it.
+///
+/// A method that changes the list works on the list where it is stored, found
+/// the same way an element assignment finds its target: the receiver's indices
+/// and then the arguments are evaluated, left to right, and only then is the
+/// list walked to and made unique. A method that only reads works on the
+/// receiver's value.
+fn callMethod(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const method = Type.list_methods.get(member.name).?;
+    if (!method.mutates) {
+        const receiver = try self.evaluate(member.base);
+        defer self.heap.release(receiver);
+        const arguments = try self.evaluateArguments(call.arguments);
+        defer {
+            for (arguments) |argument| self.heap.release(argument);
+            self.gpa.free(arguments);
+        }
+        const items = receiver.data.list.items.items;
+        if (std.mem.eql(u8, member.name, "empty?")) return .initBool(items.len == 0);
+        // `contains?`
+        for (items) |item| {
+            if (Value.equals(item, arguments[0])) return .initBool(true);
+        }
+        return .initBool(false);
+    }
+
+    // The receiver is a name, possibly indexed: the checker allows a mutating
+    // method on nothing else.
+    var path: std.ArrayList(*const Ast.Expression) = .empty;
+    defer path.deinit(self.gpa);
+    var receiver = member.base;
+    while (receiver.data == .index) {
+        try path.append(self.gpa, receiver.data.index.index);
+        receiver = receiver.data.index.base;
+    }
+    std.mem.reverse(*const Ast.Expression, path.items);
+
+    const indices = try self.gpa.alloc(i64, path.items.len);
+    defer self.gpa.free(indices);
+    for (path.items, indices) |index_expression, *index| index.* = (try self.evaluate(index_expression)).data.int;
+
+    const arguments = try self.evaluateArguments(call.arguments);
+    defer self.gpa.free(arguments);
+
+    const binding = self.find(receiver.data.name).?;
+    var slot = &binding.value.?;
+    if (indices.len > 0) slot = (try self.elementSlot(slot, indices, path.items)).slot;
+    const list = try self.heap.unique(slot);
+    return self.mutateList(expression.span, list, member.name, arguments);
+}
+
+/// Runs one mutating list method. Arguments are owned: one that is stored is
+/// taken by the list, and the rest are released here.
+fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []const u8, arguments: []const Value) Error!Value {
+    const items = &list.items;
+    const Method = enum { append, insert, remove, remove_all, remove_at, remove_first, remove_last, clear };
+    switch (std.meta.stringToEnum(Method, name).?) {
+        .append => try items.append(self.gpa, widen(arguments[0], list.element)),
+        .insert => {
+            const index = arguments[0].data.int;
+            if (index < 0 or index > items.items.len) {
+                const count = items.items.len;
+                const help = try std.fmt.allocPrint(
+                    self.arena,
+                    "Insert at 0 through {d}. Inserting at {d} adds to the end.",
+                    .{ count, count },
+                );
+                return self.raiseFmt(
+                    span,
+                    "cannot insert at index {d} in a list of {d} element{s}",
+                    .{ index, count, if (count == 1) "" else "s" },
+                    help,
+                );
+            }
+            try items.insert(self.gpa, @intCast(index), widen(arguments[1], list.element));
+        },
+        .remove => {
+            defer self.heap.release(arguments[0]);
+            for (items.items, 0..) |item, position| {
+                if (!Value.equals(item, arguments[0])) continue;
+                self.heap.release(items.orderedRemove(position));
+                break;
+            }
+        },
+        .remove_all => {
+            defer self.heap.release(arguments[0]);
+            var kept: usize = 0;
+            for (items.items) |item| {
+                if (Value.equals(item, arguments[0])) {
+                    self.heap.release(item);
+                } else {
+                    items.items[kept] = item;
+                    kept += 1;
+                }
+            }
+            items.shrinkRetainingCapacity(kept);
+        },
+        .remove_at => {
+            const position = try self.checkIndex(list, arguments[0].data.int, span);
+            return items.orderedRemove(position);
+        },
+        .remove_first, .remove_last => {
+            if (items.items.len == 0) return self.raise(
+                span,
+                "cannot remove an element from an empty list",
+                "Check `empty?()` first.",
+            );
+            return if (std.mem.eql(u8, name, "remove_first")) items.orderedRemove(0) else items.pop().?;
+        },
+        .clear => {
+            for (items.items) |item| self.heap.release(item);
+            items.clearRetainingCapacity();
+        },
+    }
+    return Value.nothing;
 }
 
 /// Section 5.2: arguments evaluate left to right, every one of them before the
@@ -839,6 +1118,6 @@ fn toFloat(value: Value) f64 {
     return switch (value.data) {
         .int => |number| @floatFromInt(number),
         .float => |number| number,
-        .nothing, .bool => unreachable,
+        .nothing, .bool, .list => unreachable,
     };
 }

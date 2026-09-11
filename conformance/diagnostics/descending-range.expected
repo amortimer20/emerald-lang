@@ -1,0 +1,4 @@
+diagnostics/descending-range.em:4:15: this range is empty, because ranges count upward
+  for number in 10..1 {
+                ^^^^^
+Write `1..10` to count up. Counting down with `10.down_to(1)` is not available yet.

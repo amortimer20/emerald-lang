@@ -1,0 +1,4 @@
+diagnostics/temporary-list-mutation.em:8:1: `append` changes a list, but this list is a temporary value, so the change would be lost
+  starting_scores().append(10)
+  ^^^^^^^^^^^^^^^^^
+Store the list in a `var` first, then call `append` on it.

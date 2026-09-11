@@ -1,0 +1,5 @@
+runtime-errors/index-out-of-range.em:5:12: index 2 is outside this list, which has 2 elements
+      return items[2]
+             ^^^^^^^^
+Valid indices are 0 through 1.
+in `third`, called at runtime-errors/index-out-of-range.em:8:7
