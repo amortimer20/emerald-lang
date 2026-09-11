@@ -57,6 +57,10 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - `src/emerald.zig` is the library root and holds `check`, which reports encoding and
   lexical problems. It returns a `Report` of every diagnostic rather than only the first.
 - `src/main.zig` implements `emerald check <file>` with the section 18.1 exit codes.
+- `conformance/` holds the suite required by sections 19.6 and 23: cases written in Emerald
+  with expected results, run by `src/conformance.zig` under `zig build test`. Cases in
+  `valid/` must produce no diagnostics; cases in `diagnostics/` must match their `.expected`
+  file exactly. See [conformance/README.md](../conformance/README.md) for how to add one.
 
 ### Lexical decisions worth knowing
 
@@ -85,9 +89,17 @@ type checking, and `print`, as in `examples/arithmetic.em`.
 
 ## Validation and blockers
 
-- `zig build test` passes: 54 unit tests plus 4 command-line contract tests asserting the
-  section 18.1 exit codes against the real binary. The command-line tests were confirmed to
-  fail when the example is broken, so they are not vacuous.
+- `zig build test` passes: 54 unit tests, 13 conformance cases, and 5 command-line contract
+  tests asserting the section 18.1 exit codes against the real binary. Both the conformance
+  suite and the command-line tests were confirmed to fail when a case is broken, so they are
+  not vacuous.
+- Writing the conformance suite immediately found a real defect. The standard streams were
+  opened in positional mode, which starts at offset zero, so with output redirected to a
+  file each diagnostic overwrote the one before it and only the last survived. Standard
+  streams now use `writerStreaming`. Note that the defect is invisible when output goes to a
+  terminal or a pipe, which is why the command-line contract tests did not catch it; the
+  guard against a regression is the comment in `writeAll` plus the two-diagnostic
+  command-line case, which at least proves both diagnostics are emitted.
 - `bash tools/check-toolchain.sh` passes.
 - Verified against the pinned standard library: `std.unicode` provides UTF-8/UTF-16
   encoding, decoding, validation, and code-point counting only — no grapheme segmentation
@@ -99,6 +111,28 @@ type checking, and `print`, as in `examples/arithmetic.em`.
   `std.fs` is deprecated in favor of `std.Io.Dir`; `std.process.argsAlloc` is gone and
   `main` instead takes a `std.process.Init` supplying the allocator, `Io`, and arguments;
   `addExecutable` and `addTest` take a `root_module` built by `b.createModule`.
+
+### Open question raised by writing the conformance cases
+
+Section 3.1 decides continuation from the preceding tokens only, explicitly "rather than
+indentation or the next line". That rules out the leading-dot method chain that Kotlin,
+Swift, and C# all allow:
+
+```emerald
+var count = numbers
+    .filter { number => number > 0 }
+    .count
+```
+
+As written, the newline after `numbers` ends the statement, because an identifier can end an
+expression. This matters more for Emerald than for most languages, because section 5.4 makes
+method chaining the pipeline notation and declines a separate pipeline operator, so long
+chains are the idiomatic style and will want to wrap. Supporting it means letting a leading
+`.` on the next line continue the previous statement, which is a deliberate exception to the
+"preceding tokens only" rule rather than an oversight in it. A conformance case was written
+using this form and then removed, since the rule as written rejects it.
+
+This needs a decision before the parser slice fixes the behavior by accident.
 
 ### Known rough edges
 

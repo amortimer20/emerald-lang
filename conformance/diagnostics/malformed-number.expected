@@ -1,0 +1,8 @@
+diagnostics/malformed-number.em:1:16: this is not a valid number
+  var repeated = 1__0
+                 ^^^^
+Write a decimal number such as `42` or `3.5`. `_` may separate digits, as in `1_000`.
+diagnostics/malformed-number.em:2:16: this is not a valid number
+  var trailing = 5_
+                 ^^
+Write a decimal number such as `42` or `3.5`. `_` may separate digits, as in `1_000`.

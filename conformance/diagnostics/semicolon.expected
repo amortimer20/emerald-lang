@@ -1,0 +1,4 @@
+diagnostics/semicolon.em:1:14: Emerald does not use semicolons
+  var score = 1;
+               ^
+Remove it. A new line ends a statement.

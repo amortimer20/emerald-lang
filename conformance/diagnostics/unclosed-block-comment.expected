@@ -1,0 +1,4 @@
+diagnostics/unclosed-block-comment.em:3:1: this block comment is never closed
+  #[ This comment is never closed.
+  ^^
+Close it with `]#`.

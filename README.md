@@ -40,10 +40,15 @@ src/
   Diagnostic.zig     one reported problem and its canonical rendering
   Token.zig          token kinds, keywords, and the continuation-token list
   Lexer.zig          source text to tokens
+  conformance.zig    runs the Emerald conformance suite
+conformance/         Emerald cases and their expected results
 examples/            Emerald programs used as fixtures and targets
 toolchain/           pinned Zig version and compiled probes
 tools/               repository check scripts
 ```
+
+Language behavior is specified by [`conformance/`](conformance/), whose cases are written
+in Emerald rather than Zig so that a future backend must pass the same files unchanged.
 
 Language behavior should follow the rewrite context and its conformance tests rather than
 behavior inherited from the implementation host.

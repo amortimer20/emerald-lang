@@ -10,6 +10,19 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // The conformance suite reads Emerald files at test time, so it needs to be
+    // told where they are rather than depending on the working directory.
+    const test_options = b.addOptions();
+    test_options.addOptionPath("conformance_dir", b.path("conformance"));
+
+    const conformance_module = b.createModule(.{
+        .root_source_file = b.path("src/conformance.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "emerald", .module = emerald_module }},
+    });
+    conformance_module.addOptions("build_options", test_options);
+
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -35,8 +48,15 @@ pub fn build(b: *std.Build) void {
     });
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
+    const conformance_tests = b.addTest(.{
+        .name = "emerald-conformance",
+        .root_module = conformance_module,
+    });
+    const run_conformance = b.addRunArtifact(conformance_tests);
+
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_conformance.step);
     addCliTests(b, exe, test_step);
 }
 
@@ -69,6 +89,18 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     reports_lexical.expectExitCode(1);
     reports_lexical.addCheck(.{ .expect_stderr_match = "Emerald writes numbers in decimal only" });
     test_step.dependOn(&reports_lexical.step);
+
+    // Every diagnostic must reach the stream, not just the last one. This caught
+    // a real defect: the standard streams were opened in positional mode, so each
+    // write restarted at offset zero and clobbered the one before it.
+    const two_problems = fixtures.add("two-problems.em", "var a = 0xFF\nvar b = 1__0\n");
+    const reports_both = b.addRunArtifact(exe);
+    reports_both.addArg("check");
+    reports_both.addFileArg(two_problems);
+    reports_both.expectExitCode(1);
+    reports_both.addCheck(.{ .expect_stderr_match = "Emerald writes numbers in decimal only" });
+    reports_both.addCheck(.{ .expect_stderr_match = "this is not a valid number" });
+    test_step.dependOn(&reports_both.step);
 
     const misused = b.addRunArtifact(exe);
     misused.expectExitCode(64);

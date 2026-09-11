@@ -1,0 +1,4 @@
+diagnostics/unterminated-string.em:1:16: this string is never closed
+  var greeting = "Hello
+                 ^
+Close it with `"` before the line ends.

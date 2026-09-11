@@ -1,0 +1,4 @@
+diagnostics/bang-operator.em:1:16: `!` is not an operator in Emerald
+  var opposite = !ready
+                 ^
+Write `not` for negation, or `!=` to compare for inequality.

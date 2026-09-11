@@ -1,0 +1,4 @@
+diagnostics/non-decimal-base.em:1:13: Emerald writes numbers in decimal only
+  var count = 0xFF
+              ^^^^
+Write the value as a decimal number. Hexadecimal, octal, and binary literals are not available.

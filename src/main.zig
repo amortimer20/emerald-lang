@@ -69,7 +69,10 @@ fn writeAll(io: std.Io, stream: Stream, bytes: []const u8) !void {
         .stdout => .stdout(),
         .stderr => .stderr(),
     };
-    var writer = file.writer(io, &buffer);
+    // Streaming, not positional. A positional writer starts at offset 0, so a
+    // second call would overwrite the first once the stream is redirected to a
+    // file — which is exactly how the conformance suite reads our output.
+    var writer = file.writerStreaming(io, &buffer);
     try writer.interface.writeAll(bytes);
     try writer.interface.flush();
 }
