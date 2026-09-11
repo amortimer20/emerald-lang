@@ -277,23 +277,64 @@ The initial semantic vocabulary is:
 - functions
 - user structs, classes, enums, and traits
 
+`Int` and `Float` have settled widths. `Int` is a 64-bit signed two's-complement integer
+with the inclusive range `-9223372036854775808` through `9223372036854775807`. `Float` is
+IEEE-754 binary64. These are language semantics, not host details: every backend uses the
+same widths, and the checked-overflow and conversion rules in 5.3 and 9.4 are defined
+against exactly this range.
+
+Arbitrary-precision integers were considered and rejected for the initial language. They
+remove one class of beginner surprise but complicate hashing, the C boundary, and any
+future native backend far more than checked overflow does. A clear overflow diagnostic is
+the better teaching moment.
+
 `Nothing` is the absence-only type. The value is written `nothing`.
 
 ```emerald
 const missing: Nothing = nothing
 ```
 
-Emerald needs a way to express “a `T` or `nothing`,” but `T?` is not the settled spelling.
-It is visually unattractive and competes with the established `?` suffix and `?.`
-optional-chaining punctuation. Keep the semantics while leaving the type syntax open:
+An optional type is written with a trailing `?`:
 
 ```emerald
-var result = "42".to_int_maybe()  # inferred as an optional Int
+var result: Int? = "42".to_int_maybe()
+var maybe_names: [String]? = nothing
+var names_that_may_be_absent: [String?] = [nothing, "Ava"]
 ```
 
-Only this one optional relationship is required initially. Optionals do not make all
-references nullable, and the replacement syntax must not create a general generic system
-by accident.
+The postfix form is settled. It is the spelling C#, Swift, and Kotlin already use, and C# is
+a language this design borrows from deliberately, so it arrives familiar to the people most
+likely to teach Emerald. Structural placement stays legible: `[String]?` is an optional list
+and `[String?]` is a list of optionals, matching the rule in 4.5.
+
+`?` is a type constructor for this one relationship only. It is not a general generic
+system: users cannot declare their own `?`-like type constructors, and a bracketed spelling
+such as `Optional[Int]` was rejected precisely because it would invite that expectation.
+Optionals do not make all references nullable.
+
+**Lexical rule.** Because 3.3 lets an identifier end in `?`, the sequence `Int?` is
+genuinely ambiguous to a lexer: maximal munch produces one identifier token `Int?` rather
+than `Int` followed by an optional marker. Emerald resolves this in the parser, not the
+lexer. The lexer keeps maximal munch and emits the single identifier token. In type
+position — after `:`, inside `[...]`, or in a function type — the parser splits a trailing
+`?` off an identifier token and treats it as the optional marker, adjusting the span by its
+final byte.
+
+The split is safe because optionality is only ever written in a type, never at a use site,
+so no lexer lookahead or parser-to-lexer feedback is required. This must not be resolved by
+consulting the casing conventions in 3.3, which are style warnings rather than enforced
+rules; lexing must not depend on a convention a program is allowed to violate.
+
+A declaration exercising both meanings of `?` in one line is a required conformance test:
+
+```emerald
+func valid?(): Bool? {
+    return nothing
+}
+```
+
+Here `valid?` keeps its `?` as part of the declared name, while the return type `Bool?`
+splits into an optional `Bool`.
 
 ### 4.3 `var` and `const`
 
@@ -413,6 +454,29 @@ elements are different types. A literal containing `nothing` requires contextual
 type information. Functions returning `nothing` on any path require an explicit optional
 or `Nothing` return type and never acquire an implicit `nothing` by falling off the end.
 
+**Optionals never nest.** This is a general rule, not a special case for any one operation.
+Writing `Int??` is an error that explains that an optional is already absent-or-present and
+suggests the single `?`. It is unrelated to the `??` coalescing operator rejected above,
+which is not a spelling in Emerald at all. Applying an optional-producing operation to an
+already-optional type yields that same type rather than a second layer.
+
+The rule is what makes the one optional relationship in 4.2 sufficient, and it has one
+honest cost: an operation that reports absence through `nothing` cannot distinguish “no
+answer” from “the answer was `nothing`” when the values themselves are optional. Emerald
+accepts that loss and supplies an unambiguous companion for every affected operation
+rather than introducing nesting:
+
+| Lossy on optional elements | Unambiguous companion |
+| --- | --- |
+| `list.find { ... }` | `list.find_index { ... }` — an index is never `nothing` |
+| `list.first`, `list.last` | `list.empty?()` |
+| `dictionary[key]` | `dictionary.contains_key?(key)` |
+| `list.min`, `list.max` | `list.empty?()` |
+
+Documentation for these operations must state the limitation and name the companion. A
+program that stores `nothing` as a meaningful element and also needs to detect absence uses
+the companion; this is rare enough in beginner code that nesting would be the worse trade.
+
 ## 5. Expressions and operators
 
 ### 5.1 Literals
@@ -483,11 +547,15 @@ The operators are:
 - `%` for the remainder paired with the chosen division rule
 - `**` for exponentiation
 
-Integer overflow is checked and reported. Division by zero is an error for both numeric
-types. Floating-point overflow may produce infinity and invalid floating operations may
-produce NaN; NaN follows IEEE comparison behavior and is inspected with `nan?()`. NaN is
-invalid as a dictionary key, set element, or recursively contained part of either. Sorting,
-`min`, and `max` report an error when they encounter NaN. Infinity orders normally.
+Integer overflow is checked and reported against the 64-bit signed range settled in 4.2.
+Every arithmetic operator, compound assignment, and `Int` conversion checks; overflow
+raises rather than wrapping, and its diagnostic names the operation and both operands.
+Negating the minimum `Int` overflows like any other operation. Division by zero is an error
+for both numeric types. Floating-point overflow may produce infinity and invalid floating
+operations may produce NaN; NaN follows IEEE comparison behavior and is inspected with
+`nan?()`. NaN is invalid as a dictionary key, set element, or recursively contained part of
+either. Sorting, `min`, and `max` report an error when they encounter NaN. Infinity orders
+normally.
 
 `/` always returns `Float`. `//` rounds toward negative infinity; two `Int` operands return
 `Int`, while either `Float` operand makes the result a whole-number-valued `Float`. `%`
@@ -758,10 +826,25 @@ above the portable minimum is a resource boundary rather than program semantics.
 no initial API for changing it, and tail-call optimization is permitted but not
 guaranteed.
 
-### 7.3 Defaults, named arguments, and overloads
+### 7.3 Defaults and named arguments
 
-Function and method overloading is supported. Selection happens statically from the
-argument types and must choose one best candidate or report the ambiguity with candidates.
+Overloading is deferred. A name declares one function or method within its scope, and a
+second declaration of the same name is an error naming the first. Selection is therefore by
+name alone: there is no candidate set, no ranking, and no ambiguity report.
+
+This reverses an earlier decision to support overloading, for three reasons. It was the
+most expensive machinery in the design — static ranking over exact types, more-specific
+class and trait types, `Int`-to-`Float` widening, defaults consumed, and name-based
+elimination — layered over inference, narrowing, and trait subtyping. It produces the class
+of diagnostic least compatible with principle 1, because “no overload matches” explains a
+search the reader cannot see. And defaults with named arguments already cover most of what
+overloading is reached for. Adding overloading later is backward compatible; removing it
+would not be, so the reversible choice starts simple.
+
+Two consequences are deliberate. Type-level factory functions replace overloaded
+constructors, which reads better anyway: `Vector2.from_angle(radians)` says what
+`Vector2(Float)` only implies. And mixed-type operators stay deferred, since a type carries
+one `add`; 11.5 already declined to invent implicit widening for them.
 
 Default-valued parameters follow required parameters:
 
@@ -778,20 +861,12 @@ left to right as written, followed by omitted defaults in parameter order. A def
 read earlier parameters but not itself or later parameters. An override inherits the
 original declaration's default and cannot replace it.
 
-Overloads may differ by parameter type or count, never solely by return type or parameter
-names. Ranking prefers exact parameter types, followed by a uniquely more-specific
-compatible class or trait type, followed by `Int`-to-`Float` widening. Otherwise-equivalent
-candidates are ranked by fewer consumed defaults. Named arguments first eliminate
-candidates whose parameter names do not match. There is no optional lifting, user-defined
-implicit conversion, or return-type contribution to overload selection. If the remaining
-parameter types are unrelated or these rules otherwise leave a tie, the compiler reports
-the ambiguity and every competing signature.
+A subclass member whose name matches an overridable base member requires `@override` and
+replaces it. A same-named member without `@override` is a diagnostic, as described in 10.7.
+Because names are unique within a scope, there is no overload set to partially hide.
 
-A subclass retains inherited overloads when it adds a different signature. A matching
-signature requires `@override` and replaces only that implementation rather than hiding
-the rest of the overload set.
-
-Variadic parameters are deferred.
+Variadic parameters are deferred. `print` and `write` accept zero or more values as a
+prelude affordance described in 15.2, not as a general calling convention users can write.
 
 ### 7.4 Lambdas, trailing blocks, and capture
 
@@ -852,6 +927,21 @@ if (items.any? { item => item.valid?() }) {
 Methods are first-class callable values. `player.greet()` invokes the method and
 `player.greet` captures it. Capturing any method is allowed. A class receiver remains the
 shared object; a struct receiver is copied and the captured copy persists across calls.
+
+The struct rule is ordinary value semantics rather than a special case, and it is taught
+through its equivalence: capturing a method from a struct behaves exactly as if the struct
+had been copied into a local first, with the method called on that local.
+
+```emerald
+const advance = counter.increment   # behaves like the two lines below
+var private_copy = counter
+const advance = private_copy.increment
+```
+
+Nothing the captured method does is visible through the original binding, because a struct
+assignment never shares. Diagnostics for the related restriction in 7.4 — a struct method
+may not create a closure that outlives and mutates its original `self` — should use this
+same framing and suggest the explicit local, which makes the copy visible in the source.
 
 ## 8. Collections and compound values
 
@@ -951,6 +1041,7 @@ var score = scores["Ava"].or(0)
 Bracket assignment inserts a new entry or replaces the existing value. A dictionary whose
 value type is already optional does not produce a nested optional on lookup: both a missing
 entry and a stored `nothing` read as `nothing`, while `contains_key?` distinguishes them.
+This is the general non-nesting rule of 4.5 rather than a dictionary-specific exception.
 Assigning `nothing` stores an entry when the value type permits it and never means deletion.
 
 Dictionary keys must have stable equality and hashing. Built-in scalar values, strings,
@@ -1061,7 +1152,8 @@ values.
 
 Methods that can miss, such as `find`, `first`, `last`, `min`, and `max`, return an
 optional. Membership must not be implemented by comparing `find` with `nothing`, because a
-collection may itself contain `nothing`.
+collection may itself contain `nothing`; use `contains?`, or `find_index` when the matching
+position is needed. This follows the non-nesting rule and companion table in 4.5.
 
 `filter` and `reject` preserve the receiver's collection kind for lists, dictionaries,
 and sets. `take(count)` and `drop(count)` do the same, using insertion order for
@@ -1155,6 +1247,22 @@ the same normalized equality into dictionary keys and sets. Ordinary string orde
 deterministic and locale-independent, comparing normalized code points. Locale-aware
 collation belongs in a later library facility.
 
+**Normalization happens at comparison, not at construction.** A `String` retains exactly the
+bytes it was built from, so reading a file and writing it back reproduces the original
+bytes; `File.read` is not a lossy operation. Canonical equivalence is applied when two
+strings are compared, hashed as dictionary keys, or tested for set membership.
+
+The alternative, normalizing on construction, was rejected because it would silently rewrite
+user data passing through the standard library — unacceptable in a language whose file
+helpers are part of the beginner vocabulary.
+
+The cost is that `==` is not a byte comparison. The implementation takes the obvious fast
+paths: byte-equal strings are equal without further work, and a quick check that both
+operands are already in NFC — true of nearly all real text — avoids allocating a normalized
+form. Equal strings must hash equally, so the hash is computed over the normalized form
+using the same quick check. These are performance details; the observable rule is only that
+canonically equivalent strings are equal.
+
 ### 9.3 Numeric vocabulary
 
 Useful value methods include:
@@ -1228,8 +1336,8 @@ The three parsing forms intentionally express three different failure policies:
 "42".to_int_maybe()    # return Int or nothing
 ```
 
-The same family applies to floating-point parsing. The spelling of the optional return
-type remains unsettled even though the runtime result of the `_maybe` form is settled.
+The same family applies to floating-point parsing, so `to_int_maybe` returns `Int?` and
+`to_float_maybe` returns `Float?`.
 Parsing accepts surrounding whitespace but otherwise requires the entire string. Malformed
 or out-of-range input raises for the strict form, returns the fallback for `_or`, and
 returns `nothing` for `_maybe`.
@@ -1287,7 +1395,7 @@ keys and set membership.
 Fields visibly use `var` or `const`:
 
 ```emerald
-struct Vector2
+struct Vector2 {
     var x: Float
     var y: Float
 
@@ -1295,6 +1403,7 @@ struct Vector2
         self.x = x
         self.y = y
     }
+}
 ```
 
 Parameters are read-only, while fields may mutate. `self.` makes field access distinct
@@ -1310,8 +1419,10 @@ They may read earlier initialized fields but not later ones. An explicitly suppl
 generated-constructor argument replaces that field's default, which then does not run.
 Every remaining field must be definitely initialized before construction completes.
 
-Custom constructors replace the generated constructor and may be overloaded. A derived
-constructor calls `super(...)` first when the base constructor requires arguments; a
+A custom constructor replaces the generated constructor. A type declares at most one, since
+overloading is deferred; alternative ways to build a value are type-level factory functions
+such as `func Vector2.from_angle(radians: Float): Vector2`, which name their intent. A
+derived constructor calls `super(...)` first when the base constructor requires arguments; a
 zero-argument base call is inserted when possible. Base construction finishes before
 derived field defaults and the rest of the derived constructor. `self(...)` delegates to
 another constructor of the same type, must be first, cannot be combined with `super(...)`,
@@ -1392,32 +1503,33 @@ not depend on convention alone. Public is the default; there is no `public` keyw
 Type-level visibility across directories is deferred until larger projects provide a
 concrete need.
 
-### 10.6 Block-free types
+### 10.6 One braced form
 
-Classes, structs, traits, and enums may use a block-free top-level form inspired by
-GDScript:
-
-```emerald
-class Dog extends Animal with Speaker
-    var name: String
-
-    func speak() {
-        print("Woof")
-    }
-```
-
-The body runs to end of file. A file using this form has one block-free outer type; sibling
-outer types require the braced form or separate files. Nested helper types remain possible
-only where their ownership is unambiguous.
-
-Braced forms remain valid for files containing sibling types:
+Classes, structs, traits, and enums always brace their bodies:
 
 ```emerald
 struct Point {
     var x: Float
     var y: Float
 }
+
+class Dog extends Animal with Speaker {
+    var name: String
+
+    func speak() {
+        print("Woof")
+    }
+}
 ```
+
+An earlier draft also allowed a block-free top-level form whose body ran to end of file,
+inspired by GDScript. It is removed. It contradicted the formatter contract in 18.3, which
+promises one canonical output with no style configuration: the formatter would have had to
+either rewrite block-free types into braced ones, making the form pointless, or maintain two
+canonical outputs. It also added a second parsing mode, a second shape for error recovery to
+understand, and a second way to teach a class declaration, in exchange for saving one brace
+in single-type files. Braces already delimit every other block in the language, so the
+uniform rule is both simpler to implement and easier to explain.
 
 ### 10.7 Inheritance and overriding
 
@@ -1443,7 +1555,10 @@ Abstract classes should be visually explicit through `@abstract`:
 
 ```emerald
 @abstract
-class Shape
+class Shape {
+    @abstract
+    func area(): Float
+}
 ```
 
 In a class, `@abstract` may also mark a bodyless method. The initial language avoids an
@@ -1471,12 +1586,13 @@ a body supplies a default. Member requirements use Emerald's existing `const` an
 distinction without C# getter markers:
 
 ```emerald
-trait Named
+trait Named {
     const name: String
 
     func introduction(): String {
         return "I am #{self.name}."
     }
+}
 ```
 
 A `const` requirement promises readable access and may be satisfied by a public `const` or
@@ -1490,7 +1606,8 @@ state. Private members cannot satisfy public requirements.
 A class has one optional base class and may adopt multiple traits:
 
 ```emerald
-class Duck extends Animal with Swimmer, Flyer
+class Duck extends Animal with Swimmer, Flyer {
+}
 ```
 
 Adoption is explicit: merely having matching members does not establish conformance.
@@ -1505,7 +1622,7 @@ reports the ambiguity and names both traits. Trait order must not silently selec
 Trait requirements are checked eagerly for the entire project.
 
 Class methods, including inherited ones, outrank trait defaults. Two distinct trait
-defaults with the same signature require an explicit implementation; trait order never
+defaults with the same name require an explicit implementation; trait order never
 selects one. Compatible duplicate requirements need one implementation. A writable
 property requirement subsumes a read-only one of the same type; different required types
 conflict. `TraitName.method(self, ...)` explicitly invokes that trait's default. Private
@@ -1559,9 +1676,14 @@ The initial overloadable set is narrow:
 
 Assignment, boolean short-circuit operators, member access, calls, and language control
 flow are not overloadable. Custom equality, hashing, and indexing are deferred. Operators
-should use `Self` when both operands and the result are the implementing type. Mixed-type
-operators require an explicit contract rather than an implicit widening invented by the
-runtime. `Ordered` does not redefine equality.
+use `Self` for both operands and the result.
+
+Mixed-type operators are deferred. Because a type declares one `add`, a user type cannot
+currently accept both `Vector2 + Vector2` and `Vector2 + Float`; the second is written as a
+named method such as `scaled_by`. This is a consequence of deferring overloading in 7.3 and
+is the intended initial limit, not an oversight. Built-in `Int`-to-`Float` widening is
+unaffected because it is language arithmetic rather than a user contract. `Ordered` does not
+redefine equality.
 
 ## 12. Enums and branching
 
@@ -1735,10 +1857,9 @@ visible; names across subdirectories use their namespace unless shortened by `us
 
 ### 14.3 File shapes
 
-A file may use one block-free outer class, struct, trait, or enum whose body continues to
-EOF. Files needing sibling outer types use braced forms. Braced nested types are naming and
-visibility relationships only; they do not capture an enclosing class instance. A leading
-underscore makes a nested type private.
+A file may declare any number of outer types, all using the braced form of 10.6. Nested
+types are naming and visibility relationships only; they do not capture an enclosing class
+instance. A leading underscore makes a nested type private.
 
 The old filename-as-implicit-type rule is not assumed. Type declarations state their own
 names so search, rename, and diagnostics remain direct.
@@ -2122,6 +2243,15 @@ When a Zig behavior is uncertain, write a minimal program under an
 result. If a pattern cannot be pointed to in the pinned source or demonstrated compiling,
 it is not accepted implementation knowledge.
 
+**Unicode is Emerald's dependency, not Zig's.** Inspection of the pinned `0.16.0` standard
+library confirms `std.unicode` provides UTF-8 and UTF-16 encoding, decoding, validation, and
+code-point counting, and nothing more: there is no grapheme cluster segmentation and no
+normalization. Grapheme indexing from 9.1 needs UAX #29 and normalized equality from 9.2
+needs UAX #15, so Emerald vendors the required Unicode tables with a recorded Unicode
+version, regenerates them deliberately, and owns the segmentation and normalization code.
+Plan this cost into the string slice rather than discovering it there. `std.fmt` does supply
+shortest-round-trip float formatting, which satisfies the display rule in 9.4.
+
 ### 19.2 Frontend pipeline
 
 The initial architecture is:
@@ -2241,6 +2371,9 @@ The following are deliberately outside the initial implementation:
 - broad user-declared generics;
 - a source-visible `Any` top type;
 - immutable collection views and collection covariance;
+- function and method overloading, and with it overloaded constructors;
+- mixed-type operator contracts such as `Vector2 + Float`;
+- nested optionals;
 - variadic functions;
 - `protected` and type-level visibility controls;
 - enum payloads and algebraic pattern matching;
@@ -2296,7 +2429,11 @@ These newer decisions supersede the existing C# implementation and old design do
 | Constants | `SCREAMING_SNAKE_CASE` | `snake_case` |
 | Struct mutation | Structs were immutable | Struct fields may mutate; `const` prevents rebinding |
 | String indexing | No integer indexing | Zero-based grapheme indexing |
-| Optional type spelling | `T?` | Unsettled; `T?` is currently disliked |
+| Optional type spelling | `T?` | `T?` retained |
+| Overloading | Supported | Deferred; names are unique within a scope |
+| Type declaration bodies | Braced, plus a block-free to-EOF form | Braced only |
+| `Int` width | Unstated | 64-bit signed, checked overflow |
+| String normalization | Unstated | At comparison; construction preserves bytes |
 | `Self` | Deferred | Narrowly supported in trait/type contracts |
 | User `Iterable` | Implemented | Deferred and retained on the roadmap |
 | `case`/`when` | Deferred | Accepted with a controlled initial matching model |
@@ -2322,7 +2459,7 @@ place:
 - constants and enum values use `snake_case`;
 - return annotations use `:` and lambdas use `=>`;
 - optional chaining was first deferred during reconstruction and was later restored as
-  `?.`, while the optional type spelling remains open;
+  `?.`, and the optional type spelling was subsequently confirmed as the postfix `T?`;
 - tuple syntax supports two or more elements, with no empty or one-element tuple;
 - integer iteration methods are `up_to` and `down_to`, not the historical abbreviations;
 - `count` is a property, collection pipelines are eager, `each` returns `Nothing`, and
@@ -2336,6 +2473,26 @@ place:
 This history is retained because it identifies exactly where confident reconstruction has
 already failed. Future corrections belong here and in the affected normative section, in
 the same change.
+
+### Pre-implementation decision pass
+
+A review immediately before the first Zig slice closed the remaining questions that would
+have been answered by implementation accident. Each is recorded in its normative section;
+they are collected here with the reasoning that produced them.
+
+| Decision | Resolution | Reasoning |
+| --- | --- | --- |
+| Numeric widths (4.2) | `Int` is 64-bit signed, `Float` is binary64 | The overflow and conversion rules already assumed a bounded range without naming it. Arbitrary precision costs more at the C boundary and in hashing than checked overflow costs a learner. |
+| Optional spelling (4.2) | Postfix `T?` | The familiar spelling from C#, Swift, and Kotlin. The clash with `?`-suffixed identifiers is lexical rather than merely visual, and is resolved by splitting a trailing `?` in type position during parsing; 4.2 records the rule and its conformance test. |
+| Optional nesting (4.5) | Optionals never nest; `T??` is an error | Makes one optional relationship sufficient. The resulting ambiguity in `find`, `first`, `last`, `min`, `max`, and dictionary lookup over optional elements is accepted and paired with an unambiguous companion operation rather than fixed by nesting. |
+| Overloading (7.3) | Deferred | The most expensive machinery in the design, producing the least explainable diagnostics, for ergonomics that defaults and named arguments largely already provide. Adding it later is backward compatible. |
+| Type body syntax (10.6) | Braced only | The block-free form contradicted the single canonical formatter output promised in 18.3, and cost a second parsing and recovery mode. |
+| Struct method capture (7.5) | Semantics kept, framing added | The behavior is ordinary value semantics; it needed a teaching equivalence rather than a different rule. |
+| String normalization (9.2) | Compare normalized, store original bytes | Keeps canonical equivalence for equality while guaranteeing that file contents round-trip unchanged. |
+
+These supersede conflicting statements elsewhere in this document. The optional spelling and
+`Int` width were previously listed as open roadmap items in section 24 and have been removed
+from it.
 
 ## 23. Consistency rules for future work
 
@@ -2361,8 +2518,9 @@ The complete conversation audit and the final uncertainty pass leave no known se
 question blocking the first interpreter slices. The following decisions intentionally wait
 for working Emerald programs, implementation measurements, or a dedicated design pass:
 
-- the optional type spelling that replaces the disliked `T?` form;
 - nondecimal numeric literals and numeric suffixes;
+- overloading and mixed-type operator contracts, if real Emerald programs show that
+  defaults, named arguments, and named factory functions are genuinely insufficient;
 - immutable collection views, covariance, `Any`, user generics, and user `Iterable`;
 - stable C ABI declarations and ownership rules based on an actual library binding;
 - project templates and the eventual build, distribution, and package commands;
