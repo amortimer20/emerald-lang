@@ -24,6 +24,13 @@ New source, tests, examples, and tools will be added at the repository root as t
 working slices are implemented. Language behavior should follow the rewrite context and
 its conformance tests rather than behavior inherited from the implementation host.
 
+## Working with coding agents
+
+Codex and Claude share [AGENTS.md](AGENTS.md) for working rules and
+[docs/handoff.md](docs/handoff.md) for the current milestone, validation, and next step.
+[CLAUDE.md](CLAUDE.md) directs Claude to the same shared context. The rewrite context
+remains the authoritative language design.
+
 ## Historical .NET prototype
 
 The original C#/.NET implementation is preserved in
