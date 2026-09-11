@@ -1,6 +1,4 @@
 # build output
-bin/
-obj/
 zig-out/
 .zig-cache/
 
