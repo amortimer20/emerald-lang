@@ -13,6 +13,13 @@ The rewrite is at the executable-specification stage. The first implementation s
 establish a minimal end-to-end path through source loading, diagnostics, parsing, checking,
 and interpretation.
 
+The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify
+the exact version and compile and run the toolchain probe with:
+
+```bash
+bash tools/check-toolchain.sh
+```
+
 New source, tests, examples, and tools will be added at the repository root as their first
 working slices are implemented. Language behavior should follow the rewrite context and
 its conformance tests rather than behavior inherited from the implementation host.

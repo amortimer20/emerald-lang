@@ -2104,8 +2104,8 @@ evaluation in `.em` source. The same debugger core should serve the CLI and edit
 
 ### 19.1 Toolchain discipline
 
-- Pin one exact Zig release in the repository and CI configuration before implementation
-  begins. Record the complete `zig version` output and do not track `master` implicitly.
+- The initial toolchain is pinned to Zig `0.16.0` in the repository. CI uses the same
+  version, and upgrades never track `master` implicitly.
 - Keep that release's standard-library source locally searchable through the paths reported
   by `zig env`.
 - Treat compiling probes and the pinned standard-library declarations as authoritative for
@@ -2384,7 +2384,6 @@ small proposal and representative program when its implementation slice becomes 
 The project is ready for its first Zig slice when:
 
 - this document and README agree that this is the only current rewrite context;
-- the exact Zig version is selected and recorded;
 - first-program syntax has no provisional tokens;
 - source spans and diagnostic output have one canonical example;
 - integer literal and basic arithmetic semantics are pinned by examples;
