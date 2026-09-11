@@ -261,14 +261,21 @@ test "precedence and grouping" {
 }
 
 test "exponentiation binds tighter than unary minus and associates right to left" {
-    try expectOutput("print(-2 ** 2)\n", "-4.0\n");
-    try expectOutput("print(2 ** 3 ** 2)\n", "512.0\n");
-    try expectOutput("print((-2) ** 2)\n", "4.0\n");
-    try expectOutput("print(2 ** -1)\n", "0.5\n");
+    try expectOutput("print(-2 ** 2)\n", "-4\n");
+    try expectOutput("print(2 ** 3 ** 2)\n", "512\n");
+    try expectOutput("print((-2) ** 2)\n", "4\n");
+    try expectOutput("print(2.0 ** -1)\n", "0.5\n");
 }
 
-test "exponentiation always produces a Float" {
-    try expectOutput("print(2 ** 10)\n", "1024.0\n");
+test "exponentiation of two Ints is an Int, and a Float operand makes a Float" {
+    try expectOutput("print(2 ** 10)\n", "1024\n");
+    try expectOutput("var side = 7\nvar area: Int = side ** 2\nprint(area)\n", "49\n");
+    try expectOutput("print(2 ** 0.5 > 1.41, 2.0 ** 3)\n", "true 8.0\n");
+    try expectOutput("print(0 ** 0, (-1) ** 999999999999)\n", "1 -1\n");
+    // The minimum Int is reachable exactly.
+    try expectOutput("print((-2) ** 63)\n", "-9223372036854775808\n");
+    try expectFailure("print(2 ** 63)\n", "exponentiation of 2 and 63 overflows Int");
+    try expectFailure("print(2 ** -1)\n", "an Int cannot be raised to the negative power -1");
 }
 
 test "ordinary division always produces a Float" {
@@ -775,7 +782,8 @@ test "a recursive function needs an explicit return type" {
 }
 
 test "a recursive function with no result needs no annotation" {
-    // Nothing is inferred, so section 7.2's reason for the rule does not apply.
+    // Its return type is `Nothing` without looking inside, so section 7.2 asks
+    // for no annotation: there is nothing to infer circularly.
     try expectOutput("func countdown(n: Int) {\n    if n < 0 {\n        return\n    }\n    print(n)\n    countdown(n - 1)\n}\ncountdown(2)\n", "2\n1\n0\n");
 }
 

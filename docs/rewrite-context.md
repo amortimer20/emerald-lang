@@ -331,13 +331,14 @@ rules; lexing must not depend on a convention a program is allowed to violate.
 A declaration exercising both meanings of `?` in one line is a required conformance test:
 
 ```emerald
-func valid?(): Bool? {
-    return nothing
+func valid?(input: Int?): Bool {
+    return input != nothing
 }
 ```
 
-Here `valid?` keeps its `?` as part of the declared name, while the return type `Bool?`
-splits into an optional `Bool`.
+Here `valid?` keeps its `?` as part of the declared name, while the parameter type `Int?`
+splits into an optional `Int`. A `?` name promises a plain `Bool` answer (3.3), so a
+predicate never returns `Bool?`.
 
 ### 4.3 `var` and `const`
 
@@ -471,8 +472,9 @@ failure mode.
 
 Optional placement is structural: an optional collection and a collection of optional
 elements are different types. A literal containing `nothing` requires contextual element
-type information. Functions returning `nothing` on any path require an explicit optional
-or `Nothing` return type and never acquire an implicit `nothing` by falling off the end.
+type information. A function that returns a value on some paths and `nothing` on others
+requires an explicit optional return type, and never acquires an implicit `nothing` by
+falling off the end.
 
 **Optionals never nest.** This is a general rule, not a special case for any one operation.
 Writing `Int??` is an error that explains that an optional is already absent-or-present and
@@ -587,8 +589,11 @@ uses the matching floor-division law `a == (a // b) * b + (a % b)`; for finite o
 nonzero remainder has the divisor's sign. Two `Int` operands return `Int`, otherwise it
 returns `Float`. A NaN or infinite remainder operand produces NaN.
 
-`**` always returns `Float`, including for integer operands. It binds more tightly than
-unary minus and associates right to left.
+`**` follows `//`: two `Int` operands return an `Int`, checked for overflow like every other
+`Int` operation, and either `Float` operand makes the result a `Float`. So `side ** 2` stays
+a whole number when `side` is. An `Int` cannot hold the fraction a negative exponent
+produces, so a negative `Int` exponent raises, and its diagnostic suggests a `Float` base such
+as `2.0 ** -1`. `**` binds more tightly than unary minus and associates right to left.
 
 Compound assignment includes `+=`, `-=`, `*=`, `/=`, and `//=` and lowers through the same
 operation as the corresponding binary operator. `++` and `--` are omitted.
@@ -616,8 +621,8 @@ items[2..<]       # through the end
 items[..<3]       # from the beginning
 ```
 
-String boundaries count graphemes. Endpoints outside valid boundaries are errors rather
-than silently clamped; an exclusive endpoint may equal the length, and `items[i..<i]` is
+String boundaries count graphemes. Endpoints outside valid boundaries, and a start after
+the end, are errors rather than silently clamped or emptied; an exclusive endpoint may equal the length, and `items[i..<i]` is
 empty at any valid boundary. Omitted endpoints exist only inside slicing brackets and do
 not create unbounded range values.
 
@@ -745,8 +750,8 @@ for name in names {
 be used where the resulting control flow stays obvious. Loop bindings are read-only and
 fresh for every iteration. Range endpoints are evaluated once before iteration begins.
 
-`..` includes both bounds and `..<` excludes the upper bound. A range travels from its
-left endpoint toward its right endpoint:
+`..` includes both bounds and `..<` excludes the upper bound. Ranges only count upward. A
+range whose start is past its end is empty:
 
 ```emerald
 for number in 1..5 {
@@ -758,9 +763,16 @@ for index in 0..<count {
 }
 
 for number in 5..1 {
-    print(number) # 5, 4, 3, 2, 1
+    print(number) # never runs
 }
 ```
+
+Counting upward only is what makes computed bounds safe. `for i in 0..items.count - 1`
+visits nothing for an empty list, and `for i in 1..n` visits nothing when `n` is `0`. A
+range that reversed itself would visit `0, -1` and `1, 0` instead, failing only at the edge
+case where a beginner is least likely to look. Counting down is spelled out with
+`5.down_to(1)` or `(1..5).reverse()`. A range whose endpoints are both literals and in
+descending order receives a warning suggesting `down_to`, because it can only be a mistake.
 
 Ruby-style library alternatives are welcome:
 
@@ -774,13 +786,14 @@ for number in (0..10).step(2) {
 }
 ```
 
-`step(distance)` takes a strictly positive distance; the range supplies the direction.
-Thus `(1..7).step(2)` produces `1, 3, 5, 7`, while `(7..1).step(2)` produces
-`7, 5, 3, 1`. Zero and negative distances are errors.
+`step(distance)` takes a strictly positive distance. Thus `(1..7).step(2)` produces
+`1, 3, 5, 7`, and `(7..1).step(2)` is empty like the range it steps. Zero and negative
+distances are errors.
 
 `up_to` only counts upward and `down_to` only counts downward. A target contradicting the
-method name is an error rather than a silent empty iteration. Equal inclusive endpoints,
-`up_to`, and `down_to` visit once. An equal half-open range is empty.
+method name is an error rather than a silent empty iteration, since the method name states
+a direction a range does not. Equal inclusive endpoints, `up_to`, and `down_to` visit once.
+An equal half-open range is empty.
 
 User-defined integration with `for` through an `Iterable` trait is deferred. Initial
 `for` supports the built-in iterable types.
@@ -790,9 +803,9 @@ User-defined integration with `for` through an `Iterable` trait is deferred. Ini
 `return` leaves the nearest function or lambda. It does not leave an enclosing function
 when written inside a lambda.
 
-A function returning no value may omit its return type and may use bare `return`. `Nothing`
-can be written explicitly when useful. Recursive functions require an explicit return type
-so checking does not depend on circular inference.
+A function returning no value has the return type `Nothing`, which may be written or
+omitted, and it may use bare `return`. A recursive function that returns a value requires
+an explicit return type so checking does not depend on circular inference (7.2).
 
 ## 7. Functions and callable values
 
@@ -848,9 +861,13 @@ answer. Public API guidance may later recommend explicit return types without ma
 syntax requirements.
 
 Every reachable path in a value-producing function returns a value. Recursive functions
-and mutually recursive cycles require explicit return types. A function that returns only
-`nothing` may explicitly return `Nothing`; this remains distinct from a function with no
-result, whose annotation is omitted.
+and mutually recursive cycles that return a value require explicit return types.
+
+A function with no result returns `Nothing`. There is no separate "no result" category:
+omitting the return type of a function with no value-returning `return` means `Nothing`,
+and writing `: Nothing` means the same. Calling one produces `nothing`. Because that return
+type is known without looking inside the body, such a function needs no annotation even
+when it is recursive, so a recursive `countdown` is written like any other.
 
 Every implementation supports at least 1,000 active Emerald calls and detects excessive
 recursion before exhausting its host stack. Crossing an implementation's documented limit
@@ -1347,7 +1364,8 @@ cards.shuffle!()
 
 Repeatable work uses `Random(seed: 42)` with `next(range)`, `choose(collection)`, and
 `shuffle!(collection)`. The global form delegates to a runtime-managed generator. Range
-bounds retain the ordinary inclusive or exclusive meaning of their syntax.
+bounds retain the ordinary inclusive or exclusive meaning of their syntax, and choosing
+from an empty range is an error.
 
 ### 9.4 Standard-library recovery audit
 
@@ -1692,8 +1710,9 @@ that the simple trait model cannot express.
 contracts where another operand or result must be that same concrete type.
 
 ```emerald
-trait Addable
+trait Addable {
     func add(other: Self): Self
+}
 ```
 
 It does not introduce F-bounded polymorphism or an unrestricted metatype system. Uses
@@ -1758,7 +1777,8 @@ Errors are ordinary typed values rooted in an `Error` class. Programs may define
 error subclasses. Failures use `raise`:
 
 ```emerald
-class InvalidScore extends Error
+class InvalidScore extends Error {
+}
 
 raise InvalidScore("Score cannot be negative")
 ```
@@ -1827,12 +1847,18 @@ happens. There is no user-visible object destructor in the initial language.
 
 ### 14.1 Projects and entry points
 
-A project is initially a directory tree. Every `.em` file under the project root is
-included; no imports are needed merely to make project files exist.
+A single file is a complete program. A directory becomes a project only when it contains
+`main.em`, which `emerald new` creates. Running a file outside a project runs that file
+alone, so a folder of independent exercises works as a beginner expects: `emerald run
+ex1.em` never sees `ex2.em`, and two exercises that each declare `func helper` do not
+collide.
 
-`main.em` is the conventional entry file. `emerald run path/to/file.em` may select another
-entry explicitly. Until a project manifest exists, the entry file's directory is the
-project root, independent of the terminal's working directory.
+Inside a project, every `.em` file under the project root is included; no imports are
+needed merely to make project files exist. `main.em` is the entry file, and `emerald run
+path/to/file.em` may select another entry explicitly. Until a manifest exists, the project
+root is the directory containing `main.em`, independent of the terminal's working
+directory. The complete rules for finding a project root and for `emerald.toml` are a
+roadmap item (24).
 
 The rewrite adopts the clearer top-level boundary suggested in the discussion:
 
@@ -2507,7 +2533,8 @@ place:
   `unique`/`unique!`, and `shuffle`/`shuffle!`;
 - logical string padding uses `pad_start` and `pad_end`; and
 - regex is an ordinary roadmap library with no special literal syntax;
-- ranges follow their written endpoint direction and use a positive step magnitude.
+- ranges follow their written endpoint direction and use a positive step magnitude
+  (since superseded: ranges count upward only; see the implementation decisions below).
 
 This history is retained because it identifies exactly where confident reconstruction has
 already failed. Future corrections belong here and in the affected normative section, in
@@ -2542,6 +2569,11 @@ recorded in their normative sections:
 | --- | --- | --- |
 | Ordering (5.2) | Only numbers and strings are ordered; every type has `==` and `!=` | `true < false` has no meaning a reader would guess, so it is rejected rather than given one. |
 | Uninitialized `const` (4.1) | Rejected at the declaration | A `const` can never be assigned afterward, so it would stay unassigned forever. |
+| Range direction (6.4) | Ranges count upward only; a start past the end is empty | A self-reversing range turns every computed bound into an edge-case bug: `0..items.count - 1` visits `0, -1` for an empty list. `down_to` and `reverse()` already spell counting down. Supersedes the recovered endpoint-direction rule. |
+| Project detection (14.1) | A directory is a project only when it contains `main.em`; otherwise a file runs alone | Including every file in the entry's directory broke the most common beginner layout, a folder of independent exercises. |
+| Integer exponentiation (5.3) | Two `Int`s give an `Int`; a negative `Int` exponent raises | Squares and cubes are the common case, and `side ** 2` printing `49.0` or failing to fit an `Int` was a papercut. Matches `//`. |
+| Functions with no result (6.5, 7.2) | They return `Nothing`; no separate "no result" category | The distinction had no observable difference. Unifying them also settles that a recursive function with no result needs no annotation, since there is nothing to infer. |
+| `?` predicates (3.3, 4.2) | Always return plain `Bool`; the conformance example changed | The earlier example `func valid?(): Bool?` contradicted 3.3's rule. |
 | Value-type mutability (4.3, 7.1, 8.1, 10.2) | `const` and parameters freeze values; the rule stops at class references | Under value semantics, mutating and replacing are indistinguishable, so a shallow `const` protected nothing coherent, and mutating a parameter's copy was a silent no-op that a beginner would write and never understand. Replaces the earlier shallow `const`, which followed C# reference-type variables. |
 
 ## 23. Consistency rules for future work
@@ -2573,6 +2605,11 @@ for working Emerald programs, implementation measurements, or a dedicated design
   defaults, named arguments, and named factory functions are genuinely insufficient;
 - immutable collection views, covariance, `Any`, user generics, and user `Iterable`;
 - stable C ABI declarations and ownership rules based on an actual library binding;
+- project rules: how a project root is found from a file in a subdirectory, whether and how
+  a subdirectory file can be run as a standalone program inside a project, what
+  `emerald.toml` holds and how it interacts with `main.em`, and whether `shapes/circle.em`
+  names a module `Shapes.Circle` or only a namespace for the types declared in it (14.2
+  currently reads both ways);
 - project templates and the eventual build, distribution, and package commands;
 - generated documentation and its searchable reference interface;
 - serialization, filesystem encoding policy, clocks, dates, time zones, and networking;

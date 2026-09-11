@@ -3,4 +3,4 @@
 print(1 + 2)
 print(1 + 2.5)
 print(2 * 1.5)
-print(2 ** 10)
+print(2.0 ** 10)

@@ -1,0 +1,4 @@
+runtime-errors/negative-exponent.em:5:7: an Int cannot be raised to the negative power -1
+  print(2 ** exponent)
+        ^^^^^^^^^^^^^
+Make the base a Float, as in `2.0 ** -1`, for a fractional result.

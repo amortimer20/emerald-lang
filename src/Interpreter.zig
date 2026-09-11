@@ -8,7 +8,7 @@
 //!   `/`          always `Float`
 //!   `//`         rounds toward negative infinity; two `Int`s give an `Int`
 //!   `%`          paired with `//` by `a == (a // b) * b + (a % b)`
-//!   `**`         always `Float`, even for integer operands
+//!   `**`         two `Int`s give an `Int`, and a negative `Int` exponent raises
 //!
 //! Division by zero is an error for both numeric types, and integer overflow
 //! raises rather than wrapping.
@@ -466,15 +466,11 @@ fn applyBinary(
         "Arithmetic works on Int and Float.",
     );
 
-    // These two always produce a Float regardless of operand types.
-    switch (operator) {
-        .divide => {
-            const divisor = toFloat(right);
-            if (divisor == 0) return self.raiseDivisionByZero(span, operator);
-            return .initFloat(toFloat(left) / divisor);
-        },
-        .power => return .initFloat(std.math.pow(f64, toFloat(left), toFloat(right))),
-        else => {},
+    // This one always produces a Float regardless of operand types.
+    if (operator == .divide) {
+        const divisor = toFloat(right);
+        if (divisor == 0) return self.raiseDivisionByZero(span, operator);
+        return .initFloat(toFloat(left) / divisor);
     }
 
     const both_int = left.data == .int and right.data == .int;
@@ -525,8 +521,53 @@ fn evaluateIntBinary(
             if (right == -1) return .initInt(0);
             return .initInt(@mod(left, right));
         },
-        .divide, .power => unreachable, // handled before operand kinds matter
+        .power => return self.evaluateIntPower(span, left, right),
+        .divide => unreachable, // handled before operand kinds matter
     }
+}
+
+/// Section 5.3: two `Int`s give an `Int`, so `side ** 2` stays whole. An `Int`
+/// has no fraction to hold `2 ** -1`, so a negative exponent raises and points
+/// at the `Float` spelling.
+///
+/// Squaring by repeated halving takes as many steps as the exponent has bits,
+/// so `1 ** 1_000_000_000` is instant. The base is squared only while bits of
+/// the exponent remain, which means that when squaring overflows, the result it
+/// was headed for would have too, so no false overflow is reported.
+fn evaluateIntPower(self: *Interpreter, span: Source.Span, base: i64, exponent: i64) Error!Value {
+    if (exponent < 0) return self.raiseFmt(
+        span,
+        "an Int cannot be raised to the negative power {d}",
+        .{exponent},
+        "Make the base a Float, as in `2.0 ** -1`, for a fractional result.",
+    );
+
+    var result: i64 = 1;
+    var factor = base;
+    var remaining = exponent;
+    while (remaining > 0) {
+        if (remaining & 1 == 1) {
+            const product = @mulWithOverflow(result, factor);
+            if (product[1] != 0) return self.raisePowerOverflow(span, base, exponent);
+            result = product[0];
+        }
+        remaining >>= 1;
+        if (remaining > 0) {
+            const square = @mulWithOverflow(factor, factor);
+            if (square[1] != 0) return self.raisePowerOverflow(span, base, exponent);
+            factor = square[0];
+        }
+    }
+    return .initInt(result);
+}
+
+fn raisePowerOverflow(self: *Interpreter, span: Source.Span, base: i64, exponent: i64) Error {
+    return self.raiseFmt(
+        span,
+        "exponentiation of {d} and {d} overflows Int",
+        .{ base, exponent },
+        integer_range_help,
+    );
 }
 
 fn evaluateFloatBinary(
@@ -549,7 +590,8 @@ fn evaluateFloatBinary(
             // A NaN or infinite operand produces NaN, which @mod already gives.
             return .initFloat(@mod(left, right));
         },
-        .divide, .power => unreachable,
+        .power => return .initFloat(std.math.pow(f64, left, right)),
+        .divide => unreachable,
     }
 }
 

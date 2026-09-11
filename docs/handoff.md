@@ -115,18 +115,10 @@ that rule is what is enforced instead. Do not reintroduce the isolation.
   coincide with a capture error at that call.
 - **Functions and variables share one namespace**, as section 7.3's "a name declares one
   function" implies. A program function may shadow a prelude function, as a variable may.
-- Section 7.2 requires an explicit return type on a recursive function "so checking does not
-  depend on circular inference". That is read here as applying only when there is something
-  to infer: a recursive function with no value-returning `return` needs no annotation, since
-  its type is "no result" without looking inside. **Needs a decision.** The spec pulls both
-  ways: 7.2 says recursive functions "require" a return type, while the same section says a
-  function with no result is one "whose annotation is omitted", distinct from one returning
-  `Nothing`. An external review read it the strict way, and `: Nothing` is writable, so the
-  strict reading is workable; an earlier version of this note wrongly said otherwise. The
-  lenient reading is kept because the rule's stated reason does not apply and a recursive
-  `countdown` is a common beginner program. Changing it is one branch in
-  `Checker.signatureFor` plus the unit test "a recursive function with no result needs no
-  annotation".
+- A function with no result returns `Nothing`, and a recursive one needs no annotation,
+  since its return type is known without inference. The user settled this (7.2 now says
+  so directly), replacing a "no result" category that differed from `Nothing` in name
+  only.
 - Widening happens at calls too. The checker exports its signatures, including return types
   it inferred, and the interpreter widens arguments to parameter types and results to return
   types, so `return 1` from a function whose returns merged to `Float` yields `1.0`.
@@ -250,6 +242,23 @@ still open.
 
 Per-call memory was the one prerequisite a review flagged for loops, and it is done.
 
+A design review after slice 7 changed several rules, all recorded in the "Decisions made
+during implementation" table of section 22. The ones that bear on upcoming slices: ranges
+count upward only and a start past the end is empty (6.4), which the loop slice must
+follow, including the warning for a descending literal range; `**` on two `Int`s is now an
+`Int` (implemented); and a directory is a project only when it contains `main.em` (14.1),
+with the rest of the project rules on the roadmap in section 24.
+
+Two proposals from that review await the user's answer and are not yet in the spec:
+
+- Drop `unless` in both forms and keep trailing `if` as the guard form (`return if not
+  valid?()`), leaving three conditional forms with distinct jobs: block `if`, trailing `if`
+  for one statement, and `if ... then ... else` for a value.
+- Remove set literal braces. Brackets become the literal for lists, dictionaries, and sets
+  alike, with the type deciding (`var seen: {String} = ["red"]`, as the empty dictionary
+  `[]` already works), `.to_set()` converting, and `{String}` kept as the type spelling.
+  Braces in expression position would then mean only a lambda.
+
 Section 20's slice 8 is collections: a list literal, indexing, mutation, and one
 higher-order method. Two things stand in front of it, and the order is worth deciding
 before starting:
@@ -285,7 +294,7 @@ Still open: the leading-dot question below.
 
 ## Validation and blockers
 
-- `zig build test` passes in Debug and ReleaseSafe: 155 unit tests, 50 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 155 unit tests, 52 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real binary. Every case kind was
   confirmed to fail when a case is broken, so none of them are vacuous.
 - Every host-stack probe — 100,000 nested parentheses, 100,000 prefix minuses, a

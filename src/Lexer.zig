@@ -669,10 +669,10 @@ test "a bang before an equals is the inequality operator, not part of the name" 
 }
 
 test "the optional type conformance case from section 4.2" {
-    // `valid?` keeps its marker as part of the declared name, while the return
-    // type `Bool?` is lexed as one identifier for the parser to split.
-    try expectTexts("func valid?(): Bool? {\n", &.{
-        "func", "valid?", "(", ")", ":", "Bool?", "{",
+    // `valid?` keeps its marker as part of the declared name, while the
+    // parameter type `Int?` is lexed as one identifier for the parser to split.
+    try expectTexts("func valid?(input: Int?): Bool {\n", &.{
+        "func", "valid?", "(", "input", ":", "Int?", ")", ":", "Bool", "{",
     });
 }
 

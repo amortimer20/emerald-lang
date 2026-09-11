@@ -842,9 +842,8 @@ fn arithmetic(
     left: Type,
     right: Type,
 ) Error!Type {
-    // Section 5.3: `/` and `**` always produce a Float.
-    const always_float = operator == .divide or operator == .power;
-    return Type.arithmeticResult(left, right, always_float) orelse {
+    // Section 5.3: `/` always produces a Float.
+    return Type.arithmeticResult(left, right, operator == .divide) orelse {
         try self.report(
             span,
             "{s} needs numbers, but this is {s} and {s}",
