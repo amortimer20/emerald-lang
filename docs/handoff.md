@@ -1,11 +1,11 @@
 # Current handoff
 
-Updated: 2026-09-10. Prepared by Claude after the pre-implementation design pass.
+Updated: 2026-09-10. Prepared by Claude after the source manager and diagnostics slice.
 
 ## Current milestone
 
-Design is closed for the first implementation slices. The Zig interpreter has not been
-started: there is no root `build.zig`, lexer, parser, checker, or interpreter yet.
+Slices 1 and 2 of section 20 are complete: the build layout exists, and source loading and
+diagnostics work end to end. There is no lexer, parser, checker, or interpreter yet.
 
 ## Completed foundation
 
@@ -40,36 +40,59 @@ section 22 under "Pre-implementation decision pass":
 
 Section 24 no longer lists the optional spelling as an open roadmap item.
 
+## Implemented so far
+
+- `build.zig` provides `zig build`, `zig build test`, and `zig build run`.
+- `src/Source.zig` is the immutable source-file record: UTF-8 with byte-order mark removal,
+  LF and CRLF line handling, byte-offset spans, and one-based line and scalar-column
+  mapping. It also locates the first invalid UTF-8 sequence and its span.
+- `src/Diagnostic.zig` renders the canonical four-part shape from section 17.1, with the
+  underline measured in scalars so it aligns past multi-byte characters.
+- `src/emerald.zig` is the library root and holds `check`, which currently reports only
+  encoding problems because no later stage exists.
+- `src/main.zig` implements `emerald check <file>` with the section 18.1 exit codes.
+
 ## Next concrete step
 
-Establish the minimal Zig build layout and source diagnostics, which is slice 1–2 of
-section 20. Inspect Zig 0.16.0's local build APIs before writing `build.zig`. Add
-`zig build` and `zig build test`, then source loading and source spans with one useful
-diagnostic.
-
-The first runnable Emerald milestone is integer arithmetic, `var`/`const`, name and type
-checking, and `print`:
+Slice 3 of section 20: the lexer. Identifiers, integers, strings, comments, newline, and
+EOF, each carrying a `Source.Span`. Two rules already settled deserve tests from the start:
+the newline-continuation token list in 3.1, and the `T?` split described in 4.2, whose
+conformance case is
 
 ```emerald
-var score = 2 + 3 * 4
-print(score) # 14
+func valid?(): Bool? {
+    return nothing
+}
 ```
+
+The first runnable Emerald milestone remains integer arithmetic, `var`/`const`, name and
+type checking, and `print`, as in `examples/arithmetic.em`.
 
 ## Validation and blockers
 
-- The Zig smoke probe previously compiled and ran, printing `0.16.0` and
-  `Zig toolchain ready.`
-- The design pass is documentation only. `git diff --check` is clean.
+- `zig build test` passes: 14 unit tests plus 3 command-line contract tests asserting the
+  section 18.1 exit codes against the real binary. The command-line tests were confirmed to
+  fail when the example is broken, so they are not vacuous.
+- `bash tools/check-toolchain.sh` passes.
 - Verified against the pinned standard library: `std.unicode` provides UTF-8/UTF-16
   encoding, decoding, validation, and code-point counting only — no grapheme segmentation
   and no normalization. Emerald must vendor UAX #29 and UAX #15 tables for grapheme
   indexing (9.1) and normalized equality (9.2). This is recorded in 19.1 and should be
   planned into the string slice, not discovered during it. `std.fmt` does provide
   shortest-round-trip float formatting, satisfying 9.4.
-- Note that `zig env` emits ZON, not JSON, in 0.16.0; parse it accordingly in tooling.
-- No known blocker to the initial Zig slice.
+- Zig 0.16 API notes worth not rediscovering: `zig env` emits ZON rather than JSON;
+  `std.fs` is deprecated in favor of `std.Io.Dir`; `std.process.argsAlloc` is gone and
+  `main` instead takes a `std.process.Init` supplying the allocator, `Io`, and arguments;
+  `addExecutable` and `addTest` take a `root_module` built by `b.createModule`.
+
+### Known rough edges
+
+- A diagnostic that quotes a line containing invalid UTF-8 prints the offending bytes raw,
+  so a terminal shows a replacement glyph. Escaping them is a small refinement worth doing
+  when the lexer starts reporting byte-level problems more often.
+- `emerald check` on a missing file exits `64`. Section 18.1 does not cover that case; `64`
+  was chosen because there is no source to diagnose. Confirm or change deliberately.
 
 ## Pending changes
 
-None. The decision pass and this handoff are committed. The working tree is clean; verify
-against Git before continuing.
+None. The working tree is clean; verify against Git before continuing.

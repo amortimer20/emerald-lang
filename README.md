@@ -9,9 +9,9 @@ implementation architecture, staged plan, and evidence-driven roadmap live in
 
 ## Rewrite status
 
-The rewrite is at the executable-specification stage. The first implementation slice will
-establish a minimal end-to-end path through source loading, diagnostics, parsing, checking,
-and interpretation.
+The source manager and diagnostics are implemented. There is no lexer, parser, checker, or
+interpreter yet, so `emerald check` currently verifies only that a file is well-formed
+UTF-8 — enough to exercise source spans and the canonical diagnostic format end to end.
 
 The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify
 the exact version and compile and run the toolchain probe with:
@@ -20,9 +20,30 @@ the exact version and compile and run the toolchain probe with:
 bash tools/check-toolchain.sh
 ```
 
-New source, tests, examples, and tools will be added at the repository root as their first
-working slices are implemented. Language behavior should follow the rewrite context and
-its conformance tests rather than behavior inherited from the implementation host.
+Build, test, and run:
+
+```bash
+zig build                              # build zig-out/bin/emerald
+zig build test                         # unit tests and command-line contract tests
+zig build run -- check examples/arithmetic.em
+```
+
+### Layout
+
+```text
+build.zig            build, test, and run steps
+src/
+  main.zig           the emerald command-line entry point
+  emerald.zig        frontend library root
+  Source.zig         immutable source files, spans, and line/column mapping
+  Diagnostic.zig     one reported problem and its canonical rendering
+examples/            Emerald programs used as fixtures and targets
+toolchain/           pinned Zig version and compiled probes
+tools/               repository check scripts
+```
+
+Language behavior should follow the rewrite context and its conformance tests rather than
+behavior inherited from the implementation host.
 
 ## Working with coding agents
 
