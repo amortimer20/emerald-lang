@@ -13,6 +13,7 @@ const ExitCode = enum(u8) {
     source_diagnostics = 1,
     runtime_error = 2,
     invalid_usage = 64,
+    internal_failure = 70,
 };
 
 const usage =
@@ -59,10 +60,11 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     var out_buffer: [4096]u8 = undefined;
     var out = std.Io.File.stdout().writerStreaming(io, &out_buffer);
 
-    var report = switch (command) {
-        .check => try emerald.check(gpa, &source),
-        .run => try emerald.run(gpa, &source, &out.interface),
+    const analysis = switch (command) {
+        .check => emerald.check(gpa, &source),
+        .run => emerald.run(gpa, &source, &out.interface),
     };
+    var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();
 
     try out.interface.flush();
@@ -79,6 +81,18 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
 
     if (command == .check) try writeAll(io, .stdout, "No problems found.\n");
     return @intFromEnum(ExitCode.success);
+}
+
+/// A failure of Emerald itself rather than of the program, which section 18.1
+/// keeps apart from source and runtime errors with its own status.
+fn internalFailure(io: std.Io, err: emerald.Error) !u8 {
+    const message = switch (err) {
+        error.OutOfMemory => "emerald: ran out of memory\n",
+        error.StackUnavailable => "emerald: could not reserve the stack it needs to run programs safely\n",
+        error.WriteFailed => "emerald: could not write the program's output\n",
+    };
+    try writeAll(io, .stderr, message);
+    return @intFromEnum(ExitCode.internal_failure);
 }
 
 fn writeDiagnostics(

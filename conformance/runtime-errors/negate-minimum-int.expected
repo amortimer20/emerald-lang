@@ -1,0 +1,4 @@
+runtime-errors/negate-minimum-int.em:5:7: negating -9223372036854775808 overflows Int
+  print(-lowest)
+        ^^^^^^^
+`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807.

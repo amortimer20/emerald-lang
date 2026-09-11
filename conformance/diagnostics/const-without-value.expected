@@ -1,0 +1,4 @@
+diagnostics/const-without-value.em:4:7: `limit` is a `const`, so it needs a value where it is declared
+  const limit: Int
+        ^^^^^
+Write its value after `=`, or declare it with `var` if it is assigned later.

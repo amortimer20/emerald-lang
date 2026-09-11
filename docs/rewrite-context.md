@@ -249,6 +249,9 @@ var winner: Player
 Reading it before definite assignment is an error. The checker proves definite assignment
 through control flow rather than inserting a default value.
 
+A `const` always has an initializer. It can never be assigned afterward, so `const limit:
+Int` would stay unassigned forever, and is rejected where it is written.
+
 ```emerald
 var message: String
 
@@ -520,6 +523,10 @@ Use the word operators `not`, `and`, and `or`. Symbolic duplicates such as `!`, 
 Comparison operators are `==`, `!=`, `<`, `<=`, `>`, and `>=`. Chained comparisons are
 supported: `0 <= score <= 100` evaluates the middle expression once and short-circuits as
 if the comparisons were joined by `and`.
+
+`==` and `!=` compare two values of the same type, and an `Int` with a `Float` (4.4). The
+ordering operators apply only to types with an order: numbers, and strings (9.2). `true <
+false` is rejected rather than given a meaning a reader would have to guess.
 
 Assignment is a statement, never an expression. Therefore `if x = 5` is rejected instead
 of assigning accidentally.

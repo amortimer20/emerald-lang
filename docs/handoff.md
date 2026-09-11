@@ -1,6 +1,7 @@
 # Current handoff
 
-Updated: 2026-09-11. Prepared by Claude after the functions slice.
+Updated: 2026-09-11. Prepared by Claude after fixing an external review of the functions
+slice.
 
 ## Current milestone
 
@@ -117,9 +118,15 @@ that rule is what is enforced instead. Do not reintroduce the isolation.
 - Section 7.2 requires an explicit return type on a recursive function "so checking does not
   depend on circular inference". That is read here as applying only when there is something
   to infer: a recursive function with no value-returning `return` needs no annotation, since
-  its type is "no result" without looking inside. **Worth confirming**, since it is an
-  interpretation; the alternative reading would demand an annotation a no-result function
-  has no way to write.
+  its type is "no result" without looking inside. **Needs a decision.** The spec pulls both
+  ways: 7.2 says recursive functions "require" a return type, while the same section says a
+  function with no result is one "whose annotation is omitted", distinct from one returning
+  `Nothing`. An external review read it the strict way, and `: Nothing` is writable, so the
+  strict reading is workable; an earlier version of this note wrongly said otherwise. The
+  lenient reading is kept because the rule's stated reason does not apply and a recursive
+  `countdown` is a common beginner program. Changing it is one branch in
+  `Checker.signatureFor` plus the unit test "a recursive function with no result needs no
+  annotation".
 - Widening happens at calls too. The checker exports its signatures, including return types
   it inferred, and the interpreter widens arguments to parameter types and results to return
   types, so `return 1` from a function whose returns merged to `Float` yields `1.0`.
@@ -132,6 +139,42 @@ that rule is what is enforced instead. Do not reintroduce the isolation.
   long flat chain such as `1 + 1 + ... + 1` is a diagnostic rather than a crash. One unit
   test proves 1,000 calls at 250 levels of nesting in Debug; it peaks around 340 MB resident
   while it runs.
+- **No fallback stack.** If the large-stack thread cannot be created, `emerald` exits `70`
+  (internal failure) rather than running on the calling thread. Probing the old fallback
+  showed nothing crashed on an 8 MiB main thread, but legal programs failed there, and the
+  fallback had to assume a stack size the host chooses (1 MiB on Windows), which could make
+  the guard wrong. Single-threaded builds are a compile error for the same reason.
+- **Memory per call is freed.** Scopes, arguments, and the call stack come from the general
+  allocator and are released as each block or call ends; only module bindings, hoisted
+  functions, and the final failure live in the run's arena. This was done before loops,
+  which would otherwise have grown memory with every iteration. A unit test pins it by peak
+  memory: 32,767 calls must cost no more than 15.
+
+### Review fixes
+
+An external review of slice 7 found these, all verified by reproduction before fixing and
+each now covered by unit tests and conformance cases:
+
+- `true == true` and `nothing == nothing` passed checking and then failed at runtime. Every
+  type now has `==` and `!=`; the ordering operators are rejected statically on anything but
+  numbers (recorded in 5.2 of the rewrite context). When strings land, the "only numbers are
+  ordered" diagnostic has to gain strings.
+- `print` wrote each argument as it was evaluated, so an argument that printed interleaved
+  with the line being built, and a failing argument left half a line. It now evaluates every
+  argument first, like any other call.
+- `-9223372036854775808`, the minimum `Int`, was rejected because its digits alone are out
+  of range. The parser reads the minus and that literal together, but only when the minus
+  applies to the literal alone: `-9223372036854775808 ** 2` is still out of range.
+- `const limit: Int` was accepted though nothing could ever assign it. It is now rejected in
+  the resolver, which runs before the checker, and later assignments to it are not reported
+  again (recorded in 4.1 of the rewrite context).
+- Stack fallback and per-call memory, described under the function decisions above.
+- Not from the review: internal failures such as running out of memory escaped `main` as a
+  raw Zig error with status `1`, colliding with source diagnostics. They now print one line
+  and exit `70`, as section 18.1 specifies.
+
+The review also restated the known Unicode identifier gap under "Known rough edges"; it is
+still open.
 
 ### Checker decisions worth knowing
 
@@ -205,6 +248,8 @@ that rule is what is enforced instead. Do not reintroduce the isolation.
 
 ## Next concrete step
 
+Per-call memory was the one prerequisite a review flagged for loops, and it is done.
+
 Section 20's slice 8 is collections: a list literal, indexing, mutation, and one
 higher-order method. Two things stand in front of it, and the order is worth deciding
 before starting:
@@ -224,8 +269,8 @@ Still open: the leading-dot question below.
 
 ## Validation and blockers
 
-- `zig build test` passes: 150 unit tests, 44 conformance cases, and 7 command-line contract
-  tests asserting the section 18.1 exit codes against the real binary. Every case kind was
+- `zig build test` passes in Debug and ReleaseSafe: 155 unit tests, 50 conformance cases,
+  and 7 command-line contract tests asserting the section 18.1 exit codes against the real binary. Every case kind was
   confirmed to fail when a case is broken, so none of them are vacuous.
 - Every host-stack probe — 100,000 nested parentheses, 100,000 prefix minuses, a
   1,000,000-term flat sum, unbounded recursion, and 1,000 calls at 250 levels of nesting —
@@ -326,4 +371,6 @@ This needs a decision before the parser slice fixes the behavior by accident.
 
 ## Pending changes
 
-None. The working tree is clean; verify against Git before continuing.
+The review fixes above are uncommitted, on top of `fbd417d`. They touch `src/` (Ast,
+Checker, Interpreter, Parser, Resolver, Value, emerald, main), six new conformance cases, and
+this file and the rewrite context. Verify against Git before continuing.

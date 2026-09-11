@@ -43,7 +43,11 @@ pub const Report = struct {
     }
 };
 
-pub const Error = Interpreter.RunError;
+pub const Error = Interpreter.RunError || error{
+    /// The large-stack thread could not be created, so the pipeline cannot
+    /// keep section 7.2's guarantees and does not start.
+    StackUnavailable,
+};
 
 /// Analyses a source file without running it, as section 18.1 requires of
 /// `emerald check`: the same analysis as `run`, with nothing executed.
@@ -64,10 +68,11 @@ pub fn run(gpa: std.mem.Allocator, source: *const Source, out: *std.Io.Writer) E
 /// full 1,000 in half the space.
 const stack_size: usize = if (@sizeOf(usize) >= 8) 512 * 1024 * 1024 else 32 * 1024 * 1024;
 
-/// If the large-stack thread cannot be created, the pipeline runs on the
-/// calling thread, whose stack is typically 8 MiB. The interpreter's guard still
-/// holds; only the headroom shrinks.
-const fallback_stack_size: usize = 7 * 1024 * 1024;
+comptime {
+    if (builtin.single_threaded) @compileError(
+        "Emerald runs its pipeline on a thread with a large stack, so it cannot be built single-threaded.",
+    );
+}
 
 fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Writer) Error!Report {
     const Task = struct {
@@ -83,13 +88,15 @@ fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Wri
 
     // The calling thread only waits, so nothing is touched from two threads at
     // once.
+    //
+    // There is deliberately no fallback to the calling thread. Its stack size
+    // is the host's choice, as little as 1 MiB, so the guard could not be told
+    // honestly how much there is, and a program within section 7.2's
+    // guarantees could fail or crash. Failing to start is the honest outcome.
     var task: Task = .{ .gpa = gpa, .source = source, .out = out };
-    const thread: ?std.Thread = if (builtin.single_threaded)
-        null
-    else
-        std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch null;
-
-    if (thread) |spawned| spawned.join() else task.go(fallback_stack_size);
+    const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
+        return error.StackUnavailable;
+    thread.join();
     return task.result;
 }
 
@@ -327,6 +334,16 @@ test "a number outside the Int range is rejected at its literal" {
     try expectFailure("print(99999999999999999999)\n", "this number is outside the range of Int");
 }
 
+test "the minimum Int can be written, although its digits alone are out of range" {
+    try expectOutput("print(-9223372036854775808)\n", "-9223372036854775808\n");
+    try expectOutput("print(-9_223_372_036_854_775_808 + 1)\n", "-9223372036854775807\n");
+    try expectFailure("print(9223372036854775808)\n", "this number is outside the range of Int");
+    // `**` binds tighter than the minus, so the literal stands alone.
+    try expectFailure("print(-9223372036854775808 ** 2)\n", "this number is outside the range of Int");
+    // Negating it still overflows, because the range is asymmetric.
+    try expectFailure("print(-(-9223372036854775808))\n", "negating -9223372036854775808 overflows Int");
+}
+
 test "underscores in a literal carry no value" {
     try expectOutput("print(1_000_000)\n", "1000000\n");
 }
@@ -340,6 +357,11 @@ test "the first milestone program" {
 test "var rebinds and const does not" {
     try expectOutput("var n = 1\nn = 2\nprint(n)\n", "2\n");
     try expectFailure("const n = 1\nn = 2\n", "`n` cannot be reassigned");
+}
+
+test "a const needs its value where it is declared" {
+    try expectFailure("const n: Int\n", "`n` is a `const`, so it needs a value where it is declared");
+    try expectOutput("var n: Int\nn = 2\nprint(n)\n", "2\n");
 }
 
 test "compound assignment lowers through the matching operation" {
@@ -461,6 +483,15 @@ test "NaN follows IEEE comparison behavior" {
 test "values of different kinds cannot be compared or added" {
     try expectFailure("print(1 < true)\n", "Int and Bool cannot be compared");
     try expectFailure("print(1 + true)\n", "addition needs numbers, but this is Int and Bool");
+}
+
+test "every type has equality, and only numbers have order" {
+    try expectOutput("print(true == true, true != false, false == true)\n", "true true false\n");
+    try expectOutput("print(nothing == nothing, nothing != nothing)\n", "true false\n");
+    try expectOutput("var done = 1 > 2\nprint(done == false)\n", "true\n");
+    try expectFailure("print(true < false)\n", "`<` needs numbers, but these are Bool values");
+    try expectFailure("print(nothing >= nothing)\n", "`>=` needs numbers, but these are Nothing values");
+    try expectFailure("print(1 == true)\n", "Int and Bool cannot be compared");
 }
 
 // Section 4.2 and 15.2: `nothing`.
@@ -597,6 +628,97 @@ test "a function with no result may omit its return type" {
 
 test "a call with no result evaluates to nothing" {
     try expectOutput("func f() {\n    print(1)\n}\nvar result = f()\nprint(result)\n", "1\nnothing\n");
+}
+
+test "print evaluates every argument before writing any of them" {
+    const functions =
+        \\func first(): Int {
+        \\    print(10)
+        \\    return 1
+        \\}
+        \\func second(): Int {
+        \\    print(20)
+        \\    return 2
+        \\}
+        \\
+    ;
+    try expectOutput(functions ++ "print(first(), second())\n", "10\n20\n1 2\n");
+
+    // An argument that fails leaves no half-written line behind.
+    var source = try Source.init(testing.allocator, "test.em", "print(1, 1 // 0)\n");
+    defer source.deinit(testing.allocator);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var report = try run(testing.allocator, &source, &out.writer);
+    defer report.deinit();
+    try testing.expect(report.failure != null);
+    try testing.expectEqualStrings("", out.written());
+}
+
+/// Tracks the most memory live at once, to show that finished calls give theirs
+/// back.
+const PeakAllocator = struct {
+    child: std.mem.Allocator,
+    live: usize = 0,
+    peak: usize = 0,
+
+    fn allocator(self: *PeakAllocator) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{
+            .alloc = alloc,
+            .resize = resize,
+            .remap = remap,
+            .free = free,
+        } };
+    }
+
+    fn record(self: *PeakAllocator, old_len: usize, new_len: usize) void {
+        self.live = self.live - old_len + new_len;
+        self.peak = @max(self.peak, self.live);
+    }
+
+    fn alloc(context: *anyopaque, len: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+        const self: *PeakAllocator = @ptrCast(@alignCast(context));
+        const memory = self.child.rawAlloc(len, alignment, ret) orelse return null;
+        self.record(0, len);
+        return memory;
+    }
+
+    fn resize(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) bool {
+        const self: *PeakAllocator = @ptrCast(@alignCast(context));
+        if (!self.child.rawResize(memory, alignment, len, ret)) return false;
+        self.record(memory.len, len);
+        return true;
+    }
+
+    fn remap(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) ?[*]u8 {
+        const self: *PeakAllocator = @ptrCast(@alignCast(context));
+        const moved = self.child.rawRemap(memory, alignment, len, ret) orelse return null;
+        self.record(memory.len, len);
+        return moved;
+    }
+
+    fn free(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret: usize) void {
+        const self: *PeakAllocator = @ptrCast(@alignCast(context));
+        self.child.rawFree(memory, alignment, ret);
+        self.record(memory.len, 0);
+    }
+};
+
+fn peakMemory(text: []const u8) !usize {
+    var tracking: PeakAllocator = .{ .child = testing.allocator };
+    const output = try runToString(tracking.allocator(), text);
+    tracking.allocator().free(output);
+    return tracking.peak;
+}
+
+test "memory stays flat however many calls a program makes" {
+    // `calls(n)` makes 2^(n+1) - 1 calls but is never more than n + 1 deep.
+    const program = "func calls(n: Int): Int {{\n    if n == 0 {{\n        return 1\n    }}\n    return calls(n - 1) + calls(n - 1)\n}}\nprint(calls({d}))\n";
+    var buffer: [256]u8 = undefined;
+    const few = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{3}));
+    const many = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{14}));
+    // 32,767 calls against 15. Keeping a frame per call would cost megabytes.
+    try testing.expect(many < few + 16 * 1024);
 }
 
 test "recursion and mutual recursion run when annotated" {

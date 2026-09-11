@@ -92,17 +92,23 @@ pub const RunError = std.mem.Allocator.Error || std.Io.Writer.Error;
 
 const Error = error{ Raised, Returned } || RunError;
 
+/// Lives as long as the run: hoisted functions, module bindings, and the
+/// failure that ends the program.
 arena: std.mem.Allocator,
+/// Everything that ends with a block or a call: its scope, and the arguments
+/// being passed. Freed as each one finishes, so a loop that calls a function a
+/// million times does not keep a million dead frames.
+gpa: std.mem.Allocator,
 source: *const Source,
 out: *std.Io.Writer,
 failure: ?Diagnostic = null,
 
-/// Top-level bindings. A function sees these, and it sees them as they are
-/// when it runs; the checker has already proved that everything a call reads
-/// is assigned by then.
+/// Top-level bindings, from `arena`. A function sees these, and it sees them
+/// as they are when it runs; the checker has already proved that everything a
+/// call reads is assigned by then.
 module: Scope = .empty,
 /// Block scopes at the top level, or the current function's own scopes
-/// during a call, innermost last. A call replaces this stack for its duration,
+/// during a call, innermost last, from `gpa`. A call replaces this stack for its duration,
 /// so a function never sees the block-local names of whoever called it.
 scopes: std.ArrayList(Scope) = .empty,
 
@@ -131,6 +137,7 @@ pub fn run(
 
     var interpreter: Interpreter = .{
         .arena = arena_state.allocator(),
+        .gpa = gpa,
         .source = source,
         .out = out,
         .signatures = signatures,
@@ -143,6 +150,11 @@ pub fn run(
         const function = statement.data.function_declaration;
         try interpreter.functions.put(interpreter.arena, function.name, function);
     }
+
+    // Each block and call frees its own scope as it ends, including while an
+    // error unwinds through it, so only the lists themselves are left.
+    defer interpreter.scopes.deinit(gpa);
+    defer interpreter.call_stack.deinit(gpa);
 
     interpreter.executeAll(program.statements) catch |err| switch (err) {
         error.Raised => {},
@@ -186,8 +198,11 @@ fn executeAll(self: *Interpreter, statements: []const Ast.Statement) Error!void 
 /// Section 6.1 gives every block its own scope, and a local declared inside does
 /// not leak out.
 fn executeBlock(self: *Interpreter, block: Ast.Block) Error!void {
-    try self.scopes.append(self.arena, .empty);
-    defer _ = self.scopes.pop();
+    try self.scopes.append(self.gpa, .empty);
+    defer {
+        var scope = self.scopes.pop().?;
+        scope.deinit(self.gpa);
+    }
     try self.executeAll(block.statements);
 }
 
@@ -212,11 +227,9 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
             else
                 .nothing;
 
-            const current = if (self.scopes.items.len > 0)
-                &self.scopes.items[self.scopes.items.len - 1]
-            else
-                &self.module;
-            try current.put(self.arena, declaration.name, .{
+            const in_block = self.scopes.items.len > 0;
+            const current = if (in_block) &self.scopes.items[self.scopes.items.len - 1] else &self.module;
+            try current.put(if (in_block) self.gpa else self.arena, declaration.name, .{
                 .kind = kind,
                 .value = if (initial) |value| widen(value, kind) else null,
             });
@@ -363,7 +376,9 @@ fn evaluateComparison(
     for (comparison.operators, comparison.operands[1..]) |operator, operand_node| {
         const right = try self.evaluate(operand_node);
 
-        const holds = if (Value.order(left, right)) |ordering|
+        const holds = if (operator.isEquality())
+            Value.equals(left, right) == (operator == .equal)
+        else if (Value.order(left, right)) |ordering|
             operator.holds(ordering)
         else if (left.isNumber() and right.isNumber())
             // Unordered means a NaN is involved. Section 5.3 keeps IEEE
@@ -552,9 +567,15 @@ fn evaluateCall(
     return self.evaluatePrint(call);
 }
 
+/// Every argument is evaluated before anything is written, as for any other
+/// call. Displaying each as it arrived would interleave the output of an
+/// argument that prints with the line being built, and an argument that
+/// failed would leave half a line behind.
 fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    for (call.arguments, 0..) |argument, position| {
-        const value = try self.evaluate(argument);
+    const values = try self.evaluateArguments(call.arguments);
+    defer self.gpa.free(values);
+
+    for (values, 0..) |value, position| {
         // Section 15.2 separates multiple arguments with one space.
         if (position != 0) try self.out.writeAll(" ");
         try value.display(self.out);
@@ -572,12 +593,10 @@ fn callFunction(
     name: []const u8,
     argument_expressions: []const *const Ast.Expression,
 ) Error!Value {
-    // Arguments evaluate in the caller's scopes, left to right per section 5.2,
-    // before the callee's replace them.
-    const arguments = try self.arena.alloc(Value, argument_expressions.len);
-    for (argument_expressions, arguments) |expression, *value| {
-        value.* = try self.evaluate(expression);
-    }
+    // Arguments evaluate in the caller's scopes before the callee's replace
+    // them.
+    const arguments = try self.evaluateArguments(argument_expressions);
+    defer self.gpa.free(arguments);
 
     if (self.call_stack.items.len >= max_call_depth) {
         return self.raiseTooMuchRecursion(call_span, name, true);
@@ -586,19 +605,25 @@ fn callFunction(
     const function = self.functions.get(name).?;
     const signature = self.signatures.get(name).?;
 
+    // The function's own block scopes push onto and pop off this list, so by
+    // the time it is restored only the parameter scope is left in it.
     const outer_scopes = self.scopes;
     self.scopes = .empty;
-    defer self.scopes = outer_scopes;
+    defer {
+        for (self.scopes.items) |*scope| scope.deinit(self.gpa);
+        self.scopes.deinit(self.gpa);
+        self.scopes = outer_scopes;
+    }
 
-    try self.scopes.append(self.arena, .empty);
+    try self.scopes.append(self.gpa, .empty);
     const frame = &self.scopes.items[0];
     for (function.parameters, arguments, signature.parameters) |parameter, argument, parameter_type| {
         // An `Int` passed to a `Float` parameter arrives as a `Float`.
         const kind = kindOf(parameter_type);
-        try frame.put(self.arena, parameter.name, .{ .kind = kind, .value = widen(argument, kind) });
+        try frame.put(self.gpa, parameter.name, .{ .kind = kind, .value = widen(argument, kind) });
     }
 
-    try self.call_stack.append(self.arena, .{ .function = name, .call_span = call_span });
+    try self.call_stack.append(self.gpa, .{ .function = name, .call_span = call_span });
     defer _ = self.call_stack.pop();
 
     self.executeAll(function.body.statements) catch |err| switch (err) {
@@ -611,6 +636,15 @@ fn callFunction(
     // As with parameters, and including a return type the checker inferred:
     // `return 1` from a function whose returns merged to `Float` yields `1.0`.
     return widen(result, kindOf(signature.return_type));
+}
+
+/// Section 5.2: arguments evaluate left to right, every one of them before the
+/// call itself happens. The caller frees the result.
+fn evaluateArguments(self: *Interpreter, expressions: []const *const Ast.Expression) Error![]Value {
+    const values = try self.gpa.alloc(Value, expressions.len);
+    errdefer self.gpa.free(values);
+    for (expressions, values) |expression, *value| value.* = try self.evaluate(expression);
+    return values;
 }
 
 // Raising.

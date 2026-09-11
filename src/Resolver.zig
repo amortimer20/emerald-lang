@@ -262,6 +262,20 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             // right-hand `x` as undefined rather than quietly seeing itself.
             if (declaration.initializer) |initializer| try self.walkExpression(initializer);
 
+            // Section 4.1 lets a variable start unassigned, but a `const` can
+            // never be assigned afterward, so it would stay that way. Later
+            // assignments are then let through, since they are how this
+            // `const` was meant to get its value, and the one report covers it.
+            const missing_value = !declaration.mutable and declaration.initializer == null;
+            if (missing_value) {
+                try self.report(
+                    declaration.name_span,
+                    "`{s}` is a `const`, so it needs a value where it is declared",
+                    .{declaration.name},
+                    "Write its value after `=`, or declare it with `var` if it is assigned later.",
+                );
+            }
+
             if (self.visibleLocal(declaration.name) != null) {
                 try self.report(
                     declaration.name_span,
@@ -274,7 +288,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
 
             const current = &self.scopes.items[self.scopes.items.len - 1];
             try current.put(self.arena, declaration.name, .{
-                .mutable = declaration.mutable,
+                .mutable = declaration.mutable or missing_value,
                 .span = declaration.name_span,
             });
         },

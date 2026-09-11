@@ -67,6 +67,20 @@ pub fn display(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     }
 }
 
+/// Emerald's `==`. Numbers compare by mathematical value, as `order` does, so
+/// a NaN equals nothing, itself included. Values of different kinds are never
+/// equal; the checker rejects comparing them, so that answer is a safety net.
+pub fn equals(left: Value, right: Value) bool {
+    return switch (left.data) {
+        .nothing => right.data == .nothing,
+        .bool => |a| switch (right.data) {
+            .bool => |b| a == b,
+            else => false,
+        },
+        .int, .float => order(left, right) == .eq,
+    };
+}
+
 /// Orders two numbers, or reports that they are unordered because one is NaN.
 ///
 /// Section 4.4 requires a mixed comparison to compare mathematical values

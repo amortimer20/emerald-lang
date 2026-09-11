@@ -208,6 +208,12 @@ pub const ComparisonOperator = enum {
         };
     }
 
+    /// `==` and `!=` work on any two values of the same type; the rest need
+    /// an order, which only numbers have.
+    pub fn isEquality(self: ComparisonOperator) bool {
+        return self == .equal or self == .not_equal;
+    }
+
     /// Whether the operator holds for a given ordering. Operands that are not
     /// ordered at all, meaning a NaN is involved, never reach here: section 5.3
     /// gives them IEEE behavior, which the interpreter applies first.

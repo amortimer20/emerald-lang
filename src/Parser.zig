@@ -116,6 +116,15 @@ fn advance(self: *Parser) Token {
     return token;
 }
 
+fn peekAfterNext(self: *Parser) Token {
+    var at = self.index;
+    while (self.tokens[at].kind == .doc_comment) at += 1;
+    if (self.tokens[at].kind == .eof) return self.tokens[at];
+    at += 1;
+    while (self.tokens[at].kind == .doc_comment) at += 1;
+    return self.tokens[at];
+}
+
 fn check(self: *Parser, kind: Token.Kind) bool {
     return self.peek().kind == kind;
 }
@@ -790,6 +799,9 @@ fn parseMultiplicative(self: *Parser) Error!*const Ast.Expression {
 
 fn parseUnary(self: *Parser) Error!*const Ast.Expression {
     if (self.match(.minus)) |token| {
+        if (self.matchMinimumIntMagnitude()) |literal| {
+            return self.node(spanning(token.span, literal.span), .{ .int_literal = std.math.minInt(i64) });
+        }
         try self.recurse(token.span);
         defer self.unrecurse();
         const operand = try self.parseUnary();
@@ -898,6 +910,29 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
             .{token.kind.describe()},
             "An expression is a number, a name, or something built from them.",
         ),
+    }
+}
+
+/// The minimum `Int` is written `-9223372036854775808`, but its digits alone
+/// are one past the maximum, because the range is asymmetric. A literal is
+/// read before the minus is applied to it, so the pair is taken together here.
+///
+/// Only when the minus applies to the literal alone. In `-9223372036854775808
+/// ** 2` it applies to the power, which binds tighter, so the literal stands
+/// by itself and is out of range, as it would be anywhere else. Calling the
+/// literal is excluded for the same reason, although it is an error anyway.
+fn matchMinimumIntMagnitude(self: *Parser) ?Token {
+    const literal = self.peek();
+    if (literal.kind != .int_literal) return null;
+
+    var buffer: [32]u8 = undefined;
+    const digits = self.stripSeparators(self.text(literal), &buffer) orelse return null;
+    const magnitude = std.fmt.parseInt(u64, digits, 10) catch return null;
+    if (magnitude != @as(u64, std.math.maxInt(i64)) + 1) return null;
+
+    switch (self.peekAfterNext().kind) {
+        .star_star, .left_paren => return null,
+        else => return self.advance(),
     }
 }
 

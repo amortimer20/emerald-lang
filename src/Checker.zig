@@ -864,23 +864,38 @@ fn typeOfLogical(self: *Checker, logical: Ast.Expression.Logical) Error!Type {
 /// A comparison chain yields a `Bool`, and every adjacent pair has to be
 /// comparable. Section 4.4 allows a mixed `Int`/`Float` comparison, which is why
 /// this asks whether the pair is numeric rather than whether the types match.
+///
+/// Equality needs two values of the same type. Order needs numbers: `true <
+/// false` has no meaning a reader would guess, so it is rejected rather than
+/// given one.
 fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error!Type {
-    var left = try self.typeOf(comparison.operands[0]);
+    var left_node = comparison.operands[0];
+    var left = try self.typeOf(left_node);
 
-    for (comparison.operators, comparison.operands[1..]) |_, operand_node| {
+    for (comparison.operators, comparison.operands[1..]) |operator, operand_node| {
         const right = try self.typeOf(operand_node);
-        const comparable = left.kind == .invalid or right.kind == .invalid or
-            (left.isNumber() and right.isNumber()) or left.kind == right.kind;
+        // The pair is the problem, so both sides are underlined.
+        const pair: Source.Span = .{ .start = left_node.span.start, .end = operand_node.span.end };
+        const numeric = left.isNumber() and right.isNumber();
+        const unknown = left.kind == .invalid or right.kind == .invalid;
 
-        if (!comparable) {
+        if (!unknown and !numeric and left.kind != right.kind) {
             try self.report(
-                operand_node.span,
+                pair,
                 "{s} and {s} cannot be compared",
                 .{ left.name(), right.name() },
-                "Comparison needs two values of the same kind.",
+                "`==` and `!=` compare two values of the same type, and Int and Float compare with each other.",
+            );
+        } else if (!unknown and !numeric and !operator.isEquality()) {
+            try self.report(
+                pair,
+                "`{s}` needs numbers, but these are {s} values",
+                .{ operator.lexeme(), left.name() },
+                "Only numbers are ordered. Use `==` or `!=` to compare other values.",
             );
         }
         left = right;
+        left_node = operand_node;
     }
 
     return .bool;

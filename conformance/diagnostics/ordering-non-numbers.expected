@@ -1,0 +1,4 @@
+diagnostics/ordering-non-numbers.em:5:7: `>` needs numbers, but these are Bool values
+  print(ready > false)
+        ^^^^^^^^^^^^^
+Only numbers are ordered. Use `==` or `!=` to compare other values.
