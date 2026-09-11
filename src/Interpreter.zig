@@ -34,6 +34,8 @@ const Heap = @import("Heap.zig");
 const Source = @import("Source.zig");
 const Type = @import("Type.zig");
 const Value = @import("Value.zig");
+const strings = @import("strings.zig");
+const unicode = @import("unicode.zig");
 
 const Interpreter = @This();
 
@@ -106,7 +108,13 @@ arena: std.mem.Allocator,
 gpa: std.mem.Allocator,
 source: *const Source,
 out: *std.Io.Writer,
+/// Where `input` reads lines from.
+in: *std.Io.Reader,
 failure: ?Diagnostic = null,
+/// One string for each string literal, made the first time the literal runs
+/// and shared by every run after it, so a loop that prints a literal does not
+/// allocate.
+literal_texts: std.AutoHashMapUnmanaged(*const Ast.Expression, *Heap.Text) = .empty,
 
 /// Top-level bindings, from `arena`. A function sees these, and it sees them
 /// as they are when it runs; the checker has already proved that everything a
@@ -147,6 +155,7 @@ pub fn run(
     signatures: *const Type.Signatures,
     literal_types: *const Checker.LiteralTypes,
     out: *std.Io.Writer,
+    in: *std.Io.Reader,
     stack: StackLimit,
 ) RunError!Outcome {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
@@ -157,6 +166,7 @@ pub fn run(
         .gpa = gpa,
         .source = source,
         .out = out,
+        .in = in,
         .signatures = signatures,
         .literal_types = literal_types,
         .heap = .init(gpa),
@@ -165,6 +175,7 @@ pub fn run(
     // Whatever the counts did not reclaim, including lists still held by
     // module bindings and anything an error skipped releasing.
     defer interpreter.heap.deinit();
+    defer interpreter.literal_texts.deinit(gpa);
 
     // Hoisted, matching the resolver and checker.
     for (program.statements) |statement| {
@@ -286,11 +297,15 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
             const value = if (assignment.operation) |operation| blk: {
                 // Section 5.3 lowers a compound assignment through the same
                 // operation as its binary form. The current value is read once.
-                const current = slot.value orelse return self.raiseUnassigned(
+                // Held while the right side runs, which could reassign the
+                // same name through a function and release the old value.
+                const current = Heap.retain(slot.value orelse return self.raiseUnassigned(
                     assignment.name_span,
                     assignment.name,
-                );
+                ));
+                defer self.heap.release(current);
                 const right = try self.evaluate(assignment.value);
+                defer self.heap.release(right);
                 break :blk try self.applyBinary(statement.span, operation, current, right);
             } else try self.evaluate(assignment.value);
             if (slot.value) |old| self.heap.release(old);
@@ -334,11 +349,15 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
     const root = &binding.value.?;
 
     if (assignment.operation) |operation| {
-        // Section 5.2: the current value is read once, before the right side.
-        const current = (try self.elementSlot(root, indices, assignment.indices)).slot.*;
+        // Section 5.2: the current value is read once, before the right side,
+        // and held while the right side runs, as for a plain name.
+        const current = Heap.retain((try self.elementSlot(root, indices, assignment.indices)).slot.*);
+        defer self.heap.release(current);
         const right = try self.evaluate(assignment.value);
+        defer self.heap.release(right);
         const result = try self.applyBinary(assignment.target_span, operation, current, right);
         const place = try self.elementSlot(root, indices, assignment.indices);
+        self.heap.release(place.slot.*);
         place.slot.* = widen(result, place.list.element);
         return;
     }
@@ -498,6 +517,15 @@ fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
     const iterable = try self.evaluate(loop.iterable);
     defer self.heap.release(iterable);
 
+    // Section 9.1: a string yields its characters, each a string of its own.
+    if (iterable.data == .string) {
+        var clusters: unicode.Graphemes = .init(iterable.data.string.bytes);
+        while (clusters.next()) |cluster| {
+            if (!try self.executeIteration(loop, try self.heap.copyText(cluster))) return;
+        }
+        return;
+    }
+
     for (iterable.data.list.items.items) |item| {
         if (!try self.executeIteration(loop, Heap.retain(item))) return;
     }
@@ -576,6 +604,7 @@ fn kindOf(checked: Type) Value.Kind {
         .bool => .bool,
         .int => .int,
         .float => .float,
+        .string => .string,
         .list => .list,
     };
 }
@@ -616,13 +645,47 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .range => unreachable,
         .list_literal => |elements| self.evaluateList(expression, elements),
         .index => |index| self.evaluateIndex(expression, index),
-        // `count` is the only property so far; the checker allows nothing else.
-        .member => |member| blk: {
-            const base = try self.evaluate(member.base);
-            defer self.heap.release(base);
-            break :blk .initInt(@intCast(base.data.list.items.items.len));
+        .member => |member| self.evaluateCount(member),
+        .string_literal => |bytes| self.evaluateStringLiteral(expression, bytes),
+        .interpolation => |parts| self.evaluateInterpolation(parts),
+    };
+}
+
+// Every case of `evaluate` that needs locals of its own lives in a function
+// like these. `evaluate` runs once per level of nesting, so every byte of its
+// frame is multiplied by section 7.2's 1,000 calls times the deepest nesting
+// section 3.4 allows, and a Debug build gives each local its own slot.
+
+/// `count` is the only property so far; the checker allows nothing else.
+fn evaluateCount(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
+    const base = try self.evaluate(member.base);
+    defer self.heap.release(base);
+    return switch (base.data) {
+        // Section 9.2: a string's count is its characters, not its bytes.
+        .string => |string| .initInt(@intCast(unicode.graphemeCount(string.bytes))),
+        else => .initInt(@intCast(base.data.list.items.items.len)),
+    };
+}
+
+fn evaluateStringLiteral(self: *Interpreter, expression: *const Ast.Expression, bytes: []const u8) Error!Value {
+    const cached = try self.literal_texts.getOrPut(self.gpa, expression);
+    if (!cached.found_existing) cached.value_ptr.* = try self.heap.literalText(bytes);
+    return .{ .data = .{ .string = cached.value_ptr.* } };
+}
+
+/// Section 5.1: each interpolated value appears as `print` would display it.
+fn evaluateInterpolation(self: *Interpreter, parts: []const Ast.Expression.Part) Error!Value {
+    var built: std.Io.Writer.Allocating = .init(self.gpa);
+    defer built.deinit();
+    for (parts) |part| switch (part) {
+        .text => |bytes| try built.writer.writeAll(bytes),
+        .expression => |part_expression| {
+            const value = try self.evaluate(part_expression);
+            defer self.heap.release(value);
+            try value.display(&built.writer);
         },
     };
+    return .{ .data = .{ .string = try self.heap.createText(try built.toOwnedSlice()) } };
 }
 
 /// Section 8.2. The checker recorded the literal's type, which says whether
@@ -642,9 +705,29 @@ fn evaluateIndex(self: *Interpreter, expression: *const Ast.Expression, index: A
     const base = try self.evaluate(index.base);
     defer self.heap.release(base);
     const position = (try self.evaluate(index.index)).data.int;
+    if (base.data == .string) return self.characterAt(expression.span, base.data.string.bytes, position);
     const list = base.data.list;
     const at = try self.checkIndex(list, position, expression.span);
     return Heap.retain(list.items.items[at]);
+}
+
+/// Section 9.1: indexing a string counts characters, from zero.
+fn characterAt(self: *Interpreter, span: Source.Span, bytes: []const u8, position: i64) Error!Value {
+    if (strings.characterAt(bytes, position)) |character| return self.heap.copyText(character);
+    const count = unicode.graphemeCount(bytes);
+    if (count == 0) return self.raiseFmt(
+        span,
+        "index {d} is outside this String, which is empty",
+        .{position},
+        "Check `empty?()` before indexing.",
+    );
+    const help = try std.fmt.allocPrint(self.arena, "Valid indices are 0 through {d}.", .{count - 1});
+    return self.raiseFmt(
+        span,
+        "index {d} is outside this String, which has {d} character{s}",
+        .{ position, count, if (count == 1) "" else "s" },
+        help,
+    );
 }
 
 /// Section 5.2's `and` and `or`, which short-circuit: the right side is not
@@ -679,7 +762,10 @@ fn evaluateComparison(
         const right = try self.evaluate(operand_node);
 
         const holds = if (operator.isEquality())
-            Value.equals(left, right) == (operator == .equal)
+            (try Value.equals(self.gpa, left, right)) == (operator == .equal)
+        else if (left.data == .string and right.data == .string)
+            // Section 9.2: by the code points of the normalized forms.
+            operator.holds(try unicode.order(self.gpa, left.data.string.bytes, right.data.string.bytes))
         else if (Value.order(left, right)) |ordering|
             operator.holds(ordering)
         else if (left.isNumber() and right.isNumber())
@@ -723,7 +809,7 @@ fn evaluateUnary(
                 return .initInt(result[0]);
             },
             .float => |value| return .initFloat(-value),
-            .nothing, .bool, .list => return self.raiseFmt(
+            .nothing, .bool, .string, .list => return self.raiseFmt(
                 expression.span,
                 "`-` needs a number, but this is {s}",
                 .{operand.typeName()},
@@ -749,7 +835,9 @@ fn evaluateBinary(
 ) Error!Value {
     // Section 5.2 evaluates ordered expression lists left to right.
     const left = try self.evaluate(binary.left);
+    defer self.heap.release(left);
     const right = try self.evaluate(binary.right);
+    defer self.heap.release(right);
     return self.applyBinary(expression.span, binary.operator, left, right);
 }
 
@@ -762,6 +850,12 @@ fn applyBinary(
     left: Value,
     right: Value,
 ) Error!Value {
+    // `+` joins two strings into a new one. The operands stay the caller's to
+    // release: compound assignment passes a binding's value without retaining.
+    if (left.data == .string and right.data == .string) {
+        const joined = try std.mem.concat(self.gpa, u8, &.{ left.data.string.bytes, right.data.string.bytes });
+        return .{ .data = .{ .string = try self.heap.createText(joined) } };
+    }
     if (!left.isNumber() or !right.isNumber()) return self.raiseFmt(
         span,
         "{s} needs numbers, but this is {s} and {s}",
@@ -908,17 +1002,54 @@ fn evaluateCall(
     if (call.callee.data == .member) return self.callMethod(expression, call, call.callee.data.member);
 
     // The checker has proved the callee is a function: a program function,
-    // which shadows the prelude as any declaration would, or `print`.
+    // which shadows the prelude as any declaration would, or a prelude one.
     const name = call.callee.data.name;
     if (self.functions.contains(name)) return self.callFunction(expression.span, name, call.arguments);
-    return self.evaluatePrint(call);
+    if (std.mem.eql(u8, name, "input")) return self.evaluateInput(expression.span, call);
+    return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
+}
+
+/// Section 15.2's `input(prompt)`: writes the prompt, reads one line, and
+/// returns it without its line ending. Pressing Enter gives `""`. The end of
+/// input is an error, since `input_maybe` needs optionals; the error is not
+/// catchable yet, as nothing is.
+fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    if (call.arguments.len == 1) {
+        const prompt = try self.evaluate(call.arguments[0]);
+        defer self.heap.release(prompt);
+        try self.out.writeAll(prompt.data.string.bytes);
+    }
+    // A prompt has to be seen before the program waits for an answer.
+    try self.out.flush();
+
+    var line: std.Io.Writer.Allocating = .init(self.gpa);
+    defer line.deinit();
+    const length = self.in.streamDelimiterEnding(&line.writer, '\n') catch |err| switch (err) {
+        error.WriteFailed => return error.OutOfMemory,
+        error.ReadFailed => return self.raise(span, "the program's input could not be read", "Check how the program's input is being provided."),
+    };
+    const at_end = self.in.bufferedLen() == 0;
+    if (!at_end) self.in.toss(1); // the newline
+    if (at_end and length == 0) return self.raise(
+        span,
+        "`input` reached the end of the input",
+        "There are no more lines to read. The program's input ended before this `input` call.",
+    );
+
+    const bytes = std.mem.trimEnd(u8, line.written(), "\r");
+    if (!std.unicode.utf8ValidateSlice(bytes)) return self.raise(
+        span,
+        "the line read by `input` is not valid UTF-8 text",
+        "Emerald strings hold Unicode text; check how the input was produced.",
+    );
+    return self.heap.copyText(bytes);
 }
 
 /// Every argument is evaluated before anything is written, as for any other
 /// call. Displaying each as it arrived would interleave the output of an
 /// argument that prints with the line being built, and an argument that
 /// failed would leave half a line behind.
-fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
+fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call, newline: bool) Error!Value {
     const values = try self.evaluateArguments(call.arguments);
     defer {
         for (values) |value| self.heap.release(value);
@@ -930,8 +1061,9 @@ fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
         if (position != 0) try self.out.writeAll(" ");
         try value.display(self.out);
     }
-    try self.out.writeAll("\n");
-    // Section 15.2 gives `print` no result, which is section 4.2's `Nothing`.
+    // Section 15.2: `print` ends the line and `write` does not.
+    if (newline) try self.out.writeAll("\n");
+    // Section 15.2 gives both no result, which is section 4.2's `Nothing`.
     return Value.nothing;
 }
 
@@ -1001,6 +1133,7 @@ fn callMethod(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
+    if (!Type.list_methods.has(member.name)) return self.callValueMethod(expression.span, call, member);
     const method = Type.list_methods.get(member.name).?;
     if (!method.mutates) {
         const receiver = try self.evaluate(member.base);
@@ -1010,11 +1143,13 @@ fn callMethod(
             for (arguments) |argument| self.heap.release(argument);
             self.gpa.free(arguments);
         }
+        // `empty?` and `contains?` are also string methods.
+        if (receiver.data == .string) return self.stringMethod(expression.span, receiver.data.string.bytes, member.name, arguments);
         const items = receiver.data.list.items.items;
         if (std.mem.eql(u8, member.name, "empty?")) return .initBool(items.len == 0);
         // `contains?`
         for (items) |item| {
-            if (Value.equals(item, arguments[0])) return .initBool(true);
+            if (try Value.equals(self.gpa, item, arguments[0])) return .initBool(true);
         }
         return .initBool(false);
     }
@@ -1042,6 +1177,196 @@ fn callMethod(
     if (indices.len > 0) slot = (try self.elementSlot(slot, indices, path.items)).slot;
     const list = try self.heap.unique(slot);
     return self.mutateList(expression.span, list, member.name, arguments);
+}
+
+/// A method on a string, or `to_string` on a number or `Bool`. None of them
+/// changes its receiver.
+fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const arguments = try self.evaluateArguments(call.arguments);
+    defer {
+        for (arguments) |argument| self.heap.release(argument);
+        self.gpa.free(arguments);
+    }
+
+    if (receiver.data == .string) return self.stringMethod(span, receiver.data.string.bytes, member.name, arguments);
+
+    // `to_string` on an `Int`, a `Float`, or a `Bool`: its display.
+    var built: std.Io.Writer.Allocating = .init(self.gpa);
+    defer built.deinit();
+    try receiver.display(&built.writer);
+    return .{ .data = .{ .string = try self.heap.createText(try built.toOwnedSlice()) } };
+}
+
+/// Section 9.2's string methods, on the receiver's bytes. The checker has
+/// proved the method exists and the arguments fit it.
+fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: []const u8, arguments: []const Value) Error!Value {
+    const Method = enum {
+        @"empty?",
+        @"blank?",
+        @"contains?",
+        @"starts_with?",
+        @"ends_with?",
+        trim,
+        trim_start,
+        trim_end,
+        upper,
+        lower,
+        capitalize,
+        reverse,
+        repeat,
+        replace,
+        substring,
+        split,
+        lines,
+        chars,
+        to_int,
+        to_int_or,
+        to_float,
+        to_float_or,
+    };
+    const gpa = self.gpa;
+    return switch (std.meta.stringToEnum(Method, name).?) {
+        .@"empty?" => .initBool(bytes.len == 0),
+        .@"blank?" => .initBool(strings.isBlank(bytes)),
+        .@"contains?" => .initBool(try strings.contains(gpa, bytes, arguments[0].data.string.bytes)),
+        .@"starts_with?" => .initBool(try strings.startsWith(gpa, bytes, arguments[0].data.string.bytes)),
+        .@"ends_with?" => .initBool(try strings.endsWith(gpa, bytes, arguments[0].data.string.bytes)),
+        .trim => self.heap.copyText(strings.trim(bytes, .both)),
+        .trim_start => self.heap.copyText(strings.trim(bytes, .start)),
+        .trim_end => self.heap.copyText(strings.trim(bytes, .end)),
+        .upper => self.ownedText(try unicode.mapCase(gpa, bytes, .upper)),
+        .lower => self.ownedText(try unicode.mapCase(gpa, bytes, .lower)),
+        .capitalize => self.ownedText(try strings.capitalize(gpa, bytes)),
+        .reverse => self.ownedText(try strings.reverse(gpa, bytes)),
+        .repeat => blk: {
+            const times = arguments[0].data.int;
+            if (times < 0) return self.raiseFmt(
+                span,
+                "a String cannot be repeated {d} times",
+                .{times},
+                "Repeat it 0 or more times; 0 gives an empty String.",
+            );
+            // A result too large to address is as unrepresentable as one too
+            // large to allocate.
+            const size = std.math.mul(usize, bytes.len, @intCast(times)) catch return error.OutOfMemory;
+            const result = try gpa.alloc(u8, size);
+            for (0..@intCast(times)) |copy| @memcpy(result[copy * bytes.len ..][0..bytes.len], bytes);
+            break :blk self.ownedText(result);
+        },
+        .replace => blk: {
+            const old = arguments[0].data.string.bytes;
+            if (old.len == 0) return self.raise(
+                span,
+                "`replace` needs something to replace, but this is an empty String",
+                "Pass the text to find as the first argument.",
+            );
+            break :blk self.ownedText(try strings.replace(gpa, bytes, old, arguments[1].data.string.bytes));
+        },
+        .substring => blk: {
+            const start = arguments[0].data.int;
+            const count: ?i64 = if (arguments.len == 2) arguments[1].data.int else null;
+            const slice = strings.substring(bytes, start, count) catch |err| return self.raiseSubstring(span, bytes, start, count, err);
+            break :blk self.heap.copyText(slice);
+        },
+        .split => blk: {
+            const separator = arguments[0].data.string.bytes;
+            if (separator.len == 0) return self.raise(
+                span,
+                "`split` needs a separator, but this is an empty String",
+                "Use `chars()` to split a String into its characters.",
+            );
+            break :blk self.stringList(try strings.split(gpa, bytes, separator));
+        },
+        .lines => self.stringList(try strings.lines(gpa, bytes)),
+        .chars => blk: {
+            const pieces = try strings.characters(gpa, bytes);
+            defer gpa.free(pieces);
+            const list = try self.heap.createList(.string, pieces.len);
+            const result: Value = .{ .data = .{ .list = list } };
+            errdefer self.heap.release(result);
+            for (pieces) |piece| list.items.appendAssumeCapacity(try self.heap.copyText(piece));
+            break :blk result;
+        },
+        .to_int, .to_int_or => blk: {
+            const parsed = strings.parseInt(bytes);
+            if (parsed == .value) break :blk .initInt(parsed.value);
+            if (arguments.len == 1) break :blk arguments[0];
+            break :blk self.raiseConversion(span, bytes, "Int", parsed == .out_of_range);
+        },
+        .to_float, .to_float_or => blk: {
+            const parsed = strings.parseFloat(bytes);
+            if (parsed == .value) break :blk .initFloat(parsed.value);
+            if (arguments.len == 1) break :blk widen(arguments[0], .float);
+            break :blk self.raiseConversion(span, bytes, "Float", parsed == .out_of_range);
+        },
+    };
+}
+
+fn ownedText(self: *Interpreter, bytes: []u8) Error!Value {
+    return .{ .data = .{ .string = try self.heap.createText(bytes) } };
+}
+
+/// A list of strings from pieces the caller allocated, which the strings take.
+fn stringList(self: *Interpreter, pieces: [][]u8) Error!Value {
+    defer self.gpa.free(pieces);
+    var taken: usize = 0;
+    errdefer for (pieces[taken..]) |piece| self.gpa.free(piece);
+
+    const list = try self.heap.createList(.string, pieces.len);
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+    for (pieces) |piece| {
+        taken += 1;
+        list.items.appendAssumeCapacity(.{ .data = .{ .string = try self.heap.createText(piece) } });
+    }
+    return result;
+}
+
+/// Section 9.4's strict parsing, which raises a conversion error. Catching it
+/// arrives with section 13; until then `to_int_or` is the way to recover.
+fn raiseConversion(self: *Interpreter, span: Source.Span, bytes: []const u8, comptime type_name: []const u8, out_of_range: bool) Error {
+    const excerpt = if (bytes.len > 40) "the text" else try std.fmt.allocPrint(self.arena, "\"{s}\"", .{bytes});
+    if (out_of_range) return self.raiseFmt(
+        span,
+        "{s} is outside the range of " ++ type_name,
+        .{excerpt},
+        if (std.mem.eql(u8, type_name, "Int"))
+            "`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807. `to_int_or(0)` gives a fallback instead of an error."
+        else
+            "The number is too large for a Float. `to_float_or(0.0)` gives a fallback instead of an error.",
+    );
+    return self.raiseFmt(
+        span,
+        "{s} is not " ++ (if (std.mem.eql(u8, type_name, "Int")) "a whole number" else "a number"),
+        .{excerpt},
+        if (std.mem.eql(u8, type_name, "Int"))
+            "Only digits, with an optional sign and surrounding spaces, convert to an Int. `to_int_or(0)` gives a fallback instead of an error."
+        else
+            "Only a number such as `2.5` or `3`, with an optional sign and surrounding spaces, converts to a Float. `to_float_or(0.0)` gives a fallback instead of an error.",
+    );
+}
+
+/// Section 9.1: substring bounds are errors rather than being clamped.
+fn raiseSubstring(self: *Interpreter, span: Source.Span, bytes: []const u8, start: i64, count: ?i64, err: strings.SubstringError) Error {
+    const total = unicode.graphemeCount(bytes);
+    return switch (err) {
+        error.NegativeStart => self.raiseFmt(span, "a substring cannot start at {d}", .{start}, "Start at 0 or later."),
+        error.NegativeCount => self.raiseFmt(span, "a substring cannot have {d} characters", .{count.?}, "Ask for 0 or more characters."),
+        error.StartPastEnd => self.raiseFmt(
+            span,
+            "a substring cannot start at {d} in a String of {d} character{s}",
+            .{ start, total, if (total == 1) "" else "s" },
+            "Start at most at the String's `count`, which gives an empty String.",
+        ),
+        error.CountPastEnd => self.raiseFmt(
+            span,
+            "a substring of {d} character{s} from {d} runs past the end of a String of {d}",
+            .{ count.?, if (count.? == 1) "" else "s", start, total },
+            "Ask for fewer characters, or leave the count out to take the rest of the String.",
+        ),
+    };
 }
 
 /// Runs one mutating list method. Arguments are owned: one that is stored is
@@ -1072,7 +1397,7 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
         .remove => {
             defer self.heap.release(arguments[0]);
             for (items.items, 0..) |item, position| {
-                if (!Value.equals(item, arguments[0])) continue;
+                if (!try Value.equals(self.gpa, item, arguments[0])) continue;
                 self.heap.release(items.orderedRemove(position));
                 break;
             }
@@ -1081,7 +1406,7 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
             defer self.heap.release(arguments[0]);
             var kept: usize = 0;
             for (items.items) |item| {
-                if (Value.equals(item, arguments[0])) {
+                if (try Value.equals(self.gpa, item, arguments[0])) {
                     self.heap.release(item);
                 } else {
                     items.items[kept] = item;
@@ -1185,6 +1510,6 @@ fn toFloat(value: Value) f64 {
     return switch (value.data) {
         .int => |number| @floatFromInt(number),
         .float => |number| number,
-        .nothing, .bool, .list => unreachable,
+        .nothing, .bool, .string, .list => unreachable,
     };
 }

@@ -1,4 +1,4 @@
-//! Where list storage lives, and how value semantics is kept cheap.
+//! Where list and string storage lives, and how value semantics is kept cheap.
 //!
 //! Section 8.1 makes a list a value: assignment and argument passing produce an
 //! independent list. Section 8.1 also says copies are "a semantic guarantee,
@@ -19,6 +19,9 @@
 //! Value-typed data cannot form a cycle, so counting reclaims lists completely
 //! for now. Once classes exist, a cycle can pass through a list, and the
 //! collector will have to trace inside these buffers.
+//!
+//! Strings are simpler: section 9.1 makes them immutable, so a string is
+//! shared freely and never copied. It is counted only so that it can be freed.
 
 const std = @import("std");
 const Value = @import("Value.zig");
@@ -39,9 +42,23 @@ pub const List = struct {
     next: ?*List = null,
 };
 
+/// A string's bytes, which never change once it exists.
+pub const Text = struct {
+    references: u32 = 1,
+    /// A string literal's text, which lives in the syntax tree for the whole
+    /// run. It is shared by every evaluation of the literal and never counted.
+    literal: bool = false,
+    bytes: []const u8,
+    /// Neighbors in `live_texts`.
+    previous: ?*Text = null,
+    next: ?*Text = null,
+};
+
 gpa: std.mem.Allocator,
 /// Every buffer not yet freed.
 live: ?*List = null,
+/// Every string not yet freed.
+live_texts: ?*Text = null,
 
 pub fn init(gpa: std.mem.Allocator) Heap {
     return .{ .gpa = gpa };
@@ -55,7 +72,49 @@ pub fn deinit(self: *Heap) void {
         list.items.deinit(self.gpa);
         self.gpa.destroy(list);
     }
+    var texts = self.live_texts;
+    while (texts) |text| {
+        texts = text.next;
+        self.destroyText(text);
+    }
     self.* = undefined;
+}
+
+/// A string that owns `bytes`, which must come from `gpa` and be valid UTF-8,
+/// with one holder, the caller. On failure `bytes` is freed.
+pub fn createText(self: *Heap, bytes: []const u8) std.mem.Allocator.Error!*Text {
+    const text = self.gpa.create(Text) catch |err| {
+        self.gpa.free(bytes);
+        return err;
+    };
+    text.* = .{ .bytes = bytes };
+    self.linkText(text);
+    return text;
+}
+
+/// A string for a literal's text, which the syntax tree keeps alive.
+pub fn literalText(self: *Heap, bytes: []const u8) std.mem.Allocator.Error!*Text {
+    const text = try self.gpa.create(Text);
+    text.* = .{ .bytes = bytes, .literal = true };
+    self.linkText(text);
+    return text;
+}
+
+/// A string holding a copy of `bytes`.
+pub fn copyText(self: *Heap, bytes: []const u8) std.mem.Allocator.Error!Value {
+    const owned = try self.gpa.dupe(u8, bytes);
+    return .{ .data = .{ .string = try self.createText(owned) } };
+}
+
+fn linkText(self: *Heap, text: *Text) void {
+    text.next = self.live_texts;
+    if (self.live_texts) |first| first.previous = text;
+    self.live_texts = text;
+}
+
+fn destroyText(self: *Heap, text: *Text) void {
+    if (!text.literal) self.gpa.free(text.bytes);
+    self.gpa.destroy(text);
 }
 
 /// An empty list of `element` values with one holder, the caller.
@@ -74,13 +133,29 @@ pub fn createList(self: *Heap, element: Value.Kind, capacity: usize) std.mem.All
 
 /// Records a new holder of `value`, and returns it for convenience.
 pub fn retain(value: Value) Value {
-    if (value.data == .list) value.data.list.references += 1;
+    switch (value.data) {
+        .list => |list| list.references += 1,
+        .string => |text| if (!text.literal) {
+            text.references += 1;
+        },
+        else => {},
+    }
     return value;
 }
 
 /// Records that one holder of `value` is gone, freeing the buffer, and what it
 /// holds in turn, when it was the last.
 pub fn release(self: *Heap, value: Value) void {
+    if (value.data == .string) {
+        const text = value.data.string;
+        if (text.literal) return;
+        text.references -= 1;
+        if (text.references > 0) return;
+        if (text.previous) |previous| previous.next = text.next else self.live_texts = text.next;
+        if (text.next) |next| next.previous = text.previous;
+        self.destroyText(text);
+        return;
+    }
     if (value.data != .list) return;
     const list = value.data.list;
     list.references -= 1;

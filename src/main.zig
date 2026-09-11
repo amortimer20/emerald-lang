@@ -68,10 +68,12 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     // anything the program itself prints in the order it happened.
     var out_buffer: [4096]u8 = undefined;
     var out = std.Io.File.stdout().writerStreaming(io, &out_buffer);
+    var in_buffer: [4096]u8 = undefined;
+    var in = std.Io.File.stdin().readerStreaming(io, &in_buffer);
 
     const analysis = switch (command) {
         .check => emerald.check(gpa, &source),
-        .run => emerald.run(gpa, &source, &out.interface),
+        .run => emerald.run(gpa, &source, .{ .out = &out.interface, .in = &in.interface }),
     };
     var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();

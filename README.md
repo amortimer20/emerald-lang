@@ -14,11 +14,19 @@ lexer, parser, name resolver, type checker, interpreter — so `emerald run` exe
 program and `emerald check` reports its problems without running it.
 
 Named bindings, type annotations, assignment, conditionals, comparison, arithmetic,
-functions, loops, and lists work. Definite assignment is proved through control flow,
-including loops; lists are values, copied on write, so a list passed to a function or
-assigned to another name is independent of the original. An unhandled error inside a
-function reports the calls that led to it. Strings, dictionaries, sets, and lambdas arrive
-with later slices.
+functions, loops, lists, and strings work, and so does the first program of the language
+guide:
+
+```emerald
+var name = input("What is your name? ")
+print("Hello, #{name}!")
+```
+
+Strings are Unicode-aware: a character is what a reader sees as one, canonically
+equivalent strings are equal, and case mapping is Unicode's, from tables generated from
+Unicode 17.0.0. Definite assignment is proved through control flow, including loops; lists
+are values, copied on write. An unhandled error inside a function reports the calls that
+led to it. Dictionaries, sets, optionals, and lambdas arrive with later slices.
 
 ```emerald
 func collatz_steps(start: Int): Int {
@@ -53,7 +61,7 @@ Build, test, and run:
 ```bash
 zig build                              # build zig-out/bin/emerald
 zig build test                         # unit tests and command-line contract tests
-zig build run -- run examples/lists.em
+zig build run -- run examples/greeter.em
 ```
 
 ### Layout
@@ -73,13 +81,16 @@ src/
   Type.zig           static types and their compatibility
   Checker.zig        type checking and definite assignment
   Value.zig          runtime values and how they display
-  Heap.zig           list storage, reference counts, and copy-on-write
+  Heap.zig           list and string storage, reference counts, and copy-on-write
   Interpreter.zig    evaluates a syntax tree
+  strings.zig        the string operations of section 9
+  unicode.zig        grapheme clusters, normalization, case mapping, identifiers
+  unicode/tables.zig generated Unicode data; see tools/unicode
   conformance.zig    runs the Emerald conformance suite
 conformance/         Emerald cases and their expected results
 examples/            Emerald programs used as fixtures and targets
 toolchain/           pinned Zig version and compiled probes
-tools/               repository check scripts
+tools/               repository check scripts and the Unicode table generator
 ```
 
 Language behavior is specified by [`conformance/`](conformance/), whose cases are written

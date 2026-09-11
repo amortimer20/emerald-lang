@@ -24,6 +24,9 @@ pub const Type = @import("Type.zig");
 pub const Checker = @import("Checker.zig");
 pub const Value = @import("Value.zig");
 pub const Interpreter = @import("Interpreter.zig");
+pub const Heap = @import("Heap.zig");
+pub const unicode = @import("unicode.zig");
+pub const strings = @import("strings.zig");
 
 /// Everything a stage reported, owned by one arena.
 pub const Report = struct {
@@ -55,9 +58,15 @@ pub fn check(gpa: std.mem.Allocator, source: *const Source) Error!Report {
     return onLargeStack(gpa, source, null);
 }
 
-/// Checks a source file and then executes it, writing program output to `out`.
-pub fn run(gpa: std.mem.Allocator, source: *const Source, out: *std.Io.Writer) Error!Report {
-    return onLargeStack(gpa, source, out);
+/// Where a running program's output goes and where `input` reads from.
+pub const Streams = struct {
+    out: *std.Io.Writer,
+    in: *std.Io.Reader,
+};
+
+/// Checks a source file and then executes it with `streams`.
+pub fn run(gpa: std.mem.Allocator, source: *const Source, streams: Streams) Error!Report {
+    return onLargeStack(gpa, source, streams);
 }
 
 /// Reserved rather than committed: the host maps a thread's stack lazily, so
@@ -74,15 +83,15 @@ comptime {
     );
 }
 
-fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Writer) Error!Report {
+fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, streams: ?Streams) Error!Report {
     const Task = struct {
         gpa: std.mem.Allocator,
         source: *const Source,
-        out: ?*std.Io.Writer,
+        streams: ?Streams,
         result: Error!Report = undefined,
 
         fn go(task: *@This(), available: usize) void {
-            task.result = analyze(task.gpa, task.source, task.out, .here(available));
+            task.result = analyze(task.gpa, task.source, task.streams, .here(available));
         }
     };
 
@@ -93,7 +102,7 @@ fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Wri
     // is the host's choice, as little as 1 MiB, so the guard could not be told
     // honestly how much there is, and a program within section 7.2's
     // guarantees could fail or crash. Failing to start is the honest outcome.
-    var task: Task = .{ .gpa = gpa, .source = source, .out = out };
+    var task: Task = .{ .gpa = gpa, .source = source, .streams = streams };
     const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
@@ -107,7 +116,7 @@ fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, out: ?*std.Io.Wri
 fn analyze(
     gpa: std.mem.Allocator,
     source: *const Source,
-    out: ?*std.Io.Writer,
+    streams: ?Streams,
     stack: Interpreter.StackLimit,
 ) Error!Report {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
@@ -158,7 +167,7 @@ fn analyze(
         return .{ .arena_state = arena_state, .diagnostics = copies };
     }
 
-    const writer = out orelse return .{ .arena_state = arena_state, .diagnostics = &.{} };
+    const running = streams orelse return .{ .arena_state = arena_state, .diagnostics = &.{} };
 
     var outcome = try Interpreter.run(
         gpa,
@@ -166,7 +175,8 @@ fn analyze(
         parsed.program,
         &checked.signatures,
         &checked.literal_types,
-        writer,
+        running.out,
+        running.in,
         stack,
     );
     defer outcome.deinit();
@@ -215,17 +225,21 @@ test {
     _ = Checker;
     _ = Value;
     _ = Interpreter;
+    _ = Heap;
+    _ = unicode;
+    _ = strings;
 }
 
 /// Runs a program and returns what it printed. The caller owns the result.
-fn runToString(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
+fn runToString(gpa: std.mem.Allocator, text: []const u8, input: []const u8) ![]u8 {
     var source = try Source.init(gpa, "test.em", text);
     defer source.deinit(gpa);
 
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
 
-    var report = try run(gpa, &source, &out.writer);
+    var no_input: std.Io.Reader = .fixed(input);
+    var report = try run(gpa, &source, .{ .out = &out.writer, .in = &no_input });
     defer report.deinit();
 
     if (!report.ok()) {
@@ -238,7 +252,12 @@ fn runToString(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
 }
 
 fn expectOutput(text: []const u8, expected: []const u8) !void {
-    const actual = try runToString(testing.allocator, text);
+    return expectOutputWithInput(text, "", expected);
+}
+
+/// Runs a program that reads `input` through `input()`.
+fn expectOutputWithInput(text: []const u8, input: []const u8, expected: []const u8) !void {
+    const actual = try runToString(testing.allocator, text, input);
     defer testing.allocator.free(actual);
     try testing.expectEqualStrings(expected, actual);
 }
@@ -250,7 +269,8 @@ fn expectFailure(text: []const u8, expected_message: []const u8) !void {
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
 
-    var report = try run(testing.allocator, &source, &out.writer);
+    var no_input: std.Io.Reader = .fixed("");
+    var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input });
     defer report.deinit();
 
     const problem = report.failure orelse
@@ -1020,6 +1040,113 @@ test "memory stays flat however many lists a loop builds and drops" {
     try testing.expect(many < few + 16 * 1024);
 }
 
+// Section 9: strings.
+
+test "string literals: escapes, raw strings, and code points" {
+    try expectOutput("print(\"a\\tb\\\\c \\\"q\\\" \\#{x}\")\n", "a\tb\\c \"q\" #{x}\n");
+    try expectOutput("print('C:\\Users\\raw \\n')\n", "C:\\Users\\raw \\n\n");
+    try expectOutput("print(\"caf\\u{E9} \\u{1F600}\")\n", "caf\u{E9} \u{1F600}\n");
+    try expectFailure("print(\"\\u{D800}\")\n", "this `\\u` escape is not a Unicode character");
+    try expectFailure("print(\"\\u0301\")\n", "this `\\u` escape is incomplete");
+}
+
+test "interpolation displays any value, and strings inside lists are quoted" {
+    try expectOutput("var n = 3\nprint(\"n is #{n}, half is #{n / 2}, #{n > 2}\")\n", "n is 3, half is 1.5, true\n");
+    try expectOutput("var n = 3\nprint(\"outer #{\"inner #{n + 1}\"} end\")\n", "outer inner 4 end\n");
+    try expectOutput("print(\"#{[\"a, b\", \"c\"]}\")\n", "[\"a, b\", \"c\"]\n");
+    try expectOutput("print([\"q\\\"\", \"line\\n\"])\n", "[\"q\\\"\", \"line\\n\"]\n");
+    try expectFailure("print(\"#{}\")\n", "an interpolation needs an expression");
+    try expectFailure("print(\"a #{1 + 2\")\n", "this `#{` is never closed");
+}
+
+test "a triple-quoted string removes the closing delimiter's indentation" {
+    const program =
+        \\var text = """
+        \\    first
+        \\      indented
+        \\
+        \\    last #{1 + 1}
+        \\    """
+        \\print(text)
+        \\print(text.lines().count)
+        \\
+    ;
+    try expectOutput(program, "first\n  indented\n\nlast 2\n4\n");
+    // A Windows line ending becomes `\n`.
+    try expectOutput("var text = \"\"\"\r\n  a\r\n  b\r\n  \"\"\"\r\nprint(text.count)\r\n", "3\n");
+    try expectFailure("var s = \"\"\"text\"\"\"\n", "a triple-quoted string starts on the line after its `\"\"\"`");
+    try expectFailure("var s = \"\"\"\n  text\"\"\"\n", "the closing `\"\"\"` of this string needs a line of its own");
+    try expectFailure("var s = \"\"\"\n  a\n    \"\"\"\n", "this line is indented less than the closing `\"\"\"`");
+}
+
+test "count, indexing, and for measure characters, not bytes" {
+    try expectOutput("var s = \"h\\u{E9}llo \\u{1F44B}\"\nprint(s.count, s[1], s[6])\n", "7 \u{E9} \u{1F44B}\n");
+    // `e` and a combining accent are one character.
+    try expectOutput("for c in \"e\\u{301}x\" {\n    write(c, \"|\")\n}\nprint()\n", "e\u{301} |x |\n");
+    try expectFailure("print(\"abc\"[3])\n", "index 3 is outside this String, which has 3 characters");
+    try expectFailure("var s = \"abc\"\ns[0] = \"x\"\n", "a String cannot be changed in place");
+}
+
+test "strings compare by canonical equivalence and order by code point" {
+    try expectOutput("print(\"caf\\u{E9}\" == \"cafe\\u{301}\", \"a\" != \"b\")\n", "true true\n");
+    try expectOutput("print(\"apple\" < \"banana\", \"Zebra\" < \"apple\", \"b\" >= \"b\")\n", "true true true\n");
+    try expectOutput("print([\"caf\\u{E9}\"].contains?(\"cafe\\u{301}\"))\n", "true\n");
+}
+
+test "plus joins strings, and nothing else mixes text with arithmetic" {
+    try expectOutput("var s = \"a\"\ns += \"b\"\ns = s + \"c\"\nprint(s)\n", "abc\n");
+    try expectOutput("var names = [\"x\"]\nnames[0] += \"y\"\nprint(names)\n", "[\"xy\"]\n");
+    try expectFailure("print(\"n = \" + 3)\n", "`+` joins two Strings, but this is String and Int");
+    try expectFailure("print(\"a\" - \"b\")\n", "subtraction needs numbers, but this is String and String");
+}
+
+test "the string vocabulary" {
+    try expectOutput("print(\"Stra\\u{DF}e\".upper(), \"ABC\".lower(), \"\\u{E9}lan\".capitalize())\n", "STRASSE abc \u{C9}lan\n");
+    try expectOutput("print(\"  hi  \".trim() + \"|\", \"  hi  \".trim_start() + \"|\", \"  hi  \".trim_end() + \"|\")\n", "hi| hi  |   hi|\n");
+    try expectOutput("print(\"caf\\u{E9}\".contains?(\"e\"), \"cafe\".contains?(\"e\"), \"ab\".starts_with?(\"a\"), \"ab\".ends_with?(\"b\"))\n", "false true true true\n");
+    try expectOutput("print(\"a,b,,c\".split(\",\"), \"one\\ntwo\\n\".lines(), \"ab\".chars())\n", "[\"a\", \"b\", \"\", \"c\"] [\"one\", \"two\"] [\"a\", \"b\"]\n");
+    try expectOutput("print(\"ha\".repeat(3), \"stressed\".reverse(), \"a-b-c\".replace(\"-\", \"+\"))\n", "hahaha desserts a+b+c\n");
+    try expectOutput("print(\"hello\".substring(1), \"hello\".substring(1, 3), \"hello\".substring(5) == \"\")\n", "ello ell true\n");
+    try expectOutput("print(\" \".blank?(), \"\".empty?(), \"a\".empty?())\n", "true true false\n");
+    try expectFailure("print(\"abc\".substring(1, 5))\n", "a substring of 5 characters from 1 runs past the end of a String of 3");
+    try expectFailure("print(\"abc\".split(\"\"))\n", "`split` needs a separator, but this is an empty String");
+    try expectFailure("print(\"abc\".length)\n", "String has no property `length`");
+}
+
+test "converting between strings and numbers" {
+    try expectOutput("print(\"42\".to_int() + 1, \" -7 \".to_int(), \"x\".to_int_or(-1))\n", "43 -7 -1\n");
+    try expectOutput("print(\"2.5\".to_float(), \"3\".to_float(), \"no\".to_float_or(0))\n", "2.5 3.0 0.0\n");
+    try expectOutput("print(12.to_string() + \"!\", 2.0.to_string(), false.to_string())\n", "12! 2.0 false\n");
+    try expectFailure("print(\"4 2\".to_int())\n", "\"4 2\" is not a whole number");
+    try expectFailure("print(\"99999999999999999999\".to_int())\n", "\"99999999999999999999\" is outside the range of Int");
+}
+
+test "the first program: input and interpolation" {
+    const program = "var name = input(\"What is your name? \")\nprint(\"Hello, #{name}!\")\n";
+    try expectOutputWithInput(program, "Ada\n", "What is your name? Hello, Ada!\n");
+    // A Windows line ending is removed with the newline; Enter alone gives "".
+    try expectOutputWithInput("print(input().count, input().count)\n", "ab\r\n\n", "2 0\n");
+    // The last line may end without a newline.
+    try expectOutputWithInput("print(input())\n", "last", "last\n");
+    try expectFailure("var name = input()\n", "`input` reached the end of the input");
+    try expectOutput("write(\"a\", \"b\")\nwrite(\"c\")\nprint()\n", "a bc\n");
+}
+
+test "names follow Unicode identifier rules and normalize" {
+    try expectOutput("var \u{FC}ber = 1\nprint(\u{FC}ber)\n", "1\n");
+    // A precomposed and a decomposed spelling are the same name (3.3).
+    try expectOutput("var caf\u{E9} = 2\nprint(cafe\u{301})\n", "2\n");
+    try expectFailure("var \u{1F600} = 1\n", "this character cannot be used in a name");
+}
+
+test "memory stays flat however many strings a loop builds and drops" {
+    const program = "var total = 0\nfor i in 1..{d} {{\n    var line = \"item #{{i}}: \" + i.to_string()\n    total += line.upper().count\n}}\nprint(total > 0)\n";
+    var buffer: [256]u8 = undefined;
+    const few = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{3}));
+    const many = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{5_000}));
+    try testing.expect(many < few + 16 * 1024);
+}
+
 // Section 7: functions.
 
 test "a function takes arguments and returns a value" {
@@ -1054,7 +1181,8 @@ test "print evaluates every argument before writing any of them" {
     defer source.deinit(testing.allocator);
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    var report = try run(testing.allocator, &source, &out.writer);
+    var no_input: std.Io.Reader = .fixed("");
+    var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input });
     defer report.deinit();
     try testing.expect(report.failure != null);
     try testing.expectEqualStrings("", out.written());
@@ -1111,7 +1239,7 @@ const PeakAllocator = struct {
 
 fn peakMemory(text: []const u8) !usize {
     var tracking: PeakAllocator = .{ .child = testing.allocator };
-    const output = try runToString(tracking.allocator(), text);
+    const output = try runToString(tracking.allocator(), text, "");
     tracking.allocator().free(output);
     return tracking.peak;
 }
@@ -1321,7 +1449,8 @@ test "a runtime error inside a function carries its stack trace" {
     defer source.deinit(testing.allocator);
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    var report = try run(testing.allocator, &source, &out.writer);
+    var no_input: std.Io.Reader = .fixed("");
+    var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input });
     defer report.deinit();
 
     const rendered = try report.failure.?.renderAlloc(testing.allocator, source);
@@ -1349,7 +1478,8 @@ test "unbounded recursion is caught at the limit, with repeated frames summarize
     defer source.deinit(testing.allocator);
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    var report = try run(testing.allocator, &source, &out.writer);
+    var no_input: std.Io.Reader = .fixed("");
+    var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input });
     defer report.deinit();
 
     const failure = report.failure.?;

@@ -1,0 +1,4 @@
+diagnostics/multiline-indentation.em:6:1: this line is indented less than the closing `"""`
+    this line is indented less than the closing quotes.
+  ^^^
+Indent every line of the text at least as far as the closing `"""`, which sets how much indentation is removed.

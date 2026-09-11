@@ -1,0 +1,4 @@
+diagnostics/familiar-string-names.em:4:12: String has no property `length`
+  print(name.length)
+             ^^^^^^
+Emerald calls this `count`.

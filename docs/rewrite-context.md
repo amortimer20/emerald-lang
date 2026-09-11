@@ -554,6 +554,19 @@ Triple double quotes form multiline strings. The opening newline is omitted, ind
 matching the closing delimiter is removed from each content line, and there is no implicit
 trailing newline. Interpolation and escapes retain their double-quoted meanings.
 
+The text of a triple-quoted string begins on the line after the opening `"""`, and the
+closing `"""` stands on a line of its own; each is an error otherwise, since neither the
+indentation nor the omitted newlines would be well defined. A content line indented less
+than the closing delimiter is an error, except a blank one. Indentation is removed before
+escapes are processed, so an escaped `\n` is never taken for a line break, and a Windows
+line ending in the source becomes `\n`.
+
+The escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`, and `\#`, plus `\u{...}`, which
+writes a Unicode scalar value as one to six hex digits: `"cafe\u{301}"`. It exists for
+characters that are invisible or impossible to type, such as a combining accent. An
+interpolation may contain any expression, including another string with interpolations,
+and displays its value as `print` would.
+
 ### 5.2 Boolean and comparison operators
 
 Use the word operators `not`, `and`, and `or`. Symbolic duplicates such as `!`, `&&`, and
@@ -1362,7 +1375,26 @@ exactly. It returns an empty string unchanged. A future operation that also lowe
 tail must use a name that promises that broader transformation.
 
 `count` is a property and measures graphemes. `index_of` returns an optional index.
-`lines()` omits newline characters by default.
+`lines()` omits newline characters by default: a line ends at `\n`, a `\r` before it
+belongs to the ending, and a final line ending does not begin an empty last line.
+
+Searching works in whole characters, as indexing does. `contains?`, `starts_with?`,
+`ends_with?`, `split`, and `replace` match only where both ends of the match fall between
+characters, and they compare canonically, as `==` does. So `"café".contains?("e")` is
+false when the `é` is a single character: the `e` inside it is not a character of its
+own, and 9.1 promises characters are never split. `trim` likewise removes whole characters
+of Unicode whitespace. `replace(old, new)` replaces every occurrence; `split` with an empty
+separator is an error that points to `chars()`, and `replace` with an empty `old` is an
+error too.
+
+`+` joins two strings, and `+=` appends. It is the one operator strings have, and it does not
+convert: `"Score: " + 10` is an error suggesting `to_string()` or interpolation, which
+remains the primary way to build prose.
+
+Parsing is strict (9.4). `to_int` accepts an optional sign and decimal digits; `to_float`
+accepts digits with an optional fraction and exponent, and also `Infinity`, `-Infinity`,
+and `NaN`, so every displayed `Float` parses back. `to_string()` gives the display of an
+`Int`, `Float`, or `Bool`.
 `pad_start` and `pad_end` describe logical placement more clearly than left and right in a
 Unicode language. `words`, `title_case`, and case-insensitive Unicode comparison remain
 deferred until their locale and boundary behavior can be designed correctly.
@@ -2056,9 +2088,12 @@ input, input_maybe, print, write, random, exit
 `input(prompt)` writes the optional prompt, reads one line, removes its line ending while
 preserving other whitespace, and returns `String`. Pressing Enter returns `""`; end of
 input raises `InputError`. `input_maybe(prompt)` instead returns `nothing` at end of input.
+A line that is not valid UTF-8 also raises, so every `String` holds Unicode text.
 
 `print` and `write` accept zero or more ordinary values through their display
 representation. Multiple arguments evaluate left to right and are separated by one space.
+A string displays as its text. Inside a collection it displays quoted, with escapes where
+needed, so `["a, b"]` and `["a", "b"]` cannot be mistaken for each other.
 `print` appends a newline; `write` does not. Separator customization is deferred, and
 interpolation remains the primary way to construct deliberate prose.
 
@@ -2383,8 +2418,15 @@ code-point counting, and nothing more: there is no grapheme cluster segmentation
 normalization. Grapheme indexing from 9.1 needs UAX #29 and normalized equality from 9.2
 needs UAX #15, so Emerald vendors the required Unicode tables with a recorded Unicode
 version, regenerates them deliberately, and owns the segmentation and normalization code.
-Plan this cost into the string slice rather than discovering it there. `std.fmt` does supply
-shortest-round-trip float formatting, which satisfies the display rule in 9.4.
+`std.fmt` does supply shortest-round-trip float formatting, which satisfies the display
+rule in 9.4.
+
+The tables currently follow **Unicode 17.0.0**. `tools/unicode/fetch.sh` downloads the
+database, `tools/unicode/generate.zig` writes `src/unicode/tables.zig`, and
+`zig build unicode-conformance` checks the result against the whole of Unicode's
+NormalizationTest.txt. The routine test suite embeds GraphemeBreakTest.txt and every part
+of NormalizationTest.txt except the character-by-character part. The same tables supply
+identifier characters (3.3), whitespace, and full case mapping.
 
 ### 19.2 Frontend pipeline
 
@@ -2651,6 +2693,11 @@ recorded in their normative sections:
 | Set literals (8.2) | Square brackets, with the set type deciding; `{T}` stays the type spelling | Braces in expression position meant a block, a lambda, or a set, which forced `for n in ({1, 2, 3})` and made `{}` ambiguous. Brackets already build empty dictionaries from context, so sets follow the same rule. |
 | Leading-dot continuation (3.1) | A line beginning with `.` or `?.` continues the previous line | Method chaining is the pipeline notation, so chains need to wrap, and no valid line could begin with a member dot anyway. The one exception to deciding continuation from preceding tokens. |
 | Widening (4.4) | `Int` widens to `Float` wherever a `Float` is expected, not only in arithmetic | The section relied on it for `[1, 2.5]` already, and `var rate: Float = 1` being an error would teach nothing. |
+| String joining (9.2) | `+` joins two Strings and `+=` appends; nothing converts implicitly | Every language a beginner meets next has it, and building a string in a loop without it is awkward. It stays the only string operator, and interpolation stays the primary way to build prose. |
+| `\u{...}` escape (5.1) | Writes a Unicode scalar value by code point | Combining marks and other invisible characters cannot otherwise be written in source. The braced form matches Swift, Rust, and JavaScript. |
+| Strings inside collections (15.2) | Displayed quoted, with escapes | `["a, b"]` and `["a", "b"]` must not look alike. At the top level a string is still its text. |
+| Searching strings (9.2) | Matches only between characters, and canonically | Section 9.1 promises characters are never split; `"café".contains?("e")` is false when `é` is one character. `replace` replaces every occurrence. |
+| Unicode version (19.1) | 17.0.0, generated and checked by `tools/unicode` | Recorded so a change is deliberate; the full NormalizationTest runs whenever the tables are regenerated. |
 | Loops and definite assignment (6.4) | A loop may run zero times; only a literal `while true` is known to end through `break` | Precise enough that the common `while true` search with a `break` needs no dummy initial value, while staying a rule a reader can check by eye. |
 | Value-type mutability (4.3, 7.1, 8.1, 10.2) | `const` and parameters freeze values; the rule stops at class references | Under value semantics, mutating and replacing are indistinguishable, so a shallow `const` protected nothing coherent, and mutating a parameter's copy was a silent no-op that a beginner would write and never understand. Replaces the earlier shallow `const`, which followed C# reference-type variables. |
 

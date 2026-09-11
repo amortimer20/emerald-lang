@@ -19,6 +19,13 @@ pub const Kind = enum {
     raw_string_literal,
     /// A triple-double-quoted string.
     multiline_string_literal,
+    /// A string with interpolation arrives in parts, with the tokens of each
+    /// interpolated expression between them: `"Hi, #{name}!"` is the start
+    /// `"Hi, #{`, the tokens of `name`, and the end `}!"`. A middle part,
+    /// `} and #{`, sits between two interpolations.
+    string_start,
+    string_middle,
+    string_end,
 
     identifier,
     /// A `##` documentation comment, which attaches to the declaration below it.
@@ -123,6 +130,7 @@ pub const Kind = enum {
             .string_literal,
             .raw_string_literal,
             .multiline_string_literal,
+            .string_end,
             .identifier,
             .keyword_break,
             .keyword_continue,
@@ -141,6 +149,8 @@ pub const Kind = enum {
             => true,
 
             .doc_comment,
+            .string_start,
+            .string_middle,
             .keyword_and,
             .keyword_assert,
             .keyword_case,
@@ -212,6 +222,7 @@ pub const Kind = enum {
             .int_literal => "a whole number",
             .float_literal => "a decimal number",
             .string_literal, .raw_string_literal, .multiline_string_literal => "a string",
+            .string_start, .string_middle, .string_end => "a string",
             .identifier => "a name",
             .doc_comment => "a documentation comment",
             .newline => "the end of the line",
@@ -230,6 +241,9 @@ pub const Kind = enum {
             .string_literal,
             .raw_string_literal,
             .multiline_string_literal,
+            .string_start,
+            .string_middle,
+            .string_end,
             .identifier,
             .doc_comment,
             .newline,

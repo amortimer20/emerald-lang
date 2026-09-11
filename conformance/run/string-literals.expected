@@ -1,0 +1,6 @@
+There are 3 gems.
+#{count} is literal, a tab:	|, a quote: ", a backslash: \
+C:\Users\student\game \d+
+café and café look the same
+1.5 true [1, 2] inner 4
+["Ava", "a, b", "say \"hi\""]

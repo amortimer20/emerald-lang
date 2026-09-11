@@ -1,0 +1,8 @@
+[apples, pears,,plums] ["apples", " pears", "", "plums"]   apples, pears,,plums  
+[apples, pears,,plums  ] [  apples, pears,,plums]
+true true true
+["one", "two", "three"] ["a", "b", "c"] ababab desserts
+a + b + c ell llo
+true true false
+43 2.5 0 7!
+abc 3

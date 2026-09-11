@@ -1,0 +1,4 @@
+diagnostics/emoji-name.em:3:5: this character cannot be used in a name
+  var 🎉 = "party"
+      ^
+Names are made of letters, digits, and underscores. Emoji and symbols belong inside strings.

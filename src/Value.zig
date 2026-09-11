@@ -11,10 +11,11 @@
 
 const std = @import("std");
 const Heap = @import("Heap.zig");
+const unicode = @import("unicode.zig");
 
 const Value = @This();
 
-pub const Kind = enum { nothing, bool, int, float, list };
+pub const Kind = enum { nothing, bool, int, float, string, list };
 
 data: Data,
 
@@ -24,6 +25,7 @@ pub const Data = union(Kind) {
     bool: bool,
     int: i64,
     float: f64,
+    string: *Heap.Text,
     list: *Heap.List,
 };
 
@@ -57,6 +59,7 @@ pub fn typeName(self: Value) []const u8 {
         .bool => "Bool",
         .int => "Int",
         .float => "Float",
+        .string => "String",
         .list => "a list",
     };
 }
@@ -64,37 +67,61 @@ pub fn typeName(self: Value) []const u8 {
 /// Whether two values are numbers, which is what arithmetic and ordering need.
 pub fn isNumber(self: Value) bool {
     return switch (self.data) {
-        .nothing, .bool, .list => false,
+        .nothing, .bool, .string, .list => false,
         .int, .float => true,
     };
 }
 
-/// Writes the value as `print` would. A list writes its elements the same way,
-/// between brackets and separated by a comma and a space, as it would be
-/// written in source: `[1, 2, 3]`.
+/// Writes the value as `print` and interpolation would. A string is its text.
+/// A list writes its elements between brackets, separated by a comma and a
+/// space, the way they would be written in source: `[1, 2, 3]`, and
+/// `["Ava", "Noah"]` with each string quoted, so `["a, b"]` and `["a", "b"]`
+/// cannot be mistaken for each other.
 pub fn display(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    return self.write(writer, false);
+}
+
+fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Error!void {
     switch (self.data) {
         .nothing => try writer.writeAll("nothing"),
         .bool => |value| try writer.writeAll(if (value) "true" else "false"),
         .int => |value| try writer.print("{d}", .{value}),
         .float => |value| try displayFloat(value, writer),
+        .string => |text| if (quoted) try writeQuoted(text.bytes, writer) else try writer.writeAll(text.bytes),
         .list => |list| {
             try writer.writeAll("[");
             for (list.items.items, 0..) |item, position| {
                 if (position != 0) try writer.writeAll(", ");
-                try item.display(writer);
+                try item.write(writer, true);
             }
             try writer.writeAll("]");
         },
     }
 }
 
+/// A string as a double-quoted literal would write it, with section 5.1's
+/// escapes where they are needed.
+fn writeQuoted(bytes: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    try writer.writeAll("\"");
+    for (bytes) |c| switch (c) {
+        '"' => try writer.writeAll("\\\""),
+        '\\' => try writer.writeAll("\\\\"),
+        '\n' => try writer.writeAll("\\n"),
+        '\t' => try writer.writeAll("\\t"),
+        '\r' => try writer.writeAll("\\r"),
+        0 => try writer.writeAll("\\0"),
+        else => try writer.writeByte(c),
+    };
+    try writer.writeAll("\"");
+}
+
 /// Emerald's `==`. Numbers compare by mathematical value, as `order` does, so
-/// a NaN equals nothing, itself included. Lists are equal when they hold equal
-/// elements in the same order (8.4), using this same `==` for each. Values of
-/// different kinds are never equal; the checker rejects comparing them, so that
-/// answer is a safety net.
-pub fn equals(left: Value, right: Value) bool {
+/// a NaN equals nothing, itself included. Strings are equal when they are
+/// canonically equivalent (9.2), which can need normalizing, hence the
+/// allocator. Lists are equal when they hold equal elements in the same order
+/// (8.4), using this same `==` for each. Values of different kinds are never
+/// equal; the checker rejects comparing them, so that answer is a safety net.
+pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocator.Error!bool {
     return switch (left.data) {
         .nothing => right.data == .nothing,
         .bool => |a| switch (right.data) {
@@ -102,11 +129,15 @@ pub fn equals(left: Value, right: Value) bool {
             else => false,
         },
         .int, .float => order(left, right) == .eq,
+        .string => |a| switch (right.data) {
+            .string => |b| unicode.equal(gpa, a.bytes, b.bytes),
+            else => false,
+        },
         .list => |a| switch (right.data) {
             .list => |b| blk: {
                 if (a.items.items.len != b.items.items.len) break :blk false;
                 for (a.items.items, b.items.items) |x, y| {
-                    if (!equals(x, y)) break :blk false;
+                    if (!try equals(gpa, x, y)) break :blk false;
                 }
                 break :blk true;
             },
@@ -127,7 +158,7 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
         .int => |a| switch (right.data) {
             .int => |b| std.math.order(a, b),
             .float => |b| orderIntFloat(a, b),
-            .nothing, .bool, .list => null,
+            .nothing, .bool, .string, .list => null,
         },
         .float => |a| switch (right.data) {
             .int => |b| if (orderIntFloat(b, a)) |result| result.invert() else null,
@@ -135,9 +166,9 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
                 null
             else
                 std.math.order(a, b),
-            .nothing, .bool, .list => null,
+            .nothing, .bool, .string, .list => null,
         },
-        .nothing, .bool, .list => null,
+        .nothing, .bool, .string, .list => null,
     };
 }
 

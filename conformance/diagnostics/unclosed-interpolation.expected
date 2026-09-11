@@ -1,0 +1,4 @@
+diagnostics/unclosed-interpolation.em:5:18: this `#{` is never closed
+  print("There are #{count gems.")
+                   ^^
+End the interpolation with `}` before the string's closing quote, as in `"#{count}"`.

@@ -322,6 +322,8 @@ fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
     if (actual.kind == .invalid) return .invalid;
     // Section 8.4: a loop visits the list as it was when the loop began.
     if (actual.kind == .list) return actual.element.?.*;
+    // Section 9.1: iterating a string yields its characters, each a String.
+    if (actual.kind == .string) return .string;
     try self.report(
         iterable.span,
         "a `for` loop cannot visit {f}",
@@ -636,6 +638,16 @@ fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void
     var element = binding.type;
     for (assignment.indices) |_| {
         if (element.kind == .invalid) break;
+        if (element.kind == .string) {
+            try self.report(
+                assignment.target_span,
+                "a String cannot be changed in place",
+                .{},
+                "Strings are immutable. Build a new one instead, for example with `replace` or interpolation.",
+            );
+            element = .invalid;
+            break;
+        }
         if (element.kind != .list) {
             try self.report(
                 assignment.target_span,
@@ -1245,6 +1257,16 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .comparison => |comparison| self.typeOfComparison(comparison),
         .call => |call| self.typeOfCall(expression, call),
         .list_literal => self.typeOfList(expression, null),
+        .string_literal => .string,
+        // Section 5.1: any value can be interpolated, displayed as `print`
+        // would display it.
+        .interpolation => |parts| blk: {
+            for (parts) |part| switch (part) {
+                .text => {},
+                .expression => |part_expression| _ = try self.typeOf(part_expression),
+            };
+            break :blk .string;
+        },
         .index => |index| self.typeOfIndex(index),
         .member => |member| self.typeOfMember(member),
         .range => self.rejectCountingValue(expression),
@@ -1318,12 +1340,14 @@ fn typeOfIndex(self: *Checker, index: Ast.Expression.Index) Error!Type {
     const base = try self.typeOf(index.base);
     try self.requireIndex(index.index);
     if (base.kind == .invalid) return .invalid;
+    // Section 9.1: a string's index counts characters, and each is a String.
+    if (base.kind == .string) return .string;
     if (base.kind != .list) {
         try self.report(
             index.base.span,
             "{f} cannot be indexed",
             .{base},
-            "Only a list has elements to index.",
+            "Only a list or a String has elements to index.",
         );
         return .invalid;
     }
@@ -1346,9 +1370,11 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) return .invalid;
 
-    if (base.kind == .list) {
+    if (base.kind == .list or base.kind == .string) {
         if (std.mem.eql(u8, member.name, "count")) return .int;
-        if (Type.list_methods.has(member.name)) {
+        if (Type.list_methods.has(member.name) or Type.string_methods.has(member.name) or
+            std.mem.eql(u8, member.name, "to_string"))
+        {
             try self.reportWithHelp(
                 member.name_span,
                 "`{s}` is a method, so it needs parentheses",
@@ -1369,6 +1395,14 @@ fn typeOfMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expre
     if (base.kind == .invalid) {
         try self.typeArguments(call.arguments);
         return .invalid;
+    }
+
+    if (base.kind == .string) return self.typeOfStringMethod(call, member);
+    if ((base.kind == .int or base.kind == .float or base.kind == .bool) and
+        std.mem.eql(u8, member.name, "to_string"))
+    {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return .string;
     }
 
     if (base.kind == .list and std.mem.eql(u8, member.name, "count")) {
@@ -1424,6 +1458,81 @@ fn typeOfMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expre
     };
 }
 
+/// Section 9.2's string methods. None changes the string, which is immutable.
+fn typeOfStringMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    if (std.mem.eql(u8, member.name, "count")) {
+        try self.report(
+            member.name_span,
+            "`count` is a property, so it takes no parentheses",
+            .{},
+            "Write `.count` without `()`.",
+        );
+        try self.typeArguments(call.arguments);
+        return .int;
+    }
+    const method = Type.string_methods.get(member.name) orelse {
+        try self.reportUnknownMember(.string, member, "method");
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    };
+
+    const most = method.parameters.len;
+    if (try self.requireArity(member, call.arguments, most - method.optional, most)) {
+        for (call.arguments, method.parameters[0..call.arguments.len]) |argument, operand| {
+            const wanted: Type = switch (operand) {
+                .string => .string,
+                .int => .int,
+                .float => .float,
+            };
+            const actual = try self.typeOf(argument);
+            if (actual.assignableTo(wanted)) continue;
+            try self.report(
+                argument.span,
+                "this is {f}, but `{s}` needs {f}",
+                .{ actual, member.name, wanted },
+                "Pass a value of the type the method needs, or convert it first.",
+            );
+        }
+    }
+
+    return switch (method.result) {
+        .bool => .bool,
+        .int => .int,
+        .float => .float,
+        .string => .string,
+        .strings => Type.listOf(self.arena, .string),
+    };
+}
+
+/// Reports a call with too few or too many arguments, typing them anyway.
+/// True when the count is right.
+fn requireArity(
+    self: *Checker,
+    member: Ast.Expression.Member,
+    arguments: []const *const Ast.Expression,
+    least: usize,
+    most: usize,
+) Error!bool {
+    if (arguments.len >= least and arguments.len <= most) return true;
+    if (least == most) {
+        try self.report(
+            member.name_span,
+            "`{s}` takes {d} argument{s}, but this call passes {d}",
+            .{ member.name, most, if (most == 1) "" else "s", arguments.len },
+            "Match the number of arguments to what the method needs.",
+        );
+    } else {
+        try self.report(
+            member.name_span,
+            "`{s}` takes {d} or {d} arguments, but this call passes {d}",
+            .{ member.name, least, most, arguments.len },
+            "Match the number of arguments to what the method needs.",
+        );
+    }
+    try self.typeArguments(arguments);
+    return false;
+}
+
 /// A mutating method changes the list it is called on, so that list has to be
 /// one a program can see again: held by a `var`, directly or through indexing.
 /// Changing a temporary, such as the result of a call, would be lost at once.
@@ -1447,7 +1556,11 @@ fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
 /// A member that does not exist, with the Emerald name for what the writer
 /// probably meant when they reached for another language's.
 fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member, comptime what: []const u8) Error!void {
-    const suggestion: ?[]const u8 = if (base.kind == .list) familiarListName(member.name) else null;
+    const suggestion: ?[]const u8 = switch (base.kind) {
+        .list => familiarListName(member.name),
+        .string => familiarStringName(member.name),
+        else => null,
+    };
     if (suggestion) |name| {
         return self.reportWithHelp(
             member.name_span,
@@ -1461,11 +1574,39 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         member.name_span,
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
-        if (base.kind == .list)
-            "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, and `clear`."
-        else
-            "Check the spelling, or what kind of value this is.",
+        switch (base.kind) {
+            .list => "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, and `clear`.",
+            .string => "A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `substring`, `split`, `lines`, `chars`, `to_int`, and `to_float`, among others.",
+            else => "Check the spelling, or what kind of value this is.",
+        },
     );
+}
+
+/// Names other languages use for string operations Emerald spells differently.
+fn familiarStringName(name: []const u8) ?[]const u8 {
+    const familiar = std.StaticStringMap([]const u8).initComptime(.{
+        .{ "length", "count" },
+        .{ "size", "count" },
+        .{ "len", "count" },
+        .{ "upcase", "upper" },
+        .{ "uppercase", "upper" },
+        .{ "to_upper", "upper" },
+        .{ "downcase", "lower" },
+        .{ "lowercase", "lower" },
+        .{ "to_lower", "lower" },
+        .{ "strip", "trim" },
+        .{ "includes", "contains?" },
+        .{ "contains", "contains?" },
+        .{ "starts_with", "starts_with?" },
+        .{ "ends_with", "ends_with?" },
+        .{ "empty", "empty?" },
+        .{ "is_empty", "empty?" },
+        .{ "slice", "substring" },
+        .{ "substr", "substring" },
+        .{ "reversed", "reverse" },
+        .{ "parse", "to_int" },
+    });
+    return familiar.get(name);
 }
 
 /// Names other languages use for list operations Emerald spells differently.
@@ -1551,6 +1692,28 @@ fn arithmetic(
     left: Type,
     right: Type,
 ) Error!Type {
+    // `+` joins two Strings; nothing else mixes text and arithmetic.
+    if (left.kind == .string or right.kind == .string) {
+        if (left.kind == .invalid or right.kind == .invalid) return .invalid;
+        if (operator == .add and left.kind == .string and right.kind == .string) return .string;
+        if (operator == .add) {
+            try self.report(
+                span,
+                "`+` joins two Strings, but this is {f} and {f}",
+                .{ left, right },
+                "Convert the value with `to_string()`, or use interpolation, as in `\"#{name}: #{score}\"`.",
+            );
+        } else {
+            try self.report(
+                span,
+                "{s} needs numbers, but this is {f} and {f}",
+                .{ operator.describe(), left, right },
+                "Strings have no arithmetic. `+` is the one operator for them, and it joins two Strings.",
+            );
+        }
+        return .invalid;
+    }
+
     // Section 5.3: `/` always produces a Float.
     return Type.arithmeticResult(left, right, operator == .divide) orelse {
         try self.report(
@@ -1610,7 +1773,7 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
                 .{ left, right },
                 "`==` and `!=` compare two values of the same type, and Int and Float compare with each other.",
             );
-        } else if (!unknown and !numeric and !operator.isEquality()) {
+        } else if (!unknown and !numeric and !operator.isEquality() and left.kind != .string) {
             try self.report(
                 pair,
                 "`{s}` needs numbers, but these are {f} values",
@@ -1660,9 +1823,10 @@ fn typeOfCall(
         return .invalid;
     }
 
-    // A prelude function. Section 15.2's `print` accepts any number of values
-    // and has no result.
+    // A prelude function. Section 15.2's `print` and `write` accept any number
+    // of values and have no result; `input` takes an optional prompt.
     if (!self.declarations.contains(name)) {
+        if (std.mem.eql(u8, name, "input")) return self.typeOfInput(call);
         try self.typeArguments(call.arguments);
         return .nothing;
     }
@@ -1694,6 +1858,30 @@ fn typeOfCall(
 
     if (!self.in_function) try self.checkCaptures(expression.span, name);
     return signature.return_type;
+}
+
+/// Section 15.2's `input(prompt)`: the prompt is optional and is a String.
+fn typeOfInput(self: *Checker, call: Ast.Expression.Call) Error!Type {
+    if (call.arguments.len > 1) {
+        try self.report(
+            call.callee.span,
+            "`input` takes at most 1 argument, but this call passes {d}",
+            .{call.arguments.len},
+            "Pass the prompt as one String, as in `input(\"What is your name? \")`.",
+        );
+        try self.typeArguments(call.arguments);
+    } else if (call.arguments.len == 1) {
+        const prompt = try self.typeOf(call.arguments[0]);
+        if (prompt.kind != .string and prompt.kind != .invalid) {
+            try self.report(
+                call.arguments[0].span,
+                "the prompt is {f}, but `input` needs a String",
+                .{prompt},
+                "Write the prompt as text, as in `input(\"How old are you? \")`.",
+            );
+        }
+    }
+    return .string;
 }
 
 fn typeArguments(self: *Checker, arguments: []const *const Ast.Expression) Error!void {

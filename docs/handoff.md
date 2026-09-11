@@ -1,12 +1,13 @@
 # Current handoff
 
-Updated: 2026-09-11. Prepared by Claude after the list slice.
+Updated: 2026-09-11. Prepared by Claude after the string slice.
 
 ## Current milestone
 
 Slices 1 through 7 of section 20 are complete, plus a loop slice the user approved
-inserting before slice 8, and slice 8 itself as the user scoped it: lists, without the
-higher-order method, which moves to the heap slice with lambdas. The whole frontend
+inserting before slice 8, slice 8 itself as the user scoped it (lists, without the
+higher-order method, which moves to the heap slice with lambdas), and a string slice the
+user chose to do before the heap slice. The whole frontend
 pipeline of section 19.2 exists: source manager, lexer, parser, name resolver, type
 checker, interpreter.
 
@@ -14,7 +15,10 @@ Functions work: declarations, calls, returns, recursion, hoisting, return-type i
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
 `continue`, and the trailing `if` guard. Lists work: literals, indexing, element assignment,
 the essential methods, equality, printing, and `for`, with value semantics through
-copy-on-write. Every expression has a static type before execution and
+copy-on-write. Strings work: literals with escapes and interpolation, triple-quoted
+layout, Unicode-aware counting, indexing, iteration, comparison, and case mapping, the
+section 9.2 methods that need no optionals, and `input` and `write`, so section 2's first
+program runs. Every expression has a static type before execution and
 definite assignment is proved through control flow. What remains at runtime is only what
 cannot be known statically: integer overflow, division by zero, and exceeding the
 recursion limit.
@@ -81,8 +85,15 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   errors, section 4.1's definite assignment, and everything section 7 asks of functions.
 - `src/Value.zig` holds `Nothing`, `Bool`, `Int`, `Float`, and lists, implements section
   9.4's display rules, and compares and orders values.
-- `src/Heap.zig` owns list buffers: reference counts, copy-on-write, and the list of every
-  live buffer that the run frees at the end and the slice 9 collector will walk.
+- `src/Heap.zig` owns list buffers and string texts: reference counts, copy-on-write, and
+  the lists of every live object that the run frees at the end and the slice 9 collector
+  will walk.
+- `src/unicode.zig` is Emerald's Unicode: grapheme clusters (UAX #29), NFC normalization
+  and its quick check (UAX #15), full case mapping with Final_Sigma, and identifier and
+  whitespace classes. Its data is `src/unicode/tables.zig`, generated from Unicode 17.0.0
+  by `tools/unicode/generate.zig`; `src/unicode/test/` embeds Unicode's conformance data.
+- `src/strings.zig` holds section 9's string operations on UTF-8 bytes: character-aware
+  searching, splitting, trimming, substrings, and strict number parsing.
 - `src/Interpreter.zig` evaluates, applying section 5.3's result types and failure modes,
   and guards the host stack. Block and call scopes come from the general allocator and are
   reused once emptied, so a running loop does not allocate.
@@ -97,6 +108,50 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### String decisions worth knowing
+
+- **Unicode is generated, not hand-written.** `tools/unicode/fetch.sh` downloads the
+  database, `tools/unicode/generate.zig` writes the tables (then `zig fmt` them), and
+  `zig build unicode-conformance -Doptimize=ReleaseSafe -- <dir>` checks the whole
+  NormalizationTest: 20,034 cases plus the rule that every one of 1,094,978 unlisted code
+  points is its own NFC, with no failures. Regenerating reproduces the committed tables
+  exactly. The routine suite embeds all 766 GraphemeBreakTest cases and every
+  NormalizationTest part but Part 1, which is 2.8 MB.
+- **The lexer emits an interpolated string in parts** (`string_start`, `string_middle`,
+  `string_end`) around ordinary expression tokens, tracking a stack of open
+  interpolations and the braces inside each, so quotes and braces inside `#{...}` belong to
+  the expression. A string that began inside an interpolation and ran off its line is
+  reported as the unclosed `#{`, which is almost always the real mistake.
+- **The parser cooks strings once**: escapes, `\u{...}`, triple-quoted layout, and
+  Windows line endings. The AST holds finished text. Triple-quoted layout errors (text on
+  the opening line, a closing delimiter sharing a line, a line indented less than the
+  closing delimiter) are all parser diagnostics.
+- **Names are XID and NFC.** The lexer accepts Unicode identifier characters (which leave
+  out emoji, so no separate emoji rule is needed) and the parser normalizes any name not
+  already in NFC at the one place every stored name passes through, `Parser.identifier`.
+  The long-standing rough edge about accepting any non-ASCII byte is closed.
+- **Strings are immutable heap texts** with counts, sharing freely. A literal's text lives
+  in the syntax tree and is wrapped once per literal as a "literal" text that is never
+  counted, so a loop printing a literal does not allocate.
+- **Equality and ordering normalize only when they must.** Identical bytes are equal, two
+  strings the quick check says are already NFC compare as bytes, and only otherwise is
+  anything normalized. `Value.equals` now takes an allocator for that reason.
+- **Searching respects characters** (recorded in 9.2): matches must start and end on
+  grapheme boundaries of the normalized haystack, so `"café".contains?("e")` is false.
+- **`+` joins strings** and `+=` appends (user decision pending confirmation; recorded in
+  the section 22 table). A reference-count bug was caught while adding it: `applyBinary`
+  released its operands, but compound assignment passed a binding's value unretained. Now
+  no operator releases operands; callers own them, and compound assignment holds the
+  current value while the right side runs, since that could reassign the same name.
+- **`input` reads from a stream the CLI passes in**, and the conformance runner feeds a
+  `.input` file beside a case. End of input is a runtime error until optionals bring
+  `input_maybe`; so is a line that is not valid UTF-8.
+- **Stack budget.** Adding cases to `evaluate` pushed its Debug frame past what 1,000
+  calls at 250 levels of nesting fit in; the fix, now a comment in `evaluate`, is that
+  every case needing locals lives in a function of its own.
+- Performance: 200,000 interpolations with `upper` and 50,000 `contains?` calls run in
+  0.7 s in ReleaseSafe.
 
 ### List decisions worth knowing
 
@@ -336,23 +391,19 @@ still open.
 
 ## Next concrete step
 
-Two candidates, and the order is worth asking the user about:
+Section 20's slice 9, the heap slice, with lambdas (the approved plan): lambdas and
+closures, function values, capture by reference, the trailing-lambda call form, the
+higher-order method slice 8 deferred (`each` or `map`), and section 19.5's mark-and-sweep
+collector, which must trace inside list buffers once anything can form a cycle.
+`Heap.live` and `Heap.live_texts` are already the object lists it walks.
 
-- **Section 20's slice 9, the heap slice, with lambdas** (the approved plan). Lambdas and
-  closures, function values, capture by reference, the trailing-lambda call form, the
-  higher-order method slice 8 deferred (`each` or `map`), and section 19.5's mark-and-sweep
-  collector, which must trace inside list buffers once anything can form a cycle. `Heap.live`
-  is already the object list it walks.
-- **Strings.** No slice in section 20 is devoted to them, yet the first program in section 2
-  prints a greeting, and dictionaries and sets need string keys. The slice would cook string
-  literals (escapes, triple-quoted indentation, interpolation), add the `String` type and
-  its values, and vendor the UAX #29 and UAX #15 tables that 9.1 and 9.2 need. It is the
-  larger of the two but the more visible for beginners. The recommendation is strings
-  first, since lambdas are more useful once there is text to transform.
+Optionals are the other gap now visible everywhere: `first`, `last`, `index_of`, the
+`_maybe` parsers, `input_maybe`, and dictionary lookup all wait for them. Worth asking the
+user whether optionals come before or after the heap slice.
 
 ## Validation and blockers
 
-- `zig build test` passes in Debug and ReleaseSafe: 197 unit tests, 73 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 221 unit tests, 85 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -407,8 +458,11 @@ Two candidates, and the order is worth asking the user about:
 - Optional types. The parser splits the `?` in type position as section 4.2 requires, and
   the checker reports that optionals are not available yet, so the rule is exercised without
   the semantics existing.
-- String literals in expressions. The lexer produces the tokens, but nothing consumes them,
-  so `conformance/lexical/strings.em` has not graduated.
+- From section 9: everything needing optionals (`index_of`, `to_int_maybe`,
+  `to_float_maybe`, `input_maybe`), `pad_start`, `pad_end`, and `pad_center` (their
+  signatures need default arguments), `insert_at`, `remove_prefix`, `remove_suffix`,
+  `collapse_repeats`, `partition`, `letter?` and `digit?` (general category tables),
+  `code_points` and `bytes`, string slicing with ranges, and `type_name`.
 
 ### Known rough edges
 
@@ -423,16 +477,15 @@ Two candidates, and the order is worth asking the user about:
   when the lexer starts reporting byte-level problems more often.
 - `emerald check` on a missing file exits `64`. Section 18.1 does not cover that case; `64`
   was chosen because there is no source to diagnose. Confirm or change deliberately.
-- String interpolation is not scanned yet, so a `"` inside `#{...}` ends the string early.
-  Strings are lexed as whole tokens and left uncooked; escape processing, indentation
-  stripping for triple-quoted strings, and interpolation all belong to one later slice.
-- Identifier characters are currently any ASCII letter, digit, underscore, or any non-ASCII
-  byte. Section 3.3 specifies Unicode XID classes with NFC normalization and no emoji, which
-  needs the tables section 19.1 schedules for the string slice. Accepting too much now and
-  tightening later keeps valid programs valid.
+- Indexing a string by character is linear, as section 9.1 accepts, so
+  `for i in 0..<s.count { s[i] }` is quadratic. `for character in s` is the linear way, and
+  a cached boundary index is the fix if real programs need it.
+- A string's searching methods return text built from the normalized haystack when the
+  haystack was not already NFC, so `replace` on decomposed text yields composed text.
+  Canonically this is the same string, but the bytes differ from the input.
 - A multi-line block comment joins the lines around it rather than terminating a statement,
   matching how C-family languages treat their block comments.
 
 ## Pending changes
 
-None. Verify against Git before continuing.
+None. The string slice is committed. Verify against Git before continuing.

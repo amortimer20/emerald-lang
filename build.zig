@@ -54,6 +54,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_conformance = b.addRunArtifact(conformance_tests);
 
+    // `zig build unicode-conformance -- <database directory>` checks all of
+    // Unicode's NormalizationTest.txt, which is too large to commit. Part of
+    // regenerating the Unicode tables; see tools/unicode/generate.zig.
+    const unicode_check = b.addExecutable(.{
+        .name = "unicode-conformance",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/unicode/conformance.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "emerald", .module = emerald_module }},
+        }),
+    });
+    const run_unicode_check = b.addRunArtifact(unicode_check);
+    if (b.args) |args| run_unicode_check.addArgs(args);
+    b.step("unicode-conformance", "Check the Unicode tables against a full database download").dependOn(&run_unicode_check.step);
+
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_conformance.step);

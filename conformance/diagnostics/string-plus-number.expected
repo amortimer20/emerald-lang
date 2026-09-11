@@ -1,0 +1,4 @@
+diagnostics/string-plus-number.em:5:7: `+` joins two Strings, but this is String and Int
+  print("Score: " + score)
+        ^^^^^^^^^^^^^^^^^
+Convert the value with `to_string()`, or use interpolation, as in `"#{name}: #{score}"`.

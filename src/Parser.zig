@@ -16,6 +16,7 @@ const Diagnostic = @import("Diagnostic.zig");
 const Lexer = @import("Lexer.zig");
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
+const unicode = @import("unicode.zig");
 
 const Parser = @This();
 
@@ -138,6 +139,15 @@ fn text(self: Parser, token: Token) []const u8 {
     return self.source.text[token.span.start..token.span.end];
 }
 
+/// A name as every later stage sees it: section 3.3 makes canonically
+/// equivalent spellings the same name, so a name not already in NFC is
+/// normalized here, once, where every name passes through.
+fn identifier(self: *Parser, token: Token) Error![]const u8 {
+    const written = self.text(token);
+    if (unicode.quickCheck(written) == .yes) return written;
+    return unicode.normalize(self.arena, written);
+}
+
 fn skipSeparators(self: *Parser) void {
     while (self.check(.newline)) _ = self.advance();
 }
@@ -245,6 +255,15 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
         .list_literal => |elements| blk: {
             var deepest: u32 = 0;
             for (elements) |element| deepest = @max(deepest, element.depth);
+            break :blk deepest;
+        },
+        .string_literal => 0,
+        .interpolation => |parts| blk: {
+            var deepest: u32 = 0;
+            for (parts) |part| switch (part) {
+                .text => {},
+                .expression => |expression| deepest = @max(deepest, expression.depth),
+            };
             break :blk deepest;
         },
         .index => |index| @max(index.base.depth, index.index.depth),
@@ -369,7 +388,7 @@ fn parseFor(self: *Parser) Error!Ast.Statement {
     return .{
         .span = spanning(keyword.span, body.span),
         .data = .{ .for_loop = .{
-            .name = self.text(name),
+            .name = try self.identifier(name),
             .name_span = name.span,
             .iterable = iterable,
             .body = body,
@@ -466,7 +485,7 @@ fn parseFunctionDeclaration(self: *Parser) Error!Ast.Statement {
     return .{
         .span = spanning(keyword.span, body.span),
         .data = .{ .function_declaration = .{
-            .name = self.text(name),
+            .name = try self.identifier(name),
             .name_span = name.span,
             .parameters = try parameters.toOwnedSlice(self.arena),
             .return_annotation = return_annotation,
@@ -505,7 +524,7 @@ fn parseParameter(self: *Parser) Error!Ast.Parameter {
     }
 
     const annotation = try self.parseTypeExpression();
-    return .{ .name = self.text(name), .name_span = name.span, .annotation = annotation };
+    return .{ .name = try self.identifier(name), .name_span = name.span, .annotation = annotation };
 }
 
 /// Section 7.1 allows a bare `return` for a function with no result. Whether a
@@ -554,7 +573,7 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
             .span = spanning(keyword.span, annotation.?.span),
             .data = .{ .declaration = .{
                 .mutable = mutable,
-                .name = self.text(name),
+                .name = try self.identifier(name),
                 .name_span = name.span,
                 .annotation = annotation,
                 .initializer = null,
@@ -581,7 +600,7 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
         .span = spanning(keyword.span, initializer.span),
         .data = .{ .declaration = .{
             .mutable = mutable,
-            .name = self.text(name),
+            .name = try self.identifier(name),
             .name_span = name.span,
             .annotation = annotation,
             .initializer = initializer,
@@ -622,7 +641,7 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     }
     _ = self.advance();
 
-    var written = self.text(token);
+    var written = try self.identifier(token);
     var span = token.span;
     var question: ?Source.Span = null;
 
@@ -1150,7 +1169,7 @@ fn finishMember(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Exp
 
     return self.node(spanning(base.span, name.span), .{ .member = .{
         .base = base,
-        .name = self.text(name),
+        .name = try self.identifier(name),
         .name_span = name.span,
     } });
 }
@@ -1196,6 +1215,11 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
     const token = self.peek();
     switch (token.kind) {
         .left_bracket => return self.parseListLiteral(),
+        .string_literal, .raw_string_literal, .multiline_string_literal => {
+            _ = self.advance();
+            return self.node(token.span, .{ .string_literal = try self.cookLiteral(token) });
+        },
+        .string_start => return self.parseInterpolation(),
         .int_literal => {
             _ = self.advance();
             return self.node(token.span, .{ .int_literal = try self.parseIntLiteral(token) });
@@ -1206,7 +1230,7 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
         },
         .identifier => {
             _ = self.advance();
-            return self.node(token.span, .{ .name = self.text(token) });
+            return self.node(token.span, .{ .name = try self.identifier(token) });
         },
         .keyword_true, .keyword_false => {
             _ = self.advance();
@@ -1240,6 +1264,201 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
             "An expression is a number, a name, or something built from them.",
         ),
     }
+}
+
+// Strings.
+
+/// A string with no interpolation, finished.
+fn cookLiteral(self: *Parser, token: Token) Error![]const u8 {
+    const written = self.text(token);
+    return switch (token.kind) {
+        // Section 5.1: raw strings process nothing.
+        .raw_string_literal => written[1 .. written.len - 1],
+        .string_literal => unescape(self.arena, written[1 .. written.len - 1]),
+        .multiline_string_literal => blk: {
+            const segments = try self.cookSegments(&.{written[3 .. written.len - 3]}, true, token.span);
+            break :blk segments[0];
+        },
+        else => unreachable,
+    };
+}
+
+/// Section 5.1's interpolation: text and expressions in turn. The lexer has
+/// already split the string at each `#{` and its closing `}`.
+fn parseInterpolation(self: *Parser) Error!*const Ast.Expression {
+    const start = self.advance();
+    const opening = self.text(start);
+    const multiline = std.mem.startsWith(u8, opening, "\"\"\"");
+
+    var raws: std.ArrayList([]const u8) = .empty;
+    var expressions: std.ArrayList(*const Ast.Expression) = .empty;
+    try raws.append(self.arena, opening[(if (multiline) 3 else 1) .. opening.len - 2]);
+
+    const end = while (true) {
+        const next = self.peek();
+        if (next.kind == .string_middle or next.kind == .string_end) {
+            return self.report(
+                next.span,
+                "an interpolation needs an expression",
+                "Put a value between the braces, as in `#{name}`, or write `\\#{` for the characters themselves.",
+            );
+        }
+        try self.nest(next.span);
+        const expression = try self.parseExpression();
+        self.unnest();
+        try expressions.append(self.arena, expression);
+
+        const part = self.peek();
+        const part_text = self.text(part);
+        switch (part.kind) {
+            .string_middle => {
+                _ = self.advance();
+                try raws.append(self.arena, part_text[1 .. part_text.len - 2]);
+            },
+            .string_end => {
+                _ = self.advance();
+                try raws.append(self.arena, part_text[1 .. part_text.len - @as(usize, if (multiline) 3 else 1)]);
+                break part;
+            },
+            else => return self.reportFmt(
+                part.span,
+                "expected `}}` to end this interpolation, found {s}",
+                .{part.kind.describe()},
+                "An interpolation holds one expression, as in `#{count}`.",
+            ),
+        }
+    };
+
+    const texts = try self.cookSegments(raws.items, multiline, start.span);
+    var parts: std.ArrayList(Ast.Expression.Part) = .empty;
+    for (texts, 0..) |text_part, position| {
+        if (text_part.len > 0) try parts.append(self.arena, .{ .text = text_part });
+        if (position < expressions.items.len) try parts.append(self.arena, .{ .expression = expressions.items[position] });
+    }
+    return self.node(spanning(start.span, end.span), .{ .interpolation = try parts.toOwnedSlice(self.arena) });
+}
+
+/// Finishes the text between a string's delimiters and interpolations: the
+/// segments in order, which are slices of the source.
+///
+/// A triple-quoted string also gets section 5.1's layout. Its text starts on
+/// the line after the opening `"""`, and that newline is not part of it. The
+/// closing `"""` sits on a line of its own, and its indentation is removed
+/// from every line; a line indented less is an error, except a blank one. The
+/// newline before the closing line is not part of the text either. Escapes are
+/// processed last, so `\n` written in the text is never mistaken for a line
+/// break, and a Windows line ending becomes `\n` so the value does not depend
+/// on how the file was saved.
+fn cookSegments(self: *Parser, raws: []const []const u8, multiline: bool, opening: Source.Span) Error![][]const u8 {
+    const cooked = try self.arena.alloc([]const u8, raws.len);
+    if (!multiline) {
+        for (raws, cooked) |raw, *text_part| text_part.* = try unescape(self.arena, raw);
+        return cooked;
+    }
+
+    const opening_delimiter: Source.Span = .{ .start = opening.start, .end = opening.start + 3 };
+    const contents = try self.arena.dupe([]const u8, raws);
+
+    // The opening line holds nothing but the delimiter.
+    const first = contents[0];
+    if (std.mem.startsWith(u8, first, "\r\n")) {
+        contents[0] = first[2..];
+    } else if (std.mem.startsWith(u8, first, "\n")) {
+        contents[0] = first[1..];
+    } else {
+        return self.report(
+            opening_delimiter,
+            "a triple-quoted string starts on the line after its `\"\"\"`",
+            "Move the text to the next line, or use `\"...\"` for a single line.",
+        );
+    }
+
+    // The closing line holds only indentation, which sets what is removed.
+    const last = contents[contents.len - 1];
+    const closing_line = if (std.mem.lastIndexOfScalar(u8, last, '\n')) |newline| newline + 1 else 0;
+    const indentation = last[closing_line..];
+    const on_own_line = (closing_line > 0 or contents.len == 1) and
+        std.mem.indexOfNone(u8, indentation, " \t") == null;
+    if (!on_own_line) {
+        return self.report(
+            opening_delimiter,
+            "the closing `\"\"\"` of this string needs a line of its own",
+            "Put the closing `\"\"\"` on its own line; its indentation is removed from every line of the text.",
+        );
+    }
+    // Drop the newline before the closing line, and the line itself.
+    contents[contents.len - 1] = std.mem.trimEnd(u8, last[0..if (closing_line > 0) closing_line - 1 else 0], "\r");
+
+    var at_line_start = true;
+    for (contents, cooked, 0..) |content, *text_part, segment| {
+        var built: std.ArrayList(u8) = .empty;
+        var position: usize = 0;
+        while (position <= content.len) {
+            if (at_line_start) {
+                at_line_start = false;
+                const rest = content[position..];
+                const line_end = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
+                const line = std.mem.trimEnd(u8, rest[0..line_end], "\r");
+                const ends_line = line_end < rest.len or segment == contents.len - 1;
+                if (ends_line and std.mem.indexOfNone(u8, line, " \t") == null) {
+                    position += line.len; // a blank line keeps no indentation
+                } else if (std.mem.startsWith(u8, line, indentation)) {
+                    position += indentation.len;
+                } else {
+                    // Underline the short indentation, through the first
+                    // character of the line's text.
+                    const offset = @intFromPtr(content.ptr) - @intFromPtr(self.source.text.ptr) + position;
+                    const leading = std.mem.indexOfNone(u8, line, " \t") orelse line.len;
+                    return self.report(
+                        .{ .start = @intCast(offset), .end = @intCast(offset + @min(leading + 1, line.len)) },
+                        "this line is indented less than the closing `\"\"\"`",
+                        "Indent every line of the text at least as far as the closing `\"\"\"`, which sets how much indentation is removed.",
+                    );
+                }
+            }
+            if (position == content.len) break;
+            const c = content[position];
+            position += 1;
+            if (c == '\r' and position < content.len and content[position] == '\n') continue;
+            try built.append(self.arena, c);
+            if (c == '\n') at_line_start = true;
+        }
+        text_part.* = try unescape(self.arena, built.items);
+    }
+    return cooked;
+}
+
+/// Section 5.1's escapes. The lexer has already reported any it does not
+/// recognize, so none reach here.
+fn unescape(arena: std.mem.Allocator, raw: []const u8) Error![]const u8 {
+    if (std.mem.indexOfScalar(u8, raw, '\\') == null) return raw;
+    var result: std.ArrayList(u8) = .empty;
+    var position: usize = 0;
+    while (position < raw.len) : (position += 1) {
+        if (raw[position] != '\\' or position + 1 == raw.len) {
+            try result.append(arena, raw[position]);
+            continue;
+        }
+        position += 1;
+        if (raw[position] == 'u') {
+            // `\u{...}`, already validated by the lexer.
+            const close = std.mem.indexOfScalarPos(u8, raw, position, '}').?;
+            const code_point = std.fmt.parseInt(u21, raw[position + 2 .. close], 16) catch unreachable;
+            var buffer: [4]u8 = undefined;
+            const length = std.unicode.utf8Encode(code_point, &buffer) catch unreachable;
+            try result.appendSlice(arena, buffer[0..length]);
+            position = close;
+            continue;
+        }
+        try result.append(arena, switch (raw[position]) {
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            '0' => 0,
+            else => |c| c, // `\\`, `\"`, `\'`, and `\#` stand for themselves
+        });
+    }
+    return result.toOwnedSlice(arena);
 }
 
 /// The minimum `Int` is written `-9223372036854775808`, but its digits alone

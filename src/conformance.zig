@@ -143,7 +143,16 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
     var source = try Source.init(gpa, case.relative_path, bytes);
     defer source.deinit(gpa);
 
-    const actual = try produce(gpa, &source, kind) orelse return 1;
+    // A case may give its program input to read, in a `.input` file beside it.
+    const input_path = try std.fmt.allocPrint(gpa, "{s}.input", .{case.relative_path[0 .. case.relative_path.len - ".em".len]});
+    defer gpa.free(input_path);
+    const input = root.readFileAlloc(io, input_path, gpa, .limited(Source.max_bytes)) catch |err| switch (err) {
+        error.FileNotFound => try gpa.dupe(u8, ""),
+        else => |other| return other,
+    };
+    defer gpa.free(input);
+
+    const actual = try produce(gpa, &source, kind, input) orelse return 1;
     defer gpa.free(actual);
 
     if (kind == .lexical) {
@@ -160,7 +169,7 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
 
 /// Produces the output a case is judged on, or null when the case failed in a
 /// way that has already been reported.
-fn produce(gpa: std.mem.Allocator, source: *const Source, kind: Kind) !?[]u8 {
+fn produce(gpa: std.mem.Allocator, source: *const Source, kind: Kind, input: []const u8) !?[]u8 {
     switch (kind) {
         .lexical => {
             var tokenized = try emerald.Lexer.tokenize(gpa, source);
@@ -176,7 +185,8 @@ fn produce(gpa: std.mem.Allocator, source: *const Source, kind: Kind) !?[]u8 {
             var out: std.Io.Writer.Allocating = .init(gpa);
             defer out.deinit();
 
-            var report = try emerald.run(gpa, source, &out.writer);
+            var in: std.Io.Reader = .fixed(input);
+            var report = try emerald.run(gpa, source, .{ .out = &out.writer, .in = &in });
             defer report.deinit();
 
             if (report.diagnostics.len != 0) {

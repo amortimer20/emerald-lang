@@ -1,0 +1,4 @@
+runtime-errors/input-ended.em:4:12: `input` reached the end of the input
+  var name = input("Name: ")
+             ^^^^^^^^^^^^^^^
+There are no more lines to read. The program's input ended before this `input` call.

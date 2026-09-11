@@ -20,6 +20,7 @@ const std = @import("std");
 const Source = @import("Source.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Token = @import("Token.zig");
+const unicode = @import("unicode.zig");
 
 const Lexer = @This();
 
@@ -34,6 +35,20 @@ group_depth: u32 = 0,
 /// makes leading blank lines disappear the same way interior ones do.
 previous: Token.Kind = .newline,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
+/// Strings whose `#{` has been read but not yet their closing `}`,
+/// innermost last. A `}` that closes one resumes scanning that string.
+interpolations: std.ArrayList(Interpolation) = .empty,
+
+const Interpolation = struct {
+    /// Where the string began, for reporting it unclosed.
+    start: u32,
+    /// Where its `#{` is, for reporting that unclosed instead.
+    opening: u32,
+    multiline: bool,
+    /// Braces opened inside the interpolation and not yet closed, so that
+    /// only the `}` matching `#{` resumes the string.
+    braces: u32 = 0,
+};
 
 pub fn init(gpa: std.mem.Allocator, source: *const Source) Lexer {
     return .{ .gpa = gpa, .source = source };
@@ -41,6 +56,7 @@ pub fn init(gpa: std.mem.Allocator, source: *const Source) Lexer {
 
 pub fn deinit(self: *Lexer) void {
     self.diagnostics.deinit(self.gpa);
+    self.interpolations.deinit(self.gpa);
     self.* = undefined;
 }
 
@@ -239,7 +255,7 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
     const c = self.peek();
 
     if (isDigit(c)) return self.lexNumber();
-    if (isIdentifierStart(c)) return self.lexIdentifier();
+    if (self.startsIdentifier()) return self.lexIdentifier();
 
     switch (c) {
         '"' => return self.lexDoubleQuoted(),
@@ -268,8 +284,18 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
             if (self.group_depth > 0) self.group_depth -= 1;
             break :blk .right_bracket;
         },
-        '{' => .left_brace,
-        '}' => .right_brace,
+        '{' => blk: {
+            if (self.interpolations.items.len > 0) self.interpolations.items[self.interpolations.items.len - 1].braces += 1;
+            break :blk .left_brace;
+        },
+        '}' => blk: {
+            if (self.interpolations.items.len > 0) {
+                const open = &self.interpolations.items[self.interpolations.items.len - 1];
+                if (open.braces == 0) return self.scanString(start, open.multiline, true);
+                open.braces -= 1;
+            }
+            break :blk .right_brace;
+        },
         ',' => .comma,
         ':' => .colon,
         '@' => .at,
@@ -312,11 +338,21 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
             // one diagnostic rather than one per byte.
             const width = std.unicode.utf8ByteSequenceLength(c) catch 1;
             self.index = @min(start + width, @as(u32, @intCast(self.source.text.len)));
-            try self.report(
-                .{ .start = start, .end = self.index },
-                "this character does not belong here",
-                "Remove it, or check for a typo nearby.",
-            );
+            if (c >= 0x80) {
+                // Section 3.3: names use Unicode's identifier characters, which
+                // leave out emoji and symbols.
+                try self.report(
+                    .{ .start = start, .end = self.index },
+                    "this character cannot be used in a name",
+                    "Names are made of letters, digits, and underscores. Emoji and symbols belong inside strings.",
+                );
+            } else {
+                try self.report(
+                    .{ .start = start, .end = self.index },
+                    "this character does not belong here",
+                    "Remove it, or check for a typo nearby.",
+                );
+            }
             break :blk .invalid;
         },
     };
@@ -336,21 +372,37 @@ fn isDigit(c: u8) bool {
     return c >= '0' and c <= '9';
 }
 
-/// Non-ASCII bytes are accepted so that Unicode names work today. Section 3.3
-/// specifies XID identifier classes with NFC normalization and no emoji, which
-/// needs the Unicode tables that section 19.1 schedules for the string slice.
-/// Accepting too much now and tightening later keeps valid programs valid.
-fn isIdentifierStart(c: u8) bool {
-    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or c >= 0x80;
+/// Section 3.3: names follow Unicode's identifier rules (UAX #31's XID
+/// classes, which leave out emoji), with ASCII taken on a fast path.
+fn startsIdentifier(self: Lexer) bool {
+    const c = self.peek();
+    if (c < 0x80) return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_';
+    const code_point, _ = unicode.decode(self.source.text, self.index);
+    return unicode.isIdentifierStart(code_point);
 }
 
-fn isIdentifierPart(c: u8) bool {
-    return isIdentifierStart(c) or isDigit(c);
+/// The length of the identifier character at the current position, or 0.
+fn identifierContinues(self: Lexer) u32 {
+    const c = self.peek();
+    if (c < 0x80) {
+        const part = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or isDigit(c);
+        return if (part) 1 else 0;
+    }
+    const code_point, const length = unicode.decode(self.source.text, self.index);
+    return if (unicode.isIdentifierContinue(code_point)) length else 0;
+}
+
+fn skipIdentifierCharacters(self: *Lexer) void {
+    while (!self.atEnd()) {
+        const length = self.identifierContinues();
+        if (length == 0) return;
+        self.index += length;
+    }
 }
 
 fn lexIdentifier(self: *Lexer) Token {
     const start = self.index;
-    while (!self.atEnd() and isIdentifierPart(self.peek())) self.index += 1;
+    self.skipIdentifierCharacters();
 
     // A single trailing `?` or `!` belongs to the name, unless the character
     // after it would form `?.` or `!=`.
@@ -411,8 +463,8 @@ fn lexNumber(self: *Lexer) std.mem.Allocator.Error!Token {
     // Anything immediately adjacent means the whole run was one attempted
     // literal; section 5.1 wants one error spanning it rather than a number
     // followed by a puzzling name.
-    if (!self.atEnd() and isIdentifierPart(self.peek())) {
-        while (!self.atEnd() and isIdentifierPart(self.peek())) self.index += 1;
+    if (!self.atEnd() and self.identifierContinues() > 0) {
+        self.skipIdentifierCharacters();
         malformed = true;
     }
 
@@ -430,7 +482,7 @@ fn lexNumber(self: *Lexer) std.mem.Allocator.Error!Token {
 
 fn rejectNonDecimal(self: *Lexer, start: u32) std.mem.Allocator.Error!Token {
     self.index += 2;
-    while (!self.atEnd() and isIdentifierPart(self.peek())) self.index += 1;
+    self.skipIdentifierCharacters();
     try self.report(
         .{ .start = start, .end = self.index },
         "Emerald writes numbers in decimal only",
@@ -464,46 +516,77 @@ fn consumeDigits(self: *Lexer) bool {
 
 // Strings.
 //
-// Only the boundaries are found here. Escape processing, indentation stripping,
-// and interpolation produce the cooked value later, when a stage needs the text.
-// Interpolation is therefore not yet scanned, so a quote inside `#{...}` ends
-// the string early; that is fixed by the slice that implements interpolation.
+// Only the boundaries are found here; the parser cooks escapes, indentation,
+// and interpolation into values. A string with interpolation is emitted in
+// parts, with the tokens of each interpolated expression between them, so a
+// quote inside `#{...}` belongs to the expression rather than ending the
+// string.
 
 fn lexDoubleQuoted(self: *Lexer) std.mem.Allocator.Error!Token {
     const start = self.index;
-    if (self.peekAt(1) == '"' and self.peekAt(2) == '"') return self.lexMultiline(start);
+    const multiline = self.peekAt(1) == '"' and self.peekAt(2) == '"';
+    self.index += if (multiline) 3 else 1;
+    return self.scanString(start, multiline, false);
+}
 
-    self.index += 1;
+/// Scans string text from the current position up to its end, or up to the
+/// next `#{`. `resuming` means `start` is the `}` that closed an
+/// interpolation rather than the opening quote.
+fn scanString(self: *Lexer, start: u32, multiline: bool, resuming: bool) std.mem.Allocator.Error!Token {
+    // When resuming, `lexToken` has already stepped past the `}`.
     while (!self.atEnd()) {
-        switch (self.peek()) {
-            '"' => {
-                self.index += 1;
-                return self.emit(.string_literal, start, self.index);
-            },
+        const c = self.peek();
+        if (c == '"' and (!multiline or (self.peekAt(1) == '"' and self.peekAt(2) == '"'))) {
+            self.index += if (multiline) 3 else 1;
+            if (!resuming) {
+                return self.emit(if (multiline) .multiline_string_literal else .string_literal, start, self.index);
+            }
+            _ = self.interpolations.pop();
+            self.group_depth -= 1;
+            return self.emit(.string_end, start, self.index);
+        }
+        if (c == '#' and self.peekAt(1) == '{') {
+            self.index += 2;
+            if (resuming) return self.emit(.string_middle, start, self.index);
+            try self.interpolations.append(self.gpa, .{
+                .start = start,
+                .opening = self.index - 2,
+                .multiline = multiline,
+            });
+            // Newlines inside an interpolation continue it, as inside `(`.
+            self.group_depth += 1;
+            return self.emit(.string_start, start, self.index);
+        }
+        switch (c) {
             '\\' => try self.consumeEscape(),
-            '\n' => break,
+            '\n' => if (multiline) {
+                self.index += 1;
+            } else break,
             else => self.index += 1,
         }
     }
 
-    return self.unterminated(start, "\"");
-}
-
-fn lexMultiline(self: *Lexer, start: u32) std.mem.Allocator.Error!Token {
-    self.index += 3;
-    while (!self.atEnd()) {
-        if (self.peek() == '"' and self.peekAt(1) == '"' and self.peekAt(2) == '"') {
-            self.index += 3;
-            return self.emit(.multiline_string_literal, start, self.index);
-        }
-        if (self.peek() == '\\') {
-            try self.consumeEscape();
-        } else {
-            self.index += 1;
-        }
+    if (!resuming and self.interpolations.items.len > 0) {
+        // A string that began inside `#{...}` and ran off the line: far more
+        // often the `}` was forgotten and this quote was meant to close the
+        // outer string. Say that, and stop tracking the interpolations.
+        const open = self.interpolations.items[self.interpolations.items.len - 1];
+        self.group_depth -= @intCast(self.interpolations.items.len);
+        self.interpolations.clearRetainingCapacity();
+        try self.report(
+            .{ .start = open.opening, .end = open.opening + 2 },
+            "this `#{` is never closed",
+            "End the interpolation with `}` before the string's closing quote, as in `\"#{count}\"`.",
+        );
+        return self.emit(.invalid, start, self.index);
     }
 
-    return self.unterminated(start, "\"\"\"");
+    const opening = if (resuming) blk: {
+        const open = self.interpolations.pop().?;
+        self.group_depth -= 1;
+        break :blk open.start;
+    } else start;
+    return self.unterminated(opening, if (multiline) "\"\"\"" else "\"");
 }
 
 fn lexRawString(self: *Lexer) std.mem.Allocator.Error!Token {
@@ -532,27 +615,62 @@ fn consumeEscape(self: *Lexer) std.mem.Allocator.Error!void {
     switch (self.peek()) {
         // `\#` escapes an interpolation opener, per section 5.1.
         'n', 't', 'r', '0', '\\', '"', '\'', '#' => self.index += 1,
+        'u' => try self.consumeUnicodeEscape(start),
         else => {
             const width = std.unicode.utf8ByteSequenceLength(self.peek()) catch 1;
             self.index = @min(self.index + width, @as(u32, @intCast(self.source.text.len)));
             try self.report(
                 .{ .start = start, .end = self.index },
                 "this escape is not recognized",
-                "Emerald understands `\\n`, `\\t`, `\\r`, `\\0`, `\\\\`, `\\\"`, `\\'`, and `\\#`.",
+                "Emerald understands `\\n`, `\\t`, `\\r`, `\\0`, `\\\\`, `\\\"`, `\\'`, `\\#`, and `\\u{...}`.",
             );
         },
     }
 }
 
+/// `\u{1F600}`: a Unicode scalar value written as one to six hex digits,
+/// for characters that are invisible or awkward to type, such as a combining
+/// accent. Surrogates are not scalar values, so they are refused.
+fn consumeUnicodeEscape(self: *Lexer, start: u32) std.mem.Allocator.Error!void {
+    self.index += 1; // `u`
+    if (self.peek() == '{') {
+        self.index += 1;
+        const digits_start = self.index;
+        while (!self.atEnd() and std.ascii.isHex(self.peek())) self.index += 1;
+        const digits = self.source.text[digits_start..self.index];
+        if (self.peek() == '}' and digits.len > 0 and digits.len <= 6) {
+            self.index += 1;
+            const value = std.fmt.parseInt(u32, digits, 16) catch unreachable;
+            if (value <= 0x10FFFF and (value < 0xD800 or value > 0xDFFF)) return;
+            return self.report(
+                .{ .start = start, .end = self.index },
+                "this `\\u` escape is not a Unicode character",
+                "Characters run from `\\u{0}` to `\\u{10FFFF}`, skipping `\\u{D800}` through `\\u{DFFF}`.",
+            );
+        }
+        if (self.peek() == '}') self.index += 1;
+    }
+    try self.report(
+        .{ .start = start, .end = self.index },
+        "this `\\u` escape is incomplete",
+        "Write the character's code point as one to six hex digits in braces, as in `\\u{E9}` for é.",
+    );
+}
+
 fn unterminated(
     self: *Lexer,
     start: u32,
-    comptime delimiter: []const u8,
+    delimiter: []const u8,
 ) std.mem.Allocator.Error!Token {
     try self.report(
-        .{ .start = start, .end = start + @as(u32, delimiter.len) },
+        .{ .start = start, .end = start + @as(u32, @intCast(delimiter.len)) },
         "this string is never closed",
-        "Close it with `" ++ delimiter ++ "` before the line ends.",
+        if (delimiter.len == 3)
+            "Close it with `\"\"\"` on a line of its own."
+        else if (delimiter[0] == '\'')
+            "Close it with `'` before the line ends."
+        else
+            "Close it with `\"` before the line ends.",
     );
     return self.emit(.invalid, start, self.index);
 }
@@ -717,6 +835,24 @@ test "the optional type conformance case from section 4.2" {
     try expectTexts("func valid?(input: Int?): Bool {\n", &.{
         "func", "valid?", "(", "input", ":", "Int?", ")", ":", "Bool", "{",
     });
+}
+
+test "a string with interpolation arrives in parts around its expressions" {
+    try expectKinds("\"a #{b} c\"", &.{ .string_start, .identifier, .string_end, .eof });
+    try expectKinds("\"#{a} and #{b}\"", &.{ .string_start, .identifier, .string_middle, .identifier, .string_end, .eof });
+    // A quote inside an interpolation belongs to a nested string.
+    try expectKinds("\"x #{\"y\"} z\"", &.{ .string_start, .string_literal, .string_end, .eof });
+    // A brace inside the interpolation does not end it.
+    try expectKinds("\"#{f({})}\"", &.{
+        .string_start, .identifier, .left_paren, .left_brace, .right_brace, .right_paren, .string_end, .eof,
+    });
+    // `\#{` is an escaped opener, so the string has no parts.
+    try expectKinds("\"\\#{x}\"", &.{ .string_literal, .eof });
+}
+
+test "names use Unicode identifier characters" {
+    try expectKinds("\u{FC}ber caf\u{E9} \u{5B57}", &.{ .identifier, .identifier, .identifier, .eof });
+    try expectKinds("e\u{301}", &.{ .identifier, .eof });
 }
 
 test "an optional collection type puts the question mark on its own" {

@@ -166,6 +166,11 @@ pub const Expression = struct {
         comparison: Comparison,
         call: Call,
         range: Range,
+        /// A string whose text is fully known, with every escape and, for a
+        /// triple-quoted string, its indentation already applied (5.1).
+        string_literal: []const u8,
+        /// Section 5.1's `"text #{expression} text"`, in order.
+        interpolation: []const Part,
         /// Section 8.2's `[a, b, c]`. Dictionary and set literals share the
         /// bracket spelling and arrive with those collections.
         list_literal: []const *const Expression,
@@ -173,6 +178,13 @@ pub const Expression = struct {
         index: Index,
         /// `base.name`: a property, or a method when it is the callee of a call.
         member: Member,
+    };
+
+    /// One piece of an interpolated string: finished text, or an expression
+    /// whose displayed value goes there.
+    pub const Part = union(enum) {
+        text: []const u8,
+        expression: *const Expression,
     };
 
     pub const Index = struct {

@@ -1,4 +1,4 @@
 diagnostics/unknown-escape.em:1:14: this escape is not recognized
   var text = "a\qb"
                ^^
-Emerald understands `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`, and `\#`.
+Emerald understands `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`, `\#`, and `\u{...}`.

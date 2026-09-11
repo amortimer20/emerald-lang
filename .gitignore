@@ -10,3 +10,4 @@ zig-out/
 # script is a record of how a change was typed, not of what it was.
 .*.py
 _scratch/
+.unicode/

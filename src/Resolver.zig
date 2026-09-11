@@ -63,7 +63,7 @@ pub const Resolved = struct {
 
 /// Section 15.2's prelude. These are callable without qualification and are not
 /// declared by any program, so they live in a scope of their own.
-pub const prelude = [_][]const u8{"print"};
+pub const prelude = [_][]const u8{ "print", "write", "input" };
 
 pub const BindingKind = enum { variable, parameter, loop_variable, function };
 
@@ -495,5 +495,10 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             try self.walkExpression(index.index);
         },
         .member => |member| try self.walkExpression(member.base),
+        .string_literal => {},
+        .interpolation => |parts| for (parts) |part| switch (part) {
+            .text => {},
+            .expression => |part_expression| try self.walkExpression(part_expression),
+        },
     }
 }

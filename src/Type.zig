@@ -17,6 +17,8 @@ pub const Kind = enum {
     bool,
     int,
     float,
+    /// Section 9's immutable, Unicode-aware text.
+    string,
     /// Section 8.2's `[T]`. `element` holds `T`.
     list,
     /// A type that could not be determined because something was already
@@ -53,6 +55,7 @@ pub const nothing: Type = .{ .kind = .nothing };
 pub const @"bool": Type = .{ .kind = .bool };
 pub const int: Type = .{ .kind = .int };
 pub const float: Type = .{ .kind = .float };
+pub const string: Type = .{ .kind = .string };
 pub const invalid: Type = .{ .kind = .invalid };
 
 /// `[element]`, with the element allocated from `allocator`, which must outlive
@@ -71,6 +74,7 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         .bool => try writer.writeAll("Bool"),
         .int => try writer.writeAll("Int"),
         .float => try writer.writeAll("Float"),
+        .string => try writer.writeAll("String"),
         .list => try writer.print("[{f}]", .{self.element.?.*}),
         .invalid => try writer.writeAll("an unknown type"),
     }
@@ -81,13 +85,14 @@ pub fn fromName(text: []const u8) ?Type {
     if (std.mem.eql(u8, text, "Bool")) return @"bool";
     if (std.mem.eql(u8, text, "Int")) return int;
     if (std.mem.eql(u8, text, "Float")) return float;
+    if (std.mem.eql(u8, text, "String")) return string;
     return null;
 }
 
 pub fn isNumber(self: Type) bool {
     return switch (self.kind) {
         .int, .float => true,
-        .nothing, .bool, .list, .invalid => false,
+        .nothing, .bool, .string, .list, .invalid => false,
     };
 }
 
@@ -147,6 +152,44 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "clear", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
     .{ "contains?", ListMethod{ .parameters = &.{.element}, .result = .bool, .mutates = false } },
     .{ "empty?", ListMethod{ .parameters = &.{}, .result = .bool, .mutates = false } },
+});
+
+/// What a `String` method takes and gives. Section 9.2's vocabulary, less what
+/// needs optionals (`index_of` and the `_maybe` parsers) or is deferred there.
+pub const StringMethod = struct {
+    parameters: []const Operand,
+    /// How many trailing parameters may be left out: `substring(start)` and
+    /// `substring(start, count)` are one method.
+    optional: u8 = 0,
+    result: Result,
+
+    pub const Operand = enum { string, int, float };
+    pub const Result = enum { bool, int, float, string, strings };
+};
+
+pub const string_methods = std.StaticStringMap(StringMethod).initComptime(.{
+    .{ "empty?", StringMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "blank?", StringMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "contains?", StringMethod{ .parameters = &.{.string}, .result = .bool } },
+    .{ "starts_with?", StringMethod{ .parameters = &.{.string}, .result = .bool } },
+    .{ "ends_with?", StringMethod{ .parameters = &.{.string}, .result = .bool } },
+    .{ "trim", StringMethod{ .parameters = &.{}, .result = .string } },
+    .{ "trim_start", StringMethod{ .parameters = &.{}, .result = .string } },
+    .{ "trim_end", StringMethod{ .parameters = &.{}, .result = .string } },
+    .{ "upper", StringMethod{ .parameters = &.{}, .result = .string } },
+    .{ "lower", StringMethod{ .parameters = &.{}, .result = .string } },
+    .{ "capitalize", StringMethod{ .parameters = &.{}, .result = .string } },
+    .{ "reverse", StringMethod{ .parameters = &.{}, .result = .string } },
+    .{ "repeat", StringMethod{ .parameters = &.{.int}, .result = .string } },
+    .{ "replace", StringMethod{ .parameters = &.{ .string, .string }, .result = .string } },
+    .{ "substring", StringMethod{ .parameters = &.{ .int, .int }, .optional = 1, .result = .string } },
+    .{ "split", StringMethod{ .parameters = &.{.string}, .result = .strings } },
+    .{ "lines", StringMethod{ .parameters = &.{}, .result = .strings } },
+    .{ "chars", StringMethod{ .parameters = &.{}, .result = .strings } },
+    .{ "to_int", StringMethod{ .parameters = &.{}, .result = .int } },
+    .{ "to_int_or", StringMethod{ .parameters = &.{.int}, .result = .int } },
+    .{ "to_float", StringMethod{ .parameters = &.{}, .result = .float } },
+    .{ "to_float_or", StringMethod{ .parameters = &.{.float}, .result = .float } },
 });
 
 /// The type of an arithmetic result, given both operand types, or null when the

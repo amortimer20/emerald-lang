@@ -1,0 +1,4 @@
+runtime-errors/not-a-number.em:6:7: "twelve" is not a whole number
+  print(typed.to_int())
+        ^^^^^^^^^^^^^^
+Only digits, with an optional sign and surrounding spaces, convert to an Int. `to_int_or(0)` gives a fallback instead of an error.
