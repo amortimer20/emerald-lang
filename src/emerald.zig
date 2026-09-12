@@ -374,6 +374,96 @@ fn expectFailure(text: []const u8, expected_message: []const u8) !void {
     try testing.expectEqualStrings(expected_message, problem.message);
 }
 
+test "section 8.2's tuple literal, and its positions" {
+    try expectOutput("const entry = (\"score\", 10)\nprint(entry)\nprint(entry.0, entry.1)\n", "(\"score\", 10)\nscore 10\n");
+    // Nested positions, which the lexer hands over as one decimal number.
+    try expectOutput("const deep = ((1, (2, 3)), 4)\nprint(deep.0.1.0, deep.1)\n", "2 4\n");
+    // A tuple's elements are quoted like a list's, so `("a, b")` and
+    // `("a", "b")` cannot be mistaken for each other.
+    try expectOutput("print((\"a, b\", 1), (\"a\", \"b\"))\n", "(\"a, b\", 1) (\"a\", \"b\")\n");
+}
+
+test "section 8.2 needs at least two positions, so one is a group" {
+    try expectOutput("const grouped = (1)\nprint(grouped + 1)\n", "2\n");
+    // A trailing comma never changes an expression's type.
+    try expectOutput("const grouped = (1,)\nprint(grouped + 1)\n", "2\n");
+    try expectFailure("print(())\n", "`()` is not a value");
+    try expectFailure("var (only) = 1\n", "a tuple is unpacked into at least two names");
+    try expectFailure("var pair: (Int) = 1\n", "a tuple type needs at least two positions");
+}
+
+test "section 8.4 compares tuples position by position" {
+    try expectOutput("print((\"a\", 1) == (\"a\", 1), (\"a\", 1) == (\"a\", 2))\n", "true false\n");
+    // Recursively, through whatever the positions hold.
+    try expectOutput("print(([1, 2], (\"x\", 3)) == ([1, 2], (\"x\", 3)))\n", "true\n");
+}
+
+test "section 8.2 unpacks a tuple wherever names are introduced" {
+    try expectOutput("var (name, age) = (\"Ada\", 36)\nprint(name, age)\n", "Ada 36\n");
+    try expectOutput("const (name, _) = (\"Ada\", 36)\nprint(name)\n", "Ada\n");
+    try expectOutput(
+        "for (letter, number) in [(\"a\", 1), (\"b\", 2)] {\n    print(letter, number)\n}\n",
+        "a 1\nb 2\n",
+    );
+    try expectOutput(
+        "print([(\"a\", 1)].map { (letter, number) => letter + number.to_string() })\n",
+        "[\"a1\"]\n",
+    );
+}
+
+test "section 8.2's assignment unpacking evaluates the right side first" {
+    try expectOutput("var a = 1\nvar b = 2\n(a, b) = (b, a)\nprint(a, b)\n", "2 1\n");
+    // `_` discards its position, and the names must already exist.
+    try expectOutput("var a = 1\nvar b = 2\n(a, _) = (9, 9)\nprint(a, b)\n", "9 2\n");
+    try expectFailure("const a = 1\nvar b = 2\n(a, b) = (b, a)\n", "`a` cannot be reassigned");
+    try expectFailure("var a = 1\n(a, b) = (1, 2)\n", "`b` is not defined");
+    try expectFailure("var a = 1\n(a, b.c) = (1, 2)\n", "only a name can be assigned to here");
+}
+
+test "unpacking checks the shape before it binds anything" {
+    try expectFailure("var (a, b, c) = (1, 2)\n", "this unpacks 3 names, but (Int, Int) has 2 positions");
+    try expectFailure("var (a, b) = 5\n", "this is Int, which is not a tuple");
+    try expectFailure(
+        "const pair: (Int, Int)? = nothing\nvar (a, b) = pair\n",
+        "this is (Int, Int)?, which may be absent, so it cannot be unpacked",
+    );
+}
+
+test "a tuple position is checked where it is written" {
+    try expectFailure("const pair = (1, 2)\nprint(pair.2)\n", "(Int, Int) has no position 2");
+    try expectFailure("const pair = (1, 2)\nprint(pair.count)\n", "a tuple has no `count`");
+    try expectFailure("print([1, 2].0)\n", "`[Int]` has no positions");
+}
+
+test "section 4.4 widens a tuple position wherever one is expected" {
+    try expectOutput("const rates: (Float, Int) = (1, 2)\nprint(rates)\n", "(1.0, 2)\n");
+    try expectOutput(
+        "func make(): (Float, String) {\n    return (3, \"x\")\n}\nprint(make())\n",
+        "(3.0, \"x\")\n",
+    );
+    try expectOutput(
+        "func take(pair: (Float, Int)) {\n    print(pair)\n}\ntake((7, 8))\n",
+        "(7.0, 8)\n",
+    );
+    try expectOutput("const many: [(Float, Int)] = [(1, 2)]\nprint(many)\n", "[(1.0, 2)]\n");
+}
+
+test "a tuple is a value, so holding one cannot change another" {
+    // Nothing can assign to a position, so there is nothing to copy for, but
+    // the list a tuple holds keeps its own value semantics.
+    try expectOutput(
+        "const pair = ([1, 2], 3)\nvar items = pair.0\nitems.append(9)\nprint(pair.0, items)\n",
+        "[1, 2] [1, 2, 9]\n",
+    );
+}
+
+test "a tuple carries whatever it holds, including a block" {
+    try expectOutput(
+        "const pair = (2, { value: Int => value * 3 })\nprint(pair.1(pair.0))\n",
+        "6\n",
+    );
+}
+
 /// One file of a project written inline, for the tests below. A real project
 /// comes from directories; these state the same thing directly so a test does
 /// not need a temporary directory to exercise namespaces.

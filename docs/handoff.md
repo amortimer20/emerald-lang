@@ -1,12 +1,14 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Claude after the project slice.
+Updated: 2026-09-12. Prepared by Claude after the tuple slice.
 
 ## Current milestone
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
-inserting before slice 8, a string slice the user chose to do before slice 9, and an
-optionals slice the user chose to do before the project slice. Section 20 was renumbered
+inserting before slice 8, a string slice the user chose to do before slice 9, an
+optionals slice the user chose to do before the project slice, and a tuple slice split out
+of section 8's collections because dictionaries need it (8.6 iterates a dictionary as
+`(key, value)` tuples and states there is no second implicit calling convention). Section 20 was renumbered
 during the callable slice: the old slice 9 bundled closures with the collector, and they
 are now slice 9 (callables) and slice 10 (the managed heap). The whole frontend pipeline of
 section 19.2 exists: source manager, lexer, parser, name resolver, type checker,
@@ -26,7 +28,9 @@ against `nothing`, `.or(...)`, and the vocabulary that needed them — `first`, 
 `find`, `find_index`, `index_of`, the `_maybe` parsers, and `input_maybe`. Projects work:
 a directory with a `main.em` is a program of many files, directories are namespaces,
 `using` shortens them, a leading underscore keeps a name inside its file, and a file that
-is not the entry initializes once, on first use. Memory is
+is not the entry initializes once, on first use. Tuples work: the `(String, Int)` type and
+`("score", 10)` literal, zero-based positions, equality position by position, and
+unpacking in declarations, `for` bindings, block parameters, and assignment. Memory is
 managed: reference counting reclaims promptly
 and section 19.5's mark-and-sweep collector reclaims the cycles counting cannot, so a loop
 that keeps making blocks runs in flat memory. Every expression has a static type before
@@ -124,6 +128,32 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Tuple decisions worth knowing
+
+- **Why tuples came before dictionaries.** Section 8.6 iterates a dictionary as `(key,
+  value)` tuples and says plainly that "there is no second implicit `key, value` calling
+  convention", so `ages.each { (name, age) => ... }` cannot be written without them.
+  Splitting them out keeps the dictionary slice about dictionaries.
+- **A tuple widens position by position; a list does not.** Nothing can assign to a tuple
+  position, so a `(Int, Int)` used as a `(Float, Int)` can never be written through and
+  observed as the wrong type — which is the whole argument that makes a list invariant.
+  Recorded in 8.2 and section 22.
+- **A tuple is never copied.** It is counted like a list and traced like one, but there is
+  no copy-on-write, because there is no way to change one after it is built.
+- **`entry.0.1` is a lexical problem, solved in the parser.** The lexer reads `0.1` as one
+  decimal number, since a `.` between two digits is a decimal point. The parser splits it
+  back into two positions in the one place that already knows a member is being named.
+  The alternative was making people write `(entry.0).1`.
+- **Unpacking is one operation in four places.** A declaration, an assignment, a `for`
+  binding, and a block's parameters all reach `unpackInto`, and the checker reaches
+  `bindPattern`. The four differ only in whether the names are being introduced and what
+  kind of binding they become.
+- **A restriction that was invented and then removed.** The first version rejected
+  `("x", nothing)` as a position with no useful type. Nothing else in the language does
+  that — `[nothing]` and `const c = nothing` are both accepted — so it was a rule this
+  slice had no business adding. If bare `Nothing` is worth rejecting it is worth rejecting
+  in all three places, as its own decision.
 
 ### Project decisions worth knowing
 
@@ -521,24 +551,25 @@ still open.
 
 ## Next concrete step
 
-Section 20's slice 12, the object model: structs, classes, construction, properties,
+Dictionaries and sets, the rest of section 8. Tuples are in place, so section 8.6's
+`(key, value)` iteration can be written as specified. What remains is an insertion-ordered
+hash map in the heap with the counting and copy-on-write lists already have, hashing and
+equality for eligible keys (8.3), bracket lookup producing an optional (8.3), the essential
+methods of 8.5, and the `{T}` set type whose literal takes its kind from the expected type
+(8.2).
+
+After that, section 20's slice 12, the object model: structs, classes, construction, properties,
 inheritance, traits, operators, and enums, in dependency order. It is by far the largest
 remaining piece and everything after it depends on it, so it will want splitting into
 several slices of its own — structs and construction first, since they need no
 inheritance.
 
-The alternative is dictionaries and sets from section 8. They are the last collections
-missing, optionals unblocked dictionary lookup, and they need no new machinery beyond the
-literal syntax already reserved in 8.2. They are perhaps two days' work against the object
-model's several, and they would make the standard library feel complete first.
-
-Recommend dictionaries and sets before the object model, for one reason that was not true
-before this slice: `Type` currently has a fixed `Kind` enum and a `ListMethod` table, and
-the object model has to replace both with something that holds user-declared types. Adding
-dictionaries and sets to the current shape is cheap; adding them after the object model
-means writing them against whatever that shape becomes, twice over if it changes again.
-Either order is defensible, and the user may prefer to take the big piece while the
-language is still small.
+Finishing section 8 first has one argument that the object model's size does not answer:
+`Type` still has a fixed `Kind` enum and a `ListMethod` table, and the object model has to
+replace both with something that holds user-declared types. Adding dictionaries and sets to
+the current shape is cheap; adding them afterwards means writing them against whatever that
+shape becomes. Either order is defensible, and the user may prefer to take the big piece
+while the language is still small.
 
 ## Validation and blockers
 
@@ -547,7 +578,7 @@ language is still small.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 269 unit tests, 121 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 282 unit tests, 130 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -649,4 +680,4 @@ language is still small.
 
 ## Pending changes
 
-None. The project slice is committed. Verify against Git before continuing.
+None. The tuple slice is committed. Verify against Git before continuing.

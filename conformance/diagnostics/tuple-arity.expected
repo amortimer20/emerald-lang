@@ -1,0 +1,4 @@
+diagnostics/tuple-arity.em:2:5: this unpacks 3 names, but (String, Int) has 2 positions
+  var (first, second, third) = pair
+      ^^^^^^^^^^^^^^^^^^^^^^
+Write one name for each position. Use `_` for a position you do not need.

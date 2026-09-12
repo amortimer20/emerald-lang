@@ -33,8 +33,9 @@
 //! rare, and counting alone would never reclaim one.
 //!
 //! So counting is only half of it. Section 19.5's mark-and-sweep collector is
-//! the other half: `collect` walks `live`, `live_texts`, `live_environments`,
-//! and `live_closures` and frees whatever nothing outside the heap can reach.
+//! the other half: `collect` walks `live`, `live_tuples`, `live_texts`,
+//! `live_environments`, and `live_closures` and frees whatever nothing outside
+//! the heap can reach.
 //! Counting still does the everyday work, freeing promptly and deciding when a
 //! list must be copied; collection runs at a threshold and exists for the
 //! cycles. `deinit` still frees whatever is left at the end, whatever the counts
@@ -61,6 +62,26 @@ pub const List = struct {
     /// Neighbors in `live`.
     previous: ?*List = null,
     next: ?*List = null,
+};
+
+/// Section 8.2's `(String, Int)`.
+///
+/// Counted like a list, but never copied: section 8.2 gives no way to assign to
+/// a position, so a tuple cannot change once it is built and nothing can
+/// observe it being shared. That is also why there is no copy-on-write here.
+pub const Tuple = struct {
+    references: u32 = 1,
+    /// One value per position, at least two, fixed for the tuple's life.
+    items: []Value,
+    /// The kind each position holds, for section 4.4's widening, as a list's
+    /// `element` does.
+    kinds: []Value.Kind,
+    /// Collector bookkeeping; see `collect`.
+    marked: bool = false,
+    internal: u32 = 0,
+    /// Neighbors in `live_tuples`.
+    previous: ?*Tuple = null,
+    next: ?*Tuple = null,
 };
 
 /// What one name holds, and the kind it holds.
@@ -142,7 +163,9 @@ live_texts: ?*Text = null,
 live_environments: ?*Environment = null,
 /// Every closure not yet freed.
 live_closures: ?*Closure = null,
-/// How many objects are in those four lists.
+/// Every tuple not yet freed.
+live_tuples: ?*Tuple = null,
+/// How many objects are in those five lists.
 live_objects: usize = 0,
 /// The size `live_objects` must reach for the next collection. Section 19.5
 /// asks for "predictable allocation thresholds"; this is one, doubled after
@@ -185,6 +208,11 @@ pub fn deinit(self: *Heap) void {
         environments = environment.next;
         environment.bindings.deinit(self.gpa);
         self.gpa.destroy(environment);
+    }
+    var tuples = self.live_tuples;
+    while (tuples) |tuple| {
+        tuples = tuple.next;
+        self.destroyTuple(tuple);
     }
     self.work.deinit(self.gpa);
     self.* = undefined;
@@ -322,10 +350,40 @@ pub fn createList(self: *Heap, element: Value.Kind, capacity: usize) std.mem.All
     return list;
 }
 
+/// A tuple holding `items`, whose memory it takes over, with one holder, the
+/// caller. `kinds` is taken over too.
+pub fn createTuple(self: *Heap, items: []Value, kinds: []Value.Kind) std.mem.Allocator.Error!*Tuple {
+    self.maybeCollect();
+    const tuple = self.gpa.create(Tuple) catch |err| {
+        self.gpa.free(items);
+        self.gpa.free(kinds);
+        return err;
+    };
+    self.live_objects += 1;
+    tuple.* = .{ .items = items, .kinds = kinds };
+    tuple.next = self.live_tuples;
+    if (self.live_tuples) |first| first.previous = tuple;
+    self.live_tuples = tuple;
+    return tuple;
+}
+
+fn destroyTuple(self: *Heap, tuple: *Tuple) void {
+    self.gpa.free(tuple.items);
+    self.gpa.free(tuple.kinds);
+    self.gpa.destroy(tuple);
+}
+
+fn unlinkTuple(self: *Heap, tuple: *Tuple) void {
+    self.live_objects -= 1;
+    if (tuple.previous) |previous| previous.next = tuple.next else self.live_tuples = tuple.next;
+    if (tuple.next) |next| next.previous = tuple.previous;
+}
+
 /// Records a new holder of `value`, and returns it for convenience.
 pub fn retain(value: Value) Value {
     switch (value.data) {
         .list => |list| list.references += 1,
+        .tuple => |tuple| tuple.references += 1,
         .closure => |closure| closure.references += 1,
         .string => |text| if (!text.literal) {
             text.references += 1;
@@ -356,6 +414,15 @@ pub fn release(self: *Heap, value: Value) void {
         self.unlinkClosure(closure);
         self.gpa.free(closure.captured);
         self.gpa.destroy(closure);
+        return;
+    }
+    if (value.data == .tuple) {
+        const tuple = value.data.tuple;
+        tuple.references -= 1;
+        if (tuple.references > 0) return;
+        for (tuple.items) |item| self.release(item);
+        self.unlinkTuple(tuple);
+        self.destroyTuple(tuple);
         return;
     }
     if (value.data != .list) return;
@@ -409,6 +476,7 @@ pub fn releaseEnvironment(self: *Heap, environment: *Environment) void {
 /// One managed object, for the collector's worklist.
 const Object = union(enum) {
     list: *List,
+    tuple: *Tuple,
     text: *Text,
     environment: *Environment,
     closure: *Closure,
@@ -416,6 +484,7 @@ const Object = union(enum) {
     fn of(value: Value) ?Object {
         return switch (value.data) {
             .list => |list| .{ .list = list },
+            .tuple => |tuple| .{ .tuple = tuple },
             .string => |text| .{ .text = text },
             .closure => |closure| .{ .closure = closure },
             .nothing, .bool, .int, .float => null,
@@ -485,6 +554,11 @@ fn resetMarks(self: *Heap) void {
         closure.marked = false;
         closure.internal = 0;
     }
+    var tuples = self.live_tuples;
+    while (tuples) |tuple| : (tuples = tuple.next) {
+        tuple.marked = false;
+        tuple.internal = 0;
+    }
 }
 
 /// Tallies, for each object, how many of its holders are themselves managed
@@ -504,6 +578,10 @@ fn countInternalReferences(self: *Heap) void {
     var closures = self.live_closures;
     while (closures) |closure| : (closures = closure.next) {
         for (closure.captured) |environment| environment.internal += 1;
+    }
+    var tuples = self.live_tuples;
+    while (tuples) |tuple| : (tuples = tuple.next) {
+        for (tuple.items) |item| bumpInternal(item);
     }
 }
 
@@ -544,11 +622,18 @@ fn markReachable(self: *Heap) bool {
     while (closures) |closure| : (closures = closure.next) {
         if (closure.references > closure.internal and !self.push(.{ .closure = closure })) return false;
     }
+    var tuples = self.live_tuples;
+    while (tuples) |tuple| : (tuples = tuple.next) {
+        if (tuple.references > tuple.internal and !self.push(.{ .tuple = tuple })) return false;
+    }
 
     while (self.work.pop()) |object| {
         switch (object) {
             .text => {},
             .list => |list| for (list.items.items) |item| {
+                if (!self.reach(item)) return false;
+            },
+            .tuple => |tuple| for (tuple.items) |item| {
                 if (!self.reach(item)) return false;
             },
             .environment => |environment| {
@@ -614,6 +699,12 @@ fn sweep(self: *Heap) void {
             for (closure.captured) |environment| environment.references -= 1;
         }
     }
+    var tuples = self.live_tuples;
+    while (tuples) |tuple| : (tuples = tuple.next) {
+        if (!tuple.marked) {
+            for (tuple.items) |item| dropReference(item);
+        }
+    }
 
     var next_list = self.live;
     while (next_list) |list| {
@@ -622,6 +713,13 @@ fn sweep(self: *Heap) void {
         self.unlink(list);
         list.items.deinit(self.gpa);
         self.gpa.destroy(list);
+    }
+    var next_tuple = self.live_tuples;
+    while (next_tuple) |tuple| {
+        next_tuple = tuple.next;
+        if (tuple.marked) continue;
+        self.unlinkTuple(tuple);
+        self.destroyTuple(tuple);
     }
     var next_closure = self.live_closures;
     while (next_closure) |closure| {
@@ -669,6 +767,16 @@ fn unlink(self: *Heap, list: *List) void {
 
 const testing = std.testing;
 
+fn tupleOfInts(heap: *Heap, values: []const i64) !Value {
+    const items = try testing.allocator.alloc(Value, values.len);
+    const kinds = try testing.allocator.alloc(Value.Kind, values.len);
+    for (values, items, kinds) |value, *item, *item_kind| {
+        item.* = .initInt(value);
+        item_kind.* = .int;
+    }
+    return .{ .data = .{ .tuple = try heap.createTuple(items, kinds) } };
+}
+
 fn listOfInts(heap: *Heap, values: []const i64) !Value {
     const list = try heap.createList(.int, values.len);
     for (values) |value| list.items.appendAssumeCapacity(.initInt(value));
@@ -682,6 +790,77 @@ test "releasing the last holder frees the buffer" {
     const list = try listOfInts(&heap, &.{ 1, 2 });
     heap.release(list);
     try testing.expect(heap.live == null);
+}
+
+test "releasing the last holder of a tuple frees it and what it holds" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const held = try listOfInts(&heap, &.{1});
+    const items = try testing.allocator.alloc(Value, 2);
+    const kinds = try testing.allocator.alloc(Value.Kind, 2);
+    items[0] = .initInt(7);
+    items[1] = held;
+    kinds[0] = .int;
+    kinds[1] = .list;
+    const tuple: Value = .{ .data = .{ .tuple = try heap.createTuple(items, kinds) } };
+
+    heap.release(tuple);
+    try testing.expect(heap.live_tuples == null);
+    // The list the tuple held went with it: the tuple was its only holder.
+    try testing.expect(heap.live == null);
+}
+
+test "a tuple is shared rather than copied, because it cannot change" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const original = try tupleOfInts(&heap, &.{ 1, 2 });
+    const copy = retain(original);
+    try testing.expectEqual(original.data.tuple, copy.data.tuple);
+    try testing.expectEqual(@as(u32, 2), original.data.tuple.references);
+
+    heap.release(copy);
+    try testing.expect(heap.live_tuples != null);
+    heap.release(original);
+    try testing.expect(heap.live_tuples == null);
+}
+
+test "the collector reclaims a cycle through a tuple" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    // A tuple holding a closure whose captured scope holds the tuple: neither
+    // count ever reaches zero, which is exactly what the collector is for.
+    const environment = try heap.createEnvironment();
+    const closure = try heap.createClosure(
+        .{ .named = "block" },
+        try testing.allocator.dupe(*Environment, &.{environment}),
+        0,
+    );
+    heap.releaseEnvironment(environment); // the closure holds it now
+
+    const items = try testing.allocator.alloc(Value, 2);
+    const kinds = try testing.allocator.alloc(Value.Kind, 2);
+    items[0] = .initInt(1);
+    items[1] = .{ .data = .{ .closure = closure } };
+    kinds[0] = .int;
+    kinds[1] = .closure;
+    const tuple = try heap.createTuple(items, kinds);
+
+    try environment.bindings.put(testing.allocator, "pair", .{
+        .kind = .tuple,
+        .value = .{ .data = .{ .tuple = tuple } },
+    });
+    tuple.references += 1; // the environment holds it
+
+    // Nothing outside the heap holds any of the three.
+    tuple.references -= 1;
+
+    heap.collect();
+    try testing.expect(heap.live_tuples == null);
+    try testing.expect(heap.live_closures == null);
+    try testing.expect(heap.live_environments == null);
 }
 
 test "a shared buffer is copied before it changes, and a sole one is not" {

@@ -1,0 +1,4 @@
+diagnostics/tuple-has-no-count.em:2:12: a tuple has no `count`
+  print(pair.count)
+             ^^^^^
+Its size is fixed where it is written. Reach its positions with `.0` through `.1`.

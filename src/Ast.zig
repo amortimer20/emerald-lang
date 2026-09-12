@@ -58,7 +58,40 @@ pub const Statement = struct {
         continue_statement: Source.Span,
         function_declaration: FunctionDeclaration,
         return_statement: Return,
+        /// Section 8.2's `var (name, age) = entry`.
+        destructuring: Destructuring,
+        /// Section 8.2's `(left, right) = (right, left)`, which assigns to
+        /// names that already exist.
+        destructuring_assignment: DestructuringAssignment,
     };
+};
+
+/// Section 8.2's `(name, age)`: the names a tuple is unpacked into. `_`
+/// discards its position, exactly as it does elsewhere.
+pub const Pattern = struct {
+    span: Source.Span,
+    names: []const Name,
+
+    pub const Name = struct {
+        text: []const u8,
+        span: Source.Span,
+    };
+};
+
+/// `var (name, age) = entry`, or `const` (4.3). An annotation applies to the
+/// whole tuple, not to one position.
+pub const Destructuring = struct {
+    mutable: bool,
+    pattern: Pattern,
+    annotation: ?TypeExpression,
+    initializer: *const Expression,
+};
+
+/// `(left, right) = (right, left)`. Section 8.2 evaluates the complete right
+/// side before any destination changes, which is what makes a swap work.
+pub const DestructuringAssignment = struct {
+    pattern: Pattern,
+    value: *const Expression,
 };
 
 /// Section 6.4: `while condition { body }`.
@@ -71,9 +104,13 @@ pub const While = struct {
 /// fresh for every iteration. Only a range can be looped over so far;
 /// collections arrive with the collection slice.
 pub const For = struct {
-    /// `_` discards each value without introducing a binding.
+    /// `_` discards each value without introducing a binding. Empty when the
+    /// loop destructures instead, which section 8.2 allows wherever a binding
+    /// is introduced.
     name: []const u8,
     name_span: Source.Span,
+    /// Section 8.2's `for (name, age) in entries`; null for a plain binding.
+    pattern: ?Pattern = null,
     iterable: *const Expression,
     body: Block,
 };
@@ -128,6 +165,8 @@ pub const TypeExpression = struct {
     element: ?*const TypeExpression = null,
     /// The shape of a function type; null otherwise.
     signature: ?*const SignatureExpression = null,
+    /// The position types of a tuple type, `(A, B)`; null otherwise.
+    positions: ?[]const TypeExpression = null,
     /// The `?` that marks an optional, split from the name by the parser as
     /// section 4.2 describes. Null when the type is not optional.
     question_span: ?Source.Span,
@@ -210,6 +249,9 @@ pub const Expression = struct {
         member: Member,
         /// Section 7.4's `{ value => value * 2 }`.
         lambda: Lambda,
+        /// Section 8.2's `("score", 10)`, which always has at least two
+        /// positions; one parenthesized expression is a group.
+        tuple_literal: []const *const Expression,
     };
 
     /// Section 7.4. A lambda has no return annotation: its result type comes
@@ -234,6 +276,10 @@ pub const Expression = struct {
         name: []const u8,
         name_span: Source.Span,
         annotation: ?TypeExpression,
+        /// Section 8.6's `{ (name, age) => ... }`, where the one item a block
+        /// receives is a tuple unpacked in the header; null for a plain
+        /// parameter.
+        pattern: ?Pattern = null,
     };
 
     /// One piece of an interpolated string: finished text, or an expression
@@ -252,6 +298,9 @@ pub const Expression = struct {
         base: *const Expression,
         name: []const u8,
         name_span: Source.Span,
+        /// Section 8.2's `entry.0`, the zero-based position of a tuple member.
+        /// Null when the member was written as a name.
+        position: ?u32 = null,
     };
 
     /// Section 6.4's `start..end`, which includes both bounds, or

@@ -21,6 +21,9 @@ pub const Kind = enum {
     string,
     /// Section 8.2's `[T]`. `element` holds `T`.
     list,
+    /// Section 8.2's `(String, Int)`. `elements` holds the positions, of which
+    /// there are always at least two.
+    tuple,
     /// Section 7.1's `func(Int): String`. `signature` holds its shape.
     function,
     /// A type that could not be determined because something was already
@@ -32,6 +35,8 @@ pub const Kind = enum {
 kind: Kind,
 /// The element type of a list, and null for every other kind.
 element: ?*const Type = null,
+/// The position types of a tuple, and empty for every other kind.
+elements: []const Type = &.{},
 /// What a function takes and gives, and null for every other kind.
 signature: ?*const Signature = null,
 /// Section 4.2's trailing `?`: this value may be absent.
@@ -80,6 +85,13 @@ pub fn listOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.Err
     return .{ .kind = .list, .element = stored };
 }
 
+/// `(A, B)`, with the positions allocated from `allocator`, which must outlive
+/// the result. Section 8.2 requires at least two.
+pub fn tupleOf(allocator: std.mem.Allocator, elements: []const Type) std.mem.Allocator.Error!Type {
+    std.debug.assert(elements.len >= 2);
+    return .{ .kind = .tuple, .elements = try allocator.dupe(Type, elements) };
+}
+
 /// `func(...)`, with the signature allocated from `allocator`, which must
 /// outlive the result.
 pub fn functionOf(allocator: std.mem.Allocator, signature: Signature) std.mem.Allocator.Error!Type {
@@ -118,6 +130,14 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         .float => try writer.writeAll("Float"),
         .string => try writer.writeAll("String"),
         .list => try writer.print("[{f}]", .{self.element.?.*}),
+        .tuple => {
+            try writer.writeAll("(");
+            for (self.elements, 0..) |element, position| {
+                if (position != 0) try writer.writeAll(", ");
+                try writer.print("{f}", .{element});
+            }
+            try writer.writeAll(")");
+        },
         // Section 7.1: the return type is written only when there is one, so a
         // function with no result is `func(Int)` rather than `func(Int): Nothing`.
         .function => {
@@ -151,7 +171,7 @@ pub fn isNumber(self: Type) bool {
     if (self.optional) return false;
     return switch (self.kind) {
         .int, .float => true,
-        .nothing, .bool, .string, .list, .function, .invalid => false,
+        .nothing, .bool, .string, .list, .tuple, .function, .invalid => false,
     };
 }
 
@@ -160,6 +180,12 @@ pub fn isInvalid(self: Type) bool {
     return switch (self.kind) {
         .invalid => true,
         .list => self.element.?.isInvalid(),
+        .tuple => blk: {
+            for (self.elements) |element| {
+                if (element.isInvalid()) break :blk true;
+            }
+            break :blk false;
+        },
         .function => blk: {
             const signature = self.signature.?;
             for (signature.parameters) |parameter| {
@@ -178,6 +204,13 @@ pub fn same(self: Type, other: Type) bool {
     if (self.optional != other.optional) return false;
     if (self.kind != other.kind) return false;
     if (self.kind == .list) return self.element.?.same(other.element.?.*);
+    if (self.kind == .tuple) {
+        if (self.elements.len != other.elements.len) return false;
+        for (self.elements, other.elements) |a, b| {
+            if (!a.same(b)) return false;
+        }
+        return true;
+    }
     if (self.kind == .function) {
         const mine = self.signature.?;
         const theirs = other.signature.?;
@@ -215,6 +248,19 @@ pub fn assignableTo(self: Type, target: Type) bool {
     if (self.optional) return false;
 
     if (self.kind == .int and target.kind == .float) return true;
+
+    // A tuple widens position by position, unlike a list. Section 8.2 gives no
+    // way to assign to a position, so a `(Int, Int)` used as a `(Float, Int)`
+    // can never be written through and observed as the wrong type — which is
+    // exactly the argument that makes a list invariant.
+    if (self.kind == .tuple and target.kind == .tuple and !target.optional) {
+        if (self.elements.len != target.elements.len) return false;
+        for (self.elements, target.elements) |mine, theirs| {
+            if (!mine.assignableTo(theirs)) return false;
+        }
+        return true;
+    }
+
     return self.same(target);
 }
 

@@ -1,0 +1,4 @@
+diagnostics/not-a-tuple.em:2:23: this is Int, which is not a tuple
+  var (first, second) = count
+                        ^^^^^
+Only a tuple can be unpacked into names. Write one name for anything else.

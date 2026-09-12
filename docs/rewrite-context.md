@@ -1148,8 +1148,22 @@ a trailing comma never changes an expression's type. `()` is not a tuple or unit
 Functions with no result already use `Nothing`.
 
 Tuple positions use zero-based member access such as `entry.0` and `entry.1`; an invalid
-position is a compile-time error. Destructuring must match the arity and works in
-declarations and `for` bindings. Existing local bindings may be updated together:
+position is a compile-time error. A tuple has no `count`: its size is part of its type and
+is written where the tuple is, so there is nothing to ask at runtime.
+
+`entry.0.1` reaches a position of a position. The lexer reads `0.1` as one decimal number,
+because a `.` between two digits is a decimal point, and the parser splits it back into two
+positions where it knows a member is being named. This is the same kind of lexical rule as
+4.2's `Int?`, and it is recorded here for the same reason: an implementation that skips it
+rejects a program that should work.
+
+A tuple cannot be assigned to a position, so a `(Int, Int)` may be used where a
+`(Float, Int)` is expected, widening position by position. This is unlike a list, which is
+invariant precisely because it can be written through (4.4).
+
+Destructuring must match the arity and works in declarations, `for` bindings, and the
+parameters of a block (8.6). `_` discards a position wherever a tuple is unpacked. Existing
+local bindings may be updated together:
 
 ```emerald
 (left, right) = (right, left)
@@ -2744,6 +2758,9 @@ recorded in their normative sections:
 | Functions with no result (6.5, 7.2) | They return `Nothing`; no separate "no result" category | The distinction had no observable difference. Unifying them also settles that a recursive function with no result needs no annotation, since there is nothing to infer. |
 | `?` predicates (3.3, 4.2) | Always return plain `Bool`; the conformance example changed | The earlier example `func valid?(): Bool?` contradicted 3.3's rule. |
 | `unless` (6.2) | Removed in both forms; trailing `if` is the guard form | It only ever meant `if not`. Removing it leaves three conditional forms with distinct jobs: block `if`, trailing `if`, and the `if` expression. |
+| Tuple variance (8.2, 4.4) | A tuple widens position by position; a list stays invariant | Nothing can assign to a tuple position, so a `(Int, Int)` used as a `(Float, Int)` can never be written through and observed as the wrong type. That is the entire argument that makes a list invariant, and it simply does not apply here. |
+| `entry.0.1` (8.2) | The lexer reads `0.1` as a decimal number; the parser splits it where it knows a member is named | The alternative was requiring `(entry.0).1`, which is a papercut with no teaching value. Splitting it costs a few lines in the one place that already knows a position is being written. |
+| A tuple's `count` (8.2, 8.5) | Tuples have none | 8.5 gives `count` to collections, whose size is a runtime question. A tuple's size is part of its type and is written in the source, so `count` could only ever return a constant the reader already typed. |
 | Set literals (8.2) | Square brackets, with the set type deciding; `{T}` stays the type spelling | Braces in expression position meant a block, a lambda, or a set, which forced `for n in ({1, 2, 3})` and made `{}` ambiguous. Brackets already build empty dictionaries from context, so sets follow the same rule. |
 | Leading-dot continuation (3.1) | A line beginning with `.` or `?.` continues the previous line | Method chaining is the pipeline notation, so chains need to wrap, and no valid line could begin with a member dot anyway. The one exception to deciding continuation from preceding tokens. |
 | Widening (4.4) | `Int` widens to `Float` wherever a `Float` is expected, not only in arithmetic | The section relied on it for `[1, 2.5]` already, and `var rate: Float = 1` being an error would teach nothing. |

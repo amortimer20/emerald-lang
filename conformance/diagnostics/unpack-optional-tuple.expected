@@ -1,0 +1,4 @@
+diagnostics/unpack-optional-tuple.em:2:21: this is (String, Int)?, which may be absent, so it cannot be unpacked
+  var (name, score) = pair
+                      ^^^^
+Check it against `nothing` first, or give it a fallback with `.or(...)`.

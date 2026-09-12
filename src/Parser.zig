@@ -273,6 +273,11 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
             break :blk deepest;
         },
         .range => |range| @max(range.start.depth, range.end.depth),
+        .tuple_literal => |positions| blk: {
+            var deepest: u32 = 0;
+            for (positions) |position| deepest = @max(deepest, position.depth);
+            break :blk deepest;
+        },
         .list_literal => |elements| blk: {
             var deepest: u32 = 0;
             for (elements) |element| deepest = @max(deepest, element.depth);
@@ -359,6 +364,13 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             }
             break :blk statement;
         },
+        // Section 8.2's `(left, right) = (right, left)`. Recognized before the
+        // expression parser sees it, because `_` is a destination here and not
+        // an expression anywhere.
+        .left_paren => if (self.startsPatternAssignment())
+            self.parseDestructuringAssignment()
+        else
+            self.parseSimpleStatement(),
         .keyword_using => self.report(
             self.peek().span,
             "a `using` declaration belongs at the top level of a file",
@@ -376,6 +388,33 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             "Remove it, or look above for a block that is missing its opening `{`.",
         ),
         else => self.parseSimpleStatement(),
+    };
+}
+
+/// `for (name, age) in entries`, which unpacks each value it visits.
+fn parseDestructuringFor(self: *Parser, keyword: Token) Error!Ast.Statement {
+    const pattern = try self.parsePattern();
+
+    if (self.match(.keyword_in) == null) {
+        return self.reportFmt(
+            self.peek().span,
+            "expected `in` after these names, found {s}",
+            .{self.peek().kind.describe()},
+            "Write what to loop over after `in`, as in `for (name, age) in entries`.",
+        );
+    }
+
+    const iterable = try self.parseHeaderExpression();
+    const body = try self.parseBlock();
+    return .{
+        .span = spanning(keyword.span, body.span),
+        .data = .{ .for_loop = .{
+            .name = "",
+            .name_span = pattern.span,
+            .pattern = pattern,
+            .iterable = iterable,
+            .body = body,
+        } },
     };
 }
 
@@ -440,6 +479,9 @@ fn parseWhile(self: *Parser) Error!Ast.Statement {
 /// Section 6.4: `for name in iterable { body }`.
 fn parseFor(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
+
+    // Section 8.2's `for (name, age) in entries`.
+    if (self.startsPattern()) return self.parseDestructuringFor(keyword);
 
     // `_` visits each value without naming it.
     const name = self.peek();
@@ -629,6 +671,9 @@ fn parseReturn(self: *Parser) Error!Ast.Statement {
 fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
     const keyword = self.advance();
 
+    // Section 8.2's `var (name, age) = entry`.
+    if (self.startsPattern()) return self.parseDestructuring(keyword, mutable);
+
     const name = self.peek();
     if (name.kind != .identifier) {
         return self.reportFmt(
@@ -687,6 +732,39 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
     };
 }
 
+/// Section 8.2's `var (name, age) = entry`. The annotation, when there is one,
+/// is the tuple's type: there is nowhere for a position to carry its own.
+fn parseDestructuring(self: *Parser, keyword: Token, mutable: bool) Error!Ast.Statement {
+    const pattern = try self.parsePattern();
+
+    var annotation: ?Ast.TypeExpression = null;
+    if (self.match(.colon) != null) annotation = try self.parseTypeExpression();
+
+    const equals = self.peek();
+    if (equals.kind != .equal) {
+        return self.reportFmt(
+            equals.span,
+            "expected `=` after these names, found {s}",
+            .{equals.kind.describe()},
+            "Unpacking needs a tuple to unpack, as in `var (name, age) = entry`.",
+        );
+    }
+    _ = self.advance();
+
+    const initializer = try self.parseExpression();
+    try self.expectStatementEnd();
+
+    return .{
+        .span = spanning(keyword.span, initializer.span),
+        .data = .{ .destructuring = .{
+            .mutable = mutable,
+            .pattern = pattern,
+            .annotation = annotation,
+            .initializer = initializer,
+        } },
+    };
+}
+
 /// A trailing `if` would put the declaration inside a block of its own, where
 /// section 6.1 would end its scope on the same line, so it could never be used.
 fn rejectGuardedDeclaration(self: *Parser, name: Token) Error!void {
@@ -710,6 +788,7 @@ fn rejectGuardedDeclaration(self: *Parser, name: Token) Error!void {
 fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     const token = self.peek();
     if (token.kind == .left_bracket) return self.parseListType();
+    if (token.kind == .left_paren) return self.parseTupleType();
     if (token.kind == .keyword_func) return self.parseFunctionType();
     if (token.kind != .identifier) {
         return self.reportFmt(
@@ -748,6 +827,55 @@ fn rejectNestedOptional(self: *Parser, question: ?Source.Span) Error!void {
         "a type cannot be optional twice",
         "One `?` already says the value may be absent; there is nothing for a second to add.",
     );
+}
+
+/// Section 8.2's `(String, Int)`, and `(String, Int)?` for an optional tuple.
+fn parseTupleType(self: *Parser) Error!Ast.TypeExpression {
+    const opening = self.advance();
+    try self.nest(opening.span);
+    defer self.unnest();
+
+    var positions: std.ArrayList(Ast.TypeExpression) = .empty;
+    while (true) {
+        self.skipSeparators();
+        try positions.append(self.arena, try self.parseTypeExpression());
+        self.skipSeparators();
+        if (self.match(.comma) == null) break;
+        self.skipSeparators();
+        if (self.check(.right_paren)) break; // a trailing comma
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_paren) {
+        return self.reportFmt(
+            closing.span,
+            "expected `)` to close this tuple type, found {s}",
+            .{closing.kind.describe()},
+            "Separate the position types with commas, as in `(String, Int)`.",
+        );
+    }
+    _ = self.advance();
+
+    if (positions.items.len < 2) {
+        return self.report(
+            spanning(opening.span, closing.span),
+            "a tuple type needs at least two positions",
+            "A tuple holds at least two values. Drop the parentheses to write a single type.",
+        );
+    }
+
+    var span = spanning(opening.span, closing.span);
+    var question: ?Source.Span = null;
+    if (self.check(.question)) question = self.advance().span;
+    try self.rejectNestedOptional(question);
+    if (question) |mark| span = spanning(span, mark);
+
+    return .{
+        .span = span,
+        .name = "",
+        .positions = try positions.toOwnedSlice(self.arena),
+        .question_span = question,
+    };
 }
 
 /// Section 8.2's `[T]`, and `[T]?` for an optional list.
@@ -975,6 +1103,13 @@ fn finishStatementFrom(
     expression: *const Ast.Expression,
 ) Error!Ast.Statement {
     if (assignmentOperator(self.peek().kind)) |assignment| {
+        // Section 8.2's `(left, right) = (right, left)`. It is recognized after
+        // the fact, because a statement beginning with `(` is an expression
+        // until an `=` says otherwise.
+        if (expression.data == .tuple_literal and assignment.operation == null) {
+            return self.finishDestructuringAssignment(start, expression);
+        }
+
         _ = self.advance();
         const target = try self.assignmentTarget(expression);
 
@@ -1003,6 +1138,68 @@ fn finishStatementFrom(
     }
 
     return self.finishExpressionStatement(expression);
+}
+
+/// Section 8.2's `(left, right) = (right, left)`, recognized from the start.
+fn parseDestructuringAssignment(self: *Parser) Error!Ast.Statement {
+    const start = self.peek();
+    const pattern = try self.parsePattern();
+    _ = self.advance(); // the `=`, which `startsPatternAssignment` has seen
+
+    const value = try self.parseExpression();
+    if (assignmentOperator(self.peek().kind) != null) {
+        return self.report(
+            self.peek().span,
+            "assignments cannot be chained",
+            "Write each assignment on its own line.",
+        );
+    }
+
+    return self.finishSimpleStatement(.{
+        .span = spanning(start.span, value.span),
+        .data = .{ .destructuring_assignment = .{ .pattern = pattern, .value = value } },
+    });
+}
+
+/// The same, reached the other way: the left side parsed as a tuple literal
+/// because it held something that is not a name, so this is where that is
+/// reported. Section 8.2 allows local names and `_` as destinations; a
+/// field or index destination is deferred, so anything else is reported here.
+fn finishDestructuringAssignment(
+    self: *Parser,
+    start: Token,
+    left: *const Ast.Expression,
+) Error!Ast.Statement {
+    _ = self.advance();
+
+    var names: std.ArrayList(Ast.Pattern.Name) = .empty;
+    for (left.data.tuple_literal) |position| {
+        switch (position.data) {
+            .name => |name| try names.append(self.arena, .{ .text = name, .span = position.span }),
+            else => return self.report(
+                position.span,
+                "only a name can be assigned to here",
+                "Unpacking assigns to names that already exist, as in `(left, right) = (right, left)`. Write `_` for a position you do not need.",
+            ),
+        }
+    }
+
+    const value = try self.parseExpression();
+    if (assignmentOperator(self.peek().kind) != null) {
+        return self.report(
+            self.peek().span,
+            "assignments cannot be chained",
+            "Write each assignment on its own line.",
+        );
+    }
+
+    return self.finishSimpleStatement(.{
+        .span = spanning(start.span, value.span),
+        .data = .{ .destructuring_assignment = .{
+            .pattern = .{ .span = left.span, .names = try names.toOwnedSlice(self.arena) },
+            .value = value,
+        } },
+    });
 }
 
 const Target = struct {
@@ -1360,6 +1557,27 @@ fn finishIndex(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expr
 fn finishMember(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expression {
     _ = self.advance();
     const name = self.peek();
+
+    // Section 8.2's `entry.0`. The lexer already splits this into `.` and a
+    // whole number, because a `.` is only a decimal point when it follows one.
+    if (name.kind == .int_literal) {
+        _ = self.advance();
+        return self.positionMember(base, self.text(name), name.span);
+    }
+
+    // `entry.0.1`, where the lexer read `0.1` as a decimal number because a
+    // digit did follow the dot. Two positions were written, so two are taken.
+    if (name.kind == .float_literal) {
+        const written = self.text(name);
+        if (std.mem.indexOfScalar(u8, written, '.')) |dot| {
+            _ = self.advance();
+            const outer_span: Source.Span = .{ .start = name.span.start, .end = name.span.start + @as(u32, @intCast(dot)) };
+            const inner_span: Source.Span = .{ .start = outer_span.end + 1, .end = name.span.end };
+            const first = try self.positionMember(base, written[0..dot], outer_span);
+            return self.positionMember(first, written[dot + 1 ..], inner_span);
+        }
+    }
+
     const written: []const u8 = if (name.kind == .identifier)
         try self.identifier(name)
     else
@@ -1375,6 +1593,160 @@ fn finishMember(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Exp
         .base = base,
         .name = written,
         .name_span = name.span,
+    } });
+}
+
+/// Section 8.2's `("score", 10)`, once the first position is parsed and a comma
+/// has been seen.
+fn finishTupleLiteral(
+    self: *Parser,
+    opening: Token,
+    first: *const Ast.Expression,
+) Error!*const Ast.Expression {
+    var positions: std.ArrayList(*const Ast.Expression) = .empty;
+    try positions.append(self.arena, first);
+
+    while (self.match(.comma)) |_| {
+        self.skipSeparators();
+        if (self.check(.right_paren)) break; // a trailing comma
+        try positions.append(self.arena, try self.parseExpression());
+        self.skipSeparators();
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_paren) {
+        return self.reportFmt(
+            closing.span,
+            "expected `)` to close this tuple, found {s}",
+            .{closing.kind.describe()},
+            "Separate the positions with commas and close the tuple with `)`.",
+        );
+    }
+    _ = self.advance();
+
+    return self.node(spanning(opening.span, closing.span), .{
+        .tuple_literal = try positions.toOwnedSlice(self.arena),
+    });
+}
+
+/// Section 8.2's `(name, age)` where names are being introduced or assigned to.
+/// Only names and `_` may appear, so this is not `parseExpression` with a check
+/// afterwards: reporting `(a.b, c)` as "expected a name" beats reporting it as
+/// a bad assignment target.
+fn parsePattern(self: *Parser) Error!Ast.Pattern {
+    const opening = self.advance();
+    var names: std.ArrayList(Ast.Pattern.Name) = .empty;
+
+    while (true) {
+        self.skipSeparators();
+        const token = self.peek();
+        switch (token.kind) {
+            .identifier => {
+                _ = self.advance();
+                try names.append(self.arena, .{ .text = try self.identifier(token), .span = token.span });
+            },
+            .underscore => {
+                _ = self.advance();
+                try names.append(self.arena, .{ .text = "_", .span = token.span });
+            },
+            else => return self.reportFmt(
+                token.span,
+                "expected a name, found {s}",
+                .{token.kind.describe()},
+                "A tuple is unpacked into names, as in `(name, age)`. Write `_` for a position you do not need.",
+            ),
+        }
+        self.skipSeparators();
+        if (self.match(.comma) == null) break;
+        self.skipSeparators();
+        if (self.check(.right_paren)) break; // a trailing comma
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_paren) {
+        return self.reportFmt(
+            closing.span,
+            "expected `)` to close these names, found {s}",
+            .{closing.kind.describe()},
+            "Separate the names with commas and close them with `)`.",
+        );
+    }
+    _ = self.advance();
+
+    if (names.items.len < 2) {
+        return self.report(
+            spanning(opening.span, closing.span),
+            "a tuple is unpacked into at least two names",
+            "A tuple holds at least two values. Drop the parentheses to bind one name.",
+        );
+    }
+
+    return .{
+        .span = spanning(opening.span, closing.span),
+        .names = try names.toOwnedSlice(self.arena),
+    };
+}
+
+/// Whether a `(` here begins names being assigned to: a pattern whose closing
+/// `)` is followed by `=`, and not by `==` or any compound operator.
+fn startsPatternAssignment(self: *Parser) bool {
+    if (!self.startsPattern()) return false;
+    var depth: usize = 0;
+    var at = self.index;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .left_paren => depth += 1,
+            .right_paren => {
+                depth -= 1;
+                if (depth == 0) return at + 1 < self.tokens.len and self.tokens[at + 1].kind == .equal;
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// Whether a `(` here begins names being bound rather than an expression.
+/// Only names, `_`, and commas may appear before the `)`.
+fn startsPattern(self: *Parser) bool {
+    if (!self.check(.left_paren)) return false;
+    var at = self.index;
+    var expect_name = true;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .left_paren, .doc_comment, .newline => {},
+            .identifier, .underscore => {
+                if (!expect_name) return false;
+                expect_name = false;
+            },
+            .comma => {
+                if (expect_name) return false;
+                expect_name = true;
+            },
+            .right_paren => return !expect_name,
+            else => return false,
+        }
+    }
+    return false;
+}
+
+/// One `.0` of a member chain, given the digits as written.
+fn positionMember(
+    self: *Parser,
+    base: *const Ast.Expression,
+    written: []const u8,
+    span: Source.Span,
+) Error!*const Ast.Expression {
+    const position = std.fmt.parseInt(u32, written, 10) catch return self.report(
+        span,
+        "this tuple position is too large",
+        "Positions are counted from `0`, and a tuple has at most a handful.",
+    );
+    return self.node(spanning(base.span, span), .{ .member = .{
+        .base = base,
+        .name = written,
+        .name_span = span,
+        .position = position,
     } });
 }
 
@@ -1465,6 +1837,20 @@ fn parseLambdaParameters(self: *Parser, opening: Token) Error!LambdaHeader {
     }
 
     while (true) {
+        // Section 8.6's `{ (name, age) => ... }`: the one item the block
+        // receives is a tuple, unpacked in the header.
+        if (self.startsPattern()) {
+            const pattern = try self.parsePattern();
+            try parameters.append(self.arena, .{
+                .name = "",
+                .name_span = pattern.span,
+                .annotation = null,
+                .pattern = pattern,
+            });
+            if (self.match(.comma) == null) break;
+            continue;
+        }
+
         const name = self.peek();
         if (name.kind != .identifier and name.kind != .underscore) {
             const at = if (name.kind == .right_brace) opening.span else name.span;
@@ -1677,7 +2063,24 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
             self.in_control_header = false;
             defer self.in_control_header = saved_header;
             _ = self.advance();
+            if (self.check(.right_paren)) {
+                return self.report(
+                    spanning(token.span, self.peek().span),
+                    "`()` is not a value",
+                    "A tuple holds at least two values. A function with no result already uses `Nothing`.",
+                );
+            }
+
             const inner = try self.parseExpression();
+
+            // A second expression makes it section 8.2's tuple. One, with or
+            // without a trailing comma, stays a grouped expression: a trailing
+            // comma never changes an expression's type.
+            if (self.check(.comma) and self.peekAfterNext().kind != .right_paren) {
+                return self.finishTupleLiteral(token, inner);
+            }
+            _ = self.match(.comma);
+
             const closing = self.peek();
             if (closing.kind != .right_paren) {
                 return self.reportFmt(

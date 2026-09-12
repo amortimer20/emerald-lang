@@ -1,0 +1,4 @@
+diagnostics/empty-tuple.em:1:7: `()` is not a value
+  print(())
+        ^^
+A tuple holds at least two values. A function with no result already uses `Nothing`.

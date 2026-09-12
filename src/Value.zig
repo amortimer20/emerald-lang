@@ -5,7 +5,7 @@
 //! `Int` is 64-bit signed and `Float` is IEEE-754 binary64, and every backend
 //! must agree.
 //!
-//! A list is a reference to a counted buffer in `Heap`, so copying a `Value`
+//! A list or tuple is a reference to a counted object in `Heap`, so copying a `Value`
 //! is cheap, but only `Heap.retain` records that the copy exists. See `Heap`
 //! for the rules that keep section 8.1's value semantics intact.
 
@@ -15,7 +15,7 @@ const unicode = @import("unicode.zig");
 
 const Value = @This();
 
-pub const Kind = enum { nothing, bool, int, float, string, list, closure };
+pub const Kind = enum { nothing, bool, int, float, string, list, tuple, closure };
 
 data: Data,
 
@@ -27,6 +27,8 @@ pub const Data = union(Kind) {
     float: f64,
     string: *Heap.Text,
     list: *Heap.List,
+    /// Section 8.2's `("score", 10)`, which never changes once built.
+    tuple: *Heap.Tuple,
     /// Section 7.4's lambda, or section 7.5's captured function.
     closure: *Heap.Closure,
 };
@@ -63,6 +65,7 @@ pub fn typeName(self: Value) []const u8 {
         .float => "Float",
         .string => "String",
         .list => "a list",
+        .tuple => "a tuple",
         .closure => "a function",
     };
 }
@@ -70,7 +73,7 @@ pub fn typeName(self: Value) []const u8 {
 /// Whether two values are numbers, which is what arithmetic and ordering need.
 pub fn isNumber(self: Value) bool {
     return switch (self.data) {
-        .nothing, .bool, .string, .list, .closure => false,
+        .nothing, .bool, .string, .list, .tuple, .closure => false,
         .int, .float => true,
     };
 }
@@ -102,6 +105,16 @@ fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Error!
                 try item.write(writer, true);
             }
             try writer.writeAll("]");
+        },
+        // A tuple writes the way it is written in source, and its elements are
+        // quoted for the same reason a list's are.
+        .tuple => |tuple| {
+            try writer.writeAll("(");
+            for (tuple.items, 0..) |item, position| {
+                if (position != 0) try writer.writeAll(", ");
+                try item.write(writer, true);
+            }
+            try writer.writeAll(")");
         },
         .closure => |closure| switch (closure.function) {
             .named => |name| try writer.print("<func {s}>", .{name}),
@@ -160,6 +173,18 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
             },
             else => false,
         },
+        // Section 8.4: tuples compare their values position by position. The
+        // checker has already proved the arities match.
+        .tuple => |a| switch (right.data) {
+            .tuple => |b| blk: {
+                if (a.items.len != b.items.len) break :blk false;
+                for (a.items, b.items) |x, y| {
+                    if (!try equals(gpa, x, y)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        },
     };
 }
 
@@ -188,7 +213,7 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
         .int => |a| switch (right.data) {
             .int => |b| std.math.order(a, b),
             .float => |b| orderIntFloat(a, b),
-            .nothing, .bool, .string, .list, .closure => null,
+            .nothing, .bool, .string, .list, .tuple, .closure => null,
         },
         .float => |a| switch (right.data) {
             .int => |b| if (orderIntFloat(b, a)) |result| result.invert() else null,
@@ -196,9 +221,9 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
                 null
             else
                 std.math.order(a, b),
-            .nothing, .bool, .string, .list, .closure => null,
+            .nothing, .bool, .string, .list, .tuple, .closure => null,
         },
-        .nothing, .bool, .string, .list, .closure => null,
+        .nothing, .bool, .string, .list, .tuple, .closure => null,
     };
 }
 

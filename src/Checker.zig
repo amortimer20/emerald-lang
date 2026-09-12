@@ -232,14 +232,17 @@ fn earlierInSource(_: void, a: Diagnostic, b: Diagnostic) bool {
 /// Section 14.1 initializes a module file before anything can read it, so its
 /// bindings are assigned wherever they are seen from.
 fn markModuleAssigned(self: *Checker, statements: []const Ast.Statement) Error!void {
-    for (statements) |statement| {
-        const declaration = switch (statement.data) {
-            .declaration => |d| d,
-            else => continue,
-        };
-        const binding = self.module.getPtr(self.keyOf(declaration.name)) orelse continue;
-        binding.assigned = true;
-    }
+    for (statements) |statement| switch (statement.data) {
+        .declaration => |declaration| {
+            const binding = self.module.getPtr(self.keyOf(declaration.name)) orelse continue;
+            binding.assigned = true;
+        },
+        .destructuring => |destructuring| for (destructuring.pattern.names) |name| {
+            const binding = self.module.getPtr(self.keyOf(name.text)) orelse continue;
+            binding.assigned = true;
+        },
+        else => {},
+    };
 }
 
 /// The one name the whole program knows a module-level declaration by, as the
@@ -357,6 +360,135 @@ fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
         // Checked after the top level; see the module comment.
         .function_declaration => {},
         .return_statement => |return_statement| try self.checkReturn(return_statement),
+        .destructuring => |destructuring| try self.checkDestructuring(destructuring),
+        .destructuring_assignment => |assignment| try self.checkDestructuringAssignment(assignment),
+    }
+}
+
+/// Section 8.2's `var (name, age) = entry`. The names take the position types,
+/// so the tuple's arity has to match the pattern's before anything is bound.
+fn checkDestructuring(self: *Checker, destructuring: Ast.Destructuring) Error!void {
+    const expected: ?Type = if (destructuring.annotation) |annotation|
+        try self.resolveTypeExpression(annotation)
+    else
+        null;
+
+    const actual = try self.typeOfExpected(destructuring.initializer, expected);
+    if (expected) |declared| {
+        if (!actual.assignableTo(declared)) {
+            try self.report(
+                destructuring.initializer.span,
+                "this is {f}, but it was declared as {f}",
+                .{ actual, declared },
+                mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
+            );
+        }
+    }
+
+    try self.bindPattern(
+        destructuring.pattern,
+        expected orelse actual,
+        destructuring.initializer.span,
+        if (destructuring.mutable) .variable else .constant,
+    );
+}
+
+/// The position types a pattern unpacks, or an empty slice once the mismatch
+/// has been reported. `invalid` unpacks to as many invalid positions as the
+/// pattern asks for, so one mistake produces one report.
+fn positionsFor(
+    self: *Checker,
+    unpacked: Type,
+    pattern: Ast.Pattern,
+    span: Source.Span,
+) Error![]const Type {
+    if (unpacked.isInvalid()) return &.{};
+    if (unpacked.optional) {
+        try self.report(
+            span,
+            "this is {f}, which may be absent, so it cannot be unpacked",
+            .{unpacked},
+            "Check it against `nothing` first, or give it a fallback with `.or(...)`.",
+        );
+        return &.{};
+    }
+    if (unpacked.kind != .tuple) {
+        try self.report(
+            span,
+            "this is {f}, which is not a tuple",
+            .{unpacked},
+            "Only a tuple can be unpacked into names. Write one name for anything else.",
+        );
+        return &.{};
+    }
+    if (unpacked.elements.len != pattern.names.len) {
+        try self.reportWithHelp(
+            pattern.span,
+            "this unpacks {d} names, but {f} has {d} positions",
+            .{ pattern.names.len, unpacked, unpacked.elements.len },
+            "Write one name for each position. Use `_` for a position you do not need.",
+            .{},
+        );
+        return &.{};
+    }
+    return unpacked.elements;
+}
+
+fn bindPatternName(
+    self: *Checker,
+    name: Ast.Pattern.Name,
+    position: Type,
+    mutability: Mutability,
+) Error!void {
+    // Section 8.2: `_` discards its position and binds nothing.
+    if (std.mem.eql(u8, name.text, "_")) return;
+
+    const current = self.scopes.items[self.scopes.items.len - 1];
+    const key = if (current == self.module) self.keyOf(name.text) else name.text;
+    try current.put(self.arena, key, .{
+        .type = position,
+        .declared = position,
+        .assigned = true,
+        .mutability = mutability,
+    });
+}
+
+/// Unpacks one value into the names of a pattern, reporting a shape that cannot
+/// be unpacked once rather than once per name.
+fn bindPattern(
+    self: *Checker,
+    pattern: Ast.Pattern,
+    unpacked: Type,
+    span: Source.Span,
+    mutability: Mutability,
+) Error!void {
+    const positions = try self.positionsFor(unpacked, pattern, span);
+    for (pattern.names, 0..) |name, index| {
+        const position: Type = if (index < positions.len) positions[index] else .invalid;
+        try self.bindPatternName(name, position, mutability);
+    }
+}
+
+/// Section 8.2's `(left, right) = (right, left)`, which assigns to names that
+/// already exist. The whole right side is checked first, as it is evaluated.
+fn checkDestructuringAssignment(self: *Checker, assignment: Ast.DestructuringAssignment) Error!void {
+    const actual = try self.typeOf(assignment.value);
+    const positions = try self.positionsFor(actual, assignment.pattern, assignment.value.span);
+
+    for (assignment.pattern.names, 0..) |name, index| {
+        if (std.mem.eql(u8, name.text, "_")) continue;
+        const binding = self.find(name.text) orelse continue;
+        const position: Type = if (index < positions.len) positions[index] else .invalid;
+        if (!position.assignableTo(binding.declared)) {
+            try self.report(
+                name.span,
+                "position {d} is {f}, but `{s}` is {f}",
+                .{ index, position, name.text, binding.declared },
+                mismatchHelp(position, binding.declared, "Assign a value of the expected type, or convert it first."),
+            );
+        }
+        binding.assigned = true;
+        binding.type = binding.declared;
     }
 }
 
@@ -394,7 +526,9 @@ fn checkFor(self: *Checker, loop: Ast.For) Error!void {
 
     try self.loops.append(self.arena, .{ .depth = self.scopes.items.len, .infinite = false });
     try self.pushScope();
-    if (!std.mem.eql(u8, loop.name, "_")) {
+    if (loop.pattern) |pattern| {
+        try self.bindPattern(pattern, element, loop.iterable.span, .loop_variable);
+    } else if (!std.mem.eql(u8, loop.name, "_")) {
         const scope = self.scopes.items[self.scopes.items.len - 1];
         try scope.put(self.arena, loop.name, .{
             .type = element,
@@ -1315,6 +1449,14 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         return Type.listOf(self.arena, inner);
     }
 
+    if (annotation.positions) |written| {
+        const positions = try self.arena.alloc(Type, written.len);
+        for (written, positions) |position, *resolved| {
+            resolved.* = try self.resolveTypeExpression(position);
+        }
+        return Type.tupleOf(self.arena, positions);
+    }
+
     if (annotation.signature) |written| {
         const parameters = try self.arena.alloc(Type, written.parameters.len);
         for (written.parameters, parameters) |parameter, *resolved| {
@@ -1514,6 +1656,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             self.typeOfMember(member),
         .range => self.rejectCountingValue(expression),
         .lambda => self.typeOfLambda(expression, null),
+        .tuple_literal => self.typeOfTuple(expression, null),
     };
 }
 
@@ -1547,7 +1690,38 @@ fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, refere
 fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
     if (expression.data == .list_literal) return self.typeOfList(expression, expected);
     if (expression.data == .lambda) return self.typeOfLambda(expression, expected);
+    if (expression.data == .tuple_literal) return self.typeOfTuple(expression, expected);
     return self.typeOf(expression);
+}
+
+/// Section 8.2's `("score", 10)`. Each position takes its own type, and an
+/// expected tuple type passes down position by position so that a whole number
+/// written where a `Float` is expected is built as one (4.4).
+fn typeOfTuple(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
+    const positions = expression.data.tuple_literal;
+    const expected_positions: ?[]const Type = if (expected) |tuple|
+        (if (tuple.kind == .tuple and tuple.elements.len == positions.len) tuple.elements else null)
+    else
+        null;
+
+    const types = try self.arena.alloc(Type, positions.len);
+    for (positions, types, 0..) |position, *position_type, index| {
+        const want: ?Type = if (expected_positions) |wanted| wanted[index] else null;
+        position_type.* = try self.typeOfExpected(position, want);
+
+        // The position takes the expected type when it fits, so a whole number
+        // written where a `Float` belongs is stored as one (4.4). Keeping the
+        // written type when it does not fit leaves the mismatch to report it.
+        if (want) |wanted| {
+            if (position_type.assignableTo(wanted)) position_type.* = wanted;
+        }
+    }
+
+    const built = try Type.tupleOf(self.arena, types);
+    // Recorded for the interpreter, which needs the position kinds to store a
+    // whole number as a `Float` where one was expected, as it does for a list.
+    try self.literal_types.put(self.arena, expression, built);
+    return built;
 }
 
 /// Section 8.2. Nonempty literals infer their element type, widening `Int` to
@@ -1612,13 +1786,15 @@ fn typeOfList(self: *Checker, expression: *const Ast.Expression, expected: ?Type
     return self.recordLiteral(expression, target);
 }
 
+/// Records the type a list literal was built with, so the interpreter can store
+/// its elements at that type: `[1, 2]` where a `[Float]` is expected holds
+/// `1.0` and `2.0` (4.4).
 fn recordLiteral(self: *Checker, expression: *const Ast.Expression, element: Type) Error!Type {
     const list = try Type.listOf(self.arena, element);
     try self.literal_types.put(self.arena, expression, list);
     return list;
 }
 
-/// Section 5.4's zero-based indexing.
 /// Section 7.4's lambda.
 ///
 /// Parameter types come from their annotations, or from the callable type
@@ -1721,7 +1897,14 @@ fn checkLambdaBody(
 
     try self.pushScope();
     const parameters = self.scopes.items[self.scopes.items.len - 1];
-    for (parameter_names, parameter_types) |name, parameter_type| {
+    for (parameter_names, parameter_types, 0..) |name, parameter_type, index| {
+        // Section 8.6's `{ (name, age) => ... }`: one parameter, unpacked.
+        if (index < lambda.parameters.len) {
+            if (lambda.parameters[index].pattern) |pattern| {
+                try self.bindPattern(pattern, parameter_type, pattern.span, .parameter);
+                continue;
+            }
+        }
         // Section 7.4: `_` binds nothing, and may appear more than once.
         if (std.mem.eql(u8, name, "_")) continue;
         try parameters.put(self.arena, name, .{
@@ -1837,6 +2020,51 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) return .invalid;
     if (!try self.requirePresent(base, member.base, member.name)) return .invalid;
+
+    // Section 8.2's `entry.0`. The position is known where it is written, so an
+    // invalid one is a compile-time error rather than a runtime one.
+    if (member.position) |position| {
+        if (base.kind != .tuple) {
+            try self.report(
+                member.name_span,
+                "`{f}` has no positions",
+                .{base},
+                "Only a tuple is reached by position. Write the name of what you want instead.",
+            );
+            return .invalid;
+        }
+        if (position >= base.elements.len) {
+            try self.reportWithHelp(
+                member.name_span,
+                "{f} has no position {d}",
+                .{ base, position },
+                "Its positions are `0` through `{d}`.",
+                .{base.elements.len - 1},
+            );
+            return .invalid;
+        }
+        return base.elements[position];
+    }
+
+    if (base.kind == .tuple) {
+        if (std.mem.eql(u8, member.name, "count")) {
+            try self.reportWithHelp(
+                member.name_span,
+                "a tuple has no `count`",
+                .{},
+                "Its size is fixed where it is written. Reach its positions with `.0` through `.{d}`.",
+                .{base.elements.len - 1},
+            );
+            return .invalid;
+        }
+        try self.report(
+            member.name_span,
+            "a tuple has no `{s}`",
+            .{member.name},
+            "Reach a tuple by position, as in `entry.0`, or unpack it into names.",
+        );
+        return .invalid;
+    }
 
     if (base.kind == .list or base.kind == .string) {
         if (std.mem.eql(u8, member.name, "count")) return .int;
@@ -2498,7 +2726,11 @@ fn typeOfCall(
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
     // resolver already decided which this is.
     const reference = self.referenceOf(call.callee) orelse {
-        if (call.callee.data == .member) return self.typeOfMethodCall(expression, call, call.callee.data.member);
+        // A tuple position holding a block is called through its value, not as
+        // a method of the tuple.
+        if (call.callee.data == .member and call.callee.data.member.position == null) {
+            return self.typeOfMethodCall(expression, call, call.callee.data.member);
+        }
         // Anything that is not a plain name — a lambda called where it is
         // written, an element of a list of functions — is called through its
         // value.
@@ -2671,6 +2903,7 @@ fn blockCompletes(statements: []const Ast.Statement) bool {
 fn stmtCompletes(statement: Ast.Statement) bool {
     return switch (statement.data) {
         .return_statement, .break_statement, .continue_statement => false,
+        .destructuring, .destructuring_assignment => true,
         .conditional => |conditional| blk: {
             if (blockCompletes(conditional.then_block.statements)) break :blk true;
             const otherwise = conditional.otherwise orelse break :blk true;
@@ -2706,6 +2939,7 @@ fn stmtBreaks(statement: Ast.Statement) bool {
             };
         },
         .while_loop, .for_loop, .return_statement, .continue_statement => false,
+        .destructuring, .destructuring_assignment => false,
         .expression, .declaration, .assignment, .function_declaration => false,
     };
 }
@@ -2738,6 +2972,7 @@ fn statementHasValueReturn(statement: Ast.Statement) bool {
         },
         .while_loop => |loop| blockHasValueReturn(loop.body.statements),
         .for_loop => |loop| blockHasValueReturn(loop.body.statements),
+        .destructuring, .destructuring_assignment => false,
         .expression, .declaration, .assignment, .function_declaration => false,
         .break_statement, .continue_statement => false,
     };

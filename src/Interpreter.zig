@@ -269,6 +269,45 @@ fn executeAll(self: *Interpreter, statements: []const Ast.Statement) Error!void 
     for (statements) |statement| try self.execute(statement);
 }
 
+/// Whether a pattern's names are being introduced or already exist.
+const Unpack = enum { declare, assign, bind_loop };
+
+/// Section 8.2's unpacking, which is one operation wherever it appears: a
+/// declaration, an assignment, a `for` binding, or a block's parameter list.
+/// The checker has already proved the arity matches.
+fn unpackInto(self: *Interpreter, pattern: Ast.Pattern, value: Value, how: Unpack) Error!void {
+    const items = value.data.tuple.items;
+    for (pattern.names, items) |name, item| {
+        // Section 8.2: `_` discards its position, so nothing holds it.
+        if (std.mem.eql(u8, name.text, "_")) continue;
+
+        switch (how) {
+            .assign => {
+                const slot = self.find(name.text).?;
+                const widened = widen(Heap.retain(item), slot.kind);
+                if (slot.value) |old| self.heap.release(old);
+                slot.value = widened;
+            },
+            .declare, .bind_loop => {
+                const in_block = self.scopes.items.len > 0;
+                const key = if (in_block) name.text else self.keyOf(name.text);
+                const current = if (in_block)
+                    &self.scopes.items[self.scopes.items.len - 1].bindings
+                else
+                    &self.module;
+                const held = Heap.retain(item);
+                current.put(if (in_block) self.gpa else self.arena, key, .{
+                    .kind = held.kind(),
+                    .value = held,
+                }) catch |err| {
+                    self.heap.release(held);
+                    return err;
+                };
+            },
+        }
+    }
+}
+
 /// Section 6.1 gives every block its own scope, and a local declared inside does
 /// not leak out.
 fn executeBlock(self: *Interpreter, block: Ast.Block) Error!void {
@@ -334,6 +373,20 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
                 .kind = kind,
                 .value = if (initial) |value| widen(value, kind) else null,
             });
+        },
+
+        .destructuring => |destructuring| {
+            const value = try self.evaluate(destructuring.initializer);
+            defer self.heap.release(value);
+            try self.unpackInto(destructuring.pattern, value, .declare);
+        },
+
+        .destructuring_assignment => |assignment| {
+            // Section 8.2: the complete right side is evaluated before any
+            // destination changes, which is what makes a swap a swap.
+            const value = try self.evaluate(assignment.value);
+            defer self.heap.release(value);
+            try self.unpackInto(assignment.pattern, value, .assign);
         },
 
         .assignment => |assignment| {
@@ -585,7 +638,10 @@ fn executeIteration(self: *Interpreter, loop: Ast.For, value: Value) Error!bool 
     const scope = try self.pushScope();
     defer self.popScope();
 
-    if (std.mem.eql(u8, loop.name, "_")) {
+    if (loop.pattern) |pattern| {
+        defer self.heap.release(value);
+        try self.unpackInto(pattern, value, .bind_loop);
+    } else if (std.mem.eql(u8, loop.name, "_")) {
         self.heap.release(value);
     } else {
         scope.bindings.put(self.gpa, loop.name, .{ .kind = value.kind(), .value = value }) catch |err| {
@@ -653,6 +709,7 @@ fn kindOf(checked: Type) Value.Kind {
         .float => .float,
         .string => .string,
         .list => .list,
+        .tuple => .tuple,
         .function => .closure,
     };
 }
@@ -727,8 +784,10 @@ fn initializeModule(self: *Interpreter, file: u32) Error!void {
 
     // Declaration order, which is the order section 14.1 gives them.
     for (self.programs[file].statements) |statement| {
-        if (statement.data != .declaration) continue;
-        try self.execute(statement);
+        switch (statement.data) {
+            .declaration, .destructuring => try self.execute(statement),
+            else => {},
+        }
     }
 
     self.module_states[file] = .done;
@@ -755,6 +814,7 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         // `executeFor` reads directly.
         .range => unreachable,
         .list_literal => |elements| self.evaluateList(expression, elements),
+        .tuple_literal => |positions| self.evaluateTuple(expression, positions),
         .index => |index| self.evaluateIndex(expression, index),
         // A namespace-qualified name is a reference, not a property access.
         .member => |member| if (self.facts.qualified.get(expression)) |key|
@@ -821,6 +881,13 @@ fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
 fn evaluateProperty(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
     const base = try self.evaluate(member.base);
     defer self.heap.release(base);
+
+    // Section 8.2's `entry.0`. The checker has proved the position exists, so
+    // there is nothing to fail here.
+    if (member.position) |position| {
+        return Heap.retain(base.data.tuple.items[position]);
+    }
+
     if (base.data == .string) {
         // Section 9.2: a string's count is its characters, not its bytes.
         return .initInt(@intCast(unicode.graphemeCount(base.data.string.bytes)));
@@ -866,6 +933,37 @@ fn evaluateList(self: *Interpreter, expression: *const Ast.Expression, elements:
     errdefer self.heap.release(result);
     for (elements) |item| list.items.appendAssumeCapacity(widen(try self.evaluate(item), element));
     return result;
+}
+
+/// Section 8.2's `("score", 10)`. The checker recorded the position types, so a
+/// whole number written where a `Float` was expected is stored as one, exactly
+/// as a list literal's elements are.
+fn evaluateTuple(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    positions: []const *const Ast.Expression,
+) Error!Value {
+    const checked = self.literal_types.get(expression).?;
+
+    const items = try self.gpa.alloc(Value, positions.len);
+    const kinds = self.gpa.alloc(Value.Kind, positions.len) catch |err| {
+        self.gpa.free(items);
+        return err;
+    };
+    for (kinds, checked.elements) |*slot, element| slot.* = kindOf(element);
+
+    // Filled one at a time, so a failure part-way releases only what is built.
+    var built: usize = 0;
+    errdefer {
+        for (items[0..built]) |item| self.heap.release(item);
+        self.gpa.free(items);
+        self.gpa.free(kinds);
+    }
+    while (built < positions.len) : (built += 1) {
+        items[built] = widen(try self.evaluate(positions[built]), kinds[built]);
+    }
+
+    return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
 }
 
 fn evaluateIndex(self: *Interpreter, expression: *const Ast.Expression, index: Ast.Expression.Index) Error!Value {
@@ -976,7 +1074,7 @@ fn evaluateUnary(
                 return .initInt(result[0]);
             },
             .float => |value| return .initFloat(-value),
-            .nothing, .bool, .string, .list, .closure => return self.raiseFmt(
+            .nothing, .bool, .string, .list, .tuple, .closure => return self.raiseFmt(
                 expression.span,
                 "`-` needs a number, but this is {s}",
                 .{operand.typeName()},
@@ -1173,7 +1271,10 @@ fn evaluateCall(
         if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
         return self.callValue(expression.span, call);
     }
-    if (call.callee.data == .member) return self.callMethod(expression, call, call.callee.data.member);
+    // A tuple position holding a block is called through its value.
+    if (call.callee.data == .member and call.callee.data.member.position == null) {
+        return self.callMethod(expression, call, call.callee.data.member);
+    }
     // Anything that is not a plain name is a value that must be evaluated
     // first: a lambda called where it is written, or an element of a list of
     // functions.
@@ -1262,6 +1363,10 @@ fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call, newline: bool) E
 const Callable = struct {
     /// What a stack trace calls it.
     name: []const u8,
+    /// A lambda's parameters as written, so section 8.6's `(name, age)` can be
+    /// unpacked where it is bound. Empty for a named function, whose
+    /// parameters are always plain names.
+    parameters: []const Ast.Expression.LambdaParameter = &.{},
     /// Whether `name` is the program's own name for it, which a lambda has not.
     named: bool = true,
     /// The file its body was written in, which is what its bare module-level
@@ -1324,6 +1429,7 @@ fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
             .name = "a block",
             .named = false,
             .file = closure.file,
+            .parameters = expression.data.lambda.parameters,
             // The checker recorded the lambda's type where it is written, which
             // is the only place its parameter and result types were known.
             .signature = self.literal_types.get(expression).?.signature.?.*,
@@ -1361,9 +1467,20 @@ fn invoke(
     try self.scopes.appendSlice(self.gpa, callable.captured);
 
     const frame = try self.pushScope();
-    for (callable.signature.parameter_names, arguments, callable.signature.parameters) |name, argument, parameter_type| {
+    for (callable.signature.parameter_names, arguments, callable.signature.parameters, 0..) |name, argument, parameter_type, index| {
         // An `Int` passed to a `Float` parameter arrives as a `Float`.
         const kind = kindOf(parameter_type);
+
+        // Section 8.6's `{ (name, age) => ... }`: one argument, unpacked into
+        // the names the block's header gave its positions.
+        if (index < callable.parameters.len) {
+            if (callable.parameters[index].pattern) |pattern| {
+                defer self.heap.release(argument);
+                try self.unpackInto(pattern, argument, .declare);
+                continue;
+            }
+        }
+
         // Section 7.4: `_` names nothing, so its argument has nowhere to live.
         if (std.mem.eql(u8, name, "_")) {
             self.heap.release(argument);
@@ -1899,6 +2016,6 @@ fn toFloat(value: Value) f64 {
     return switch (value.data) {
         .int => |number| @floatFromInt(number),
         .float => |number| number,
-        .nothing, .bool, .string, .list, .closure => unreachable,
+        .nothing, .bool, .string, .list, .tuple, .closure => unreachable,
     };
 }

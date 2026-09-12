@@ -1,0 +1,4 @@
+diagnostics/tuple-position.em:2:12: (String, Int) has no position 2
+  print(pair.2)
+             ^
+Its positions are `0` through `1`.

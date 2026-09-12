@@ -1,0 +1,4 @@
+diagnostics/tuple-assignment-target.em:3:8: only a name can be assigned to here
+  (name, pair.1) = ("c", 2)
+         ^^^^^^
+Unpacking assigns to names that already exist, as in `(left, right) = (right, left)`. Write `_` for a position you do not need.

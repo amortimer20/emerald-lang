@@ -299,31 +299,56 @@ fn declareModuleLevel(self: *Resolver, programs: []const Ast.Program) Error!void
     for (programs, 0..) |program, index| {
         self.file = @intCast(index);
         for (program.statements) |statement| {
-            const declaration = switch (statement.data) {
-                .declaration => |d| d,
-                else => continue,
-            };
-            const key = try self.keyOf(self.file, declaration.name);
-            if (module.contains(key)) {
-                try self.reportDuplicate(declaration.name, declaration.name_span, key);
-                continue;
+            switch (statement.data) {
+                .declaration => |declaration| {
+                    // A `const` with no value is reported below, and treated as
+                    // assignable so the one report covers it.
+                    const missing_value = !declaration.mutable and declaration.initializer == null;
+                    try self.hoistModuleName(
+                        module,
+                        declaration.name,
+                        declaration.name_span,
+                        declaration.mutable or missing_value,
+                        statement.span.end,
+                    );
+                },
+                // Section 8.2's `var (left, right) = pair` at the top level.
+                // Each name it introduces is a module-level name like any other.
+                .destructuring => |destructuring| for (destructuring.pattern.names) |name| {
+                    if (std.mem.eql(u8, name.text, "_")) continue;
+                    try self.hoistModuleName(
+                        module,
+                        name.text,
+                        name.span,
+                        destructuring.mutable,
+                        statement.span.end,
+                    );
+                },
+                else => {},
             }
-            // A `const` with no value is reported below, and treated as
-            // assignable so the one report covers it.
-            const missing_value = !declaration.mutable and declaration.initializer == null;
-            try module.put(self.arena, key, .{
-                .mutable = declaration.mutable or missing_value,
-                .span = declaration.name_span,
-            });
-            try self.facts.owner.put(self.arena, key, self.file);
-            try self.module_declarations.put(self.arena, key, .{
-                .file = self.file,
-                .span = declaration.name_span,
-                .end = statement.span.end,
-            });
-            try self.noteElsewhere(declaration.name);
         }
     }
+}
+
+fn hoistModuleName(
+    self: *Resolver,
+    module: *Scope,
+    name: []const u8,
+    span: Source.Span,
+    mutable: bool,
+    end: u32,
+) Error!void {
+    const key = try self.keyOf(self.file, name);
+    if (module.contains(key)) return self.reportDuplicate(name, span, key);
+
+    try module.put(self.arena, key, .{ .mutable = mutable, .span = span });
+    try self.facts.owner.put(self.arena, key, self.file);
+    try self.module_declarations.put(self.arena, key, .{
+        .file = self.file,
+        .span = span,
+        .end = end,
+    });
+    try self.noteElsewhere(name);
 }
 
 /// Section 7.1: "variables are visible only from their declarations." That is a
@@ -477,6 +502,7 @@ fn joinPath(self: *Resolver, path: []const []const u8) Error![]const u8 {
 fn checkModuleFile(self: *Resolver, statements: []const Ast.Statement) Error!void {
     for (statements) |statement| switch (statement.data) {
         .function_declaration => {},
+        .destructuring => {},
         .declaration => |declaration| {
             if (declaration.initializer != null) continue;
             try self.report(
@@ -797,32 +823,9 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             // the checker answers, since section 4.3's `const` covers both.
             if (assignment.indices.len > 0) return;
 
-            if (!found.binding.mutable) switch (found.binding.kind) {
-                .variable => try self.report(
-                    assignment.name_span,
-                    "`{s}` cannot be reassigned",
-                    .{assignment.name},
-                    "It was declared with `const`. Use `var` if the value needs to change.",
-                ),
-                .parameter => try self.report(
-                    assignment.name_span,
-                    "`{s}` cannot be reassigned",
-                    .{assignment.name},
-                    "Parameters are read-only. Assign it to a local variable first if you need a version that can change.",
-                ),
-                .loop_variable => try self.report(
-                    assignment.name_span,
-                    "`{s}` cannot be reassigned",
-                    .{assignment.name},
-                    "A loop variable takes each value in turn. Copy it into a `var` if you need one that changes.",
-                ),
-                .function => try self.report(
-                    assignment.name_span,
-                    "`{s}` is a function and cannot be assigned to",
-                    .{assignment.name},
-                    "Declare a variable with a different name to hold the value.",
-                ),
-            };
+            if (!found.binding.mutable) {
+                try self.reportReadOnly(assignment.name, assignment.name_span, found.binding.kind);
+            }
         },
 
         .conditional => |conditional| {
@@ -848,6 +851,94 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         .return_statement => |return_statement| {
             if (return_statement.value) |value| try self.walkExpression(value);
         },
+
+        .destructuring => |destructuring| {
+            try self.walkExpression(destructuring.initializer);
+            for (destructuring.pattern.names) |name| {
+                try self.declarePatternName(name, destructuring.mutable);
+            }
+        },
+
+        .destructuring_assignment => |assignment| {
+            // The whole right side first, so `(left, right) = (right, left)`
+            // reads both names before either is written, exactly as it runs.
+            try self.walkExpression(assignment.value);
+            for (assignment.pattern.names) |name| {
+                if (std.mem.eql(u8, name.text, "_")) continue;
+                try self.checkAmbiguous(name.text, name.span);
+                const found = self.lookup(name.text) orelse {
+                    try self.reportUndefined(
+                        name.span,
+                        name.text,
+                        "Declare it first with `var`, or check the spelling.",
+                    );
+                    continue;
+                };
+                if (!try self.declaredAbove(found, name.span)) continue;
+                if (self.lambda_depth > 0) {
+                    try self.facts.assigned_in_lambda.put(self.arena, name.text, {});
+                }
+                if (!found.binding.mutable) try self.reportReadOnly(name.text, name.span, found.binding.kind);
+            }
+        },
+    }
+}
+
+/// One name a pattern introduces. Section 8.2 makes `_` discard its position,
+/// so it binds nothing and may appear more than once.
+fn declarePatternName(self: *Resolver, name: Ast.Pattern.Name, mutable: bool) Error!void {
+    if (std.mem.eql(u8, name.text, "_")) return;
+
+    // Already in place, with its duplicates reported, if this is the module
+    // level; see `declareModuleLevel`.
+    if (self.scopes.items.len == module_scope + 1) return;
+
+    if (self.visibleLocal(name.text) != null) {
+        return self.report(
+            name.span,
+            "`{s}` is already declared",
+            .{name.text},
+            "Assign to the existing name instead of declaring it again, or choose a different name.",
+        );
+    }
+
+    const current = &self.scopes.items[self.scopes.items.len - 1];
+    try current.put(self.arena, name.text, .{ .mutable = mutable, .span = name.span });
+}
+
+/// The reason a name cannot be assigned to, which section 4.3, 6.4, and 7.1
+/// each give differently.
+fn reportReadOnly(
+    self: *Resolver,
+    name: []const u8,
+    span: Source.Span,
+    binding_kind: BindingKind,
+) Error!void {
+    switch (binding_kind) {
+        .variable => try self.report(
+            span,
+            "`{s}` cannot be reassigned",
+            .{name},
+            "It was declared with `const`. Use `var` if the value needs to change.",
+        ),
+        .parameter => try self.report(
+            span,
+            "`{s}` cannot be reassigned",
+            .{name},
+            "Parameters are read-only. Assign it to a local variable first if you need a version that can change.",
+        ),
+        .loop_variable => try self.report(
+            span,
+            "`{s}` cannot be reassigned",
+            .{name},
+            "A loop variable takes each value in turn. Copy it into a `var` if you need one that changes.",
+        ),
+        .function => try self.report(
+            span,
+            "`{s}` is a function and cannot be assigned to",
+            .{name},
+            "Declare a variable with a different name to hold the value.",
+        ),
     }
 }
 
@@ -859,6 +950,28 @@ fn walkFor(self: *Resolver, loop: Ast.For) Error!void {
 
     try self.push();
     defer self.pop();
+
+    if (loop.pattern) |pattern| {
+        for (pattern.names) |name| {
+            if (std.mem.eql(u8, name.text, "_")) continue;
+            if (self.visibleLocal(name.text) != null) {
+                try self.report(
+                    name.span,
+                    "`{s}` is already declared",
+                    .{name.text},
+                    "Give the loop variable a name of its own.",
+                );
+                continue;
+            }
+            try self.scopes.items[self.scopes.items.len - 1].put(self.arena, name.text, .{
+                .mutable = false,
+                .span = name.span,
+                .kind = .loop_variable,
+            });
+        }
+        try self.walkStatements(loop.body.statements);
+        return;
+    }
 
     // `_` visits each value without naming it.
     if (!std.mem.eql(u8, loop.name, "_")) {
@@ -1105,6 +1218,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             .expression => |part_expression| try self.walkExpression(part_expression),
         },
         .lambda => |lambda| try self.walkLambda(lambda),
+        .tuple_literal => |positions| for (positions) |position| try self.walkExpression(position),
     }
 }
 
@@ -1129,6 +1243,29 @@ fn walkLambda(self: *Resolver, lambda: Ast.Expression.Lambda) Error!void {
 
     const parameters = &self.scopes.items[self.scopes.items.len - 1];
     for (lambda.parameters) |parameter| {
+        // Section 8.6's `{ (name, age) => ... }`: the names of the unpacked
+        // tuple are the block's own, exactly as a plain parameter is.
+        if (parameter.pattern) |pattern| {
+            for (pattern.names) |name| {
+                if (std.mem.eql(u8, name.text, "_")) continue;
+                if (parameters.contains(name.text)) {
+                    try self.report(
+                        name.span,
+                        "`{s}` is already a parameter of this lambda",
+                        .{name.text},
+                        "Give each parameter a different name.",
+                    );
+                    continue;
+                }
+                try parameters.put(self.arena, name.text, .{
+                    .mutable = false,
+                    .span = name.span,
+                    .kind = .parameter,
+                });
+            }
+            continue;
+        }
+
         // Section 7.4: `_` discards the argument and may appear more than once,
         // so it binds nothing and cannot collide.
         if (std.mem.eql(u8, parameter.name, "_")) continue;
