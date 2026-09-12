@@ -31,6 +31,10 @@ pub const Kind = enum {
     set,
     /// Section 7.1's `func(Int): String`. `signature` holds its shape.
     function,
+    /// Section 10.1's user-defined value type. `name` is its program-wide
+    /// resolved name, so two declarations never become the same type merely
+    /// because their short spellings match.
+    struct_value,
     /// A type that could not be determined because something was already
     /// reported. It is compatible with everything, so one mistake produces one
     /// diagnostic instead of a cascade through every expression containing it.
@@ -46,6 +50,10 @@ elements: []const Type = &.{},
 key: ?*const Type = null,
 /// What a function takes and gives, and null for every other kind.
 signature: ?*const Signature = null,
+/// The resolved name of a user-defined type; empty for built-ins.
+name: []const u8 = "",
+/// The source-facing short name used in diagnostics.
+display_name: []const u8 = "",
 /// Section 4.2's trailing `?`: this value may be absent.
 ///
 /// A flag rather than a wrapping kind, because section 4.5 settles that
@@ -83,6 +91,10 @@ pub const int: Type = .{ .kind = .int };
 pub const float: Type = .{ .kind = .float };
 pub const string: Type = .{ .kind = .string };
 pub const invalid: Type = .{ .kind = .invalid };
+
+pub fn structOf(name: []const u8, display_name: []const u8) Type {
+    return .{ .kind = .struct_value, .name = name, .display_name = display_name };
+}
 
 /// `[element]`, with the element allocated from `allocator`, which must outlive
 /// the result.
@@ -126,6 +138,7 @@ pub fn eligibleKey(self: Type) bool {
         },
         // Reported already, and treated as usable so one mistake reports once.
         .invalid => true,
+        .struct_value => true,
         .nothing, .list, .dictionary, .set, .function => false,
     };
 }
@@ -199,6 +212,7 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 try writer.print(": {f}", .{signature.return_type});
             }
         },
+        .struct_value => try writer.writeAll(self.display_name),
         .invalid => try writer.writeAll("an unknown type"),
     }
 }
@@ -218,7 +232,7 @@ pub fn isNumber(self: Type) bool {
     if (self.optional) return false;
     return switch (self.kind) {
         .int, .float => true,
-        .nothing, .bool, .string, .list, .tuple, .dictionary, .set, .function, .invalid => false,
+        .nothing, .bool, .string, .list, .tuple, .dictionary, .set, .function, .struct_value, .invalid => false,
     };
 }
 
@@ -251,6 +265,7 @@ pub fn same(self: Type, other: Type) bool {
     if (self.kind == .invalid or other.kind == .invalid) return true;
     if (self.optional != other.optional) return false;
     if (self.kind != other.kind) return false;
+    if (self.kind == .struct_value) return std.mem.eql(u8, self.name, other.name);
     if (self.kind == .list or self.kind == .set) return self.element.?.same(other.element.?.*);
     if (self.kind == .dictionary) {
         return self.key.?.same(other.key.?.*) and self.element.?.same(other.element.?.*);

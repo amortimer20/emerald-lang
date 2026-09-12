@@ -15,7 +15,7 @@ const unicode = @import("unicode.zig");
 
 const Value = @This();
 
-pub const Kind = enum { nothing, bool, int, float, string, list, tuple, map, closure };
+pub const Kind = enum { nothing, bool, int, float, string, list, tuple, map, closure, struct_value };
 
 data: Data,
 
@@ -33,6 +33,13 @@ pub const Data = union(Kind) {
     map: *Heap.Map,
     /// Section 7.4's lambda, or section 7.5's captured function.
     closure: *Heap.Closure,
+    /// Empty structs carry no fields, only their stable type identity. A
+    /// pointer keeps the universal Value as compact as its other cases.
+    struct_value: *const StructType,
+};
+
+pub const StructType = struct {
+    name: []const u8,
 };
 
 pub const nothing: Value = .{ .data = .nothing };
@@ -70,13 +77,14 @@ pub fn typeName(self: Value) []const u8 {
         .tuple => "a tuple",
         .map => |map| if (map.is_set) "a set" else "a dictionary",
         .closure => "a function",
+        .struct_value => |descriptor| descriptor.name,
     };
 }
 
 /// Whether two values are numbers, which is what arithmetic and ordering need.
 pub fn isNumber(self: Value) bool {
     return switch (self.data) {
-        .nothing, .bool, .string, .list, .tuple, .map, .closure => false,
+        .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => false,
         .int, .float => true,
     };
 }
@@ -147,6 +155,7 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             .named => |name| try writer.print("<func {s}>", .{name}),
             .lambda => try writer.writeAll("<lambda>"),
         },
+        .struct_value => |descriptor| try writer.print("{s}()", .{shortName(descriptor.name)}),
     }
 }
 
@@ -169,7 +178,7 @@ pub fn hash(gpa: std.mem.Allocator, value: Value) std.mem.Allocator.Error!u64 {
 /// A tag per kind, mixed in so that a tuple of two values cannot collide with
 /// something else built from the same parts. `Int` and `Float` share one,
 /// because `1 == 1.0` and equal values must hash alike.
-const HashTag = enum(u8) { nothing, bool, number, string, tuple, unhashable };
+const HashTag = enum(u8) { nothing, bool, number, string, tuple, struct_value, unhashable };
 
 fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.mem.Allocator.Error!void {
     const tag: HashTag = switch (value.data) {
@@ -178,6 +187,7 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.
         .int, .float => .number,
         .string => .string,
         .tuple => .tuple,
+        .struct_value => .struct_value,
         .list, .map, .closure => .unhashable,
     };
     hasher.update(&.{@intFromEnum(tag)});
@@ -205,6 +215,7 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.
             }
         },
         .tuple => |tuple| for (tuple.items) |item| try hashInto(gpa, item, hasher),
+        .struct_value => |descriptor| hasher.update(descriptor.name),
         // The checker rejects these as keys (8.3), so this is a safety net.
         .list, .map, .closure => {},
     }
@@ -295,6 +306,10 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
             },
             else => false,
         },
+        .struct_value => |a| switch (right.data) {
+            .struct_value => |b| a == b,
+            else => false,
+        },
     };
 }
 
@@ -323,7 +338,7 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
         .int => |a| switch (right.data) {
             .int => |b| std.math.order(a, b),
             .float => |b| orderIntFloat(a, b),
-            .nothing, .bool, .string, .list, .tuple, .map, .closure => null,
+            .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => null,
         },
         .float => |a| switch (right.data) {
             .int => |b| if (orderIntFloat(b, a)) |result| result.invert() else null,
@@ -331,10 +346,15 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
                 null
             else
                 std.math.order(a, b),
-            .nothing, .bool, .string, .list, .tuple, .map, .closure => null,
+            .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => null,
         },
-        .nothing, .bool, .string, .list, .tuple, .map, .closure => null,
+        .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => null,
     };
+}
+
+fn shortName(name: []const u8) []const u8 {
+    if (std.mem.lastIndexOfScalar(u8, name, '.')) |at| return name[at + 1 ..];
+    return name;
 }
 
 /// Compares an `Int` against a `Float` exactly, by splitting the float rather

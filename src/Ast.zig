@@ -57,6 +57,9 @@ pub const Statement = struct {
         /// Section 6.4's `continue`, holding its keyword's span.
         continue_statement: Source.Span,
         function_declaration: FunctionDeclaration,
+        /// Section 10's user-defined value type. The first object-model slice
+        /// admits the fieldless form; stored members extend this node next.
+        struct_declaration: StructDeclaration,
         return_statement: Return,
         /// Section 8.2's `var (name, age) = entry`.
         destructuring: Destructuring,
@@ -64,6 +67,11 @@ pub const Statement = struct {
         /// names that already exist.
         destructuring_assignment: DestructuringAssignment,
     };
+};
+
+pub const StructDeclaration = struct {
+    name: []const u8,
+    name_span: Source.Span,
 };
 
 /// Section 8.2's `(name, age)`: the names a tuple is unpacked into. `_`

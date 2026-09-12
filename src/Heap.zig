@@ -747,7 +747,7 @@ const Object = union(enum) {
             .map => |map| .{ .map = map },
             .string => |text| .{ .text = text },
             .closure => |closure| .{ .closure = closure },
-            .nothing, .bool, .int, .float => null,
+            .nothing, .bool, .int, .float, .struct_value => null,
         };
     }
 };

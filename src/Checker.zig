@@ -76,6 +76,9 @@ const Binding = struct {
     /// A function's name. Its `type` is unused; a call goes through
     /// `signatureFor` instead.
     is_function: bool = false,
+    /// A user-defined type name. It can be called to construct a value, but it
+    /// is not itself a runtime value.
+    is_type: bool = false,
     /// Assigned inside a loop and not before it, so unassigned after the loop
     /// only because the loop might not run. Changes the correction a read
     /// before assignment offers, since "every branch" would not describe it.
@@ -109,6 +112,8 @@ diagnostics: std.ArrayList(Diagnostic) = .empty,
 
 facts: Resolver.Facts,
 declarations: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
+/// User-defined structs, keyed by the same resolved names as module bindings.
+structs: std.StringHashMapUnmanaged(Type) = .empty,
 /// Memoized by `signatureFor`.
 signatures: Type.Signatures = .empty,
 /// Bodies already checked, so each is checked exactly once whichever of
@@ -173,6 +178,19 @@ pub fn check(
     for (programs, 0..) |program, index| {
         checker.file = @intCast(index);
         for (program.statements) |statement| {
+            if (statement.data == .struct_declaration) {
+                const declaration = statement.data.struct_declaration;
+                const key = checker.keyOf(declaration.name);
+                const struct_type = Type.structOf(key, declaration.name);
+                try checker.structs.put(arena, key, struct_type);
+                try module.put(arena, key, .{
+                    .type = struct_type,
+                    .declared = struct_type,
+                    .assigned = true,
+                    .is_type = true,
+                });
+                continue;
+            }
             const function = switch (statement.data) {
                 .function_declaration => |f| f,
                 else => continue,
@@ -359,6 +377,7 @@ fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
         .continue_statement => |span| _ = try self.enclosingLoop(span, "continue"),
         // Checked after the top level; see the module comment.
         .function_declaration => {},
+        .struct_declaration => {},
         .return_statement => |return_statement| try self.checkReturn(return_statement),
         .destructuring => |destructuring| try self.checkDestructuring(destructuring),
         .destructuring_assignment => |assignment| try self.checkDestructuringAssignment(assignment),
@@ -1521,15 +1540,15 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         return Type.functionOf(self.arena, .{ .parameters = parameters, .return_type = result });
     }
 
-    return Type.fromName(annotation.name) orelse {
-        try self.report(
-            annotation.span,
-            "`{s}` is not a type",
-            .{annotation.name},
-            "The types available so far are `Int`, `Float`, `Bool`, `String`, `Nothing`, lists of them such as `[Int]`, and functions such as `func(Int): Bool`.",
-        );
-        return .invalid;
-    };
+    if (Type.fromName(annotation.name)) |builtin| return builtin;
+    if (self.structs.get(self.keyOf(annotation.name))) |user_type| return user_type;
+    try self.report(
+        annotation.span,
+        "`{s}` is not a type",
+        .{annotation.name},
+        "Check the spelling or declare the struct in this project.",
+    );
+    return .invalid;
 }
 
 /// Section 4.5's narrowing: records what a condition proves about a name that
@@ -1670,6 +1689,15 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             // while inferring early for a call that `checkCaptures` rejects.
             const binding = self.find(name) orelse break :blk .invalid;
             // Section 3.4 and 7.5: a bare function name is its callable value.
+            if (binding.is_type) {
+                try self.report(
+                    expression.span,
+                    "`{s}` is a type, not a value",
+                    .{name},
+                    "Construct a value by calling the type with parentheses.",
+                );
+                break :blk .invalid;
+            }
             if (binding.is_function) {
                 break :blk try self.typeOfFunctionValue(expression, .{ .key = self.keyOf(name), .display = name });
             }
@@ -2212,6 +2240,15 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
     const binding = self.findKey(reference.key) orelse return .invalid;
+    if (binding.is_type) {
+        try self.report(
+            expression.span,
+            "`{s}` is a type, not a value",
+            .{reference.display},
+            "Construct a value by calling the type with parentheses.",
+        );
+        return .invalid;
+    }
     if (binding.is_function) return self.typeOfFunctionValue(expression, reference);
     if (!binding.assigned) {
         try self.reportUnassigned(expression.span, reference.display, binding.*);
@@ -3163,6 +3200,19 @@ fn typeOfCall(
         return .invalid;
     };
 
+    if (binding.is_type) {
+        if (call.arguments.len != 0) {
+            try self.report(
+                call.callee.span,
+                "`{s}` takes no arguments, but this call passes {d}",
+                .{ name, call.arguments.len },
+                "This fieldless struct uses its generated zero-argument constructor.",
+            );
+            try self.typeArguments(call.arguments);
+        }
+        return binding.type;
+    }
+
     // A variable holding a function is called through its value, which is how
     // a parameter or a local that received a lambda is used.
     if (!binding.is_function) return self.typeOfValueCall(call, binding.type, name);
@@ -3334,7 +3384,7 @@ fn stmtCompletes(statement: Ast.Statement) bool {
         },
         // Only a `break` ends `while true`. Any other loop can end on its own.
         .while_loop => |loop| !isLiteralTrue(loop.condition) or blockBreaks(loop.body.statements),
-        .for_loop, .expression, .declaration, .assignment, .function_declaration => true,
+        .for_loop, .expression, .declaration, .assignment, .function_declaration, .struct_declaration => true,
     };
 }
 
@@ -3360,7 +3410,7 @@ fn stmtBreaks(statement: Ast.Statement) bool {
         },
         .while_loop, .for_loop, .return_statement, .continue_statement => false,
         .destructuring, .destructuring_assignment => false,
-        .expression, .declaration, .assignment, .function_declaration => false,
+        .expression, .declaration, .assignment, .function_declaration, .struct_declaration => false,
     };
 }
 
@@ -3393,7 +3443,7 @@ fn statementHasValueReturn(statement: Ast.Statement) bool {
         .while_loop => |loop| blockHasValueReturn(loop.body.statements),
         .for_loop => |loop| blockHasValueReturn(loop.body.statements),
         .destructuring, .destructuring_assignment => false,
-        .expression, .declaration, .assignment, .function_declaration => false,
+        .expression, .declaration, .assignment, .function_declaration, .struct_declaration => false,
         .break_statement, .continue_statement => false,
     };
 }

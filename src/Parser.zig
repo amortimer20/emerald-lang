@@ -371,6 +371,19 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             }
             break :blk statement;
         },
+        .keyword_struct => blk: {
+            const nested = !self.at_top_level;
+            const keyword = self.peek().span;
+            const statement = try self.parseStructDeclaration();
+            if (nested) {
+                return self.report(
+                    keyword,
+                    "a struct declaration belongs at the top level",
+                    "Move this struct out of the enclosing block.",
+                );
+            }
+            break :blk statement;
+        },
         // Section 8.2's `(left, right) = (right, left)`. Recognized before the
         // expression parser sees it, because `_` is a destination here and not
         // an expression anywhere.
@@ -395,6 +408,58 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             "Remove it, or look above for a block that is missing its opening `{`.",
         ),
         else => self.parseSimpleStatement(),
+    };
+}
+
+/// The first object-model slice: a named, fieldless value type. Keeping this
+/// runnable before fields arrive establishes type identity, construction,
+/// equality, display, and heap ownership without hiding them in a larger step.
+fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
+    const keyword = self.advance();
+    const name = self.peek();
+    if (name.kind != .identifier) {
+        return self.reportFmt(
+            name.span,
+            "expected a name after `struct`, found {s}",
+            .{name.kind.describe()},
+            "A struct declaration needs a PascalCase name, as in `struct Marker { }`.",
+        );
+    }
+    _ = self.advance();
+
+    if (self.match(.left_brace) == null) {
+        return self.reportFmt(
+            self.peek().span,
+            "expected `{{` after `{s}`, found {s}",
+            .{ self.text(name), self.peek().kind.describe() },
+            "A struct body is enclosed in braces, as in `struct Marker { }`.",
+        );
+    }
+    self.skipSeparators();
+    if (!self.check(.right_brace)) {
+        const unsupported = self.peek().span;
+        // Consume this simple body before reporting so recovery resumes after
+        // the declaration rather than treating each field and the closing
+        // brace as unrelated top-level mistakes.
+        while (!self.check(.right_brace) and !self.check(.eof)) _ = self.advance();
+        if (self.check(.right_brace)) {
+            _ = self.advance();
+            if (self.check(.newline)) _ = self.advance();
+        }
+        return self.report(
+            unsupported,
+            "stored fields are not available yet",
+            "Use an empty struct body for now.",
+        );
+    }
+    const closing = self.advance();
+    try self.expectStatementEnd();
+    return .{
+        .span = spanning(keyword.span, closing.span),
+        .data = .{ .struct_declaration = .{
+            .name = try self.identifier(name),
+            .name_span = name.span,
+        } },
     };
 }
 

@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Claude after the dictionaries and sets slice.
+Updated: 2026-09-12. Prepared by Codex after the first object-model sub-slice.
 
 ## Current milestone
 
@@ -14,6 +14,12 @@ during the callable slice: the old slice 9 bundled closures with the collector, 
 are now slice 9 (callables) and slice 10 (the managed heap). The whole frontend pipeline of
 section 19.2 exists: source manager, lexer, parser, name resolver, type checker,
 interpreter.
+
+The object model has begun with its smallest end-to-end foundation: a fieldless
+`struct Marker { }` declares a hoisted user type, `Marker()` uses its generated
+zero-argument constructor, annotations and function signatures may name it, and values
+have structural equality, source-shaped display, namespace identity, and dictionary-key
+behavior. Stored fields are the next sub-slice.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -109,6 +115,9 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   errors, section 4.1's definite assignment, and everything section 7 asks of functions.
 - `src/Value.zig` holds `Nothing`, `Bool`, `Int`, `Float`, and lists, implements section
   9.4's display rules, and compares and orders values.
+- The first section 10 sub-slice carries user-defined struct identity through the AST,
+  resolver, checker, interpreter, and runtime value representation. Fieldless structs are
+  hoisted, constructible, printable, structurally comparable, and eligible as stable keys.
 - `src/Heap.zig` owns list buffers, string texts, scope environments, and closures:
   reference counts, copy-on-write, and section 19.5's mark-and-sweep collector, which walks
   the lists of every live object and reclaims the cycles counting cannot.
@@ -580,16 +589,17 @@ still open.
 
 ## Next concrete step
 
-Section 20's slice 12, the object model: structs, classes, construction, properties,
-inheritance, traits, operators, and enums, in dependency order. It is by far the largest
-remaining piece and everything after it depends on it, so it will want splitting into
-several slices of its own — structs and construction first, since they need no
-inheritance.
+Continue section 20's slice 12 with required stored struct fields and the generated
+positional constructor. Extend the stable struct descriptor with ordered field metadata,
+store values in the runtime struct value, implement field reads and structural display and
+equality, and preserve value semantics. Field assignment, defaults, custom constructors,
+methods, and properties should remain later sub-slices so each semantic layer is runnable
+and testable on its own.
 
 Section 8's collections are now finished, which was the argument for doing them first:
-`Type` still has a fixed `Kind` enum, and the object model has to replace it with something
-that holds user-declared types. Everything section 8 asked for is in place before that
-happens.
+`Type` now carries resolved identity for a user-declared struct alongside its kind. The
+remaining object-model sub-slices can extend that identity with members and relationships
+without redesigning the collection types underneath it.
 
 The remaining alternative is section 13, errors and tests: typed errors, `raise`,
 `try`/`catch`/`finally`, `assert`, and `emerald test`. It is smaller than the object model
@@ -604,7 +614,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 303 unit tests, 140 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 303 unit tests, 143 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

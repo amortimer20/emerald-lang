@@ -142,6 +142,9 @@ scopes: std.ArrayList(*Environment) = .empty,
 spare_scopes: std.ArrayList(*Environment) = .empty,
 
 functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
+/// Fieldless struct constructors, keyed program-wide and carrying their short
+/// source name for display.
+structs: std.StringHashMapUnmanaged(*const Value.StructType) = .empty,
 /// What the checker proved about each function, including return types it
 /// inferred, which are needed to widen results the way it allowed.
 signatures: *const Type.Signatures,
@@ -208,6 +211,17 @@ pub fn run(
     for (programs, 0..) |program, index| {
         interpreter.file = @intCast(index);
         for (program.statements) |statement| {
+            if (statement.data == .struct_declaration) {
+                const declaration = statement.data.struct_declaration;
+                const descriptor = try interpreter.arena.create(Value.StructType);
+                descriptor.* = .{ .name = interpreter.keyOf(declaration.name) };
+                try interpreter.structs.put(
+                    interpreter.arena,
+                    interpreter.keyOf(declaration.name),
+                    descriptor,
+                );
+                continue;
+            }
             if (statement.data != .function_declaration) continue;
             const function = statement.data.function_declaration;
             try interpreter.functions.put(interpreter.arena, interpreter.keyOf(function.name), function);
@@ -419,6 +433,9 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
 
         // Hoisted into `self.functions` before anything runs.
         .function_declaration => {},
+        // A type declaration describes construction; executing it has no
+        // runtime effect.
+        .struct_declaration => {},
 
         .return_statement => |return_statement| {
             self.return_value = if (return_statement.value) |value|
@@ -842,7 +859,7 @@ fn widen(value: Value, kind: Value.Kind) Value {
 fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
     if (annotation.element != null) return .list;
     if (annotation.signature != null) return .closure;
-    return kindOf(Type.fromName(annotation.name) orelse .invalid);
+    return kindOf(Type.fromName(annotation.name) orelse Type.structOf(annotation.name, annotation.name));
 }
 
 /// The runtime kind for a checked type. `.invalid` never reaches a program that
@@ -858,6 +875,7 @@ fn kindOf(checked: Type) Value.Kind {
         .tuple => .tuple,
         .dictionary, .set => .map,
         .function => .closure,
+        .struct_value => .struct_value,
     };
 }
 
@@ -1318,7 +1336,7 @@ fn evaluateUnary(
                 return .initInt(result[0]);
             },
             .float => |value| return .initFloat(-value),
-            .nothing, .bool, .string, .list, .tuple, .map, .closure => return self.raiseFmt(
+            .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => return self.raiseFmt(
                 expression.span,
                 "`-` needs a number, but this is {s}",
                 .{operand.typeName()},
@@ -1512,6 +1530,7 @@ fn evaluateCall(
     // resolver decided which, and recorded it.
     if (self.facts.qualified.get(call.callee)) |key| {
         try self.reach(key, call.callee.span);
+        if (self.structs.get(key)) |descriptor| return .{ .data = .{ .struct_value = descriptor } };
         if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
         return self.callValue(expression.span, call);
     }
@@ -1531,6 +1550,7 @@ fn evaluateCall(
     const key = self.keyOf(name);
     try self.reach(key, call.callee.span);
     if (self.find(name) != null) return self.callValue(expression.span, call);
+    if (self.structs.get(key)) |descriptor| return .{ .data = .{ .struct_value = descriptor } };
     if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
     if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
         return self.evaluateInput(expression.span, call, std.mem.eql(u8, name, "input_maybe"));
@@ -2457,6 +2477,6 @@ fn toFloat(value: Value) f64 {
     return switch (value.data) {
         .int => |number| @floatFromInt(number),
         .float => |number| number,
-        .nothing, .bool, .string, .list, .tuple, .map, .closure => unreachable,
+        .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => unreachable,
     };
 }

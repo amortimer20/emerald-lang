@@ -104,7 +104,7 @@ pub const Resolved = struct {
 /// declared by any program, so they live in a scope of their own.
 pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe" };
 
-pub const BindingKind = enum { variable, parameter, loop_variable, function };
+pub const BindingKind = enum { variable, parameter, loop_variable, function, type };
 
 const Binding = struct {
     mutable: bool,
@@ -288,6 +288,7 @@ fn declareModuleLevel(self: *Resolver, programs: []const Ast.Program) Error!void
     for (programs, 0..) |program, index| {
         self.file = @intCast(index);
         try self.hoistFunctions(program.statements);
+        try self.hoistTypes(program.statements);
     }
     // Module-level variables are hoisted into the scope too, not added as the
     // walk reaches them. Section 14.2 makes same-directory names directly
@@ -327,6 +328,31 @@ fn declareModuleLevel(self: *Resolver, programs: []const Ast.Program) Error!void
                 else => {},
             }
         }
+    }
+}
+
+/// User-defined types are hoisted like functions: their names describe the
+/// program rather than an initialization step, and fields may refer to types
+/// declared later.
+fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
+    const module = &self.scopes.items[module_scope];
+    for (statements) |statement| {
+        const declaration = switch (statement.data) {
+            .struct_declaration => |value| value,
+            else => continue,
+        };
+        const key = try self.keyOf(self.file, declaration.name);
+        if (module.contains(key)) {
+            try self.reportDuplicate(declaration.name, declaration.name_span, key);
+            continue;
+        }
+        try module.put(self.arena, key, .{
+            .mutable = false,
+            .span = declaration.name_span,
+            .kind = .type,
+        });
+        try self.facts.owner.put(self.arena, key, self.file);
+        try self.noteElsewhere(declaration.name);
     }
 }
 
@@ -501,7 +527,7 @@ fn joinPath(self: *Resolver, path: []const []const u8) Error![]const u8 {
 /// position in the walk can change what a program does.
 fn checkModuleFile(self: *Resolver, statements: []const Ast.Statement) Error!void {
     for (statements) |statement| switch (statement.data) {
-        .function_declaration => {},
+        .function_declaration, .struct_declaration => {},
         .destructuring => {},
         .declaration => |declaration| {
             if (declaration.initializer != null) continue;
@@ -595,7 +621,7 @@ fn reportDuplicate(self: *Resolver, name: []const u8, span: Source.Span, key: []
         span,
         "`{s}` is already declared",
         .{name},
-        "A name declares one function. Choose a different name, or remove the duplicate.",
+        "Each name can have one declaration in a scope. Choose a different name, or remove the duplicate.",
     );
 }
 
@@ -847,6 +873,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         .break_statement, .continue_statement => {},
 
         .function_declaration => |function| try self.walkFunctionBody(function),
+        .struct_declaration => {},
 
         .return_statement => |return_statement| {
             if (return_statement.value) |value| try self.walkExpression(value);
@@ -938,6 +965,12 @@ fn reportReadOnly(
             "`{s}` is a function and cannot be assigned to",
             .{name},
             "Declare a variable with a different name to hold the value.",
+        ),
+        .type => try self.report(
+            span,
+            "`{s}` is a type and cannot be assigned to",
+            .{name},
+            "Declare a variable with a different name to hold a value.",
         ),
     }
 }
