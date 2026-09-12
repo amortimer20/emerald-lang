@@ -1,0 +1,5 @@
+print("the program starts")
+print(Store.greeting)
+print("and again")
+print(Store.greeting)
+print(Store.shout())

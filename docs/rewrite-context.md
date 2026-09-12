@@ -1962,8 +1962,13 @@ Inside a project, every `.em` file under the project root is included; no import
 needed merely to make project files exist. `main.em` is the entry file, and `emerald run
 path/to/file.em` may select another entry explicitly. Until a manifest exists, the project
 root is the directory containing `main.em`, independent of the terminal's working
-directory. The complete rules for finding a project root and for `emerald.toml` are a
-roadmap item (24).
+directory. What `emerald.toml` holds is still a roadmap item (24).
+
+Only the directory a file sits in is consulted, never a directory above it. `emerald run
+ex1.em` in a folder of exercises sees no project even when one exists further up, which is
+what keeps that layout working. The consequence is that a file in a subdirectory of a
+project, run on its own, is a program on its own: it sees none of its project, and a name
+it cannot find says so and names the entry to run instead.
 
 The rewrite adopts the clearer top-level boundary suggested in the discussion:
 
@@ -1975,11 +1980,17 @@ The rewrite adopts the clearer top-level boundary suggested in the discussion:
 This replaces the historical prototype's “top-level statements in every file” behavior
 and avoids hidden file-order or import-order effects.
 
-A non-entry module file may declare functions and module-level bindings. It is named from
-the file, initializes once when one of its members is first accessed, and processes
-bindings in declaration order. Including it or naming it in `using` does not initialize
-it. A cycle reaching an unfinished binding is an initialization-cycle error. If
-initialization raises, later access reports the original failure without retrying it.
+A non-entry module file may declare functions and module-level bindings. The file is the
+unit of initialization: it initializes once when one of its members is first accessed, and
+processes bindings in declaration order. Including it or naming it in `using` does not
+initialize it. Reaching a function of a file that is still initializing is not a cycle,
+because declarations are hoisted and a function body runs later; reaching a binding it has
+not got to yet is an initialization-cycle error. If initialization raises, later access
+reports the original failure without retrying it.
+
+Because only the entry file's top level runs, a module-level binding elsewhere has nowhere
+to be assigned but its own declaration, so one without a value is rejected where it is
+written.
 
 Type-level fields follow the same lazy rule, initializing once in declaration order when
 the type is first constructed or a type-level member is accessed. Merely mentioning the
@@ -2005,6 +2016,14 @@ game/
     circle.em       → Shapes.Circle
 ```
 
+The directory is the whole of the name: the file contributes nothing to it. `circle.em`
+above puts its declarations in `Shapes`, and moving a declaration from `circle.em` to a new
+`square.em` beside it changes nothing that any other file writes. This settles the question
+24 left open, in favor of the reading 14.3 already implies by removing filename-as-type.
+Each directory becomes one namespace segment, written the way a type is written:
+`ui_kit/` is `UiKit`. A directory that cannot be read as a name is reported rather than
+skipped.
+
 An optional `using` declaration shortens repeated qualification:
 
 ```emerald
@@ -2018,12 +2037,20 @@ using UiColor = Graphics.Color
 ```
 
 `using` is file-local, imports only direct public names, and does not include or execute
-files. Ambiguity is reported when a conflicting short name is used; a focused alias or
-fully qualified name resolves it. Project inclusion remains independent from `using`.
+files. It may appear anywhere in a file and applies to all of it, since it names no order
+of execution. An alias may name either a namespace or one declaration in it. Ambiguity is
+reported when a conflicting short name is used; a focused alias or fully qualified name
+resolves it. A name the file's own namespace declares is never ambiguous: `using` cannot
+take a name out from under the directory that declared it. Project inclusion remains
+independent from `using`.
 
 A leading underscore on a module-level declaration makes it private to that module, just
-as it does for a type member. Other public same-directory declarations are directly
-visible; names across subdirectories use their namespace unless shortened by `using`.
+as it does for a type member. The module there is the file, so two files in one directory
+may each declare `_helper` without colliding, and neither can reach the other's. Other
+public same-directory declarations are directly visible, whichever file they are in and in
+whatever order the files are read; names across subdirectories use their namespace unless
+shortened by `using`. Two files in one directory declaring the same public name is an
+error, reported against the second with the first one named.
 
 ### 14.3 File shapes
 
@@ -2705,6 +2732,14 @@ recorded in their normative sections:
 | List method results (8.5) | `remove_at`, `remove_first`, and `remove_last` return the removed element; removing from an empty list is an error; a list displays as it is written | The spec named the methods but not their results. Returning the element is the common expectation, and an error on empty matches indexing's strict bounds until optionals exist. |
 | Range direction (6.4) | Ranges count upward only; a start past the end is empty | A self-reversing range turns every computed bound into an edge-case bug: `0..items.count - 1` visits `0, -1` for an empty list. `down_to` and `reverse()` already spell counting down. Supersedes the recovered endpoint-direction rule. |
 | Project detection (14.1) | A directory is a project only when it contains `main.em`; otherwise a file runs alone | Including every file in the entry's directory broke the most common beginner layout, a folder of independent exercises. |
+| Finding the project root (14.1, 24) | Only the file's own directory is consulted, never one above it | Searching upward would pull a folder of exercises into whatever project happens to be above it, which is the surprise 14.1 exists to avoid. A subdirectory file run on its own is then a program on its own, and the "not defined" it produces names the entry to run instead, so the rule explains itself the first time it bites. |
+| What a file names (14.2, 24) | The directory is the namespace; the file names nothing | 14.2 read both ways. 14.3 had already removed filename-as-implicit-type, and 14.2 makes same-directory names directly visible, so the file cannot be part of the name without contradicting both. It also means splitting one file into two changes nothing any other file writes, which is the refactor a growing program reaches for first. |
+| Namespace spelling (14.2) | One segment per directory, `snake_case` to `PascalCase`: `ui_kit/` is `UiKit` | Directories follow 3.2's file naming and namespaces read like types, so the mapping has to be stated somewhere. A directory whose name cannot be read as one is reported rather than skipped, because skipping it would make its declarations silently unreachable. |
+| The unit of initialization and privacy (14.1, 14.2) | The file, not the directory | The two are separable: the directory answers "what is this called", the file answers "when does it run" and "who can see it". Keeping privacy with the file is what lets two files in one directory each have a `_helper`. |
+| Reaching a file that is initializing (14.1) | A function is fine; an unfinished binding is the cycle error | Declarations are hoisted, so a function value exists before any binding does, and a body runs later. Treating every reach as a cycle rejected `const x = helper()` calling a function in its own file, which is the ordinary way to write one. |
+| Module bindings outside the entry file (14.1) | Must have a value where they are declared | Only the entry file's top level runs, so there is nowhere else an assignment could happen. Reporting it at the declaration is better than letting the checker's definite assignment report it at every read. |
+| A `using` collision with a local name (14.2) | The file's own namespace wins, silently | 14.2 makes same-directory names directly visible. An import that could shadow them would make adding a declaration to a neighboring file change what an unrelated file means. Only two imports conflicting with each other is ambiguity, and that is reported where the name is used. |
+| Where a block's names come from (7.4, 14.1) | The file the block was written in, wherever it is called | A block passed to another file and called there is still the block that was written where it was written. The closure carries its file for the same reason it carries its scopes. |
 | Integer exponentiation (5.3) | Two `Int`s give an `Int`; a negative `Int` exponent raises | Squares and cubes are the common case, and `side ** 2` printing `49.0` or failing to fit an `Int` was a papercut. Matches `//`. |
 | Functions with no result (6.5, 7.2) | They return `Nothing`; no separate "no result" category | The distinction had no observable difference. Unifying them also settles that a recursive function with no result needs no annotation, since there is nothing to infer. |
 | `?` predicates (3.3, 4.2) | Always return plain `Bool`; the conformance example changed | The earlier example `func valid?(): Bool?` contradicted 3.3's rule. |
@@ -2761,11 +2796,9 @@ for working Emerald programs, implementation measurements, or a dedicated design
   defaults, named arguments, and named factory functions are genuinely insufficient;
 - immutable collection views, covariance, `Any`, user generics, and user `Iterable`;
 - stable C ABI declarations and ownership rules based on an actual library binding;
-- project rules: how a project root is found from a file in a subdirectory, whether and how
-  a subdirectory file can be run as a standalone program inside a project, what
-  `emerald.toml` holds and how it interacts with `main.em`, and whether `shapes/circle.em`
-  names a module `Shapes.Circle` or only a namespace for the types declared in it (14.2
-  currently reads both ways);
+- what `emerald.toml` holds and how it interacts with `main.em`. The rest of the project
+  rules were settled with the project slice and are recorded in 14.1, 14.2, and the
+  decision table in 22;
 - project templates and the eventual build, distribution, and package commands;
 - generated documentation and its searchable reference interface;
 - serialization, filesystem encoding policy, clocks, dates, time zones, and networking;

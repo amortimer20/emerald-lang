@@ -1,0 +1,4 @@
+diagnostics/duplicate-in-namespace/shapes/two.em:1:6: `area` is already declared in `diagnostics/duplicate-in-namespace/shapes/one.em`
+  func area(width: Int, height: Int): Int {
+       ^^^^
+Files in one directory share a namespace. Rename one, or make this one private by starting its name with `_`.

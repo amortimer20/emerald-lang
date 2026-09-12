@@ -1,0 +1,4 @@
+runtime-errors/initialization-cycle/second/two.em:1:15: `runtime-errors/initialization-cycle/first/one.em` is still being set up, so `First.value` cannot be read yet
+  const value = First.value
+                ^^^^^^^^^^^
+Two values are waiting on each other. Break the cycle by moving one into a function, which runs when it is called rather than when the file is set up.

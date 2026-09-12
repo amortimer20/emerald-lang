@@ -100,6 +100,9 @@ pub const Closure = struct {
     /// The environments visible where it was written, outermost first. Held,
     /// so they outlive the blocks that created them.
     captured: []*Environment,
+    /// The file it was written in, which decides what its bare module-level
+    /// names mean wherever it is eventually called (14.1).
+    file: u32 = 0,
     /// Collector bookkeeping; see `collect`.
     marked: bool = false,
     internal: u32 = 0,
@@ -246,6 +249,7 @@ pub fn createClosure(
     self: *Heap,
     function: Closure.Function,
     captured: []*Environment,
+    file: u32,
 ) std.mem.Allocator.Error!*Closure {
     self.maybeCollect();
     const closure = self.gpa.create(Closure) catch |err| {
@@ -253,7 +257,7 @@ pub fn createClosure(
         return err;
     };
     self.live_objects += 1;
-    closure.* = .{ .function = function, .captured = captured };
+    closure.* = .{ .function = function, .captured = captured, .file = file };
     for (captured) |environment| environment.references += 1;
     closure.next = self.live_closures;
     if (self.live_closures) |first| first.previous = closure;
@@ -714,7 +718,7 @@ test "a cycle is reclaimed, which counting alone cannot do" {
     // A closure that captured the environment its own name lives in, which is
     // what `const block = { ... }` builds.
     const environment = try heap.createEnvironment();
-    const closure = try heap.createClosure(.{ .named = "block" }, try testing.allocator.dupe(*Environment, &.{environment}));
+    const closure = try heap.createClosure(.{ .named = "block" }, try testing.allocator.dupe(*Environment, &.{environment}), 0);
     try environment.bindings.put(testing.allocator, "block", .{
         .kind = .closure,
         .value = .{ .data = .{ .closure = closure } },
@@ -758,7 +762,7 @@ test "a dead cycle releases what it held, so survivors are not kept by it" {
 
     {
         const environment = try heap.createEnvironment();
-        const closure = try heap.createClosure(.{ .named = "block" }, try testing.allocator.dupe(*Environment, &.{environment}));
+        const closure = try heap.createClosure(.{ .named = "block" }, try testing.allocator.dupe(*Environment, &.{environment}), 0);
         try environment.bindings.put(testing.allocator, "block", .{
             .kind = .closure,
             .value = .{ .data = .{ .closure = closure } },

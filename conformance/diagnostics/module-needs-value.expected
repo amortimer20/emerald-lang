@@ -1,0 +1,4 @@
+diagnostics/module-needs-value/helpers/total.em:1:5: `total` needs its value here
+  var total: Int
+      ^^^^^
+Only the entry file, `diagnostics/module-needs-value/main.em`, runs statements, so there is nowhere else to assign it. Write its value after `=`.

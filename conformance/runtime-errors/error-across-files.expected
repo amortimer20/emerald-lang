@@ -1,0 +1,6 @@
+runtime-errors/error-across-files/math/divide.em:6:12: floor division by zero
+      return value // by
+             ^^^^^^^^^^^
+Check the divisor before dividing. Division by zero has no result for either numeric type.
+in `step`, called at runtime-errors/error-across-files/math/divide.em:2:12
+in `halve`, called at runtime-errors/error-across-files/main.em:1:7

@@ -1,0 +1,4 @@
+diagnostics/module-statement/helpers/greet.em:1:1: this would never run
+  print("this runs at load time")
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Only the entry file runs its top level. Move this into `diagnostics/module-statement/main.em`, or into a function declared in this file.

@@ -28,12 +28,28 @@
 const std = @import("std");
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
+const Project = @import("Project.zig");
 const Source = @import("Source.zig");
 
 const Resolver = @This();
 
 /// A set of names, used for both halves of `Facts`.
 pub const NameSet = std.StringHashMapUnmanaged(void);
+
+/// What one file calls a module-level declaration, mapped to the one name the
+/// whole program calls it. See `Keys` below for how a key is built.
+pub const KeyMap = std.StringHashMapUnmanaged([]const u8);
+
+/// The separator between a file's path and a private declaration's name. It
+/// cannot appear in an identifier, so a private key can never collide with a
+/// qualified one.
+pub const private_separator = "#";
+
+/// Section 14.2's privacy: a leading underscore on a module-level declaration
+/// makes it private to its own file. `_` alone is the discard, not a name.
+pub fn isPrivate(name: []const u8) bool {
+    return name.len > 1 and name[0] == '_';
+}
 
 /// What name resolution learned about functions, for the checker.
 pub const Facts = struct {
@@ -48,6 +64,25 @@ pub const Facts = struct {
     /// one of these: a block holding the variable could be called between the
     /// test and the use, and set it back to `nothing`.
     assigned_in_lambda: NameSet = .empty,
+    /// For each file, what a bare module-level name means there: its own
+    /// declarations, its namespace's, and whatever its `using` declarations
+    /// brought in. Indexed by file.
+    module_keys: []const KeyMap = &.{},
+    /// Every member expression that turned out to be a namespace-qualified
+    /// reference rather than a property access, and the key it names. The
+    /// checker and the interpreter read this rather than folding the chain
+    /// again, so `Shapes.area` is decided in exactly one place.
+    qualified: std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8) = .empty,
+    /// The file each module-level key is declared in, which is the unit section
+    /// 14.1 initializes lazily.
+    owner: std.StringHashMapUnmanaged(u32) = .empty,
+
+    /// The key a bare name has in `file`, or null when the name is not a
+    /// module-level declaration visible there.
+    pub fn keyFor(self: Facts, file: u32, name: []const u8) ?[]const u8 {
+        if (file >= self.module_keys.len) return null;
+        return self.module_keys[file].get(name);
+    }
 };
 
 pub const Resolved = struct {
@@ -104,16 +139,61 @@ function_boundary: usize = module_scope,
 current_function: ?[]const u8 = null,
 /// How many lambda bodies enclose the statement being walked.
 lambda_depth: u32 = 0,
-/// Every top-level variable and where it is declared, so a name used above its
-/// declaration can be reported as exactly that rather than as a misspelling.
-module_declarations: std.StringHashMapUnmanaged(Source.Span) = .empty,
+/// Every module-level variable and where it is declared, so a name used above
+/// its declaration can be reported as exactly that rather than as a
+/// misspelling. Keyed the way the module scope is.
+module_declarations: std.StringHashMapUnmanaged(Declared) = .empty,
+/// Every namespace a directory built, and every prefix of one, so a partly
+/// written path can be told apart from a mistyped name.
+namespaces: NameSet = .empty,
+/// For each public bare name, one namespace that declares it, so a name used
+/// without qualification can be pointed at where it actually lives.
+elsewhere: std.StringHashMapUnmanaged([]const u8) = .empty,
+/// Per file, the namespace short names its `using` declarations introduced.
+namespace_aliases: []KeyMap = &.{},
+/// Per file, the names two `using` declarations both offered, each mapped to
+/// one namespace that offers it so the correction can name a real one. Section
+/// 14.2 reports these where one is used, not where they are imported, since a
+/// name nobody writes is not a conflict anyone has.
+ambiguous: []KeyMap = &.{},
+/// The file `emerald run` selected, named by the diagnostics that explain why
+/// a statement cannot run where it is written.
+entry_path: []const u8 = "",
+/// The files, in the order diagnostics index them.
+files: []const Project.File = &.{},
+/// Set when this one file is running alone but sits inside a project, so a
+/// name it cannot find can say where the rest of the program went (14.1).
+enclosing_project: ?[]const u8 = null,
+/// Which file is being walked. Every diagnostic reported here is stamped with
+/// it, and it is what a bare module-level name is resolved through.
+file: u32 = 0,
 
-pub fn resolve(gpa: std.mem.Allocator, program: Ast.Program) !Resolved {
+const Declared = struct {
+    file: u32,
+    /// The name, for pointing at.
+    span: Source.Span,
+    /// The end of the whole declaration, which is where the name starts to be
+    /// visible. `var x = x` reads the right-hand `x` before that point.
+    end: u32,
+};
+
+pub fn resolve(
+    gpa: std.mem.Allocator,
+    files: []const Project.File,
+    programs: []const Ast.Program,
+    enclosing_project: ?[]const u8,
+) !Resolved {
+    std.debug.assert(files.len == programs.len);
+
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var resolver: Resolver = .{ .arena = arena };
+    var resolver: Resolver = .{
+        .arena = arena,
+        .files = files,
+        .enclosing_project = enclosing_project,
+    };
 
     // The prelude sits outside the program's own scopes, so a program may
     // declare a name that matches one without it counting as shadowing a local.
@@ -127,17 +207,317 @@ pub fn resolve(gpa: std.mem.Allocator, program: Ast.Program) !Resolved {
     }
 
     try resolver.push();
-    try resolver.hoistFunctions(program.statements);
-    for (program.statements) |statement| {
-        if (statement.data == .declaration) {
-            const declaration = statement.data.declaration;
-            try resolver.module_declarations.put(arena, declaration.name, declaration.name_span);
+    try resolver.collectNamespaces();
+    try resolver.declareModuleLevel(programs);
+
+    for (files) |file| {
+        if (file.entry) resolver.entry_path = file.source.path;
+    }
+
+    const key_maps = try arena.alloc(KeyMap, files.len);
+    for (key_maps) |*map| map.* = .empty;
+    resolver.facts.module_keys = key_maps;
+    resolver.namespace_aliases = try arena.alloc(KeyMap, files.len);
+    for (resolver.namespace_aliases) |*map| map.* = .empty;
+    resolver.ambiguous = try arena.alloc(KeyMap, files.len);
+    for (resolver.ambiguous) |*set| set.* = .empty;
+    for (files, 0..) |_, index| {
+        resolver.file = @intCast(index);
+        try resolver.buildKeyMap(&key_maps[index]);
+    }
+    // Every `using` is resolved after every file's own names are in place, so
+    // whether an imported name collides does not depend on file order.
+    for (programs, 0..) |program, index| {
+        resolver.file = @intCast(index);
+        try resolver.applyUsing(program.using, &key_maps[index]);
+    }
+
+    for (files, programs, 0..) |file, program, index| {
+        resolver.file = @intCast(index);
+        if (!file.entry) try resolver.checkModuleFile(program.statements);
+        try resolver.walkStatements(program.statements);
+    }
+
+    // Hoisting reports across every file before any file is walked, so the
+    // order they were found in is not the order a reader reads them in.
+    const owned = try resolver.diagnostics.toOwnedSlice(arena);
+    std.mem.sort(Diagnostic, owned, {}, earlierInProgram);
+    return .{ .arena_state = arena_state, .diagnostics = owned, .facts = resolver.facts };
+}
+
+fn earlierInProgram(_: void, a: Diagnostic, b: Diagnostic) bool {
+    if (a.file != b.file) return a.file < b.file;
+    return a.span.start < b.span.start;
+}
+
+/// The one name the whole program knows a module-level declaration by.
+///
+/// A public declaration is named by its namespace, which section 14.2 derives
+/// from the directory: `area` in `shapes/` is `Shapes.area`, and at the project
+/// root it is just `area`. A private one is named by the file it cannot leave,
+/// which is why two files may each declare `_helper` without colliding.
+fn keyOf(self: *Resolver, file: u32, name: []const u8) Error![]const u8 {
+    if (isPrivate(name)) {
+        return std.fmt.allocPrint(self.arena, "{s}" ++ private_separator ++ "{s}", .{
+            self.files[file].source.path,
+            name,
+        });
+    }
+    const namespace = self.files[file].namespace;
+    if (namespace.len == 0) return name;
+    return std.fmt.allocPrint(self.arena, "{s}.{s}", .{ namespace, name });
+}
+
+/// Every namespace, plus every prefix of one, so `Graphics` is known even when
+/// only `graphics/ui/` holds any source.
+fn collectNamespaces(self: *Resolver) Error!void {
+    for (self.files) |file| {
+        var at: usize = 0;
+        while (at <= file.namespace.len) {
+            const boundary = std.mem.indexOfScalarPos(u8, file.namespace, at, '.') orelse file.namespace.len;
+            if (boundary != 0) try self.namespaces.put(self.arena, file.namespace[0..boundary], {});
+            if (boundary == file.namespace.len) break;
+            at = boundary + 1;
         }
     }
-    try resolver.walkStatements(program.statements);
+}
 
-    const owned = try resolver.diagnostics.toOwnedSlice(arena);
-    return .{ .arena_state = arena_state, .diagnostics = owned, .facts = resolver.facts };
+/// Hoists every module-level declaration of every file into the one module
+/// scope, keyed as `keyOf` describes.
+fn declareModuleLevel(self: *Resolver, programs: []const Ast.Program) Error!void {
+    for (programs, 0..) |program, index| {
+        self.file = @intCast(index);
+        try self.hoistFunctions(program.statements);
+    }
+    // Module-level variables are hoisted into the scope too, not added as the
+    // walk reaches them. Section 14.2 makes same-directory names directly
+    // visible, and the files of a directory are walked in some order, so a name
+    // that depended on that order would be visible or not by accident.
+    // Section 7.1's "variables are visible only from their declarations" is a
+    // rule about one file, and `declaredAbove` keeps it by comparing spans.
+    const module = &self.scopes.items[module_scope];
+    for (programs, 0..) |program, index| {
+        self.file = @intCast(index);
+        for (program.statements) |statement| {
+            const declaration = switch (statement.data) {
+                .declaration => |d| d,
+                else => continue,
+            };
+            const key = try self.keyOf(self.file, declaration.name);
+            if (module.contains(key)) {
+                try self.reportDuplicate(declaration.name, declaration.name_span, key);
+                continue;
+            }
+            // A `const` with no value is reported below, and treated as
+            // assignable so the one report covers it.
+            const missing_value = !declaration.mutable and declaration.initializer == null;
+            try module.put(self.arena, key, .{
+                .mutable = declaration.mutable or missing_value,
+                .span = declaration.name_span,
+            });
+            try self.facts.owner.put(self.arena, key, self.file);
+            try self.module_declarations.put(self.arena, key, .{
+                .file = self.file,
+                .span = declaration.name_span,
+                .end = statement.span.end,
+            });
+            try self.noteElsewhere(declaration.name);
+        }
+    }
+}
+
+/// Section 7.1: "variables are visible only from their declarations." That is a
+/// rule about one file, so it is checked by span and only against a declaration
+/// in the file being walked. Returns whether the use is allowed.
+fn declaredAbove(self: *Resolver, found: Found, span: Source.Span) Error!bool {
+    if (found.scope != module_scope or found.binding.kind != .variable) return true;
+    const declared = self.module_declarations.get(found.key) orelse return true;
+    if (declared.file != self.file) return true;
+    if (span.start >= declared.end) return true;
+
+    if (span.start < declared.span.start) {
+        try self.report(
+            span,
+            "`{s}` is not declared until later in the file",
+            .{nameOf(found.key)},
+            "A variable can only be used below its declaration. Move the declaration above this line.",
+        );
+    } else {
+        // Inside its own declaration, as in `var x = x`.
+        try self.report(
+            span,
+            "`{s}` is not defined",
+            .{nameOf(found.key)},
+            "Check the spelling, or declare it before this line.",
+        );
+    }
+    return false;
+}
+
+/// The name as it was written, taken back out of a key.
+fn nameOf(key: []const u8) []const u8 {
+    if (std.mem.lastIndexOf(u8, key, private_separator)) |at| {
+        return key[at + private_separator.len ..];
+    }
+    if (std.mem.lastIndexOfScalar(u8, key, '.')) |at| return key[at + 1 ..];
+    return key;
+}
+
+fn noteElsewhere(self: *Resolver, name: []const u8) Error!void {
+    if (isPrivate(name)) return;
+    const namespace = self.files[self.file].namespace;
+    if (namespace.len == 0) return;
+    try self.elsewhere.put(self.arena, name, namespace);
+}
+
+/// What a bare module-level name means in one file: its own private names, and
+/// every public name of its own namespace. Section 14.2 makes same-directory
+/// names directly visible, so a file that grows into two needs no qualification.
+fn buildKeyMap(self: *Resolver, map: *KeyMap) Error!void {
+    const namespace = self.files[self.file].namespace;
+    var entries = self.scopes.items[module_scope].keyIterator();
+    while (entries.next()) |entry| try self.offerKey(map, namespace, entry.*);
+    var declared = self.module_declarations.keyIterator();
+    while (declared.next()) |entry| try self.offerKey(map, namespace, entry.*);
+}
+
+/// Section 14.2's `using`, which is file-local, imports only direct public
+/// names, and neither includes nor executes anything: it renames, and that is
+/// all it does.
+fn applyUsing(self: *Resolver, declarations: []const Ast.Using, map: *KeyMap) Error!void {
+    for (declarations) |declaration| {
+        const path = try self.joinPath(declaration.path);
+
+        if (declaration.alias.len != 0) {
+            if (self.namespaces.contains(path)) {
+                try self.namespace_aliases[self.file].put(self.arena, declaration.alias, path);
+                continue;
+            }
+            if (self.scopes.items[module_scope].contains(path) or self.module_declarations.contains(path)) {
+                try map.put(self.arena, declaration.alias, path);
+                continue;
+            }
+            try self.reportUnknownPath(declaration, path);
+            continue;
+        }
+
+        if (!self.namespaces.contains(path)) {
+            try self.reportUnknownPath(declaration, path);
+            continue;
+        }
+
+        // Only the names directly in that namespace, so `using Graphics` does
+        // not quietly bring in everything under `graphics/ui/` as well.
+        var imported: usize = 0;
+        var names = self.module_declarations.keyIterator();
+        while (names.next()) |key| {
+            if (try self.importName(map, path, key.*)) imported += 1;
+        }
+        var functions = self.scopes.items[module_scope].keyIterator();
+        while (functions.next()) |key| {
+            if (try self.importName(map, path, key.*)) imported += 1;
+        }
+
+        if (imported == 0) try self.report(
+            declaration.path_span,
+            "`{s}` has no public names to use",
+            .{path},
+            "Every declaration in it starts with `_`, which section 14.2 keeps private to its own file.",
+        );
+    }
+}
+
+/// Returns whether `key` is a direct public name of `namespace`, having put it
+/// in the map or marked it ambiguous.
+fn importName(self: *Resolver, map: *KeyMap, namespace: []const u8, key: []const u8) Error!bool {
+    if (std.mem.indexOf(u8, key, private_separator) != null) return false;
+    if (!std.mem.startsWith(u8, key, namespace)) return false;
+    if (key.len <= namespace.len or key[namespace.len] != '.') return false;
+    const bare = key[namespace.len + 1 ..];
+    if (std.mem.indexOfScalar(u8, bare, '.') != null) return false;
+
+    // A name this file already has of its own wins. Section 14.2 makes
+    // same-directory names directly visible, and an import should not be able
+    // to take a name out from under the file that declared it.
+    if (map.get(bare)) |existing| {
+        if (std.mem.eql(u8, existing, key)) return true;
+        const own = try self.keyOf(self.file, bare);
+        if (!std.mem.eql(u8, existing, own)) {
+            try self.ambiguous[self.file].put(self.arena, bare, namespace);
+        }
+        return true;
+    }
+
+    try map.put(self.arena, bare, key);
+    return true;
+}
+
+fn reportUnknownPath(self: *Resolver, declaration: Ast.Using, path: []const u8) Error!void {
+    try self.report(
+        declaration.path_span,
+        "there is no `{s}` to use",
+        .{path},
+        "A namespace comes from a directory: `shapes/` makes `Shapes`. Check the spelling, and that the directory holds a `.em` file.",
+    );
+}
+
+fn joinPath(self: *Resolver, path: []const []const u8) Error![]const u8 {
+    if (path.len == 1) return path[0];
+    var written: std.ArrayList(u8) = .empty;
+    for (path, 0..) |segment, index| {
+        if (index != 0) try written.append(self.arena, '.');
+        try written.appendSlice(self.arena, segment);
+    }
+    return written.toOwnedSlice(self.arena);
+}
+
+/// Section 14.1: outside the entry file a top level holds declarations and
+/// nothing else, so loading a project never runs arbitrary code and no file's
+/// position in the walk can change what a program does.
+fn checkModuleFile(self: *Resolver, statements: []const Ast.Statement) Error!void {
+    for (statements) |statement| switch (statement.data) {
+        .function_declaration => {},
+        .declaration => |declaration| {
+            if (declaration.initializer != null) continue;
+            try self.report(
+                declaration.name_span,
+                "`{s}` needs its value here",
+                .{declaration.name},
+                try std.fmt.allocPrint(
+                    self.arena,
+                    "Only the entry file, `{s}`, runs statements, so there is nowhere else to assign it. Write its value after `=`.",
+                    .{self.entry_path},
+                ),
+            );
+        },
+        else => try self.report(
+            statement.span,
+            "this would never run",
+            .{},
+            try std.fmt.allocPrint(
+                self.arena,
+                "Only the entry file runs its top level. Move this into `{s}`, or into a function declared in this file.",
+                .{self.entry_path},
+            ),
+        ),
+    };
+}
+
+fn offerKey(self: *Resolver, map: *KeyMap, namespace: []const u8, key: []const u8) Error!void {
+    if (std.mem.indexOf(u8, key, private_separator)) |at| {
+        // Private: visible only in the file whose path names it.
+        if (!std.mem.eql(u8, key[0..at], self.files[self.file].source.path)) return;
+        return map.put(self.arena, key[at + private_separator.len ..], key);
+    }
+    if (namespace.len == 0) {
+        if (std.mem.indexOfScalar(u8, key, '.') == null) try map.put(self.arena, key, key);
+        return;
+    }
+    if (!std.mem.startsWith(u8, key, namespace)) return;
+    if (key.len <= namespace.len or key[namespace.len] != '.') return;
+    const bare = key[namespace.len + 1 ..];
+    if (std.mem.indexOfScalar(u8, bare, '.') != null) return;
+    try map.put(self.arena, bare, key);
 }
 
 /// Section 7.1: function declarations are hoisted within their scope. Every
@@ -155,23 +535,42 @@ fn hoistFunctions(self: *Resolver, statements: []const Ast.Statement) Error!void
             .function_declaration => |f| f,
             else => continue,
         };
-        if (module.contains(function.name)) {
-            try self.report(
-                function.name_span,
-                "`{s}` is already declared",
-                .{function.name},
-                "A name declares one function. Choose a different name, or remove the duplicate.",
-            );
+        const key = try self.keyOf(self.file, function.name);
+        if (module.contains(key)) {
+            try self.reportDuplicate(function.name, function.name_span, key);
             continue;
         }
-        try module.put(self.arena, function.name, .{
+        try module.put(self.arena, key, .{
             .mutable = false,
             .span = function.name_span,
             .kind = .function,
         });
-        try self.facts.module_reads.put(self.arena, function.name, .empty);
-        try self.facts.calls.put(self.arena, function.name, .empty);
+        try self.facts.owner.put(self.arena, key, self.file);
+        try self.facts.module_reads.put(self.arena, key, .empty);
+        try self.facts.calls.put(self.arena, key, .empty);
+        try self.noteElsewhere(function.name);
     }
+}
+
+/// Two declarations of one name. Within a file that reads the way it always
+/// has; across two files in one directory it has to say where the other one is,
+/// because section 14.2 makes same-directory names share a namespace and the
+/// reader cannot see both at once.
+fn reportDuplicate(self: *Resolver, name: []const u8, span: Source.Span, key: []const u8) Error!void {
+    if (self.facts.owner.get(key)) |other| {
+        if (other != self.file) return self.report(
+            span,
+            "`{s}` is already declared in `{s}`",
+            .{ name, self.files[other].source.path },
+            "Files in one directory share a namespace. Rename one, or make this one private by starting its name with `_`.",
+        );
+    }
+    try self.report(
+        span,
+        "`{s}` is already declared",
+        .{name},
+        "A name declares one function. Choose a different name, or remove the duplicate.",
+    );
 }
 
 fn push(self: *Resolver) !void {
@@ -182,15 +581,32 @@ fn pop(self: *Resolver) void {
     _ = self.scopes.pop();
 }
 
-const Found = struct { binding: Binding, scope: usize };
+const Found = struct { binding: Binding, scope: usize, key: []const u8 };
+
+/// What a bare module-level name is called program-wide in the file being
+/// walked, or null when no module-level declaration by that name is visible
+/// here. Local scopes are keyed by the bare name; only the module scope is
+/// keyed this way, because only it is shared between files.
+fn moduleKey(self: *Resolver, name: []const u8) ?[]const u8 {
+    if (self.facts.module_keys.len == 0) return null;
+    return self.facts.module_keys[self.file].get(name);
+}
 
 fn lookup(self: *Resolver, name: []const u8) ?Found {
     var index = self.scopes.items.len;
-    while (index > 0) {
+    while (index > module_scope) {
         index -= 1;
         if (self.scopes.items[index].get(name)) |binding| {
-            return .{ .binding = binding, .scope = index };
+            return .{ .binding = binding, .scope = index, .key = name };
         }
+    }
+    if (self.moduleKey(name)) |key| {
+        if (self.scopes.items[module_scope].get(key)) |binding| {
+            return .{ .binding = binding, .scope = module_scope, .key = key };
+        }
+    }
+    if (self.scopes.items[prelude_scope].get(name)) |binding| {
+        return .{ .binding = binding, .scope = prelude_scope, .key = name };
     }
     return null;
 }
@@ -203,6 +619,11 @@ fn visibleLocal(self: *Resolver, name: []const u8) ?Binding {
     var index = self.scopes.items.len;
     while (index > self.function_boundary) {
         index -= 1;
+        if (index == module_scope) {
+            const key = self.moduleKey(name) orelse continue;
+            if (self.scopes.items[index].get(key)) |binding| return binding;
+            continue;
+        }
         if (self.scopes.items[index].get(name)) |binding| return binding;
     }
     return null;
@@ -219,6 +640,7 @@ fn report(
         .message = try std.fmt.allocPrint(self.arena, message_format, message_args),
         .span = span,
         .help = help,
+        .file = self.file,
     });
 }
 
@@ -227,26 +649,69 @@ fn report(
 /// "variables are visible only from their declarations", so that is what the
 /// diagnostic says.
 fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: []const u8) Error!void {
-    if (self.module_declarations.get(name)) |declared| {
-        if (declared.start > span.start) {
-            return self.report(
-                span,
-                "`{s}` is not declared until later in the file",
-                .{name},
-                "A variable can only be used below its declaration. Move the declaration above this line.",
-            );
-        }
+    // A namespace is a real thing with a real name; it is just not a value.
+    if (self.namespaces.contains(self.namespaceFor(name))) {
+        return self.report(
+            span,
+            "`{s}` is a namespace, not a value",
+            .{name},
+            try std.fmt.allocPrint(
+                self.arena,
+                "Write the name you want from it, such as `{s}.area`, or put `using {s}` at the top of this file to reach its names directly.",
+                .{ name, name },
+            ),
+        );
     }
+
+    // Declared, but in another directory, so it needs its namespace.
+    if (self.elsewhere.get(name)) |namespace| {
+        return self.report(
+            span,
+            "`{s}` is not visible here",
+            .{name},
+            try std.fmt.allocPrint(
+                self.arena,
+                "It is declared in `{s}`. Write `{s}.{s}`, or add `using {s}` at the top of this file.",
+                .{ namespace, namespace, name, namespace },
+            ),
+        );
+    }
+
+    // Running alone inside a project. Section 14.1 says a file outside a
+    // project runs alone, and this is where that stops being invisible.
+    if (self.enclosing_project) |enclosing| {
+        const root = if (std.mem.eql(u8, enclosing, "."))
+            ""
+        else
+            try std.fmt.allocPrint(self.arena, "{s}/", .{enclosing});
+        return self.report(
+            span,
+            "`{s}` is not defined",
+            .{name},
+            try std.fmt.allocPrint(
+                self.arena,
+                "This file is running on its own, because its directory has no `main.em`. To run it as part of the project above it, use `emerald run {s}main.em`.",
+                .{root},
+            ),
+        );
+    }
+
     try self.report(span, "`{s}` is not defined", .{name}, help);
+}
+
+/// The namespace a short name stands for here, following a `using` alias.
+fn namespaceFor(self: *Resolver, name: []const u8) []const u8 {
+    if (self.namespace_aliases.len == 0) return name;
+    return self.namespace_aliases[self.file].get(name) orelse name;
 }
 
 /// Records that the current function reads `name`, if `name` resolved to a
 /// module-level variable. Reads of the function's own parameters and locals,
 /// and anything at the top level, are not captures.
-fn noteRead(self: *Resolver, found: Found, name: []const u8) Error!void {
+fn noteRead(self: *Resolver, found: Found) Error!void {
     const function = self.current_function orelse return;
     if (found.scope != module_scope or found.binding.kind != .variable) return;
-    try self.facts.module_reads.getPtr(function).?.put(self.arena, name, {});
+    try self.facts.module_reads.getPtr(function).?.put(self.arena, found.key, {});
 }
 
 fn walkStatements(self: *Resolver, statements: []const Ast.Statement) Error!void {
@@ -282,7 +747,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 );
             }
 
-            if (self.visibleLocal(declaration.name) != null) {
+            if (self.scopes.items.len > module_scope + 1 and self.visibleLocal(declaration.name) != null) {
                 try self.report(
                     declaration.name_span,
                     "`{s}` is already declared",
@@ -291,6 +756,10 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 );
                 return;
             }
+
+            // Already in place, with its duplicates reported, if this is the
+            // module level; see `declareModuleLevel`.
+            if (self.scopes.items.len == module_scope + 1) return;
 
             const current = &self.scopes.items[self.scopes.items.len - 1];
             try current.put(self.arena, declaration.name, .{
@@ -303,6 +772,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             for (assignment.indices) |index| try self.walkExpression(index);
             try self.walkExpression(assignment.value);
 
+            try self.checkAmbiguous(assignment.name, assignment.name_span);
             const found = self.lookup(assignment.name) orelse {
                 return self.reportUndefined(
                     assignment.name_span,
@@ -310,6 +780,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     "Declare it first with `var`, or check the spelling.",
                 );
             };
+            if (!try self.declaredAbove(found, assignment.name_span)) return;
 
             if (self.lambda_depth > 0) {
                 try self.facts.assigned_in_lambda.put(self.arena, assignment.name, {});
@@ -319,7 +790,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             // the variable to be assigned already; a plain one does not. An
             // assignment into a list reads the list it changes.
             if (assignment.operation != null or assignment.indices.len > 0) {
-                try self.noteRead(found, assignment.name);
+                try self.noteRead(found);
             }
 
             // Changing a list's contents is a question about its type, which
@@ -424,7 +895,7 @@ fn walkFunctionBody(self: *Resolver, function: Ast.FunctionDeclaration) Error!vo
     const outer_boundary = self.function_boundary;
     const outer_function = self.current_function;
     self.function_boundary = self.scopes.items.len - 1;
-    self.current_function = function.name;
+    self.current_function = try self.keyOf(self.file, function.name);
     defer {
         self.pop();
         self.function_boundary = outer_boundary;
@@ -454,11 +925,114 @@ fn walkFunctionBody(self: *Resolver, function: Ast.FunctionDeclaration) Error!vo
     try self.walkStatements(function.body.statements);
 }
 
+/// What a member expression turned out to be.
+const Qualified = union(enum) {
+    /// A namespace-qualified reference to this module-level declaration.
+    key: []const u8,
+    /// A qualified reference to something that is not there; already reported.
+    reported,
+    /// Not qualified at all: an ordinary property access on a value.
+    none,
+};
+
+/// Whether this whole member chain names one module-level declaration.
+///
+/// The chain is only followed while it is made of plain names, so
+/// `Shapes.area(3).to_string()` stops at `Shapes.area` and the rest stays
+/// ordinary. A chain whose leading name is a value is never a namespace, which
+/// is what keeps `text.upper()` out of here.
+fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
+    var names: [max_path_segments][]const u8 = undefined;
+    const length = chainOf(expression, &names) orelse return .none;
+    if (length < 2) return .none;
+
+    // A local or a module binding of that name is a value; section 14.2's
+    // namespaces do not shadow it.
+    if (self.lookup(names[0]) != null) return .none;
+
+    var path: []const u8 = self.namespaceFor(names[0]);
+    for (names[1 .. length - 1]) |segment| {
+        path = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ path, segment });
+    }
+    if (!self.namespaces.contains(path)) return .none;
+
+    const last = names[length - 1];
+    const key = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ path, last });
+    if (self.scopes.items[module_scope].contains(key) or self.module_declarations.contains(key)) {
+        return .{ .key = key };
+    }
+
+    if (isPrivate(last)) {
+        try self.report(
+            expression.span,
+            "`{s}` is private to the file that declares it",
+            .{last},
+            "A module-level name starting with `_` cannot be reached from another file. Remove the underscore to make it public.",
+        );
+        return .reported;
+    }
+
+    try self.report(
+        expression.span,
+        "`{s}` is not declared in `{s}`",
+        .{ last, path },
+        "Check the spelling. Only names without a leading underscore are visible outside the file that declares them.",
+    );
+    return .reported;
+}
+
+/// A namespace path is a handful of segments at most; a longer chain is a
+/// property access on a value, which this is not about.
+const max_path_segments = 8;
+
+/// Fills `names` with a chain of plain names, outermost last, and returns how
+/// many. Null when the chain does not bottom out in a name.
+fn chainOf(expression: *const Ast.Expression, names: *[max_path_segments][]const u8) ?usize {
+    var length: usize = 0;
+    var at = expression;
+    while (true) {
+        switch (at.data) {
+            .name => |name| {
+                if (length == max_path_segments) return null;
+                names[length] = name;
+                length += 1;
+                std.mem.reverse([]const u8, names[0..length]);
+                return length;
+            },
+            .member => |member| {
+                if (length == max_path_segments) return null;
+                names[length] = member.name;
+                length += 1;
+                at = member.base;
+            },
+            else => return null,
+        }
+    }
+}
+
+/// Section 14.2: two `using` declarations may offer the same short name, and
+/// that is reported where the name is used rather than where they are written.
+fn checkAmbiguous(self: *Resolver, name: []const u8, span: Source.Span) Error!void {
+    if (self.ambiguous.len == 0) return;
+    const candidate = self.ambiguous[self.file].get(name) orelse return;
+    try self.report(
+        span,
+        "`{s}` could mean more than one thing here",
+        .{name},
+        try std.fmt.allocPrint(
+            self.arena,
+            "More than one `using` offers it. Write the namespace it should come from, such as `{s}.{s}`, or give one an alias: `using Short = {s}`.",
+            .{ candidate, name, candidate },
+        ),
+    );
+}
+
 fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void {
     switch (expression.data) {
         .int_literal, .float_literal, .bool_literal, .nothing_literal => {},
 
         .name => |name| {
+            try self.checkAmbiguous(name, expression.span);
             const found = self.lookup(name) orelse {
                 return self.reportUndefined(
                     expression.span,
@@ -466,7 +1040,8 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     "Check the spelling, or declare it before this line.",
                 );
             };
-            try self.noteRead(found, name);
+            if (!try self.declaredAbove(found, expression.span)) return;
+            try self.noteRead(found);
         },
 
         .unary => |unary| try self.walkExpression(unary.operand),
@@ -488,7 +1063,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     const callee = call.callee.data.name;
                     if (self.lookup(callee)) |found| {
                         if (found.scope == module_scope and found.binding.kind == .function) {
-                            try self.facts.calls.getPtr(caller).?.put(self.arena, callee, {});
+                            try self.facts.calls.getPtr(caller).?.put(self.arena, found.key, {});
                         }
                     }
                 }
@@ -504,7 +1079,26 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             try self.walkExpression(index.base);
             try self.walkExpression(index.index);
         },
-        .member => |member| try self.walkExpression(member.base),
+        .member => |member| {
+            // `Shapes.area` is one name, not a property of a value. Deciding
+            // which it is happens once, here, and the answer is recorded for
+            // the checker and the interpreter to read.
+            switch (try self.qualify(expression)) {
+                .key => |key| {
+                    try self.facts.qualified.put(self.arena, expression, key);
+                    if (self.scopes.items[module_scope].get(key)) |binding| {
+                        try self.noteRead(.{ .binding = binding, .scope = module_scope, .key = key });
+                        if (self.current_function) |caller| {
+                            if (binding.kind == .function) {
+                                try self.facts.calls.getPtr(caller).?.put(self.arena, key, {});
+                            }
+                        }
+                    }
+                },
+                .reported => {},
+                .none => try self.walkExpression(member.base),
+            }
+        },
         .string_literal => {},
         .interpolation => |parts| for (parts) |part| switch (part) {
             .text => {},

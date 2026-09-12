@@ -34,6 +34,9 @@ const Diagnostic = @This();
 pub const Frame = struct {
     function: []const u8,
     call_span: Source.Span,
+    /// Which of the program's files `call_span` is measured in. A project
+    /// spans several, and a call from one into another is ordinary.
+    file: u32 = 0,
     /// Whether `function` is a name the program wrote. A lambda has no name, so
     /// its frame carries a description that is printed as one rather than
     /// quoted as if it were a name.
@@ -49,11 +52,18 @@ help: []const u8,
 /// The calls active when a runtime error was raised, innermost first. Empty for
 /// every diagnostic reported before a program runs.
 trace: []const Frame = &.{},
+/// Which of the program's files `span` is measured in, indexing the sources
+/// `render` is given. Zero for a single-file program, which is every program
+/// outside a project (14.1).
+file: u32 = 0,
 
 /// The indentation applied to the quoted source line and its underline.
 const gutter = "  ";
 
-pub fn render(self: Diagnostic, source: Source, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+/// `sources` holds the program's files in the order diagnostics index them, so
+/// a project reports each problem against the file it is actually in.
+pub fn render(self: Diagnostic, sources: []const Source, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    const source = sources[self.file];
     const start = source.location(self.span.start);
     try writer.print("{s}:{d}:{d}: {s}\n", .{
         source.path,
@@ -80,14 +90,15 @@ pub fn render(self: Diagnostic, source: Source, writer: *std.Io.Writer) std.Io.W
             repeats += 1;
         }
 
-        const called_at = source.location(frame.call_span.start);
+        const caller = sources[frame.file];
+        const called_at = caller.location(frame.call_span.start);
         if (frame.named) {
             try writer.print("in `{s}`, called at ", .{frame.function});
         } else {
             try writer.print("in {s}, called at ", .{frame.function});
         }
         try writer.print("{s}:{d}:{d}", .{
-            source.path,
+            caller.path,
             called_at.line,
             called_at.column,
         });
@@ -99,7 +110,8 @@ pub fn render(self: Diagnostic, source: Source, writer: *std.Io.Writer) std.Io.W
 }
 
 fn sameFrame(a: Frame, b: Frame) bool {
-    return a.call_span.start == b.call_span.start and std.mem.eql(u8, a.function, b.function);
+    return a.call_span.start == b.call_span.start and a.file == b.file and
+        std.mem.eql(u8, a.function, b.function);
 }
 
 /// The underline covers the span, measured in scalars so it lines up with the
@@ -129,11 +141,11 @@ fn scalarCount(bytes: []const u8) u32 {
 pub fn renderAlloc(
     self: Diagnostic,
     gpa: std.mem.Allocator,
-    source: Source,
+    sources: []const Source,
 ) std.mem.Allocator.Error![]u8 {
     var allocating: std.Io.Writer.Allocating = .init(gpa);
     errdefer allocating.deinit();
-    self.render(source, &allocating.writer) catch return error.OutOfMemory;
+    self.render(sources, &allocating.writer) catch return error.OutOfMemory;
     return allocating.toOwnedSlice();
 }
 
@@ -162,7 +174,7 @@ test "renders the canonical shape from section 17.1" {
         .help = "Assign `score` on every branch before reading it.",
     };
 
-    const rendered = try diagnostic.renderAlloc(testing.allocator, source);
+    const rendered = try diagnostic.renderAlloc(testing.allocator, &.{source});
     defer testing.allocator.free(rendered);
 
     try testing.expectEqualStrings(
@@ -185,7 +197,7 @@ test "the underline aligns past multi-byte scalars" {
         .help = "Convert the number with `to_string()` first.",
     };
 
-    const rendered = try diagnostic.renderAlloc(testing.allocator, source);
+    const rendered = try diagnostic.renderAlloc(testing.allocator, &.{source});
     defer testing.allocator.free(rendered);
 
     // "héllo" is six bytes but five scalars, so the caret sits under `1` at column 22.
@@ -208,7 +220,7 @@ test "an underline never runs past the end of its line" {
         .help = "Nothing to do.",
     };
 
-    const rendered = try diagnostic.renderAlloc(testing.allocator, source);
+    const rendered = try diagnostic.renderAlloc(testing.allocator, &.{source});
     defer testing.allocator.free(rendered);
 
     try testing.expectEqualStrings(
@@ -230,7 +242,7 @@ test "an empty span still marks one column" {
         .help = "Nothing to do.",
     };
 
-    const rendered = try diagnostic.renderAlloc(testing.allocator, source);
+    const rendered = try diagnostic.renderAlloc(testing.allocator, &.{source});
     defer testing.allocator.free(rendered);
 
     try testing.expectEqualStrings(

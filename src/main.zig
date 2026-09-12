@@ -53,7 +53,9 @@ fn misuse(io: std.Io) !u8 {
 }
 
 fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8) !u8 {
-    var source = emerald.Source.load(gpa, io, path) catch |err| {
+    // Section 14.1: the file alone, unless it sits beside a `main.em`, in which
+    // case the whole project comes with it.
+    var project = emerald.Project.load(gpa, io, path) catch |err| {
         var buffer: [512]u8 = undefined;
         const message = std.fmt.bufPrint(&buffer, "emerald: cannot read '{s}': {t}\n", .{
             path,
@@ -62,7 +64,10 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
         try writeAll(io, .stderr, message);
         return @intFromEnum(ExitCode.invalid_usage);
     };
-    defer source.deinit(gpa);
+    defer project.deinit(gpa);
+
+    const sources = try project.sources(gpa);
+    defer gpa.free(sources);
 
     // Program output is written straight through, so it interleaves with
     // anything the program itself prints in the order it happened.
@@ -72,8 +77,8 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     var in = std.Io.File.stdin().readerStreaming(io, &in_buffer);
 
     const analysis = switch (command) {
-        .check => emerald.check(gpa, &source),
-        .run => emerald.run(gpa, &source, .{ .out = &out.interface, .in = &in.interface }),
+        .check => emerald.checkProject(gpa, &project),
+        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface }),
     };
     var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();
@@ -81,12 +86,12 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     try out.interface.flush();
 
     if (report.diagnostics.len != 0) {
-        try writeDiagnostics(gpa, io, source, report.diagnostics);
+        try writeDiagnostics(gpa, io, sources, report.diagnostics);
         return @intFromEnum(ExitCode.source_diagnostics);
     }
 
     if (report.failure) |failure| {
-        try writeDiagnostics(gpa, io, source, &.{failure});
+        try writeDiagnostics(gpa, io, sources, &.{failure});
         return @intFromEnum(ExitCode.runtime_error);
     }
 
@@ -109,11 +114,11 @@ fn internalFailure(io: std.Io, err: emerald.Error) !u8 {
 fn writeDiagnostics(
     gpa: std.mem.Allocator,
     io: std.Io,
-    source: emerald.Source,
+    sources: []const emerald.Source,
     diagnostics: []const emerald.Diagnostic,
 ) !void {
     for (diagnostics) |diagnostic| {
-        const rendered = try diagnostic.renderAlloc(gpa, source);
+        const rendered = try diagnostic.renderAlloc(gpa, sources);
         defer gpa.free(rendered);
         try writeAll(io, .stderr, rendered);
     }

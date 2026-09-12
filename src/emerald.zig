@@ -14,6 +14,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub const Source = @import("Source.zig");
+pub const Project = @import("Project.zig");
 pub const Diagnostic = @import("Diagnostic.zig");
 pub const Token = @import("Token.zig");
 pub const Lexer = @import("Lexer.zig");
@@ -55,7 +56,27 @@ pub const Error = Interpreter.RunError || error{
 /// Analyses a source file without running it, as section 18.1 requires of
 /// `emerald check`: the same analysis as `run`, with nothing executed.
 pub fn check(gpa: std.mem.Allocator, source: *const Source) Error!Report {
-    return onLargeStack(gpa, source, null);
+    var files = [_]Project.File{lone(source)};
+    const project = loneProject(&files);
+    return checkProject(gpa, &project);
+}
+
+/// The same, for a whole project (14.1).
+pub fn checkProject(gpa: std.mem.Allocator, project: *const Project) Error!Report {
+    return onLargeStack(gpa, project, null);
+}
+
+/// A single file is a complete program, so it is a project of one. Nothing
+/// below this needs to know which it was given.
+///
+/// The caller holds the one-file array, because the project borrows it and must
+/// not outlive it.
+fn lone(source: *const Source) Project.File {
+    return .{ .source = source.*, .namespace = "", .entry = true };
+}
+
+fn loneProject(files: []Project.File) Project {
+    return .{ .files = files, .entry = 0, .bad_directories = &.{} };
 }
 
 /// Where a running program's output goes and where `input` reads from.
@@ -66,7 +87,14 @@ pub const Streams = struct {
 
 /// Checks a source file and then executes it with `streams`.
 pub fn run(gpa: std.mem.Allocator, source: *const Source, streams: Streams) Error!Report {
-    return onLargeStack(gpa, source, streams);
+    var files = [_]Project.File{lone(source)};
+    const project = loneProject(&files);
+    return runProject(gpa, &project, streams);
+}
+
+/// The same, for a whole project (14.1).
+pub fn runProject(gpa: std.mem.Allocator, project: *const Project, streams: Streams) Error!Report {
+    return onLargeStack(gpa, project, streams);
 }
 
 /// Reserved rather than committed: the host maps a thread's stack lazily, so
@@ -83,15 +111,15 @@ comptime {
     );
 }
 
-fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, streams: ?Streams) Error!Report {
+fn onLargeStack(gpa: std.mem.Allocator, project: *const Project, streams: ?Streams) Error!Report {
     const Task = struct {
         gpa: std.mem.Allocator,
-        source: *const Source,
+        project: *const Project,
         streams: ?Streams,
         result: Error!Report = undefined,
 
         fn go(task: *@This(), available: usize) void {
-            task.result = analyze(task.gpa, task.source, task.streams, .here(available));
+            task.result = analyze(task.gpa, task.project, task.streams, .here(available));
         }
     };
 
@@ -102,7 +130,7 @@ fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, streams: ?Streams
     // is the host's choice, as little as 1 MiB, so the guard could not be told
     // honestly how much there is, and a program within section 7.2's
     // guarantees could fail or crash. Failing to start is the honest outcome.
-    var task: Task = .{ .gpa = gpa, .source = source, .streams = streams };
+    var task: Task = .{ .gpa = gpa, .project = project, .streams = streams };
     const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
@@ -115,7 +143,7 @@ fn onLargeStack(gpa: std.mem.Allocator, source: *const Source, streams: ?Streams
 /// cascade, and a parser fed a broken token stream produces exactly that cascade.
 fn analyze(
     gpa: std.mem.Allocator,
-    source: *const Source,
+    project: *const Project,
     streams: ?Streams,
     stack: Interpreter.StackLimit,
 ) Error!Report {
@@ -123,35 +151,84 @@ fn analyze(
     errdefer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    const files = project.files;
+
+    // A stage runs over every file before the next one starts, so a project
+    // reports every encoding problem, then every lexical one, and so on. That
+    // is section 17.2's rule about cascades, applied to a project: one stage's
+    // worth of problems at a time.
+    var found: std.ArrayList(Diagnostic) = .empty;
+
     // Encoding. Lexing bytes that are not text would only invent confusion on
     // top of a problem the reader has to fix first.
-    if (Source.findInvalidUtf8(source.text)) |span| {
-        const only = try arena.alloc(Diagnostic, 1);
-        only[0] = .{
+    for (files, 0..) |file, index| {
+        const span = Source.findInvalidUtf8(file.source.text) orelse continue;
+        try found.append(arena, .{
             .message = "this is not valid UTF-8 text",
             .span = span,
             .help = "Emerald source files are always UTF-8. Re-save this file as UTF-8.",
-        };
-        return .{ .arena_state = arena_state, .diagnostics = only };
+            .file = @intCast(index),
+        });
+    }
+    if (found.items.len != 0) {
+        return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
 
-    var tokenized = try Lexer.tokenize(gpa, source);
-    defer tokenized.deinit(gpa);
-    if (tokenized.diagnostics.len != 0) {
-        // Every allocation has to finish before the arena is copied into the
-        // result, because copying it snapshots the list of blocks it owns.
-        const copies = try dupeDiagnostics(arena, tokenized.diagnostics);
-        return .{ .arena_state = arena_state, .diagnostics = copies };
+    // A directory whose name cannot become a namespace, reported against a file
+    // inside it so there is a line to point at.
+    for (project.bad_directories) |bad| {
+        try found.append(arena, .{
+            .message = try std.fmt.allocPrint(
+                arena,
+                "the directory `{s}` cannot be a namespace",
+                .{bad.path},
+            ),
+            .span = .{ .start = 0, .end = 0 },
+            .help = "A directory name becomes a namespace, so it has to read as one: letters, digits and `_`, starting with a letter. Rename it, as in `shapes/`.",
+            .file = bad.file,
+        });
+    }
+    if (found.items.len != 0) {
+        return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
 
-    var parsed = try Parser.parse(gpa, source, tokenized.tokens);
-    defer parsed.deinit();
-    if (!parsed.ok()) {
-        const copies = try dupeDiagnostics(arena, parsed.diagnostics);
-        return .{ .arena_state = arena_state, .diagnostics = copies };
+    // Every file's tokens are held at once, because the parser for one file may
+    // still be reading them while another is parsed.
+    const tokenized = try gpa.alloc(Lexer.Tokenized, files.len);
+    var lexed: usize = 0;
+    defer {
+        for (tokenized[0..lexed]) |*one| one.deinit(gpa);
+        gpa.free(tokenized);
+    }
+    while (lexed < files.len) : (lexed += 1) {
+        tokenized[lexed] = try Lexer.tokenize(gpa, &files[lexed].source);
+        try appendFrom(arena, &found, tokenized[lexed].diagnostics, @intCast(lexed));
+    }
+    if (found.items.len != 0) {
+        return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
 
-    var resolved = try Resolver.resolve(gpa, parsed.program);
+    const parsed = try gpa.alloc(Parser.Parsed, files.len);
+    var parsed_count: usize = 0;
+    defer {
+        for (parsed[0..parsed_count]) |*one| one.deinit();
+        gpa.free(parsed);
+    }
+    while (parsed_count < files.len) : (parsed_count += 1) {
+        parsed[parsed_count] = try Parser.parse(gpa, &files[parsed_count].source, tokenized[parsed_count].tokens);
+        try appendFrom(arena, &found, parsed[parsed_count].diagnostics, @intCast(parsed_count));
+    }
+    if (found.items.len != 0) {
+        return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
+    }
+
+    const programs = try gpa.alloc(Ast.Program, files.len);
+    defer gpa.free(programs);
+    for (parsed, programs) |one, *program| program.* = one.program;
+
+    // Resolution, checking and execution each see the whole project at once,
+    // because a name in one file can only be understood against the rest.
+    var resolved = try Resolver.resolve(gpa, files, programs, project.enclosing_project);
     defer resolved.deinit();
     if (!resolved.ok()) {
         const copies = try dupeDiagnostics(arena, resolved.diagnostics);
@@ -160,7 +237,7 @@ fn analyze(
 
     // The resolver's facts stay valid here: `resolved` is released only when
     // this function returns.
-    var checked = try Checker.check(gpa, parsed.program, resolved.facts);
+    var checked = try Checker.check(gpa, files, programs, resolved.facts);
     defer checked.deinit();
     if (!checked.ok()) {
         const copies = try dupeDiagnostics(arena, checked.diagnostics);
@@ -171,10 +248,11 @@ fn analyze(
 
     var outcome = try Interpreter.run(
         gpa,
-        source,
-        parsed.program,
+        files,
+        programs,
         &checked.signatures,
         &checked.literal_types,
+        resolved.facts,
         running.out,
         running.in,
         stack,
@@ -189,6 +267,22 @@ fn analyze(
     return .{ .arena_state = arena_state, .diagnostics = &.{}, .failure = failure };
 }
 
+/// Copies one file's diagnostics into the report's arena, stamping the file
+/// they came from. A stage that works on one file at a time does not know its
+/// index, so it is filled in here, where the loop does.
+fn appendFrom(
+    arena: std.mem.Allocator,
+    into: *std.ArrayList(Diagnostic),
+    diagnostics: []const Diagnostic,
+    file: u32,
+) !void {
+    for (diagnostics) |diagnostic| {
+        var copy = try dupeDiagnostic(arena, diagnostic);
+        copy.file = file;
+        try into.append(arena, copy);
+    }
+}
+
 /// Diagnostics point at text owned by the stage that produced them, and every
 /// stage is released as soon as the next one starts, so they are copied into the
 /// report's own arena.
@@ -198,12 +292,13 @@ fn dupeDiagnostic(arena: std.mem.Allocator, diagnostic: Diagnostic) !Diagnostic 
         copy.* = frame;
         copy.function = try arena.dupe(u8, frame.function);
     }
-    return .{
-        .message = try arena.dupe(u8, diagnostic.message),
-        .span = diagnostic.span,
-        .help = try arena.dupe(u8, diagnostic.help),
-        .trace = trace,
-    };
+    // Copied whole and then patched, so a field added to `Diagnostic` is
+    // carried across rather than silently dropped here.
+    var copy = diagnostic;
+    copy.message = try arena.dupe(u8, diagnostic.message);
+    copy.help = try arena.dupe(u8, diagnostic.help);
+    copy.trace = trace;
+    return copy;
 }
 
 fn dupeDiagnostics(arena: std.mem.Allocator, diagnostics: []const Diagnostic) ![]const Diagnostic {
@@ -277,6 +372,309 @@ fn expectFailure(text: []const u8, expected_message: []const u8) !void {
     const problem = report.failure orelse
         if (report.diagnostics.len != 0) report.diagnostics[0] else return error.ExpectedAFailure;
     try testing.expectEqualStrings(expected_message, problem.message);
+}
+
+/// One file of a project written inline, for the tests below. A real project
+/// comes from directories; these state the same thing directly so a test does
+/// not need a temporary directory to exercise namespaces.
+const ProjectFile = struct {
+    path: []const u8,
+    namespace: []const u8 = "",
+    text: []const u8,
+};
+
+/// Builds a project from files written inline. The first is the entry, as
+/// section 14.1 makes `main.em`.
+fn buildProject(gpa: std.mem.Allocator, files: []const ProjectFile) !Project {
+    const built = try gpa.alloc(Project.File, files.len);
+    errdefer gpa.free(built);
+    for (files, built, 0..) |file, *slot, index| {
+        slot.* = .{
+            .source = try Source.init(gpa, file.path, file.text),
+            .namespace = try gpa.dupe(u8, file.namespace),
+            .entry = index == 0,
+        };
+    }
+    return .{ .files = built, .entry = 0, .bad_directories = &.{} };
+}
+
+fn expectProjectOutput(files: []const ProjectFile, expected: []const u8) !void {
+    var project = try buildProject(testing.allocator, files);
+    defer project.deinit(testing.allocator);
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var no_input: std.Io.Reader = .fixed("");
+
+    var report = try runProject(testing.allocator, &project, .{ .out = &out.writer, .in = &no_input });
+    defer report.deinit();
+
+    if (report.diagnostics.len != 0) {
+        const sources = try project.sources(testing.allocator);
+        defer testing.allocator.free(sources);
+        const rendered = try report.diagnostics[0].renderAlloc(testing.allocator, sources);
+        defer testing.allocator.free(rendered);
+        std.debug.print("\nexpected it to run, but:\n{s}", .{rendered});
+        return error.ExpectedItToRun;
+    }
+    if (report.failure) |failure| {
+        std.debug.print("\nexpected it to run, but it failed: {s}\n", .{failure.message});
+        return error.ExpectedItToRun;
+    }
+    try testing.expectEqualStrings(expected, out.written());
+}
+
+/// Checks a project and returns the first problem's message and the file it was
+/// reported in, which is the part a single-file test cannot cover.
+fn expectProjectProblem(
+    files: []const ProjectFile,
+    expected_file: []const u8,
+    expected_message: []const u8,
+) !void {
+    var project = try buildProject(testing.allocator, files);
+    defer project.deinit(testing.allocator);
+
+    var report = try checkProject(testing.allocator, &project);
+    defer report.deinit();
+
+    if (report.diagnostics.len == 0) return error.ExpectedAProblem;
+    const problem = report.diagnostics[0];
+    try testing.expectEqualStrings(expected_message, problem.message);
+    try testing.expectEqualStrings(expected_file, project.files[problem.file].source.path);
+}
+
+/// The same for a problem found only while running.
+fn expectProjectFailure(
+    files: []const ProjectFile,
+    expected_file: []const u8,
+    expected_message: []const u8,
+) !void {
+    var project = try buildProject(testing.allocator, files);
+    defer project.deinit(testing.allocator);
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var no_input: std.Io.Reader = .fixed("");
+
+    var report = try runProject(testing.allocator, &project, .{ .out = &out.writer, .in = &no_input });
+    defer report.deinit();
+
+    const problem = report.failure orelse
+        if (report.diagnostics.len != 0) report.diagnostics[0] else return error.ExpectedAFailure;
+    try testing.expectEqualStrings(expected_message, problem.message);
+    try testing.expectEqualStrings(expected_file, project.files[problem.file].source.path);
+}
+
+const shapes_area: ProjectFile = .{
+    .path = "shapes/rectangle.em",
+    .namespace = "Shapes",
+    .text = "func area(width: Int, height: Int): Int {\n    return width * height\n}\n",
+};
+
+test "a name in another directory is reached through its namespace" {
+    try expectProjectOutput(&.{
+        .{ .path = "main.em", .text = "print(Shapes.area(4, 3))\n" },
+        shapes_area,
+    }, "12\n");
+}
+
+test "`using` makes a namespace's names directly visible" {
+    try expectProjectOutput(&.{
+        .{ .path = "main.em", .text = "using Shapes\nprint(area(4, 3))\n" },
+        shapes_area,
+    }, "12\n");
+}
+
+test "`using` can alias a namespace or one name in it" {
+    try expectProjectOutput(&.{
+        .{ .path = "main.em", .text = "using S = Shapes\nprint(S.area(4, 3))\n" },
+        shapes_area,
+    }, "12\n");
+    try expectProjectOutput(&.{
+        .{ .path = "main.em", .text = "using rectangle = Shapes.area\nprint(rectangle(4, 3))\n" },
+        shapes_area,
+    }, "12\n");
+}
+
+test "files in one directory see each other without qualification" {
+    // In file order the helper is walked second, so this also covers a name
+    // being visible whichever order the files happen to be walked in.
+    try expectProjectOutput(&.{
+        .{ .path = "main.em", .text = "print(Shapes.area(4, 3))\n" },
+        .{
+            .path = "shapes/area.em",
+            .namespace = "Shapes",
+            .text = "func area(width: Int, height: Int): Int {\n    return scale(width * height)\n}\n",
+        },
+        .{
+            .path = "shapes/scale.em",
+            .namespace = "Shapes",
+            .text = "const factor = 2\nfunc scale(value: Int): Int {\n    return value * factor\n}\n",
+        },
+    }, "24\n");
+}
+
+test "section 14.2 keeps a leading underscore private to its own file" {
+    try expectProjectProblem(&.{
+        .{ .path = "main.em", .text = "print(Shapes._twice(2))\n" },
+        .{
+            .path = "shapes/rectangle.em",
+            .namespace = "Shapes",
+            .text = "func _twice(value: Int): Int {\n    return value * 2\n}\n",
+        },
+    }, "main.em", "`_twice` is private to the file that declares it");
+
+    // Two files may each declare one, because the name is the file's.
+    try expectProjectOutput(&.{
+        .{ .path = "main.em", .text = "print(Shapes.area(), Sizes.width())\n" },
+        .{
+            .path = "shapes/a.em",
+            .namespace = "Shapes",
+            .text = "func area(): Int {\n    return _value()\n}\nfunc _value(): Int {\n    return 1\n}\n",
+        },
+        .{
+            .path = "sizes/b.em",
+            .namespace = "Sizes",
+            .text = "func width(): Int {\n    return _value()\n}\nfunc _value(): Int {\n    return 2\n}\n",
+        },
+    }, "1 2\n");
+}
+
+test "two files in one directory cannot declare the same public name" {
+    try expectProjectProblem(&.{
+        .{ .path = "main.em", .text = "print(Shapes.area(4, 3))\n" },
+        shapes_area,
+        .{
+            .path = "shapes/square.em",
+            .namespace = "Shapes",
+            .text = "func area(side: Int): Int {\n    return side * side\n}\n",
+        },
+    }, "shapes/square.em", "`area` is already declared in `shapes/rectangle.em`");
+}
+
+test "section 14.1 gives only the entry file a top level that runs" {
+    try expectProjectProblem(&.{
+        .{ .path = "main.em", .text = "print(Shapes.area(4, 3))\n" },
+        .{
+            .path = "shapes/rectangle.em",
+            .namespace = "Shapes",
+            .text = "print(\"loaded\")\nfunc area(width: Int, height: Int): Int {\n    return width * height\n}\n",
+        },
+    }, "shapes/rectangle.em", "this would never run");
+
+    // And so a binding there has nowhere to be assigned but its declaration.
+    try expectProjectProblem(&.{
+        .{ .path = "main.em", .text = "print(Shapes.total)\n" },
+        .{ .path = "shapes/total.em", .namespace = "Shapes", .text = "var total: Int\n" },
+    }, "shapes/total.em", "`total` needs its value here");
+}
+
+test "section 14.1 initializes a module file once, on first use" {
+    try expectProjectOutput(&.{
+        .{
+            .path = "main.em",
+            .text = "print(\"start\")\nprint(Store.label)\nprint(Store.label)\nprint(Store.shout())\n",
+        },
+        .{
+            .path = "store/label.em",
+            .namespace = "Store",
+            .text =
+            \\const label = build()
+            \\
+            \\func build(): String {
+            \\    print("  building")
+            \\    return "ready"
+            \\}
+            \\
+            \\func shout(): String {
+            \\    return label.upper()
+            \\}
+            \\
+            ,
+        },
+    }, "start\n  building\nready\nready\nREADY\n");
+}
+
+test "section 14.1 reports a cycle that reaches an unfinished binding" {
+    try expectProjectFailure(&.{
+        .{ .path = "main.em", .text = "print(First.value)\n" },
+        .{ .path = "first/one.em", .namespace = "First", .text = "const value = Second.value\n" },
+        .{ .path = "second/two.em", .namespace = "Second", .text = "const value = First.value\n" },
+    }, "second/two.em", "`first/one.em` is still being set up, so `First.value` cannot be read yet");
+}
+
+test "a runtime error names the file each frame is in" {
+    var project = try buildProject(testing.allocator, &.{
+        .{ .path = "main.em", .text = "print(Math.halve(10, 0))\n" },
+        .{
+            .path = "math/divide.em",
+            .namespace = "Math",
+            .text = "func halve(value: Int, by: Int): Int {\n    return value // by\n}\n",
+        },
+    });
+    defer project.deinit(testing.allocator);
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var no_input: std.Io.Reader = .fixed("");
+    var report = try runProject(testing.allocator, &project, .{ .out = &out.writer, .in = &no_input });
+    defer report.deinit();
+
+    const failure = report.failure orelse return error.ExpectedAFailure;
+    try testing.expectEqualStrings("math/divide.em", project.files[failure.file].source.path);
+    try testing.expectEqual(@as(usize, 1), failure.trace.len);
+    // The call is in the caller's file, not the callee's.
+    try testing.expectEqualStrings("main.em", project.files[failure.trace[0].file].source.path);
+}
+
+test "a block reads its own file's names wherever it is called" {
+    // A block written in `main.em` and called from inside `tools/`, and one
+    // written in `tools/` and called from `main.em`. Each reads a module-level
+    // name of the file it was written in, which is what makes this a question
+    // about where a block comes from rather than where it runs.
+    try expectProjectOutput(&.{
+        .{
+            .path = "main.em",
+            // Deliberately without `using Tools`: that would put `factor` in
+            // this file's names too, and then the block would read the right
+            // value whichever file it was taken to be from.
+            .text =
+            \\const scale = 10
+            \\const triple = Tools.multiplier()
+            \\
+            \\print(Tools.apply([1, 2]) { value => value * scale })
+            \\print([1, 2].map(triple))
+            \\
+            ,
+        },
+        .{
+            .path = "tools/apply.em",
+            .namespace = "Tools",
+            .text =
+            \\const factor = 3
+            \\
+            \\func apply(values: [Int], block: func(Int): Int): [Int] {
+            \\    return values.map(block)
+            \\}
+            \\
+            \\func multiplier(): func(Int): Int {
+            \\    return { value => value * factor }
+            \\}
+            \\
+            ,
+        },
+    }, "[10, 20]\n[3, 6]\n");
+}
+
+test "a local shadows a name its namespace declares" {
+    try expectProjectOutput(&.{
+        .{ .path = "main.em", .text = "print(Shapes.describe())\n" },
+        .{
+            .path = "shapes/describe.em",
+            .namespace = "Shapes",
+            .text = "const unit = \"cm\"\nfunc describe(): String {\n    const unit = \"mm\"\n    return unit\n}\n",
+        },
+    }, "mm\n");
 }
 
 test "the first milestone expression" {
@@ -1481,7 +1879,7 @@ test "a runtime error inside a function carries its stack trace" {
     var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input });
     defer report.deinit();
 
-    const rendered = try report.failure.?.renderAlloc(testing.allocator, source);
+    const rendered = try report.failure.?.renderAlloc(testing.allocator, &.{source});
     defer testing.allocator.free(rendered);
     try testing.expectEqualStrings(
         \\main.em:2:12: division by zero
@@ -1515,7 +1913,7 @@ test "unbounded recursion is caught at the limit, with repeated frames summarize
     // Exactly the 1,000 active calls section 7.2 guarantees.
     try testing.expectEqual(@as(usize, 1000), failure.trace.len);
 
-    const rendered = try failure.renderAlloc(testing.allocator, source);
+    const rendered = try failure.renderAlloc(testing.allocator, &.{source});
     defer testing.allocator.free(rendered);
     try testing.expect(std.mem.endsWith(u8, rendered,
         \\in `forever`, called at main.em:2:12 (999 times)

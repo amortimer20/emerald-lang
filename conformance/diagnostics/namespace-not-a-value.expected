@@ -1,0 +1,4 @@
+diagnostics/namespace-not-a-value/main.em:1:7: `Shapes` is a namespace, not a value
+  print(Shapes)
+        ^^^^^^
+Write the name you want from it, such as `Shapes.area`, or put `using Shapes` at the top of this file to reach its names directly.

@@ -17,6 +17,11 @@ Run them with `zig build test`. The runner is [`src/conformance.zig`](../src/con
 | `run/` | The program runs and prints exactly its `.expected` file. |
 | `runtime-errors/` | The program runs, then fails with exactly its `.expected` file. |
 
+A case is usually one `.em` file. A directory holding a `main.em` is one case too — a
+whole project, per section 14.1 of the rewrite context — and the files inside it are not
+cases of their own. Its `.expected` sits beside the directory rather than inside it, so
+`run/project/` is judged by `run/project.expected`.
+
 Cases run in sorted order, and every case runs even after one fails, so a single run
 reports the whole picture.
 
@@ -38,6 +43,13 @@ cd conformance
 ../zig-out/bin/emerald run runtime-errors/your-case.em 2> runtime-errors/your-case.expected
 ```
 
+A project case is a directory with a `main.em` in it, and is generated the same way
+through that file:
+
+```bash
+../zig-out/bin/emerald run run/your-project/main.em > run/your-project.expected
+```
+
 A `run/` or `runtime-errors/` case whose program calls `input` reads from a `.input` file
 beside it, such as `run/first-program.input`; without one, its input is empty. Generate
 its expectation with that file on standard input:
@@ -55,7 +67,9 @@ who hit it — section 17 treats diagnostic text as part of the product, not as 
 
 Encoding, lexical structure, syntax, name resolution, type checking, definite assignment,
 arithmetic, comparison, bindings, conditionals, loops, functions, lists and their value
-semantics, strings and their Unicode behavior, input, and stack traces for runtime errors
-raised inside functions. Unicode's own conformance data is checked separately, by the unit
-tests in `src/unicode.zig`. What remains at runtime is what cannot be known
-statically: integer overflow, division by zero, and exceeding the recursion limit.
+semantics, strings and their Unicode behavior, optionals and narrowing, input, projects of
+several files with their namespaces, `using`, privacy and lazy module initialization, and
+stack traces for runtime errors raised inside functions and across files. Unicode's own
+conformance data is checked separately, by the unit tests in `src/unicode.zig`. What
+remains at runtime is what cannot be known statically: integer overflow, division by zero,
+exceeding the recursion limit, and an initialization cycle between files.

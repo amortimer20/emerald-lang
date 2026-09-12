@@ -82,9 +82,22 @@ pub fn parse(gpa: std.mem.Allocator, source: *const Source, tokens: []const Toke
     var parser: Parser = .{ .arena = arena, .source = source, .tokens = tokens };
 
     var statements: std.ArrayList(Ast.Statement) = .empty;
+    var using: std.ArrayList(Ast.Using) = .empty;
     while (true) {
         parser.skipSeparators();
         if (parser.peek().kind == .eof) break;
+
+        // Section 14.2's `using` is a file-local declaration rather than a
+        // statement, so it is collected here instead of among the statements.
+        if (parser.check(.keyword_using)) {
+            if (parser.parseUsing()) |declaration| {
+                try using.append(arena, declaration);
+            } else |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.ParseFailed => parser.skipToNextStatement(),
+            }
+            continue;
+        }
 
         if (parser.parseStatement()) |statement| {
             try statements.append(arena, statement);
@@ -96,14 +109,15 @@ pub fn parse(gpa: std.mem.Allocator, source: *const Source, tokens: []const Toke
         }
     }
 
-    // Both allocations have to finish before the arena is copied into the
+    // Every allocation has to finish before the arena is copied into the
     // result, because copying it snapshots the list of blocks it owns.
     const owned_statements = try statements.toOwnedSlice(arena);
+    const owned_using = try using.toOwnedSlice(arena);
     const owned_diagnostics = try parser.diagnostics.toOwnedSlice(arena);
 
     return .{
         .arena_state = arena_state,
-        .program = .{ .statements = owned_statements },
+        .program = .{ .statements = owned_statements, .using = owned_using },
         .diagnostics = owned_diagnostics,
     };
 }
@@ -345,6 +359,11 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             }
             break :blk statement;
         },
+        .keyword_using => self.report(
+            self.peek().span,
+            "a `using` declaration belongs at the top level of a file",
+            "Move it out to the top level. `using` applies to the whole file wherever it is written.",
+        ),
         .keyword_return => self.parseReturn(),
         .keyword_while => self.parseWhile(),
         .keyword_for => self.parseFor(),
@@ -358,6 +377,53 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
         ),
         else => self.parseSimpleStatement(),
     };
+}
+
+/// Section 14.2: `using Shapes`, or `using UiColor = Graphics.Color`.
+///
+/// A namespace is written in `PascalCase` and a declaration in `snake_case`, but
+/// both are ordinary identifiers here; which one a path names is a question for
+/// the resolver, which is the pass that knows what exists.
+fn parseUsing(self: *Parser) Error!Ast.Using {
+    const keyword = self.advance();
+
+    var first = try self.expectName("expected a name after `using`");
+    var alias: []const u8 = "";
+    var alias_span: Source.Span = .{ .start = 0, .end = 0 };
+
+    if (self.match(.equal)) |_| {
+        alias = try self.identifier(first);
+        alias_span = first.span;
+        first = try self.expectName("expected a name after `=`");
+    }
+
+    var path: std.ArrayList([]const u8) = .empty;
+    try path.append(self.arena, try self.identifier(first));
+    var last = first.span;
+    while (self.match(.dot)) |_| {
+        const segment = try self.expectName("expected a name after `.`");
+        try path.append(self.arena, try self.identifier(segment));
+        last = segment.span;
+    }
+
+    try self.expectStatementEnd();
+    return .{
+        .span = spanning(keyword.span, last),
+        .alias = alias,
+        .alias_span = alias_span,
+        .path = try path.toOwnedSlice(self.arena),
+        .path_span = spanning(first.span, last),
+    };
+}
+
+fn expectName(self: *Parser, message: []const u8) Error!Token {
+    if (self.check(.identifier)) return self.advance();
+    return self.reportFmt(
+        self.peek().span,
+        "{s}, found {s}",
+        .{ message, self.peek().kind.describe() },
+        "A `using` declaration names a namespace, such as `using Shapes`, or one name in it.",
+    );
 }
 
 /// Section 6.4: `while condition { body }`.

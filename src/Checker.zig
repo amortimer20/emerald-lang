@@ -35,6 +35,7 @@
 const std = @import("std");
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
+const Project = @import("Project.zig");
 const Resolver = @import("Resolver.zig");
 const Source = @import("Source.zig");
 const Type = @import("Type.zig");
@@ -127,6 +128,10 @@ literal_types: LiteralTypes = .empty,
 /// The loops enclosing the statement being checked, innermost last. Empty at
 /// the start of every function body, since a `break` cannot leave a function.
 loops: std.ArrayList(Loop) = .empty,
+/// Which of the program's files is being checked, stamped onto everything
+/// reported here and used to turn a bare module-level name into the one key
+/// the whole program knows it by.
+file: u32 = 0,
 
 /// What the checker tracks about one enclosing loop.
 const Loop = struct {
@@ -141,7 +146,12 @@ const Loop = struct {
     exits: ?Snapshot = null,
 };
 
-pub fn check(gpa: std.mem.Allocator, program: Ast.Program, facts: Resolver.Facts) !Checked {
+pub fn check(
+    gpa: std.mem.Allocator,
+    files: []const Project.File,
+    programs: []const Ast.Program,
+    facts: Resolver.Facts,
+) !Checked {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -159,23 +169,45 @@ pub fn check(gpa: std.mem.Allocator, program: Ast.Program, facts: Resolver.Facts
     try checker.scopes.append(arena, module);
 
     // Hoisted, as in the resolver. The resolver has rejected duplicate names,
-    // so every declaration here is the only one with its name.
-    for (program.statements) |statement| {
-        const function = switch (statement.data) {
-            .function_declaration => |f| f,
-            else => continue,
-        };
-        try checker.declarations.put(arena, function.name, function);
-        try module.put(arena, function.name, .{ .type = .invalid, .declared = .invalid, .assigned = true, .is_function = true });
+    // so every declaration here is the only one with its key.
+    for (programs, 0..) |program, index| {
+        checker.file = @intCast(index);
+        for (program.statements) |statement| {
+            const function = switch (statement.data) {
+                .function_declaration => |f| f,
+                else => continue,
+            };
+            const key = checker.keyOf(function.name);
+            try checker.declarations.put(arena, key, function);
+            try module.put(arena, key, .{ .type = .invalid, .declared = .invalid, .assigned = true, .is_function = true });
+        }
     }
 
-    try checker.checkStatements(program.statements);
+    // Section 14.1: a file that is not the entry has no statements that run,
+    // and its bindings are initialized before anything can reach them, so they
+    // are in place and assigned before the entry file is looked at.
+    for (files, programs, 0..) |file, program, index| {
+        if (file.entry) continue;
+        checker.file = @intCast(index);
+        try checker.checkStatements(program.statements);
+        try checker.markModuleAssigned(program.statements);
+    }
+
+    checker.file = 0;
+    for (files, programs, 0..) |file, program, index| {
+        if (!file.entry) continue;
+        checker.file = @intCast(index);
+        try checker.checkStatements(program.statements);
+    }
 
     // Every body, in the order written. Most were not needed during the walk
     // above; those that were have already been checked and are skipped.
-    for (program.statements) |statement| {
-        if (statement.data == .function_declaration) {
-            try checker.ensureBodyChecked(statement.data.function_declaration.name);
+    for (programs, 0..) |program, index| {
+        checker.file = @intCast(index);
+        for (program.statements) |statement| {
+            if (statement.data == .function_declaration) {
+                try checker.ensureBodyChecked(checker.keyOf(statement.data.function_declaration.name));
+            }
         }
     }
 
@@ -193,14 +225,71 @@ pub fn check(gpa: std.mem.Allocator, program: Ast.Program, facts: Resolver.Facts
 }
 
 fn earlierInSource(_: void, a: Diagnostic, b: Diagnostic) bool {
+    if (a.file != b.file) return a.file < b.file;
     return a.span.start < b.span.start;
 }
 
+/// Section 14.1 initializes a module file before anything can read it, so its
+/// bindings are assigned wherever they are seen from.
+fn markModuleAssigned(self: *Checker, statements: []const Ast.Statement) Error!void {
+    for (statements) |statement| {
+        const declaration = switch (statement.data) {
+            .declaration => |d| d,
+            else => continue,
+        };
+        const binding = self.module.getPtr(self.keyOf(declaration.name)) orelse continue;
+        binding.assigned = true;
+    }
+}
+
+/// The one name the whole program knows a module-level declaration by, as the
+/// resolver worked it out for the file being checked. A name that is not a
+/// module-level declaration is its own key, which is every local.
+fn keyOf(self: *Checker, name: []const u8) []const u8 {
+    return self.facts.keyFor(self.file, name) orelse name;
+}
+
+/// A module-level declaration reached either way: `area` inside `shapes/`, or
+/// `Shapes.area` from anywhere. The resolver decided which member expressions
+/// are qualified references; this only reads the answer.
+const Reference = struct {
+    key: []const u8,
+    /// How the reader wrote it, which is what a diagnostic should echo back.
+    display: []const u8,
+};
+
+fn referenceOf(self: *Checker, expression: *const Ast.Expression) ?Reference {
+    return switch (expression.data) {
+        .name => |name| .{ .key = self.keyOf(name), .display = name },
+        .member => if (self.facts.qualified.get(expression)) |key|
+            .{ .key = key, .display = key }
+        else
+            null,
+        else => null,
+    };
+}
+
+/// Local scopes are keyed by the bare name and only the module scope is keyed
+/// program-wide, so both spellings are tried at each level. A local always wins,
+/// because it is found in an inner scope first.
 fn find(self: *Checker, name: []const u8) ?*Binding {
+    const key = self.facts.keyFor(self.file, name);
     var index = self.scopes.items.len;
     while (index > 0) {
         index -= 1;
         if (self.scopes.items[index].getPtr(name)) |binding| return binding;
+        if (key) |qualified| {
+            if (self.scopes.items[index].getPtr(qualified)) |binding| return binding;
+        }
+    }
+    return null;
+}
+
+fn findKey(self: *Checker, key: []const u8) ?*Binding {
+    var index = self.scopes.items.len;
+    while (index > 0) {
+        index -= 1;
+        if (self.scopes.items[index].getPtr(key)) |binding| return binding;
     }
     return null;
 }
@@ -216,6 +305,7 @@ fn report(
         .message = try std.fmt.allocPrint(self.arena, message_format, message_args),
         .span = span,
         .help = help,
+        .file = self.file,
     });
 }
 
@@ -232,6 +322,7 @@ fn reportWithHelp(
         .message = try std.fmt.allocPrint(self.arena, message_format, message_args),
         .span = span,
         .help = try std.fmt.allocPrint(self.arena, help_format, help_args),
+        .file = self.file,
     });
 }
 
@@ -572,7 +663,10 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
     }
 
     const current = self.scopes.items[self.scopes.items.len - 1];
-    try current.put(self.arena, declaration.name, .{
+    // Only the module scope is shared between files, so only it is keyed
+    // program-wide; a local is known by the name that was written.
+    const name = if (current == self.module) self.keyOf(declaration.name) else declaration.name;
+    try current.put(self.arena, name, .{
         .type = declared,
         .declared = declared,
         .assigned = assigned,
@@ -896,10 +990,19 @@ fn checkReturn(self: *Checker, return_statement: Ast.Return) Error!void {
 /// Inference only happens after that is ruled out, which is what keeps this
 /// from chasing its own tail. A provisional signature is stored while inferring
 /// all the same, so a re-entrant call could never recurse forever.
-fn signatureFor(self: *Checker, name: []const u8) Error!Signature {
-    if (self.signatures.get(name)) |signature| return signature;
+/// `key` names the declaration program-wide; see `Checker.keyOf`.
+fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
+    if (self.signatures.get(key)) |signature| return signature;
 
-    const declaration = self.declarations.get(name).?;
+    const declaration = self.declarations.get(key).?;
+
+    // Everything below reports against the declaration, and may check its
+    // body, so the file is the one that wrote it rather than the one that
+    // needed its type.
+    const outer_file = self.file;
+    defer self.file = outer_file;
+    if (self.facts.owner.get(key)) |owner| self.file = owner;
+
     const parameter_types = try self.arena.alloc(Type, declaration.parameters.len);
     const parameter_names = try self.arena.alloc([]const u8, declaration.parameters.len);
     for (declaration.parameters, 0..) |parameter, index| {
@@ -919,40 +1022,46 @@ fn signatureFor(self: *Checker, name: []const u8) Error!Signature {
         // Nothing to infer: section 7.2's "a function returning no value may
         // omit its return type".
         signature.return_type = .nothing;
-    } else if (try self.isRecursive(name)) {
+    } else if (try self.isRecursive(key)) {
         try self.report(
             declaration.name_span,
             "`{s}` is recursive and needs an explicit return type",
-            .{name},
+            .{declaration.name},
             "Add a return type, so checking does not depend on inferring it from a call to itself.",
         );
     } else {
-        try self.signatures.put(self.arena, name, signature); // provisional
+        try self.signatures.put(self.arena, key, signature); // provisional
         const saved_pending = self.pending_return_types;
         self.pending_return_types = .empty;
 
         try self.checkFunctionBody(declaration, parameter_types, null);
-        try self.bodies_checked.put(self.arena, name, {});
+        try self.bodies_checked.put(self.arena, key, {});
 
         signature.return_type = try self.inferredReturnType(
             self.pending_return_types.items,
-            name,
+            declaration.name,
             declaration.name_span,
         );
         self.pending_return_types = saved_pending;
         try self.checkAllPathsReturn(declaration, signature.return_type);
     }
 
-    try self.signatures.put(self.arena, name, signature);
+    try self.signatures.put(self.arena, key, signature);
     return signature;
 }
 
-fn ensureBodyChecked(self: *Checker, name: []const u8) Error!void {
-    const signature = try self.signatureFor(name);
-    if (self.bodies_checked.contains(name)) return;
-    try self.bodies_checked.put(self.arena, name, {});
+fn ensureBodyChecked(self: *Checker, key: []const u8) Error!void {
+    // A body belongs to the file that wrote it, whichever file the call that
+    // needed its type happens to be in.
+    const outer_file = self.file;
+    defer self.file = outer_file;
+    if (self.facts.owner.get(key)) |owner| self.file = owner;
 
-    const declaration = self.declarations.get(name).?;
+    const signature = try self.signatureFor(key);
+    if (self.bodies_checked.contains(key)) return;
+    try self.bodies_checked.put(self.arena, key, {});
+
+    const declaration = self.declarations.get(key).?;
     try self.checkFunctionBody(declaration, signature.parameters, signature.return_type);
     try self.checkAllPathsReturn(declaration, signature.return_type);
 }
@@ -1119,7 +1228,12 @@ fn capturesOf(self: *Checker, name: []const u8) Error!Resolver.NameSet {
 /// scope as it stands there. Calls made inside a function are covered by the
 /// top-level call that led to them, since a caller's captures include its
 /// callees'.
-fn checkCaptures(self: *Checker, call_span: Source.Span, callee: []const u8) Error!void {
+fn checkCaptures(
+    self: *Checker,
+    call_span: Source.Span,
+    callee: []const u8,
+    display: []const u8,
+) Error!void {
     const reads = try self.capturesOf(callee);
 
     // Report the first unassigned name in alphabetical order, so the output
@@ -1137,7 +1251,7 @@ fn checkCaptures(self: *Checker, call_span: Source.Span, callee: []const u8) Err
     try self.reportWithHelp(
         call_span,
         "`{s}` reads `{s}`, which is not assigned yet here",
-        .{ callee, name },
+        .{ display, name },
         "Move this call below the line that assigns `{s}`.",
         .{name},
     );
@@ -1363,7 +1477,9 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             // while inferring early for a call that `checkCaptures` rejects.
             const binding = self.find(name) orelse break :blk .invalid;
             // Section 3.4 and 7.5: a bare function name is its callable value.
-            if (binding.is_function) break :blk try self.typeOfFunctionValue(expression, name);
+            if (binding.is_function) {
+                break :blk try self.typeOfFunctionValue(expression, .{ .key = self.keyOf(name), .display = name });
+            }
             if (!binding.assigned) {
                 try self.reportUnassigned(expression.span, name, binding.*);
                 // Treated as assigned from here so one unassigned read does not
@@ -1390,7 +1506,12 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             break :blk .string;
         },
         .index => |index| self.typeOfIndex(index),
-        .member => |member| self.typeOfMember(member),
+        // A namespace-qualified name is a reference, not a property access:
+        // `Shapes.area` names one declaration, as the resolver worked out.
+        .member => |member| if (self.referenceOf(expression)) |reference|
+            self.typeOfQualified(expression, reference)
+        else
+            self.typeOfMember(member),
         .range => self.rejectCountingValue(expression),
         .lambda => self.typeOfLambda(expression, null),
     };
@@ -1399,18 +1520,18 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
 /// Section 7.5's captured function. Section 15.2's prelude functions are the
 /// exception: `print` and `write` take any number of arguments of any type, and
 /// no type that can be written describes that, so they can only be called.
-fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, name: []const u8) Error!Type {
-    if (!self.declarations.contains(name)) {
+fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+    if (!self.declarations.contains(reference.key)) {
         try self.reportWithHelp(
             expression.span,
             "`{s}` is built in, and built-in functions cannot be used as values",
-            .{name},
+            .{reference.display},
             "Call it with parentheses, as in `{s}(...)`, or wrap it in a lambda such as `{{ value => {s}(value) }}`.",
-            .{ name, name },
+            .{ reference.display, reference.display },
         );
         return .invalid;
     }
-    const signature = try self.signatureFor(name);
+    const signature = try self.signatureFor(reference.key);
     return Type.functionOf(self.arena, .{
         .parameters = signature.parameters,
         .parameter_names = signature.parameter_names,
@@ -1697,6 +1818,18 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
         .{actual},
         "Indices count whole positions, starting from 0.",
     );
+}
+
+/// Section 14.2's `Shapes.area` used as a value rather than called. It is the
+/// name branch of `typeOf`, reached through a member expression.
+fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+    const binding = self.findKey(reference.key) orelse return .invalid;
+    if (binding.is_function) return self.typeOfFunctionValue(expression, reference);
+    if (!binding.assigned) {
+        try self.reportUnassigned(expression.span, reference.display, binding.*);
+        binding.assigned = true;
+    }
+    return binding.type;
 }
 
 /// A property: `count` is the only one so far (8.5).
@@ -2361,13 +2494,19 @@ fn typeOfCall(
     call: Ast.Expression.Call,
 ) Error!Type {
     if (isCounting(expression)) return self.rejectCountingValue(expression);
-    if (call.callee.data == .member) return self.typeOfMethodCall(expression, call, call.callee.data.member);
-    // Anything that is not a plain name — a lambda called where it is written,
-    // an element of a list of functions — is called through its value.
-    if (call.callee.data != .name) return self.typeOfValueCall(call, try self.typeOf(call.callee), null);
 
-    const name = call.callee.data.name;
-    const binding = self.find(name) orelse {
+    // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
+    // resolver already decided which this is.
+    const reference = self.referenceOf(call.callee) orelse {
+        if (call.callee.data == .member) return self.typeOfMethodCall(expression, call, call.callee.data.member);
+        // Anything that is not a plain name — a lambda called where it is
+        // written, an element of a list of functions — is called through its
+        // value.
+        return self.typeOfValueCall(call, try self.typeOf(call.callee), null);
+    };
+
+    const name = reference.display;
+    const binding = self.findKey(reference.key) orelse self.find(name) orelse {
         try self.typeArguments(call.arguments);
         return .invalid;
     };
@@ -2378,7 +2517,7 @@ fn typeOfCall(
 
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
-    if (!self.declarations.contains(name)) {
+    if (!self.declarations.contains(reference.key)) {
         if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
             return self.typeOfInput(call, name);
         }
@@ -2386,7 +2525,7 @@ fn typeOfCall(
         return .nothing;
     }
 
-    const signature = try self.signatureFor(name);
+    const signature = try self.signatureFor(reference.key);
 
     if (call.arguments.len != signature.parameters.len) {
         const expected = signature.parameters.len;
@@ -2411,7 +2550,7 @@ fn typeOfCall(
         }
     }
 
-    if (!self.in_function) try self.checkCaptures(expression.span, name);
+    if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
     return signature.return_type;
 }
 

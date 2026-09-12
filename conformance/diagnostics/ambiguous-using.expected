@@ -1,0 +1,4 @@
+diagnostics/ambiguous-using/main.em:4:7: `draw` could mean more than one thing here
+  print(draw())
+        ^^^^
+More than one `using` offers it. Write the namespace it should come from, such as `Ui.draw`, or give one an alias: `using Short = Ui`.

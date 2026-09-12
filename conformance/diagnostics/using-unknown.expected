@@ -1,0 +1,4 @@
+diagnostics/using-unknown/main.em:2:7: there is no `Sizes` to use
+  using Sizes
+        ^^^^^
+A namespace comes from a directory: `shapes/` makes `Shapes`. Check the spelling, and that the directory holds a `.em` file.

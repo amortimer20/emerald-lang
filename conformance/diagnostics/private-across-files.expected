@@ -1,0 +1,4 @@
+diagnostics/private-across-files/main.em:1:7: `_twice` is private to the file that declares it
+  print(Shapes._twice(2))
+        ^^^^^^^^^^^^^
+A module-level name starting with `_` cannot be reached from another file. Remove the underscore to make it public.

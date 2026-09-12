@@ -11,6 +11,25 @@ const Source = @import("Source.zig");
 /// A whole source file.
 pub const Program = struct {
     statements: []const Statement,
+    /// Section 14.2's `using` declarations. They are file-local and name no
+    /// order of execution, so they are kept beside the statements rather than
+    /// among them.
+    using: []const Using = &.{},
+};
+
+/// Section 14.2: `using Shapes`, which makes that namespace's public names
+/// directly visible here, or `using UiColor = Graphics.Color`, which gives one
+/// name a short spelling. Either way it is file-local, imports only direct
+/// public names, and neither includes nor executes anything.
+pub const Using = struct {
+    span: Source.Span,
+    /// The short name this introduces, empty for the unaliased form, where
+    /// every public name of `path` keeps its own spelling.
+    alias: []const u8 = "",
+    alias_span: Source.Span = .{ .start = 0, .end = 0 },
+    /// The dotted path as written: `Graphics.Color` is `.{ "Graphics", "Color" }`.
+    path: []const []const u8,
+    path_span: Source.Span,
 };
 
 /// A brace-delimited sequence of statements. Section 6.1 gives every one its own

@@ -116,6 +116,7 @@ src/
   strings.zig        the string operations of section 9
   unicode.zig        grapheme clusters, normalization, case mapping, identifiers
   unicode/tables.zig generated Unicode data; see tools/unicode
+  Project.zig        finds and loads the files a program is made of
   conformance.zig    runs the Emerald conformance suite
 conformance/         Emerald cases and their expected results
 examples/            Emerald programs used as fixtures and targets

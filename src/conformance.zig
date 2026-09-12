@@ -14,6 +14,10 @@
 //!   conformance/run/             runs, and prints exactly its `.expected`
 //!   conformance/runtime-errors/  runs, then fails with exactly its `.expected`
 //!
+//! A case is usually one `.em` file. A directory holding a `main.em` is one
+//! case too — a whole project, per section 14.1 — and its `.expected` sits
+//! beside the directory rather than inside it.
+//!
 //! `lexical/` exists because the lexer accepts far more of the language than the
 //! parser does yet. Those cases hold real lexical rules that are worth protecting
 //! now, and they graduate to `run/` as the stages behind them land.
@@ -36,17 +40,30 @@ const testing = std.testing;
 /// and as the file name in expected diagnostics, so golden files do not embed
 /// machine-specific absolute paths.
 const Case = struct {
+    /// The `.em` file, or the directory of a project case.
     relative_path: []const u8,
+    /// The entry passed to the compiler: the file itself, or the project's
+    /// `main.em`.
+    entry_path: []const u8,
+    /// Where `.expected` and `.input` sit, which is the case path without a
+    /// `.em` suffix.
+    stem: []const u8,
 
     fn lessThan(_: void, a: Case, b: Case) bool {
         return std.mem.order(u8, a.relative_path, b.relative_path) == .lt;
+    }
+
+    fn deinit(self: Case, gpa: std.mem.Allocator) void {
+        gpa.free(self.relative_path);
+        gpa.free(self.entry_path);
+        gpa.free(self.stem);
     }
 };
 
 fn collectCases(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir) ![]Case {
     var cases: std.ArrayList(Case) = .empty;
     errdefer {
-        for (cases.items) |case| gpa.free(case.relative_path);
+        for (cases.items) |case| case.deinit(gpa);
         cases.deinit(gpa);
     }
 
@@ -56,12 +73,52 @@ fn collectCases(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir) ![]Case {
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.path, ".em")) continue;
-        try cases.append(gpa, .{ .relative_path = try gpa.dupe(u8, entry.path) });
+
+        const path = try gpa.dupe(u8, entry.path);
+        defer gpa.free(path);
+        std.mem.replaceScalar(u8, path, std.fs.path.sep, '/');
+
+        // A file inside a project is not a case of its own: the project is,
+        // and its `main.em` is what registers it.
+        if (projectRootOf(io, root, path)) |project| {
+            if (!std.mem.eql(u8, std.fs.path.dirnamePosix(path) orelse "", project)) continue;
+            if (!std.mem.eql(u8, std.fs.path.basenamePosix(path), "main.em")) continue;
+            try cases.append(gpa, .{
+                .relative_path = try gpa.dupe(u8, project),
+                .entry_path = try gpa.dupe(u8, path),
+                .stem = try gpa.dupe(u8, project),
+            });
+            continue;
+        }
+
+        try cases.append(gpa, .{
+            .relative_path = try gpa.dupe(u8, path),
+            .entry_path = try gpa.dupe(u8, path),
+            .stem = try gpa.dupe(u8, path[0 .. path.len - ".em".len]),
+        });
     }
 
     // Walk order is undefined, and section 16.3 wants deterministic ordering.
     std.mem.sort(Case, cases.items, {}, Case.lessThan);
     return cases.toOwnedSlice(gpa);
+}
+
+/// The nearest directory at or above the file that holds a `main.em`, or null
+/// when the file is a program on its own.
+fn projectRootOf(io: std.Io, root: std.Io.Dir, path: []const u8) ?[]const u8 {
+    var at: []const u8 = std.fs.path.dirnamePosix(path) orelse return null;
+    while (true) {
+        if (isProjectRoot(io, root, at)) return at;
+        at = std.fs.path.dirnamePosix(at) orelse return null;
+    }
+}
+
+fn isProjectRoot(io: std.Io, root: std.Io.Dir, directory: []const u8) bool {
+    if (directory.len == 0) return false;
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const candidate = std.fmt.bufPrint(&buffer, "{s}/main.em", .{directory}) catch return false;
+    root.access(io, candidate, .{}) catch return false;
+    return true;
 }
 
 /// What a case asserts, taken from the directory it sits in.
@@ -85,13 +142,13 @@ const Kind = enum {
 /// Renders diagnostics in order, exactly as the command line prints them.
 fn renderDiagnostics(
     gpa: std.mem.Allocator,
-    source: Source,
+    sources: []const Source,
     diagnostics: []const emerald.Diagnostic,
 ) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
     for (diagnostics) |diagnostic| {
-        diagnostic.render(source, &out.writer) catch return error.OutOfMemory;
+        diagnostic.render(sources, &out.writer) catch return error.OutOfMemory;
     }
     return out.toOwnedSlice();
 }
@@ -108,7 +165,7 @@ test "conformance suite" {
 
     const cases = try collectCases(gpa, io, root);
     defer {
-        for (cases) |case| gpa.free(case.relative_path);
+        for (cases) |case| case.deinit(gpa);
         gpa.free(cases);
     }
 
@@ -136,15 +193,16 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
         return 1;
     };
 
-    const bytes = try root.readFileAlloc(io, case.relative_path, gpa, .limited(Source.max_bytes));
-    defer gpa.free(bytes);
+    // The display paths are the relative ones, so expectations stay
+    // machine-independent. A project case loads every file beside its entry.
+    var project = try emerald.Project.loadIn(gpa, io, root, case.entry_path);
+    defer project.deinit(gpa);
 
-    // The display path is the relative one, so expectations stay machine-independent.
-    var source = try Source.init(gpa, case.relative_path, bytes);
-    defer source.deinit(gpa);
+    const sources = try project.sources(gpa);
+    defer gpa.free(sources);
 
     // A case may give its program input to read, in a `.input` file beside it.
-    const input_path = try std.fmt.allocPrint(gpa, "{s}.input", .{case.relative_path[0 .. case.relative_path.len - ".em".len]});
+    const input_path = try std.fmt.allocPrint(gpa, "{s}.input", .{case.stem});
     defer gpa.free(input_path);
     const input = root.readFileAlloc(io, input_path, gpa, .limited(Source.max_bytes)) catch |err| switch (err) {
         error.FileNotFound => try gpa.dupe(u8, ""),
@@ -152,7 +210,7 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
     };
     defer gpa.free(input);
 
-    const actual = try produce(gpa, &source, kind, input) orelse return 1;
+    const actual = try produce(gpa, &project, sources, kind, input) orelse return 1;
     defer gpa.free(actual);
 
     if (kind == .lexical) {
@@ -169,43 +227,50 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
 
 /// Produces the output a case is judged on, or null when the case failed in a
 /// way that has already been reported.
-fn produce(gpa: std.mem.Allocator, source: *const Source, kind: Kind, input: []const u8) !?[]u8 {
+fn produce(
+    gpa: std.mem.Allocator,
+    project: *const emerald.Project,
+    sources: []const Source,
+    kind: Kind,
+    input: []const u8,
+) !?[]u8 {
+    const entry = &project.files[project.entry].source;
     switch (kind) {
         .lexical => {
-            var tokenized = try emerald.Lexer.tokenize(gpa, source);
+            var tokenized = try emerald.Lexer.tokenize(gpa, entry);
             defer tokenized.deinit(gpa);
-            return try renderDiagnostics(gpa, source.*, tokenized.diagnostics);
+            return try renderDiagnostics(gpa, sources, tokenized.diagnostics);
         },
         .diagnostics => {
-            var report = try emerald.check(gpa, source);
+            var report = try emerald.checkProject(gpa, project);
             defer report.deinit();
-            return try renderDiagnostics(gpa, source.*, report.diagnostics);
+            return try renderDiagnostics(gpa, sources, report.diagnostics);
         },
         .run, .runtime_errors => {
             var out: std.Io.Writer.Allocating = .init(gpa);
             defer out.deinit();
 
             var in: std.Io.Reader = .fixed(input);
-            var report = try emerald.run(gpa, source, .{ .out = &out.writer, .in = &in });
+            var report = try emerald.runProject(gpa, project, .{ .out = &out.writer, .in = &in });
             defer report.deinit();
 
             if (report.diagnostics.len != 0) {
-                const rendered = try renderDiagnostics(gpa, source.*, report.diagnostics);
+                const rendered = try renderDiagnostics(gpa, sources, report.diagnostics);
                 defer gpa.free(rendered);
                 std.debug.print(
                     "\n{s}: expected to run, but it did not check:\n{s}",
-                    .{ source.path, rendered },
+                    .{ entry.path, rendered },
                 );
                 return null;
             }
 
             if (kind == .run) {
                 if (report.failure) |failure| {
-                    const rendered = try renderDiagnostics(gpa, source.*, &.{failure});
+                    const rendered = try renderDiagnostics(gpa, sources, &.{failure});
                     defer gpa.free(rendered);
                     std.debug.print(
                         "\n{s}: expected to run to completion, but it failed:\n{s}",
-                        .{ source.path, rendered },
+                        .{ entry.path, rendered },
                     );
                     return null;
                 }
@@ -215,11 +280,11 @@ fn produce(gpa: std.mem.Allocator, source: *const Source, kind: Kind, input: []c
             const failure = report.failure orelse {
                 std.debug.print(
                     "\n{s}: expected a runtime error, but it ran to completion.\n",
-                    .{source.path},
+                    .{entry.path},
                 );
                 return null;
             };
-            return try renderDiagnostics(gpa, source.*, &.{failure});
+            return try renderDiagnostics(gpa, sources, &.{failure});
         },
     }
 }
@@ -231,9 +296,7 @@ fn compareWithExpected(
     case: Case,
     actual: []const u8,
 ) !usize {
-    const expected_path = try std.fmt.allocPrint(gpa, "{s}.expected", .{
-        case.relative_path[0 .. case.relative_path.len - ".em".len],
-    });
+    const expected_path = try std.fmt.allocPrint(gpa, "{s}.expected", .{case.stem});
     defer gpa.free(expected_path);
 
     const expected = root.readFileAlloc(io, expected_path, gpa, .limited(Source.max_bytes)) catch {

@@ -1,0 +1,4 @@
+diagnostics/name-needs-its-namespace/main.em:1:7: `area` is not visible here
+  print(area(2, 3))
+        ^^^^
+It is declared in `Shapes`. Write `Shapes.area`, or add `using Shapes` at the top of this file.

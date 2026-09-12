@@ -1,10 +1,10 @@
 # Current handoff
 
-Updated: 2026-09-11. Prepared by Claude after the optionals slice.
+Updated: 2026-09-12. Prepared by Claude after the project slice.
 
 ## Current milestone
 
-Slices 1 through 10 of section 20 are complete, plus a loop slice the user approved
+Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, and an
 optionals slice the user chose to do before the project slice. Section 20 was renumbered
 during the callable slice: the old slice 9 bundled closures with the collector, and they
@@ -23,7 +23,10 @@ program runs. Callables work: lambdas with inferred or written parameter types, 
 that capture by reference, function types, named functions as values, the trailing-block
 call form, and `each` and `map`. Optionals work: `T?`, `nothing`, narrowing by comparison
 against `nothing`, `.or(...)`, and the vocabulary that needed them — `first`, `last`,
-`find`, `find_index`, `index_of`, the `_maybe` parsers, and `input_maybe`. Memory is
+`find`, `find_index`, `index_of`, the `_maybe` parsers, and `input_maybe`. Projects work:
+a directory with a `main.em` is a program of many files, directories are namespaces,
+`using` shortens them, a leading underscore keeps a name inside its file, and a file that
+is not the entry initializes once, on first use. Memory is
 managed: reference counting reclaims promptly
 and section 19.5's mark-and-sweep collector reclaims the cycles counting cannot, so a loop
 that keeps making blocks runs in flat memory. Every expression has a static type before
@@ -68,6 +71,10 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 ## Implemented so far
 
 - `build.zig` provides `zig build`, `zig build test`, and `zig build run`.
+- `src/Project.zig` finds and loads the files a program is made of, which is section
+  14.1's rule and nothing more: the file alone, unless its own directory holds `main.em`,
+  in which case every `.em` file under that directory comes with it. It derives each
+  directory's namespace and reports one that cannot be a name.
 - `src/Source.zig` is the immutable source-file record: UTF-8 with byte-order mark removal,
   LF and CRLF line handling, byte-offset spans, and one-based line and scalar-column
   mapping. It also locates the first invalid UTF-8 sequence and its span.
@@ -117,6 +124,42 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Project decisions worth knowing
+
+- **The directory is the namespace; the file names nothing.** Section 24 recorded that 14.2
+  read both ways — whether `shapes/circle.em` names a module `Shapes.Circle` or only a
+  namespace. It names only a namespace. 14.3 had already dropped filename-as-implicit-type
+  and 14.2 makes same-directory names directly visible, so the file cannot be part of the
+  name without contradicting both. The practical effect is that splitting one file into two
+  changes nothing any other file writes, which is the refactor a growing program reaches for
+  first. Recorded in 14.2 and in section 22.
+- **The file is still the unit of initialization and of privacy.** The two questions are
+  separable: the directory answers "what is this called", the file answers "when does it
+  run" and "who can see it". That is what lets two files in one directory each declare a
+  `_helper`.
+- **Every module-level name becomes one key, and almost nothing else changed.** The
+  resolver, checker and interpreter all keyed their module scopes by name already. Making
+  the key `Shapes.area` for a public declaration and `shapes/circle.em#_twice` for a
+  private one meant those three passes needed a translation step at exactly one place each,
+  rather than a new concept. `#` cannot appear in an identifier, so a private key can never
+  collide with a qualified one.
+- **`Shapes.area` is decided once.** It parses as a member access, and whether it is one is
+  a question only the resolver can answer. It records the answer in `Facts.qualified`,
+  keyed by the expression node, and the checker and interpreter read it rather than folding
+  the chain again — the same pattern as `literal_types`.
+- **Module variables are hoisted across the whole project, and the ordering rule became a
+  span comparison.** They used to enter the module scope as the walk reached them, which
+  works in one file and fails in many: whether `grades.em` could see `scores.em`'s
+  `pass_mark` depended on which was walked first. They are now hoisted like functions, and
+  section 7.1's "variables are visible only from their declarations" is enforced by
+  comparing spans within one file. The example found this, not a test.
+- **A block carries the file it was written in.** A block passed to another file and called
+  there is still the block that was written where it was written, so `Heap.Closure` holds
+  its file for the same reason it holds its scopes.
+- **Only the entry file's top level runs, so a binding elsewhere needs its value where it
+  is written.** There is nowhere else an assignment could happen. Reporting it at the
+  declaration beats letting definite assignment report it at every read.
 
 ### Optional decisions worth knowing
 
@@ -478,23 +521,33 @@ still open.
 
 ## Next concrete step
 
-Section 20's slice 11, the project slice: `main.em`, multiple files, namespaces, and
-`using`. Section 14.1's project-detection rule is settled and recorded, and nothing else
-now blocks it. It is the last slice before the object model, which is by far the largest
-remaining piece and which everything after it depends on.
+Section 20's slice 12, the object model: structs, classes, construction, properties,
+inheritance, traits, operators, and enums, in dependency order. It is by far the largest
+remaining piece and everything after it depends on it, so it will want splitting into
+several slices of its own — structs and construction first, since they need no
+inheritance.
 
 The alternative is dictionaries and sets from section 8. They are the last collections
-missing, optionals have just unblocked dictionary lookup, and they need no new machinery
-beyond the literal syntax already reserved in 8.2. They would make the standard library
-feel complete before the object model reshapes everything.
+missing, optionals unblocked dictionary lookup, and they need no new machinery beyond the
+literal syntax already reserved in 8.2. They are perhaps two days' work against the object
+model's several, and they would make the standard library feel complete first.
 
-Recommend the project slice, because multiple files is the thing a growing program hits
-first, and because leaving it until after the object model would mean reworking namespaces
-around types rather than the other way round.
+Recommend dictionaries and sets before the object model, for one reason that was not true
+before this slice: `Type` currently has a fixed `Kind` enum and a `ListMethod` table, and
+the object model has to replace both with something that holds user-declared types. Adding
+dictionaries and sets to the current shape is cheap; adding them after the object model
+means writing them against whatever that shape becomes, twice over if it changes again.
+Either order is defensible, and the user may prefer to take the big piece while the
+language is still small.
 
 ## Validation and blockers
 
-- `zig build test` passes in Debug and ReleaseSafe: 255 unit tests, 107 conformance cases,
+- Writing this slice found a bug that only a ReleaseSafe run could find. `check` and `run`
+  wrap their one file in a `Project`, and the first version built it with `&.{ ... }`,
+  which is a pointer to a temporary that dies at the return. Debug passed every test;
+  ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
+  outlives the call it is passed to. Run both modes before believing a green suite.
+- `zig build test` passes in Debug and ReleaseSafe: 269 unit tests, 121 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -581,6 +634,13 @@ around types rather than the other way round.
   the program got faster rather than slower (0.09 s against 0.17 s) because it allocates
   less. The threshold is 4,096 live objects, doubling to twice the surviving count after
   each collection.
+- Narrowing does not cross `or`. `if value == nothing or score > value` is rejected, while
+  the same test written as `if`/`else` is accepted. Section 4.5's narrowing is applied to
+  branches and loop bodies but not to the right operand of a short-circuiting operator,
+  where the left operand's falsity is also a proof. The diagnostic it produces is worse than
+  the gap: it says "`>` needs numbers, but these are Int values", which names the payload
+  type rather than the optional. Found while writing `examples/project/`, and predates this
+  slice.
 - The capture check does not follow a function reached through a value. `const f = later`
   then `f()` above a module variable `later` reads is not reported the way a direct call is;
   the interpreter's unassigned-read error catches it at runtime instead. Extending
@@ -589,4 +649,4 @@ around types rather than the other way round.
 
 ## Pending changes
 
-None. The optionals slice is committed. Verify against Git before continuing.
+None. The project slice is committed. Verify against Git before continuing.

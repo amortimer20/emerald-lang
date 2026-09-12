@@ -31,6 +31,8 @@ const Ast = @import("Ast.zig");
 const Checker = @import("Checker.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Heap = @import("Heap.zig");
+const Project = @import("Project.zig");
+const Resolver = @import("Resolver.zig");
 const Source = @import("Source.zig");
 const Type = @import("Type.zig");
 const Value = @import("Value.zig");
@@ -84,6 +86,11 @@ pub const StackLimit = struct {
 
 pub const RunError = std.mem.Allocator.Error || std.Io.Writer.Error;
 
+/// Section 14.1: a module file "initializes once when one of its members is
+/// first accessed", and "a cycle reaching an unfinished binding is an
+/// initialization-cycle error".
+const ModuleState = enum { pending, running, done, failed };
+
 /// `Returned`, `Broke`, and `Continued` are control flow rather than failures:
 /// each unwinds through `execute` to the construct that handles it, the way
 /// `Raised` unwinds to the top. The checker guarantees every one has a handler.
@@ -96,7 +103,17 @@ arena: std.mem.Allocator,
 /// being passed. Freed as each one finishes, so a loop that calls a function a
 /// million times does not keep a million dead frames.
 gpa: std.mem.Allocator,
-source: *const Source,
+/// The program's files. Only the entry file's top level runs; the rest are
+/// initialized on first use, which is what section 14.1 asks for.
+files: []const Project.File = &.{},
+programs: []const Ast.Program = &.{},
+/// How far each file's module-level bindings have got. The entry file is
+/// `.done` from the start, because its top level is the program.
+module_states: []ModuleState = &.{},
+/// Which file the statement being executed was written in. It decides what a
+/// bare module-level name means and which file a diagnostic points into.
+file: u32 = 0,
+facts: Resolver.Facts = .{},
 out: *std.Io.Writer,
 /// Where `input` reads lines from.
 in: *std.Io.Reader,
@@ -145,10 +162,11 @@ stack: StackLimit,
 
 pub fn run(
     gpa: std.mem.Allocator,
-    source: *const Source,
-    program: Ast.Program,
+    files: []const Project.File,
+    programs: []const Ast.Program,
     signatures: *const Type.Signatures,
     literal_types: *const Checker.LiteralTypes,
+    facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
     stack: StackLimit,
@@ -156,10 +174,22 @@ pub fn run(
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
 
+    const states = try gpa.alloc(ModuleState, files.len);
+    defer gpa.free(states);
+    var entry: u32 = 0;
+    for (files, states, 0..) |file, *state, index| {
+        state.* = if (file.entry) .done else .pending;
+        if (file.entry) entry = @intCast(index);
+    }
+
     var interpreter: Interpreter = .{
         .arena = arena_state.allocator(),
         .gpa = gpa,
-        .source = source,
+        .files = files,
+        .programs = programs,
+        .module_states = states,
+        .file = entry,
+        .facts = facts,
         .out = out,
         .in = in,
         .signatures = signatures,
@@ -172,12 +202,18 @@ pub fn run(
     defer interpreter.heap.deinit();
     defer interpreter.literal_texts.deinit(gpa);
 
-    // Hoisted, matching the resolver and checker.
-    for (program.statements) |statement| {
-        if (statement.data != .function_declaration) continue;
-        const function = statement.data.function_declaration;
-        try interpreter.functions.put(interpreter.arena, function.name, function);
+    // Hoisted, matching the resolver and checker. Every file's functions are
+    // in place before anything runs, so a call into another file never depends
+    // on that file having been reached yet.
+    for (programs, 0..) |program, index| {
+        interpreter.file = @intCast(index);
+        for (program.statements) |statement| {
+            if (statement.data != .function_declaration) continue;
+            const function = statement.data.function_declaration;
+            try interpreter.functions.put(interpreter.arena, interpreter.keyOf(function.name), function);
+        }
     }
+    interpreter.file = entry;
 
     // Each block and call frees its own scope as it ends, including while an
     // error unwinds through it, so only the lists themselves are left.
@@ -193,7 +229,7 @@ pub fn run(
         interpreter.spare_scopes.deinit(gpa);
     }
 
-    interpreter.executeAll(program.statements) catch |err| switch (err) {
+    interpreter.executeAll(programs[entry].statements) catch |err| switch (err) {
         error.Raised => {},
         // The checker rejects `return` outside a function, and section 14.1's
         // top-level `return` is deferred. It rejects `break` and `continue`
@@ -293,7 +329,8 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
 
             const in_block = self.scopes.items.len > 0;
             const current = if (in_block) &self.scopes.items[self.scopes.items.len - 1].bindings else &self.module;
-            try current.put(if (in_block) self.gpa else self.arena, declaration.name, .{
+            const name = if (in_block) declaration.name else self.keyOf(declaration.name);
+            try current.put(if (in_block) self.gpa else self.arena, name, .{
                 .kind = kind,
                 .value = if (initial) |value| widen(value, kind) else null,
             });
@@ -301,6 +338,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
 
         .assignment => |assignment| {
             if (assignment.indices.len > 0) return self.assignElement(assignment);
+            try self.reach(self.keyOf(assignment.name), assignment.name_span);
             const slot = self.find(assignment.name).?;
             const value = if (assignment.operation) |operation| blk: {
                 // Section 5.3 lowers a compound assignment through the same
@@ -619,13 +657,81 @@ fn kindOf(checked: Type) Value.Kind {
     };
 }
 
+/// The one name the whole program knows a module-level declaration by, as the
+/// resolver worked it out for the file being executed. A local is its own key.
+fn keyOf(self: *Interpreter, name: []const u8) []const u8 {
+    return self.facts.keyFor(self.file, name) orelse name;
+}
+
 fn find(self: *Interpreter, name: []const u8) ?*Binding {
     var index = self.scopes.items.len;
     while (index > 0) {
         index -= 1;
         if (self.scopes.items[index].bindings.getPtr(name)) |slot| return slot;
     }
-    return self.module.getPtr(name);
+    return self.module.getPtr(self.keyOf(name));
+}
+
+/// Section 14.1: a file that is not the entry initializes once, the first time
+/// anything reaches one of its members. Called wherever a module-level key is
+/// about to be read, assigned, or called.
+fn reach(self: *Interpreter, key: []const u8, span: Source.Span) Error!void {
+    const owner = self.facts.owner.get(key) orelse return;
+    switch (self.module_states[owner]) {
+        .done => return,
+        .pending => return self.initializeModule(owner),
+        .running => {
+            // Section 14.1's cycle is a cycle "reaching an unfinished
+            // binding". A function is hoisted, so reaching one is never that,
+            // and a binding the file has already got to is finished.
+            if (self.functions.contains(key)) return;
+            if (self.module.get(key)) |slot| {
+                if (slot.value != null) return;
+            }
+            return self.raiseFmt(
+                span,
+                "`{s}` is still being set up, so `{s}` cannot be read yet",
+                .{ self.files[owner].source.path, key },
+                "Two values are waiting on each other. Break the cycle by moving one into a function, which runs when it is called rather than when the file is set up.",
+            );
+        },
+        // Unreachable while nothing can catch a failure: the first one ends the
+        // program. Section 13 is where a later access becomes possible.
+        .failed => return self.raiseFmt(
+            span,
+            "`{s}` could not be set up",
+            .{self.files[owner].source.path},
+            "An earlier error stopped it. Fix that first.",
+        ),
+    }
+}
+
+/// Section 14.1: the file's module-level bindings, in declaration order, run
+/// once. Only `reach` calls this, and only for a file that has not started.
+fn initializeModule(self: *Interpreter, file: u32) Error!void {
+    self.module_states[file] = .running;
+    errdefer self.module_states[file] = .failed;
+
+    // Its declarations run against the module scope alone, in the file they
+    // were written in, whatever was executing when they were reached.
+    const outer_file = self.file;
+    const outer_scopes = self.scopes;
+    self.file = file;
+    self.scopes = .empty;
+    defer {
+        while (self.scopes.items.len > 0) self.popScope();
+        self.scopes.deinit(self.gpa);
+        self.scopes = outer_scopes;
+        self.file = outer_file;
+    }
+
+    // Declaration order, which is the order section 14.1 gives them.
+    for (self.programs[file].statements) |statement| {
+        if (statement.data != .declaration) continue;
+        try self.execute(statement);
+    }
+
+    self.module_states[file] = .done;
 }
 
 // Expressions.
@@ -639,15 +745,7 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .bool_literal => |value| .initBool(value),
         .nothing_literal => Value.nothing,
         // Reading a name makes a new holder of what it holds.
-        .name => |name| if (self.find(name)) |slot|
-            (if (slot.value) |value| Heap.retain(value) else self.raiseUnassigned(expression.span, name))
-        else if (self.functions.contains(name))
-            // Section 7.5: a bare function name is its callable value.
-            self.evaluateFunctionValue(name)
-        else
-            // The checker proves every name read here is bound and assigned,
-            // so this is a safety net rather than a language rule.
-            self.raiseUnassigned(expression.span, name),
+        .name => |name| self.evaluateName(expression, self.keyOf(name), name),
         .unary => |unary| self.evaluateUnary(expression, unary),
         .binary => |binary| self.evaluateBinary(expression, binary),
         .logical => |logical| self.evaluateLogical(logical),
@@ -658,7 +756,11 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .range => unreachable,
         .list_literal => |elements| self.evaluateList(expression, elements),
         .index => |index| self.evaluateIndex(expression, index),
-        .member => |member| self.evaluateProperty(member),
+        // A namespace-qualified name is a reference, not a property access.
+        .member => |member| if (self.facts.qualified.get(expression)) |key|
+            self.evaluateName(expression, key, key)
+        else
+            self.evaluateProperty(member),
         .string_literal => |bytes| self.evaluateStringLiteral(expression, bytes),
         .interpolation => |parts| self.evaluateInterpolation(parts),
         .lambda => self.evaluateLambda(expression),
@@ -670,14 +772,43 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
 /// The module is not captured because it is visible from everywhere anyway.
 fn evaluateLambda(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
     const captured = try self.gpa.dupe(*Environment, self.scopes.items);
-    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .lambda = expression }, captured) } };
+    // A block can be passed to another file and called there, so it remembers
+    // where it was written: that is what its bare module-level names mean.
+    return .{ .data = .{
+        .closure = try self.heap.createClosure(.{ .lambda = expression }, captured, self.file),
+    } };
+}
+
+/// A name read for its value, whether it was written bare or qualified.
+/// `key` is what the program calls it; `written` is what the reader typed, so a
+/// diagnostic echoes that back.
+fn evaluateName(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    key: []const u8,
+    written: []const u8,
+) Error!Value {
+    try self.reach(key, expression.span);
+    if (self.find(written)) |slot| {
+        if (slot.value) |value| return Heap.retain(value);
+        return self.raiseUnassigned(expression.span, written);
+    }
+    if (self.module.getPtr(key)) |slot| {
+        if (slot.value) |value| return Heap.retain(value);
+        return self.raiseUnassigned(expression.span, written);
+    }
+    // Section 7.5: a bare function name is its callable value.
+    if (self.functions.contains(key)) return self.evaluateFunctionValue(key);
+    // The checker proves every name read here is bound and assigned, so this is
+    // a safety net rather than a language rule.
+    return self.raiseUnassigned(expression.span, written);
 }
 
 /// Section 7.5's captured named function, which captures nothing: a named
 /// function's body can only see the module, which is always visible.
 fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
     const captured = try self.gpa.alloc(*Environment, 0);
-    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = name }, captured) } };
+    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = name }, captured, self.file) } };
 }
 
 // Every case of `evaluate` that needs locals of its own lives in a function
@@ -1035,6 +1166,13 @@ fn evaluateCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Value {
+    // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
+    // resolver decided which, and recorded it.
+    if (self.facts.qualified.get(call.callee)) |key| {
+        try self.reach(key, call.callee.span);
+        if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
+        return self.callValue(expression.span, call);
+    }
     if (call.callee.data == .member) return self.callMethod(expression, call, call.callee.data.member);
     // Anything that is not a plain name is a value that must be evaluated
     // first: a lambda called where it is written, or an element of a list of
@@ -1045,8 +1183,10 @@ fn evaluateCall(
     // a program function, which shadows the prelude as any declaration would,
     // or a prelude one.
     const name = call.callee.data.name;
+    const key = self.keyOf(name);
+    try self.reach(key, call.callee.span);
     if (self.find(name) != null) return self.callValue(expression.span, call);
-    if (self.functions.contains(name)) return self.callFunction(expression.span, name, call.arguments);
+    if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
     if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
         return self.evaluateInput(expression.span, call, std.mem.eql(u8, name, "input_maybe"));
     }
@@ -1124,6 +1264,9 @@ const Callable = struct {
     name: []const u8,
     /// Whether `name` is the program's own name for it, which a lambda has not.
     named: bool = true,
+    /// The file its body was written in, which is what its bare module-level
+    /// names mean and where its own errors are reported.
+    file: u32 = 0,
     /// The checked shape, which is where widening comes from (4.4).
     signature: Type.Signature,
     body: Body,
@@ -1151,11 +1294,15 @@ fn callFunction(
     return self.invoke(call_span, self.namedCallable(name), arguments);
 }
 
-fn namedCallable(self: *Interpreter, name: []const u8) Callable {
+fn namedCallable(self: *Interpreter, key: []const u8) Callable {
+    const declaration = self.functions.get(key).?;
     return .{
-        .name = name,
-        .signature = self.signatures.get(name).?,
-        .body = .{ .statements = self.functions.get(name).?.body.statements },
+        // The name as it was written, not the key: a stack trace should read
+        // the way the file reads.
+        .name = declaration.name,
+        .file = self.facts.owner.get(key) orelse self.file,
+        .signature = self.signatures.get(key).?,
+        .body = .{ .statements = declaration.body.statements },
         .captured = &.{},
     };
 }
@@ -1176,6 +1323,7 @@ fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
         .lambda => |expression| .{
             .name = "a block",
             .named = false,
+            .file = closure.file,
             // The checker recorded the lambda's type where it is written, which
             // is the only place its parameter and result types were known.
             .signature = self.literal_types.get(expression).?.signature.?.*,
@@ -1227,9 +1375,15 @@ fn invoke(
     try self.call_stack.append(self.gpa, .{
         .function = callable.name,
         .call_span = call_span,
+        // The call is in the caller's file; the body that follows is not.
+        .file = self.file,
         .named = callable.named,
     });
     defer _ = self.call_stack.pop();
+
+    const outer_file = self.file;
+    self.file = callable.file;
+    defer self.file = outer_file;
 
     const result = switch (callable.body) {
         .expression => |body| try self.evaluate(body),
@@ -1691,7 +1845,7 @@ fn raise(self: *Interpreter, span: Source.Span, message: []const u8, help: []con
     for (trace, 0..) |*frame, index| {
         frame.* = self.call_stack.items[self.call_stack.items.len - 1 - index];
     }
-    self.failure = .{ .message = message, .span = span, .help = help, .trace = trace };
+    self.failure = .{ .message = message, .span = span, .help = help, .trace = trace, .file = self.file };
     return error.Raised;
 }
 
