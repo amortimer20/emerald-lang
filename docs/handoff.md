@@ -1,15 +1,15 @@
 # Current handoff
 
-Updated: 2026-09-11. Prepared by Claude after the callable slice.
+Updated: 2026-09-11. Prepared by Claude after the managed heap slice.
 
 ## Current milestone
 
-Slices 1 through 9 of section 20 are complete, plus a loop slice the user approved
+Slices 1 through 10 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8 and a string slice the user chose to do before slice 9. Section 20
-was renumbered in this slice: the old slice 9 bundled closures with the collector, and they
-are now slice 9 (callables) and slice 10 (the managed heap), for the reason recorded under
-"Decisions" below. The whole frontend pipeline of section 19.2 exists: source manager,
-lexer, parser, name resolver, type checker, interpreter.
+was renumbered during the callable slice: the old slice 9 bundled closures with the
+collector, and they are now slice 9 (callables) and slice 10 (the managed heap). The whole
+frontend pipeline of section 19.2 exists: source manager, lexer, parser, name resolver,
+type checker, interpreter.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -20,7 +20,10 @@ layout, Unicode-aware counting, indexing, iteration, comparison, and case mappin
 section 9.2 methods that need no optionals, and `input` and `write`, so section 2's first
 program runs. Callables work: lambdas with inferred or written parameter types, closures
 that capture by reference, function types, named functions as values, the trailing-block
-call form, and `each` and `map`. Every expression has a static type before execution and
+call form, and `each` and `map`. Memory is managed: reference counting reclaims promptly
+and section 19.5's mark-and-sweep collector reclaims the cycles counting cannot, so a loop
+that keeps making blocks runs in flat memory. Every expression has a static type before
+execution and
 definite assignment is proved through control flow. What remains at runtime is only what
 cannot be known statically: integer overflow, division by zero, and exceeding the
 recursion limit.
@@ -88,8 +91,8 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - `src/Value.zig` holds `Nothing`, `Bool`, `Int`, `Float`, and lists, implements section
   9.4's display rules, and compares and orders values.
 - `src/Heap.zig` owns list buffers, string texts, scope environments, and closures:
-  reference counts, copy-on-write, and the lists of every live object that the run frees at
-  the end and the slice 10 collector will walk.
+  reference counts, copy-on-write, and section 19.5's mark-and-sweep collector, which walks
+  the lists of every live object and reclaims the cycles counting cannot.
 - `src/unicode.zig` is Emerald's Unicode: grapheme clusters (UAX #29), NFC normalization
   and its quick check (UAX #15), full case mapping with Final_Sigma, and identifier and
   whitespace classes. Its data is `src/unicode/tables.zig`, generated from Unicode 17.0.0
@@ -111,6 +114,30 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
 
+### Collector decisions worth knowing
+
+- **The roots are derived, not registered.** Section 19.5 asked for an explicit root API,
+  which would mean registering every temporary the evaluator holds across an allocation.
+  The counts already say the same thing and say it more safely: every holder retains, a
+  count may be too high but never too low, so an object whose count exceeds the references
+  coming from other managed objects is held by something outside the heap. That is exactly
+  the root set, including every `Value` sitting in a Zig local. The decisive argument is
+  the failure mode — a missed registration frees a live object, while a count that is too
+  high only delays a free. Recorded in 19.5 and in section 22.
+- **Literal strings are roots.** They are never counted, so counting holders of one would
+  make it look like garbage. `collect` marks every `literal` text unconditionally.
+- **Sweeping drops the garbage's references to survivors.** A dead cycle can hold a live
+  string; freeing the cycle without decrementing would keep that string for the whole run.
+  The sweep does that in a pass before it frees anything, so no free cascades into another.
+- **Tracing can fail.** The worklist needs memory. When it cannot grow, `collect` returns
+  having freed nothing, which is always correct — the heap is exactly as it was.
+- **Collection happens before allocating, not after.** Called at the top of each `create`,
+  so a half-built object is never exposed to a trace.
+- **How it was verified.** The whole suite, every example, and every conformance case were
+  run with the threshold forced to collect before every single allocation, in Debug and
+  ReleaseSafe. Each collector test was also confirmed to fail with the sweep disabled or
+  the list roots removed, so none of them is vacuous.
+
 ### Callable decisions worth knowing
 
 - **A scope is an object, not a stack frame.** Section 7.4 captures by reference, so a block
@@ -122,12 +149,7 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - **Why the collector became its own slice.** Counting reclaims everything the earlier
   slices can build, because value-typed data cannot form a cycle. A closure can: store a
   lambda in a variable it captures and the closure and the environment hold each other
-  forever. That is a leak, not a correctness bug — nothing is read after death or freed
-  twice, and `Heap.deinit` frees every live object at the end whatever the counts say. What
-  the collector actually needs is section 19.5's explicit root API, which means every
-  `Value` the interpreter holds across an allocation becomes a registered root. That touches
-  all of `Interpreter.zig` and is why it was not bundled with this slice. The cost of not
-  having it is measured under "Known rough edges" and is larger than it first looked.
+  forever. The collector arrived in the next slice and now reclaims exactly that.
 - **The parser decides a lambda's body shape from the source, not a token.** `=>` continues
   a line like any other operator, so the lexer has already dropped the newline after it.
   `brokeLine` reads the bytes between `=>` and the next token instead. This was a real bug:
@@ -427,30 +449,24 @@ still open.
 
 ## Next concrete step
 
-Two candidates, and the user should choose between them.
+Optionals. They are the largest remaining gap and nothing depends on them landing later:
+`first`, `last`, `index_of`, `find`, the `_maybe` parsers, `input_maybe`, and dictionary
+lookup all wait for them, and several diagnostics already promise them by name. Section 4.2
+settles the spelling (`T?`, never nested) and the parser already splits the `?` in type
+position, so the work is the type, the checker's narrowing (4.5 and 6.3), and the unwrapping
+vocabulary.
 
-Section 20's slice 10, the managed heap: section 19.5's mark-and-sweep collector with its
-explicit root API. `Heap.live`, `live_texts`, `live_environments`, and `live_closures` are
-the object lists it walks. The work it needs beyond the collector itself is the root API:
-the interpreter holds `Value` locals across allocations and calls all through
-`Interpreter.zig`, and 19.5 says "a native pointer hidden in arbitrary Zig memory must not
-silently keep an object alive", so those temporaries have to become registered roots rather
-than invisible ones. That is the reason it was split out of this slice rather than the
-collector being hard on its own.
+The alternative is section 20's slice 11, the project slice: `main.em`, multiple files,
+namespaces, and `using`. Section 14.1's project-detection rule is already settled and
+recorded. It is self-contained and does not need optionals, but it adds less to what a
+program can express.
 
-Optionals are the other gap, and are now visible everywhere: `first`, `last`, `index_of`,
-the `_maybe` parsers, `input_maybe`, `find`, and dictionary lookup all wait for them. They
-block more user-visible vocabulary than the collector does, and nothing about them depends
-on the collector.
-
-Recommend the collector first. The measurement under "Known rough edges" changed the
-balance: a closure kept in a variable leaks its scope, that is how closures are normally
-written, and this slice is what introduced it. Optionals add reach; the collector repairs
-something that is now wrong.
+Recommend optionals, because they unblock vocabulary across sections 8 and 9 that is
+currently missing rather than merely absent.
 
 ## Validation and blockers
 
-- `zig build test` passes in Debug and ReleaseSafe: 238 unit tests, 98 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 244 unit tests, 99 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -533,16 +549,11 @@ something that is now wrong.
   Canonically this is the same string, but the bytes differ from the input.
 - A multi-line block comment joins the lines around it rather than terminating a statement,
   matching how C-family languages treat their block comments.
-- **A closure stored in a local leaks its scope, and this is the common case, not a rare
-  one.** `const block = { ... }` puts the closure into the very environment the closure
-  captured, so the two hold each other and neither is reclaimed until the run ends. Measured
-  in ReleaseSafe: 200,000 iterations of `const block = { => i }` inside a loop reach 155 MB,
-  against 1.6 MB for 500,000 calls of a block passed straight to `each`, which is never
-  stored and so never cycles. Speed is unaffected (0.17 s against 0.08 s); only memory
-  grows. Section 20's slice 10 is the fix. A cheaper partial fix, if the collector is
-  postponed again, is to capture only the environments that actually hold a name the lambda
-  reads — the resolver can compute that set — which removes the cycle for every lambda that
-  does not refer to itself.
+- Closures in a loop no longer grow memory. The same measurement that showed 155 MB for
+  200,000 iterations of `const block = { => i }` before the collector now shows 3.4 MB, and
+  the program got faster rather than slower (0.09 s against 0.17 s) because it allocates
+  less. The threshold is 4,096 live objects, doubling to twice the surviving count after
+  each collection.
 - The capture check does not follow a function reached through a value. `const f = later`
   then `f()` above a module variable `later` reads is not reported the way a direct call is;
   the interpreter's unassigned-read error catches it at runtime instead. Extending
@@ -551,4 +562,4 @@ something that is now wrong.
 
 ## Pending changes
 
-None. The callable slice is committed. Verify against Git before continuing.
+None. The managed heap slice is committed. Verify against Git before continuing.

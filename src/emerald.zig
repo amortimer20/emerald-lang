@@ -1740,3 +1740,45 @@ test "each and map belong to lists, not to every value" {
     // Names from other languages point at Emerald's.
     try expectFailure("[1].collect { n => n }\n", "[Int] has no method `collect`");
 }
+
+// Section 19.5's collector.
+
+test "memory stays flat when a loop keeps making closures" {
+    // `const block = { => i }` stores the closure in the very scope it
+    // captured, so the two hold each other and reference counting alone never
+    // reclaims either. This is the ordinary way to write a block, so without a
+    // collector the cost grows with the loop.
+    const program =
+        \\var total = 0
+        \\for i in 1..{d} {{
+        \\    const block = {{ => i }}
+        \\    total += block()
+        \\}}
+        \\print(total)
+        \\
+    ;
+    var buffer: [256]u8 = undefined;
+    const few = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{100}));
+    const many = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{50_000}));
+    try testing.expect(many < few + 4 * 1024 * 1024);
+}
+
+test "a collection in the middle of building a value keeps the half-built value" {
+    // Every allocation is a chance to collect, including the ones made while a
+    // list literal or an interpolation is still being assembled. The pieces
+    // already in hand are held by Zig locals and nothing else, which is exactly
+    // the case the collector has to get right.
+    const program =
+        \\func label(n: Int): String {
+        \\    return "#{n}:#{n * 2}"
+        \\}
+        \\var rows: [[String]] = []
+        \\for i in 1..2000 {
+        \\    rows.append([label(i), label(i + 1), label(i + 2)])
+        \\}
+        \\print(rows.count)
+        \\print(rows[1999])
+        \\
+    ;
+    try expectOutput(program, "2000\n[\"2000:4000\", \"2001:4002\", \"2002:4004\"]\n");
+}

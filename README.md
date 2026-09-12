@@ -28,7 +28,9 @@ Unicode 17.0.0. Definite assignment is proved through control flow, including lo
 are values, copied on write. An unhandled error inside a function reports the calls that
 led to it. Functions are values: a block can be written inline, passed to `each` or `map`,
 or kept in a variable, and it captures the variables around it rather than copies of them.
-Dictionaries, sets, and optionals arrive with later slices.
+Memory is managed for you, by reference counting with a mark-and-sweep collector behind it
+for the cycles counting cannot reach. Dictionaries, sets, and optionals arrive with later
+slices.
 
 ```emerald
 func collatz_steps(start: Int): Int {

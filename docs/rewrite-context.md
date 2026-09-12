@@ -2492,8 +2492,19 @@ Roots include:
 - temporary values held across an allocation or call;
 - host handles that deliberately retain an Emerald value.
 
-The root API must be explicit. A native pointer hidden in arbitrary Zig memory must not
-silently keep an object alive.
+No hidden pointer may silently keep an object alive. Holding a managed object must be an
+explicit act, and the set of roots must follow from those acts rather than from what
+happens to be on the host stack.
+
+The interpreter satisfies this by deriving the roots from its reference counts rather than
+by registering each temporary in a root API. Every holder retains, counts may be too high
+but never too low, and so an object held from outside the heap has a count that no other
+managed object accounts for. Tallying the references that come from managed objects and
+comparing against the count finds exactly the external holders: module variables, the scope
+stack, and every value in flight. The reason to prefer this over a registration API is the
+failure mode. A missed registration frees an object still in use; a count that is too high
+only keeps a dead object alive, so the worst outcome is the leak the collector exists to
+reduce rather than memory corruption.
 
 Collection may initially occur at predictable allocation thresholds. The collector does
 not move objects, finalize resources, expose manual collection to ordinary Emerald code,
@@ -2710,6 +2721,7 @@ recorded in their normative sections:
 | Capturing a built-in (7.5) | `print`, `write`, and `input` can only be called | They take any number of arguments of any type, which no written function type describes. The diagnostic suggests wrapping one in a lambda. |
 | `each` and the unused result (5.2, 8.5) | `each` ignores what its block produces, except a one-expression body that is not a call, which is reported | That shape is section 5.2's unused result and is almost always a `map` written as an `each`. A block body that happens to return is left alone. |
 | Blocks in a statement header (7.4) | The `{` after an `if`, `while`, or `for` condition opens the body, and a trailing block written there is reported against its own `{` | The rule was already stated; without a diagnostic naming it, the parameters were read as statements and produced errors that named nothing relevant. |
+| Collector roots (19.5) | Derived from the reference counts rather than from a registration API | Every holder already retains, and a count may be too high but never too low, so an unaccounted count is exactly an external holder. A missed registration would free a live object; a count that is too high only delays a free, which is the failure the collector is there to reduce rather than one it can turn into corruption. |
 | Value-type mutability (4.3, 7.1, 8.1, 10.2) | `const` and parameters freeze values; the rule stops at class references | Under value semantics, mutating and replacing are indistinguishable, so a shallow `const` protected nothing coherent, and mutating a parameter's copy was a silent no-op that a beginner would write and never understand. Replaces the earlier shallow `const`, which followed C# reference-type variables. |
 
 ## 23. Consistency rules for future work
