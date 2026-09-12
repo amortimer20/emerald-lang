@@ -33,13 +33,19 @@ pub const Data = union(Kind) {
     map: *Heap.Map,
     /// Section 7.4's lambda, or section 7.5's captured function.
     closure: *Heap.Closure,
-    /// Empty structs carry no fields, only their stable type identity. A
-    /// pointer keeps the universal Value as compact as its other cases.
-    struct_value: *const StructType,
+    /// Section 10.1's value-type instance. The heap keeps copying cheap until
+    /// a later field mutation needs its own buffer.
+    struct_value: *Heap.StructValue,
 };
 
 pub const StructType = struct {
     name: []const u8,
+    fields: []const Field,
+
+    pub const Field = struct {
+        name: []const u8,
+        kind: Kind,
+    };
 };
 
 pub const nothing: Value = .{ .data = .nothing };
@@ -77,7 +83,7 @@ pub fn typeName(self: Value) []const u8 {
         .tuple => "a tuple",
         .map => |map| if (map.is_set) "a set" else "a dictionary",
         .closure => "a function",
-        .struct_value => |descriptor| descriptor.name,
+        .struct_value => |instance| instance.descriptor.name,
     };
 }
 
@@ -155,7 +161,15 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             .named => |name| try writer.print("<func {s}>", .{name}),
             .lambda => try writer.writeAll("<lambda>"),
         },
-        .struct_value => |descriptor| try writer.print("{s}()", .{shortName(descriptor.name)}),
+        .struct_value => |instance| {
+            try writer.print("{s}(", .{shortName(instance.descriptor.name)});
+            for (instance.fields, instance.descriptor.fields, 0..) |value, field, index| {
+                if (index != 0) try writer.writeAll(", ");
+                try writer.print("{s}: ", .{field.name});
+                try value.write(writer, true);
+            }
+            try writer.writeAll(")");
+        },
     }
 }
 
@@ -215,7 +229,10 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.
             }
         },
         .tuple => |tuple| for (tuple.items) |item| try hashInto(gpa, item, hasher),
-        .struct_value => |descriptor| hasher.update(descriptor.name),
+        .struct_value => |instance| {
+            hasher.update(instance.descriptor.name);
+            for (instance.fields) |field| try hashInto(gpa, field, hasher);
+        },
         // The checker rejects these as keys (8.3), so this is a safety net.
         .list, .map, .closure => {},
     }
@@ -307,7 +324,13 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
             else => false,
         },
         .struct_value => |a| switch (right.data) {
-            .struct_value => |b| a == b,
+            .struct_value => |b| blk: {
+                if (a.descriptor != b.descriptor) break :blk false;
+                for (a.fields, b.fields) |left_field, right_field| {
+                    if (!try equals(gpa, left_field, right_field)) break :blk false;
+                }
+                break :blk true;
+            },
             else => false,
         },
     };

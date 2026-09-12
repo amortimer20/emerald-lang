@@ -31,9 +31,8 @@ pub const Kind = enum {
     set,
     /// Section 7.1's `func(Int): String`. `signature` holds its shape.
     function,
-    /// Section 10.1's user-defined value type. `name` is its program-wide
-    /// resolved name, so two declarations never become the same type merely
-    /// because their short spellings match.
+    /// Section 10.1's user-defined value type. `user` carries stable identity
+    /// and its checked fields.
     struct_value,
     /// A type that could not be determined because something was already
     /// reported. It is compatible with everything, so one mistake produces one
@@ -50,10 +49,8 @@ elements: []const Type = &.{},
 key: ?*const Type = null,
 /// What a function takes and gives, and null for every other kind.
 signature: ?*const Signature = null,
-/// The resolved name of a user-defined type; empty for built-ins.
-name: []const u8 = "",
-/// The source-facing short name used in diagnostics.
-display_name: []const u8 = "",
+/// Stable metadata for a user-defined type; null for built-ins.
+user: ?*const User = null,
 /// Section 4.2's trailing `?`: this value may be absent.
 ///
 /// A flag rather than a wrapping kind, because section 4.5 settles that
@@ -83,6 +80,20 @@ pub const Signature = struct {
     return_type: Type,
 };
 
+/// Shared by every occurrence of one user-defined type. The checker allocates
+/// this before resolving fields so declarations may refer to one another.
+pub const User = struct {
+    name: []const u8,
+    display_name: []const u8,
+    fields: []const Field = &.{},
+
+    pub const Field = struct {
+        name: []const u8,
+        type: Type,
+        mutable: bool,
+    };
+};
+
 pub const Signatures = std.StringHashMapUnmanaged(Signature);
 
 pub const nothing: Type = .{ .kind = .nothing };
@@ -92,8 +103,8 @@ pub const float: Type = .{ .kind = .float };
 pub const string: Type = .{ .kind = .string };
 pub const invalid: Type = .{ .kind = .invalid };
 
-pub fn structOf(name: []const u8, display_name: []const u8) Type {
-    return .{ .kind = .struct_value, .name = name, .display_name = display_name };
+pub fn structOf(user: *const User) Type {
+    return .{ .kind = .struct_value, .user = user };
 }
 
 /// `[element]`, with the element allocated from `allocator`, which must outlive
@@ -127,18 +138,34 @@ pub fn setOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.Erro
 /// change after it is stored, and an absent key is not a key at all, so neither
 /// qualifies. Enums and structs join this when they exist.
 pub fn eligibleKey(self: Type) bool {
+    var seen: [256]*const User = undefined;
+    return self.eligibleKeyInner(&seen, 0);
+}
+
+fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize) bool {
     if (self.optional) return false;
     return switch (self.kind) {
         .bool, .int, .float, .string => true,
         .tuple => blk: {
             for (self.elements) |element| {
-                if (!element.eligibleKey()) break :blk false;
+                if (!element.eligibleKeyInner(seen, depth)) break :blk false;
             }
             break :blk true;
         },
         // Reported already, and treated as usable so one mistake reports once.
         .invalid => true,
-        .struct_value => true,
+        .struct_value => blk: {
+            const user = self.user.?;
+            for (seen[0..depth]) |earlier| {
+                if (earlier == user) break :blk false;
+            }
+            if (depth == seen.len) break :blk false;
+            seen[depth] = user;
+            for (user.fields) |field| {
+                if (!field.type.eligibleKeyInner(seen, depth + 1)) break :blk false;
+            }
+            break :blk true;
+        },
         .nothing, .list, .dictionary, .set, .function => false,
     };
 }
@@ -212,7 +239,7 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 try writer.print(": {f}", .{signature.return_type});
             }
         },
-        .struct_value => try writer.writeAll(self.display_name),
+        .struct_value => try writer.writeAll(self.user.?.display_name),
         .invalid => try writer.writeAll("an unknown type"),
     }
 }
@@ -265,7 +292,7 @@ pub fn same(self: Type, other: Type) bool {
     if (self.kind == .invalid or other.kind == .invalid) return true;
     if (self.optional != other.optional) return false;
     if (self.kind != other.kind) return false;
-    if (self.kind == .struct_value) return std.mem.eql(u8, self.name, other.name);
+    if (self.kind == .struct_value) return self.user.? == other.user.?;
     if (self.kind == .list or self.kind == .set) return self.element.?.same(other.element.?.*);
     if (self.kind == .dictionary) {
         return self.key.?.same(other.key.?.*) and self.element.?.same(other.element.?.*);

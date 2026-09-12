@@ -169,6 +169,7 @@ pub fn run(
     programs: []const Ast.Program,
     signatures: *const Type.Signatures,
     literal_types: *const Checker.LiteralTypes,
+    checked_structs: *const Checker.Structs,
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
@@ -213,8 +214,14 @@ pub fn run(
         for (program.statements) |statement| {
             if (statement.data == .struct_declaration) {
                 const declaration = statement.data.struct_declaration;
+                const checked = checked_structs.get(interpreter.keyOf(declaration.name)).?;
+                const checked_fields = checked.user.?.fields;
+                const fields = try interpreter.arena.alloc(Value.StructType.Field, checked_fields.len);
+                for (checked_fields, fields) |field, *runtime| {
+                    runtime.* = .{ .name = field.name, .kind = kindOf(field.type) };
+                }
                 const descriptor = try interpreter.arena.create(Value.StructType);
-                descriptor.* = .{ .name = interpreter.keyOf(declaration.name) };
+                descriptor.* = .{ .name = interpreter.keyOf(declaration.name), .fields = fields };
                 try interpreter.structs.put(
                     interpreter.arena,
                     interpreter.keyOf(declaration.name),
@@ -857,9 +864,11 @@ fn widen(value: Value, kind: Value.Kind) Value {
 }
 
 fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
+    if (annotation.key != null or annotation.set) return .map;
     if (annotation.element != null) return .list;
+    if (annotation.positions != null) return .tuple;
     if (annotation.signature != null) return .closure;
-    return kindOf(Type.fromName(annotation.name) orelse Type.structOf(annotation.name, annotation.name));
+    return if (Type.fromName(annotation.name)) |builtin| kindOf(builtin) else .struct_value;
 }
 
 /// The runtime kind for a checked type. `.invalid` never reaches a program that
@@ -1052,6 +1061,14 @@ fn evaluateProperty(self: *Interpreter, member: Ast.Expression.Member) Error!Val
     // there is nothing to fail here.
     if (member.position) |position| {
         return Heap.retain(base.data.tuple.items[position]);
+    }
+
+    if (base.data == .struct_value) {
+        const instance = base.data.struct_value;
+        for (instance.descriptor.fields, 0..) |field, index| {
+            if (std.mem.eql(u8, field.name, member.name)) return Heap.retain(instance.fields[index]);
+        }
+        unreachable;
     }
 
     if (base.data == .string) {
@@ -1530,7 +1547,7 @@ fn evaluateCall(
     // resolver decided which, and recorded it.
     if (self.facts.qualified.get(call.callee)) |key| {
         try self.reach(key, call.callee.span);
-        if (self.structs.get(key)) |descriptor| return .{ .data = .{ .struct_value = descriptor } };
+        if (self.structs.get(key)) |descriptor| return self.constructStruct(descriptor, call.arguments);
         if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
         return self.callValue(expression.span, call);
     }
@@ -1550,12 +1567,22 @@ fn evaluateCall(
     const key = self.keyOf(name);
     try self.reach(key, call.callee.span);
     if (self.find(name) != null) return self.callValue(expression.span, call);
-    if (self.structs.get(key)) |descriptor| return .{ .data = .{ .struct_value = descriptor } };
+    if (self.structs.get(key)) |descriptor| return self.constructStruct(descriptor, call.arguments);
     if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
     if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
         return self.evaluateInput(expression.span, call, std.mem.eql(u8, name, "input_maybe"));
     }
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
+}
+
+fn constructStruct(
+    self: *Interpreter,
+    descriptor: *const Value.StructType,
+    arguments: []const *const Ast.Expression,
+) Error!Value {
+    const fields = try self.evaluateArguments(arguments);
+    for (fields, descriptor.fields) |*field, metadata| field.* = widen(field.*, metadata.kind);
+    return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
 }
 
 /// Section 15.2's `input(prompt)` and `input_maybe(prompt)`: writes the prompt,
@@ -2406,8 +2433,15 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
 /// call itself happens. The caller frees the result.
 fn evaluateArguments(self: *Interpreter, expressions: []const *const Ast.Expression) Error![]Value {
     const values = try self.gpa.alloc(Value, expressions.len);
-    errdefer self.gpa.free(values);
-    for (expressions, values) |expression, *value| value.* = try self.evaluate(expression);
+    var initialized: usize = 0;
+    errdefer {
+        for (values[0..initialized]) |value| self.heap.release(value);
+        self.gpa.free(values);
+    }
+    for (expressions, values) |expression, *value| {
+        value.* = try self.evaluate(expression);
+        initialized += 1;
+    }
     return values;
 }
 

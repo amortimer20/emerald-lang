@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Codex after the first object-model sub-slice.
+Updated: 2026-09-12. Prepared by Codex after the required-fields object-model sub-slice.
 
 ## Current milestone
 
@@ -15,11 +15,12 @@ are now slice 9 (callables) and slice 10 (the managed heap). The whole frontend 
 section 19.2 exists: source manager, lexer, parser, name resolver, type checker,
 interpreter.
 
-The object model has begun with its smallest end-to-end foundation: a fieldless
-`struct Marker { }` declares a hoisted user type, `Marker()` uses its generated
-zero-argument constructor, annotations and function signatures may name it, and values
-have structural equality, source-shaped display, namespace identity, and dictionary-key
-behavior. Stored fields are the next sub-slice.
+The object model now has hoisted structs with required `var` and `const` stored fields.
+Their generated constructor takes one positional argument per field in declaration order;
+field reads, numeric widening into fields, structural display and equality, namespace
+identity, qualified type annotations, recursive dictionary-key eligibility, and value
+semantics for values held by fields all work end to end. Fieldless structs retain their
+generated zero-argument constructor. Field assignment is the next sub-slice.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -115,10 +116,12 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   errors, section 4.1's definite assignment, and everything section 7 asks of functions.
 - `src/Value.zig` holds `Nothing`, `Bool`, `Int`, `Float`, and lists, implements section
   9.4's display rules, and compares and orders values.
-- The first section 10 sub-slice carries user-defined struct identity through the AST,
-  resolver, checker, interpreter, and runtime value representation. Fieldless structs are
-  hoisted, constructible, printable, structurally comparable, and eligible as stable keys.
-- `src/Heap.zig` owns list buffers, string texts, scope environments, and closures:
+- The first two section 10 sub-slices carry user-defined struct identity and required stored
+  fields through the AST, resolver, checker, interpreter, and runtime representation.
+  Structs are hoisted, constructible, readable field by field, printable, structurally
+  comparable, and eligible as stable keys when every field recursively qualifies.
+- `src/Heap.zig` owns list buffers, string texts, scope environments, closures, and struct
+  instances:
   reference counts, copy-on-write, and section 19.5's mark-and-sweep collector, which walks
   the lists of every live object and reclaims the cycles counting cannot.
 - `src/unicode.zig` is Emerald's Unicode: grapheme clusters (UAX #29), NFC normalization
@@ -141,6 +144,31 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Struct decisions worth knowing
+
+- **Type identity is a stable metadata pointer.** Every reference to one declared struct
+  shares a `Type.User`; its ordered checked fields are filled only after all struct names
+  have been hoisted. This permits forward and cross-file field types without equating two
+  same-named types from different namespaces.
+- **The generated constructor is positional and follows declaration order.** Required
+  fields are checked and evaluated left to right, with `Int` widened when the field expects
+  `Float`. Defaults and custom constructors remain separate later slices.
+- **Runtime instances are managed objects.** They own a compact field-value slice and point
+  to an arena-owned descriptor carrying names and runtime kinds. Reference counting handles
+  ordinary lifetimes, and the collector traces struct fields and reclaims cycles through
+  closures. This keeps the universal `Value` pointer-sized.
+- **Sharing the instance buffer is currently unobservable.** There is no field assignment
+  yet. The next slice must copy a shared struct instance before changing a `var` field, the
+  same copy-on-write technique lists and dictionaries use, to preserve section 10.1's value
+  semantics.
+- **Key eligibility waits for every field type.** A struct may be a dictionary key only
+  when its fields recursively qualify. The checker deliberately validates this after all
+  struct metadata is complete, so a field that refers to a later declaration gets the same
+  answer regardless of file or declaration order.
+- **Qualified type spelling follows namespace aliases.** Direct `Left.Marker`, a focused
+  alias, and a namespace alias such as `using L = Left` followed by `L.Marker` all resolve
+  in annotations as they do at construction sites.
 
 ### Dictionary and set decisions worth knowing
 
@@ -589,12 +617,12 @@ still open.
 
 ## Next concrete step
 
-Continue section 20's slice 12 with required stored struct fields and the generated
-positional constructor. Extend the stable struct descriptor with ordered field metadata,
-store values in the runtime struct value, implement field reads and structural display and
-equality, and preserve value semantics. Field assignment, defaults, custom constructors,
-methods, and properties should remain later sub-slices so each semantic layer is runnable
-and testable on its own.
+Continue section 20's slice 12 with assignment to stored struct fields. Permit assignment
+only through a mutable struct binding and only to a `var` field, preserve `const` field and
+binding diagnostics, widen `Int` when a `Float` field is assigned, and add copy-on-write for
+the struct instance before mutation so an earlier assignment or argument keeps its own
+value. Nested field assignment, defaults, custom constructors, methods, and properties
+should remain later sub-slices so this rule is runnable and testable on its own.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -614,7 +642,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 303 unit tests, 143 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 304 unit tests, 151 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -659,17 +687,17 @@ easier to design once there are types to raise.
   assigned everything rather than reported.
 - Section 6.2's `if ... then ... else` expression. `unless` is no longer part of the language
   and is not a keyword.
-- From section 8: dictionaries and sets (the bracket parser reports "dictionaries are not
-  available yet" at a `:`), the rest of section 8.6's rich vocabulary beyond `each`, `map`,
-  `find`, and `find_index`, slicing with ranges, `type_name`, and a mutating method through
-  a struct field, which arrives with structs.
+- From section 8: the rest of section 8.6's rich vocabulary beyond `each`, `map`, `find`,
+  and `find_index`, slicing with ranges, `type_name`, and a mutating method through a struct
+  field, which arrives with field assignment. It is currently rejected with a focused
+  diagnostic rather than reaching an unsupported runtime path.
 - Range values: ranges and counts stored in names, `random(1..6)`, and the block forms of
   `up_to`, `down_to`, and `times` are rejected ("a range can only be looped over so far")
   until range values land. Blocks now exist, so only the range value itself is missing. In a
   `for` header every counting form works.
 - Section 4.5's optional chaining, `?.`. It exists to shorten chains through objects, and
-  there are no objects yet, so there is nothing for it to reach through; the parser reports
-  it and points at narrowing and `.or(...)`.
+  there are no object fields or properties to chain through yet; the parser reports it and
+  points at narrowing and `.or(...)`.
 - From section 9: `pad_start`, `pad_end`, and `pad_center` (their
   signatures need default arguments), `insert_at`, `remove_prefix`, `remove_suffix`,
   `collapse_repeats`, `partition`, `letter?` and `digit?` (general category tables),
@@ -677,6 +705,10 @@ easier to design once there are types to raise.
 
 ### Known rough edges
 
+- Recursive dictionary-key eligibility currently keeps a fixed path of 256 struct types.
+  A cycle is correctly rejected, but an acyclic chain deeper than 256 is conservatively
+  rejected too. Ordinary programs will not approach this; replace it with checker-owned
+  visitation state if generated code ever does.
 - The capture check is conservative. It flags a call if the callee could read an
   unassigned variable on any path, even one this particular call cannot take. Moving the
   call below the variable is always the fix, and the diagnostic says so.
@@ -724,4 +756,5 @@ easier to design once there are types to raise.
 
 ## Pending changes
 
-None. The dictionaries and sets slice is committed. Verify against Git before continuing.
+The required stored-field slice and this updated handoff are pending review and commit.
+The preceding fieldless struct foundation is committed as `7214005`.

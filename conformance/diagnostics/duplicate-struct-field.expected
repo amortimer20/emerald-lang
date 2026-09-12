@@ -1,0 +1,4 @@
+diagnostics/duplicate-struct-field.em:3:9: `name` is already a field of `Student`
+      var name: String
+          ^^^^
+Give each stored field a different name.

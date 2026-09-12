@@ -1,0 +1,4 @@
+diagnostics/struct-constructor-arity.em:6:17: `Student` takes 2 arguments, but this call passes 1
+  const student = Student("Ava")
+                  ^^^^^^^
+Pass one value for each required field, in declaration order.

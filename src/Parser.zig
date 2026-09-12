@@ -411,9 +411,9 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
     };
 }
 
-/// The first object-model slice: a named, fieldless value type. Keeping this
-/// runnable before fields arrive establishes type identity, construction,
-/// equality, display, and heap ownership without hiding them in a larger step.
+/// Section 10.2's stored fields. Defaults and custom constructors are later
+/// slices; every field here is therefore one required generated-constructor
+/// argument, in declaration order.
 fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
     const name = self.peek();
@@ -435,21 +435,62 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             "A struct body is enclosed in braces, as in `struct Marker { }`.",
         );
     }
+    var fields: std.ArrayList(Ast.StructDeclaration.Field) = .empty;
     self.skipSeparators();
-    if (!self.check(.right_brace)) {
-        const unsupported = self.peek().span;
-        // Consume this simple body before reporting so recovery resumes after
-        // the declaration rather than treating each field and the closing
-        // brace as unrelated top-level mistakes.
-        while (!self.check(.right_brace) and !self.check(.eof)) _ = self.advance();
-        if (self.check(.right_brace)) {
-            _ = self.advance();
-            if (self.check(.newline)) _ = self.advance();
+    while (!self.check(.right_brace) and !self.check(.eof)) {
+        const marker = self.peek();
+        const mutable = if (self.match(.keyword_var) != null)
+            true
+        else if (self.match(.keyword_const) != null)
+            false
+        else
+            return self.reportFmt(
+                marker.span,
+                "expected `var` or `const` for a stored field, found {s}",
+                .{marker.kind.describe()},
+                "A stored field makes its binding visible, as in `var x: Float`.",
+            );
+
+        const field_name = self.peek();
+        if (field_name.kind != .identifier) {
+            return self.reportFmt(
+                field_name.span,
+                "expected a field name, found {s}",
+                .{field_name.kind.describe()},
+                "A stored field has a name and type, as in `var x: Float`.",
+            );
         }
+        _ = self.advance();
+        if (self.match(.colon) == null) {
+            return self.reportFmt(
+                self.peek().span,
+                "expected `:` and a type after `{s}`, found {s}",
+                .{ self.text(field_name), self.peek().kind.describe() },
+                "Every stored field needs an explicit type, as in `var x: Float`.",
+            );
+        }
+        const annotation = try self.parseTypeExpression();
+        if (self.check(.equal)) {
+            return self.report(
+                self.peek().span,
+                "default field values are not available yet",
+                "Pass this field to the generated constructor for now.",
+            );
+        }
+        try self.expectStatementEnd();
+        try fields.append(self.arena, .{
+            .mutable = mutable,
+            .name = try self.identifier(field_name),
+            .name_span = field_name.span,
+            .annotation = annotation,
+        });
+        self.skipSeparators();
+    }
+    if (self.check(.eof)) {
         return self.report(
-            unsupported,
-            "stored fields are not available yet",
-            "Use an empty struct body for now.",
+            self.peek().span,
+            "this struct body is missing its closing `}`",
+            "Add `}` after the final field.",
         );
     }
     const closing = self.advance();
@@ -459,6 +500,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         .data = .{ .struct_declaration = .{
             .name = try self.identifier(name),
             .name_span = name.span,
+            .fields = try fields.toOwnedSlice(self.arena),
         } },
     };
 }
@@ -881,7 +923,38 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
         question = .{ .start = span.end - 1, .end = span.end };
         written = written[0 .. written.len - 1];
         span = .{ .start = span.start, .end = span.end - 1 };
-    } else if (self.check(.question)) {
+    }
+
+    // Section 14.2: the fully qualified spelling that resolves a collision is
+    // valid anywhere a type is written, not only at a constructor call.
+    var path: std.ArrayList(u8) = .empty;
+    try path.appendSlice(self.arena, written);
+    while (self.check(.dot)) {
+        _ = self.advance();
+        const segment = self.peek();
+        if (segment.kind != .identifier) {
+            return self.reportFmt(
+                segment.span,
+                "expected a type name after `.`, found {s}",
+                .{segment.kind.describe()},
+                "Write the complete qualified type, as in `Shapes.Marker`.",
+            );
+        }
+        _ = self.advance();
+        var part = try self.identifier(segment);
+        if (std.mem.endsWith(u8, part, "?")) {
+            question = .{ .start = segment.span.end - 1, .end = segment.span.end };
+            part = part[0 .. part.len - 1];
+            span.end = segment.span.end - 1;
+        } else {
+            span.end = segment.span.end;
+        }
+        try path.append(self.arena, '.');
+        try path.appendSlice(self.arena, part);
+    }
+    written = try path.toOwnedSlice(self.arena);
+
+    if (question == null and self.check(.question)) {
         // A `?` that could not attach to a name, as in `[String]?`.
         question = self.advance().span;
     }

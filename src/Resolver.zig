@@ -68,6 +68,9 @@ pub const Facts = struct {
     /// declarations, its namespace's, and whatever its `using` declarations
     /// brought in. Indexed by file.
     module_keys: []const KeyMap = &.{},
+    /// Per-file aliases for namespace prefixes, used by type annotations as
+    /// well as by member expressions.
+    namespace_aliases: []const KeyMap = &.{},
     /// Every member expression that turned out to be a namespace-qualified
     /// reference rather than a property access, and the key it names. The
     /// checker and the interpreter read this rather than folding the chain
@@ -82,6 +85,11 @@ pub const Facts = struct {
     pub fn keyFor(self: Facts, file: u32, name: []const u8) ?[]const u8 {
         if (file >= self.module_keys.len) return null;
         return self.module_keys[file].get(name);
+    }
+
+    pub fn namespaceAliasFor(self: Facts, file: u32, name: []const u8) ?[]const u8 {
+        if (file >= self.namespace_aliases.len) return null;
+        return self.namespace_aliases[file].get(name);
     }
 };
 
@@ -219,6 +227,7 @@ pub fn resolve(
     resolver.facts.module_keys = key_maps;
     resolver.namespace_aliases = try arena.alloc(KeyMap, files.len);
     for (resolver.namespace_aliases) |*map| map.* = .empty;
+    resolver.facts.namespace_aliases = resolver.namespace_aliases;
     resolver.ambiguous = try arena.alloc(KeyMap, files.len);
     for (resolver.ambiguous) |*set| set.* = .empty;
     for (files, 0..) |_, index| {

@@ -34,8 +34,8 @@
 //!
 //! So counting is only half of it. Section 19.5's mark-and-sweep collector is
 //! the other half: `collect` walks `live`, `live_tuples`, `live_maps`,
-//! `live_texts`, `live_environments`, and `live_closures` and frees whatever
-//! nothing outside the heap can reach.
+//! `live_texts`, `live_environments`, `live_closures`, and `live_structs`, and
+//! frees whatever nothing outside the heap can reach.
 //! Counting still does the everyday work, freeing promptly and deciding when a
 //! list must be copied; collection runs at a threshold and exists for the
 //! cycles. `deinit` still frees whatever is left at the end, whatever the counts
@@ -82,6 +82,18 @@ pub const Tuple = struct {
     /// Neighbors in `live_tuples`.
     previous: ?*Tuple = null,
     next: ?*Tuple = null,
+};
+
+/// One instance of a user-defined value type. The descriptor belongs to the
+/// interpreter arena; this object owns one value for each stored field.
+pub const StructValue = struct {
+    references: u32 = 1,
+    descriptor: *const Value.StructType,
+    fields: []Value,
+    marked: bool = false,
+    internal: u32 = 0,
+    previous: ?*StructValue = null,
+    next: ?*StructValue = null,
 };
 
 /// Section 8.2's dictionary and set, which are one structure: a set is a
@@ -216,7 +228,9 @@ live_closures: ?*Closure = null,
 live_tuples: ?*Tuple = null,
 /// Every dictionary and set not yet freed.
 live_maps: ?*Map = null,
-/// How many objects are in those six lists.
+/// Every user-defined struct instance not yet freed.
+live_structs: ?*StructValue = null,
+/// How many objects are in the managed-object lists.
 live_objects: usize = 0,
 /// The size `live_objects` must reach for the next collection. Section 19.5
 /// asks for "predictable allocation thresholds"; this is one, doubled after
@@ -269,6 +283,11 @@ pub fn deinit(self: *Heap) void {
     while (maps) |map| {
         maps = map.next;
         self.destroyMap(map);
+    }
+    var structs = self.live_structs;
+    while (structs) |instance| {
+        structs = instance.next;
+        self.destroyStruct(instance);
     }
     self.work.deinit(self.gpa);
     self.* = undefined;
@@ -421,6 +440,38 @@ pub fn createTuple(self: *Heap, items: []Value, kinds: []Value.Kind) std.mem.All
     if (self.live_tuples) |first| first.previous = tuple;
     self.live_tuples = tuple;
     return tuple;
+}
+
+/// A user-defined struct holding `fields`, whose memory and values it takes
+/// over, with one holder in the caller.
+pub fn createStruct(
+    self: *Heap,
+    descriptor: *const Value.StructType,
+    fields: []Value,
+) std.mem.Allocator.Error!*StructValue {
+    self.maybeCollect();
+    const instance = self.gpa.create(StructValue) catch |err| {
+        for (fields) |field| self.release(field);
+        self.gpa.free(fields);
+        return err;
+    };
+    self.live_objects += 1;
+    instance.* = .{ .descriptor = descriptor, .fields = fields };
+    instance.next = self.live_structs;
+    if (self.live_structs) |first| first.previous = instance;
+    self.live_structs = instance;
+    return instance;
+}
+
+fn destroyStruct(self: *Heap, instance: *StructValue) void {
+    self.gpa.free(instance.fields);
+    self.gpa.destroy(instance);
+}
+
+fn unlinkStruct(self: *Heap, instance: *StructValue) void {
+    self.live_objects -= 1;
+    if (instance.previous) |previous| previous.next = instance.next else self.live_structs = instance.next;
+    if (instance.next) |next| next.previous = instance.previous;
 }
 
 fn destroyTuple(self: *Heap, tuple: *Tuple) void {
@@ -631,6 +682,7 @@ pub fn retain(value: Value) Value {
         .tuple => |tuple| tuple.references += 1,
         .map => |map| map.references += 1,
         .closure => |closure| closure.references += 1,
+        .struct_value => |instance| instance.references += 1,
         .string => |text| if (!text.literal) {
             text.references += 1;
         },
@@ -681,6 +733,15 @@ pub fn release(self: *Heap, value: Value) void {
         }
         self.unlinkMap(map);
         self.destroyMap(map);
+        return;
+    }
+    if (value.data == .struct_value) {
+        const instance = value.data.struct_value;
+        instance.references -= 1;
+        if (instance.references > 0) return;
+        for (instance.fields) |field| self.release(field);
+        self.unlinkStruct(instance);
+        self.destroyStruct(instance);
         return;
     }
     if (value.data != .list) return;
@@ -739,6 +800,7 @@ const Object = union(enum) {
     text: *Text,
     environment: *Environment,
     closure: *Closure,
+    struct_value: *StructValue,
 
     fn of(value: Value) ?Object {
         return switch (value.data) {
@@ -747,7 +809,8 @@ const Object = union(enum) {
             .map => |map| .{ .map = map },
             .string => |text| .{ .text = text },
             .closure => |closure| .{ .closure = closure },
-            .nothing, .bool, .int, .float, .struct_value => null,
+            .struct_value => |instance| .{ .struct_value = instance },
+            .nothing, .bool, .int, .float => null,
         };
     }
 };
@@ -824,6 +887,11 @@ fn resetMarks(self: *Heap) void {
         map.marked = false;
         map.internal = 0;
     }
+    var structs = self.live_structs;
+    while (structs) |instance| : (structs = instance.next) {
+        instance.marked = false;
+        instance.internal = 0;
+    }
 }
 
 /// Tallies, for each object, how many of its holders are themselves managed
@@ -854,6 +922,10 @@ fn countInternalReferences(self: *Heap) void {
             bumpInternal(entry.key);
             bumpInternal(entry.value);
         }
+    }
+    var structs = self.live_structs;
+    while (structs) |instance| : (structs = instance.next) {
+        for (instance.fields) |field| bumpInternal(field);
     }
 }
 
@@ -902,6 +974,10 @@ fn markReachable(self: *Heap) bool {
     while (maps) |map| : (maps = map.next) {
         if (map.references > map.internal and !self.push(.{ .map = map })) return false;
     }
+    var structs = self.live_structs;
+    while (structs) |instance| : (structs = instance.next) {
+        if (instance.references > instance.internal and !self.push(.{ .struct_value = instance })) return false;
+    }
 
     while (self.work.pop()) |object| {
         switch (object) {
@@ -915,6 +991,9 @@ fn markReachable(self: *Heap) bool {
             .map => |map| for (map.entries.items) |entry| {
                 if (!self.reach(entry.key)) return false;
                 if (!self.reach(entry.value)) return false;
+            },
+            .struct_value => |instance| for (instance.fields) |field| {
+                if (!self.reach(field)) return false;
             },
             .environment => |environment| {
                 var bindings = environment.bindings.valueIterator();
@@ -994,6 +1073,12 @@ fn sweep(self: *Heap) void {
             }
         }
     }
+    var structs = self.live_structs;
+    while (structs) |instance| : (structs = instance.next) {
+        if (!instance.marked) {
+            for (instance.fields) |field| dropReference(field);
+        }
+    }
 
     var next_list = self.live;
     while (next_list) |list| {
@@ -1016,6 +1101,13 @@ fn sweep(self: *Heap) void {
         if (tuple.marked) continue;
         self.unlinkTuple(tuple);
         self.destroyTuple(tuple);
+    }
+    var next_struct = self.live_structs;
+    while (next_struct) |instance| {
+        next_struct = instance.next;
+        if (instance.marked) continue;
+        self.unlinkStruct(instance);
+        self.destroyStruct(instance);
     }
     var next_closure = self.live_closures;
     while (next_closure) |closure| {
@@ -1120,6 +1212,52 @@ test "a tuple is shared rather than copied, because it cannot change" {
     try testing.expect(heap.live_tuples != null);
     heap.release(original);
     try testing.expect(heap.live_tuples == null);
+}
+
+test "releasing the last holder of a struct frees it and its fields" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const metadata = [_]Value.StructType.Field{.{ .name = "values", .kind = .list }};
+    const descriptor: Value.StructType = .{ .name = "Bag", .fields = &metadata };
+    const fields = try testing.allocator.alloc(Value, 1);
+    fields[0] = try listOfInts(&heap, &.{1});
+    const instance: Value = .{ .data = .{ .struct_value = try heap.createStruct(&descriptor, fields) } };
+
+    heap.release(instance);
+    try testing.expect(heap.live_structs == null);
+    try testing.expect(heap.live == null);
+}
+
+test "the collector reclaims a cycle through a struct" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const environment = try heap.createEnvironment();
+    const closure = try heap.createClosure(
+        .{ .named = "block" },
+        try testing.allocator.dupe(*Environment, &.{environment}),
+        0,
+    );
+    heap.releaseEnvironment(environment); // the closure holds it now
+
+    const metadata = [_]Value.StructType.Field{.{ .name = "action", .kind = .closure }};
+    const descriptor: Value.StructType = .{ .name = "Task", .fields = &metadata };
+    const fields = try testing.allocator.alloc(Value, 1);
+    fields[0] = .{ .data = .{ .closure = closure } };
+    const instance = try heap.createStruct(&descriptor, fields);
+
+    try environment.bindings.put(testing.allocator, "task", .{
+        .kind = .struct_value,
+        .value = .{ .data = .{ .struct_value = instance } },
+    });
+    instance.references += 1; // the environment holds it
+    instance.references -= 1; // and nothing outside the heap does
+
+    heap.collect();
+    try testing.expect(heap.live_structs == null);
+    try testing.expect(heap.live_closures == null);
+    try testing.expect(heap.live_environments == null);
 }
 
 test "the collector reclaims a cycle through a tuple" {

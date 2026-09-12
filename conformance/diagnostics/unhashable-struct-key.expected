@@ -1,4 +1,4 @@
-diagnostics/dictionary-key-eligible.em:1:13: [Int] cannot be a dictionary key
-  var index: [[Int]: String] = []
-              ^^^^^
+diagnostics/unhashable-struct-key.em:5:16: Bag cannot be a dictionary key
+  const labels: [Bag: String] = []
+                 ^^^
 A key must be a number, a `Bool`, a `String`, or a tuple or struct made only from valid key types. Lists and other mutable collections cannot be keys.

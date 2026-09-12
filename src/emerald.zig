@@ -252,6 +252,7 @@ fn analyze(
         programs,
         &checked.signatures,
         &checked.literal_types,
+        &checked.structs,
         resolved.facts,
         running.out,
         running.in,

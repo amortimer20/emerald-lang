@@ -1,0 +1,4 @@
+diagnostics/mutate-struct-field-collection.em:6:1: changing a collection through a struct field is not available yet
+  bag.values.append(2)
+  ^^^^^^^^^^
+Read the field without changing it for now; struct field mutation is the next object-model slice.

@@ -51,6 +51,9 @@ pub const Checked = struct {
     /// from whole numbers when that is what is expected, and the interpreter
     /// needs to know so that it can widen them as it stores them.
     literal_types: LiteralTypes,
+    /// Checked user-defined struct metadata, also used to build runtime
+    /// descriptors without resolving source annotations a second time.
+    structs: Structs,
 
     pub fn ok(self: Checked) bool {
         return self.diagnostics.len == 0;
@@ -89,6 +92,7 @@ const Binding = struct {
 };
 
 pub const LiteralTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
+pub const Structs = std.StringHashMapUnmanaged(Type);
 
 /// Why a binding may or may not change. Each reason gets its own correction,
 /// because the fix for a `const` is not the fix for a parameter.
@@ -113,7 +117,7 @@ diagnostics: std.ArrayList(Diagnostic) = .empty,
 facts: Resolver.Facts,
 declarations: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// User-defined structs, keyed by the same resolved names as module bindings.
-structs: std.StringHashMapUnmanaged(Type) = .empty,
+structs: Structs = .empty,
 /// Memoized by `signatureFor`.
 signatures: Type.Signatures = .empty,
 /// Bodies already checked, so each is checked exactly once whichever of
@@ -130,6 +134,9 @@ current_return_type: ?Type = null,
 in_function: bool = false,
 pending_return_types: std.ArrayList(Type) = .empty,
 literal_types: LiteralTypes = .empty,
+/// Field metadata is completed for every struct before recursive key
+/// eligibility is judged, so declaration order cannot change the answer.
+resolving_struct_fields: bool = false,
 /// The loops enclosing the statement being checked, innermost last. Empty at
 /// the start of every function body, since a `break` cannot leave a function.
 loops: std.ArrayList(Loop) = .empty,
@@ -181,7 +188,9 @@ pub fn check(
             if (statement.data == .struct_declaration) {
                 const declaration = statement.data.struct_declaration;
                 const key = checker.keyOf(declaration.name);
-                const struct_type = Type.structOf(key, declaration.name);
+                const user = try arena.create(Type.User);
+                user.* = .{ .name = key, .display_name = declaration.name };
+                const struct_type = Type.structOf(user);
                 try checker.structs.put(arena, key, struct_type);
                 try module.put(arena, key, .{
                     .type = struct_type,
@@ -198,6 +207,32 @@ pub fn check(
             const key = checker.keyOf(function.name);
             try checker.declarations.put(arena, key, function);
             try module.put(arena, key, .{ .type = .invalid, .declared = .invalid, .assigned = true, .is_function = true });
+        }
+    }
+
+    // Every type identity exists before any field annotation is resolved, so
+    // fields may name a type declared later or in another file.
+    checker.resolving_struct_fields = true;
+    for (programs, 0..) |program, index| {
+        checker.file = @intCast(index);
+        for (program.statements) |statement| {
+            if (statement.data != .struct_declaration) continue;
+            try checker.checkStructDeclaration(statement.data.struct_declaration);
+        }
+    }
+    checker.resolving_struct_fields = false;
+
+    // A field may refer to a struct whose fields are declared later. Validate
+    // dictionary keys only after all of that metadata is complete.
+    for (programs, 0..) |program, index| {
+        checker.file = @intCast(index);
+        for (program.statements) |statement| {
+            if (statement.data != .struct_declaration) continue;
+            const declaration = statement.data.struct_declaration;
+            const fields = checker.structs.get(checker.keyOf(declaration.name)).?.user.?.fields;
+            for (declaration.fields, fields) |field, checked_field| {
+                try checker.validateKeyAnnotations(field.annotation, checked_field.type);
+            }
         }
     }
 
@@ -239,7 +274,55 @@ pub fn check(
         .diagnostics = owned,
         .signatures = checker.signatures,
         .literal_types = checker.literal_types,
+        .structs = checker.structs,
     };
+}
+
+fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
+    const struct_type = self.structs.get(self.keyOf(declaration.name)).?;
+    const user = @constCast(struct_type.user.?);
+    const fields = try self.arena.alloc(Type.User.Field, declaration.fields.len);
+    var names: std.StringHashMapUnmanaged(void) = .empty;
+
+    for (declaration.fields, fields) |field, *checked| {
+        if (names.contains(field.name)) {
+            try self.report(
+                field.name_span,
+                "`{s}` is already a field of `{s}`",
+                .{ field.name, declaration.name },
+                "Give each stored field a different name.",
+            );
+        } else {
+            try names.put(self.arena, field.name, {});
+        }
+        checked.* = .{
+            .name = field.name,
+            .type = try self.resolveTypeExpression(field.annotation),
+            .mutable = field.mutable,
+        };
+    }
+    user.fields = fields;
+}
+
+fn validateKeyAnnotations(self: *Checker, annotation: Ast.TypeExpression, resolved: Type) Error!void {
+    if (annotation.key) |key| {
+        try self.requireEligibleKey(resolved.key.?.*, key.span);
+        try self.validateKeyAnnotations(key.*, resolved.key.?.*);
+        try self.validateKeyAnnotations(annotation.element.?.*, resolved.element.?.*);
+    } else if (annotation.element) |element| {
+        try self.validateKeyAnnotations(element.*, resolved.element.?.*);
+    } else if (annotation.positions) |positions| {
+        for (positions, resolved.elements) |position, checked| {
+            try self.validateKeyAnnotations(position, checked);
+        }
+    } else if (annotation.signature) |signature| {
+        for (signature.parameters, resolved.signature.?.parameters) |parameter, checked| {
+            try self.validateKeyAnnotations(parameter, checked);
+        }
+        if (signature.result) |result| {
+            try self.validateKeyAnnotations(result.*, resolved.signature.?.return_type);
+        }
+    }
 }
 
 fn earlierInSource(_: void, a: Diagnostic, b: Diagnostic) bool {
@@ -268,6 +351,15 @@ fn markModuleAssigned(self: *Checker, statements: []const Ast.Statement) Error!v
 /// module-level declaration is its own key, which is every local.
 fn keyOf(self: *Checker, name: []const u8) []const u8 {
     return self.facts.keyFor(self.file, name) orelse name;
+}
+
+/// Resolves both a bare imported type and a namespace alias at the front of a
+/// qualified type, such as `using L = Left` followed by `L.Marker`.
+fn typeKeyOf(self: *Checker, name: []const u8) Error![]const u8 {
+    if (self.facts.keyFor(self.file, name)) |key| return key;
+    const dot = std.mem.indexOfScalar(u8, name, '.') orelse return name;
+    const namespace = self.facts.namespaceAliasFor(self.file, name[0..dot]) orelse return name;
+    return std.fmt.allocPrint(self.arena, "{s}{s}", .{ namespace, name[dot..] });
 }
 
 /// A module-level declaration reached either way: `area` inside `shapes/`, or
@@ -1504,7 +1596,7 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
     if (annotation.key) |written_key| {
         const key = try self.resolveTypeExpression(written_key.*);
         const value = try self.resolveTypeExpression(annotation.element.?.*);
-        try self.requireEligibleKey(key, written_key.span);
+        if (!self.resolving_struct_fields) try self.requireEligibleKey(key, written_key.span);
         return Type.dictionaryOf(self.arena, key, value);
     }
 
@@ -1541,7 +1633,7 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
     }
 
     if (Type.fromName(annotation.name)) |builtin| return builtin;
-    if (self.structs.get(self.keyOf(annotation.name))) |user_type| return user_type;
+    if (self.structs.get(try self.typeKeyOf(annotation.name))) |user_type| return user_type;
     try self.report(
         annotation.span,
         "`{s}` is not a type",
@@ -1836,7 +1928,7 @@ fn requireEligibleKey(self: *Checker, key: Type, span: Source.Span) Error!void {
         span,
         "{f} cannot be a dictionary key",
         .{key},
-        "A key must be a whole or decimal number, a `Bool`, a `String`, or a tuple of those. Anything that can change after it is stored could not be found again.",
+        "A key must be a number, a `Bool`, a `String`, or a tuple or struct made only from valid key types. Lists and other mutable collections cannot be keys.",
     );
 }
 
@@ -2262,6 +2354,19 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) return .invalid;
     if (!try self.requirePresent(base, member.base, member.name)) return .invalid;
+
+    if (base.kind == .struct_value) {
+        for (base.user.?.fields) |field| {
+            if (std.mem.eql(u8, field.name, member.name)) return field.type;
+        }
+        try self.report(
+            member.name_span,
+            "`{f}` has no field named `{s}`",
+            .{ base, member.name },
+            "Check the field name in the struct declaration.",
+        );
+        return .invalid;
+    }
 
     // Section 8.2's `entry.0`. The position is known where it is written, so an
     // invalid one is a compile-time error rather than a runtime one.
@@ -2701,11 +2806,20 @@ fn typeOfMapMethod(
 /// Section 4.3 and 7.1: a method that changes its receiver cannot be called on
 /// a `const`, a parameter, a loop variable, or a temporary.
 fn requireMutableReceiver(self: *Checker, member: Ast.Expression.Member, name: []const u8) Error!void {
-    if (member.base.data == .name) {
-        const binding = self.find(member.base.data.name) orelse return;
-        return self.requireMutable(member.base.data.name, member.base.span, binding.*);
+    var receiver = member.base;
+    while (receiver.data == .index) receiver = receiver.data.index.base;
+    if (receiver.data == .name) {
+        const binding = self.find(receiver.data.name) orelse return;
+        return self.requireMutable(receiver.data.name, receiver.span, binding.*);
     }
-    if (member.base.data == .index or member.base.data == .member) return;
+    if (receiver.data == .member) {
+        return self.report(
+            receiver.span,
+            "changing a collection through a struct field is not available yet",
+            .{},
+            "Read the field without changing it for now; struct field mutation is the next object-model slice.",
+        );
+    }
     try self.reportWithHelp(
         member.name_span,
         "`{s}` changes what it is called on, and this value has nowhere to keep the change",
@@ -2846,6 +2960,14 @@ fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
     while (receiver.data == .index) receiver = receiver.data.index.base;
 
     if (receiver.data != .name) {
+        if (receiver.data == .member) {
+            return self.report(
+                receiver.span,
+                "changing a collection through a struct field is not available yet",
+                .{},
+                "Read the field without changing it for now; struct field mutation is the next object-model slice.",
+            );
+        }
         return self.reportWithHelp(
             member.base.span,
             "`{s}` changes a list, but this list is a temporary value, so the change would be lost",
@@ -3201,14 +3323,36 @@ fn typeOfCall(
     };
 
     if (binding.is_type) {
-        if (call.arguments.len != 0) {
-            try self.report(
-                call.callee.span,
-                "`{s}` takes no arguments, but this call passes {d}",
-                .{ name, call.arguments.len },
-                "This fieldless struct uses its generated zero-argument constructor.",
-            );
+        const fields = binding.type.user.?.fields;
+        if (call.arguments.len != fields.len) {
+            if (fields.len == 0) {
+                try self.report(
+                    call.callee.span,
+                    "`{s}` takes no arguments, but this call passes {d}",
+                    .{ name, call.arguments.len },
+                    "This fieldless struct uses its generated zero-argument constructor.",
+                );
+            } else {
+                try self.report(
+                    call.callee.span,
+                    "`{s}` takes {d} argument{s}, but this call passes {d}",
+                    .{ name, fields.len, if (fields.len == 1) "" else "s", call.arguments.len },
+                    "Pass one value for each required field, in declaration order.",
+                );
+            }
             try self.typeArguments(call.arguments);
+        } else {
+            for (call.arguments, fields) |argument, field| {
+                const actual = try self.typeOfExpected(argument, field.type);
+                if (!actual.assignableTo(field.type)) {
+                    try self.report(
+                        argument.span,
+                        "this is {f}, but field `{s}` of `{s}` needs {f}",
+                        .{ actual, field.name, name, field.type },
+                        mismatchHelp(actual, field.type, "Pass a value of the field's declared type, or convert it first."),
+                    );
+                }
+            }
         }
         return binding.type;
     }

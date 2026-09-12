@@ -1,0 +1,4 @@
+diagnostics/struct-constructor-type.em:6:32: this is String, but field `grade` of `Student` needs Int
+  const student = Student("Ava", "twelve")
+                                 ^^^^^^^^
+Pass a value of the field's declared type, or convert it first.
