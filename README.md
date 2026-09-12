@@ -14,8 +14,8 @@ lexer, parser, name resolver, type checker, interpreter — so `emerald run` exe
 program and `emerald check` reports its problems without running it.
 
 Named bindings, type annotations, assignment, conditionals, comparison, arithmetic,
-functions, loops, lists, and strings work, and so does the first program of the language
-guide:
+functions, loops, lists, strings, and blocks work, and so does the first program of the
+language guide:
 
 ```emerald
 var name = input("What is your name? ")
@@ -26,7 +26,9 @@ Strings are Unicode-aware: a character is what a reader sees as one, canonically
 equivalent strings are equal, and case mapping is Unicode's, from tables generated from
 Unicode 17.0.0. Definite assignment is proved through control flow, including loops; lists
 are values, copied on write. An unhandled error inside a function reports the calls that
-led to it. Dictionaries, sets, optionals, and lambdas arrive with later slices.
+led to it. Functions are values: a block can be written inline, passed to `each` or `map`,
+or kept in a variable, and it captures the variables around it rather than copies of them.
+Dictionaries, sets, and optionals arrive with later slices.
 
 ```emerald
 func collatz_steps(start: Int): Int {
@@ -47,6 +49,20 @@ func collatz_steps(start: Int): Int {
 for start in 1..5 {
     print(start, collatz_steps(start))
 }
+```
+
+```emerald
+func counter_from(start: Int): func(): Int {
+    var next = start
+    return { =>
+        next += 1
+        return next - 1
+    }
+}
+
+const ticket = counter_from(1)
+print(ticket(), ticket(), ticket())
+print([1, 2, 3].map { number => number * number })
 ```
 
 The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify

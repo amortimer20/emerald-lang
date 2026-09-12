@@ -1147,12 +1147,25 @@ fn resolveTypeExpression(self: *Checker, annotation: Ast.TypeExpression) Error!T
         return Type.listOf(self.arena, inner);
     }
 
+    if (annotation.signature) |written| {
+        const parameters = try self.arena.alloc(Type, written.parameters.len);
+        for (written.parameters, parameters) |parameter, *resolved| {
+            resolved.* = try self.resolveTypeExpression(parameter);
+        }
+        // Section 7.1: an omitted result is `Nothing`.
+        const result: Type = if (written.result) |written_result|
+            try self.resolveTypeExpression(written_result.*)
+        else
+            .nothing;
+        return Type.functionOf(self.arena, .{ .parameters = parameters, .return_type = result });
+    }
+
     return Type.fromName(annotation.name) orelse {
         try self.report(
             annotation.span,
             "`{s}` is not a type",
             .{annotation.name},
-            "The types available so far are `Int`, `Float`, `Bool`, `Nothing`, and lists of them, such as `[Int]`.",
+            "The types available so far are `Int`, `Float`, `Bool`, `String`, `Nothing`, lists of them such as `[Int]`, and functions such as `func(Int): Bool`.",
         );
         return .invalid;
     };
@@ -1230,18 +1243,8 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             // Missing only when the resolver already reported the name, or
             // while inferring early for a call that `checkCaptures` rejects.
             const binding = self.find(name) orelse break :blk .invalid;
-            if (binding.is_function) {
-                // Section 3.4 makes a bare function name its callable value.
-                // Function values are deferred along with lambdas.
-                try self.reportWithHelp(
-                    expression.span,
-                    "`{s}` is a function, and functions cannot be used as values yet",
-                    .{name},
-                    "Call it with parentheses, as in `{s}()`.",
-                    .{name},
-                );
-                break :blk .invalid;
-            }
+            // Section 3.4 and 7.5: a bare function name is its callable value.
+            if (binding.is_function) break :blk try self.typeOfFunctionValue(expression, name);
             if (!binding.assigned) {
                 try self.reportUnassigned(expression.span, name, binding.*);
                 // Treated as assigned from here so one unassigned read does not
@@ -1270,14 +1273,40 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .index => |index| self.typeOfIndex(index),
         .member => |member| self.typeOfMember(member),
         .range => self.rejectCountingValue(expression),
+        .lambda => self.typeOfLambda(expression, null),
     };
 }
 
-/// `typeOf`, for a place where a value of `expected` is wanted. Only a list
-/// literal uses it, to take its element type from context: `[]` gets one at
-/// all, and `[1, 2]` becomes a `[Float]` where one is expected.
+/// Section 7.5's captured function. Section 15.2's prelude functions are the
+/// exception: `print` and `write` take any number of arguments of any type, and
+/// no type that can be written describes that, so they can only be called.
+fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, name: []const u8) Error!Type {
+    if (!self.declarations.contains(name)) {
+        try self.reportWithHelp(
+            expression.span,
+            "`{s}` is built in, and built-in functions cannot be used as values",
+            .{name},
+            "Call it with parentheses, as in `{s}(...)`, or wrap it in a lambda such as `{{ value => {s}(value) }}`.",
+            .{ name, name },
+        );
+        return .invalid;
+    }
+    const signature = try self.signatureFor(name);
+    return Type.functionOf(self.arena, .{
+        .parameters = signature.parameters,
+        .parameter_names = signature.parameter_names,
+        .return_type = signature.return_type,
+    });
+}
+
+/// `typeOf`, for a place where a value of `expected` is wanted. A list literal
+/// takes its element type from context — `[]` gets one at all, and `[1, 2]`
+/// becomes a `[Float]` where one is expected — and a lambda takes its parameter
+/// types the same way, which is what lets `numbers.each { n => ... }` leave
+/// `n` unannotated (7.2).
 fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
     if (expression.data == .list_literal) return self.typeOfList(expression, expected);
+    if (expression.data == .lambda) return self.typeOfLambda(expression, expected);
     return self.typeOf(expression);
 }
 
@@ -1336,6 +1365,176 @@ fn recordLiteral(self: *Checker, expression: *const Ast.Expression, element: Typ
 }
 
 /// Section 5.4's zero-based indexing.
+/// Section 7.4's lambda.
+///
+/// Parameter types come from their annotations, or from the callable type
+/// expected here. Nothing else can supply them: section 7.4 requires a
+/// standalone lambda to annotate its parameters rather than have them inferred
+/// from the body's use of them, which would make the diagnostic for a mistake
+/// appear far from the mistake.
+///
+/// The body is checked in place, with every enclosing scope still visible.
+/// That visibility is capture, and checking it here rather than against a fresh
+/// view is what makes a captured name's type the type it has where the lambda
+/// is written.
+fn typeOfLambda(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
+    const lambda = expression.data.lambda;
+
+    var wanted: ?*const Signature = if (expected) |context|
+        (if (context.kind == .function) context.signature else null)
+    else
+        null;
+    // A lambda of the wrong shape has been reported here, so its type is left
+    // undetermined rather than reported again where it is being stored. An
+    // expected type that is already invalid means the surrounding call was
+    // reported, which has the same effect: nothing here is worth a second
+    // diagnostic.
+    var mismatched = if (expected) |context| context.kind == .invalid else false;
+    if (wanted) |signature| {
+        if (signature.parameters.len != lambda.parameters.len) {
+            try self.report(
+                expression.span,
+                "this lambda takes {d} value{s}, but it will be given {d}",
+                .{
+                    lambda.parameters.len,
+                    if (lambda.parameters.len == 1) "" else "s",
+                    signature.parameters.len,
+                },
+                "Match the number of parameters to the number of values passed to it.",
+            );
+            wanted = null;
+            mismatched = true;
+        }
+    }
+
+    const parameter_types = try self.arena.alloc(Type, lambda.parameters.len);
+    const parameter_names = try self.arena.alloc([]const u8, lambda.parameters.len);
+    for (lambda.parameters, parameter_types, parameter_names, 0..) |parameter, *resolved, *written, index| {
+        written.* = parameter.name;
+        resolved.* = if (parameter.annotation) |annotation|
+            try self.resolveTypeExpression(annotation)
+        else if (wanted) |signature|
+            signature.parameters[index]
+        else if (mismatched)
+            // The shape is already reported; which parameter lost its type is
+            // a consequence of that, not a second mistake.
+            .invalid
+        else blk: {
+            try self.report(
+                parameter.name_span,
+                "`{s}` needs a type",
+                .{parameter.name},
+                "A lambda written on its own says what it receives, as in `{ value: Int => value * 2 }`.",
+            );
+            break :blk .invalid;
+        };
+    }
+
+    // An expected result of `invalid` means the caller has no opinion, which is
+    // how `map` asks for a block without saying what it must produce.
+    const wanted_result: ?Type = if (wanted) |signature|
+        (if (signature.return_type.kind == .invalid) null else signature.return_type)
+    else
+        null;
+
+    const result = try self.checkLambdaBody(expression, lambda, parameter_types, parameter_names, wanted_result);
+
+    const lambda_type = try Type.functionOf(self.arena, .{
+        .parameters = parameter_types,
+        .parameter_names = parameter_names,
+        .return_type = result,
+    });
+    // The interpreter reads this to widen arguments and results the way section
+    // 4.4 allows, exactly as it does for a named function's signature.
+    try self.literal_types.put(self.arena, expression, lambda_type);
+    return if (mismatched) .invalid else lambda_type;
+}
+
+/// The body of a lambda, with its parameters in scope.
+///
+/// `return` inside a lambda belongs to the lambda (6.5), and `break` and
+/// `continue` cannot reach an enclosing loop from inside one (7.4), so both are
+/// saved and restarted here the way a function body restarts them.
+fn checkLambdaBody(
+    self: *Checker,
+    expression: *const Ast.Expression,
+    lambda: Ast.Expression.Lambda,
+    parameter_types: []const Type,
+    parameter_names: []const []const u8,
+    wanted_result: ?Type,
+) Error!Type {
+    const before = try self.snapshot();
+
+    try self.pushScope();
+    const parameters = self.scopes.items[self.scopes.items.len - 1];
+    for (parameter_names, parameter_types) |name, parameter_type| {
+        // Section 7.4: `_` binds nothing, and may appear more than once.
+        if (std.mem.eql(u8, name, "_")) continue;
+        try parameters.put(self.arena, name, .{
+            .type = parameter_type,
+            .assigned = true,
+            .mutability = .parameter,
+        });
+    }
+
+    const outer_return_type = self.current_return_type;
+    const outer_in_function = self.in_function;
+    const outer_loops = self.loops;
+    const outer_pending = self.pending_return_types;
+    defer {
+        _ = self.scopes.pop();
+        self.current_return_type = outer_return_type;
+        self.in_function = outer_in_function;
+        self.loops = outer_loops;
+        self.pending_return_types = outer_pending;
+        // A lambda may never run, and may run long after this point, so what it
+        // assigns to a captured variable cannot make that variable assigned
+        // here.
+        self.restore(before);
+    }
+    self.loops = .empty;
+    self.pending_return_types = .empty;
+    self.in_function = true;
+    self.current_return_type = wanted_result;
+
+    switch (lambda.body) {
+        .expression => |body| {
+            const produced = try self.typeOfExpected(body, wanted_result);
+            if (wanted_result) |result| {
+                if (!produced.assignableTo(result)) {
+                    try self.report(
+                        body.span,
+                        "this lambda produces {f}, but {f} is expected here",
+                        .{ produced, result },
+                        mismatchHelp(produced, result, "Produce a value of the expected type, or convert it first."),
+                    );
+                }
+                return result;
+            }
+            return produced;
+        },
+        .block => |body| {
+            try self.checkStatements(body.statements);
+            if (wanted_result) |result| {
+                if (result.kind != .nothing and blockCompletes(body.statements)) {
+                    try self.report(
+                        expression.span,
+                        "not every path in this lambda returns a value",
+                        .{},
+                        "Add a `return` on every path, or restructure so every branch returns.",
+                    );
+                }
+                return result;
+            }
+            return self.inferredReturnType(
+                self.pending_return_types.items,
+                "this lambda",
+                expression.span,
+            );
+        },
+    }
+}
+
 fn typeOfIndex(self: *Checker, index: Ast.Expression.Index) Error!Type {
     const base = try self.typeOf(index.base);
     try self.requireIndex(index.index);
@@ -1416,6 +1615,11 @@ fn typeOfMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expre
         return .int;
     }
 
+    if (base.kind == .list) {
+        if (std.mem.eql(u8, member.name, "each")) return self.typeOfEach(call, member, base);
+        if (std.mem.eql(u8, member.name, "map")) return self.typeOfMap(call, member, base);
+    }
+
     const method = (if (base.kind == .list) Type.list_methods.get(member.name) else null) orelse {
         try self.reportUnknownMember(base, member, "method");
         try self.typeArguments(call.arguments);
@@ -1456,6 +1660,90 @@ fn typeOfMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expre
         .bool => .bool,
         .element => element,
     };
+}
+
+/// Section 8.5's `each`, the traversal every collection has. The block receives
+/// one element and is run for its effect, so whatever it produces is ignored —
+/// except a body that is a single expression producing a value, which is
+/// section 5.2's unused result and is almost always a `map` written as an
+/// `each`.
+fn typeOfEach(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    const block = try self.requireBlock(call, member, base, .invalid) orelse return .nothing;
+    if (block.data == .lambda and block.data.lambda.body == .expression) {
+        const body = block.data.lambda.body.expression;
+        if (body.data != .call) {
+            try self.report(
+                body.span,
+                "this block produces a value, and `each` does not use it",
+                .{},
+                "Use `map` to collect the results into a list, or do something with each element here.",
+            );
+        }
+    }
+    return .nothing;
+}
+
+/// Section 8.6's `map`: a new list of what the block produces for each element.
+/// The block's result type is what decides the list's element type, so nothing
+/// is expected of it beyond producing something.
+fn typeOfMap(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    const block = try self.requireBlock(call, member, base, .invalid) orelse return .invalid;
+    const produced = self.literal_types.get(block) orelse (try self.typeOf(block));
+    if (produced.kind != .function) return .invalid;
+
+    const result = produced.signature.?.return_type;
+    if (result.kind == .nothing) {
+        try self.report(
+            block.span,
+            "this block produces nothing, so there is nothing for `map` to collect",
+            .{},
+            "Produce a value for each element, or use `each` to run the block for its effect.",
+        );
+        return .invalid;
+    }
+    return Type.listOf(self.arena, result);
+}
+
+/// The single block argument a higher-order method takes, checked against a
+/// callable that receives one element. `result` of `invalid` asks for a block
+/// without saying what it must produce.
+fn requireBlock(
+    self: *Checker,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    base: Type,
+    result: Type,
+) Error!?*const Ast.Expression {
+    if (call.arguments.len != 1) {
+        try self.report(
+            member.name_span,
+            "`{s}` takes 1 block, but this call passes {d} argument{s}",
+            .{ member.name, call.arguments.len, if (call.arguments.len == 1) "" else "s" },
+            "Write the block after the method, as in `numbers.each { number => print(number) }`.",
+        );
+        try self.typeArguments(call.arguments);
+        return null;
+    }
+
+    const element = try self.arena.create(Type);
+    element.* = base.element.?.*;
+    const expected = try Type.functionOf(self.arena, .{
+        .parameters = element[0..1],
+        .return_type = result,
+    });
+
+    const block = call.arguments[0];
+    const actual = try self.typeOfExpected(block, expected);
+    if (actual.kind != .function and actual.kind != .invalid) {
+        try self.report(
+            block.span,
+            "`{s}` needs a block, but this is {f}",
+            .{ member.name, actual },
+            "Write the block after the method, as in `numbers.each { number => print(number) }`.",
+        );
+        return null;
+    }
+    return block;
 }
 
 /// Section 9.2's string methods. None changes the string, which is immutable.
@@ -1626,6 +1914,10 @@ fn familiarListName(name: []const u8) ?[]const u8 {
         .{ "is_empty", "empty?" },
         .{ "delete", "remove" },
         .{ "delete_at", "remove_at" },
+        .{ "for_each", "each" },
+        .{ "foreach", "each" },
+        .{ "collect", "map" },
+        .{ "select", "map" },
     });
     return familiar.get(name);
 }
@@ -1795,16 +2087,9 @@ fn typeOfCall(
 ) Error!Type {
     if (isCounting(expression)) return self.rejectCountingValue(expression);
     if (call.callee.data == .member) return self.typeOfMethodCall(call, call.callee.data.member);
-    if (call.callee.data != .name) {
-        try self.report(
-            call.callee.span,
-            "this cannot be called",
-            .{},
-            "Only a function can be called, by writing its name followed by parentheses.",
-        );
-        try self.typeArguments(call.arguments);
-        return .invalid;
-    }
+    // Anything that is not a plain name — a lambda called where it is written,
+    // an element of a list of functions — is called through its value.
+    if (call.callee.data != .name) return self.typeOfValueCall(call, try self.typeOf(call.callee), null);
 
     const name = call.callee.data.name;
     const binding = self.find(name) orelse {
@@ -1812,16 +2097,9 @@ fn typeOfCall(
         return .invalid;
     };
 
-    if (!binding.is_function) {
-        try self.report(
-            call.callee.span,
-            "`{s}` is not a function",
-            .{name},
-            "Only a function can be called.",
-        );
-        try self.typeArguments(call.arguments);
-        return .invalid;
-    }
+    // A variable holding a function is called through its value, which is how
+    // a parameter or a local that received a lambda is used.
+    if (!binding.is_function) return self.typeOfValueCall(call, binding.type, name);
 
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
@@ -1860,6 +2138,72 @@ fn typeOfCall(
     return signature.return_type;
 }
 
+/// A call through a value rather than a name: section 7.4's lambdas and
+/// section 7.5's captured functions, once either is stored somewhere.
+///
+/// `name` is the binding the value came from, when it came from one, so the
+/// diagnostic can say which name is not a function.
+fn typeOfValueCall(self: *Checker, call: Ast.Expression.Call, callee: Type, name: ?[]const u8) Error!Type {
+    if (callee.kind == .invalid) {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+    if (callee.kind != .function) {
+        if (name) |written| {
+            try self.report(
+                call.callee.span,
+                "`{s}` is {f}, which is not a function",
+                .{ written, callee },
+                "Only a function can be called.",
+            );
+        } else {
+            try self.report(
+                call.callee.span,
+                "this is {f}, which is not a function",
+                .{callee},
+                "Only a function can be called.",
+            );
+        }
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+
+    const signature = callee.signature.?;
+    if (call.arguments.len != signature.parameters.len) {
+        const expected = signature.parameters.len;
+        const plural = if (expected == 1) "" else "s";
+        if (name) |written| {
+            try self.report(
+                call.callee.span,
+                "`{s}` takes {d} argument{s}, but this call passes {d}",
+                .{ written, expected, plural, call.arguments.len },
+                "Match the number of arguments to what the function takes.",
+            );
+        } else {
+            try self.report(
+                call.callee.span,
+                "this takes {d} argument{s}, but this call passes {d}",
+                .{ expected, plural, call.arguments.len },
+                "Match the number of arguments to what the function takes.",
+            );
+        }
+        try self.typeArguments(call.arguments);
+        return signature.return_type;
+    }
+
+    for (call.arguments, signature.parameters) |argument, expected| {
+        const actual = try self.typeOfExpected(argument, expected);
+        if (actual.assignableTo(expected)) continue;
+        try self.report(
+            argument.span,
+            "this is {f}, but {f} is expected here",
+            .{ actual, expected },
+            mismatchHelp(actual, expected, "Pass a value of the expected type, or convert it first."),
+        );
+    }
+    return signature.return_type;
+}
+
 /// Section 15.2's `input(prompt)`: the prompt is optional and is a String.
 fn typeOfInput(self: *Checker, call: Ast.Expression.Call) Error!Type {
     if (call.arguments.len > 1) {
@@ -1884,8 +2228,13 @@ fn typeOfInput(self: *Checker, call: Ast.Expression.Call) Error!Type {
     return .string;
 }
 
+/// Types the arguments of a call that has already been reported, so that
+/// mistakes inside them are still found. They are typed against `invalid`,
+/// which says the context is gone: a block, which would otherwise ask for its
+/// parameter types, takes that as already answered rather than reporting a
+/// second time.
 fn typeArguments(self: *Checker, arguments: []const *const Ast.Expression) Error!void {
-    for (arguments) |argument| _ = try self.typeOf(argument);
+    for (arguments) |argument| _ = try self.typeOfExpected(argument, .invalid);
 }
 
 // Control-flow shape, computed from the AST alone.

@@ -1,0 +1,4 @@
+diagnostics/lambda-no-arrow-after-parameters.em:1:15: expected `=>` after this lambda's parameters, found a name
+  const f = { a b }
+                ^
+A lambda separates what it receives from what it does with `=>`, as in `{ number => number * 2 }`.

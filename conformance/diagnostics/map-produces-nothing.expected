@@ -1,0 +1,4 @@
+diagnostics/map-produces-nothing.em:2:27: this block produces nothing, so there is nothing for `map` to collect
+  const shown = numbers.map { number => print(number) }
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Produce a value for each element, or use `each` to run the block for its effect.

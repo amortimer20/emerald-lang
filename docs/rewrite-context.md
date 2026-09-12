@@ -2528,14 +2528,18 @@ The rewrite should advance through small vertical slices:
    operand errors before execution.
 7. **Functions slice** — calls, returns, scopes, recursion, and stack traces.
 8. **Collection slice** — list literal, indexing, mutation, and one higher-order method.
-9. **Managed heap slice** — class instance or closure allocation with the simple collector.
-10. **Project slice** — `main.em`, multiple files, namespaces, and `using`.
-11. **Object model** — structs, classes, construction, properties, inheritance, traits,
+9. **Callable slice** — lambdas, closures over captured scopes, function values, and the
+   trailing-block call form.
+10. **Managed heap slice** — the simple collector, with the explicit root API of 19.5.
+    Reference counting reclaims everything the earlier slices can build; a closure and the
+    scope it captured can point at each other, and that cycle is what needs collecting.
+11. **Project slice** — `main.em`, multiple files, namespaces, and `using`.
+12. **Object model** — structs, classes, construction, properties, inheritance, traits,
     operators, and enums in dependency order.
-12. **Errors and tests** — typed errors, `raise`, `try`/`catch`/`finally`, `assert`, and
+13. **Errors and tests** — typed errors, `raise`, `try`/`catch`/`finally`, `assert`, and
     `emerald test`.
-13. **Standard-library growth** — add methods only alongside behavioral tests and examples.
-14. **Tooling** — canonical formatter, REPL, LSP, then debugger protocol.
+14. **Standard-library growth** — add methods only alongside behavioral tests and examples.
+15. **Tooling** — canonical formatter, REPL, LSP, then debugger protocol.
 
 Each slice ends with a runnable Emerald example and behavioral tests. Do not scaffold every
 future subsystem before the first expression runs.
@@ -2699,6 +2703,13 @@ recorded in their normative sections:
 | Searching strings (9.2) | Matches only between characters, and canonically | Section 9.1 promises characters are never split; `"café".contains?("e")` is false when `é` is one character. `replace` replaces every occurrence. |
 | Unicode version (19.1) | 17.0.0, generated and checked by `tools/unicode` | Recorded so a change is deliberate; the full NormalizationTest runs whenever the tables are regenerated. |
 | Loops and definite assignment (6.4) | A loop may run zero times; only a literal `while true` is known to end through `break` | Precise enough that the common `while true` search with a `break` needs no dummy initial value, while staying a rule a reader can check by eye. |
+| Lambda body shape (7.4) | The body is one expression when it is written on the `=>` line and `}` follows it; otherwise the lines after `=>` are statements | `{ n => n * 2 }` and `{ n => total += n }` are both natural one-liners, and only the first produces a value. Deciding by what follows the first expression accepts both without a second spelling. |
+| Function-type variance (7.1) | Functions are invariant in parameters and result | Variance is a real rule with a real explanation, but it earns its place only once there is a type hierarchy to vary over. An exact match is sound and is what a reader would guess. |
+| Function equality (8.4) | Two captures of the same named function are equal; two lambdas only when they are the same closure | There is no way to compare what code does. Two evaluations of the same lambda capture different variables, so they are genuinely different functions, while `add` is the same function every time it is named. |
+| Displaying a function (15.2) | `<func greet>`, or `<lambda>` for one written inline | A function has no written form, so it displays as something obviously not one rather than as a plausible value. |
+| Capturing a built-in (7.5) | `print`, `write`, and `input` can only be called | They take any number of arguments of any type, which no written function type describes. The diagnostic suggests wrapping one in a lambda. |
+| `each` and the unused result (5.2, 8.5) | `each` ignores what its block produces, except a one-expression body that is not a call, which is reported | That shape is section 5.2's unused result and is almost always a `map` written as an `each`. A block body that happens to return is left alone. |
+| Blocks in a statement header (7.4) | The `{` after an `if`, `while`, or `for` condition opens the body, and a trailing block written there is reported against its own `{` | The rule was already stated; without a diagnostic naming it, the parameters were read as statements and produced errors that named nothing relevant. |
 | Value-type mutability (4.3, 7.1, 8.1, 10.2) | `const` and parameters freeze values; the rule stops at class references | Under value semantics, mutating and replacing are indistinguishable, so a shallow `const` protected nothing coherent, and mutating a parameter's copy was a silent no-op that a beginner would write and never understand. Replaces the earlier shallow `const`, which followed C# reference-type variables. |
 
 ## 23. Consistency rules for future work

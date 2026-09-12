@@ -500,5 +500,52 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             .text => {},
             .expression => |part_expression| try self.walkExpression(part_expression),
         },
+        .lambda => |lambda| try self.walkLambda(lambda),
+    }
+}
+
+/// Section 7.4's lambda body, which unlike a named function's body is walked
+/// where it is written, with every enclosing scope still visible: that
+/// visibility is exactly what capture is.
+///
+/// A lambda is a function boundary for section 6.1's shadowing rule, so
+/// `names.each { name => ... }` is allowed alongside an outer `name`. Crossing
+/// a function boundary has always been allowed, and a parameter that names what
+/// the block receives is the whole point of writing one.
+fn walkLambda(self: *Resolver, lambda: Ast.Expression.Lambda) Error!void {
+    try self.push();
+    const outer_boundary = self.function_boundary;
+    self.function_boundary = self.scopes.items.len - 1;
+    defer {
+        self.pop();
+        self.function_boundary = outer_boundary;
+    }
+
+    const parameters = &self.scopes.items[self.scopes.items.len - 1];
+    for (lambda.parameters) |parameter| {
+        // Section 7.4: `_` discards the argument and may appear more than once,
+        // so it binds nothing and cannot collide.
+        if (std.mem.eql(u8, parameter.name, "_")) continue;
+        if (parameters.contains(parameter.name)) {
+            try self.report(
+                parameter.name_span,
+                "`{s}` is already a parameter of this lambda",
+                .{parameter.name},
+                "Give each parameter a different name.",
+            );
+            continue;
+        }
+        try parameters.put(self.arena, parameter.name, .{
+            .mutable = false, // Section 7.1: parameters are read-only.
+            .span = parameter.name_span,
+            .kind = .parameter,
+        });
+    }
+
+    switch (lambda.body) {
+        .expression => |body| try self.walkExpression(body),
+        // The body's top level shares the parameters' scope, as a named
+        // function's does.
+        .block => |body| try self.walkStatements(body.statements),
     }
 }

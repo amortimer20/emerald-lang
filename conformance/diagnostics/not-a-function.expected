@@ -1,4 +1,4 @@
-diagnostics/not-a-function.em:2:7: `score` is not a function
+diagnostics/not-a-function.em:2:7: `score` is Int, which is not a function
   print(score())
         ^^^^^
 Only a function can be called.

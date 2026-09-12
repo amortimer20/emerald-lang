@@ -61,8 +61,9 @@ pub const For = struct {
 
 /// Section 7.1. Parameters are read-only, and require an explicit type this
 /// slice rather than the defaults section 7.2 allows for public API guidance.
-/// Nested function declarations, lambdas, defaults, and named arguments are all
-/// deferred; a name declares at most one function, per section 7.3.
+/// Nested function declarations, defaults, and named arguments are deferred; a
+/// name declares at most one function, per section 7.3. Anonymous functions are
+/// `Expression.Lambda`.
 pub const FunctionDeclaration = struct {
     name: []const u8,
     name_span: Source.Span,
@@ -97,14 +98,17 @@ pub const Declaration = struct {
     initializer: ?*const Expression,
 };
 
-/// A type as written in the source: a name, or section 8.2's `[T]`. The
-/// dictionary, set, and function type spellings arrive with their features.
+/// A type as written in the source: a name, section 8.2's `[T]`, or section
+/// 7.1's `func(Int): String`. The dictionary and set spellings arrive with
+/// those collections.
 pub const TypeExpression = struct {
     span: Source.Span,
-    /// The name, or empty for a list type.
+    /// The name, or empty for a list or function type.
     name: []const u8,
-    /// The element type of a list type, `T` in `[T]`; null for a name.
+    /// The element type of a list type, `T` in `[T]`; null otherwise.
     element: ?*const TypeExpression = null,
+    /// The shape of a function type; null otherwise.
+    signature: ?*const SignatureExpression = null,
     /// The `?` that marks an optional, split from the name by the parser as
     /// section 4.2 describes. Null when the type is not optional.
     question_span: ?Source.Span,
@@ -125,6 +129,13 @@ pub const Assignment = struct {
     /// Section 5.3 lowers `a += b` through the same operation as `a + b`.
     operation: ?BinaryOperator,
     value: *const Expression,
+};
+
+/// `func(Int, String): Bool` as written. The result is null when the type
+/// omits it, which section 7.1 makes the same as writing `Nothing`.
+pub const SignatureExpression = struct {
+    parameters: []const TypeExpression,
+    result: ?*const TypeExpression,
 };
 
 pub const If = struct {
@@ -178,6 +189,32 @@ pub const Expression = struct {
         index: Index,
         /// `base.name`: a property, or a method when it is the callee of a call.
         member: Member,
+        /// Section 7.4's `{ value => value * 2 }`.
+        lambda: Lambda,
+    };
+
+    /// Section 7.4. A lambda has no return annotation: its result type comes
+    /// from its body, and its parameter types from their annotations or from
+    /// the callable type expected where it is written.
+    pub const Lambda = struct {
+        parameters: []const LambdaParameter,
+        body: Body,
+
+        /// A single-expression lambda returns its expression; a block-bodied one
+        /// uses `return`. The parser decides by what follows `=>`: a newline
+        /// begins a block, and anything else is the one expression.
+        pub const Body = union(enum) {
+            expression: *const Expression,
+            block: Block,
+        };
+    };
+
+    /// Unlike a named function's parameter, a lambda's annotation is optional
+    /// (7.2). `_` discards the argument and binds nothing.
+    pub const LambdaParameter = struct {
+        name: []const u8,
+        name_span: Source.Span,
+        annotation: ?TypeExpression,
     };
 
     /// One piece of an interpolated string: finished text, or an expression

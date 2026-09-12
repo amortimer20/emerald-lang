@@ -52,6 +52,13 @@ nesting: u32 = 0,
 /// delimiters section 3.4 promises, and so a very long chain of any of them is
 /// still a diagnostic rather than a crash.
 recursion: u32 = 0,
+/// Whether the expression being parsed is the condition of an `if` or `while`,
+/// or the iterable of a `for`. There, the next `{` opens the statement's body
+/// rather than a trailing lambda, which is the rule section 7.4 states and the
+/// reason it tells you to parenthesize the call: `if (items.any? { ... }) {`.
+/// Any bracket or parenthesis clears it, because the body cannot begin inside
+/// one.
+in_control_header: bool = false,
 
 /// Section 3.4: "An implementation accepts at least 256 nested syntactic
 /// delimiters or declarations and checks its nesting budget before consuming
@@ -268,6 +275,12 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
         },
         .index => |index| @max(index.base.depth, index.index.depth),
         .member => |member| member.base.depth,
+        // A block body's statements each carry their own bound, so only an
+        // expression body extends this lambda's height.
+        .lambda => |lambda| switch (lambda.body) {
+            .expression => |expression| expression.depth,
+            .block => 0,
+        },
     };
 }
 
@@ -350,7 +363,7 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
 /// Section 6.4: `while condition { body }`.
 fn parseWhile(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseExpression();
+    const condition = try self.parseHeaderExpression();
     const body = try self.parseBlock();
     return .{
         .span = spanning(keyword.span, body.span),
@@ -383,7 +396,7 @@ fn parseFor(self: *Parser) Error!Ast.Statement {
         );
     }
 
-    const iterable = try self.parseExpression();
+    const iterable = try self.parseHeaderExpression();
     const body = try self.parseBlock();
     return .{
         .span = spanning(keyword.span, body.span),
@@ -631,6 +644,7 @@ fn rejectGuardedDeclaration(self: *Parser, name: Token) Error!void {
 fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     const token = self.peek();
     if (token.kind == .left_bracket) return self.parseListType();
+    if (token.kind == .keyword_func) return self.parseFunctionType();
     if (token.kind != .identifier) {
         return self.reportFmt(
             token.span,
@@ -693,9 +707,67 @@ fn parseListType(self: *Parser) Error!Ast.TypeExpression {
     };
 }
 
+/// Section 7.1's `func(Int, String): Bool`. A function type reuses declaration
+/// syntax, so the only difference from a declaration is that it names nothing.
+fn parseFunctionType(self: *Parser) Error!Ast.TypeExpression {
+    const keyword = self.advance();
+    const opening = self.peek();
+    if (opening.kind != .left_paren) {
+        return self.reportFmt(
+            opening.span,
+            "expected `(` after `func` in a type, found {s}",
+            .{opening.kind.describe()},
+            "A function type lists what it takes in parentheses, as in `func(Int): String`.",
+        );
+    }
+    try self.nest(opening.span);
+    defer self.unnest();
+    _ = self.advance();
+
+    var parameters: std.ArrayList(Ast.TypeExpression) = .empty;
+    if (!self.check(.right_paren)) {
+        while (true) {
+            try parameters.append(self.arena, try self.parseTypeExpression());
+            if (self.match(.comma) == null) break;
+        }
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_paren) {
+        return self.reportFmt(
+            closing.span,
+            "expected `)` to close this function type, found {s}",
+            .{closing.kind.describe()},
+            "A function type lists what it takes in parentheses, as in `func(Int): String`.",
+        );
+    }
+    _ = self.advance();
+
+    // Section 7.1 omits the result when there is none, which is `Nothing`.
+    var result: ?*const Ast.TypeExpression = null;
+    var last = closing.span;
+    if (self.match(.colon) != null) {
+        const written = try self.arena.create(Ast.TypeExpression);
+        written.* = try self.parseTypeExpression();
+        last = written.span;
+        result = written;
+    }
+
+    const signature = try self.arena.create(Ast.SignatureExpression);
+    signature.* = .{ .parameters = try parameters.toOwnedSlice(self.arena), .result = result };
+
+    const question: ?Source.Span = if (self.match(.question)) |token| token.span else null;
+    return .{
+        .span = spanning(keyword.span, last),
+        .name = "",
+        .signature = signature,
+        .question_span = question,
+    };
+}
+
 fn parseIf(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseExpression();
+    const condition = try self.parseHeaderExpression();
     const then_block = try self.parseBlock();
 
     var otherwise: ?Ast.Else = null;
@@ -734,6 +806,15 @@ fn parseIf(self: *Parser) Error!Ast.Statement {
 
 /// Section 3.4: braces delimit blocks, and a block is only ever part of a
 /// declared construct. There is no standalone anonymous block.
+/// The condition of an `if` or `while`, or the iterable of a `for`, where the
+/// `{` that follows opens the body.
+fn parseHeaderExpression(self: *Parser) Error!*const Ast.Expression {
+    const saved = self.in_control_header;
+    self.in_control_header = true;
+    defer self.in_control_header = saved;
+    return self.parseExpression();
+}
+
 fn parseBlock(self: *Parser) Error!Ast.Block {
     const opening = self.peek();
     if (opening.kind != .left_brace) {
@@ -747,6 +828,19 @@ fn parseBlock(self: *Parser) Error!Ast.Block {
     try self.nest(opening.span);
     defer self.unnest();
     _ = self.advance();
+
+    // Section 7.4: in an `if`, `while`, or `for` header the `{` opens the body,
+    // so a trailing block written there was read as the body instead. Its `=>`
+    // is the giveaway, and saying so here is far clearer than the errors the
+    // parameters would otherwise produce as statements.
+    if (self.startsLambdaHeader()) {
+        self.skipPastBraces();
+        return self.report(
+            opening.span,
+            "this `{` opens the body, so the block before it has nowhere to go",
+            "Put the call in parentheses so the block belongs to it, as in `if (items.any? { item => item.valid?() }) {`.",
+        );
+    }
 
     // Every block, not only a function body: nested function declarations are
     // deferred, and one inside a top-level `if` is just as nested.
@@ -788,8 +882,17 @@ fn parseBlock(self: *Parser) Error!Ast.Block {
 /// statement rather than an expression.
 fn parseSimpleStatement(self: *Parser) Error!Ast.Statement {
     const start = self.peek();
-    const expression = try self.parseExpression();
+    return self.finishStatementFrom(start, try self.parseExpression());
+}
 
+/// The rest of a simple statement, once its first expression is parsed. Split
+/// out because a lambda written on one line has to see that expression before
+/// it can tell a body that produces a value from a body that does something.
+fn finishStatementFrom(
+    self: *Parser,
+    start: Token,
+    expression: *const Ast.Expression,
+) Error!Ast.Statement {
     if (assignmentOperator(self.peek().kind)) |assignment| {
         _ = self.advance();
         const target = try self.assignmentTarget(expression);
@@ -1093,6 +1196,10 @@ fn parsePostfix(self: *Parser) Error!*const Ast.Expression {
             .left_paren => try self.finishCall(base),
             .left_bracket => try self.finishIndex(base),
             .dot => try self.finishMember(base),
+            .left_brace => if (self.in_control_header or !takesTrailingLambda(base))
+                return base
+            else
+                try self.finishTrailingLambda(base),
             .question_dot => return self.report(
                 self.peek().span,
                 "optional chaining is not available yet",
@@ -1106,6 +1213,9 @@ fn parsePostfix(self: *Parser) Error!*const Ast.Expression {
 fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Expression {
     try self.nest(self.peek().span);
     defer self.unnest();
+    const saved_header = self.in_control_header;
+    self.in_control_header = false;
+    defer self.in_control_header = saved_header;
     _ = self.advance();
 
     var arguments: std.ArrayList(*const Ast.Expression) = .empty;
@@ -1136,6 +1246,9 @@ fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Exp
 fn finishIndex(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expression {
     try self.nest(self.peek().span);
     defer self.unnest();
+    const saved_header = self.in_control_header;
+    self.in_control_header = false;
+    defer self.in_control_header = saved_header;
     _ = self.advance();
 
     const index = try self.parseExpression();
@@ -1174,6 +1287,228 @@ fn finishMember(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Exp
     } });
 }
 
+/// Whether a trailing lambda may follow this expression. Only the forms that
+/// name something callable, so a `{` after anything else is left alone and
+/// reported where it actually goes wrong.
+fn takesTrailingLambda(base: *const Ast.Expression) bool {
+    return switch (base.data) {
+        .name, .member, .call => true,
+        else => false,
+    };
+}
+
+/// Section 5.4's one exception to parenthesized calls: `numbers.each { ... }`.
+/// The lambda becomes the call's final argument, so `each { ... }` and
+/// `reduce(0) { ... }` are the same shape with a different number of arguments
+/// before the block.
+fn finishTrailingLambda(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expression {
+    const lambda = try self.parseLambda();
+
+    var arguments: std.ArrayList(*const Ast.Expression) = .empty;
+    const callee = if (base.data == .call) blk: {
+        try arguments.appendSlice(self.arena, base.data.call.arguments);
+        break :blk base.data.call.callee;
+    } else base;
+    try arguments.append(self.arena, lambda);
+
+    return self.node(spanning(base.span, lambda.span), .{ .call = .{
+        .callee = callee,
+        .arguments = try arguments.toOwnedSlice(self.arena),
+    } });
+}
+
+/// Section 7.4's `{ value => value * 2 }`.
+///
+/// Section 8.2 is what makes this unambiguous: braces in expression position
+/// begin a lambda and nothing else, which is exactly why collection literals
+/// use brackets. So a `{` here needs no lookahead to classify.
+fn parseLambda(self: *Parser) Error!*const Ast.Expression {
+    const opening = self.advance();
+    try self.nest(opening.span);
+    defer self.unnest();
+
+    // The body is a body, whatever the statement around it was doing, and
+    // nested function declarations remain deferred inside one.
+    const saved_header = self.in_control_header;
+    self.in_control_header = false;
+    defer self.in_control_header = saved_header;
+    const saved_top_level = self.at_top_level;
+    self.at_top_level = false;
+    defer self.at_top_level = saved_top_level;
+
+    const header = try self.parseLambdaParameters(opening);
+    const parameters = header.parameters;
+
+    // Section 7.4: a lambda whose body is one expression produces it. That is
+    // the only body written on the same line as `=>` that is not a statement,
+    // so the expression is parsed first and what follows it decides: a `}` ends
+    // a lambda that produces a value, and anything else was the start of a
+    // statement all along.
+    //
+    // Whether the body is on that line is read from the source rather than from
+    // a newline token, because `=>` continues the line the way any other
+    // operator does and the lexer has already dropped the break after it.
+    if (!self.brokeLine(header.arrow)) {
+        const start = self.peek();
+        const first = try self.parseExpression();
+        if (self.check(.right_brace)) {
+            const closing = self.advance();
+            return self.node(spanning(opening.span, closing.span), .{ .lambda = .{
+                .parameters = parameters,
+                .body = .{ .expression = first },
+            } });
+        }
+        return self.finishLambdaBlock(opening, parameters, try self.finishStatementFrom(start, first));
+    }
+
+    return self.finishLambdaBlock(opening, parameters, null);
+}
+
+/// The names between `{` and `=>`, each with an optional type. A lambda with no
+/// parameters still writes the arrow, so `{ => do_work() }` is never mistaken
+/// for something else.
+fn parseLambdaParameters(self: *Parser, opening: Token) Error!LambdaHeader {
+    var parameters: std.ArrayList(Ast.Expression.LambdaParameter) = .empty;
+    if (self.check(.fat_arrow)) {
+        return .{ .parameters = &.{}, .arrow = self.advance() };
+    }
+
+    while (true) {
+        const name = self.peek();
+        if (name.kind != .identifier and name.kind != .underscore) {
+            const at = if (name.kind == .right_brace) opening.span else name.span;
+            // Step over the rest of the lambda first, so its closing `}` is not
+            // reported a second time as one that closes nothing.
+            self.skipPastBraces();
+            return self.reportFmt(
+                at,
+                "expected a lambda parameter, found {s}",
+                .{name.kind.describe()},
+                "A lambda names what it receives and then writes `=>`, as in `{ number => number * 2 }`. An empty list is written `[]`.",
+            );
+        }
+        _ = self.advance();
+
+        const annotation: ?Ast.TypeExpression = if (self.match(.colon) == null)
+            null
+        else
+            try self.parseTypeExpression();
+
+        try parameters.append(self.arena, .{
+            .name = try self.identifier(name),
+            .name_span = name.span,
+            .annotation = annotation,
+        });
+        if (self.match(.comma) == null) break;
+    }
+
+    const arrow = self.match(.fat_arrow) orelse {
+        const found = self.peek();
+        self.skipPastBraces();
+        return self.reportFmt(
+            found.span,
+            "expected `=>` after this lambda's parameters, found {s}",
+            .{found.kind.describe()},
+            "A lambda separates what it receives from what it does with `=>`, as in `{ number => number * 2 }`.",
+        );
+    };
+    return .{ .parameters = try parameters.toOwnedSlice(self.arena), .arrow = arrow };
+}
+
+const LambdaHeader = struct {
+    parameters: []const Ast.Expression.LambdaParameter,
+    arrow: Token,
+};
+
+/// Whether what follows the `{` just consumed is a lambda's parameter list.
+/// `=>` appears nowhere else in the grammar, so finding one before the line
+/// ends settles it.
+fn startsLambdaHeader(self: *Parser) bool {
+    var at = self.index;
+    var seen: u32 = 0;
+    while (seen < 16) : (seen += 1) {
+        switch (self.tokens[at].kind) {
+            .fat_arrow => return true,
+            .newline, .right_brace, .left_brace, .eof => return false,
+            else => {},
+        }
+        at += 1;
+    }
+    return false;
+}
+
+/// Consumes the rest of a brace-delimited body whose opening `{` is already
+/// consumed, up to and including the `}` that closes it. Without this,
+/// statement recovery would resume inside it and report its closing brace as a
+/// stray one.
+fn skipPastBraces(self: *Parser) void {
+    var depth: u32 = 1;
+    while (true) {
+        switch (self.peek().kind) {
+            .eof => return,
+            .left_brace => depth += 1,
+            .right_brace => {
+                depth -= 1;
+                if (depth == 0) {
+                    _ = self.advance();
+                    return;
+                }
+            },
+            else => {},
+        }
+        _ = self.advance();
+    }
+}
+
+/// Whether the source breaks the line between `token` and whatever comes next.
+fn brokeLine(self: *Parser, token: Token) bool {
+    const between = self.source.text[token.span.end..self.peek().span.start];
+    return std.mem.indexOfScalar(u8, between, '\n') != null;
+}
+
+/// A lambda whose body is statements rather than one expression. Its `{` is
+/// already consumed, so this closes what `parseLambda` opened. `first` is the
+/// statement already parsed on the `=>` line, when there was one.
+fn finishLambdaBlock(
+    self: *Parser,
+    opening: Token,
+    parameters: []const Ast.Expression.LambdaParameter,
+    first: ?Ast.Statement,
+) Error!*const Ast.Expression {
+    var statements: std.ArrayList(Ast.Statement) = .empty;
+    if (first) |statement| try statements.append(self.arena, statement);
+    while (true) {
+        self.skipSeparators();
+        if (self.check(.right_brace) or self.check(.eof)) break;
+
+        if (self.parseStatement()) |statement| {
+            try statements.append(self.arena, statement);
+        } else |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.ParseFailed => self.skipToNextStatement(),
+        }
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_brace) {
+        return self.report(
+            opening.span,
+            "this lambda is never closed",
+            "Add the closing `}` that ends it.",
+        );
+    }
+    _ = self.advance();
+
+    const span = spanning(opening.span, closing.span);
+    return self.node(span, .{ .lambda = .{
+        .parameters = parameters,
+        .body = .{ .block = .{
+            .span = span,
+            .statements = try statements.toOwnedSlice(self.arena),
+        } },
+    } });
+}
+
 /// Section 8.2's list literal. A trailing comma is allowed, which keeps a
 /// literal written one element per line uniform. Newlines inside the brackets
 /// never end the statement, which the lexer already arranges.
@@ -1181,6 +1516,9 @@ fn parseListLiteral(self: *Parser) Error!*const Ast.Expression {
     const opening = self.advance();
     try self.nest(opening.span);
     defer self.unnest();
+    const saved_header = self.in_control_header;
+    self.in_control_header = false;
+    defer self.in_control_header = saved_header;
 
     var elements: std.ArrayList(*const Ast.Expression) = .empty;
     while (!self.check(.right_bracket)) {
@@ -1215,6 +1553,7 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
     const token = self.peek();
     switch (token.kind) {
         .left_bracket => return self.parseListLiteral(),
+        .left_brace => return self.parseLambda(),
         .string_literal, .raw_string_literal, .multiline_string_literal => {
             _ = self.advance();
             return self.node(token.span, .{ .string_literal = try self.cookLiteral(token) });
@@ -1243,6 +1582,9 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
         .left_paren => {
             try self.nest(token.span);
             defer self.unnest();
+            const saved_header = self.in_control_header;
+            self.in_control_header = false;
+            defer self.in_control_header = saved_header;
             _ = self.advance();
             const inner = try self.parseExpression();
             const closing = self.peek();

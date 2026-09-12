@@ -195,7 +195,8 @@ fn analyze(
 fn dupeDiagnostic(arena: std.mem.Allocator, diagnostic: Diagnostic) !Diagnostic {
     const trace = try arena.alloc(Diagnostic.Frame, diagnostic.trace.len);
     for (diagnostic.trace, trace) |frame, *copy| {
-        copy.* = .{ .function = try arena.dupe(u8, frame.function), .call_span = frame.call_span };
+        copy.* = frame;
+        copy.function = try arena.dupe(u8, frame.function);
     }
     return .{
         .message = try arena.dupe(u8, diagnostic.message),
@@ -1352,9 +1353,12 @@ test "calls are checked for arity and argument types" {
     try expectOutput("func show(x: Float) {\n    print(x)\n}\nshow(2)\n", "2.0\n");
 }
 
-test "only a function can be called, and a function cannot yet be a value" {
-    try expectFailure("var x = 5\nprint(x())\n", "`x` is not a function");
-    try expectFailure("func f(): Int {\n    return 1\n}\nvar g = f\n", "`f` is a function, and functions cannot be used as values yet");
+test "only a function can be called, and the diagnostic says what it is instead" {
+    try expectFailure("var x = 5\nprint(x())\n", "`x` is Int, which is not a function");
+    try expectFailure("var x = [1]\nprint(x())\n", "`x` is [Int], which is not a function");
+    // Section 15.2's prelude functions take any number of arguments of any
+    // type, which no written type describes, so they can only be called.
+    try expectFailure("var p = print\n", "`print` is built in, and built-in functions cannot be used as values");
 }
 
 test "parameters are read-only and share the body's scope" {
@@ -1543,4 +1547,196 @@ test "a long flat chain is a diagnostic, not a crash" {
     for (0..Parser.max_expression_depth) |_| try text.appendSlice(testing.allocator, " + 1");
     try text.appendSlice(testing.allocator, ")\n");
     try expectFailure(text.items, "this expression is too long");
+}
+
+// Section 7.4 and 7.5: lambdas, closures, and callable values.
+
+test "a lambda is a value that can be called" {
+    try expectOutput("const double = { value: Int => value * 2 }\nprint(double(21))\n", "42\n");
+    try expectOutput("const answer = { => 42 }\nprint(answer())\n", "42\n");
+    try expectOutput("print({ value: Int => value + 1 }(41))\n", "42\n");
+}
+
+test "a lambda takes its parameter types from the type expected where it is written" {
+    try expectOutput(
+        "const apply: func(func(Int): Int, Int): Int = { block, value => block(value) }\nprint(apply({ n => n * 2 }, 21))\n",
+        "42\n",
+    );
+    // With nothing to take them from, they have to be written (7.2).
+    try expectFailure("const double = { value => value * 2 }\n", "`value` needs a type");
+}
+
+test "a lambda body on more than one line returns its result" {
+    const program =
+        \\const classify = { n: Int =>
+        \\    return "big" if n > 10
+        \\    return "small"
+        \\}
+        \\print(classify(3))
+        \\print(classify(30))
+        \\
+    ;
+    try expectOutput(program, "small\nbig\n");
+}
+
+test "a one-line lambda body may be a statement rather than a value" {
+    try expectOutput("var total = 0\n[1, 2, 3].each { n => total += n }\nprint(total)\n", "6\n");
+}
+
+test "section 7.4: capture is by reference, so the variable is shared both ways" {
+    try expectOutput("var count = 0\nconst bump = { => count += 1 }\nbump()\nbump()\nprint(count)\n", "2\n");
+    // And the other direction: the block sees a change made after it was made.
+    try expectOutput(
+        "var count = 0\nconst show = { => print(count) }\ncount = 7\nshow()\n",
+        "7\n",
+    );
+}
+
+test "captured variables outlive the call that made them, one set per call" {
+    const program =
+        \\func counter_from(start: Int): func(): Int {
+        \\    var next = start
+        \\    return { =>
+        \\        next += 1
+        \\        return next - 1
+        \\    }
+        \\}
+        \\const first = counter_from(1)
+        \\const second = counter_from(100)
+        \\print("#{first()} #{first()} #{second()} #{first()}")
+        \\
+    ;
+    try expectOutput(program, "1 2 100 3\n");
+}
+
+test "section 6.1: a loop variable is fresh each iteration, so blocks keep their own" {
+    const program =
+        \\var blocks: [func(): Int] = []
+        \\for i in 1..3 {
+        \\    blocks.append({ => i })
+        \\}
+        \\print(blocks.map { block => block() })
+        \\
+    ;
+    try expectOutput(program, "[1, 2, 3]\n");
+}
+
+test "section 8.5's each and section 8.6's map" {
+    try expectOutput("[1, 2, 3].each { n => write(\"#{n} \") }\nprint(\"\")\n", "1 2 3 \n");
+    try expectOutput("print([1, 2, 3].map { n => n * n })\n", "[1, 4, 9]\n");
+    // The block's result type is the new list's element type.
+    try expectOutput("print([1, 2].map { n => \"n#{n}\" })\n", "[\"n1\", \"n2\"]\n");
+    try expectOutput("print([1, 2].map { n => n / 2 })\n", "[0.5, 1.0]\n");
+    try expectFailure("[1, 2].each { n => n * 2 }\n", "this block produces a value, and `each` does not use it");
+    try expectFailure("print([1, 2].map { n => print(n) })\n", "this block produces nothing, so there is nothing for `map` to collect");
+    try expectFailure("[1, 2].each(5)\n", "`each` needs a block, but this is Int");
+    try expectFailure("[1, 2].each { a, b => print(a) }\n", "this lambda takes 2 values, but it will be given 1");
+}
+
+test "a block traverses the list as it was, even when the block changes it" {
+    // The traversal holds the buffer, so section 8.1's copy-on-write gives the
+    // block its own copy to append to rather than a list growing underfoot.
+    try expectOutput(
+        "var numbers = [1, 2, 3]\nnumbers.each { n => numbers.append(n) }\nprint(numbers)\n",
+        "[1, 2, 3, 1, 2, 3]\n",
+    );
+}
+
+test "section 7.5: a named function is a value" {
+    const program =
+        \\func triple(value: Int): Int {
+        \\    return value * 3
+        \\}
+        \\const tripler = triple
+        \\print(tripler(5))
+        \\print([1, 2].map(triple))
+        \\
+    ;
+    try expectOutput(program, "15\n[3, 6]\n");
+    // Two captures of the same named function are the same function.
+    try expectOutput("func f(): Int {\n    return 1\n}\nconst a = f\nconst b = f\nprint(a == b)\n", "true\n");
+}
+
+test "a function type is written the way a declaration is" {
+    try expectOutput("const f: func(Int): Int = { n => n }\nprint(f(1))\n", "1\n");
+    try expectOutput("const f: func() = { => print(1) }\nf()\n", "1\n");
+    try expectOutput("const f: func(Int, String) = { _, _ => print(1) }\nf(1, \"a\")\n", "1\n");
+    // Section 7.1 omits a `Nothing` result, so that is how a function type
+    // with no result prints.
+    try expectFailure(
+        "const f: func(Int) = { n => print(n) }\nvar g: Int = f\n",
+        "this is func(Int), but `g` was declared as Int",
+    );
+    // A block given a result type must produce one of that type.
+    try expectFailure("const f: func(Int) = { n => n }\n", "this lambda produces Int, but Nothing is expected here");
+}
+
+test "section 7.4: `_` takes a value without naming it, more than once" {
+    try expectOutput("const f: func(Int, Int): Int = { _, _ => 7 }\nprint(f(1, 2))\n", "7\n");
+    // `_` names nothing, so there is nothing to read back.
+    try expectFailure("const f: func(Int): Int = { _ => _ }\n", "expected an expression, found _");
+}
+
+test "return leaves only the lambda, and break cannot leave one at all" {
+    const program =
+        \\func f(): Int {
+        \\    [1, 2].each { n =>
+        \\        return
+        \\    }
+        \\    return 9
+        \\}
+        \\print(f())
+        \\
+    ;
+    try expectOutput(program, "9\n");
+    try expectFailure(
+        "for i in 1..2 {\n    [1].each { n =>\n        break\n    }\n}\n",
+        "`break` can only be used inside a loop",
+    );
+}
+
+test "section 7.4: a trailing block in a control-flow header needs parentheses" {
+    try expectOutput("if ([1, 2].map { n => n }).count == 2 {\n    print(1)\n}\n", "1\n");
+    // Without them the `{` opens the statement's body, which is exactly what
+    // the diagnostic says.
+    try expectFailure(
+        "if [1, 2].map { n => n } {\n    print(1)\n}\n",
+        "this `{` opens the body, so the block before it has nowhere to go",
+    );
+}
+
+test "a captured block runs against the scopes it captured, not the caller's" {
+    const program =
+        \\var name = "outer"
+        \\func run(block: func(): String): String {
+        \\    var name = "inner"
+        \\    return block()
+        \\}
+        \\print(run({ => name }))
+        \\
+    ;
+    try expectOutput(program, "outer\n");
+}
+
+test "a call through a value names the binding when there is one" {
+    try expectFailure(
+        "const f = { n: Int => n }\nprint(f(1, 2))\n",
+        "`f` takes 1 argument, but this call passes 2",
+    );
+    try expectFailure(
+        "const fs: [func(Int): Int] = [{ n => n }]\nprint(fs[0](1, 2))\n",
+        "this takes 1 argument, but this call passes 2",
+    );
+    // A function stored in a list is called through the element.
+    try expectOutput(
+        "const fs: [func(Int): Int] = [{ n => n }, { n => n * 2 }]\nprint(fs[1](5))\n",
+        "10\n",
+    );
+}
+
+test "each and map belong to lists, not to every value" {
+    try expectFailure("\"abc\".each { c => print(c) }\n", "String has no method `each`");
+    try expectFailure("print(5.map { n => n })\n", "Int has no method `map`");
+    // Names from other languages point at Emerald's.
+    try expectFailure("[1].collect { n => n }\n", "[Int] has no method `collect`");
 }

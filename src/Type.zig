@@ -21,6 +21,8 @@ pub const Kind = enum {
     string,
     /// Section 8.2's `[T]`. `element` holds `T`.
     list,
+    /// Section 7.1's `func(Int): String`. `signature` holds its shape.
+    function,
     /// A type that could not be determined because something was already
     /// reported. It is compatible with everything, so one mistake produces one
     /// diagnostic instead of a cascade through every expression containing it.
@@ -30,14 +32,16 @@ pub const Kind = enum {
 kind: Kind,
 /// The element type of a list, and null for every other kind.
 element: ?*const Type = null,
+/// What a function takes and gives, and null for every other kind.
+signature: ?*const Signature = null,
 
 /// A function's checked shape: each parameter's type, its name for diagnostics
 /// that name a mismatched one, and the return type, whether written or
 /// inferred.
 ///
-/// Not a `Type` itself. No value of function type can be formed yet — bare
-/// function references and lambdas are both deferred — so there is no
-/// assignability question a structural function type would have to answer.
+/// This is also what a `.function` type points at, so a named function and a
+/// lambda with the same shape have the same type: nothing about a callable's
+/// type depends on where it came from.
 ///
 /// The interpreter reads these too, because section 4.4's widening has to
 /// happen at runtime wherever the checker allowed it: an `Int` passed to a
@@ -45,7 +49,9 @@ element: ?*const Type = null,
 /// including one the checker inferred.
 pub const Signature = struct {
     parameters: []const Type,
-    parameter_names: []const []const u8,
+    /// Empty for a signature that came from a type annotation, which writes no
+    /// names.
+    parameter_names: []const []const u8 = &.{},
     return_type: Type,
 };
 
@@ -66,6 +72,14 @@ pub fn listOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.Err
     return .{ .kind = .list, .element = stored };
 }
 
+/// `func(...)`, with the signature allocated from `allocator`, which must
+/// outlive the result.
+pub fn functionOf(allocator: std.mem.Allocator, signature: Signature) std.mem.Allocator.Error!Type {
+    const stored = try allocator.create(Signature);
+    stored.* = signature;
+    return .{ .kind = .function, .signature = stored };
+}
+
 /// Writes the name a program writes for this type, which is also the name
 /// diagnostics use.
 pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -76,6 +90,20 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         .float => try writer.writeAll("Float"),
         .string => try writer.writeAll("String"),
         .list => try writer.print("[{f}]", .{self.element.?.*}),
+        // Section 7.1: the return type is written only when there is one, so a
+        // function with no result is `func(Int)` rather than `func(Int): Nothing`.
+        .function => {
+            const signature = self.signature.?;
+            try writer.writeAll("func(");
+            for (signature.parameters, 0..) |parameter, position| {
+                if (position != 0) try writer.writeAll(", ");
+                try writer.print("{f}", .{parameter});
+            }
+            try writer.writeAll(")");
+            if (signature.return_type.kind != .nothing) {
+                try writer.print(": {f}", .{signature.return_type});
+            }
+        },
         .invalid => try writer.writeAll("an unknown type"),
     }
 }
@@ -92,7 +120,7 @@ pub fn fromName(text: []const u8) ?Type {
 pub fn isNumber(self: Type) bool {
     return switch (self.kind) {
         .int, .float => true,
-        .nothing, .bool, .string, .list, .invalid => false,
+        .nothing, .bool, .string, .list, .function, .invalid => false,
     };
 }
 
@@ -101,6 +129,13 @@ pub fn isInvalid(self: Type) bool {
     return switch (self.kind) {
         .invalid => true,
         .list => self.element.?.isInvalid(),
+        .function => blk: {
+            const signature = self.signature.?;
+            for (signature.parameters) |parameter| {
+                if (parameter.isInvalid()) break :blk true;
+            }
+            break :blk signature.return_type.isInvalid();
+        },
         else => false,
     };
 }
@@ -111,6 +146,15 @@ pub fn same(self: Type, other: Type) bool {
     if (self.kind == .invalid or other.kind == .invalid) return true;
     if (self.kind != other.kind) return false;
     if (self.kind == .list) return self.element.?.same(other.element.?.*);
+    if (self.kind == .function) {
+        const mine = self.signature.?;
+        const theirs = other.signature.?;
+        if (mine.parameters.len != theirs.parameters.len) return false;
+        for (mine.parameters, theirs.parameters) |a, b| {
+            if (!a.same(b)) return false;
+        }
+        return mine.return_type.same(theirs.return_type);
+    }
     return true;
 }
 
@@ -121,6 +165,11 @@ pub fn same(self: Type, other: Type) bool {
 /// its elements would have to change type to become one. A list literal can
 /// still be built as `[Float]` from whole numbers, because the checker gives it
 /// the expected element type before its elements are stored.
+///
+/// Functions are invariant too. Parameter and result variance is a real rule
+/// with a real explanation, and it earns its place only once there is a type
+/// hierarchy to vary over; until then an exact match is both sound and the
+/// easier thing to teach.
 pub fn assignableTo(self: Type, target: Type) bool {
     if (self.kind == .invalid or target.kind == .invalid) return true;
     if (self.kind == .int and target.kind == .float) return true;
@@ -128,8 +177,9 @@ pub fn assignableTo(self: Type, target: Type) bool {
 }
 
 /// What a list method takes and gives, in terms of the list's element type.
-/// Section 8.5's essential vocabulary; `first`, `last`, and `each` wait for
-/// optionals and lambdas.
+/// Section 8.5's essential vocabulary, less `first` and `last`, which wait for
+/// optionals. `each` and `map` take a block, whose type depends on the
+/// receiver's element type, so the checker handles those two directly.
 pub const ListMethod = struct {
     parameters: []const Operand,
     result: Result,

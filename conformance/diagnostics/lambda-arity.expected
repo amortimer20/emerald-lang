@@ -1,0 +1,4 @@
+diagnostics/lambda-arity.em:2:14: this lambda takes 2 values, but it will be given 1
+  numbers.each { number, index => print(number) }
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Match the number of parameters to the number of values passed to it.

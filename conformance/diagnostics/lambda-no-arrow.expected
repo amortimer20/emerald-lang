@@ -1,0 +1,4 @@
+diagnostics/lambda-no-arrow.em:1:13: expected a lambda parameter, found a whole number
+  const f = { 5 }
+              ^
+A lambda names what it receives and then writes `=>`, as in `{ number => number * 2 }`. An empty list is written `[]`.

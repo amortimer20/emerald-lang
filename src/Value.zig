@@ -15,7 +15,7 @@ const unicode = @import("unicode.zig");
 
 const Value = @This();
 
-pub const Kind = enum { nothing, bool, int, float, string, list };
+pub const Kind = enum { nothing, bool, int, float, string, list, closure };
 
 data: Data,
 
@@ -27,6 +27,8 @@ pub const Data = union(Kind) {
     float: f64,
     string: *Heap.Text,
     list: *Heap.List,
+    /// Section 7.4's lambda, or section 7.5's captured function.
+    closure: *Heap.Closure,
 };
 
 pub const nothing: Value = .{ .data = .nothing };
@@ -61,13 +63,14 @@ pub fn typeName(self: Value) []const u8 {
         .float => "Float",
         .string => "String",
         .list => "a list",
+        .closure => "a function",
     };
 }
 
 /// Whether two values are numbers, which is what arithmetic and ordering need.
 pub fn isNumber(self: Value) bool {
     return switch (self.data) {
-        .nothing, .bool, .string, .list => false,
+        .nothing, .bool, .string, .list, .closure => false,
         .int, .float => true,
     };
 }
@@ -77,6 +80,10 @@ pub fn isNumber(self: Value) bool {
 /// space, the way they would be written in source: `[1, 2, 3]`, and
 /// `["Ava", "Noah"]` with each string quoted, so `["a, b"]` and `["a", "b"]`
 /// cannot be mistaken for each other.
+///
+/// A function has no written form, so it displays as something that is
+/// obviously not one: `<func greet>` for a named function, `<lambda>` for one
+/// written inline.
 pub fn display(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     return self.write(writer, false);
 }
@@ -95,6 +102,10 @@ fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Error!
                 try item.write(writer, true);
             }
             try writer.writeAll("]");
+        },
+        .closure => |closure| switch (closure.function) {
+            .named => |name| try writer.print("<func {s}>", .{name}),
+            .lambda => try writer.writeAll("<lambda>"),
         },
     }
 }
@@ -119,8 +130,10 @@ fn writeQuoted(bytes: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!vo
 /// a NaN equals nothing, itself included. Strings are equal when they are
 /// canonically equivalent (9.2), which can need normalizing, hence the
 /// allocator. Lists are equal when they hold equal elements in the same order
-/// (8.4), using this same `==` for each. Values of different kinds are never
-/// equal; the checker rejects comparing them, so that answer is a safety net.
+/// (8.4), using this same `==` for each. Two functions are equal when they are
+/// the same function: there is no way to compare what code does. Values of
+/// different kinds are never equal; the checker rejects comparing them, so that
+/// answer is a safety net.
 pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocator.Error!bool {
     return switch (left.data) {
         .nothing => right.data == .nothing,
@@ -131,6 +144,10 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
         .int, .float => order(left, right) == .eq,
         .string => |a| switch (right.data) {
             .string => |b| unicode.equal(gpa, a.bytes, b.bytes),
+            else => false,
+        },
+        .closure => |a| switch (right.data) {
+            .closure => |b| sameFunction(a, b),
             else => false,
         },
         .list => |a| switch (right.data) {
@@ -146,6 +163,19 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
     };
 }
 
+/// Whether two callable values are the same function.
+///
+/// Capturing a named function twice gives the same function both times, so the
+/// two captures are equal even though each capture is its own object. Two
+/// lambdas are equal only when they are the same closure: two evaluations of
+/// the same lambda capture different variables and are genuinely different
+/// functions.
+fn sameFunction(left: *Heap.Closure, right: *Heap.Closure) bool {
+    if (left == right) return true;
+    if (left.function != .named or right.function != .named) return false;
+    return std.mem.eql(u8, left.function.named, right.function.named);
+}
+
 /// Orders two numbers, or reports that they are unordered because one is NaN.
 ///
 /// Section 4.4 requires a mixed comparison to compare mathematical values
@@ -158,7 +188,7 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
         .int => |a| switch (right.data) {
             .int => |b| std.math.order(a, b),
             .float => |b| orderIntFloat(a, b),
-            .nothing, .bool, .string, .list => null,
+            .nothing, .bool, .string, .list, .closure => null,
         },
         .float => |a| switch (right.data) {
             .int => |b| if (orderIntFloat(b, a)) |result| result.invert() else null,
@@ -166,9 +196,9 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
                 null
             else
                 std.math.order(a, b),
-            .nothing, .bool, .string, .list => null,
+            .nothing, .bool, .string, .list, .closure => null,
         },
-        .nothing, .bool, .string, .list => null,
+        .nothing, .bool, .string, .list, .closure => null,
     };
 }
 

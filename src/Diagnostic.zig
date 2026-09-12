@@ -34,6 +34,10 @@ const Diagnostic = @This();
 pub const Frame = struct {
     function: []const u8,
     call_span: Source.Span,
+    /// Whether `function` is a name the program wrote. A lambda has no name, so
+    /// its frame carries a description that is printed as one rather than
+    /// quoted as if it were a name.
+    named: bool = true,
 };
 
 /// What is wrong, in the user's vocabulary. Never names an implementation detail.
@@ -77,8 +81,12 @@ pub fn render(self: Diagnostic, source: Source, writer: *std.Io.Writer) std.Io.W
         }
 
         const called_at = source.location(frame.call_span.start);
-        try writer.print("in `{s}`, called at {s}:{d}:{d}", .{
-            frame.function,
+        if (frame.named) {
+            try writer.print("in `{s}`, called at ", .{frame.function});
+        } else {
+            try writer.print("in {s}, called at ", .{frame.function});
+        }
+        try writer.print("{s}:{d}:{d}", .{
             source.path,
             called_at.line,
             called_at.column,

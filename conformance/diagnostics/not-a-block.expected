@@ -1,0 +1,4 @@
+diagnostics/not-a-block.em:2:14: `each` needs a block, but this is Int
+  numbers.each(5)
+               ^
+Write the block after the method, as in `numbers.each { number => print(number) }`.

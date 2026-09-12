@@ -1,15 +1,15 @@
 # Current handoff
 
-Updated: 2026-09-11. Prepared by Claude after the string slice.
+Updated: 2026-09-11. Prepared by Claude after the callable slice.
 
 ## Current milestone
 
-Slices 1 through 7 of section 20 are complete, plus a loop slice the user approved
-inserting before slice 8, slice 8 itself as the user scoped it (lists, without the
-higher-order method, which moves to the heap slice with lambdas), and a string slice the
-user chose to do before the heap slice. The whole frontend
-pipeline of section 19.2 exists: source manager, lexer, parser, name resolver, type
-checker, interpreter.
+Slices 1 through 9 of section 20 are complete, plus a loop slice the user approved
+inserting before slice 8 and a string slice the user chose to do before slice 9. Section 20
+was renumbered in this slice: the old slice 9 bundled closures with the collector, and they
+are now slice 9 (callables) and slice 10 (the managed heap), for the reason recorded under
+"Decisions" below. The whole frontend pipeline of section 19.2 exists: source manager,
+lexer, parser, name resolver, type checker, interpreter.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -18,7 +18,9 @@ the essential methods, equality, printing, and `for`, with value semantics throu
 copy-on-write. Strings work: literals with escapes and interpolation, triple-quoted
 layout, Unicode-aware counting, indexing, iteration, comparison, and case mapping, the
 section 9.2 methods that need no optionals, and `input` and `write`, so section 2's first
-program runs. Every expression has a static type before execution and
+program runs. Callables work: lambdas with inferred or written parameter types, closures
+that capture by reference, function types, named functions as values, the trailing-block
+call form, and `each` and `map`. Every expression has a static type before execution and
 definite assignment is proved through control flow. What remains at runtime is only what
 cannot be known statically: integer overflow, division by zero, and exceeding the
 recursion limit.
@@ -85,9 +87,9 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   errors, section 4.1's definite assignment, and everything section 7 asks of functions.
 - `src/Value.zig` holds `Nothing`, `Bool`, `Int`, `Float`, and lists, implements section
   9.4's display rules, and compares and orders values.
-- `src/Heap.zig` owns list buffers and string texts: reference counts, copy-on-write, and
-  the lists of every live object that the run frees at the end and the slice 9 collector
-  will walk.
+- `src/Heap.zig` owns list buffers, string texts, scope environments, and closures:
+  reference counts, copy-on-write, and the lists of every live object that the run frees at
+  the end and the slice 10 collector will walk.
 - `src/unicode.zig` is Emerald's Unicode: grapheme clusters (UAX #29), NFC normalization
   and its quick check (UAX #15), full case mapping with Final_Sigma, and identifier and
   whitespace classes. Its data is `src/unicode/tables.zig`, generated from Unicode 17.0.0
@@ -108,6 +110,40 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Callable decisions worth knowing
+
+- **A scope is an object, not a stack frame.** Section 7.4 captures by reference, so a block
+  and the code around it must keep sharing one variable. `Heap.Environment` is counted like
+  a list; `popScope` recycles it only when nothing captured it, so a loop body that creates
+  no closure still allocates nothing. A closure holds the whole visible scope chain rather
+  than a computed capture set, which costs one pointer per enclosing block and needs no
+  analysis in the resolver.
+- **Why the collector became its own slice.** Counting reclaims everything the earlier
+  slices can build, because value-typed data cannot form a cycle. A closure can: store a
+  lambda in a variable it captures and the closure and the environment hold each other
+  forever. That is a leak, not a correctness bug — nothing is read after death or freed
+  twice, and `Heap.deinit` frees every live object at the end whatever the counts say. What
+  the collector actually needs is section 19.5's explicit root API, which means every
+  `Value` the interpreter holds across an allocation becomes a registered root. That touches
+  all of `Interpreter.zig` and is why it was not bundled with this slice. The cost of not
+  having it is measured under "Known rough edges" and is larger than it first looked.
+- **The parser decides a lambda's body shape from the source, not a token.** `=>` continues
+  a line like any other operator, so the lexer has already dropped the newline after it.
+  `brokeLine` reads the bytes between `=>` and the next token instead. This was a real bug:
+  every block-bodied lambda parsed as an expression body until it was found.
+- **A named function value and a lambda are one runtime kind.** `Heap.Closure` holds either,
+  and `closureCallable` turns both into the same `Callable`, so `invoke` is the only place
+  that knows how a call works. `callFunction` is just the direct-call shortcut that skips
+  building a closure.
+- **`each` and `map` are checked directly rather than through the method table.** Their
+  argument and result types are both stated in terms of the receiver's element type, and
+  `map`'s result comes from the block, which `Type.ListMethod`'s fixed operand enum cannot
+  express. A function type whose result is `invalid` is how the checker asks for a block
+  without constraining what it produces.
+- **The checker records a lambda's type in `literal_types`.** It is the only place the
+  parameter and result types are known, and the interpreter needs them to widen arguments
+  and results the way section 4.4 allows, exactly as it reads a named function's signature.
 
 ### String decisions worth knowing
 
@@ -391,19 +427,30 @@ still open.
 
 ## Next concrete step
 
-Section 20's slice 9, the heap slice, with lambdas (the approved plan): lambdas and
-closures, function values, capture by reference, the trailing-lambda call form, the
-higher-order method slice 8 deferred (`each` or `map`), and section 19.5's mark-and-sweep
-collector, which must trace inside list buffers once anything can form a cycle.
-`Heap.live` and `Heap.live_texts` are already the object lists it walks.
+Two candidates, and the user should choose between them.
 
-Optionals are the other gap now visible everywhere: `first`, `last`, `index_of`, the
-`_maybe` parsers, `input_maybe`, and dictionary lookup all wait for them. Worth asking the
-user whether optionals come before or after the heap slice.
+Section 20's slice 10, the managed heap: section 19.5's mark-and-sweep collector with its
+explicit root API. `Heap.live`, `live_texts`, `live_environments`, and `live_closures` are
+the object lists it walks. The work it needs beyond the collector itself is the root API:
+the interpreter holds `Value` locals across allocations and calls all through
+`Interpreter.zig`, and 19.5 says "a native pointer hidden in arbitrary Zig memory must not
+silently keep an object alive", so those temporaries have to become registered roots rather
+than invisible ones. That is the reason it was split out of this slice rather than the
+collector being hard on its own.
+
+Optionals are the other gap, and are now visible everywhere: `first`, `last`, `index_of`,
+the `_maybe` parsers, `input_maybe`, `find`, and dictionary lookup all wait for them. They
+block more user-visible vocabulary than the collector does, and nothing about them depends
+on the collector.
+
+Recommend the collector first. The measurement under "Known rough edges" changed the
+balance: a closure kept in a variable leaks its scope, that is how closures are normally
+written, and this slice is what introduced it. Optionals add reach; the collector repairs
+something that is now wrong.
 
 ## Validation and blockers
 
-- `zig build test` passes in Debug and ReleaseSafe: 221 unit tests, 85 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 238 unit tests, 98 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -438,23 +485,24 @@ user whether optionals come before or after the heap slice.
 
 ### Deferred
 
-- From section 7: nested functions (rejected with one diagnostic), lambdas and trailing
-  blocks, function values (a bare function name is rejected, though section 3.4 makes it the
-  callable value), default parameters and named arguments, and variadics (already deferred
-  in the spec). A top-level `return`, which section 14.1 uses to end the program, is
-  rejected outside a function for now.
+- From section 7: nested function declarations (rejected with one diagnostic; a lambda in a
+  variable does the same job), default parameters and named arguments, variadics (already
+  deferred in the spec), tuple destructuring in a lambda parameter, and capturing a built-in
+  such as `print`, which no written function type describes. A top-level `return`, which
+  section 14.1 uses to end the program, is rejected outside a function for now.
 - Section 14.1's warning for unreachable code after a `return`. Diagnostics have no
   severity yet; until they do, code after two branches that both return is treated as
   assigned everything rather than reported.
 - Section 6.2's `if ... then ... else` expression. `unless` is no longer part of the language
   and is not a keyword.
 - From section 8: dictionaries and sets (the bracket parser reports "dictionaries are not
-  available yet" at a `:`), `first` and `last` (need optionals), `each` and the rest of the
-  rich vocabulary (need lambdas), slicing with ranges, `type_name`, and a mutating method
-  through a struct field, which arrives with structs.
+  available yet" at a `:`), `first` and `last` (need optionals), the rest of section 8.6's
+  rich vocabulary beyond `each` and `map`, slicing with ranges, `type_name`, and a mutating
+  method through a struct field, which arrives with structs.
 - Range values: ranges and counts stored in names, `random(1..6)`, and the block forms of
   `up_to`, `down_to`, and `times` are rejected ("a range can only be looped over so far")
-  until range values and lambdas land. In a `for` header every counting form works.
+  until range values land. Blocks now exist, so only the range value itself is missing. In a
+  `for` header every counting form works.
 - Optional types. The parser splits the `?` in type position as section 4.2 requires, and
   the checker reports that optionals are not available yet, so the rule is exercised without
   the semantics existing.
@@ -485,7 +533,22 @@ user whether optionals come before or after the heap slice.
   Canonically this is the same string, but the bytes differ from the input.
 - A multi-line block comment joins the lines around it rather than terminating a statement,
   matching how C-family languages treat their block comments.
+- **A closure stored in a local leaks its scope, and this is the common case, not a rare
+  one.** `const block = { ... }` puts the closure into the very environment the closure
+  captured, so the two hold each other and neither is reclaimed until the run ends. Measured
+  in ReleaseSafe: 200,000 iterations of `const block = { => i }` inside a loop reach 155 MB,
+  against 1.6 MB for 500,000 calls of a block passed straight to `each`, which is never
+  stored and so never cycles. Speed is unaffected (0.17 s against 0.08 s); only memory
+  grows. Section 20's slice 10 is the fix. A cheaper partial fix, if the collector is
+  postponed again, is to capture only the environments that actually hold a name the lambda
+  reads — the resolver can compute that set — which removes the cycle for every lambda that
+  does not refer to itself.
+- The capture check does not follow a function reached through a value. `const f = later`
+  then `f()` above a module variable `later` reads is not reported the way a direct call is;
+  the interpreter's unassigned-read error catches it at runtime instead. Extending
+  `checkCaptures` to callable values would need the checker to track which function a
+  variable holds.
 
 ## Pending changes
 
-None. The string slice is committed. Verify against Git before continuing.
+None. The callable slice is committed. Verify against Git before continuing.

@@ -1,0 +1,4 @@
+diagnostics/each-result-unused.em:2:26: this block produces a value, and `each` does not use it
+  numbers.each { number => number * 2 }
+                           ^^^^^^^^^^
+Use `map` to collect the results into a list, or do something with each element here.

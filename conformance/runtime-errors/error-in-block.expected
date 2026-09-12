@@ -1,0 +1,5 @@
+runtime-errors/error-in-block.em:2:32: floor division by zero
+  numbers.each { number => print(10 // number) }
+                                 ^^^^^^^^^^^^
+Check the divisor before dividing. Division by zero has no result for either numeric type.
+in a block, called at runtime-errors/error-in-block.em:2:1

@@ -1,0 +1,4 @@
+diagnostics/lambda-needs-type.em:1:18: `value` needs a type
+  const double = { value => value * 2 }
+                   ^^^^^
+A lambda written on its own says what it receives, as in `{ value: Int => value * 2 }`.

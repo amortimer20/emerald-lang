@@ -1,0 +1,4 @@
+diagnostics/lambda-unclosed.em:2:14: this lambda is never closed
+  numbers.each { number =>
+               ^
+Add the closing `}` that ends it.

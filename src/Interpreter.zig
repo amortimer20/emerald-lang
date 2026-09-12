@@ -56,19 +56,9 @@ pub const Outcome = struct {
     }
 };
 
-/// A name and the kind it holds.
-///
-/// The kind is carried because section 4.4's widening has to actually happen,
-/// not merely be permitted. The checker accepts `var rate: Float = 1` because an
-/// `Int` is assignable to a `Float`; if the interpreter then stored the `Int`,
-/// the static type and the runtime value would disagree and `rate` would print
-/// as `1` rather than `1.0`.
-const Binding = struct {
-    kind: Value.Kind,
-    value: ?Value,
-};
-
+const Binding = Heap.Binding;
 const Scope = std.StringHashMapUnmanaged(Binding);
+const Environment = Heap.Environment;
 
 /// Section 7.2's portable minimum, exactly. The limit above it is a resource
 /// boundary rather than language semantics, and the spec gives programs no way
@@ -120,14 +110,19 @@ literal_texts: std.AutoHashMapUnmanaged(*const Ast.Expression, *Heap.Text) = .em
 /// as they are when it runs; the checker has already proved that everything a
 /// call reads is assigned by then.
 module: Scope = .empty,
-/// Block scopes at the top level, or the current function's own scopes
-/// during a call, innermost last, from `gpa`. A call replaces this stack for its duration,
-/// so a function never sees the block-local names of whoever called it.
-scopes: std.ArrayList(Scope) = .empty,
-/// Emptied scopes kept for reuse. A loop body opens a scope every iteration,
-/// and taking one from here instead of allocating makes a loop that declares a
-/// local cost no allocation at all once it is running.
-spare_scopes: std.ArrayList(Scope) = .empty,
+/// Block scopes at the top level, or the current call's own scopes, innermost
+/// last. A call replaces this stack for its duration, so a function never sees
+/// the block-local names of whoever called it, and a closure's call restores
+/// the stack the closure captured.
+///
+/// Each scope is a counted object rather than a stack frame, because section
+/// 7.4's capture is by reference: a closure written inside a block holds that
+/// block's environment, and the block ending does not end the variables.
+scopes: std.ArrayList(*Environment) = .empty,
+/// Environments nothing captured, kept for reuse. A loop body opens a scope
+/// every iteration, and taking one from here instead of allocating makes a loop
+/// that declares a local cost no allocation at all once it is running.
+spare_scopes: std.ArrayList(*Environment) = .empty,
 
 functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// What the checker proved about each function, including return types it
@@ -188,8 +183,13 @@ pub fn run(
     // error unwinds through it, so only the lists themselves are left.
     defer interpreter.scopes.deinit(gpa);
     defer interpreter.call_stack.deinit(gpa);
+    // A recycled environment is out of the heap's live list, so it is this
+    // list's to free.
     defer {
-        for (interpreter.spare_scopes.items) |*scope| scope.deinit(gpa);
+        for (interpreter.spare_scopes.items) |environment| {
+            environment.bindings.deinit(gpa);
+            gpa.destroy(environment);
+        }
         interpreter.spare_scopes.deinit(gpa);
     }
 
@@ -241,25 +241,33 @@ fn executeBlock(self: *Interpreter, block: Ast.Block) Error!void {
     try self.executeAll(block.statements);
 }
 
-fn pushScope(self: *Interpreter) Error!*Scope {
-    var scope = self.spare_scopes.pop() orelse Scope.empty;
-    self.scopes.append(self.gpa, scope) catch |err| {
-        scope.deinit(self.gpa);
+fn pushScope(self: *Interpreter) Error!*Environment {
+    const environment = if (self.spare_scopes.pop()) |recycled| blk: {
+        self.heap.reuseEnvironment(recycled);
+        break :blk recycled;
+    } else try self.heap.createEnvironment();
+
+    self.scopes.append(self.gpa, environment) catch |err| {
+        self.heap.releaseEnvironment(environment);
         return err;
     };
-    return &self.scopes.items[self.scopes.items.len - 1];
+    return environment;
 }
 
-/// Keeps the scope's table for the next block, emptied, after releasing
-/// everything its bindings held.
+/// Ends the innermost scope. A closure created inside it holds it, and then the
+/// variables stay alive and keep changing with the closure; otherwise the table
+/// is kept, emptied, for the next block.
 fn popScope(self: *Interpreter) void {
-    var scope = self.scopes.pop().?;
-    var bindings = scope.valueIterator();
-    while (bindings.next()) |binding| {
-        if (binding.value) |value| self.heap.release(value);
+    const environment = self.scopes.pop().?;
+    if (environment.references > 1) {
+        environment.references -= 1;
+        return;
     }
-    scope.clearRetainingCapacity();
-    self.spare_scopes.append(self.gpa, scope) catch scope.deinit(self.gpa);
+    self.heap.recycleEnvironment(environment);
+    self.spare_scopes.append(self.gpa, environment) catch {
+        environment.bindings.deinit(self.gpa);
+        self.gpa.destroy(environment);
+    };
 }
 
 fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
@@ -284,7 +292,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
                 .nothing;
 
             const in_block = self.scopes.items.len > 0;
-            const current = if (in_block) &self.scopes.items[self.scopes.items.len - 1] else &self.module;
+            const current = if (in_block) &self.scopes.items[self.scopes.items.len - 1].bindings else &self.module;
             try current.put(if (in_block) self.gpa else self.arena, declaration.name, .{
                 .kind = kind,
                 .value = if (initial) |value| widen(value, kind) else null,
@@ -542,7 +550,7 @@ fn executeIteration(self: *Interpreter, loop: Ast.For, value: Value) Error!bool 
     if (std.mem.eql(u8, loop.name, "_")) {
         self.heap.release(value);
     } else {
-        scope.put(self.gpa, loop.name, .{ .kind = value.kind(), .value = value }) catch |err| {
+        scope.bindings.put(self.gpa, loop.name, .{ .kind = value.kind(), .value = value }) catch |err| {
             self.heap.release(value);
             return err;
         };
@@ -593,6 +601,7 @@ fn widen(value: Value, kind: Value.Kind) Value {
 
 fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
     if (annotation.element != null) return .list;
+    if (annotation.signature != null) return .closure;
     return kindOf(Type.fromName(annotation.name) orelse .invalid);
 }
 
@@ -606,6 +615,7 @@ fn kindOf(checked: Type) Value.Kind {
         .float => .float,
         .string => .string,
         .list => .list,
+        .function => .closure,
     };
 }
 
@@ -613,7 +623,7 @@ fn find(self: *Interpreter, name: []const u8) ?*Binding {
     var index = self.scopes.items.len;
     while (index > 0) {
         index -= 1;
-        if (self.scopes.items[index].getPtr(name)) |slot| return slot;
+        if (self.scopes.items[index].bindings.getPtr(name)) |slot| return slot;
     }
     return self.module.getPtr(name);
 }
@@ -631,6 +641,9 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         // Reading a name makes a new holder of what it holds.
         .name => |name| if (self.find(name)) |slot|
             (if (slot.value) |value| Heap.retain(value) else self.raiseUnassigned(expression.span, name))
+        else if (self.functions.contains(name))
+            // Section 7.5: a bare function name is its callable value.
+            self.evaluateFunctionValue(name)
         else
             // The checker proves every name read here is bound and assigned,
             // so this is a safety net rather than a language rule.
@@ -648,7 +661,23 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .member => |member| self.evaluateCount(member),
         .string_literal => |bytes| self.evaluateStringLiteral(expression, bytes),
         .interpolation => |parts| self.evaluateInterpolation(parts),
+        .lambda => self.evaluateLambda(expression),
     };
+}
+
+/// Section 7.4: a lambda captures the scopes it can see, not copies of what
+/// they hold, so a closure and the block around it keep sharing every variable.
+/// The module is not captured because it is visible from everywhere anyway.
+fn evaluateLambda(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
+    const captured = try self.gpa.dupe(*Environment, self.scopes.items);
+    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .lambda = expression }, captured) } };
+}
+
+/// Section 7.5's captured named function, which captures nothing: a named
+/// function's body can only see the module, which is always visible.
+fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
+    const captured = try self.gpa.alloc(*Environment, 0);
+    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = name }, captured) } };
 }
 
 // Every case of `evaluate` that needs locals of its own lives in a function
@@ -809,7 +838,7 @@ fn evaluateUnary(
                 return .initInt(result[0]);
             },
             .float => |value| return .initFloat(-value),
-            .nothing, .bool, .string, .list => return self.raiseFmt(
+            .nothing, .bool, .string, .list, .closure => return self.raiseFmt(
                 expression.span,
                 "`-` needs a number, but this is {s}",
                 .{operand.typeName()},
@@ -1000,10 +1029,16 @@ fn evaluateCall(
     call: Ast.Expression.Call,
 ) Error!Value {
     if (call.callee.data == .member) return self.callMethod(expression, call, call.callee.data.member);
+    // Anything that is not a plain name is a value that must be evaluated
+    // first: a lambda called where it is written, or an element of a list of
+    // functions.
+    if (call.callee.data != .name) return self.callValue(expression.span, call);
 
-    // The checker has proved the callee is a function: a program function,
-    // which shadows the prelude as any declaration would, or a prelude one.
+    // The checker has proved the callee is a function: a variable holding one,
+    // a program function, which shadows the prelude as any declaration would,
+    // or a prelude one.
     const name = call.callee.data.name;
+    if (self.find(name) != null) return self.callValue(expression.span, call);
     if (self.functions.contains(name)) return self.callFunction(expression.span, name, call.arguments);
     if (std.mem.eql(u8, name, "input")) return self.evaluateInput(expression.span, call);
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
@@ -1067,6 +1102,26 @@ fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call, newline: bool) E
     return Value.nothing;
 }
 
+/// One call, whatever form it was written in. `captured` is the scope stack the
+/// callee runs against: empty for a named function, which can only read the
+/// module, and section 7.4's captured scopes for a lambda.
+const Callable = struct {
+    /// What a stack trace calls it.
+    name: []const u8,
+    /// Whether `name` is the program's own name for it, which a lambda has not.
+    named: bool = true,
+    /// The checked shape, which is where widening comes from (4.4).
+    signature: Type.Signature,
+    body: Body,
+    captured: []const *Environment,
+
+    const Body = union(enum) {
+        statements: []const Ast.Statement,
+        /// A single-expression lambda, whose value is its result (7.4).
+        expression: *const Ast.Expression,
+    };
+};
+
 /// Section 7.1's calling convention. The checker has already proved arity and
 /// argument types, so nothing here checks them again.
 fn callFunction(
@@ -1079,44 +1134,144 @@ fn callFunction(
     // them.
     const arguments = try self.evaluateArguments(argument_expressions);
     defer self.gpa.free(arguments);
+    return self.invoke(call_span, self.namedCallable(name), arguments);
+}
 
+fn namedCallable(self: *Interpreter, name: []const u8) Callable {
+    return .{
+        .name = name,
+        .signature = self.signatures.get(name).?,
+        .body = .{ .statements = self.functions.get(name).?.body.statements },
+        .captured = &.{},
+    };
+}
+
+/// A call through a value: `double(3)` where `double` holds a lambda, or a
+/// lambda called where it is written.
+fn callValue(self: *Interpreter, call_span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    const callee = try self.evaluate(call.callee);
+    defer self.heap.release(callee);
+    const arguments = try self.evaluateArguments(call.arguments);
+    defer self.gpa.free(arguments);
+    return self.invoke(call_span, self.closureCallable(callee.data.closure), arguments);
+}
+
+fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
+    return switch (closure.function) {
+        .named => |name| self.namedCallable(name),
+        .lambda => |expression| .{
+            .name = "a block",
+            .named = false,
+            // The checker recorded the lambda's type where it is written, which
+            // is the only place its parameter and result types were known.
+            .signature = self.literal_types.get(expression).?.signature.?.*,
+            .body = switch (expression.data.lambda.body) {
+                .expression => |body| .{ .expression = body },
+                .block => |body| .{ .statements = body.statements },
+            },
+            .captured = closure.captured,
+        },
+    };
+}
+
+/// Runs a callable against already-evaluated arguments, which it takes
+/// ownership of.
+fn invoke(
+    self: *Interpreter,
+    call_span: Source.Span,
+    callable: Callable,
+    arguments: []const Value,
+) Error!Value {
     if (self.call_stack.items.len >= max_call_depth) {
-        return self.raiseTooMuchRecursion(call_span, name, true);
+        return self.raiseTooMuchRecursion(call_span, callable.name, true);
     }
 
-    const function = self.functions.get(name).?;
-    const signature = self.signatures.get(name).?;
-
-    // The function's own block scopes push onto and pop off this list, so by
-    // the time it is restored only the parameter scope is left in it.
+    // The callee's own block scopes push onto and pop off this list, so by the
+    // time it is restored only what it started with is left. The captured
+    // scopes are held by the closure, not by this list, so they are left alone.
     const outer_scopes = self.scopes;
     self.scopes = .empty;
     defer {
-        while (self.scopes.items.len > 0) self.popScope();
+        while (self.scopes.items.len > callable.captured.len) self.popScope();
         self.scopes.deinit(self.gpa);
         self.scopes = outer_scopes;
     }
+    try self.scopes.appendSlice(self.gpa, callable.captured);
 
     const frame = try self.pushScope();
-    for (function.parameters, arguments, signature.parameters) |parameter, argument, parameter_type| {
+    for (callable.signature.parameter_names, arguments, callable.signature.parameters) |name, argument, parameter_type| {
         // An `Int` passed to a `Float` parameter arrives as a `Float`.
         const kind = kindOf(parameter_type);
-        try frame.put(self.gpa, parameter.name, .{ .kind = kind, .value = widen(argument, kind) });
+        // Section 7.4: `_` names nothing, so its argument has nowhere to live.
+        if (std.mem.eql(u8, name, "_")) {
+            self.heap.release(argument);
+            continue;
+        }
+        try frame.bindings.put(self.gpa, name, .{ .kind = kind, .value = widen(argument, kind) });
     }
 
-    try self.call_stack.append(self.gpa, .{ .function = name, .call_span = call_span });
+    try self.call_stack.append(self.gpa, .{
+        .function = callable.name,
+        .call_span = call_span,
+        .named = callable.named,
+    });
     defer _ = self.call_stack.pop();
 
-    self.executeAll(function.body.statements) catch |err| switch (err) {
-        error.Returned => {},
-        else => return err,
+    const result = switch (callable.body) {
+        .expression => |body| try self.evaluate(body),
+        .statements => |statements| blk: {
+            self.executeAll(statements) catch |err| switch (err) {
+                error.Returned => {},
+                else => return err,
+            };
+            const returned = self.return_value orelse Value.nothing;
+            self.return_value = null;
+            break :blk returned;
+        },
     };
-
-    const result = self.return_value orelse Value.nothing;
-    self.return_value = null;
     // As with parameters, and including a return type the checker inferred:
     // `return 1` from a function whose returns merged to `Float` yields `1.0`.
-    return widen(result, kindOf(signature.return_type));
+    return widen(result, kindOf(callable.signature.return_type));
+}
+
+/// Section 8.5's `each` and section 8.6's `map`.
+///
+/// The receiver is held for the whole traversal, so the list being visited
+/// cannot change underneath it: a block that changes the same variable finds
+/// the buffer shared and copies it first, which is section 8.1's value
+/// semantics doing exactly what it promises.
+fn callHigherOrder(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const block = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(block);
+
+    const callable = self.closureCallable(block.data.closure);
+    const collecting = std.mem.eql(u8, member.name, "map");
+    const items = receiver.data.list.items.items;
+
+    const collected: ?*Heap.List = if (collecting)
+        try self.heap.createList(kindOf(callable.signature.return_type), items.len)
+    else
+        null;
+    const result: Value = if (collected) |list| .{ .data = .{ .list = list } } else Value.nothing;
+    errdefer self.heap.release(result);
+
+    for (items) |item| {
+        const argument = [_]Value{Heap.retain(item)};
+        const produced = try self.invoke(expression.span, callable, &argument);
+        if (collected) |list| {
+            list.items.appendAssumeCapacity(produced);
+        } else {
+            self.heap.release(produced);
+        }
+    }
+    return result;
 }
 
 /// Section 8.5's list methods. The checker has proved the receiver is a list,
@@ -1133,6 +1288,10 @@ fn callMethod(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
+    // The checker allows these only on a list, and only with one block.
+    if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "map")) {
+        return self.callHigherOrder(expression, call, member);
+    }
     if (!Type.list_methods.has(member.name)) return self.callValueMethod(expression.span, call, member);
     const method = Type.list_methods.get(member.name).?;
     if (!method.mutates) {
@@ -1510,6 +1669,6 @@ fn toFloat(value: Value) f64 {
     return switch (value.data) {
         .int => |number| @floatFromInt(number),
         .float => |number| number,
-        .nothing, .bool, .string, .list => unreachable,
+        .nothing, .bool, .string, .list, .closure => unreachable,
     };
 }

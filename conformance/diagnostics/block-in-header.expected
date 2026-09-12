@@ -1,0 +1,4 @@
+diagnostics/block-in-header.em:2:16: this `{` opens the body, so the block before it has nowhere to go
+  if numbers.map { number => number } {
+                 ^
+Put the call in parentheses so the block belongs to it, as in `if (items.any? { item => item.valid?() }) {`.
