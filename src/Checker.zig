@@ -62,7 +62,12 @@ pub const Checked = struct {
 };
 
 const Binding = struct {
+    /// What the name holds right here, which section 4.5's narrowing can make
+    /// more specific than `declared` for as long as the proof holds.
     type: Type,
+    /// The type the declaration gave it, which is what an assignment must fit
+    /// and what narrowing falls back to.
+    declared: Type,
     /// Section 4.1: a variable declared without an initializer stays unassigned
     /// until control flow proves otherwise, and reading it before then is an
     /// error.
@@ -144,7 +149,7 @@ pub fn check(gpa: std.mem.Allocator, program: Ast.Program, facts: Resolver.Facts
     const prelude = try arena.create(Scope);
     prelude.* = .empty;
     for (Resolver.prelude) |name| {
-        try prelude.put(arena, name, .{ .type = .invalid, .assigned = true, .is_function = true });
+        try prelude.put(arena, name, .{ .type = .invalid, .declared = .invalid, .assigned = true, .is_function = true });
     }
     const module = try arena.create(Scope);
     module.* = .empty;
@@ -161,7 +166,7 @@ pub fn check(gpa: std.mem.Allocator, program: Ast.Program, facts: Resolver.Facts
             else => continue,
         };
         try checker.declarations.put(arena, function.name, function);
-        try module.put(arena, function.name, .{ .type = .invalid, .assigned = true, .is_function = true });
+        try module.put(arena, function.name, .{ .type = .invalid, .declared = .invalid, .assigned = true, .is_function = true });
     }
 
     try checker.checkStatements(program.statements);
@@ -278,6 +283,10 @@ fn checkWhile(self: *Checker, loop: Ast.While) Error!void {
     const infinite = isLiteralTrue(loop.condition);
 
     try self.loops.append(self.arena, .{ .depth = self.scopes.items.len, .infinite = infinite });
+    // Section 4.5: the body runs only when the condition held, so what the
+    // condition proves holds there, exactly as in an `if`. This is what makes
+    // `while line != nothing` narrow `line` for the body that reads it.
+    self.narrow(loop.condition, true);
     try self.checkBlock(loop.body);
     const finished = self.loops.pop().?;
 
@@ -298,6 +307,7 @@ fn checkFor(self: *Checker, loop: Ast.For) Error!void {
         const scope = self.scopes.items[self.scopes.items.len - 1];
         try scope.put(self.arena, loop.name, .{
             .type = element,
+            .declared = element,
             .assigned = true,
             .mutability = .loop_variable,
         });
@@ -320,6 +330,7 @@ fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
 
     const actual = try self.typeOf(iterable);
     if (actual.kind == .invalid) return .invalid;
+    if (!try self.requirePresent(actual, iterable, null)) return .invalid;
     // Section 8.4: a loop visits the list as it was when the loop began.
     if (actual.kind == .list) return actual.element.?.*;
     // Section 9.1: iterating a string yields its characters, each a String.
@@ -490,7 +501,13 @@ fn checkBreak(self: *Checker, span: Source.Span) Error!void {
     const here = try self.snapshotOf(loop.depth);
     if (loop.exits) |exits| {
         for (exits, here) |known, now| {
-            for (known, now) |*flag, assigned| flag.* = flag.* and assigned;
+            for (known, now) |*state, reached| {
+                state.assigned = state.assigned and reached.assigned;
+                // Narrowing survives only where every `break` proved it. The
+                // types here are the declared one or a narrowing of it, so the
+                // one that may still be absent is the one both paths allow.
+                if (reached.type.optional) state.type = reached.type;
+            }
         }
     } else {
         loop.exits = here;
@@ -557,6 +574,7 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
     const current = self.scopes.items[self.scopes.items.len - 1];
     try current.put(self.arena, declaration.name, .{
         .type = declared,
+        .declared = declared,
         .assigned = assigned,
         .mutability = if (declaration.mutable) .variable else .constant,
     });
@@ -570,9 +588,11 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         _ = try self.typeOf(assignment.value);
         return;
     };
+    // Against the declared type, not the narrowed one: an assignment is free to
+    // put `nothing` back into an optional that was proved present above it.
     const value = try self.typeOfExpected(
         assignment.value,
-        if (assignment.operation == null) binding.type else null,
+        if (assignment.operation == null) binding.declared else null,
     );
     if (binding.is_function) return; // so did this
 
@@ -601,15 +621,21 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         return;
     }
 
-    if (!value.assignableTo(binding.type)) {
+    if (!value.assignableTo(binding.declared)) {
         try self.report(
             assignment.value.span,
             "this is {f}, but `{s}` holds {f}",
-            .{ value, assignment.name, binding.type },
-            mismatchHelp(value, binding.type, "Assign a value of the declared type, or convert it first."),
+            .{ value, assignment.name, binding.declared },
+            mismatchHelp(value, binding.declared, "Assign a value of the declared type, or convert it first."),
         );
     }
 
+    // Section 4.5: assigning a value that is certainly there proves it is, and
+    // assigning anything else ends whatever an earlier test had proved.
+    binding.type = binding.declared;
+    if (binding.declared.optional and !value.optional and value.kind != .nothing) {
+        self.narrowName(assignment.name);
+    }
     binding.assigned = true;
 }
 
@@ -638,6 +664,18 @@ fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void
     var element = binding.type;
     for (assignment.indices) |_| {
         if (element.kind == .invalid) break;
+        // Section 4.5: a list that may be absent has no element to assign to.
+        if (element.optional) {
+            try self.reportWithHelp(
+                assignment.target_span,
+                "this is {f}, so there may be nothing to assign into",
+                .{element},
+                "Check it first with `if {s} != nothing {{ ... }}`.",
+                .{assignment.name},
+            );
+            element = .invalid;
+            break;
+        }
         if (element.kind == .string) {
             try self.report(
                 assignment.target_span,
@@ -746,6 +784,8 @@ fn checkConditional(self: *Checker, conditional: Ast.If) Error!void {
     try self.requireCondition(conditional.condition);
 
     const before = try self.snapshot();
+    // Section 4.5: inside the block, the condition held.
+    self.narrow(conditional.condition, true);
     try self.checkBlock(conditional.then_block);
     const after_then = try self.snapshot();
     const then_returns = !blockCompletes(conditional.then_block.statements);
@@ -754,10 +794,15 @@ fn checkConditional(self: *Checker, conditional: Ast.If) Error!void {
         // No else: the block may not have run at all. This holds even when the
         // block always returns, since reaching past it means it did not run.
         self.restore(before);
+        // Unless it always returns, in which case getting here proves the
+        // condition failed. That is what makes a guard — `return if
+        // name == nothing` — narrow the whole rest of the block.
+        if (then_returns) self.narrow(conditional.condition, false);
         return;
     };
 
     self.restore(before);
+    self.narrow(conditional.condition, false);
     const otherwise_returns = switch (otherwise) {
         .block => |block| blk: {
             try self.checkBlock(block);
@@ -944,6 +989,7 @@ fn checkFunctionBody(
     for (declaration.parameters, parameter_types) |parameter, parameter_type| {
         try parameters.put(self.arena, parameter.name, .{
             .type = parameter_type,
+            .declared = parameter_type,
             .assigned = true,
             .mutability = .parameter,
         });
@@ -1132,16 +1178,24 @@ fn reportUnassigned(self: *Checker, span: Source.Span, name: []const u8, binding
 }
 
 fn resolveTypeExpression(self: *Checker, annotation: Ast.TypeExpression) Error!Type {
-    if (annotation.question_span) |question| {
+    const written = try self.resolveWrittenType(annotation);
+    const question = annotation.question_span orelse return written;
+
+    // Section 4.2's `Nothing` is absence itself, so marking it possibly-absent
+    // says nothing at all.
+    if (written.kind == .nothing) {
         try self.report(
             question,
-            "optional types are not available yet",
+            "`Nothing?` is not a type",
             .{},
-            "Declare the type without `?` for now.",
+            "`Nothing` already means there is no value. Write the type of what may be there, as in `Int?`.",
         );
         return .invalid;
     }
+    return written.optionalOf();
+}
 
+fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type {
     if (annotation.element) |element| {
         const inner = try self.resolveTypeExpression(element.*);
         return Type.listOf(self.arena, inner);
@@ -1171,10 +1225,66 @@ fn resolveTypeExpression(self: *Checker, annotation: Ast.TypeExpression) Error!T
     };
 }
 
+/// Section 4.5's narrowing: records what a condition proves about a name that
+/// may be absent, for as long as the proof holds.
+///
+/// Only a comparison against `nothing` proves anything, and only about a plain
+/// name. `not` flips which way the proof runs; `and` proves both of its sides
+/// when it holds, and `or` proves both when it fails, which is what makes
+/// `if a == nothing or b == nothing { return }` narrow both afterwards.
+fn narrow(self: *Checker, condition: *const Ast.Expression, when_true: bool) void {
+    switch (condition.data) {
+        .unary => |unary| if (unary.operator == .not) self.narrow(unary.operand, !when_true),
+        .logical => |logical| {
+            if ((logical.operator == .conjunction) != when_true) return;
+            self.narrow(logical.left, when_true);
+            self.narrow(logical.right, when_true);
+        },
+        .comparison => |comparison| {
+            if (comparison.operators.len != 1) return;
+            const operator = comparison.operators[0];
+            if (!operator.isEquality()) return;
+            // `x != nothing` holding, or `x == nothing` failing, proves it is
+            // there. The other two prove it is absent, which narrows nothing:
+            // the type is already as specific as `Nothing`.
+            if ((operator == .not_equal) != when_true) return;
+            self.narrowName(presenceTest(comparison) orelse return);
+        },
+        else => {},
+    }
+}
+
+/// The name in `name == nothing`, written either way round.
+fn presenceTest(comparison: Ast.Expression.Comparison) ?[]const u8 {
+    const left = comparison.operands[0];
+    const right = comparison.operands[1];
+    if (right.data == .nothing_literal and left.data == .name) return left.data.name;
+    if (left.data == .nothing_literal and right.data == .name) return right.data.name;
+    return null;
+}
+
+fn narrowName(self: *Checker, name: []const u8) void {
+    const binding = self.find(name) orelse return;
+    if (binding.is_function or !binding.type.optional) return;
+    // Section 4.5: a `const` and a read-only parameter keep the proof because
+    // they cannot be rebound. A `var` a block assigns to can change between the
+    // test and the use, since calling the block is all it takes.
+    if (binding.mutability == .variable and self.facts.assigned_in_lambda.contains(name)) return;
+    binding.type = binding.type.payload();
+}
+
 // Definite-assignment state.
 
 /// The assignment state of every binding currently in scope, innermost last.
-const Snapshot = [][]bool;
+/// What one binding knew at a point in the program: whether it was assigned
+/// (4.1) and what narrowing had proved about its type (4.5). Both are facts
+/// that a branch can establish and that rejoining control flow can undo.
+const State = struct {
+    assigned: bool,
+    type: Type,
+};
+
+const Snapshot = [][]State;
 
 fn snapshot(self: *Checker) Error!Snapshot {
     return self.snapshotOf(self.scopes.items.len);
@@ -1183,42 +1293,51 @@ fn snapshot(self: *Checker) Error!Snapshot {
 /// The state of only the outermost `depth` scopes, which is what a `break`
 /// carries out of a loop.
 fn snapshotOf(self: *Checker, depth: usize) Error!Snapshot {
-    const result = try self.arena.alloc([]bool, depth);
-    for (self.scopes.items[0..depth], result) |scope, *flags| {
-        flags.* = try self.arena.alloc(bool, scope.count());
+    const result = try self.arena.alloc([]State, depth);
+    for (self.scopes.items[0..depth], result) |scope, *states| {
+        states.* = try self.arena.alloc(State, scope.count());
         var index: usize = 0;
         var entries = scope.valueIterator();
-        while (entries.next()) |binding| : (index += 1) flags.*[index] = binding.assigned;
+        while (entries.next()) |binding| : (index += 1) {
+            states.*[index] = .{ .assigned = binding.assigned, .type = binding.type };
+        }
     }
     return result;
 }
 
 fn restore(self: *Checker, state: Snapshot) void {
-    for (self.scopes.items, state) |scope, flags| {
+    for (self.scopes.items, state) |scope, states| {
         var index: usize = 0;
         var entries = scope.valueIterator();
-        while (entries.next()) |binding| : (index += 1) binding.assigned = flags[index];
+        while (entries.next()) |binding| : (index += 1) {
+            binding.assigned = states[index].assigned;
+            binding.type = states[index].type;
+        }
     }
 }
 
 /// `restore`, noting which names only the loop assigned.
 fn restoreAfterLoop(self: *Checker, before: Snapshot) void {
-    for (self.scopes.items, before) |scope, flags| {
+    for (self.scopes.items, before) |scope, states| {
         var index: usize = 0;
         var entries = scope.valueIterator();
         while (entries.next()) |binding| : (index += 1) {
-            if (binding.assigned and !flags[index]) binding.assigned_in_loop = true;
-            binding.assigned = flags[index];
+            if (binding.assigned and !states[index].assigned) binding.assigned_in_loop = true;
+            binding.assigned = states[index].assigned;
+            binding.type = states[index].type;
         }
     }
 }
 
+/// Merges two paths that rejoin: a name is assigned only if both assigned it,
+/// and narrowing survives only if both proved the same thing.
 fn intersect(self: *Checker, other: Snapshot) void {
-    for (self.scopes.items, other) |scope, flags| {
+    for (self.scopes.items, other) |scope, states| {
         var index: usize = 0;
         var entries = scope.valueIterator();
         while (entries.next()) |binding| : (index += 1) {
-            binding.assigned = binding.assigned and flags[index];
+            binding.assigned = binding.assigned and states[index].assigned;
+            if (!binding.type.same(states[index].type)) binding.type = binding.declared;
         }
     }
 }
@@ -1348,6 +1467,20 @@ fn typeOfList(self: *Checker, expression: *const Ast.Expression, expected: ?Type
 
     for (elements, types) |element, element_type| {
         if (element_type.assignableTo(target)) continue;
+        // Section 4.5: a literal holding `nothing` needs the element type from
+        // context, because `[String]?` and `[String?]` are different types and
+        // the literal alone does not say which was meant.
+        if (element_type.kind == .nothing or target.kind == .nothing) {
+            const present = if (target.kind == .nothing) element_type else target;
+            try self.reportWithHelp(
+                expression.span,
+                "this list mixes `nothing` with {f}, so its type has to be written",
+                .{present},
+                "Say what it holds, as in `var each: [{f}?] = [...]`.",
+                .{present},
+            );
+            return self.recordLiteral(expression, .invalid);
+        }
         try self.report(
             element.span,
             "this is {f}, but the list holds {f}",
@@ -1472,6 +1605,7 @@ fn checkLambdaBody(
         if (std.mem.eql(u8, name, "_")) continue;
         try parameters.put(self.arena, name, .{
             .type = parameter_type,
+            .declared = parameter_type,
             .assigned = true,
             .mutability = .parameter,
         });
@@ -1539,6 +1673,7 @@ fn typeOfIndex(self: *Checker, index: Ast.Expression.Index) Error!Type {
     const base = try self.typeOf(index.base);
     try self.requireIndex(index.index);
     if (base.kind == .invalid) return .invalid;
+    if (!try self.requirePresent(base, index.base, null)) return .invalid;
     // Section 9.1: a string's index counts characters, and each is a String.
     if (base.kind == .string) return .string;
     if (base.kind != .list) {
@@ -1568,9 +1703,18 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) return .invalid;
+    if (!try self.requirePresent(base, member.base, member.name)) return .invalid;
 
     if (base.kind == .list or base.kind == .string) {
         if (std.mem.eql(u8, member.name, "count")) return .int;
+        // Section 8.5: `first` and `last` are properties, and may be absent
+        // because the list may be empty. Their companion is `empty?`, which
+        // 4.5 names because a list of optionals cannot tell the two apart.
+        if (base.kind == .list and
+            (std.mem.eql(u8, member.name, "first") or std.mem.eql(u8, member.name, "last")))
+        {
+            return base.element.?.optionalOf();
+        }
         if (Type.list_methods.has(member.name) or Type.string_methods.has(member.name) or
             std.mem.eql(u8, member.name, "to_string"))
         {
@@ -1589,9 +1733,23 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
 }
 
 /// A method call such as `scores.append(10)`.
-fn typeOfMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+fn typeOfMethodCall(
+    self: *Checker,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Type {
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+
+    // Section 4.5's `or` is the one thing you may do to a value that may be
+    // absent without proving it is there, because supplying the fallback is
+    // what proves it.
+    if (std.mem.eql(u8, member.name, "or")) return self.typeOfOr(expression, call, member, base);
+    if (!try self.requirePresent(base, member.base, member.name)) {
         try self.typeArguments(call.arguments);
         return .invalid;
     }
@@ -1618,6 +1776,16 @@ fn typeOfMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expre
     if (base.kind == .list) {
         if (std.mem.eql(u8, member.name, "each")) return self.typeOfEach(call, member, base);
         if (std.mem.eql(u8, member.name, "map")) return self.typeOfMap(call, member, base);
+        // Section 8.6's searching pair. `find_index` is what 4.5 names as the
+        // companion for a list whose elements may themselves be `nothing`.
+        if (std.mem.eql(u8, member.name, "find")) {
+            _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+            return base.element.?.optionalOf();
+        }
+        if (std.mem.eql(u8, member.name, "find_index")) {
+            _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+            return Type.int.optionalOf();
+        }
     }
 
     const method = (if (base.kind == .list) Type.list_methods.get(member.name) else null) orelse {
@@ -1660,6 +1828,86 @@ fn typeOfMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expre
         .bool => .bool,
         .element => element,
     };
+}
+
+/// Section 4.5: everything but `or` needs the value to be there first.
+/// `member` is the name being reached for, so the diagnostic can repeat it.
+/// Returns false when it reported.
+fn requirePresent(
+    self: *Checker,
+    base: Type,
+    at: *const Ast.Expression,
+    member: ?[]const u8,
+) Error!bool {
+    if (!base.optional) return true;
+    // A name can be proved present by testing it; anything else has to be put
+    // in one first, which is what the correction says.
+    const help = if (at.data == .name)
+        try std.fmt.allocPrint(
+            self.arena,
+            "Give it a fallback with `.or(...)`, or check it first with `if {s} != nothing {{ ... }}`.",
+            .{at.data.name},
+        )
+    else
+        "Give it a fallback with `.or(...)`, or put it in a name and check that against `nothing` first.";
+
+    if (member) |name| {
+        try self.report(
+            at.span,
+            "this is {f}, so `{s}` may not be there to use",
+            .{ base, name },
+            help,
+        );
+    } else {
+        try self.report(at.span, "this is {f}, so it may not be there to use", .{base}, help);
+    }
+    return false;
+}
+
+/// Section 4.5's `or`: the value if it is there, and the fallback if it is not.
+/// The result is never optional, which is what makes it the way out.
+fn typeOfOr(
+    self: *Checker,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    base: Type,
+) Error!Type {
+    const present = base.payload();
+    // The interpreter widens the fallback to this, since `.or(0)` standing in
+    // for a `Float?` has to produce `0.0` (4.4).
+    try self.literal_types.put(self.arena, expression, present);
+    if (!base.optional) {
+        try self.report(
+            member.name_span,
+            "`or` needs a value that may be absent, and this is already {f}",
+            .{base},
+            "Remove the `.or(...)`; there is nothing for it to stand in for.",
+        );
+        try self.typeArguments(call.arguments);
+        return present;
+    }
+    if (call.arguments.len != 1) {
+        try self.report(
+            member.name_span,
+            "`or` takes 1 argument, but this call passes {d}",
+            .{call.arguments.len},
+            "Pass what to use when the value is absent, as in `.or(0)`.",
+        );
+        try self.typeArguments(call.arguments);
+        return present;
+    }
+
+    const fallback = try self.typeOfExpected(call.arguments[0], present);
+    if (!fallback.assignableTo(present)) {
+        try self.report(
+            call.arguments[0].span,
+            "this is {f}, but the value it stands in for is {f}",
+            .{ fallback, present },
+            mismatchHelp(fallback, present, "The fallback has to be the same kind of value."),
+        );
+    }
+    return present;
 }
 
 /// Section 8.5's `each`, the traversal every collection has. The block receives
@@ -1783,13 +2031,14 @@ fn typeOfStringMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Exp
         }
     }
 
-    return switch (method.result) {
+    const result: Type = switch (method.result) {
         .bool => .bool,
         .int => .int,
         .float => .float,
         .string => .string,
-        .strings => Type.listOf(self.arena, .string),
+        .strings => try Type.listOf(self.arena, .string),
     };
+    return if (method.maybe) result.optionalOf() else result;
 }
 
 /// Reports a call with too few or too many arguments, typing them anyway.
@@ -1984,16 +2233,21 @@ fn arithmetic(
     left: Type,
     right: Type,
 ) Error!Type {
-    // `+` joins two Strings; nothing else mixes text and arithmetic.
+    // `+` joins two Strings; nothing else mixes text and arithmetic. A String
+    // that may be absent is not one until it is proved present (4.5).
     if (left.kind == .string or right.kind == .string) {
         if (left.kind == .invalid or right.kind == .invalid) return .invalid;
-        if (operator == .add and left.kind == .string and right.kind == .string) return .string;
+        if (operator == .add and left.kind == .string and right.kind == .string and
+            !left.optional and !right.optional) return .string;
         if (operator == .add) {
             try self.report(
                 span,
                 "`+` joins two Strings, but this is {f} and {f}",
                 .{ left, right },
-                "Convert the value with `to_string()`, or use interpolation, as in `\"#{name}: #{score}\"`.",
+                if (left.optional or right.optional)
+                    "One of these may be absent. Give it a fallback with `.or(\"\")`, or check it against `nothing` first."
+                else
+                    "Convert the value with `to_string()`, or use interpolation, as in `\"#{name}: #{score}\"`.",
             );
         } else {
             try self.report(
@@ -2012,7 +2266,12 @@ fn arithmetic(
             span,
             "{s} needs numbers, but this is {f} and {f}",
             .{ operator.describe(), left, right },
-            "Arithmetic works on Int and Float.",
+            // A number that may be absent is the common case here, and it has a
+            // different fix from a value that is the wrong kind entirely.
+            if (left.payload().isNumber() or right.payload().isNumber())
+                "One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first."
+            else
+                "Arithmetic works on Int and Float.",
         );
         return .invalid;
     };
@@ -2058,14 +2317,16 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
         const numeric = left.isNumber() and right.isNumber();
         const unknown = left.kind == .invalid or right.kind == .invalid;
 
-        if (!unknown and !numeric and !left.same(right)) {
+        if (!unknown and !numeric and !left.same(right) and !comparableOptional(left, right)) {
             try self.report(
                 pair,
                 "{f} and {f} cannot be compared",
                 .{ left, right },
                 "`==` and `!=` compare two values of the same type, and Int and Float compare with each other.",
             );
-        } else if (!unknown and !numeric and !operator.isEquality() and left.kind != .string) {
+        } else if (!unknown and !numeric and !operator.isEquality() and
+            !(left.kind == .string and !left.optional and !right.optional))
+        {
             try self.report(
                 pair,
                 "`{s}` needs numbers, but these are {f} values",
@@ -2080,13 +2341,27 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
     return .bool;
 }
 
+/// Section 4.5: a value that may be absent is compared against `nothing` to
+/// find out, which is the test narrowing reads. Two optionals of the same shape
+/// compare as well, and an optional compares against a present value of its own
+/// type, which is how `maybe == 5` asks whether it is there and is that.
+///
+/// Ordering is not included: `<` on something that may be absent has no answer,
+/// so it stays rejected.
+fn comparableOptional(left: Type, right: Type) bool {
+    if (!left.optional and !right.optional) return false;
+    if (left.kind == .nothing or right.kind == .nothing) return true;
+    if (left.payload().isNumber() and right.payload().isNumber()) return true;
+    return left.payload().same(right.payload());
+}
+
 fn typeOfCall(
     self: *Checker,
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Type {
     if (isCounting(expression)) return self.rejectCountingValue(expression);
-    if (call.callee.data == .member) return self.typeOfMethodCall(call, call.callee.data.member);
+    if (call.callee.data == .member) return self.typeOfMethodCall(expression, call, call.callee.data.member);
     // Anything that is not a plain name — a lambda called where it is written,
     // an element of a list of functions — is called through its value.
     if (call.callee.data != .name) return self.typeOfValueCall(call, try self.typeOf(call.callee), null);
@@ -2104,7 +2379,9 @@ fn typeOfCall(
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
     if (!self.declarations.contains(name)) {
-        if (std.mem.eql(u8, name, "input")) return self.typeOfInput(call);
+        if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
+            return self.typeOfInput(call, name);
+        }
         try self.typeArguments(call.arguments);
         return .nothing;
     }
@@ -2205,12 +2482,12 @@ fn typeOfValueCall(self: *Checker, call: Ast.Expression.Call, callee: Type, name
 }
 
 /// Section 15.2's `input(prompt)`: the prompt is optional and is a String.
-fn typeOfInput(self: *Checker, call: Ast.Expression.Call) Error!Type {
+fn typeOfInput(self: *Checker, call: Ast.Expression.Call, name: []const u8) Error!Type {
     if (call.arguments.len > 1) {
         try self.report(
             call.callee.span,
-            "`input` takes at most 1 argument, but this call passes {d}",
-            .{call.arguments.len},
+            "`{s}` takes at most 1 argument, but this call passes {d}",
+            .{ name, call.arguments.len },
             "Pass the prompt as one String, as in `input(\"What is your name? \")`.",
         );
         try self.typeArguments(call.arguments);
@@ -2219,13 +2496,16 @@ fn typeOfInput(self: *Checker, call: Ast.Expression.Call) Error!Type {
         if (prompt.kind != .string and prompt.kind != .invalid) {
             try self.report(
                 call.arguments[0].span,
-                "the prompt is {f}, but `input` needs a String",
-                .{prompt},
+                "the prompt is {f}, but `{s}` needs a String",
+                .{ prompt, name },
                 "Write the prompt as text, as in `input(\"How old are you? \")`.",
             );
         }
     }
-    return .string;
+    // Section 15.2: `input` raises at the end of the input, while
+    // `input_maybe` reports it as absence, which is what makes reading until
+    // the input runs out writable.
+    return if (std.mem.eql(u8, name, "input_maybe")) Type.string.optionalOf() else .string;
 }
 
 /// Types the arguments of a call that has already been reported, so that

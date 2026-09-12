@@ -1,0 +1,4 @@
+diagnostics/optional-arithmetic.em:2:7: addition needs numbers, but this is Int? and Int
+  print(score + 1)
+        ^^^^^^^^^
+One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first.

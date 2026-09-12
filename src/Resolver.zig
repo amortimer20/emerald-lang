@@ -44,6 +44,10 @@ pub const Facts = struct {
     /// For each function, the other program functions its own body calls.
     /// Calls to prelude functions are not recorded; they read no program state.
     calls: std.StringHashMapUnmanaged(NameSet) = .empty,
+    /// Every name assigned inside a lambda body. Section 4.5 will not narrow
+    /// one of these: a block holding the variable could be called between the
+    /// test and the use, and set it back to `nothing`.
+    assigned_in_lambda: NameSet = .empty,
 };
 
 pub const Resolved = struct {
@@ -63,7 +67,7 @@ pub const Resolved = struct {
 
 /// Section 15.2's prelude. These are callable without qualification and are not
 /// declared by any program, so they live in a scope of their own.
-pub const prelude = [_][]const u8{ "print", "write", "input" };
+pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe" };
 
 pub const BindingKind = enum { variable, parameter, loop_variable, function };
 
@@ -98,6 +102,8 @@ facts: Facts = .{},
 function_boundary: usize = module_scope,
 /// The function whose body is being walked, or null at the top level.
 current_function: ?[]const u8 = null,
+/// How many lambda bodies enclose the statement being walked.
+lambda_depth: u32 = 0,
 /// Every top-level variable and where it is declared, so a name used above its
 /// declaration can be reported as exactly that rather than as a misspelling.
 module_declarations: std.StringHashMapUnmanaged(Source.Span) = .empty,
@@ -304,6 +310,10 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     "Declare it first with `var`, or check the spelling.",
                 );
             };
+
+            if (self.lambda_depth > 0) {
+                try self.facts.assigned_in_lambda.put(self.arena, assignment.name, {});
+            }
 
             // A compound assignment reads the current value first, so it needs
             // the variable to be assigned already; a plain one does not. An
@@ -516,9 +526,11 @@ fn walkLambda(self: *Resolver, lambda: Ast.Expression.Lambda) Error!void {
     try self.push();
     const outer_boundary = self.function_boundary;
     self.function_boundary = self.scopes.items.len - 1;
+    self.lambda_depth += 1;
     defer {
         self.pop();
         self.function_boundary = outer_boundary;
+        self.lambda_depth -= 1;
     }
 
     const parameters = &self.scopes.items[self.scopes.items.len - 1];

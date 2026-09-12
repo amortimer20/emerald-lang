@@ -34,6 +34,14 @@ kind: Kind,
 element: ?*const Type = null,
 /// What a function takes and gives, and null for every other kind.
 signature: ?*const Signature = null,
+/// Section 4.2's trailing `?`: this value may be absent.
+///
+/// A flag rather than a wrapping kind, because section 4.5 settles that
+/// optionals never nest. There is nothing for a second layer to mean, so there
+/// is no way to build one by accident, and `Int?` stays as cheap to carry
+/// around as `Int`. Placement is still structural: this flag on a list is
+/// `[String]?`, while the same flag on its element is `[String?]`.
+optional: bool = false,
 
 /// A function's checked shape: each parameter's type, its name for diagnostics
 /// that name a mismatched one, and the return type, whether written or
@@ -80,9 +88,29 @@ pub fn functionOf(allocator: std.mem.Allocator, signature: Signature) std.mem.Al
     return .{ .kind = .function, .signature = stored };
 }
 
+/// Section 4.5: applying an optional-producing operation to something already
+/// optional yields the same type rather than a second layer.
+pub fn optionalOf(self: Type) Type {
+    var result = self;
+    result.optional = true;
+    return result;
+}
+
+/// What an optional holds when it is present. Unchanged for a type that is not
+/// optional.
+pub fn payload(self: Type) Type {
+    var result = self;
+    result.optional = false;
+    return result;
+}
+
 /// Writes the name a program writes for this type, which is also the name
 /// diagnostics use.
 pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    if (self.optional) {
+        try self.payload().format(writer);
+        return writer.writeAll("?");
+    }
     switch (self.kind) {
         .nothing => try writer.writeAll("Nothing"),
         .bool => try writer.writeAll("Bool"),
@@ -117,7 +145,10 @@ pub fn fromName(text: []const u8) ?Type {
     return null;
 }
 
+/// Whether arithmetic and ordering apply. An optional number is not one: it may
+/// be absent, so it has to be narrowed or given a fallback first.
 pub fn isNumber(self: Type) bool {
+    if (self.optional) return false;
     return switch (self.kind) {
         .int, .float => true,
         .nothing, .bool, .string, .list, .function, .invalid => false,
@@ -144,6 +175,7 @@ pub fn isInvalid(self: Type) bool {
 /// that one mistake does not produce a second report.
 pub fn same(self: Type, other: Type) bool {
     if (self.kind == .invalid or other.kind == .invalid) return true;
+    if (self.optional != other.optional) return false;
     if (self.kind != other.kind) return false;
     if (self.kind == .list) return self.element.?.same(other.element.?.*);
     if (self.kind == .function) {
@@ -172,6 +204,16 @@ pub fn same(self: Type, other: Type) bool {
 /// easier thing to teach.
 pub fn assignableTo(self: Type, target: Type) bool {
     if (self.kind == .invalid or target.kind == .invalid) return true;
+
+    // Section 4.2: `nothing` is the absent value of every optional type, and a
+    // present value may be used where a possibly-absent one is expected. The
+    // reverse is not true, which is the whole point of the marker.
+    if (target.optional) {
+        if (self.kind == .nothing) return true;
+        return self.payload().assignableTo(target.payload());
+    }
+    if (self.optional) return false;
+
     if (self.kind == .int and target.kind == .float) return true;
     return self.same(target);
 }
@@ -205,13 +247,15 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
 });
 
 /// What a `String` method takes and gives. Section 9.2's vocabulary, less what
-/// needs optionals (`index_of` and the `_maybe` parsers) or is deferred there.
+/// is deferred there. `maybe` marks the ones whose answer may be absent (4.5).
 pub const StringMethod = struct {
     parameters: []const Operand,
     /// How many trailing parameters may be left out: `substring(start)` and
     /// `substring(start, count)` are one method.
     optional: u8 = 0,
     result: Result,
+    /// Whether the result may be absent, which section 4.5 marks with `?`.
+    maybe: bool = false,
 
     pub const Operand = enum { string, int, float };
     pub const Result = enum { bool, int, float, string, strings };
@@ -236,7 +280,10 @@ pub const string_methods = std.StaticStringMap(StringMethod).initComptime(.{
     .{ "split", StringMethod{ .parameters = &.{.string}, .result = .strings } },
     .{ "lines", StringMethod{ .parameters = &.{}, .result = .strings } },
     .{ "chars", StringMethod{ .parameters = &.{}, .result = .strings } },
+    .{ "index_of", StringMethod{ .parameters = &.{.string}, .result = .int, .maybe = true } },
     .{ "to_int", StringMethod{ .parameters = &.{}, .result = .int } },
+    .{ "to_int_maybe", StringMethod{ .parameters = &.{}, .result = .int, .maybe = true } },
+    .{ "to_float_maybe", StringMethod{ .parameters = &.{}, .result = .float, .maybe = true } },
     .{ "to_int_or", StringMethod{ .parameters = &.{.int}, .result = .int } },
     .{ "to_float", StringMethod{ .parameters = &.{}, .result = .float } },
     .{ "to_float_or", StringMethod{ .parameters = &.{.float}, .result = .float } },

@@ -658,7 +658,7 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .range => unreachable,
         .list_literal => |elements| self.evaluateList(expression, elements),
         .index => |index| self.evaluateIndex(expression, index),
-        .member => |member| self.evaluateCount(member),
+        .member => |member| self.evaluateProperty(member),
         .string_literal => |bytes| self.evaluateStringLiteral(expression, bytes),
         .interpolation => |parts| self.evaluateInterpolation(parts),
         .lambda => self.evaluateLambda(expression),
@@ -685,15 +685,22 @@ fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
 // frame is multiplied by section 7.2's 1,000 calls times the deepest nesting
 // section 3.4 allows, and a Debug build gives each local its own slot.
 
-/// `count` is the only property so far; the checker allows nothing else.
-fn evaluateCount(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
+/// Section 8.5's properties: `count`, and a list's `first` and `last`. The
+/// checker allows nothing else here.
+fn evaluateProperty(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
     const base = try self.evaluate(member.base);
     defer self.heap.release(base);
-    return switch (base.data) {
+    if (base.data == .string) {
         // Section 9.2: a string's count is its characters, not its bytes.
-        .string => |string| .initInt(@intCast(unicode.graphemeCount(string.bytes))),
-        else => .initInt(@intCast(base.data.list.items.items.len)),
-    };
+        return .initInt(@intCast(unicode.graphemeCount(base.data.string.bytes)));
+    }
+
+    const items = base.data.list.items.items;
+    if (std.mem.eql(u8, member.name, "count")) return .initInt(@intCast(items.len));
+    // Section 4.5: absent rather than an error, because an empty list has no
+    // first element to name. `empty?` is the companion that tells the two apart.
+    if (items.len == 0) return Value.nothing;
+    return Heap.retain(if (std.mem.eql(u8, member.name, "first")) items[0] else items[items.len - 1]);
 }
 
 fn evaluateStringLiteral(self: *Interpreter, expression: *const Ast.Expression, bytes: []const u8) Error!Value {
@@ -1040,15 +1047,17 @@ fn evaluateCall(
     const name = call.callee.data.name;
     if (self.find(name) != null) return self.callValue(expression.span, call);
     if (self.functions.contains(name)) return self.callFunction(expression.span, name, call.arguments);
-    if (std.mem.eql(u8, name, "input")) return self.evaluateInput(expression.span, call);
+    if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
+        return self.evaluateInput(expression.span, call, std.mem.eql(u8, name, "input_maybe"));
+    }
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
 }
 
-/// Section 15.2's `input(prompt)`: writes the prompt, reads one line, and
-/// returns it without its line ending. Pressing Enter gives `""`. The end of
-/// input is an error, since `input_maybe` needs optionals; the error is not
-/// catchable yet, as nothing is.
-fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+/// Section 15.2's `input(prompt)` and `input_maybe(prompt)`: writes the prompt,
+/// reads one line, and returns it without its line ending. Pressing Enter gives
+/// `""`. They differ only at the end of the input, where `input` raises — not
+/// catchable yet, as nothing is — and `input_maybe` reports absence (4.5).
+fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, maybe: bool) Error!Value {
     if (call.arguments.len == 1) {
         const prompt = try self.evaluate(call.arguments[0]);
         defer self.heap.release(prompt);
@@ -1065,11 +1074,16 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
     };
     const at_end = self.in.bufferedLen() == 0;
     if (!at_end) self.in.toss(1); // the newline
-    if (at_end and length == 0) return self.raise(
-        span,
-        "`input` reached the end of the input",
-        "There are no more lines to read. The program's input ended before this `input` call.",
-    );
+    if (at_end and length == 0) {
+        // Section 15.2: `input_maybe` reports the end of the input as absence,
+        // which is how a program reads until there is nothing left.
+        if (maybe) return Value.nothing;
+        return self.raise(
+            span,
+            "`input` reached the end of the input",
+            "There are no more lines to read. Use `input_maybe`, which gives `nothing` instead, to read until the input ends.",
+        );
+    }
 
     const bytes = std.mem.trimEnd(u8, line.written(), "\r");
     if (!std.unicode.utf8ValidateSlice(bytes)) return self.raise(
@@ -1234,6 +1248,27 @@ fn invoke(
     return widen(result, kindOf(callable.signature.return_type));
 }
 
+/// Section 4.5's `value.or(fallback)`.
+///
+/// The fallback is evaluated only when it is needed, the way the `or` operator
+/// short-circuits (5.2). `.or(next_ticket())` should not draw a ticket it is
+/// going to discard, and nothing else a program can write depends on the
+/// argument running.
+fn callOr(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const value = try self.evaluate(member.base);
+    if (value.data != .nothing) return value;
+
+    // An `Int` standing in for a `Float?` arrives as a `Float`, as anywhere
+    // else the checker allowed the widening (4.4).
+    const present = self.literal_types.get(expression).?;
+    return widen(try self.evaluate(call.arguments[0]), kindOf(present));
+}
+
 /// Section 8.5's `each` and section 8.6's `map`.
 ///
 /// The receiver is held for the whole traversal, so the list being visited
@@ -1252,24 +1287,36 @@ fn callHigherOrder(
     defer self.heap.release(block);
 
     const callable = self.closureCallable(block.data.closure);
-    const collecting = std.mem.eql(u8, member.name, "map");
     const items = receiver.data.list.items.items;
 
-    const collected: ?*Heap.List = if (collecting)
+    const Kind = enum { each, map, find, find_index };
+    const kind = std.meta.stringToEnum(Kind, member.name).?;
+
+    const collected: ?*Heap.List = if (kind == .map)
         try self.heap.createList(kindOf(callable.signature.return_type), items.len)
     else
         null;
     const result: Value = if (collected) |list| .{ .data = .{ .list = list } } else Value.nothing;
     errdefer self.heap.release(result);
 
-    for (items) |item| {
+    for (items, 0..) |item, index| {
         const argument = [_]Value{Heap.retain(item)};
         const produced = try self.invoke(expression.span, callable, &argument);
         if (collected) |list| {
             list.items.appendAssumeCapacity(produced);
-        } else {
-            self.heap.release(produced);
+            continue;
         }
+        if (kind == .each) {
+            self.heap.release(produced);
+            continue;
+        }
+        // Searching stops at the first element the block accepts, and reports
+        // absence when none does (4.5).
+        if (!produced.data.bool) continue;
+        return switch (kind) {
+            .find => Heap.retain(item),
+            else => .initInt(@intCast(index)),
+        };
     }
     return result;
 }
@@ -1288,8 +1335,13 @@ fn callMethod(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
+    // Section 4.5's way out of an optional, and the one method allowed on a
+    // value that may be absent.
+    if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     // The checker allows these only on a list, and only with one block.
-    if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "map")) {
+    if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "map") or
+        std.mem.eql(u8, member.name, "find") or std.mem.eql(u8, member.name, "find_index"))
+    {
         return self.callHigherOrder(expression, call, member);
     }
     if (!Type.list_methods.has(member.name)) return self.callValueMethod(expression.span, call, member);
@@ -1380,10 +1432,13 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
         split,
         lines,
         chars,
+        index_of,
         to_int,
         to_int_or,
+        to_int_maybe,
         to_float,
         to_float_or,
+        to_float_maybe,
     };
     const gpa = self.gpa;
     return switch (std.meta.stringToEnum(Method, name).?) {
@@ -1448,17 +1503,38 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
             for (pieces) |piece| list.items.appendAssumeCapacity(try self.heap.copyText(piece));
             break :blk result;
         },
-        .to_int, .to_int_or => blk: {
+        // Section 9.2: the answer counts characters, so it indexes directly.
+        .index_of => blk: {
+            const found = try strings.indexOf(gpa, bytes, arguments[0].data.string.bytes);
+            break :blk if (found) |index| Value.initInt(index) else Value.nothing;
+        },
+        // Section 4.4's three forms differ only in what they do when the text
+        // does not parse: raise, use the fallback, or report absence.
+        .to_int => blk: {
             const parsed = strings.parseInt(bytes);
             if (parsed == .value) break :blk .initInt(parsed.value);
-            if (arguments.len == 1) break :blk arguments[0];
             break :blk self.raiseConversion(span, bytes, "Int", parsed == .out_of_range);
         },
-        .to_float, .to_float_or => blk: {
+        .to_int_or => blk: {
+            const parsed = strings.parseInt(bytes);
+            break :blk if (parsed == .value) Value.initInt(parsed.value) else arguments[0];
+        },
+        .to_int_maybe => blk: {
+            const parsed = strings.parseInt(bytes);
+            break :blk if (parsed == .value) Value.initInt(parsed.value) else Value.nothing;
+        },
+        .to_float => blk: {
             const parsed = strings.parseFloat(bytes);
             if (parsed == .value) break :blk .initFloat(parsed.value);
-            if (arguments.len == 1) break :blk widen(arguments[0], .float);
             break :blk self.raiseConversion(span, bytes, "Float", parsed == .out_of_range);
+        },
+        .to_float_or => blk: {
+            const parsed = strings.parseFloat(bytes);
+            break :blk if (parsed == .value) Value.initFloat(parsed.value) else widen(arguments[0], .float);
+        },
+        .to_float_maybe => blk: {
+            const parsed = strings.parseFloat(bytes);
+            break :blk if (parsed == .value) Value.initFloat(parsed.value) else Value.nothing;
         },
     };
 }

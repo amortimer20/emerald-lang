@@ -1,0 +1,4 @@
+diagnostics/optional-or-on-present.em:2:13: `or` needs a value that may be absent, and this is already Int
+  print(score.or(0))
+              ^^
+Remove the `.or(...)`; there is nothing for it to stand in for.

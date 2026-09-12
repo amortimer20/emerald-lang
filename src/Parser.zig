@@ -667,8 +667,21 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
         // A `?` that could not attach to a name, as in `[String]?`.
         question = self.advance().span;
     }
+    try self.rejectNestedOptional(question);
 
     return .{ .span = span, .name = written, .question_span = question };
+}
+
+/// Section 4.5: optionals never nest, so a second `?` is a mistake with a
+/// specific explanation rather than a stray token.
+fn rejectNestedOptional(self: *Parser, question: ?Source.Span) Error!void {
+    if (question == null) return;
+    if (!self.check(.question)) return;
+    return self.report(
+        spanning(question.?, self.peek().span),
+        "a type cannot be optional twice",
+        "One `?` already says the value may be absent; there is nothing for a second to add.",
+    );
 }
 
 /// Section 8.2's `[T]`, and `[T]?` for an optional list.
@@ -699,6 +712,7 @@ fn parseListType(self: *Parser) Error!Ast.TypeExpression {
     _ = self.advance();
 
     const question: ?Source.Span = if (self.match(.question)) |token| token.span else null;
+    try self.rejectNestedOptional(question);
     return .{
         .span = spanning(opening.span, closing.span),
         .name = "",
@@ -757,6 +771,7 @@ fn parseFunctionType(self: *Parser) Error!Ast.TypeExpression {
     signature.* = .{ .parameters = try parameters.toOwnedSlice(self.arena), .result = result };
 
     const question: ?Source.Span = if (self.match(.question)) |token| token.span else null;
+    try self.rejectNestedOptional(question);
     return .{
         .span = spanning(keyword.span, last),
         .name = "",
@@ -1200,10 +1215,12 @@ fn parsePostfix(self: *Parser) Error!*const Ast.Expression {
                 return base
             else
                 try self.finishTrailingLambda(base),
+            // Section 4.5's `?.` waits for the chains it exists to shorten:
+            // with no objects yet there is nothing to reach through.
             .question_dot => return self.report(
                 self.peek().span,
                 "optional chaining is not available yet",
-                "Optional values arrive with a later version of Emerald.",
+                "Check the value against `nothing` first, or give it a fallback with `.or(...)`.",
             ),
             else => return base,
         };
@@ -1266,23 +1283,31 @@ fn finishIndex(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expr
     return self.node(spanning(base.span, closing.span), .{ .index = .{ .base = base, .index = index } });
 }
 
-/// Section 3.4 keeps keywords reserved after `.`, so only a name may follow.
+/// The name after a `.`, which may be a keyword.
+///
+/// Section 3.4 keeps keywords reserved so that "member declarations do not
+/// create a second identifier grammar", and they still are: a member is
+/// declared with an ordinary name. Only reaching for one accepts a keyword,
+/// which is what lets section 4.5 spell its fallback `maybe.or(0)` — the
+/// spelling that matches `to_int_or` — without a keyword after `.` ever being
+/// able to mean anything but a member.
 fn finishMember(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expression {
     _ = self.advance();
     const name = self.peek();
-    if (name.kind != .identifier) {
-        return self.reportFmt(
+    const written: []const u8 = if (name.kind == .identifier)
+        try self.identifier(name)
+    else
+        name.kind.keyword() orelse return self.reportFmt(
             name.span,
             "expected a property or method name after `.`, found {s}",
             .{name.kind.describe()},
             "Write the name of what to use, as in `scores.count`.",
         );
-    }
     _ = self.advance();
 
     return self.node(spanning(base.span, name.span), .{ .member = .{
         .base = base,
-        .name = try self.identifier(name),
+        .name = written,
         .name_span = name.span,
     } });
 }

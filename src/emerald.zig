@@ -564,10 +564,34 @@ test "an unknown type name is rejected" {
     try expectFailure("var winner: Player\n", "`Player` is not a type");
 }
 
-test "an optional annotation is recognized but not yet available" {
+test "section 4.2: the parser splits a trailing `?` in type position" {
     // The lexer hands over `Int?` as one identifier; the parser splits the
-    // trailing `?` in type position, which is what makes this reachable.
-    try expectFailure("var maybe: Int?\n", "optional types are not available yet");
+    // trailing `?`, which is what makes an optional type reachable at all.
+    try expectOutput("var maybe: Int? = nothing\nprint(maybe)\n", "nothing\n");
+    try expectOutput("var maybe: Int? = 5\nprint(maybe)\n", "5\n");
+    // Section 4.5: optionals never nest.
+    try expectFailure("var maybe: Int??\n", "a type cannot be optional twice");
+    try expectFailure("var maybe: [Int]??\n", "a type cannot be optional twice");
+    try expectFailure("var maybe: Nothing?\n", "`Nothing?` is not a type");
+    // Section 4.5: placement is structural.
+    try expectOutput("var maybe: [String]? = nothing\nprint(maybe)\n", "nothing\n");
+    try expectOutput("var each: [String?] = [nothing, \"Ava\"]\nprint(each)\n", "[nothing, \"Ava\"]\n");
+    try expectFailure(
+        "var names: [String]? = nothing\nvar each: [String?] = names\n",
+        "this is [String]?, but `each` was declared as [String?]",
+    );
+}
+
+test "section 4.2: the conformance declaration using both meanings of `?`" {
+    const program =
+        \\func valid?(input: Int?): Bool {
+        \\    return input != nothing
+        \\}
+        \\print(valid?(1))
+        \\print(valid?(nothing))
+        \\
+    ;
+    try expectOutput(program, "true\nfalse\n");
 }
 
 test "an uninitialized variable needs an explicit type" {
@@ -1781,4 +1805,134 @@ test "a collection in the middle of building a value keeps the half-built value"
         \\
     ;
     try expectOutput(program, "2000\n[\"2000:4000\", \"2001:4002\", \"2002:4004\"]\n");
+}
+
+// Sections 4.2 and 4.5: optionals.
+
+test "section 4.5: `or` supplies the value to use when there is none" {
+    try expectOutput("print(\"42\".to_int_maybe().or(0))\n", "42\n");
+    try expectOutput("print(\"no\".to_int_maybe().or(0))\n", "0\n");
+    try expectOutput("print(\"no\".to_float_maybe().or(1.5))\n", "1.5\n");
+    // The fallback widens the way it does anywhere else (4.4).
+    try expectOutput("var rate: Float? = nothing\nprint(rate.or(1))\n", "1.0\n");
+    // And it runs only when it is needed, as the `or` operator does.
+    const lazily =
+        \\var asked = 0
+        \\func fallback(): Int {
+        \\    asked += 1
+        \\    return -1
+        \\}
+        \\var present: Int? = 7
+        \\print(present.or(fallback()))
+        \\print(asked)
+        \\
+    ;
+    try expectOutput(lazily, "7\n0\n");
+    try expectFailure("var n: Int = 1\nprint(n.or(0))\n", "`or` needs a value that may be absent, and this is already Int");
+    try expectFailure("var n: Int? = 1\nprint(n.or(\"x\"))\n", "this is String, but the value it stands in for is Int");
+}
+
+test "section 4.5: comparison with `nothing` narrows" {
+    try expectOutput("var n: Int? = 5\nif n != nothing {\n    print(n + 1)\n}\n", "6\n");
+    try expectOutput("var n: Int? = 5\nif n == nothing {\n    print(0)\n} else {\n    print(n + 1)\n}\n", "6\n");
+    // A guard narrows the whole rest of the block.
+    const guard =
+        \\func size(text: String?): Int {
+        \\    return 0 if text == nothing
+        \\    return text.count
+        \\}
+        \\print(size("hello"))
+        \\print(size(nothing))
+        \\
+    ;
+    try expectOutput(guard, "5\n0\n");
+    // A `while` proves the same thing for its body.
+    try expectOutputWithInput(
+        "var line = input_maybe()\nwhile line != nothing {\n    print(line.upper())\n    line = input_maybe()\n}\n",
+        "a\nb\n",
+        "A\nB\n",
+    );
+}
+
+test "narrowing does not escape the branch that proved it" {
+    // Assigning inside a branch proves nothing after it.
+    try expectFailure(
+        "var n: Int? = nothing\nif 1 == 1 {\n    n = 5\n}\nprint(n + 1)\n",
+        "addition needs numbers, but this is Int? and Int",
+    );
+    // Nor does a loop body, which may not have run.
+    try expectFailure(
+        "var n: Int? = nothing\nwhile 1 == 2 {\n    n = 5\n}\nprint(n + 1)\n",
+        "addition needs numbers, but this is Int? and Int",
+    );
+    // Assigning `nothing` ends a proof that was holding.
+    try expectFailure(
+        "var n: Int? = 5\nif n != nothing {\n    n = nothing\n    print(n + 1)\n}\n",
+        "addition needs numbers, but this is Int? and Int",
+    );
+    // Section 4.5: a `var` a block can reassign is never narrowed, because
+    // calling the block between the test and the use is all it takes.
+    try expectFailure(
+        "var n: Int? = 5\nconst clear = { => n = nothing }\nif n != nothing {\n    clear()\n    print(n + 1)\n}\n",
+        "addition needs numbers, but this is Int? and Int",
+    );
+    // A `const` keeps it, because it cannot be rebound at all.
+    try expectOutput(
+        "const n: Int? = 5\nconst show = { => print(1) }\nif n != nothing {\n    show()\n    print(n + 1)\n}\n",
+        "1\n6\n",
+    );
+}
+
+test "assigning a value that is certainly there proves it is" {
+    try expectOutput("var n: Int? = nothing\nn = 5\nprint(n + 1)\n", "6\n");
+    try expectFailure(
+        "var n: Int? = 5\nn = nothing\nprint(n + 1)\n",
+        "addition needs numbers, but this is Int? and Int",
+    );
+}
+
+test "a value that may be absent cannot be used until it is there" {
+    try expectFailure("var s: String? = \"a\"\nprint(s.count)\n", "this is String?, so `count` may not be there to use");
+    try expectFailure("var s: String? = \"a\"\nprint(s.upper())\n", "this is String?, so `upper` may not be there to use");
+    try expectFailure("var s: String? = \"a\"\nprint(s + \"b\")\n", "`+` joins two Strings, but this is String? and String");
+    try expectFailure("var xs: [Int]? = nothing\nprint(xs[0])\n", "this is [Int]?, so it may not be there to use");
+    try expectFailure("var xs: [Int]? = nothing\nfor x in xs {\n    print(x)\n}\n", "this is [Int]?, so it may not be there to use");
+    try expectFailure("var xs: [Int]? = nothing\nxs[0] = 1\n", "this is [Int]?, so there may be nothing to assign into");
+    try expectFailure("var n: Int? = 1\nprint(n < 2)\n", "`<` needs numbers, but these are Int? values");
+}
+
+test "sections 8.5, 8.6, and 9.2: what may come back empty-handed" {
+    try expectOutput("print([3, 8].first.or(-1))\nprint([3, 8].last.or(-1))\n", "3\n8\n");
+    try expectOutput("const e: [Int] = []\nprint(e.first.or(-1))\nprint(e.last.or(-1))\n", "-1\n-1\n");
+    try expectOutput("print([3, 8, 9].find { n => n > 5 }.or(-1))\n", "8\n");
+    try expectOutput("print([3, 8, 9].find { n => n > 90 }.or(-1))\n", "-1\n");
+    try expectOutput("print([3, 8, 9].find_index { n => n > 5 }.or(-1))\n", "1\n");
+    try expectOutput("print([3, 8, 9].find_index { n => n > 90 }.or(-1))\n", "-1\n");
+    // Section 9.2: the index counts characters, so it indexes directly.
+    try expectOutput("print(\"hello\".index_of(\"ll\").or(-1))\n", "2\n");
+    try expectOutput("print(\"hello\".index_of(\"z\").or(-1))\n", "-1\n");
+    try expectOutput("const t = \"héllo\"\nprint(t[t.index_of(\"llo\").or(0)])\n", "l\n");
+}
+
+test "section 15.2: input_maybe reports the end of the input as absence" {
+    try expectOutputWithInput("print(input_maybe().or(\"none\"))\n", "", "none\n");
+    try expectOutputWithInput("print(input_maybe().or(\"none\"))\n", "Ada\n", "Ada\n");
+    // `input` still raises there, and now names the companion.
+    try expectFailure("var p = print\n", "`print` is built in, and built-in functions cannot be used as values");
+}
+
+test "section 4.5: a literal mixing `nothing` needs its type from context" {
+    try expectOutput("var each: [String?] = [nothing, \"Ava\"]\nprint(each)\n", "[nothing, \"Ava\"]\n");
+    try expectFailure("var each = [nothing, \"Ava\"]\n", "this list mixes `nothing` with String, so its type has to be written");
+    // Placement is structural: these are different types.
+    try expectFailure(
+        "var whole: [String]? = nothing\nvar each: [String?] = whole\n",
+        "this is [String]?, but `each` was declared as [String?]",
+    );
+}
+
+test "section 3.4: a keyword may name a member, which is what `.or` needs" {
+    try expectOutput("var n: Int? = nothing\nprint(n.or(7))\n", "7\n");
+    // Declaring one is still an ordinary name.
+    try expectFailure("func or(): Int {\n    return 1\n}\n", "expected a name after `func`, found or");
 }

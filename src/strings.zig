@@ -124,6 +124,21 @@ pub fn endsWith(gpa: Allocator, haystack: []const u8, suffix: []const u8) Alloca
 
 /// Every occurrence of `old`, left to right and without overlapping, replaced
 /// by `new`. `old` is not empty. The caller owns the result.
+/// Section 9.2's `index_of`: which character the first match starts at, or null
+/// when there is none. The answer counts characters, as indexing does, so it can
+/// be handed straight back to `text[i]`.
+pub fn indexOf(gpa: Allocator, haystack: []const u8, needle: []const u8) Allocator.Error!?i64 {
+    var search = try Search.init(gpa, haystack, needle);
+    defer search.deinit(gpa);
+    const offset = search.next(0) orelse return null;
+
+    var index: i64 = 0;
+    var clusters: unicode.Graphemes = .init(search.haystack.bytes);
+    var at: usize = 0;
+    while (at < offset) : (index += 1) at += (clusters.next() orelse return null).len;
+    return index;
+}
+
 pub fn replace(gpa: Allocator, haystack: []const u8, old: []const u8, new: []const u8) Allocator.Error![]u8 {
     var search = try Search.init(gpa, haystack, old);
     defer search.deinit(gpa);

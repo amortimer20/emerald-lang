@@ -1,0 +1,4 @@
+diagnostics/optional-not-checked.em:2:7: this is String?, so `upper` may not be there to use
+  print(name.upper())
+        ^^^^
+Give it a fallback with `.or(...)`, or check it first with `if name != nothing { ... }`.

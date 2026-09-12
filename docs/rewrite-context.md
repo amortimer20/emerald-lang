@@ -236,8 +236,12 @@ const greet = player.greet # bound method value
 Braces appear only where a declared construct expects a block or where expression context
 admits a lambda. A bare anonymous block is not a standalone scoping statement; use
 a named function or an existing control-flow construct when a separate scope is needed.
-Keywords remain reserved after `.`, just as they are elsewhere, so member declarations do
-not create a second identifier grammar.
+Keywords remain reserved as names: a member is declared with an ordinary identifier, so
+member declarations do not create a second identifier grammar. Reaching for a member is the
+one exception. The name after a `.` may be a keyword, because nothing else can appear there
+and so nothing is made ambiguous by allowing it. This is what lets 4.5 spell its fallback
+`maybe.or(0)`, matching the `to_int_or` family, without `or` ceasing to be a keyword
+everywhere else.
 
 An implementation accepts at least 256 nested syntactic delimiters or declarations and
 checks its nesting budget before consuming the host stack. Excess reports a normal source
@@ -2721,6 +2725,10 @@ recorded in their normative sections:
 | Capturing a built-in (7.5) | `print`, `write`, and `input` can only be called | They take any number of arguments of any type, which no written function type describes. The diagnostic suggests wrapping one in a lambda. |
 | `each` and the unused result (5.2, 8.5) | `each` ignores what its block produces, except a one-expression body that is not a call, which is reported | That shape is section 5.2's unused result and is almost always a `map` written as an `each`. A block body that happens to return is left alone. |
 | Blocks in a statement header (7.4) | The `{` after an `if`, `while`, or `for` condition opens the body, and a trailing block written there is reported against its own `{` | The rule was already stated; without a diagnostic naming it, the parameters were read as statements and produced errors that named nothing relevant. |
+| Keywords after `.` (3.4, 4.5) | A member may be reached for by a keyword name, though a member is still declared with an ordinary identifier | 3.4 reserved keywords after `.` while 4.5 wrote `maybe.or(0)` twice; one had to give. Only a member name can follow a `.`, so allowing a keyword there makes nothing ambiguous, and 3.4's stated reason — that member declarations not create a second identifier grammar — is untouched. The alternative was renaming `or`, which would have broken step with `to_int_or`. |
+| Narrowing a `var` (4.5) | A `var` that any lambda assigns to is never narrowed; a `const` and a parameter always are | 4.5 says a narrowed mutable binding loses the proof when "a called closure could reassign its captured binding", and which names those are is exactly what the resolver already sees. Refusing to narrow them at all is the rule a reader can check by eye, and the alternative — tracking which calls could reach such a block — would be both slower and harder to explain. |
+| Narrowing after assignment (4.5) | Assigning a value that is certainly there proves it is, until something un-proves it | Otherwise `x = 5` followed by `x + 1` is an error with no way to read it as anything but a compiler failing to notice. It falls out of tracking the narrowed type in the same state a branch snapshots and restores. |
+| Laziness of `or` (4.5) | The fallback is evaluated only when the value is absent | It is the one method whose name is an operator that short-circuits, and `.or(next_ticket())` should not draw a ticket it will discard. Nothing else a program can write depends on an argument running. |
 | Collector roots (19.5) | Derived from the reference counts rather than from a registration API | Every holder already retains, and a count may be too high but never too low, so an unaccounted count is exactly an external holder. A missed registration would free a live object; a count that is too high only delays a free, which is the failure the collector is there to reduce rather than one it can turn into corruption. |
 | Value-type mutability (4.3, 7.1, 8.1, 10.2) | `const` and parameters freeze values; the rule stops at class references | Under value semantics, mutating and replacing are indistinguishable, so a shallow `const` protected nothing coherent, and mutating a parameter's copy was a silent no-op that a beginner would write and never understand. Replaces the earlier shallow `const`, which followed C# reference-type variables. |
 

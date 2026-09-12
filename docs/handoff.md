@@ -1,15 +1,16 @@
 # Current handoff
 
-Updated: 2026-09-11. Prepared by Claude after the managed heap slice.
+Updated: 2026-09-11. Prepared by Claude after the optionals slice.
 
 ## Current milestone
 
 Slices 1 through 10 of section 20 are complete, plus a loop slice the user approved
-inserting before slice 8 and a string slice the user chose to do before slice 9. Section 20
-was renumbered during the callable slice: the old slice 9 bundled closures with the
-collector, and they are now slice 9 (callables) and slice 10 (the managed heap). The whole
-frontend pipeline of section 19.2 exists: source manager, lexer, parser, name resolver,
-type checker, interpreter.
+inserting before slice 8, a string slice the user chose to do before slice 9, and an
+optionals slice the user chose to do before the project slice. Section 20 was renumbered
+during the callable slice: the old slice 9 bundled closures with the collector, and they
+are now slice 9 (callables) and slice 10 (the managed heap). The whole frontend pipeline of
+section 19.2 exists: source manager, lexer, parser, name resolver, type checker,
+interpreter.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -20,7 +21,10 @@ layout, Unicode-aware counting, indexing, iteration, comparison, and case mappin
 section 9.2 methods that need no optionals, and `input` and `write`, so section 2's first
 program runs. Callables work: lambdas with inferred or written parameter types, closures
 that capture by reference, function types, named functions as values, the trailing-block
-call form, and `each` and `map`. Memory is managed: reference counting reclaims promptly
+call form, and `each` and `map`. Optionals work: `T?`, `nothing`, narrowing by comparison
+against `nothing`, `.or(...)`, and the vocabulary that needed them — `first`, `last`,
+`find`, `find_index`, `index_of`, the `_maybe` parsers, and `input_maybe`. Memory is
+managed: reference counting reclaims promptly
 and section 19.5's mark-and-sweep collector reclaims the cycles counting cannot, so a loop
 that keeps making blocks runs in flat memory. Every expression has a static type before
 execution and
@@ -113,6 +117,31 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Optional decisions worth knowing
+
+- **An optional is a flag on the type, not a wrapper.** Section 4.5 settles that optionals
+  never nest, so there is nothing a second layer could mean and no way to build one by
+  accident. `Int?` costs exactly what `Int` costs, and at runtime an optional is simply the
+  value or `nothing` — no boxing, no allocation, nothing for the collector to trace.
+  Placement stays structural: the flag on a list is `[String]?`, the same flag on its
+  element is `[String?]`.
+- **Narrowing lives in the same state that definite assignment lives in.** `Snapshot` grew
+  from a bool per binding to `{ assigned, type }`, so every place that already saved,
+  restored, intersected, or merged flow state now does the same for what narrowing proved.
+  That is what makes narrowing stop at the end of a branch, at a loop, and at a `break`
+  without any of those places knowing about optionals.
+- **A `var` a block assigns to is never narrowed.** Section 4.5 says the proof is lost when
+  "a called closure could reassign its captured binding". The resolver already walks lambda
+  bodies, so it records `assigned_in_lambda` and the checker refuses to narrow those names
+  at all. A `const` and a parameter always narrow, because they cannot be rebound.
+- **`.or(...)` is lazy and is the one method allowed on a value not yet proved present.**
+  Supplying the fallback is what proves it. The fallback is evaluated only when it is
+  needed, matching the `or` operator's short-circuiting.
+- **Every place that reached into a value had to learn to ask first.** `requirePresent`
+  guards member access, indexing, method calls, iteration, and element assignment. Two of
+  those were found by trying them rather than by reading: `for x in maybe_list` and
+  `maybe_list[0] = 1` both crashed the interpreter before the guards went in.
 
 ### Collector decisions worth knowing
 
@@ -449,24 +478,23 @@ still open.
 
 ## Next concrete step
 
-Optionals. They are the largest remaining gap and nothing depends on them landing later:
-`first`, `last`, `index_of`, `find`, the `_maybe` parsers, `input_maybe`, and dictionary
-lookup all wait for them, and several diagnostics already promise them by name. Section 4.2
-settles the spelling (`T?`, never nested) and the parser already splits the `?` in type
-position, so the work is the type, the checker's narrowing (4.5 and 6.3), and the unwrapping
-vocabulary.
+Section 20's slice 11, the project slice: `main.em`, multiple files, namespaces, and
+`using`. Section 14.1's project-detection rule is settled and recorded, and nothing else
+now blocks it. It is the last slice before the object model, which is by far the largest
+remaining piece and which everything after it depends on.
 
-The alternative is section 20's slice 11, the project slice: `main.em`, multiple files,
-namespaces, and `using`. Section 14.1's project-detection rule is already settled and
-recorded. It is self-contained and does not need optionals, but it adds less to what a
-program can express.
+The alternative is dictionaries and sets from section 8. They are the last collections
+missing, optionals have just unblocked dictionary lookup, and they need no new machinery
+beyond the literal syntax already reserved in 8.2. They would make the standard library
+feel complete before the object model reshapes everything.
 
-Recommend optionals, because they unblock vocabulary across sections 8 and 9 that is
-currently missing rather than merely absent.
+Recommend the project slice, because multiple files is the thing a growing program hits
+first, and because leaving it until after the object model would mean reworking namespaces
+around types rather than the other way round.
 
 ## Validation and blockers
 
-- `zig build test` passes in Debug and ReleaseSafe: 244 unit tests, 99 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 255 unit tests, 107 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -512,18 +540,17 @@ currently missing rather than merely absent.
 - Section 6.2's `if ... then ... else` expression. `unless` is no longer part of the language
   and is not a keyword.
 - From section 8: dictionaries and sets (the bracket parser reports "dictionaries are not
-  available yet" at a `:`), `first` and `last` (need optionals), the rest of section 8.6's
-  rich vocabulary beyond `each` and `map`, slicing with ranges, `type_name`, and a mutating
-  method through a struct field, which arrives with structs.
+  available yet" at a `:`), the rest of section 8.6's rich vocabulary beyond `each`, `map`,
+  `find`, and `find_index`, slicing with ranges, `type_name`, and a mutating method through
+  a struct field, which arrives with structs.
 - Range values: ranges and counts stored in names, `random(1..6)`, and the block forms of
   `up_to`, `down_to`, and `times` are rejected ("a range can only be looped over so far")
   until range values land. Blocks now exist, so only the range value itself is missing. In a
   `for` header every counting form works.
-- Optional types. The parser splits the `?` in type position as section 4.2 requires, and
-  the checker reports that optionals are not available yet, so the rule is exercised without
-  the semantics existing.
-- From section 9: everything needing optionals (`index_of`, `to_int_maybe`,
-  `to_float_maybe`, `input_maybe`), `pad_start`, `pad_end`, and `pad_center` (their
+- Section 4.5's optional chaining, `?.`. It exists to shorten chains through objects, and
+  there are no objects yet, so there is nothing for it to reach through; the parser reports
+  it and points at narrowing and `.or(...)`.
+- From section 9: `pad_start`, `pad_end`, and `pad_center` (their
   signatures need default arguments), `insert_at`, `remove_prefix`, `remove_suffix`,
   `collapse_repeats`, `partition`, `letter?` and `digit?` (general category tables),
   `code_points` and `bytes`, string slicing with ranges, and `type_name`.
@@ -562,4 +589,4 @@ currently missing rather than merely absent.
 
 ## Pending changes
 
-None. The managed heap slice is committed. Verify against Git before continuing.
+None. The optionals slice is committed. Verify against Git before continuing.

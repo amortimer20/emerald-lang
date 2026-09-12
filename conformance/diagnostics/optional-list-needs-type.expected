@@ -1,0 +1,4 @@
+diagnostics/optional-list-needs-type.em:1:13: this list mixes `nothing` with String, so its type has to be written
+  var names = [nothing, "Ava"]
+              ^^^^^^^^^^^^^^^^
+Say what it holds, as in `var each: [String?] = [...]`.

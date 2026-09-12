@@ -1,0 +1,4 @@
+diagnostics/optional-nested.em:1:15: a type cannot be optional twice
+  var score: Int?? = nothing
+                ^^
+One `?` already says the value may be absent; there is nothing for a second to add.

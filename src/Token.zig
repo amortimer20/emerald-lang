@@ -234,6 +234,15 @@ pub const Kind = enum {
 
     /// The fixed source spelling of a kind that has one, or null when the kind's
     /// text varies.
+    /// The word a keyword is written with, or null for everything else.
+    pub fn keyword(kind: Kind) ?[]const u8 {
+        return if (@intFromEnum(kind) >= @intFromEnum(Kind.keyword_and) and
+            @intFromEnum(kind) <= @intFromEnum(Kind.keyword_with))
+            kind.lexeme()
+        else
+            null;
+    }
+
     pub fn lexeme(kind: Kind) ?[]const u8 {
         return switch (kind) {
             .int_literal,
@@ -396,4 +405,16 @@ test "keywords and identifiers are distinguished" {
     try testing.expect(keywords.get("set") == null);
     try testing.expect(keywords.get("value") == null);
     try testing.expect(keywords.get("score") == null);
+}
+
+test "keyword covers exactly the keywords" {
+    // The range check depends on the keywords staying contiguous in `Kind`.
+    try testing.expectEqualStrings("and", Kind.keyword_and.keyword().?);
+    try testing.expectEqualStrings("with", Kind.keyword_with.keyword().?);
+    try testing.expectEqualStrings("or", Kind.keyword_or.keyword().?);
+    try testing.expect(Kind.identifier.keyword() == null);
+    try testing.expect(Kind.doc_comment.keyword() == null);
+    try testing.expect(Kind.plus.keyword() == null);
+    var entries = keywords.values();
+    for (entries[0..]) |kind| try testing.expect(kind.keyword() != null);
 }

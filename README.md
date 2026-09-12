@@ -28,9 +28,11 @@ Unicode 17.0.0. Definite assignment is proved through control flow, including lo
 are values, copied on write. An unhandled error inside a function reports the calls that
 led to it. Functions are values: a block can be written inline, passed to `each` or `map`,
 or kept in a variable, and it captures the variables around it rather than copies of them.
-Memory is managed for you, by reference counting with a mark-and-sweep collector behind it
-for the cycles counting cannot reach. Dictionaries, sets, and optionals arrive with later
-slices.
+A value that may be absent is marked `?`, and the language makes you say what happens when
+it is missing — by checking it against `nothing`, which then lets you use it as an ordinary
+value, or by giving it a fallback. Memory is managed for you, by reference counting with a
+mark-and-sweep collector behind it for the cycles counting cannot reach. Dictionaries and
+sets arrive with later slices.
 
 ```emerald
 func collatz_steps(start: Int): Int {
@@ -65,6 +67,16 @@ func counter_from(start: Int): func(): Int {
 const ticket = counter_from(1)
 print(ticket(), ticket(), ticket())
 print([1, 2, 3].map { number => number * number })
+```
+
+```emerald
+const entries = ["12", "seven", "30"]
+print(entries.map { entry => entry.to_int_maybe().or(0) })
+
+const first_long = entries.find { entry => entry.count > 2 }
+if first_long != nothing {
+    print(first_long.upper())
+}
 ```
 
 The current toolchain is Zig `0.16.0`, selected through [`mise.toml`](mise.toml). Verify
