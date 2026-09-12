@@ -221,7 +221,11 @@ pub fn run(
                     runtime.* = .{ .name = field.name, .kind = kindOf(field.type) };
                 }
                 const descriptor = try interpreter.arena.create(Value.StructType);
-                descriptor.* = .{ .name = interpreter.keyOf(declaration.name), .fields = fields };
+                descriptor.* = .{
+                    .name = interpreter.keyOf(declaration.name),
+                    .display_name = checked.user.?.display_name,
+                    .fields = fields,
+                };
                 try interpreter.structs.put(
                     interpreter.arena,
                     interpreter.keyOf(declaration.name),
@@ -951,9 +955,10 @@ fn reach(self: *Interpreter, key: []const u8, span: Source.Span) Error!void {
         .pending => return self.initializeModule(owner),
         .running => {
             // Section 14.1's cycle is a cycle "reaching an unfinished
-            // binding". A function is hoisted, so reaching one is never that,
-            // and a binding the file has already got to is finished.
-            if (self.functions.contains(key)) return;
+            // binding". Functions and struct types are hoisted, so reaching
+            // either is never that, and a binding the file has already got to
+            // is finished.
+            if (self.functions.contains(key) or self.structs.contains(key)) return;
             if (self.module.get(key)) |slot| {
                 if (slot.value != null) return;
             }
@@ -1190,6 +1195,12 @@ fn holdsNan(value: Value) bool {
         .tuple => |tuple| blk: {
             for (tuple.items) |item| {
                 if (holdsNan(item)) break :blk true;
+            }
+            break :blk false;
+        },
+        .struct_value => |instance| blk: {
+            for (instance.fields) |field| {
+                if (holdsNan(field)) break :blk true;
             }
             break :blk false;
         },
@@ -2577,4 +2588,25 @@ fn toFloat(value: Value) f64 {
         .float => |number| number,
         .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => unreachable,
     };
+}
+
+test "a NaN nested in a struct is detected for key rejection" {
+    const testing = std.testing;
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const metadata = [_]Value.StructType.Field{.{ .name = "x", .kind = .float }};
+    const descriptor: Value.StructType = .{
+        .name = "Point",
+        .display_name = "Point",
+        .fields = &metadata,
+    };
+    const fields = try testing.allocator.alloc(Value, 1);
+    fields[0] = .initFloat(std.math.nan(f64));
+    const point: Value = .{
+        .data = .{ .struct_value = try heap.createStruct(&descriptor, fields) },
+    };
+    defer heap.release(point);
+
+    try testing.expect(holdsNan(point));
 }

@@ -39,7 +39,12 @@ pub const Data = union(Kind) {
 };
 
 pub const StructType = struct {
+    /// Program-wide identity used for hashing and runtime lookup.
     name: []const u8,
+    /// The declaration spelling used when displaying a value. A private
+    /// type's resolved key contains its file path and cannot be shortened by
+    /// splitting on a namespace dot.
+    display_name: []const u8,
     fields: []const Field,
 
     pub const Field = struct {
@@ -83,7 +88,7 @@ pub fn typeName(self: Value) []const u8 {
         .tuple => "a tuple",
         .map => |map| if (map.is_set) "a set" else "a dictionary",
         .closure => "a function",
-        .struct_value => |instance| instance.descriptor.name,
+        .struct_value => |instance| instance.descriptor.display_name,
     };
 }
 
@@ -162,7 +167,7 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             .lambda => try writer.writeAll("<lambda>"),
         },
         .struct_value => |instance| {
-            try writer.print("{s}(", .{shortName(instance.descriptor.name)});
+            try writer.print("{s}(", .{instance.descriptor.display_name});
             for (instance.fields, instance.descriptor.fields, 0..) |value, field, index| {
                 if (index != 0) try writer.writeAll(", ");
                 try writer.print("{s}: ", .{field.name});
@@ -373,11 +378,6 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
         },
         .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => null,
     };
-}
-
-fn shortName(name: []const u8) []const u8 {
-    if (std.mem.lastIndexOfScalar(u8, name, '.')) |at| return name[at + 1 ..];
-    return name;
 }
 
 /// Compares an `Int` against a `Float` exactly, by splitting the float rather

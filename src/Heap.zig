@@ -1236,7 +1236,7 @@ test "releasing the last holder of a struct frees it and its fields" {
     defer heap.deinit();
 
     const metadata = [_]Value.StructType.Field{.{ .name = "values", .kind = .list }};
-    const descriptor: Value.StructType = .{ .name = "Bag", .fields = &metadata };
+    const descriptor: Value.StructType = .{ .name = "Bag", .display_name = "Bag", .fields = &metadata };
     const fields = try testing.allocator.alloc(Value, 1);
     fields[0] = try listOfInts(&heap, &.{1});
     const instance: Value = .{ .data = .{ .struct_value = try heap.createStruct(&descriptor, fields) } };
@@ -1251,7 +1251,7 @@ test "uniqueStruct copies a shared instance before it changes" {
     defer heap.deinit();
 
     const metadata = [_]Value.StructType.Field{.{ .name = "x", .kind = .int }};
-    const descriptor: Value.StructType = .{ .name = "Box", .fields = &metadata };
+    const descriptor: Value.StructType = .{ .name = "Box", .display_name = "Box", .fields = &metadata };
     const fields = try testing.allocator.alloc(Value, 1);
     fields[0] = .initInt(1);
 
@@ -1285,7 +1285,7 @@ test "the collector reclaims a cycle through a struct" {
     heap.releaseEnvironment(environment); // the closure holds it now
 
     const metadata = [_]Value.StructType.Field{.{ .name = "action", .kind = .closure }};
-    const descriptor: Value.StructType = .{ .name = "Task", .fields = &metadata };
+    const descriptor: Value.StructType = .{ .name = "Task", .display_name = "Task", .fields = &metadata };
     const fields = try testing.allocator.alloc(Value, 1);
     fields[0] = .{ .data = .{ .closure = closure } };
     const instance = try heap.createStruct(&descriptor, fields);

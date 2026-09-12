@@ -1,0 +1,1 @@
+print(Shapes.origin.x)

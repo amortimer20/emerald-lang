@@ -169,6 +169,18 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - **Qualified type spelling follows namespace aliases.** Direct `Left.Marker`, a focused
   alias, and a namespace alias such as `using L = Left` followed by `L.Marker` all resolve
   in annotations as they do at construction sites.
+- **Runtime descriptors keep identity and display names separately.** The resolver key
+  remains the stable identity used for hashing, while values print the declaration spelling.
+  This matters for private types: `_Marker(1)` now displays as `_Marker(value: 1)` rather
+  than exposing the internal `<file>.em#_Marker` key.
+- **A hoisted struct type is complete while its file initializes.** Reaching its generated
+  constructor during that file's own initialization is no more an initialization cycle than
+  calling one of its hoisted functions. `reach` exempts both, while reads of unfinished
+  value bindings still raise the cycle error.
+- **NaN rejection follows struct fields recursively.** A struct key is accepted only when
+  its field types qualify, and the runtime guard now also descends into the actual field
+  values. Once Emerald gains a way to produce NaN, hiding one inside a struct cannot bypass
+  the dictionary/set rule.
 - **A place is one path, walked once, whichever kind it passes through.**
   `checkAssignment`/`assignElement` used to know only about list and dictionary indices.
   They now walk a path of `Ast.Step`s — index or field — built once by the parser from
@@ -698,7 +710,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 305 unit tests, 168 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 306 unit tests, 170 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -766,20 +778,60 @@ easier to design once there are types to raise.
   `collapse_repeats`, `partition`, `letter?` and `digit?` (general category tables),
   `code_points` and `bytes`, string slicing with ranges, and `type_name`.
 
+### Review findings still open
+
+Six subagents ran an adversarial review of `7214005^..ed868a4` (the fieldless struct
+foundation and required-fields slices) before this handoff was next touched. Four of the
+six independently found the qualified-receiver bug fixed in `1850085`. The private-name,
+module-initialization, and recursively hidden NaN defects found in the same review are fixed
+in the pending changes. The remaining items are maintainability work rather than reproduced
+behavioral failures:
+
+- **Struct field lookup is hand-written twice instead of resolved once.** `evaluateProperty`
+  (`Interpreter.zig`) and `typeOfMember` (`Checker.zig`) each independently scan
+  `descriptor.fields`/`user.fields` by name with their own `std.mem.eql` loop. A tuple
+  position is resolved once, by the parser, into a numeric `Member.position`; a qualified
+  name is resolved once, by the resolver, into `Facts.qualified`. A struct field never got
+  the same treatment, so correctness depends on the checker's scan and the interpreter's
+  scan agreeing by construction rather than by sharing one answer, and the interpreter's
+  `unreachable` after its scan is a landmine if they ever diverge (case sensitivity, Unicode
+  normalization). Worth resolving a field to its position once, the same way, before the
+  object model grows further.
+- **Struct-constructor argument checking is a third copy of function-call checking.**
+  `typeOfCall`'s struct-construction branch, the same function's named-function-call branch,
+  and `typeOfValueCall` all independently implement "arity mismatch → report and
+  type-check-only via `typeArguments`; otherwise pairwise `typeOfExpected` + `assignableTo` +
+  a mismatch report," differing only in wording. A generated constructor has no body and
+  therefore no captures today, so this has not produced a behavioral failure. A shared
+  helper taking the parameter types and a naming scheme would remove the copies before
+  custom constructors or methods add more call sites.
+- **Struct equality duplicates the tuple/list sequence-equality pattern.** The new
+  `.struct_value` case in `Value.equals` — descriptor-identity check, then a paired loop
+  calling `equals` recursively and stopping at the first mismatch — is structurally identical
+  to the `.tuple` case immediately above it, and to `.list`'s. A small `equalsSequence(gpa,
+  a, b)` helper would remove the third copy.
+- **Struct field parsing duplicates parameter parsing.** `parseParameter` already parses
+  "name → reject a `=` default → require `:` → `parseTypeExpression()`", including the
+  message "default parameter values are not available yet". The struct-field loop in
+  `parseStructDeclaration` reproduces the same sequence by hand, with "default field values
+  are not available yet", just checking for the default after the type annotation instead of
+  before it. When defaults are implemented for one, the other's hand-written copy needs the
+  same change or the two diverge.
+- **Every parsed type annotation now allocates, even without a namespace path.**
+  `parseTypeExpression` used to return a zero-copy slice straight from source text in the
+  common case (`Int`, `String`, an element type with no `.`). This slice's qualified-path
+  handling unconditionally builds an `ArrayList(u8)` and copies the name into it before
+  checking whether a `.` ever follows, so every parameter, return type, variable annotation,
+  and now every struct field pays an allocation it did not need before. Start the list only
+  once a `.` is actually seen.
+- **`check()` scans every statement three times to find struct declarations.** Three separate
+  `for (programs) |program| for (program.statements) |statement|` loops each refilter
+  `statement.data == .struct_declaration` — once for identity and hoisting, once for field
+  resolution, once for dictionary-key eligibility. Collecting matches into a flat list on the
+  first pass and iterating that list for the second and third would filter once instead of
+  three times.
 ### Known rough edges
 
-- Constructing a struct whose type is declared in a non-entry file crashes when that
-  construction is reached from another file before the defining file has otherwise run:
-  `using Shapes; print(origin.x)`, where `shapes/data.em` holds both `struct Point` and
-  `var origin = Point(1)`, reports "`shapes/data.em` is still being set up, so `Shapes.Point`
-  cannot be read yet" — a false positive, since nothing actually depends on itself. `reach`'s
-  cycle check exempts a function reached while its own file is still running
-  (`self.functions.contains(key)`), on the reasoning that a function is hoisted and calling
-  one is never "reading an unfinished binding" (14.1); a struct type needs the same
-  exemption and does not have it. This predates the field-assignment slice — it reproduces
-  on a plain read, with no assignment involved — and was found while trying to test this
-  slice's `reach` fix (below) against a struct rather than a list. Left unfixed here since it
-  is a construction bug, not an assignment one.
 - Recursive dictionary-key eligibility currently keeps a fixed path of 256 struct types.
   A cycle is correctly rejected, but an acyclic chain deeper than 256 is conservatively
   rejected too. Ordinary programs will not approach this; replace it with checker-owned
@@ -811,7 +863,8 @@ easier to design once there are types to raise.
 - Section 8.3 rejects NaN as a key, and the guard is there, but no Emerald program can
   reach it yet: `0.0 / 0.0` raises rather than producing a NaN, and there is no `nan`
   literal or operation that makes one. The guard is untested from Emerald for that reason,
-  and should get a conformance case as soon as a NaN can be written.
+  and should get a conformance case as soon as a NaN can be written. The runtime guard does
+  recurse through tuple positions and struct fields, covered directly by unit tests.
 - Removing an entry from a dictionary or set rebuilds its index table, so removing many
   entries one at a time is quadratic in the size of the collection. Insertion order is
   what makes this the simple choice — the entries are an array, so a removal shifts every
@@ -828,9 +881,3 @@ easier to design once there are types to raise.
   the interpreter's unassigned-read error catches it at runtime instead. Extending
   `checkCaptures` to callable values would need the checker to track which function a
   variable holds.
-
-## Pending changes
-
-The struct field-assignment slice and this updated handoff are pending review and commit.
-The preceding required stored-field slice is committed as `ed868a4`, and the fieldless
-struct foundation before it as `7214005`.
