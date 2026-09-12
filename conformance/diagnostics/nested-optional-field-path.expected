@@ -1,0 +1,4 @@
+diagnostics/nested-optional-field-path.em:10:1: this is Point?, so there may be nothing to assign into
+  h.maybe.x = 2
+  ^^^^^^^^^
+Read it into a `var` first, check that for `nothing`, change it, then assign it back.

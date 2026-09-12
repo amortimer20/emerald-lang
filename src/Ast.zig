@@ -192,21 +192,30 @@ pub const TypeExpression = struct {
     question_span: ?Source.Span,
 };
 
-/// `name = value`, or an assignment into a list, `name[i][j] = value`.
+/// `name = value`, or an assignment reached through a path of indices and
+/// fields, `name[i].field[j] = value`.
 pub const Assignment = struct {
-    /// The binding assigned, or the one whose list is changed through
-    /// `indices`.
+    /// The binding assigned, or the one whose place is reached through
+    /// `steps`.
     name: []const u8,
     name_span: Source.Span,
-    /// The index expressions from outermost to innermost, empty for a plain
-    /// assignment. `grid[0][1] = 5` has `[0, 1]`.
-    indices: []const *const Expression = &.{},
+    /// The path from outermost to innermost, empty for a plain assignment.
+    /// `grid[0][1] = 5` has two index steps; `point.x = 1` has one field step.
+    steps: []const Step = &.{},
     /// The whole destination as written, for diagnostics.
     target_span: Source.Span,
     /// The operation a compound assignment applies, or null for a plain `=`.
     /// Section 5.3 lowers `a += b` through the same operation as `a + b`.
     operation: ?BinaryOperator,
     value: *const Expression,
+};
+
+/// One step of an assignment path: an index into a list or dictionary, or a
+/// named struct field. `entry.0` never appears here — a tuple position can
+/// never be assigned to, which the parser rejects before building one.
+pub const Step = union(enum) {
+    index: *const Expression,
+    field: struct { name: []const u8, span: Source.Span },
 };
 
 /// `func(Int, String): Bool` as written. The result is null when the type

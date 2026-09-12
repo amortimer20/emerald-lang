@@ -1,0 +1,4 @@
+diagnostics/const-field-list-mutation.em:6:5: `values` is a `const` field of Bag, so it cannot change
+  bag.values.append(2)
+      ^^^^^^
+Declare it `var values: [Int]` in Bag if it needs to change.

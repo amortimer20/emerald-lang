@@ -1,0 +1,4 @@
+diagnostics/loop-variable-field-assignment.em:8:5: `point` is a loop variable, so a change to it would be lost
+      point.x = 0.0
+      ^^^^^
+It holds a copy of one element. To change the list itself, loop over its indices and assign through them.

@@ -1,0 +1,4 @@
+diagnostics/qualified-struct-field-mutation/main.em:1:1: changing a value through its namespace is not available yet
+  Shapes.scores.append(4)
+  ^^^^^^^^^^^^^
+Bring it into this file with `using`, then change it directly.

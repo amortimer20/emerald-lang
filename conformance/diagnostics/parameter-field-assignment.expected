@@ -1,0 +1,4 @@
+diagnostics/parameter-field-assignment.em:7:5: `point` is a parameter, so a change to it would be lost when the function returns
+      point.x = 1.0
+      ^^^^^
+Copy it into a `var`, change the copy, and return it, as in `var changed = point`.

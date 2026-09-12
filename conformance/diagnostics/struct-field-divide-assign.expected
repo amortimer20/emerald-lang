@@ -1,0 +1,4 @@
+diagnostics/struct-field-divide-assign.em:7:1: `/` produces Float, but this field is Int
+  p.y /= 2
+  ^^^
+`/` always produces a Float. Use `//=` to keep whole numbers.

@@ -1,0 +1,4 @@
+diagnostics/capture-error-through-struct-field.em:11:6: `pick` reads `later`, which is not assigned yet here
+  grid[pick()].values.append(1)
+       ^^^^^^
+Move this call below the line that assigns `later`.

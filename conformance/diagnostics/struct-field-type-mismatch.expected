@@ -1,0 +1,4 @@
+diagnostics/struct-field-type-mismatch.em:7:7: this is String, but `x` is a field holding Float
+  p.x = "far"
+        ^^^^^
+Assign a value of the field's type, or convert it first.

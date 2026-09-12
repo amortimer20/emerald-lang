@@ -1310,7 +1310,7 @@ fn finishStatementFrom(
             .data = .{ .assignment = .{
                 .name = target.name,
                 .name_span = target.name_span,
-                .indices = target.indices,
+                .steps = target.steps,
                 .target_span = expression.span,
                 .operation = assignment.operation,
                 .value = value,
@@ -1386,31 +1386,49 @@ fn finishDestructuringAssignment(
 const Target = struct {
     name: []const u8,
     name_span: Source.Span,
-    indices: []const *const Ast.Expression,
+    steps: []const Ast.Step,
 };
 
-/// What can be assigned to: a name, or an element of a list reached from a
-/// name through indexing, as in `grid[0][1] = 5`.
+/// What can be assigned to: a name, or a place reached from a name through
+/// indexing or field access, as in `grid[0][1] = 5` or `point.x = 1`.
 fn assignmentTarget(self: *Parser, expression: *const Ast.Expression) Error!Target {
-    var indices: std.ArrayList(*const Ast.Expression) = .empty;
+    var steps: std.ArrayList(Ast.Step) = .empty;
     var current = expression;
-    while (current.data == .index) {
-        try indices.append(self.arena, current.data.index.index);
-        current = current.data.index.base;
+    while (true) {
+        switch (current.data) {
+            .index => |index| {
+                try steps.append(self.arena, .{ .index = index.index });
+                current = index.base;
+            },
+            .member => |member| {
+                // `entry.0 = 1`: a tuple position can never be assigned to,
+                // since there is no way to change one after it is built.
+                if (member.position != null) {
+                    return self.report(
+                        current.span,
+                        "a tuple cannot be changed in place",
+                        "Build a new one, as in `pair = (1, pair.1)`.",
+                    );
+                }
+                try steps.append(self.arena, .{ .field = .{ .name = member.name, .span = member.name_span } });
+                current = member.base;
+            },
+            else => break,
+        }
     }
     if (current.data != .name) {
         return self.report(
             expression.span,
             "this cannot be assigned to",
-            "Assign to a name, as in `score = 1`, or to an element of a list, as in `scores[0] = 1`.",
+            "Assign to a name, as in `score = 1`, or to a field or element, as in `point.x = 1` or `scores[0] = 1`.",
         );
     }
     // Collected innermost first; stored outermost first, the order they apply.
-    std.mem.reverse(*const Ast.Expression, indices.items);
+    std.mem.reverse(Ast.Step, steps.items);
     return .{
         .name = current.data.name,
         .name_span = current.span,
-        .indices = try indices.toOwnedSlice(self.arena),
+        .steps = try steps.toOwnedSlice(self.arena),
     };
 }
 

@@ -1,0 +1,4 @@
+diagnostics/optional-field-path.em:7:1: this is Point?, so there may be nothing to assign into
+  maybe.x = 5.0
+  ^^^^^^^
+Check it first with `if maybe != nothing { ... }`.

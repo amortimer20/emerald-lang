@@ -474,6 +474,23 @@ fn unlinkStruct(self: *Heap, instance: *StructValue) void {
     if (instance.next) |next| next.previous = instance.previous;
 }
 
+/// Makes the struct instance in `slot` safe to change in place: when anything
+/// else holds it, the slot gets a copy of its own fields first. This is the
+/// same copy-on-write `unique` and `uniqueMap` already do, which is what
+/// keeps section 10.1's value semantics true once fields can be assigned.
+pub fn uniqueStruct(self: *Heap, slot: *Value) std.mem.Allocator.Error!*StructValue {
+    const shared = slot.data.struct_value;
+    if (shared.references == 1) return shared;
+
+    const fields = try self.gpa.alloc(Value, shared.fields.len);
+    for (shared.fields, fields) |field, *copied| copied.* = retain(field);
+    const copy = try self.createStruct(shared.descriptor, fields);
+
+    shared.references -= 1; // the slot no longer holds it, and someone else does
+    slot.* = .{ .data = .{ .struct_value = copy } };
+    return copy;
+}
+
 fn destroyTuple(self: *Heap, tuple: *Tuple) void {
     self.gpa.free(tuple.items);
     self.gpa.free(tuple.kinds);
@@ -1227,6 +1244,32 @@ test "releasing the last holder of a struct frees it and its fields" {
     heap.release(instance);
     try testing.expect(heap.live_structs == null);
     try testing.expect(heap.live == null);
+}
+
+test "uniqueStruct copies a shared instance before it changes" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const metadata = [_]Value.StructType.Field{.{ .name = "x", .kind = .int }};
+    const descriptor: Value.StructType = .{ .name = "Box", .fields = &metadata };
+    const fields = try testing.allocator.alloc(Value, 1);
+    fields[0] = .initInt(1);
+
+    var a: Value = .{ .data = .{ .struct_value = try heap.createStruct(&descriptor, fields) } };
+    const b = retain(a); // a second holder, as `var b = a` produces
+
+    const copy = try heap.uniqueStruct(&a);
+    copy.fields[0] = .initInt(2);
+
+    // `b` still sees the original instance untouched by the change made
+    // through `a`, which is section 10.1's value semantics.
+    try testing.expectEqual(@as(i64, 1), b.data.struct_value.fields[0].data.int);
+    try testing.expectEqual(@as(i64, 2), a.data.struct_value.fields[0].data.int);
+    try testing.expect(a.data.struct_value != b.data.struct_value);
+
+    heap.release(a);
+    heap.release(b);
+    try testing.expect(heap.live_structs == null);
 }
 
 test "the collector reclaims a cycle through a struct" {

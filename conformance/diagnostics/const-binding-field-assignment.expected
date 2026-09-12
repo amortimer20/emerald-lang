@@ -1,0 +1,4 @@
+diagnostics/const-binding-field-assignment.em:7:1: `p` is a `const`, so its contents cannot change
+  p.x = 5.0
+  ^
+Declare `p` with `var` if it needs to change.

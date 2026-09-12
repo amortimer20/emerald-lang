@@ -1,0 +1,4 @@
+diagnostics/const-field-assignment-nested.em:12:6: `start` is a `const` field of Line, so it cannot change
+  line.start.x = 1.0
+       ^^^^^
+Declare it `var start: Point` in Line if it needs to change.

@@ -1,0 +1,4 @@
+diagnostics/unknown-struct-field-assignment.em:7:3: Point has no field named `z`
+  p.z = 5
+    ^
+Check the field name in the struct declaration.

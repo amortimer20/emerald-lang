@@ -1,0 +1,4 @@
+diagnostics/const-field-assignment.em:7:3: `y` is a `const` field of Point, so it cannot change
+  p.y = 5
+    ^
+Declare it `var y: Int` in Point if it needs to change.

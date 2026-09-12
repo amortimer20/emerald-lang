@@ -411,7 +411,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
         },
 
         .assignment => |assignment| {
-            if (assignment.indices.len > 0) return self.assignElement(assignment);
+            if (assignment.steps.len > 0) return self.assignElement(assignment);
             try self.reach(self.keyOf(assignment.name), assignment.name_span);
             const slot = self.find(assignment.name).?;
             const value = if (assignment.operation) |operation| blk: {
@@ -454,147 +454,185 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
     }
 }
 
-/// `scores[i] = value`, or `grid[i][j] += 1`.
+/// One step of a runtime path, evaluated from `Ast.Step`: an index carries the
+/// value it was evaluated to and the span to blame if it is out of range or
+/// missing, and a field carries only the name, since the checker has already
+/// proved it exists.
+const PlaceStep = union(enum) {
+    index: struct { value: Value, span: Source.Span },
+    field: []const u8,
+};
+
+/// `scores[i] = value`, `grid[i][j] += 1`, or `point.x = 1`.
 ///
-/// The indices are evaluated first and then the value, left to right as
-/// section 5.2 requires. Only then is the list walked, because evaluating the
-/// value can change it: a function it calls can append to the same list. Each
-/// list on the way down is made unique first, which is copy-on-write: a list
-/// another binding also holds is copied before anything in it changes.
+/// Every step's index expression is evaluated first and then the value, left
+/// to right as section 5.2 requires. Only then is the path walked, because
+/// evaluating the value can change it: a function it calls can append to the
+/// same list. Each container on the way down is made unique first, which is
+/// copy-on-write: one another binding also holds is copied before anything in
+/// it changes.
 fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
-    // Every index is evaluated once, in order, before anything is changed. A
-    // dictionary's is a key rather than a position, so they are kept as values.
-    const indices = try self.gpa.alloc(Value, assignment.indices.len);
+    const steps = try self.gpa.alloc(PlaceStep, assignment.steps.len);
     defer {
-        for (indices) |index| self.heap.release(index);
-        self.gpa.free(indices);
+        for (steps) |step| switch (step) {
+            .index => |index| self.heap.release(index.value),
+            .field => {},
+        };
+        self.gpa.free(steps);
     }
-    var evaluated: usize = 0;
+    var built: usize = 0;
     errdefer {
         // Only what was built so far is owned; the rest is undefined.
-        for (indices[evaluated..]) |*index| index.* = Value.nothing;
+        for (steps[built..]) |*step| step.* = .{ .field = "" };
     }
-    while (evaluated < indices.len) : (evaluated += 1) {
-        indices[evaluated] = try self.evaluate(assignment.indices[evaluated]);
+    while (built < steps.len) : (built += 1) {
+        steps[built] = switch (assignment.steps[built]) {
+            .index => |expression| .{ .index = .{ .value = try self.evaluate(expression), .span = expression.span } },
+            .field => |field| .{ .field = field.name },
+        };
     }
 
+    // Section 14.1: a non-entry file initializes on first use, which this is,
+    // exactly as a plain assignment already reaches before finding its slot.
+    try self.reach(self.keyOf(assignment.name), assignment.name_span);
     const binding = self.find(assignment.name).?;
     const root = &binding.value.?;
 
     if (assignment.operation) |operation| {
         // Section 5.2: the current value is read once, before the right side,
         // and held while the right side runs, as for a plain name.
-        const current = Heap.retain(try self.elementValue(root, indices, assignment.indices));
+        const current = Heap.retain(try self.elementValue(root, steps));
         defer self.heap.release(current);
         const right = try self.evaluate(assignment.value);
         defer self.heap.release(right);
         const result = try self.applyBinary(assignment.target_span, operation, current, right);
-        return self.storeElement(root, indices, assignment.indices, result);
+        return self.storeElement(root, steps, result);
     }
 
     const value = try self.evaluate(assignment.value);
-    return self.storeElement(root, indices, assignment.indices, value);
+    return self.storeElement(root, steps, value);
+}
+
+/// The position of `name` among a struct instance's fields. The checker has
+/// already proved it exists, exactly as `evaluateProperty` trusts for a read.
+fn fieldPosition(instance: *const Heap.StructValue, name: []const u8) usize {
+    for (instance.descriptor.fields, 0..) |field, index| {
+        if (std.mem.eql(u8, field.name, name)) return index;
+    }
+    unreachable;
 }
 
 /// What a compound assignment reads before it writes. A dictionary entry that
 /// is not there has no value to add to, which is the one place a bracket on a
 /// dictionary can fail.
-fn elementValue(
-    self: *Interpreter,
-    root: *Value,
-    indices: []const Value,
-    expressions: []const *const Ast.Expression,
-) Error!Value {
+fn elementValue(self: *Interpreter, root: *Value, steps: []const PlaceStep) Error!Value {
     var at = root.*;
-    for (indices, expressions) |index, expression| {
-        if (at.data == .map) {
-            const map = at.data.map;
-            const key = widen(Heap.retain(index), map.key_kind);
-            defer self.heap.release(key);
-            const hash = try self.hashKey(expression.span, key);
-            const entry = try Heap.lookupIn(self.gpa, map, hash, key) orelse
-                return self.raiseMissingKey(expression.span, key);
-            at = entry.value;
-            continue;
-        }
-        const list = at.data.list;
-        const position = try self.checkIndex(list, index.data.int, expression.span);
-        at = list.items.items[position];
-    }
+    for (steps) |step| switch (step) {
+        .field => |name| {
+            const instance = at.data.struct_value;
+            at = instance.fields[fieldPosition(instance, name)];
+        },
+        .index => |index| {
+            if (at.data == .map) {
+                const map = at.data.map;
+                const key = widen(Heap.retain(index.value), map.key_kind);
+                defer self.heap.release(key);
+                const hash = try self.hashKey(index.span, key);
+                const entry = try Heap.lookupIn(self.gpa, map, hash, key) orelse
+                    return self.raiseMissingKey(index.span, key);
+                at = entry.value;
+                continue;
+            }
+            const list = at.data.list;
+            const position = try self.checkIndex(list, index.value.data.int, index.span);
+            at = list.items.items[position];
+        },
+    };
     return at;
 }
 
 /// Stores `value`, taking over one holder of it. Every container on the way is
 /// made safe to change first, which is where section 8.1's value semantics is
-/// enforced for dictionaries as it already was for lists.
-fn storeElement(
-    self: *Interpreter,
-    root: *Value,
-    indices: []const Value,
-    expressions: []const *const Ast.Expression,
-    value: Value,
-) Error!void {
+/// enforced for structs and dictionaries as it already was for lists.
+fn storeElement(self: *Interpreter, root: *Value, steps: []const PlaceStep, value: Value) Error!void {
     var slot = root;
-    for (indices, expressions, 0..) |index, expression, step| {
-        const last = step + 1 == indices.len;
+    for (steps, 0..) |step, step_index| {
+        const last = step_index + 1 == steps.len;
 
-        if (slot.data == .map) {
-            const map = try self.heap.uniqueMap(slot);
-            // Section 4.4: a whole number written where a `Float` key belongs
-            // is stored as one, exactly as a value is. Without this the entry
-            // would print as `2` in a dictionary whose keys are `Float`.
-            const key = widen(Heap.retain(index), map.key_kind);
-            defer self.heap.release(key);
-            const hash = try self.hashKey(expression.span, key);
-            if (last) {
-                // Section 8.3: this inserts or replaces, and never fails.
-                return self.heap.put(map, hash, Heap.retain(key), widen(value, map.value_kind));
-            }
-            const found = switch (try self.heap.locate(map, hash, key)) {
-                .entry => |found| found,
-                .vacancy => return self.raiseMissingKey(expression.span, key),
-            };
-            slot = &map.entries.items[found].value;
-            continue;
-        }
+        switch (step) {
+            .field => |name| {
+                const instance = try self.heap.uniqueStruct(slot);
+                const position = fieldPosition(instance, name);
+                if (last) {
+                    self.heap.release(instance.fields[position]);
+                    instance.fields[position] = widen(value, instance.descriptor.fields[position].kind);
+                    return;
+                }
+                slot = &instance.fields[position];
+            },
+            .index => |index| {
+                if (slot.data == .map) {
+                    const map = try self.heap.uniqueMap(slot);
+                    // Section 4.4: a whole number written where a `Float` key
+                    // belongs is stored as one, exactly as a value is.
+                    // Without this the entry would print as `2` in a
+                    // dictionary whose keys are `Float`.
+                    const key = widen(Heap.retain(index.value), map.key_kind);
+                    defer self.heap.release(key);
+                    const hash = try self.hashKey(index.span, key);
+                    if (last) {
+                        // Section 8.3: this inserts or replaces, and never fails.
+                        return self.heap.put(map, hash, Heap.retain(key), widen(value, map.value_kind));
+                    }
+                    const found = switch (try self.heap.locate(map, hash, key)) {
+                        .entry => |found| found,
+                        .vacancy => return self.raiseMissingKey(index.span, key),
+                    };
+                    slot = &map.entries.items[found].value;
+                    continue;
+                }
 
-        const list = try self.heap.unique(slot);
-        const position = try self.checkIndex(list, index.data.int, expression.span);
-        if (last) {
-            self.heap.release(list.items.items[position]);
-            list.items.items[position] = widen(value, list.element);
-            return;
+                const list = try self.heap.unique(slot);
+                const position = try self.checkIndex(list, index.value.data.int, index.span);
+                if (last) {
+                    self.heap.release(list.items.items[position]);
+                    list.items.items[position] = widen(value, list.element);
+                    return;
+                }
+                slot = &list.items.items[position];
+            },
         }
-        slot = &list.items.items[position];
     }
 }
 
-/// The slot a path of indices reaches, for a method that changes what it finds
-/// there. Every container on the way is made safe to change first.
-fn containerSlot(
-    self: *Interpreter,
-    root: *Value,
-    indices: []const Value,
-    expressions: []const *const Ast.Expression,
-) Error!*Value {
+/// The slot a path of indices and fields reaches, for a method that changes
+/// what it finds there. Every container on the way is made safe to change
+/// first.
+fn containerSlot(self: *Interpreter, root: *Value, steps: []const PlaceStep) Error!*Value {
     var slot = root;
-    for (indices, expressions) |index, expression| {
-        if (slot.data == .map) {
-            const map = try self.heap.uniqueMap(slot);
-            const key = widen(Heap.retain(index), map.key_kind);
-            defer self.heap.release(key);
-            const hash = try self.hashKey(expression.span, key);
-            const found = switch (try self.heap.locate(map, hash, key)) {
-                .entry => |at| at,
-                .vacancy => return self.raiseMissingKey(expression.span, key),
-            };
-            slot = &map.entries.items[found].value;
-            continue;
-        }
-        const list = try self.heap.unique(slot);
-        const position = try self.checkIndex(list, index.data.int, expression.span);
-        slot = &list.items.items[position];
-    }
+    for (steps) |step| switch (step) {
+        .field => |name| {
+            const instance = try self.heap.uniqueStruct(slot);
+            slot = &instance.fields[fieldPosition(instance, name)];
+        },
+        .index => |index| {
+            if (slot.data == .map) {
+                const map = try self.heap.uniqueMap(slot);
+                const key = widen(Heap.retain(index.value), map.key_kind);
+                defer self.heap.release(key);
+                const hash = try self.hashKey(index.span, key);
+                const found = switch (try self.heap.locate(map, hash, key)) {
+                    .entry => |at| at,
+                    .vacancy => return self.raiseMissingKey(index.span, key),
+                };
+                slot = &map.entries.items[found].value;
+                continue;
+            }
+            const list = try self.heap.unique(slot);
+            const position = try self.checkIndex(list, index.value.data.int, index.span);
+            slot = &list.items.items[position];
+        },
+    };
     return slot;
 }
 
@@ -2092,36 +2130,62 @@ fn callReadingMethod(
 }
 
 /// A method that changes its receiver. Section 4.3 and 7.1 let the checker
-/// allow this only on a name, possibly indexed, which is exactly what makes the
-/// slot holding it reachable.
+/// allow this only on a name, possibly reached through indices and struct
+/// fields, which is exactly what makes the slot holding it reachable. A tuple
+/// position never appears on this path: the checker's `walkToPlaceRoot`
+/// rejects one before this runs, since a tuple can never be written through.
 fn callChangingMethod(
     self: *Interpreter,
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
-    var path: std.ArrayList(*const Ast.Expression) = .empty;
+    var path: std.ArrayList(Ast.Step) = .empty;
     defer path.deinit(self.gpa);
     var receiver = member.base;
-    while (receiver.data == .index) {
-        try path.append(self.gpa, receiver.data.index.index);
-        receiver = receiver.data.index.base;
+    while (true) {
+        switch (receiver.data) {
+            .index => |index| {
+                try path.append(self.gpa, .{ .index = index.index });
+                receiver = index.base;
+            },
+            .member => |inner| {
+                try path.append(self.gpa, .{ .field = .{ .name = inner.name, .span = inner.name_span } });
+                receiver = inner.base;
+            },
+            else => break,
+        }
     }
-    std.mem.reverse(*const Ast.Expression, path.items);
+    std.mem.reverse(Ast.Step, path.items);
 
-    const indices = try self.gpa.alloc(Value, path.items.len);
+    const steps = try self.gpa.alloc(PlaceStep, path.items.len);
     defer {
-        for (indices) |index| self.heap.release(index);
-        self.gpa.free(indices);
+        for (steps) |step| switch (step) {
+            .index => |index| self.heap.release(index.value),
+            .field => {},
+        };
+        self.gpa.free(steps);
     }
-    for (path.items, indices) |index_expression, *index| index.* = try self.evaluate(index_expression);
+    var built: usize = 0;
+    errdefer {
+        for (steps[built..]) |*step| step.* = .{ .field = "" };
+    }
+    while (built < steps.len) : (built += 1) {
+        steps[built] = switch (path.items[built]) {
+            .index => |index_expression| .{ .index = .{ .value = try self.evaluate(index_expression), .span = index_expression.span } },
+            .field => |field| .{ .field = field.name },
+        };
+    }
 
     const arguments = try self.evaluateArguments(call.arguments);
     defer self.gpa.free(arguments);
 
+    // Section 14.1: a non-entry file initializes on first use, which this is,
+    // exactly as a plain assignment already reaches before finding its slot.
+    try self.reach(self.keyOf(receiver.data.name), receiver.span);
     const binding = self.find(receiver.data.name).?;
     var slot = &binding.value.?;
-    if (indices.len > 0) slot = try self.containerSlot(slot, indices, path.items);
+    if (steps.len > 0) slot = try self.containerSlot(slot, steps);
 
     if (slot.data == .map) {
         defer for (arguments) |argument| self.heap.release(argument);

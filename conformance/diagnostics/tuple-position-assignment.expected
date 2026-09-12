@@ -1,0 +1,4 @@
+diagnostics/tuple-position-assignment.em:2:1: a tuple cannot be changed in place
+  pair.0 = 2
+  ^^^^^^
+Build a new one, as in `pair = (1, pair.1)`.

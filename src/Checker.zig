@@ -923,7 +923,7 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
 }
 
 fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
-    if (assignment.indices.len > 0) return self.checkElementAssignment(assignment);
+    if (assignment.steps.len > 0) return self.checkPlaceAssignment(assignment);
 
     const binding = self.find(assignment.name) orelse {
         // The resolver reported it.
@@ -981,12 +981,15 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
     binding.assigned = true;
 }
 
-/// `scores[0] = 1`, or `grid[i][j] += 1`: a change to a list's contents, which
-/// section 4.3 forbids for a `const` just as it forbids replacing the list,
-/// and which the list's binding must already hold.
-fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
+/// `scores[0] = 1`, `grid[i][j] += 1`, or `point.x = 1`: a change to what a
+/// name holds without replacing the name's own binding, which section 4.3
+/// forbids for a `const` just as it forbids replacing the whole value.
+fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
     const binding = self.find(assignment.name) orelse {
-        for (assignment.indices) |index| try self.requireIndex(index);
+        for (assignment.steps) |step| switch (step) {
+            .index => |index| try self.requireIndex(index),
+            .field => {},
+        };
         _ = try self.typeOf(assignment.value);
         return;
     };
@@ -1002,69 +1005,134 @@ fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void
         binding.assigned = true;
     }
 
-    // Walk down to the type of the element being replaced.
+    // Walk down to the type of the place being replaced. Section 10.2: a
+    // `const` field freezes what it holds exactly as a `const` binding does,
+    // so a struct step fails here the same way `requireMutable` fails above.
     var element = binding.type;
     var index: usize = 0;
-    while (index < assignment.indices.len) {
+    while (index < assignment.steps.len) {
         if (element.kind == .invalid) break;
-        // Section 4.5: a list that may be absent has no element to assign to.
+        // Section 4.5: a place that may be absent has nothing to assign into.
+        // At the root, `assignment.name` is the thing to check; further down
+        // the path there is no name to write into the correction, since the
+        // optional is a field or an element rather than a binding.
         if (element.optional) {
-            try self.reportWithHelp(
-                assignment.target_span,
-                "this is {f}, so there may be nothing to assign into",
-                .{element},
-                "Check it first with `if {s} != nothing {{ ... }}`.",
-                .{assignment.name},
-            );
+            if (index == 0) {
+                try self.reportWithHelp(
+                    assignment.target_span,
+                    "this is {f}, so there may be nothing to assign into",
+                    .{element},
+                    "Check it first with `if {s} != nothing {{ ... }}`.",
+                    .{assignment.name},
+                );
+            } else {
+                try self.report(
+                    assignment.target_span,
+                    "this is {f}, so there may be nothing to assign into",
+                    .{element},
+                    "Read it into a `var` first, check that for `nothing`, change it, then assign it back.",
+                );
+            }
             element = .invalid;
             break;
         }
-        if (element.kind == .string) {
-            try self.report(
-                assignment.target_span,
-                "a String cannot be changed in place",
-                .{},
-                "Strings are immutable. Build a new one instead, for example with `replace` or interpolation.",
-            );
-            element = .invalid;
-            break;
+
+        switch (assignment.steps[index]) {
+            .field => |field| {
+                if (element.kind != .struct_value) {
+                    try self.report(
+                        field.span,
+                        "{f} has no field named `{s}`",
+                        .{ element, field.name },
+                        "Only a struct has fields.",
+                    );
+                    element = .invalid;
+                    break;
+                }
+                const found = for (element.user.?.fields) |candidate| {
+                    if (std.mem.eql(u8, candidate.name, field.name)) break candidate;
+                } else null;
+                const stored = found orelse {
+                    try self.report(
+                        field.span,
+                        "{f} has no field named `{s}`",
+                        .{ element, field.name },
+                        "Check the field name in the struct declaration.",
+                    );
+                    element = .invalid;
+                    break;
+                };
+                if (!stored.mutable) {
+                    try self.reportWithHelp(
+                        field.span,
+                        "`{s}` is a `const` field of {f}, so it cannot change",
+                        .{ field.name, element },
+                        "Declare it `var {s}: {f}` in {f} if it needs to change.",
+                        .{ field.name, stored.type, element },
+                    );
+                    element = .invalid;
+                    break;
+                }
+                element = stored.type;
+                index += 1;
+            },
+            .index => |index_expression| {
+                if (element.kind == .string) {
+                    try self.report(
+                        assignment.target_span,
+                        "a String cannot be changed in place",
+                        .{},
+                        "Strings are immutable. Build a new one instead, for example with `replace` or interpolation.",
+                    );
+                    element = .invalid;
+                    break;
+                }
+                // Section 8.3: bracket assignment on a dictionary inserts a
+                // new entry or replaces an existing value, so the key is a
+                // key rather than a position and there is no missing one.
+                if (element.kind == .dictionary) {
+                    try self.requireKey(index_expression, element.key.?.*);
+                    element = element.element.?.*;
+                    index += 1;
+                    continue;
+                }
+                try self.requireIndex(index_expression);
+                if (element.kind == .set) {
+                    try self.report(
+                        assignment.target_span,
+                        "a set has no keys to assign to",
+                        .{},
+                        "Put a value in with `add(value)`.",
+                    );
+                    element = .invalid;
+                    break;
+                }
+                if (element.kind != .list) {
+                    try self.report(
+                        assignment.target_span,
+                        "{f} cannot be indexed",
+                        .{element},
+                        "Only a list or a dictionary has elements to assign to.",
+                    );
+                    element = .invalid;
+                    break;
+                }
+                element = element.element.?.*;
+                index += 1;
+            },
         }
-        // Section 8.3: bracket assignment on a dictionary inserts a new entry
-        // or replaces an existing value, so the key is a key rather than a
-        // position and there is no such thing as a missing one.
-        if (element.kind == .dictionary) {
-            try self.requireKey(assignment.indices[index], element.key.?.*);
-            element = element.element.?.*;
-            index += 1;
-            continue;
-        }
-        try self.requireIndex(assignment.indices[index]);
-        if (element.kind == .set) {
-            try self.report(
-                assignment.target_span,
-                "a set has no keys to assign to",
-                .{},
-                "Put a value in with `add(value)`.",
-            );
-            element = .invalid;
-            break;
-        }
-        if (element.kind != .list) {
-            try self.report(
-                assignment.target_span,
-                "{f} cannot be indexed",
-                .{element},
-                "Only a list or a dictionary has elements to assign to.",
-            );
-            element = .invalid;
-            break;
-        }
-        element = element.element.?.*;
-        index += 1;
     }
-    while (index < assignment.indices.len) : (index += 1) {
-        try self.requireIndex(assignment.indices[index]);
+    while (index < assignment.steps.len) : (index += 1) {
+        switch (assignment.steps[index]) {
+            .index => |index_expression| try self.requireIndex(index_expression),
+            .field => {},
+        }
     }
+
+    const last_field: ?[]const u8 = switch (assignment.steps[assignment.steps.len - 1]) {
+        .field => |field| field.name,
+        .index => null,
+    };
 
     if (assignment.operation) |operation| {
         const value = try self.typeOf(assignment.value);
@@ -1072,12 +1140,12 @@ fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void
         if (!result.assignableTo(element)) {
             try self.report(
                 assignment.target_span,
-                "`{s}` produces {f}, but this element is {f}",
-                .{ operation.lexeme(), result, element },
+                "`{s}` produces {f}, but this {s} is {f}",
+                .{ operation.lexeme(), result, if (last_field != null) "field" else "element", element },
                 if (operation == .divide)
                     "`/` always produces a Float. Use `//=` to keep whole numbers."
                 else
-                    "Use an operation whose result the element can hold.",
+                    "Use an operation whose result the place can hold.",
             );
         }
         return;
@@ -1085,12 +1153,21 @@ fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void
 
     const value = try self.typeOfExpected(assignment.value, element);
     if (!value.assignableTo(element)) {
-        try self.report(
-            assignment.value.span,
-            "this is {f}, but the elements of `{s}` are {f}",
-            .{ value, assignment.name, element },
-            "A list holds one type of value. Assign one of that type, or convert it first.",
-        );
+        if (last_field) |name| {
+            try self.report(
+                assignment.value.span,
+                "this is {f}, but `{s}` is a field holding {f}",
+                .{ value, name, element },
+                "Assign a value of the field's type, or convert it first.",
+            );
+        } else {
+            try self.report(
+                assignment.value.span,
+                "this is {f}, but the elements of `{s}` are {f}",
+                .{ value, assignment.name, element },
+                "A list holds one type of value. Assign one of that type, or convert it first.",
+            );
+        }
     }
 }
 
@@ -2803,22 +2880,132 @@ fn typeOfMapMethod(
     return .invalid;
 }
 
+/// What a receiver's path bottoms out at, once every index and struct field
+/// on it has been walked. `.reported` means a `const` field, a tuple
+/// position, or a namespace-qualified place already produced the diagnostic,
+/// and the caller does nothing more.
+const PlaceRoot = union(enum) {
+    reported,
+    root: *const Ast.Expression,
+};
+
+/// The same, but carrying the type of what was reached, when it is known
+/// without asking `typeOf` again. A plain name's type comes straight from its
+/// binding; anything a step's mutability check does not need a type for —
+/// a temporary, a qualified reference — carries none, and an enclosing field
+/// step simply cannot validate through it (the root-level check downstream
+/// still runs on whatever is ultimately reached).
+const Place = union(enum) {
+    reported,
+    root: *const Ast.Expression,
+    typed: struct { root: *const Ast.Expression, type: Type },
+};
+
+/// Walks a receiver down through indices and struct fields to the expression
+/// it is ultimately reached from, checking along the way that nothing on the
+/// path is frozen. Section 4.3 freezes a `const` field exactly as it freezes
+/// a binding, a tuple position can never be written through at all since
+/// there is no way to change a tuple after it is built (8.2), and changing a
+/// value reached through a namespace is not implemented. Shared by
+/// assignment's changing-method check and lists', since both walk the same
+/// kind of path down to the same kind of root.
+fn walkToPlaceRoot(self: *Checker, start: *const Ast.Expression) Error!PlaceRoot {
+    return switch (try self.resolvePlace(start)) {
+        .reported => .reported,
+        .root => |root| .{ .root = root },
+        .typed => |typed| .{ .root = typed.root },
+    };
+}
+
+/// The recursive step behind `walkToPlaceRoot`. Recursing to the root first
+/// and checking each field on the way back out means a struct field's owner
+/// type is read from the binding or the previous step, never from `typeOf`:
+/// the whole receiver chain was already type-checked once by the caller (the
+/// method-call or index type check that reached here), and asking `typeOf`
+/// again would repeat any diagnostic that first check produced along the way
+/// — a capture error inside an index expression, for instance — rather than
+/// only checking what this walk actually needs, which is field mutability.
+fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
+    switch (expression.data) {
+        .index => |index| {
+            const base = switch (try self.resolvePlace(index.base)) {
+                .reported => return .reported,
+                .root => |root| return .{ .root = root },
+                .typed => |typed| typed,
+            };
+            const item = if (base.type.kind == .list or base.type.kind == .dictionary)
+                base.type.element.?.*
+            else
+                null;
+            return if (item) |element| .{ .typed = .{ .root = base.root, .type = element } } else .{ .root = base.root };
+        },
+        .member => |inner| {
+            // `Shapes.scores` reaches a real value, but changing it from
+            // another file is not implemented; this is not the same as
+            // `Shapes` alone being "a namespace, not a value" (checked
+            // elsewhere), so it gets its own diagnostic.
+            if (self.facts.qualified.contains(expression)) {
+                try self.report(
+                    expression.span,
+                    "changing a value through its namespace is not available yet",
+                    .{},
+                    "Bring it into this file with `using`, then change it directly.",
+                );
+                return .reported;
+            }
+            // `entry.0`: a tuple position can never be written through, since
+            // there is no way to change a tuple once it is built (8.2).
+            if (inner.position != null) {
+                try self.report(
+                    expression.span,
+                    "a tuple cannot be changed in place",
+                    .{},
+                    "Build a new one, as in `pair = (1, pair.1)`.",
+                );
+                return .reported;
+            }
+            const base = switch (try self.resolvePlace(inner.base)) {
+                .reported => return .reported,
+                .root => |root| return .{ .root = root },
+                .typed => |typed| typed,
+            };
+            if (base.type.kind != .struct_value) return .{ .root = base.root };
+            for (base.type.user.?.fields) |field| {
+                if (!std.mem.eql(u8, field.name, inner.name)) continue;
+                if (!field.mutable) {
+                    try self.reportWithHelp(
+                        inner.name_span,
+                        "`{s}` is a `const` field of {f}, so it cannot change",
+                        .{ inner.name, base.type },
+                        "Declare it `var {s}: {f}` in {f} if it needs to change.",
+                        .{ inner.name, field.type, base.type },
+                    );
+                    return .reported;
+                }
+                return .{ .typed = .{ .root = base.root, .type = field.type } };
+            }
+            return .{ .root = base.root };
+        },
+        .name => {
+            if (self.find(expression.data.name)) |binding| {
+                return .{ .typed = .{ .root = expression, .type = binding.type } };
+            }
+            return .{ .root = expression };
+        },
+        else => return .{ .root = expression },
+    }
+}
+
 /// Section 4.3 and 7.1: a method that changes its receiver cannot be called on
 /// a `const`, a parameter, a loop variable, or a temporary.
 fn requireMutableReceiver(self: *Checker, member: Ast.Expression.Member, name: []const u8) Error!void {
-    var receiver = member.base;
-    while (receiver.data == .index) receiver = receiver.data.index.base;
-    if (receiver.data == .name) {
-        const binding = self.find(receiver.data.name) orelse return;
-        return self.requireMutable(receiver.data.name, receiver.span, binding.*);
-    }
-    if (receiver.data == .member) {
-        return self.report(
-            receiver.span,
-            "changing a collection through a struct field is not available yet",
-            .{},
-            "Read the field without changing it for now; struct field mutation is the next object-model slice.",
-        );
+    const root = switch (try self.walkToPlaceRoot(member.base)) {
+        .reported => return,
+        .root => |root| root,
+    };
+    if (root.data == .name) {
+        const binding = self.find(root.data.name) orelse return;
+        return self.requireMutable(root.data.name, root.span, binding.*);
     }
     try self.reportWithHelp(
         member.name_span,
@@ -2956,18 +3143,11 @@ fn requireArity(
 /// one a program can see again: held by a `var`, directly or through indexing.
 /// Changing a temporary, such as the result of a call, would be lost at once.
 fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
-    var receiver = member.base;
-    while (receiver.data == .index) receiver = receiver.data.index.base;
-
-    if (receiver.data != .name) {
-        if (receiver.data == .member) {
-            return self.report(
-                receiver.span,
-                "changing a collection through a struct field is not available yet",
-                .{},
-                "Read the field without changing it for now; struct field mutation is the next object-model slice.",
-            );
-        }
+    const root = switch (try self.walkToPlaceRoot(member.base)) {
+        .reported => return,
+        .root => |root| root,
+    };
+    if (root.data != .name) {
         return self.reportWithHelp(
             member.base.span,
             "`{s}` changes a list, but this list is a temporary value, so the change would be lost",
@@ -2976,8 +3156,8 @@ fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
             .{member.name},
         );
     }
-    const binding = self.find(receiver.data.name) orelse return;
-    try self.requireMutable(receiver.data.name, receiver.span, binding.*);
+    const binding = self.find(root.data.name) orelse return;
+    try self.requireMutable(root.data.name, root.span, binding.*);
 }
 
 /// A member that does not exist, with the Emerald name for what the writer

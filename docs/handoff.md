@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Codex after the required-fields object-model sub-slice.
+Updated: 2026-09-12. Prepared by Claude after the struct field-assignment sub-slice.
 
 ## Current milestone
 
@@ -20,7 +20,11 @@ Their generated constructor takes one positional argument per field in declarati
 field reads, numeric widening into fields, structural display and equality, namespace
 identity, qualified type annotations, recursive dictionary-key eligibility, and value
 semantics for values held by fields all work end to end. Fieldless structs retain their
-generated zero-argument constructor. Field assignment is the next sub-slice.
+generated zero-argument constructor. Assignment now reaches through a path of indices and
+struct fields, as in `line.start.x = 1`, `points[0].x = 1`, and `bag.values.append(2)`,
+with copy-on-write on the struct instance and section 4.3's `const` checked at every field
+the path passes through, not only at the root binding. Defaults, custom constructors,
+`self`, methods, and properties are the remaining sub-slices.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -158,10 +162,6 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   to an arena-owned descriptor carrying names and runtime kinds. Reference counting handles
   ordinary lifetimes, and the collector traces struct fields and reclaims cycles through
   closures. This keeps the universal `Value` pointer-sized.
-- **Sharing the instance buffer is currently unobservable.** There is no field assignment
-  yet. The next slice must copy a shared struct instance before changing a `var` field, the
-  same copy-on-write technique lists and dictionaries use, to preserve section 10.1's value
-  semantics.
 - **Key eligibility waits for every field type.** A struct may be a dictionary key only
   when its fields recursively qualify. The checker deliberately validates this after all
   struct metadata is complete, so a field that refers to a later declaration gets the same
@@ -169,6 +169,60 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - **Qualified type spelling follows namespace aliases.** Direct `Left.Marker`, a focused
   alias, and a namespace alias such as `using L = Left` followed by `L.Marker` all resolve
   in annotations as they do at construction sites.
+- **A place is one path, walked once, whichever kind it passes through.**
+  `checkAssignment`/`assignElement` used to know only about list and dictionary indices.
+  They now walk a path of `Ast.Step`s — index or field — built once by the parser from
+  `a.b[i].c`, and `requireMutableReceiver` and `requireChangeable` (the two changing-method
+  checks, for dictionaries and lists respectively) share the same walk through a new
+  `walkToPlaceRoot`, so `bag.values.append(2)` and `bag.values = other` are checked by one
+  piece of code apiece rather than two. `Heap.uniqueStruct` mirrors `unique` and `uniqueMap`
+  exactly, so `line.start.x = 1` copies `line`'s instance the first time it is shared, the
+  same way `scores.append(1)` already copied a shared list.
+- **`const` freezes a field where it sits, not only at the top.** `line.start.x = 1` is
+  rejected when `start` is `const`, even though `line` itself is a `var` — section 4.3 says
+  a `const` field "can be neither replaced nor changed", which only becomes checkable once a
+  field can hold another struct. `walkToPlaceRoot` checks every field step's mutability on
+  the way down. The first version learned each step's owner type by calling `self.typeOf` on
+  it again, on the theory that the caller had already type-checked the whole chain once and a
+  successful `typeOf` reports nothing. That theory was wrong: a capture error inside an index
+  expression, such as `grid[pick()].values.append(1)` where `pick` reads an unassigned module
+  variable, is reported on a successful call too, so the diagnostic printed twice. It now
+  recurses to the root first and carries each step's type back out through the recursion —
+  from the root binding, or from the previous step's field type — so no subexpression is
+  type-checked a second time. Guarded by `diagnostics/capture-error-through-struct-field`.
+- **A tuple position can never be part of a mutable path.** `pair.0 = 1` is rejected in the
+  parser, before a type even exists to consult, because section 8.2 gives no way to write
+  through a tuple position at all. The same rejection covers `pair.0.append(x)` in
+  `walkToPlaceRoot`, so a list held in a tuple position cannot be mutated through the
+  position either — a tuple position has no `var`/`const` distinction because nothing about
+  it can ever change, unlike a struct field.
+- **Assigning through a namespace was deliberately not attempted, and needed two different
+  answers.** For plain `=`, `Shapes.origin.x = 1` reaches the resolver as the bare name
+  `Shapes`, because member access is walked the same way any other step is; the resolver's
+  existing "`Shapes` is a namespace, not a value" diagnostic already covers it correctly,
+  with no new code. A changing method does not go through that resolver path at all — it is
+  an ordinary call, so `Shapes.scores.append(4)` resolves `Shapes.scores` to a real key
+  through the same `qualify` the resolver already uses for `Shapes.area(3)`, and `check`
+  reported nothing. `walkToPlaceRoot` now checks `self.facts.qualified` at each member step
+  before treating it as a field, and reports its own "changing a value through its namespace
+  is not available yet" rather than reaching a root that is not a real binding. Found by
+  running the program rather than by reading the code: it printed "No problems found" and
+  then crashed. Guarded by `diagnostics/qualified-struct-field-mutation`.
+- **`assignElement` and `callChangingMethod` were missing lazy initialization, an existing
+  bug this slice made easier to hit.** Section 14.1's rule is that a non-entry file
+  initializes on first use, and every access to a module-level key is supposed to call
+  `reach` first; plain assignment already did this, but index and field assignment, and
+  every changing method, went straight to `self.find(name).?` and crashed once the name
+  belonged to a file that had not run yet. `using Shapes` followed by `scores[0] = 1` or
+  `scores.append(1)` crashed before this slice too — confirmed by stashing the whole diff and
+  reproducing it on the prior commit — so this was not a new defect, only a newly exercised
+  one. Both functions now call `reach` before `find`, matching plain assignment. Guarded by
+  the project case `run/lazy-module-list-mutation`.
+- **A field reached through an optional needs its own correction.** `h.maybe.x = 1`, where
+  `maybe` is a field rather than a binding, cannot be told to "check `h` first" — `h` is not
+  optional, `h.maybe` is, and there is no name to write into the message the way there is at
+  the root. It now says to read the value into a `var`, check that, and assign it back.
+  Guarded by `diagnostics/nested-optional-field-path`.
 
 ### Dictionary and set decisions worth knowing
 
@@ -617,12 +671,14 @@ still open.
 
 ## Next concrete step
 
-Continue section 20's slice 12 with assignment to stored struct fields. Permit assignment
-only through a mutable struct binding and only to a `var` field, preserve `const` field and
-binding diagnostics, widen `Int` when a `Float` field is assigned, and add copy-on-write for
-the struct instance before mutation so an earlier assignment or argument keeps its own
-value. Nested field assignment, defaults, custom constructors, methods, and properties
-should remain later sub-slices so this rule is runnable and testable on its own.
+Continue section 20's slice 12. Assignment to stored fields is done, including through
+nested paths, mixed list and dictionary indices, and changing methods reached through a
+field. What remains for the object model: default field values (10.2, run once per
+construction, in declaration order, only when no constructor argument replaced them),
+custom constructors (`self.x = ...`, `super(...)`, `self(...)`), `self` and instance
+methods, and properties (10.3, read-only `const` and writable `var` with `get`/`set`).
+Custom constructors are the natural next piece, since defaults and methods both need
+`self` to already work, and a constructor is where `self` is first meaningful.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -642,10 +698,19 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 304 unit tests, 151 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 305 unit tests, 168 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
+- The field-assignment slice's own copy-on-write unit test was confirmed non-vacuous:
+  disabling `Heap.uniqueStruct`'s copy (forcing it to always return the shared instance)
+  fails both that test and `run/struct-field-assignment`, and both pass again once it is
+  restored. Checked in Debug and ReleaseSafe.
+- An adversarial review of this slice, run against the diff before it was committed, found
+  two real regressions (the duplicate diagnostic and the qualified-receiver crash, both
+  described above) and one pre-existing crash the diff made easier to reach (the missing
+  `reach` calls). All three were reproduced by running the program, not only by reading the
+  diff, and each now has its own conformance case so it cannot come back silently.
 - Every host-stack probe — 100,000 nested parentheses, 100,000 prefix minuses, a
   1,000,000-term flat sum, unbounded recursion, and 1,000 calls at 250 levels of nesting —
   ends in the right answer or a clean diagnostic, identically in Debug and ReleaseSafe.
@@ -688,9 +753,7 @@ easier to design once there are types to raise.
 - Section 6.2's `if ... then ... else` expression. `unless` is no longer part of the language
   and is not a keyword.
 - From section 8: the rest of section 8.6's rich vocabulary beyond `each`, `map`, `find`,
-  and `find_index`, slicing with ranges, `type_name`, and a mutating method through a struct
-  field, which arrives with field assignment. It is currently rejected with a focused
-  diagnostic rather than reaching an unsupported runtime path.
+  and `find_index`, slicing with ranges, and `type_name`.
 - Range values: ranges and counts stored in names, `random(1..6)`, and the block forms of
   `up_to`, `down_to`, and `times` are rejected ("a range can only be looped over so far")
   until range values land. Blocks now exist, so only the range value itself is missing. In a
@@ -705,6 +768,18 @@ easier to design once there are types to raise.
 
 ### Known rough edges
 
+- Constructing a struct whose type is declared in a non-entry file crashes when that
+  construction is reached from another file before the defining file has otherwise run:
+  `using Shapes; print(origin.x)`, where `shapes/data.em` holds both `struct Point` and
+  `var origin = Point(1)`, reports "`shapes/data.em` is still being set up, so `Shapes.Point`
+  cannot be read yet" — a false positive, since nothing actually depends on itself. `reach`'s
+  cycle check exempts a function reached while its own file is still running
+  (`self.functions.contains(key)`), on the reasoning that a function is hoisted and calling
+  one is never "reading an unfinished binding" (14.1); a struct type needs the same
+  exemption and does not have it. This predates the field-assignment slice — it reproduces
+  on a plain read, with no assignment involved — and was found while trying to test this
+  slice's `reach` fix (below) against a struct rather than a list. Left unfixed here since it
+  is a construction bug, not an assignment one.
 - Recursive dictionary-key eligibility currently keeps a fixed path of 256 struct types.
   A cycle is correctly rejected, but an acyclic chain deeper than 256 is conservatively
   rejected too. Ordinary programs will not approach this; replace it with checker-owned
@@ -756,5 +831,6 @@ easier to design once there are types to raise.
 
 ## Pending changes
 
-The required stored-field slice and this updated handoff are pending review and commit.
-The preceding fieldless struct foundation is committed as `7214005`.
+The struct field-assignment slice and this updated handoff are pending review and commit.
+The preceding required stored-field slice is committed as `ed868a4`, and the fieldless
+struct foundation before it as `7214005`.

@@ -830,7 +830,10 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         },
 
         .assignment => |assignment| {
-            for (assignment.indices) |index| try self.walkExpression(index);
+            for (assignment.steps) |step| switch (step) {
+                .index => |index| try self.walkExpression(index),
+                .field => {},
+            };
             try self.walkExpression(assignment.value);
 
             try self.checkAmbiguous(assignment.name, assignment.name_span);
@@ -849,14 +852,14 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
 
             // A compound assignment reads the current value first, so it needs
             // the variable to be assigned already; a plain one does not. An
-            // assignment into a list reads the list it changes.
-            if (assignment.operation != null or assignment.indices.len > 0) {
+            // assignment into a place reads whatever it changes.
+            if (assignment.operation != null or assignment.steps.len > 0) {
                 try self.noteRead(found);
             }
 
-            // Changing a list's contents is a question about its type, which
+            // Changing what a name holds is a question about its type, which
             // the checker answers, since section 4.3's `const` covers both.
-            if (assignment.indices.len > 0) return;
+            if (assignment.steps.len > 0) return;
 
             if (!found.binding.mutable) {
                 try self.reportReadOnly(assignment.name, assignment.name_span, found.binding.kind);
