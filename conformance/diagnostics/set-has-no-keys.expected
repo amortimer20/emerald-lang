@@ -1,0 +1,4 @@
+diagnostics/set-has-no-keys.em:2:7: a set has no keys to look up
+  print(seen[0])
+        ^^^^
+A set only records what is in it. Ask with `contains?(value)`.

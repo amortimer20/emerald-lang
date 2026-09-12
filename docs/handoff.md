@@ -1,14 +1,15 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Claude after the tuple slice.
+Updated: 2026-09-12. Prepared by Claude after the dictionaries and sets slice.
 
 ## Current milestone
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
-optionals slice the user chose to do before the project slice, and a tuple slice split out
+optionals slice the user chose to do before the project slice, a tuple slice split out
 of section 8's collections because dictionaries need it (8.6 iterates a dictionary as
-`(key, value)` tuples and states there is no second implicit calling convention). Section 20 was renumbered
+`(key, value)` tuples and states there is no second implicit calling convention), and the
+dictionaries and sets slice that finishes section 8's collections. Section 20 was renumbered
 during the callable slice: the old slice 9 bundled closures with the collector, and they
 are now slice 9 (callables) and slice 10 (the managed heap). The whole frontend pipeline of
 section 19.2 exists: source manager, lexer, parser, name resolver, type checker,
@@ -30,7 +31,10 @@ a directory with a `main.em` is a program of many files, directories are namespa
 `using` shortens them, a leading underscore keeps a name inside its file, and a file that
 is not the entry initializes once, on first use. Tuples work: the `(String, Int)` type and
 `("score", 10)` literal, zero-based positions, equality position by position, and
-unpacking in declarations, `for` bindings, block parameters, and assignment. Memory is
+unpacking in declarations, `for` bindings, block parameters, and assignment. Dictionaries
+and sets work: `[String: Int]` and `{String}`, their literals, bracket lookup producing an
+optional, bracket assignment, insertion order, equality by contents rather than order, and
+the essential vocabulary of 8.5. Memory is
 managed: reference counting reclaims promptly
 and section 19.5's mark-and-sweep collector reclaims the cycles counting cannot, so a loop
 that keeps making blocks runs in flat memory. Every expression has a static type before
@@ -128,6 +132,31 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Dictionary and set decisions worth knowing
+
+- **A set is a dictionary that stores no values.** One `Heap.Map` backs both, with an
+  `is_set` flag deciding what it stores and how it prints. Section 8.4 asks the same things
+  of both — insertion order, equality by contents, deterministic iteration — so writing
+  them twice would have meant getting the same rules right twice.
+- **Insertion order is the array; the hash table holds indices into it.** That is what
+  makes 8.4's rules fall out rather than be maintained: replacing a value keeps its
+  position because the entry does not move, and removing and reinserting a key moves it to
+  the end because appending does that.
+- **Every entry keeps the hash it was stored under.** Hashing a string means normalizing it
+  (9.2), which is the expensive part, so a stored hash makes rebuilding the table after a
+  removal cheap and lets a lookup rule out almost every entry before comparing anything.
+- **Hashing has to agree with `==`, and `1 == 1.0`.** So `Int` and `Float` share a hash tag
+  and a whole `Float` hashes as the `Int` it equals. In practice a dictionary's keys are
+  all one static type and are widened on the way in, so the case cannot arise today — but
+  the invariant the file claims is then true unconditionally rather than by accident.
+- **Printing says which of the three a collection is.** The literals overlap, so an empty
+  dictionary prints `[:]` and a set prints the braces of its type. Recorded in 8.2 and
+  section 22.
+- **A method is reached exactly once, whichever kind its receiver is.** An earlier version
+  probed the receiver by evaluating it to see whether it was a map, which made
+  `input().to_int()` read two lines. Dispatch now decides from the method's name whether it
+  changes its receiver, and reaches the receiver once either way.
 
 ### Tuple decisions worth knowing
 
@@ -551,25 +580,22 @@ still open.
 
 ## Next concrete step
 
-Dictionaries and sets, the rest of section 8. Tuples are in place, so section 8.6's
-`(key, value)` iteration can be written as specified. What remains is an insertion-ordered
-hash map in the heap with the counting and copy-on-write lists already have, hashing and
-equality for eligible keys (8.3), bracket lookup producing an optional (8.3), the essential
-methods of 8.5, and the `{T}` set type whose literal takes its kind from the expected type
-(8.2).
-
-After that, section 20's slice 12, the object model: structs, classes, construction, properties,
+Section 20's slice 12, the object model: structs, classes, construction, properties,
 inheritance, traits, operators, and enums, in dependency order. It is by far the largest
 remaining piece and everything after it depends on it, so it will want splitting into
 several slices of its own — structs and construction first, since they need no
 inheritance.
 
-Finishing section 8 first has one argument that the object model's size does not answer:
-`Type` still has a fixed `Kind` enum and a `ListMethod` table, and the object model has to
-replace both with something that holds user-declared types. Adding dictionaries and sets to
-the current shape is cheap; adding them afterwards means writing them against whatever that
-shape becomes. Either order is defensible, and the user may prefer to take the big piece
-while the language is still small.
+Section 8's collections are now finished, which was the argument for doing them first:
+`Type` still has a fixed `Kind` enum, and the object model has to replace it with something
+that holds user-declared types. Everything section 8 asked for is in place before that
+happens.
+
+The remaining alternative is section 13, errors and tests: typed errors, `raise`,
+`try`/`catch`/`finally`, `assert`, and `emerald test`. It is smaller than the object model
+and it would make the conformance suite able to test failure directly rather than through
+the runner. But the object model is what the language is missing most, and errors are
+easier to design once there are types to raise.
 
 ## Validation and blockers
 
@@ -578,7 +604,7 @@ while the language is still small.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 282 unit tests, 130 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 303 unit tests, 140 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -665,6 +691,14 @@ while the language is still small.
   the program got faster rather than slower (0.09 s against 0.17 s) because it allocates
   less. The threshold is 4,096 live objects, doubling to twice the surviving count after
   each collection.
+- Section 8.3 rejects NaN as a key, and the guard is there, but no Emerald program can
+  reach it yet: `0.0 / 0.0` raises rather than producing a NaN, and there is no `nan`
+  literal or operation that makes one. The guard is untested from Emerald for that reason,
+  and should get a conformance case as soon as a NaN can be written.
+- Removing an entry from a dictionary or set rebuilds its index table, so removing many
+  entries one at a time is quadratic in the size of the collection. Insertion order is
+  what makes this the simple choice — the entries are an array, so a removal shifts every
+  later one. A tombstone scheme would fix it if a real program ever notices.
 - Narrowing does not cross `or`. `if value == nothing or score > value` is rejected, while
   the same test written as `if`/`else` is accepted. Section 4.5's narrowing is applied to
   branches and loop bodies but not to the right operand of a short-circuiting operator,
@@ -680,4 +714,4 @@ while the language is still small.
 
 ## Pending changes
 
-None. The tuple slice is committed. Verify against Git before continuing.
+None. The dictionaries and sets slice is committed. Verify against Git before continuing.

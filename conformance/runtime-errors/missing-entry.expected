@@ -1,0 +1,4 @@
+runtime-errors/missing-entry.em:2:8: there is no entry for "blue"
+  counts["blue"] += 1
+         ^^^^^^
+Put a value there first, as in `scores[key] = 0`, or check with `contains_key?(key)`.

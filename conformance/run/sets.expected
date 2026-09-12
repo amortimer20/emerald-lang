@@ -1,0 +1,10 @@
+{"red", "green"} 2
+{"red", "green", "blue"}
+true false
+{"red", "blue"} false
+red
+blue
+["RED", "BLUE"]
+{1, 2, 3}
+true
+{} true

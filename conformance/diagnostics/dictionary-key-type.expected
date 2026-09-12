@@ -1,0 +1,4 @@
+diagnostics/dictionary-key-type.em:2:12: this is Int, but the dictionary's keys are String
+  print(ages[1])
+             ^
+Look it up with a key of the dictionary's own type.

@@ -1219,6 +1219,10 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
         },
         .lambda => |lambda| try self.walkLambda(lambda),
         .tuple_literal => |positions| for (positions) |position| try self.walkExpression(position),
+        .dictionary_literal => |entries| for (entries) |entry| {
+            try self.walkExpression(entry.key);
+            try self.walkExpression(entry.value);
+        },
     }
 }
 

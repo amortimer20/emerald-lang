@@ -1,0 +1,17 @@
+["Ava": 12, "Noah": 13] 2 false
+12 nothing 0
+["Ava": 20, "Noah": 13, "Mia": 9]
+["Ava", "Noah", "Mia"] [20, 13, 9]
+[("Ava", 20), ("Noah", 13), ("Mia", 9)]
+true false
+true false
+13 nothing
+["Ava": 20, "Mia": 9]
+["Ava": 1, "Mia": 9, "Zed": 40]
+Ava 1
+Mia 9
+Zed 40
+["Ava=1", "Mia=9", "Zed=40"]
+true
+false
+[:] true

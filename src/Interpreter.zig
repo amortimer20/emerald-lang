@@ -438,10 +438,20 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
 /// list on the way down is made unique first, which is copy-on-write: a list
 /// another binding also holds is copied before anything in it changes.
 fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
-    const indices = try self.gpa.alloc(i64, assignment.indices.len);
-    defer self.gpa.free(indices);
-    for (assignment.indices, indices) |expression, *index| {
-        index.* = (try self.evaluate(expression)).data.int;
+    // Every index is evaluated once, in order, before anything is changed. A
+    // dictionary's is a key rather than a position, so they are kept as values.
+    const indices = try self.gpa.alloc(Value, assignment.indices.len);
+    defer {
+        for (indices) |index| self.heap.release(index);
+        self.gpa.free(indices);
+    }
+    var evaluated: usize = 0;
+    errdefer {
+        // Only what was built so far is owned; the rest is undefined.
+        for (indices[evaluated..]) |*index| index.* = Value.nothing;
+    }
+    while (evaluated < indices.len) : (evaluated += 1) {
+        indices[evaluated] = try self.evaluate(assignment.indices[evaluated]);
     }
 
     const binding = self.find(assignment.name).?;
@@ -450,41 +460,129 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
     if (assignment.operation) |operation| {
         // Section 5.2: the current value is read once, before the right side,
         // and held while the right side runs, as for a plain name.
-        const current = Heap.retain((try self.elementSlot(root, indices, assignment.indices)).slot.*);
+        const current = Heap.retain(try self.elementValue(root, indices, assignment.indices));
         defer self.heap.release(current);
         const right = try self.evaluate(assignment.value);
         defer self.heap.release(right);
         const result = try self.applyBinary(assignment.target_span, operation, current, right);
-        const place = try self.elementSlot(root, indices, assignment.indices);
-        self.heap.release(place.slot.*);
-        place.slot.* = widen(result, place.list.element);
-        return;
+        return self.storeElement(root, indices, assignment.indices, result);
     }
 
     const value = try self.evaluate(assignment.value);
-    const place = try self.elementSlot(root, indices, assignment.indices);
-    self.heap.release(place.slot.*);
-    place.slot.* = widen(value, place.list.element);
+    return self.storeElement(root, indices, assignment.indices, value);
 }
 
-const Place = struct { list: *Heap.List, slot: *Value };
-
-/// Walks from the list in `root` through `indices` to one element, making each
-/// list on the way safe to change and checking every index against it.
-fn elementSlot(
+/// What a compound assignment reads before it writes. A dictionary entry that
+/// is not there has no value to add to, which is the one place a bracket on a
+/// dictionary can fail.
+fn elementValue(
     self: *Interpreter,
     root: *Value,
-    indices: []const i64,
+    indices: []const Value,
     expressions: []const *const Ast.Expression,
-) Error!Place {
-    var slot = root;
-    var list: *Heap.List = undefined;
+) Error!Value {
+    var at = root.*;
     for (indices, expressions) |index, expression| {
-        list = try self.heap.unique(slot);
-        const position = try self.checkIndex(list, index, expression.span);
+        if (at.data == .map) {
+            const map = at.data.map;
+            const key = widen(Heap.retain(index), map.key_kind);
+            defer self.heap.release(key);
+            const hash = try self.hashKey(expression.span, key);
+            const entry = try Heap.lookupIn(self.gpa, map, hash, key) orelse
+                return self.raiseMissingKey(expression.span, key);
+            at = entry.value;
+            continue;
+        }
+        const list = at.data.list;
+        const position = try self.checkIndex(list, index.data.int, expression.span);
+        at = list.items.items[position];
+    }
+    return at;
+}
+
+/// Stores `value`, taking over one holder of it. Every container on the way is
+/// made safe to change first, which is where section 8.1's value semantics is
+/// enforced for dictionaries as it already was for lists.
+fn storeElement(
+    self: *Interpreter,
+    root: *Value,
+    indices: []const Value,
+    expressions: []const *const Ast.Expression,
+    value: Value,
+) Error!void {
+    var slot = root;
+    for (indices, expressions, 0..) |index, expression, step| {
+        const last = step + 1 == indices.len;
+
+        if (slot.data == .map) {
+            const map = try self.heap.uniqueMap(slot);
+            // Section 4.4: a whole number written where a `Float` key belongs
+            // is stored as one, exactly as a value is. Without this the entry
+            // would print as `2` in a dictionary whose keys are `Float`.
+            const key = widen(Heap.retain(index), map.key_kind);
+            defer self.heap.release(key);
+            const hash = try self.hashKey(expression.span, key);
+            if (last) {
+                // Section 8.3: this inserts or replaces, and never fails.
+                return self.heap.put(map, hash, Heap.retain(key), widen(value, map.value_kind));
+            }
+            const found = switch (try self.heap.locate(map, hash, key)) {
+                .entry => |found| found,
+                .vacancy => return self.raiseMissingKey(expression.span, key),
+            };
+            slot = &map.entries.items[found].value;
+            continue;
+        }
+
+        const list = try self.heap.unique(slot);
+        const position = try self.checkIndex(list, index.data.int, expression.span);
+        if (last) {
+            self.heap.release(list.items.items[position]);
+            list.items.items[position] = widen(value, list.element);
+            return;
+        }
         slot = &list.items.items[position];
     }
-    return .{ .list = list, .slot = slot };
+}
+
+/// The slot a path of indices reaches, for a method that changes what it finds
+/// there. Every container on the way is made safe to change first.
+fn containerSlot(
+    self: *Interpreter,
+    root: *Value,
+    indices: []const Value,
+    expressions: []const *const Ast.Expression,
+) Error!*Value {
+    var slot = root;
+    for (indices, expressions) |index, expression| {
+        if (slot.data == .map) {
+            const map = try self.heap.uniqueMap(slot);
+            const key = widen(Heap.retain(index), map.key_kind);
+            defer self.heap.release(key);
+            const hash = try self.hashKey(expression.span, key);
+            const found = switch (try self.heap.locate(map, hash, key)) {
+                .entry => |at| at,
+                .vacancy => return self.raiseMissingKey(expression.span, key),
+            };
+            slot = &map.entries.items[found].value;
+            continue;
+        }
+        const list = try self.heap.unique(slot);
+        const position = try self.checkIndex(list, index.data.int, expression.span);
+        slot = &list.items.items[position];
+    }
+    return slot;
+}
+
+fn raiseMissingKey(self: *Interpreter, span: Source.Span, key: Value) Error {
+    var written: std.Io.Writer.Allocating = .init(self.arena);
+    key.write(&written.writer, true) catch return error.OutOfMemory;
+    return self.raiseFmt(
+        span,
+        "there is no entry for {s}",
+        .{written.written()},
+        "Put a value there first, as in `scores[key] = 0`, or check with `contains_key?(key)`.",
+    );
 }
 
 /// Section 5.4: an index outside the list is an error that names the index and
@@ -625,9 +723,57 @@ fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
         return;
     }
 
+    // Section 8.4: a dictionary or set is visited in insertion order, and the
+    // loop sees the collection as it was when it began. The entries are copied
+    // first, so changing the collection inside the body cannot move the ground
+    // underneath the walk.
+    if (iterable.data == .map) {
+        const map = iterable.data.map;
+        const entries = try self.gpa.dupe(Heap.Map.Entry, map.entries.items);
+        defer self.gpa.free(entries);
+        for (entries) |entry| {
+            _ = Heap.retain(entry.key);
+            _ = Heap.retain(entry.value);
+        }
+        // `pending` moves past an entry before anything consumes it, so a
+        // `break` or an error releases exactly the ones still untouched.
+        var pending: usize = 0;
+        defer for (entries[pending..]) |entry| {
+            self.heap.release(entry.key);
+            self.heap.release(entry.value);
+        };
+        while (pending < entries.len) {
+            const entry = entries[pending];
+            pending += 1;
+            // A set's value is `nothing`, which holds nothing to release.
+            const item = if (map.is_set) entry.key else try self.entryTuple(map, entry);
+            if (!try self.executeIteration(loop, item)) return;
+        }
+        return;
+    }
+
     for (iterable.data.list.items.items) |item| {
         if (!try self.executeIteration(loop, Heap.retain(item))) return;
     }
+}
+
+/// Section 8.6's `(key, value)`, which is the one item a dictionary's block and
+/// `for` loop receive. Takes over one holder of each half.
+fn entryTuple(self: *Interpreter, map: *const Heap.Map, entry: Heap.Map.Entry) Error!Value {
+    const items = try self.gpa.alloc(Value, 2);
+    const kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
+        self.gpa.free(items);
+        return err;
+    };
+    items[0] = entry.key;
+    items[1] = entry.value;
+    kinds[0] = map.key_kind;
+    kinds[1] = map.value_kind;
+    errdefer {
+        self.heap.release(entry.key);
+        self.heap.release(entry.value);
+    }
+    return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
 }
 
 /// One pass through a `for` body with the loop variable bound to `value`, in a
@@ -710,6 +856,7 @@ fn kindOf(checked: Type) Value.Kind {
         .string => .string,
         .list => .list,
         .tuple => .tuple,
+        .dictionary, .set => .map,
         .function => .closure,
     };
 }
@@ -814,6 +961,7 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         // `executeFor` reads directly.
         .range => unreachable,
         .list_literal => |elements| self.evaluateList(expression, elements),
+        .dictionary_literal => |entries| self.evaluateDictionary(expression, entries),
         .tuple_literal => |positions| self.evaluateTuple(expression, positions),
         .index => |index| self.evaluateIndex(expression, index),
         // A namespace-qualified name is a reference, not a property access.
@@ -893,6 +1041,9 @@ fn evaluateProperty(self: *Interpreter, member: Ast.Expression.Member) Error!Val
         return .initInt(@intCast(unicode.graphemeCount(base.data.string.bytes)));
     }
 
+    // Section 8.5: `count` is the only property a dictionary or set has.
+    if (base.data == .map) return .initInt(@intCast(base.data.map.count()));
+
     const items = base.data.list.items.items;
     if (std.mem.eql(u8, member.name, "count")) return .initInt(@intCast(items.len));
     // Section 4.5: absent rather than an error, because an empty list has no
@@ -924,8 +1075,64 @@ fn evaluateInterpolation(self: *Interpreter, parts: []const Ast.Expression.Part)
 
 /// Section 8.2. The checker recorded the literal's type, which says whether
 /// whole numbers in it are to be stored as `Float`s.
+/// Section 8.2's `["Ava": 12]`. A duplicate key that only shows up at runtime
+/// keeps its position and takes the later value (8.4), which is what `put`
+/// already does.
+fn evaluateDictionary(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    entries: []const Ast.Expression.Entry,
+) Error!Value {
+    const checked = self.literal_types.get(expression).?;
+    const key_kind = kindOf(checked.key.?.*);
+    const value_kind = kindOf(checked.element.?.*);
+
+    const map = try self.heap.createMap(key_kind, value_kind, false);
+    const result: Value = .{ .data = .{ .map = map } };
+    errdefer self.heap.release(result);
+
+    for (entries) |entry| {
+        const key = widen(try self.evaluate(entry.key), key_kind);
+        const hash = try self.hashKey(entry.key.span, key);
+        const value = widen(try self.evaluate(entry.value), value_kind);
+        try self.heap.put(map, hash, key, value);
+    }
+    return result;
+}
+
+/// Section 8.3: NaN is rejected as a key, directly or inside a tuple, because
+/// it is not equal to itself and so could never be found again.
+fn hashKey(self: *Interpreter, span: Source.Span, key: Value) Error!u64 {
+    if (holdsNan(key)) return self.raise(
+        span,
+        "a not-a-number value cannot be a key",
+        "`nan?` is never equal to anything, including itself, so nothing stored under it could be found again.",
+    );
+    return Value.hash(self.gpa, key);
+}
+
+fn holdsNan(value: Value) bool {
+    return switch (value.data) {
+        .float => |number| std.math.isNan(number),
+        .tuple => |tuple| blk: {
+            for (tuple.items) |item| {
+                if (holdsNan(item)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
 fn evaluateList(self: *Interpreter, expression: *const Ast.Expression, elements: []const *const Ast.Expression) Error!Value {
     const checked = self.literal_types.get(expression).?;
+
+    // Section 8.2: the same bracketed elements are a set where a set was
+    // expected, and an empty `[]` is whichever of the three was.
+    if (checked.kind == .set or checked.kind == .dictionary) {
+        return self.evaluateSet(elements, checked);
+    }
+
     const element = kindOf(checked.element.?.*);
 
     const list = try self.heap.createList(element, elements.len);
@@ -966,9 +1173,46 @@ fn evaluateTuple(
     return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
 }
 
+/// A bracketed literal the checker decided was a set, or an empty one it
+/// decided was a set or a dictionary.
+fn evaluateSet(
+    self: *Interpreter,
+    elements: []const *const Ast.Expression,
+    checked: Type,
+) Error!Value {
+    const set = checked.kind == .set;
+    const member_kind = kindOf(checked.element.?.*);
+    const map = try self.heap.createMap(
+        if (set) member_kind else kindOf(checked.key.?.*),
+        if (set) .nothing else member_kind,
+        set,
+    );
+    const result: Value = .{ .data = .{ .map = map } };
+    errdefer self.heap.release(result);
+
+    for (elements) |element| {
+        const member = widen(try self.evaluate(element), member_kind);
+        const hash = try self.hashKey(element.span, member);
+        try self.heap.put(map, hash, member, Value.nothing);
+    }
+    return result;
+}
+
 fn evaluateIndex(self: *Interpreter, expression: *const Ast.Expression, index: Ast.Expression.Index) Error!Value {
     const base = try self.evaluate(index.base);
     defer self.heap.release(base);
+
+    // Section 8.3: a dictionary lookup can miss, and reports that as absence
+    // rather than as an error, which is what makes `.or(0)` the natural reply.
+    if (base.data == .map) {
+        const map = base.data.map;
+        const key = widen(try self.evaluate(index.index), map.key_kind);
+        defer self.heap.release(key);
+        const hash = try self.hashKey(index.index.span, key);
+        const entry = try Heap.lookupIn(self.gpa, map, hash, key) orelse return Value.nothing;
+        return Heap.retain(entry.value);
+    }
+
     const position = (try self.evaluate(index.index)).data.int;
     if (base.data == .string) return self.characterAt(expression.span, base.data.string.bytes, position);
     const list = base.data.list;
@@ -1074,7 +1318,7 @@ fn evaluateUnary(
                 return .initInt(result[0]);
             },
             .float => |value| return .initFloat(-value),
-            .nothing, .bool, .string, .list, .tuple, .closure => return self.raiseFmt(
+            .nothing, .bool, .string, .list, .tuple, .map, .closure => return self.raiseFmt(
                 expression.span,
                 "`-` needs a number, but this is {s}",
                 .{operand.typeName()},
@@ -1546,6 +1790,130 @@ fn callOr(
 /// cannot change underneath it: a block that changes the same variable finds
 /// the buffer shared and copies it first, which is section 8.1's value
 /// semantics doing exactly what it promises.
+/// One value per entry: the member for a set, a `(key, value)` tuple for a
+/// dictionary. The caller owns one holder of each.
+fn collectItems(self: *Interpreter, map: *const Heap.Map) Error![]Value {
+    const items = try self.gpa.alloc(Value, map.entries.items.len);
+    var built: usize = 0;
+    errdefer {
+        for (items[0..built]) |item| self.heap.release(item);
+        self.gpa.free(items);
+    }
+    while (built < items.len) : (built += 1) {
+        const entry = map.entries.items[built];
+        items[built] = if (map.is_set)
+            Heap.retain(entry.key)
+        else
+            try self.entryTuple(map, .{
+                .hash = entry.hash,
+                .key = Heap.retain(entry.key),
+                .value = Heap.retain(entry.value),
+            });
+    }
+    return items;
+}
+
+/// Section 8.5's dictionary and set methods that only look.
+fn readMap(
+    self: *Interpreter,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    map: *const Heap.Map,
+    arguments: []const Value,
+) Error!Value {
+    const name = member.name;
+
+    if (std.mem.eql(u8, name, "empty?")) return .initBool(map.count() == 0);
+
+    if (std.mem.eql(u8, name, "contains_key?") or std.mem.eql(u8, name, "contains?")) {
+        const key = widen(Heap.retain(arguments[0]), map.key_kind);
+        defer self.heap.release(key);
+        const hash = try self.hashKey(call.arguments[0].span, key);
+        return .initBool(try Heap.lookupIn(self.gpa, map, hash, key) != null);
+    }
+
+    if (std.mem.eql(u8, name, "contains_value?")) {
+        for (map.entries.items) |entry| {
+            if (try Value.equals(self.gpa, entry.value, arguments[0])) return .initBool(true);
+        }
+        return .initBool(false);
+    }
+
+    if (std.mem.eql(u8, name, "keys")) return self.mapHalf(map, .key);
+    if (std.mem.eql(u8, name, "values")) return self.mapHalf(map, .value);
+
+    // `entries`
+    const items = try self.collectItems(map);
+    defer self.gpa.free(items);
+    const list = try self.heap.createList(.tuple, items.len);
+    for (items) |item| list.items.appendAssumeCapacity(item);
+    return .{ .data = .{ .list = list } };
+}
+
+/// Section 8.5's dictionary and set methods that change what they are called
+/// on. `map` has already been made safe to change.
+fn changeMap(
+    self: *Interpreter,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    map: *Heap.Map,
+    arguments: []const Value,
+) Error!Value {
+    const name = member.name;
+
+    if (std.mem.eql(u8, name, "add")) {
+        const held = widen(Heap.retain(arguments[0]), map.key_kind);
+        const hash = try self.hashKey(call.arguments[0].span, held);
+        try self.heap.put(map, hash, held, Value.nothing);
+        return Value.nothing;
+    }
+
+    if (std.mem.eql(u8, name, "remove")) {
+        const key = widen(Heap.retain(arguments[0]), map.key_kind);
+        defer self.heap.release(key);
+        const hash = try self.hashKey(call.arguments[0].span, key);
+        const removed = try self.heap.removeKey(map, hash, key);
+        // A set reports nothing; a dictionary answers with what was there, and
+        // absence when the key was not (4.5).
+        if (map.is_set) {
+            if (removed) |value| self.heap.release(value);
+            return Value.nothing;
+        }
+        return removed orelse Value.nothing;
+    }
+
+    // `merge`. The other dictionary's entries are copied first, because merging
+    // one into itself would otherwise walk a list growing underneath it.
+    const other = arguments[0].data.map;
+    const entries = try self.gpa.dupe(Heap.Map.Entry, other.entries.items);
+    defer self.gpa.free(entries);
+    for (entries) |entry| {
+        try self.heap.put(
+            map,
+            entry.hash,
+            Heap.retain(entry.key),
+            widen(Heap.retain(entry.value), map.value_kind),
+        );
+    }
+    return Value.nothing;
+}
+
+const Half = enum { key, value };
+
+/// Section 8.5's `keys` and `values`, each a list in insertion order.
+fn mapHalf(self: *Interpreter, map: *const Heap.Map, half: Half) Error!Value {
+    const list = try self.heap.createList(
+        if (half == .key) map.key_kind else map.value_kind,
+        map.entries.items.len,
+    );
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+    for (map.entries.items) |entry| {
+        list.items.appendAssumeCapacity(Heap.retain(if (half == .key) entry.key else entry.value));
+    }
+    return result;
+}
+
 fn callHigherOrder(
     self: *Interpreter,
     expression: *const Ast.Expression,
@@ -1558,7 +1926,20 @@ fn callHigherOrder(
     defer self.heap.release(block);
 
     const callable = self.closureCallable(block.data.closure);
-    const items = receiver.data.list.items.items;
+
+    // Section 8.6: every collection block receives one logical item, and a
+    // dictionary's is a `(key, value)` tuple. Building that list up front also
+    // gives a dictionary the same "as it was when the loop began" guarantee a
+    // list gets for free.
+    var built: ?[]Value = null;
+    defer if (built) |owned| {
+        for (owned) |item| self.heap.release(item);
+        self.gpa.free(owned);
+    };
+    const items: []const Value = if (receiver.data == .map) blk: {
+        built = try self.collectItems(receiver.data.map);
+        break :blk built.?;
+    } else receiver.data.list.items.items;
 
     const Kind = enum { each, map, find, find_index };
     const kind = std.meta.stringToEnum(Kind, member.name).?;
@@ -1609,35 +1990,69 @@ fn callMethod(
     // Section 4.5's way out of an optional, and the one method allowed on a
     // value that may be absent.
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
-    // The checker allows these only on a list, and only with one block.
+    // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "map") or
         std.mem.eql(u8, member.name, "find") or std.mem.eql(u8, member.name, "find_index"))
     {
         return self.callHigherOrder(expression, call, member);
     }
-    if (!Type.list_methods.has(member.name)) return self.callValueMethod(expression.span, call, member);
-    const method = Type.list_methods.get(member.name).?;
-    if (!method.mutates) {
-        const receiver = try self.evaluate(member.base);
-        defer self.heap.release(receiver);
-        const arguments = try self.evaluateArguments(call.arguments);
-        defer {
-            for (arguments) |argument| self.heap.release(argument);
-            self.gpa.free(arguments);
-        }
-        // `empty?` and `contains?` are also string methods.
-        if (receiver.data == .string) return self.stringMethod(expression.span, receiver.data.string.bytes, member.name, arguments);
-        const items = receiver.data.list.items.items;
-        if (std.mem.eql(u8, member.name, "empty?")) return .initBool(items.len == 0);
-        // `contains?`
-        for (items) |item| {
-            if (try Value.equals(self.gpa, item, arguments[0])) return .initBool(true);
-        }
-        return .initBool(false);
+    if (std.mem.eql(u8, member.name, "to_set")) return self.callToSet(member);
+
+    const list_method = Type.list_methods.get(member.name);
+    const map_method = Type.map_methods.has(member.name);
+    if (list_method == null and !map_method) return self.callValueMethod(expression.span, call, member);
+
+    // Whether it changes what it is called on decides how the receiver is
+    // reached, and the receiver is reached exactly once either way. Evaluating
+    // it twice would run `input().to_int()` twice, which is a real mistake this
+    // file made once.
+    const mutates = (list_method != null and list_method.?.mutates) or Type.map_mutators.has(member.name);
+    if (!mutates) return self.callReadingMethod(expression, call, member);
+    return self.callChangingMethod(expression, call, member);
+}
+
+/// A method that only looks at its receiver, which may therefore be any
+/// expression at all.
+fn callReadingMethod(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const arguments = try self.evaluateArguments(call.arguments);
+    defer {
+        for (arguments) |argument| self.heap.release(argument);
+        self.gpa.free(arguments);
     }
 
-    // The receiver is a name, possibly indexed: the checker allows a mutating
-    // method on nothing else.
+    // `empty?` and `contains?` belong to strings, lists, and sets alike.
+    if (receiver.data == .string) {
+        return self.stringMethod(expression.span, receiver.data.string.bytes, member.name, arguments);
+    }
+    if (receiver.data == .map) {
+        return self.readMap(call, member, receiver.data.map, arguments);
+    }
+
+    const items = receiver.data.list.items.items;
+    if (std.mem.eql(u8, member.name, "empty?")) return .initBool(items.len == 0);
+    // `contains?`
+    for (items) |item| {
+        if (try Value.equals(self.gpa, item, arguments[0])) return .initBool(true);
+    }
+    return .initBool(false);
+}
+
+/// A method that changes its receiver. Section 4.3 and 7.1 let the checker
+/// allow this only on a name, possibly indexed, which is exactly what makes the
+/// slot holding it reachable.
+fn callChangingMethod(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
     var path: std.ArrayList(*const Ast.Expression) = .empty;
     defer path.deinit(self.gpa);
     var receiver = member.base;
@@ -1647,18 +2062,44 @@ fn callMethod(
     }
     std.mem.reverse(*const Ast.Expression, path.items);
 
-    const indices = try self.gpa.alloc(i64, path.items.len);
-    defer self.gpa.free(indices);
-    for (path.items, indices) |index_expression, *index| index.* = (try self.evaluate(index_expression)).data.int;
+    const indices = try self.gpa.alloc(Value, path.items.len);
+    defer {
+        for (indices) |index| self.heap.release(index);
+        self.gpa.free(indices);
+    }
+    for (path.items, indices) |index_expression, *index| index.* = try self.evaluate(index_expression);
 
     const arguments = try self.evaluateArguments(call.arguments);
     defer self.gpa.free(arguments);
 
     const binding = self.find(receiver.data.name).?;
     var slot = &binding.value.?;
-    if (indices.len > 0) slot = (try self.elementSlot(slot, indices, path.items)).slot;
+    if (indices.len > 0) slot = try self.containerSlot(slot, indices, path.items);
+
+    if (slot.data == .map) {
+        defer for (arguments) |argument| self.heap.release(argument);
+        return self.changeMap(call, member, try self.heap.uniqueMap(slot), arguments);
+    }
     const list = try self.heap.unique(slot);
     return self.mutateList(expression.span, list, member.name, arguments);
+}
+
+/// Section 8.2's `["red", "green"].to_set()`. Repeats collapse, and the first
+/// of each keeps its position, which is what `put` already does.
+fn callToSet(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+
+    const items = receiver.data.list.items.items;
+    const map = try self.heap.createMap(receiver.data.list.element, .nothing, true);
+    const result: Value = .{ .data = .{ .map = map } };
+    errdefer self.heap.release(result);
+
+    for (items) |item| {
+        const hash = try self.hashKey(member.base.span, item);
+        try self.heap.put(map, hash, Heap.retain(item), Value.nothing);
+    }
+    return result;
 }
 
 /// A method on a string, or `to_string` on a number or `Bool`. None of them
@@ -2016,6 +2457,6 @@ fn toFloat(value: Value) f64 {
     return switch (value.data) {
         .int => |number| @floatFromInt(number),
         .float => |number| number,
-        .nothing, .bool, .string, .list, .tuple, .closure => unreachable,
+        .nothing, .bool, .string, .list, .tuple, .map, .closure => unreachable,
     };
 }

@@ -67,10 +67,11 @@ who hit it — section 17 treats diagnostic text as part of the product, not as 
 
 Encoding, lexical structure, syntax, name resolution, type checking, definite assignment,
 arithmetic, comparison, bindings, conditionals, loops, functions, lists and their value
-semantics, tuples and their unpacking, strings and their Unicode behavior, optionals and
-narrowing, input, projects of several files with their namespaces, `using`, privacy and
-lazy module initialization, and
+semantics, dictionaries and sets with their insertion order and key rules, tuples and their
+unpacking, strings and their Unicode behavior, optionals and narrowing, input, projects of
+several files with their namespaces, `using`, privacy and lazy module initialization, and
 stack traces for runtime errors raised inside functions and across files. Unicode's own
 conformance data is checked separately, by the unit tests in `src/unicode.zig`. What
 remains at runtime is what cannot be known statically: integer overflow, division by zero,
-exceeding the recursion limit, and an initialization cycle between files.
+exceeding the recursion limit, an entry a dictionary does not have, and an initialization
+cycle between files.

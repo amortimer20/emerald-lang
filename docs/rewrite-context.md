@@ -1125,6 +1125,11 @@ Only a literal takes its kind from the expected type. A list already stored in a
 stays a list, so `var seen: {String} = names` is a type error whose correction is
 `names.to_set()`.
 
+Printing is unambiguous even though the literals overlap. A dictionary writes its entries,
+`["Ava": 12]`, and an empty one writes `[:]`; a set writes the braces of its type,
+`{"red"}`, and an empty one `{}`. So a printed collection always says which of the three it
+is, which a bare `[]` could not.
+
 Braces after control-flow and declaration headers begin blocks. Braces in expression
 position begin a lambda, and nothing else, so a lambda is never confused with a
 collection and a literal in a `for` header needs no grouping:
@@ -1190,7 +1195,9 @@ This is the general non-nesting rule of 4.5 rather than a dictionary-specific ex
 Assigning `nothing` stores an entry when the value type permits it and never means deletion.
 
 Dictionary keys must have stable equality and hashing. Built-in scalar values, strings,
-enums, and structs or tuples whose contents recursively qualify are initial candidates.
+enums, and structs or tuples whose contents recursively qualify are initial candidates. An
+optional is not a key: an absent key is not a key at all. A set's members answer to the
+same rule, because a set stores and finds them the way a dictionary stores and finds keys.
 Stored value-type keys are copied, so later mutation of the original cannot invalidate
 lookup. Classes and collections are not initial dictionary keys, and custom hashing is
 deferred. NaN is rejected directly or recursively.
@@ -2758,6 +2765,9 @@ recorded in their normative sections:
 | Functions with no result (6.5, 7.2) | They return `Nothing`; no separate "no result" category | The distinction had no observable difference. Unifying them also settles that a recursive function with no result needs no annotation, since there is nothing to infer. |
 | `?` predicates (3.3, 4.2) | Always return plain `Bool`; the conformance example changed | The earlier example `func valid?(): Bool?` contradicted 3.3's rule. |
 | `unless` (6.2) | Removed in both forms; trailing `if` is the guard form | It only ever meant `if not`. Removing it leaves three conditional forms with distinct jobs: block `if`, trailing `if`, and the `if` expression. |
+| Collection display (8.2, 8.4) | A dictionary prints `["Ava": 12]` and `[:]` when empty; a set prints `{"red"}` and `{}` | The three literals share the bracket spelling, so an empty dictionary printing `[]` would be indistinguishable from an empty list. A set printing the braces of its type says what it is at a glance, and nothing else in the language prints braces. |
+| Set members as keys (8.3) | A set holds exactly what a dictionary can key by | A set is a dictionary that stores no values, and it finds a member the same way. Splitting the two rules would mean a set that can hold something it could never find again. |
+| Optionals as keys (8.3) | Rejected | 8.3 requires stable equality and hashing; an absent key has nothing to hash and nothing to mean. `contains_key?` already distinguishes a missing entry from a stored `nothing`, which is the case that might otherwise want one. |
 | Tuple variance (8.2, 4.4) | A tuple widens position by position; a list stays invariant | Nothing can assign to a tuple position, so a `(Int, Int)` used as a `(Float, Int)` can never be written through and observed as the wrong type. That is the entire argument that makes a list invariant, and it simply does not apply here. |
 | `entry.0.1` (8.2) | The lexer reads `0.1` as a decimal number; the parser splits it where it knows a member is named | The alternative was requiring `(entry.0).1`, which is a papercut with no teaching value. Splitting it costs a few lines in the one place that already knows a position is being written. |
 | A tuple's `count` (8.2, 8.5) | Tuples have none | 8.5 gives `count` to collections, whose size is a runtime question. A tuple's size is part of its type and is written in the source, so `count` could only ever return a constant the reader already typed. |

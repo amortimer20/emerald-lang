@@ -374,6 +374,132 @@ fn expectFailure(text: []const u8, expected_message: []const u8) !void {
     try testing.expectEqualStrings(expected_message, problem.message);
 }
 
+test "section 8.2's dictionary literal, lookup, and assignment" {
+    try expectOutput("var ages = [\"Ava\": 12, \"Noah\": 13]\nprint(ages)\nprint(ages.count)\n", "[\"Ava\": 12, \"Noah\": 13]\n2\n");
+    // Section 8.3: a lookup can miss, so it produces an optional.
+    try expectOutput("const ages = [\"Ava\": 12]\nprint(ages[\"Ava\"], ages[\"Zed\"], ages[\"Zed\"].or(0))\n", "12 nothing 0\n");
+    // Assignment inserts or replaces, and a replaced value keeps its place.
+    try expectOutput(
+        "var ages = [\"Ava\": 12, \"Noah\": 13]\nages[\"Mia\"] = 9\nages[\"Ava\"] = 20\nprint(ages)\n",
+        "[\"Ava\": 20, \"Noah\": 13, \"Mia\": 9]\n",
+    );
+}
+
+test "section 8.2's empty literals take their kind from the expected type" {
+    try expectOutput("const names: [String] = []\nprint(names)\n", "[]\n");
+    try expectOutput("const ages: [String: Int] = []\nprint(ages)\n", "[:]\n");
+    try expectOutput("const seen: {String} = []\nprint(seen)\n", "{}\n");
+    try expectFailure("var names = []\n", "an empty list needs a type");
+}
+
+test "section 8.2's set literal is bracketed where a set is expected" {
+    try expectOutput("const seen: {String} = [\"red\", \"green\"]\nprint(seen)\n", "{\"red\", \"green\"}\n");
+    // Section 8.4: repeats collapse to one, and the first keeps its position.
+    try expectOutput("const seen: {Int} = [1, 2, 1, 3]\nprint(seen, seen.count)\n", "{1, 2, 3} 3\n");
+    // Without an expected set type a bracketed list is a list, so 8.2 names
+    // the conversion.
+    try expectOutput("print([1, 2, 2, 3].to_set())\n", "{1, 2, 3}\n");
+    // Only a literal takes its kind this way.
+    try expectFailure(
+        "const names = [\"a\"]\nconst seen: {String} = names\n",
+        "this is [String], but `seen` was declared as {String}",
+    );
+}
+
+test "section 8.4 compares a dictionary by contents and a set by membership" {
+    try expectOutput("print([\"a\": 1, \"b\": 2] == [\"b\": 2, \"a\": 1])\n", "true\n");
+    try expectOutput("print([\"a\": 1] == [\"a\": 2], [\"a\": 1] == [\"a\": 1, \"b\": 2])\n", "false false\n");
+    try expectOutput(
+        "const one: {Int} = [1, 2, 3]\nconst two: {Int} = [3, 2, 1]\nprint(one == two)\n",
+        "true\n",
+    );
+}
+
+test "section 8.4 visits a dictionary and a set in insertion order" {
+    try expectOutput(
+        "for (name, age) in [\"Ava\": 12, \"Noah\": 13] {\n    print(name, age)\n}\n",
+        "Ava 12\nNoah 13\n",
+    );
+    try expectOutput(
+        "const seen: {String} = [\"red\", \"green\"]\nfor colour in seen {\n    print(colour)\n}\n",
+        "red\ngreen\n",
+    );
+    // Section 8.6: a dictionary's block receives the entry as one tuple.
+    try expectOutput(
+        "print([\"a\": 1, \"b\": 2].map { (name, value) => \"#{name}=#{value}\" })\n",
+        "[\"a=1\", \"b=2\"]\n",
+    );
+}
+
+test "section 8.5's dictionary vocabulary" {
+    const ages = "var ages = [\"Ava\": 12, \"Noah\": 13]\n";
+    try expectOutput(ages ++ "print(ages.keys(), ages.values())\n", "[\"Ava\", \"Noah\"] [12, 13]\n");
+    try expectOutput(ages ++ "print(ages.entries())\n", "[(\"Ava\", 12), (\"Noah\", 13)]\n");
+    try expectOutput(ages ++ "print(ages.contains_key?(\"Ava\"), ages.contains_key?(\"Zed\"))\n", "true false\n");
+    try expectOutput(ages ++ "print(ages.contains_value?(13), ages.contains_value?(99))\n", "true false\n");
+    try expectOutput(ages ++ "print(ages.empty?(), ages.remove(\"Ava\"), ages.remove(\"Zed\"), ages)\n", "false 12 nothing [\"Noah\": 13]\n");
+    try expectOutput(
+        ages ++ "ages.merge([\"Zed\": 40, \"Ava\": 1])\nprint(ages)\n",
+        "[\"Ava\": 1, \"Noah\": 13, \"Zed\": 40]\n",
+    );
+}
+
+test "section 8.5's set vocabulary" {
+    const seen = "var seen: {String} = [\"red\"]\n";
+    try expectOutput(seen ++ "seen.add(\"blue\")\nseen.add(\"red\")\nprint(seen, seen.count)\n", "{\"red\", \"blue\"} 2\n");
+    try expectOutput(seen ++ "print(seen.contains?(\"red\"), seen.contains?(\"blue\"))\n", "true false\n");
+    try expectOutput(seen ++ "seen.remove(\"red\")\nprint(seen, seen.empty?())\n", "{} true\n");
+}
+
+test "section 8.1 gives a dictionary and a set value semantics" {
+    try expectOutput(
+        "var a = [\"x\": 1]\nvar b = a\nb[\"y\"] = 2\nprint(a, b)\n",
+        "[\"x\": 1] [\"x\": 1, \"y\": 2]\n",
+    );
+    try expectOutput(
+        "var a: {Int} = [1]\nvar b = a\nb.add(2)\nprint(a, b)\n",
+        "{1} {1, 2}\n",
+    );
+    // Section 4.3: a `const` cannot be changed either way.
+    try expectFailure("const ages = [\"a\": 1]\nages[\"b\"] = 2\n", "`ages` is a `const`, so its contents cannot change");
+    try expectFailure("const seen: {Int} = [1]\nseen.add(2)\n", "`seen` is a `const`, so its contents cannot change");
+}
+
+test "section 8.3 accepts only keys that can be found again" {
+    try expectFailure("var bad: [[Int]: String] = []\n", "[Int] cannot be a dictionary key");
+    try expectFailure("var bad: {[Int]} = []\n", "a set cannot hold [Int]");
+    try expectFailure("var bad: [Int?: String] = []\n", "Int? cannot be a dictionary key");
+    // A tuple qualifies when its positions do.
+    try expectOutput(
+        "var byPair: [(String, Int): String] = [(\"a\", 1): \"first\"]\nprint(byPair[(\"a\", 1)], byPair[(\"b\", 2)])\n",
+        "first nothing\n",
+    );
+}
+
+test "section 9.2's normalized equality reaches dictionary keys and sets" {
+    // The same text composed, and as `e` plus a combining acute accent.
+    try expectOutput("const seen: {String} = [\"caf\u{e9}\"]\nprint(seen.contains?(\"cafe\\u{301}\"))\n", "true\n");
+    try expectOutput("const byName = [\"caf\u{e9}\": 1]\nprint(byName[\"cafe\\u{301}\"])\n", "1\n");
+}
+
+test "a dictionary key is looked up at the type the dictionary holds" {
+    try expectFailure("const ages = [\"Ava\": 12]\nprint(ages[1])\n", "this is Int, but the dictionary's keys are String");
+    // Section 4.4: a whole number reaches a `Float` key by widening.
+    try expectOutput("var rates: [Float: String] = [1.5: \"low\"]\nrates[2] = \"high\"\nprint(rates, rates[2.0])\n", "[1.5: \"low\", 2.0: \"high\"] high\n");
+}
+
+test "section 8.5 names a dictionary's and a set's operations apart" {
+    try expectFailure("const ages = [\"a\": 1]\nprint(ages.get(\"a\"))\n", "[String: Int] has no method `get`");
+    try expectFailure("const ages = [\"a\": 1]\nprint(ages.contains?(\"a\"))\n", "[String: Int] has no method `contains?`");
+    try expectFailure("const seen: {Int} = [1]\nprint(seen.contains_key?(1))\n", "{Int} has no method `contains_key?`");
+    try expectFailure("const ages = [\"a\": 1]\nprint(ages.first)\n", "[String: Int] has no property `first`");
+}
+
+test "a compound assignment needs an entry that is already there" {
+    try expectOutput("var counts = [\"a\": 1]\ncounts[\"a\"] += 10\nprint(counts)\n", "[\"a\": 11]\n");
+    try expectFailure("var counts = [\"a\": 1]\ncounts[\"b\"] += 1\n", "there is no entry for \"b\"");
+}
+
 test "section 8.2's tuple literal, and its positions" {
     try expectOutput("const entry = (\"score\", 10)\nprint(entry)\nprint(entry.0, entry.1)\n", "(\"score\", 10)\nscore 10\n");
     // Nested positions, which the lexer hands over as one decimal number.

@@ -33,9 +33,9 @@
 //! rare, and counting alone would never reclaim one.
 //!
 //! So counting is only half of it. Section 19.5's mark-and-sweep collector is
-//! the other half: `collect` walks `live`, `live_tuples`, `live_texts`,
-//! `live_environments`, and `live_closures` and frees whatever nothing outside
-//! the heap can reach.
+//! the other half: `collect` walks `live`, `live_tuples`, `live_maps`,
+//! `live_texts`, `live_environments`, and `live_closures` and frees whatever
+//! nothing outside the heap can reach.
 //! Counting still does the everyday work, freeing promptly and deciding when a
 //! list must be copied; collection runs at a threshold and exists for the
 //! cycles. `deinit` still frees whatever is left at the end, whatever the counts
@@ -82,6 +82,55 @@ pub const Tuple = struct {
     /// Neighbors in `live_tuples`.
     previous: ?*Tuple = null,
     next: ?*Tuple = null,
+};
+
+/// Section 8.2's dictionary and set, which are one structure: a set is a
+/// dictionary that stores no values.
+///
+/// Section 8.4 requires insertion order to be preserved for iteration and
+/// printing, so the entries are an array in the order they were added and the
+/// hash table holds indices into it. Replacing a value keeps its position;
+/// removing and reinserting a key moves it to the end, which falls out of
+/// appending.
+///
+/// Each entry keeps the hash it was stored under. Hashing a string means
+/// normalizing it (9.2), which is the expensive part, so keeping the hash makes
+/// rebuilding the table after a removal cheap and lets a lookup rule out most
+/// entries before it compares anything.
+pub const Map = struct {
+    references: u32 = 1,
+    entries: std.ArrayList(Entry) = .empty,
+    /// Open addressing: each slot holds an index into `entries`, or `vacant`.
+    /// Always a power of two, so the mask is the size minus one.
+    slots: []u32 = &.{},
+    /// The kind of key and of value, for section 4.4's widening, as a list's
+    /// `element` is. A set's `value` kind is `.nothing`.
+    key_kind: Value.Kind,
+    value_kind: Value.Kind,
+    /// Whether this is section 8.2's `{T}` rather than `[K: V]`. They differ
+    /// only in what they store and how they print.
+    is_set: bool,
+    /// Collector bookkeeping; see `collect`.
+    marked: bool = false,
+    internal: u32 = 0,
+    /// Neighbors in `live_maps`.
+    previous: ?*Map = null,
+    next: ?*Map = null,
+
+    pub const Entry = struct {
+        hash: u64,
+        key: Value,
+        /// `Value.nothing` for a set, which stores no values.
+        value: Value,
+    };
+
+    /// No entry. `entries` can never reach this many, because every entry is at
+    /// least a key and the heap would be exhausted first.
+    pub const vacant: u32 = std.math.maxInt(u32);
+
+    pub fn count(self: *const Map) usize {
+        return self.entries.items.len;
+    }
 };
 
 /// What one name holds, and the kind it holds.
@@ -165,7 +214,9 @@ live_environments: ?*Environment = null,
 live_closures: ?*Closure = null,
 /// Every tuple not yet freed.
 live_tuples: ?*Tuple = null,
-/// How many objects are in those five lists.
+/// Every dictionary and set not yet freed.
+live_maps: ?*Map = null,
+/// How many objects are in those six lists.
 live_objects: usize = 0,
 /// The size `live_objects` must reach for the next collection. Section 19.5
 /// asks for "predictable allocation thresholds"; this is one, doubled after
@@ -213,6 +264,11 @@ pub fn deinit(self: *Heap) void {
     while (tuples) |tuple| {
         tuples = tuple.next;
         self.destroyTuple(tuple);
+    }
+    var maps = self.live_maps;
+    while (maps) |map| {
+        maps = map.next;
+        self.destroyMap(map);
     }
     self.work.deinit(self.gpa);
     self.* = undefined;
@@ -379,11 +435,201 @@ fn unlinkTuple(self: *Heap, tuple: *Tuple) void {
     if (tuple.next) |next| next.previous = tuple.previous;
 }
 
+/// An empty dictionary or set with one holder, the caller.
+pub fn createMap(
+    self: *Heap,
+    key_kind: Value.Kind,
+    value_kind: Value.Kind,
+    is_set: bool,
+) std.mem.Allocator.Error!*Map {
+    self.maybeCollect();
+    const map = try self.gpa.create(Map);
+    self.live_objects += 1;
+    map.* = .{ .key_kind = key_kind, .value_kind = value_kind, .is_set = is_set };
+    map.next = self.live_maps;
+    if (self.live_maps) |first| first.previous = map;
+    self.live_maps = map;
+    return map;
+}
+
+fn destroyMap(self: *Heap, map: *Map) void {
+    map.entries.deinit(self.gpa);
+    self.gpa.free(map.slots);
+    self.gpa.destroy(map);
+}
+
+fn unlinkMap(self: *Heap, map: *Map) void {
+    self.live_objects -= 1;
+    if (map.previous) |previous| previous.next = map.next else self.live_maps = map.next;
+    if (map.next) |next| next.previous = map.previous;
+}
+
+/// Makes the map in `slot` safe to change in place, copying it first when
+/// anything else holds it. The dictionary half of section 8.1's value
+/// semantics, and the same copy-on-write rule `unique` applies to a list.
+pub fn uniqueMap(self: *Heap, slot: *Value) std.mem.Allocator.Error!*Map {
+    const shared = slot.data.map;
+    if (shared.references == 1) return shared;
+
+    const copy = try self.createMap(shared.key_kind, shared.value_kind, shared.is_set);
+    errdefer {
+        self.unlinkMap(copy);
+        self.destroyMap(copy);
+    }
+    try copy.entries.appendSlice(self.gpa, shared.entries.items);
+    for (copy.entries.items) |entry| {
+        _ = retain(entry.key);
+        _ = retain(entry.value);
+    }
+    copy.slots = try self.gpa.dupe(u32, shared.slots);
+
+    shared.references -= 1; // the slot no longer holds it, and someone else does
+    slot.* = .{ .data = .{ .map = copy } };
+    return copy;
+}
+
+/// Stores `key` with `value`, taking over one holder of each. An existing key
+/// keeps its position and takes the new value, which is section 8.4's rule.
+pub fn put(self: *Heap, map: *Map, hash: u64, key: Value, value: Value) std.mem.Allocator.Error!void {
+    switch (try self.locate(map, hash, key)) {
+        .entry => |index| {
+            const entry = &map.entries.items[index];
+            // The key that is already there stays, so the new one is dropped.
+            self.release(key);
+            self.release(entry.value);
+            entry.value = value;
+        },
+        .vacancy => {
+            // Grown before the entry goes in, so the slot found above is still
+            // the right one when it does not grow.
+            if (try self.growSlots(map)) {
+                return self.putKnownAbsent(map, hash, key, value);
+            }
+            map.entries.append(self.gpa, .{ .hash = hash, .key = key, .value = value }) catch |err| {
+                self.release(key);
+                self.release(value);
+                return err;
+            };
+            self.claim(map, hash, @intCast(map.entries.items.len - 1));
+        },
+    }
+}
+
+/// The same, when the key is known not to be present because the table has just
+/// been rebuilt underneath it.
+fn putKnownAbsent(self: *Heap, map: *Map, hash: u64, key: Value, value: Value) std.mem.Allocator.Error!void {
+    map.entries.append(self.gpa, .{ .hash = hash, .key = key, .value = value }) catch |err| {
+        self.release(key);
+        self.release(value);
+        return err;
+    };
+    self.claim(map, hash, @intCast(map.entries.items.len - 1));
+}
+
+/// Puts `index` in the first free slot its hash reaches. The table always has
+/// room, because `growSlots` runs first.
+fn claim(_: *Heap, map: *Map, hash: u64, index: u32) void {
+    const mask = map.slots.len - 1;
+    var at = @as(usize, @truncate(hash)) & mask;
+    while (map.slots[at] != Map.vacant) at = (at + 1) & mask;
+    map.slots[at] = index;
+}
+
+/// Keeps the table under three-quarters full, which is what keeps the linear
+/// probe above short. Returns whether it rebuilt, since that invalidates any
+/// vacancy found before it.
+fn growSlots(self: *Heap, map: *Map) std.mem.Allocator.Error!bool {
+    const needed = map.entries.items.len + 1;
+    if (map.slots.len != 0 and needed * 4 <= map.slots.len * 3) return false;
+
+    var size: usize = 8;
+    while (needed * 4 > size * 3) size *= 2;
+    try self.reindex(map, size);
+    return true;
+}
+
+/// Rebuilds the table at `size` slots from the entries, which is also how a
+/// removal repairs the indices it shifted.
+fn reindex(self: *Heap, map: *Map, size: usize) std.mem.Allocator.Error!void {
+    const slots = try self.gpa.alloc(u32, size);
+    @memset(slots, Map.vacant);
+    self.gpa.free(map.slots);
+    map.slots = slots;
+    for (map.entries.items, 0..) |entry, index| self.claim(map, entry.hash, @intCast(index));
+}
+
+/// Section 8.5's `remove`. Returns the value that was stored, or null when the
+/// key was not there. The caller takes over one holder of the returned value.
+pub fn removeKey(self: *Heap, map: *Map, hash: u64, key: Value) std.mem.Allocator.Error!?Value {
+    const index = switch (try self.locate(map, hash, key)) {
+        .entry => |at| at,
+        .vacancy => return null,
+    };
+
+    const entry = map.entries.orderedRemove(index);
+    self.release(entry.key);
+
+    // Every index above the removed one shifted, so the table is rebuilt. It
+    // costs a pass over the entries, and it needs no rehashing because each
+    // entry carries the hash it was stored under.
+    try self.reindex(map, map.slots.len);
+    return entry.value;
+}
+
+/// The entry with this key, or null. A free function because `Value.equals`
+/// compares two maps and has no heap to ask.
+pub fn lookupIn(
+    gpa: std.mem.Allocator,
+    map: *const Map,
+    hash: u64,
+    key: Value,
+) std.mem.Allocator.Error!?Map.Entry {
+    if (map.slots.len == 0) return null;
+    const mask = map.slots.len - 1;
+    var at = @as(usize, @truncate(hash)) & mask;
+    while (true) {
+        const index = map.slots[at];
+        if (index == Map.vacant) return null;
+        const entry = map.entries.items[index];
+        if (entry.hash == hash and try Value.equals(gpa, entry.key, key)) return entry;
+        at = (at + 1) & mask;
+    }
+}
+
+/// Where a key belongs: the entry holding it, or the slot a new one would take.
+pub const Found = union(enum) {
+    /// The index into `entries` of the entry with this key.
+    entry: usize,
+    /// The index into `slots` where a new entry's index would go.
+    vacancy: usize,
+};
+
+/// Section 8.3's lookup. Equality is Emerald's `==`, which for strings
+/// normalizes (9.2) and so may allocate, which is why this can fail.
+pub fn locate(self: *Heap, map: *const Map, hash: u64, key: Value) std.mem.Allocator.Error!Found {
+    if (map.slots.len == 0) return .{ .vacancy = 0 };
+
+    const mask = map.slots.len - 1;
+    var at = @as(usize, @truncate(hash)) & mask;
+    while (true) {
+        const index = map.slots[at];
+        if (index == Map.vacant) return .{ .vacancy = at };
+        const entry = map.entries.items[index];
+        // The stored hash rules out almost every entry without comparing, which
+        // matters because comparing two strings can mean normalizing them.
+        if (entry.hash == hash and try Value.equals(self.gpa, entry.key, key)) {
+            return .{ .entry = index };
+        }
+        at = (at + 1) & mask;
+    }
+}
+
 /// Records a new holder of `value`, and returns it for convenience.
 pub fn retain(value: Value) Value {
     switch (value.data) {
         .list => |list| list.references += 1,
         .tuple => |tuple| tuple.references += 1,
+        .map => |map| map.references += 1,
         .closure => |closure| closure.references += 1,
         .string => |text| if (!text.literal) {
             text.references += 1;
@@ -423,6 +669,18 @@ pub fn release(self: *Heap, value: Value) void {
         for (tuple.items) |item| self.release(item);
         self.unlinkTuple(tuple);
         self.destroyTuple(tuple);
+        return;
+    }
+    if (value.data == .map) {
+        const map = value.data.map;
+        map.references -= 1;
+        if (map.references > 0) return;
+        for (map.entries.items) |entry| {
+            self.release(entry.key);
+            self.release(entry.value);
+        }
+        self.unlinkMap(map);
+        self.destroyMap(map);
         return;
     }
     if (value.data != .list) return;
@@ -477,6 +735,7 @@ pub fn releaseEnvironment(self: *Heap, environment: *Environment) void {
 const Object = union(enum) {
     list: *List,
     tuple: *Tuple,
+    map: *Map,
     text: *Text,
     environment: *Environment,
     closure: *Closure,
@@ -485,6 +744,7 @@ const Object = union(enum) {
         return switch (value.data) {
             .list => |list| .{ .list = list },
             .tuple => |tuple| .{ .tuple = tuple },
+            .map => |map| .{ .map = map },
             .string => |text| .{ .text = text },
             .closure => |closure| .{ .closure = closure },
             .nothing, .bool, .int, .float => null,
@@ -559,6 +819,11 @@ fn resetMarks(self: *Heap) void {
         tuple.marked = false;
         tuple.internal = 0;
     }
+    var maps = self.live_maps;
+    while (maps) |map| : (maps = map.next) {
+        map.marked = false;
+        map.internal = 0;
+    }
 }
 
 /// Tallies, for each object, how many of its holders are themselves managed
@@ -582,6 +847,13 @@ fn countInternalReferences(self: *Heap) void {
     var tuples = self.live_tuples;
     while (tuples) |tuple| : (tuples = tuple.next) {
         for (tuple.items) |item| bumpInternal(item);
+    }
+    var maps = self.live_maps;
+    while (maps) |map| : (maps = map.next) {
+        for (map.entries.items) |entry| {
+            bumpInternal(entry.key);
+            bumpInternal(entry.value);
+        }
     }
 }
 
@@ -626,6 +898,10 @@ fn markReachable(self: *Heap) bool {
     while (tuples) |tuple| : (tuples = tuple.next) {
         if (tuple.references > tuple.internal and !self.push(.{ .tuple = tuple })) return false;
     }
+    var maps = self.live_maps;
+    while (maps) |map| : (maps = map.next) {
+        if (map.references > map.internal and !self.push(.{ .map = map })) return false;
+    }
 
     while (self.work.pop()) |object| {
         switch (object) {
@@ -635,6 +911,10 @@ fn markReachable(self: *Heap) bool {
             },
             .tuple => |tuple| for (tuple.items) |item| {
                 if (!self.reach(item)) return false;
+            },
+            .map => |map| for (map.entries.items) |entry| {
+                if (!self.reach(entry.key)) return false;
+                if (!self.reach(entry.value)) return false;
             },
             .environment => |environment| {
                 var bindings = environment.bindings.valueIterator();
@@ -705,6 +985,15 @@ fn sweep(self: *Heap) void {
             for (tuple.items) |item| dropReference(item);
         }
     }
+    var maps = self.live_maps;
+    while (maps) |map| : (maps = map.next) {
+        if (!map.marked) {
+            for (map.entries.items) |entry| {
+                dropReference(entry.key);
+                dropReference(entry.value);
+            }
+        }
+    }
 
     var next_list = self.live;
     while (next_list) |list| {
@@ -713,6 +1002,13 @@ fn sweep(self: *Heap) void {
         self.unlink(list);
         list.items.deinit(self.gpa);
         self.gpa.destroy(list);
+    }
+    var next_map = self.live_maps;
+    while (next_map) |map| {
+        next_map = map.next;
+        if (map.marked) continue;
+        self.unlinkMap(map);
+        self.destroyMap(map);
     }
     var next_tuple = self.live_tuples;
     while (next_tuple) |tuple| {
@@ -859,6 +1155,138 @@ test "the collector reclaims a cycle through a tuple" {
 
     heap.collect();
     try testing.expect(heap.live_tuples == null);
+    try testing.expect(heap.live_closures == null);
+    try testing.expect(heap.live_environments == null);
+}
+
+fn mapOfInts(heap: *Heap, pairs: []const [2]i64) !Value {
+    const map = try heap.createMap(.int, .int, false);
+    for (pairs) |pair| {
+        const key: Value = .initInt(pair[0]);
+        try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(pair[1]));
+    }
+    return .{ .data = .{ .map = map } };
+}
+
+test "a dictionary keeps insertion order, and a replaced value keeps its place" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const value = try mapOfInts(&heap, &.{ .{ 1, 10 }, .{ 2, 20 }, .{ 3, 30 } });
+    defer heap.release(value);
+    const map = value.data.map;
+
+    // Section 8.4: replacing a value keeps the entry where it was.
+    const key: Value = .initInt(2);
+    try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(99));
+    try testing.expectEqual(@as(usize, 3), map.count());
+    try testing.expectEqual(@as(i64, 99), map.entries.items[1].value.data.int);
+    try testing.expectEqual(@as(i64, 1), map.entries.items[0].key.data.int);
+    try testing.expectEqual(@as(i64, 3), map.entries.items[2].key.data.int);
+
+    // Removing and reinserting moves it to the end.
+    _ = try heap.removeKey(map, try Value.hash(testing.allocator, key), key);
+    try testing.expectEqual(@as(usize, 2), map.count());
+    try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(7));
+    try testing.expectEqual(@as(i64, 2), map.entries.items[2].key.data.int);
+}
+
+test "a dictionary finds its keys after it has grown past its first table" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const map = try heap.createMap(.int, .int, false);
+    const value: Value = .{ .data = .{ .map = map } };
+    defer heap.release(value);
+
+    var at: i64 = 0;
+    while (at < 200) : (at += 1) {
+        const key: Value = .initInt(at);
+        try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(at * 2));
+    }
+    try testing.expectEqual(@as(usize, 200), map.count());
+
+    at = 0;
+    while (at < 200) : (at += 1) {
+        const key: Value = .initInt(at);
+        const found = try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, key), key);
+        try testing.expectEqual(@as(i64, at * 2), found.?.value.data.int);
+    }
+    const absent: Value = .initInt(1000);
+    try testing.expect(try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, absent), absent) == null);
+}
+
+test "removing an entry leaves every later key still findable" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    // Enough entries that removing an early one shifts many, which is exactly
+    // what invalidates the indices the table holds.
+    const map = try heap.createMap(.int, .int, false);
+    const value: Value = .{ .data = .{ .map = map } };
+    defer heap.release(value);
+
+    var at: i64 = 0;
+    while (at < 50) : (at += 1) {
+        const key: Value = .initInt(at);
+        try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(at * 2));
+    }
+
+    const removed: Value = .initInt(0);
+    _ = try heap.removeKey(map, try Value.hash(testing.allocator, removed), removed);
+    try testing.expectEqual(@as(usize, 49), map.count());
+    try testing.expect(try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, removed), removed) == null);
+
+    at = 1;
+    while (at < 50) : (at += 1) {
+        const key: Value = .initInt(at);
+        const found = try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, key), key);
+        try testing.expectEqual(@as(i64, at * 2), found.?.value.data.int);
+    }
+}
+
+test "a shared dictionary is copied before it changes" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    var original = try mapOfInts(&heap, &.{.{ 1, 10 }});
+    defer heap.release(original);
+    var copy = retain(original);
+    defer heap.release(copy);
+
+    const separate = try heap.uniqueMap(&copy);
+    try testing.expect(separate != original.data.map);
+    const key: Value = .initInt(2);
+    try heap.put(separate, try Value.hash(testing.allocator, key), key, .initInt(20));
+    try testing.expectEqual(@as(usize, 1), original.data.map.count());
+    try testing.expectEqual(@as(usize, 2), separate.count());
+}
+
+test "the collector reclaims a cycle through a dictionary" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const environment = try heap.createEnvironment();
+    const closure = try heap.createClosure(
+        .{ .named = "block" },
+        try testing.allocator.dupe(*Environment, &.{environment}),
+        0,
+    );
+    heap.releaseEnvironment(environment); // the closure holds it now
+
+    const map = try heap.createMap(.int, .closure, false);
+    const key: Value = .initInt(1);
+    try heap.put(map, try Value.hash(testing.allocator, key), key, .{ .data = .{ .closure = closure } });
+
+    try environment.bindings.put(testing.allocator, "table", .{
+        .kind = .map,
+        .value = .{ .data = .{ .map = map } },
+    });
+    map.references += 1; // the environment holds it
+    map.references -= 1; // and nothing outside the heap does
+
+    heap.collect();
+    try testing.expect(heap.live_maps == null);
     try testing.expect(heap.live_closures == null);
     try testing.expect(heap.live_environments == null);
 }

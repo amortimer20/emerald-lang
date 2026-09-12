@@ -1,0 +1,4 @@
+diagnostics/set-literal-needs-set-type.em:2:24: this is [String], but `seen` was declared as {String}
+  const seen: {String} = names
+                         ^^^^^
+Only a bracketed literal becomes a set from the type expected around it. Convert it with `.to_set()`.

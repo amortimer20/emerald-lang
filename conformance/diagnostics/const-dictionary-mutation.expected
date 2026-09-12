@@ -1,0 +1,4 @@
+diagnostics/const-dictionary-mutation.em:2:1: `ages` is a `const`, so its contents cannot change
+  ages["Noah"] = 13
+  ^^^^
+Declare `ages` with `var` if it needs to change.

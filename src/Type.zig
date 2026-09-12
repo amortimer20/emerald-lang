@@ -24,6 +24,11 @@ pub const Kind = enum {
     /// Section 8.2's `(String, Int)`. `elements` holds the positions, of which
     /// there are always at least two.
     tuple,
+    /// Section 8.2's `[String: Int]`. `key` holds the key type and `element`
+    /// the value type.
+    dictionary,
+    /// Section 8.2's `{String}`. `element` holds the member type.
+    set,
     /// Section 7.1's `func(Int): String`. `signature` holds its shape.
     function,
     /// A type that could not be determined because something was already
@@ -37,6 +42,8 @@ kind: Kind,
 element: ?*const Type = null,
 /// The position types of a tuple, and empty for every other kind.
 elements: []const Type = &.{},
+/// The key type of a dictionary, and null for every other kind.
+key: ?*const Type = null,
 /// What a function takes and gives, and null for every other kind.
 signature: ?*const Signature = null,
 /// Section 4.2's trailing `?`: this value may be absent.
@@ -85,6 +92,44 @@ pub fn listOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.Err
     return .{ .kind = .list, .element = stored };
 }
 
+/// `[key: value]`, with both allocated from `allocator`, which must outlive the
+/// result.
+pub fn dictionaryOf(allocator: std.mem.Allocator, key_type: Type, value: Type) std.mem.Allocator.Error!Type {
+    const stored_key = try allocator.create(Type);
+    stored_key.* = key_type;
+    const stored_value = try allocator.create(Type);
+    stored_value.* = value;
+    return .{ .kind = .dictionary, .key = stored_key, .element = stored_value };
+}
+
+/// `{element}`, with the element allocated from `allocator`, which must outlive
+/// the result.
+pub fn setOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.Error!Type {
+    const stored = try allocator.create(Type);
+    stored.* = element;
+    return .{ .kind = .set, .element = stored };
+}
+
+/// Section 8.3: a dictionary key needs stable equality and hashing. Built-in
+/// scalars, strings, and tuples whose positions recursively qualify. A list can
+/// change after it is stored, and an absent key is not a key at all, so neither
+/// qualifies. Enums and structs join this when they exist.
+pub fn eligibleKey(self: Type) bool {
+    if (self.optional) return false;
+    return switch (self.kind) {
+        .bool, .int, .float, .string => true,
+        .tuple => blk: {
+            for (self.elements) |element| {
+                if (!element.eligibleKey()) break :blk false;
+            }
+            break :blk true;
+        },
+        // Reported already, and treated as usable so one mistake reports once.
+        .invalid => true,
+        .nothing, .list, .dictionary, .set, .function => false,
+    };
+}
+
 /// `(A, B)`, with the positions allocated from `allocator`, which must outlive
 /// the result. Section 8.2 requires at least two.
 pub fn tupleOf(allocator: std.mem.Allocator, elements: []const Type) std.mem.Allocator.Error!Type {
@@ -130,6 +175,8 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         .float => try writer.writeAll("Float"),
         .string => try writer.writeAll("String"),
         .list => try writer.print("[{f}]", .{self.element.?.*}),
+        .dictionary => try writer.print("[{f}: {f}]", .{ self.key.?.*, self.element.?.* }),
+        .set => try writer.print("{{{f}}}", .{self.element.?.*}),
         .tuple => {
             try writer.writeAll("(");
             for (self.elements, 0..) |element, position| {
@@ -171,7 +218,7 @@ pub fn isNumber(self: Type) bool {
     if (self.optional) return false;
     return switch (self.kind) {
         .int, .float => true,
-        .nothing, .bool, .string, .list, .tuple, .function, .invalid => false,
+        .nothing, .bool, .string, .list, .tuple, .dictionary, .set, .function, .invalid => false,
     };
 }
 
@@ -179,7 +226,8 @@ pub fn isNumber(self: Type) bool {
 pub fn isInvalid(self: Type) bool {
     return switch (self.kind) {
         .invalid => true,
-        .list => self.element.?.isInvalid(),
+        .list, .set => self.element.?.isInvalid(),
+        .dictionary => self.key.?.isInvalid() or self.element.?.isInvalid(),
         .tuple => blk: {
             for (self.elements) |element| {
                 if (element.isInvalid()) break :blk true;
@@ -203,7 +251,10 @@ pub fn same(self: Type, other: Type) bool {
     if (self.kind == .invalid or other.kind == .invalid) return true;
     if (self.optional != other.optional) return false;
     if (self.kind != other.kind) return false;
-    if (self.kind == .list) return self.element.?.same(other.element.?.*);
+    if (self.kind == .list or self.kind == .set) return self.element.?.same(other.element.?.*);
+    if (self.kind == .dictionary) {
+        return self.key.?.same(other.key.?.*) and self.element.?.same(other.element.?.*);
+    }
     if (self.kind == .tuple) {
         if (self.elements.len != other.elements.len) return false;
         for (self.elements, other.elements) |a, b| {
@@ -263,6 +314,28 @@ pub fn assignableTo(self: Type, target: Type) bool {
 
     return self.same(target);
 }
+
+/// Section 8.5's essential vocabulary for a dictionary and a set. They share
+/// `empty?` with a list; the rest answer to their own names.
+pub const map_methods = std.StaticStringMap(void).initComptime(.{
+    .{"empty?"},
+    .{"contains?"},
+    .{"contains_key?"},
+    .{"contains_value?"},
+    .{"keys"},
+    .{"values"},
+    .{"entries"},
+    .{"add"},
+    .{"remove"},
+    .{"merge"},
+});
+
+/// Those of them that change what they are called on.
+pub const map_mutators = std.StaticStringMap(void).initComptime(.{
+    .{"add"},
+    .{"remove"},
+    .{"merge"},
+});
 
 /// What a list method takes and gives, in terms of the list's element type.
 /// Section 8.5's essential vocabulary, less `first` and `last`, which wait for

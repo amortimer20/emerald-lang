@@ -1,0 +1,32 @@
+var ages = ["Ava": 12, "Noah": 13]
+print(ages, ages.count, ages.empty?())
+
+## Section 8.3: a lookup can miss, so it answers with an optional.
+print(ages["Ava"], ages["Zed"], ages["Zed"].or(0))
+
+## Assignment inserts or replaces. A replaced value keeps its position.
+ages["Mia"] = 9
+ages["Ava"] = 20
+print(ages)
+
+print(ages.keys(), ages.values())
+print(ages.entries())
+print(ages.contains_key?("Ava"), ages.contains_key?("Zed"))
+print(ages.contains_value?(13), ages.contains_value?(99))
+print(ages.remove("Noah"), ages.remove("Zed"))
+print(ages)
+
+ages.merge(["Zed": 40, "Ava": 1])
+print(ages)
+
+for (name, age) in ages {
+    print(name, age)
+}
+print(ages.map { (name, age) => "#{name}=#{age}" })
+
+## Section 8.4: contents decide equality, not insertion order.
+print(["a": 1, "b": 2] == ["b": 2, "a": 1])
+print(["a": 1] == ["a": 2])
+
+const empty: [String: Int] = []
+print(empty, empty.empty?())

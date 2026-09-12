@@ -1,0 +1,8 @@
+diagnostics/dictionary-familiar-names.em:2:12: [String: Int] has no method `get`
+  print(ages.get("Ava"))
+             ^^^
+Emerald calls this `[key]`.
+diagnostics/dictionary-familiar-names.em:3:12: [String: Int] has no method `contains?`
+  print(ages.contains?("Ava"))
+             ^^^^^^^^^
+Emerald calls this `contains_key?`.

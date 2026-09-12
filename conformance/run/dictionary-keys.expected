@@ -1,0 +1,6 @@
+[("a", 1): "first", ("b", 2): "second"] first nothing
+[1.5: "low", 2.0: "high"] high
+[true: "yes", false: "no"] yes
+1 true
+["x": 1] ["x": 1, "y": 2]
+["red": 2, "blue": 1]

@@ -1,0 +1,4 @@
+diagnostics/dictionary-key-eligible.em:1:13: [Int] cannot be a dictionary key
+  var index: [[Int]: String] = []
+              ^^^^^
+A key must be a whole or decimal number, a `Bool`, a `String`, or a tuple of those. Anything that can change after it is stored could not be found again.

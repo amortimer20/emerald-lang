@@ -278,6 +278,13 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
             for (positions) |position| deepest = @max(deepest, position.depth);
             break :blk deepest;
         },
+        .dictionary_literal => |entries| blk: {
+            var deepest: u32 = 0;
+            for (entries) |entry| {
+                deepest = @max(deepest, @max(entry.key.depth, entry.value.depth));
+            }
+            break :blk deepest;
+        },
         .list_literal => |elements| blk: {
             var deepest: u32 = 0;
             for (elements) |element| deepest = @max(deepest, element.depth);
@@ -788,6 +795,7 @@ fn rejectGuardedDeclaration(self: *Parser, name: Token) Error!void {
 fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     const token = self.peek();
     if (token.kind == .left_bracket) return self.parseListType();
+    if (token.kind == .left_brace) return self.parseSetType();
     if (token.kind == .left_paren) return self.parseTupleType();
     if (token.kind == .keyword_func) return self.parseFunctionType();
     if (token.kind != .identifier) {
@@ -884,23 +892,25 @@ fn parseListType(self: *Parser) Error!Ast.TypeExpression {
     try self.nest(opening.span);
     defer self.unnest();
 
-    const element = try self.arena.create(Ast.TypeExpression);
-    element.* = try self.parseTypeExpression();
+    const first = try self.arena.create(Ast.TypeExpression);
+    first.* = try self.parseTypeExpression();
 
-    if (self.check(.colon)) {
-        return self.report(
-            self.peek().span,
-            "dictionary types are not available yet",
-            "Only list types, such as `[Int]`, can be written so far.",
-        );
+    // Section 8.2's `[String: Int]`, told from `[String]` by the colon.
+    var key: ?*const Ast.TypeExpression = null;
+    var element = first;
+    if (self.match(.colon) != null) {
+        key = first;
+        element = try self.arena.create(Ast.TypeExpression);
+        element.* = try self.parseTypeExpression();
     }
+
     const closing = self.peek();
     if (closing.kind != .right_bracket) {
         return self.reportFmt(
             closing.span,
-            "expected `]` to close this list type, found {s}",
-            .{closing.kind.describe()},
-            "A list type is an element type in brackets, as in `[Int]`.",
+            "expected `]` to close this {s} type, found {s}",
+            .{ if (key == null) "list" else "dictionary", closing.kind.describe() },
+            "A list type is an element type in brackets, as in `[Int]`, and a dictionary type names both, as in `[String: Int]`.",
         );
     }
     _ = self.advance();
@@ -911,6 +921,39 @@ fn parseListType(self: *Parser) Error!Ast.TypeExpression {
         .span = spanning(opening.span, closing.span),
         .name = "",
         .element = element,
+        .key = key,
+        .question_span = question,
+    };
+}
+
+/// Section 8.2's `{String}`. Braces are unambiguous in a type position, which
+/// is why the set type keeps them while its literal uses brackets.
+fn parseSetType(self: *Parser) Error!Ast.TypeExpression {
+    const opening = self.advance();
+    try self.nest(opening.span);
+    defer self.unnest();
+
+    const element = try self.arena.create(Ast.TypeExpression);
+    element.* = try self.parseTypeExpression();
+
+    const closing = self.peek();
+    if (closing.kind != .right_brace) {
+        return self.reportFmt(
+            closing.span,
+            "expected `}}` to close this set type, found {s}",
+            .{closing.kind.describe()},
+            "A set type is a member type in braces, as in `{String}`.",
+        );
+    }
+    _ = self.advance();
+
+    const question: ?Source.Span = if (self.match(.question)) |token| token.span else null;
+    try self.rejectNestedOptional(question);
+    return .{
+        .span = spanning(opening.span, closing.span),
+        .name = "",
+        .element = element,
+        .set = true,
         .question_span = question,
     };
 }
@@ -1596,6 +1639,51 @@ fn finishMember(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Exp
     } });
 }
 
+/// Section 8.2's `["Ava": 12, "Noah": 13]`, once the first key is parsed and a
+/// colon has been seen.
+fn finishDictionaryLiteral(
+    self: *Parser,
+    opening: Token,
+    first_key: *const Ast.Expression,
+) Error!*const Ast.Expression {
+    var entries: std.ArrayList(Ast.Expression.Entry) = .empty;
+
+    var key = first_key;
+    while (true) {
+        _ = self.advance(); // the `:`
+        self.skipSeparators();
+        try entries.append(self.arena, .{ .key = key, .value = try self.parseExpression() });
+        self.skipSeparators();
+        if (self.match(.comma) == null) break;
+        self.skipSeparators();
+        if (self.check(.right_bracket)) break; // a trailing comma
+
+        key = try self.parseExpression();
+        if (!self.check(.colon)) {
+            return self.report(
+                key.span,
+                "this entry has no value",
+                "Every entry of a dictionary is written `key: value`, and they are separated by commas.",
+            );
+        }
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_bracket) {
+        return self.reportFmt(
+            closing.span,
+            "expected `]` to close this dictionary, found {s}",
+            .{closing.kind.describe()},
+            "Separate the entries with commas and close the dictionary with `]`.",
+        );
+    }
+    _ = self.advance();
+
+    return self.node(spanning(opening.span, closing.span), .{
+        .dictionary_literal = try entries.toOwnedSlice(self.arena),
+    });
+}
+
 /// Section 8.2's `("score", 10)`, once the first position is parsed and a comma
 /// has been seen.
 fn finishTupleLiteral(
@@ -1999,16 +2087,18 @@ fn parseListLiteral(self: *Parser) Error!*const Ast.Expression {
 
     var elements: std.ArrayList(*const Ast.Expression) = .empty;
     while (!self.check(.right_bracket)) {
-        try elements.append(self.arena, try self.parseExpression());
-        if (self.check(.colon)) {
-            return self.report(
-                self.peek().span,
-                "dictionaries are not available yet",
-                "Only lists, such as `[1, 2, 3]`, can be written so far.",
-            );
-        }
+        self.skipSeparators();
+        if (self.check(.right_bracket)) break; // a trailing comma
+        const first = try self.parseExpression();
+
+        // Section 8.2: a `key: value` entry makes this a dictionary literal.
+        if (self.check(.colon)) return self.finishDictionaryLiteral(opening, first);
+
+        try elements.append(self.arena, first);
+        self.skipSeparators();
         if (self.match(.comma) == null) break;
     }
+    self.skipSeparators();
 
     const closing = self.peek();
     if (closing.kind != .right_bracket) {

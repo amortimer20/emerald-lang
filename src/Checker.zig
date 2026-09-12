@@ -556,15 +556,18 @@ fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
     const actual = try self.typeOf(iterable);
     if (actual.kind == .invalid) return .invalid;
     if (!try self.requirePresent(actual, iterable, null)) return .invalid;
-    // Section 8.4: a loop visits the list as it was when the loop began.
-    if (actual.kind == .list) return actual.element.?.*;
+    // Section 8.4: a loop visits the collection as it was when the loop began,
+    // and a dictionary or set in the order things were put into it.
+    if (actual.kind == .list or actual.kind == .set or actual.kind == .dictionary) {
+        return self.itemType(actual);
+    }
     // Section 9.1: iterating a string yields its characters, each a String.
     if (actual.kind == .string) return .string;
     try self.report(
         iterable.span,
         "a `for` loop cannot visit {f}",
         .{actual},
-        "A `for` loop visits a range, as in `for i in 1..10`, or the elements of a list.",
+        "A `for` loop visits a range, as in `for i in 1..10`, or the elements of a list, dictionary, or set.",
     );
     return .invalid;
 }
@@ -871,8 +874,8 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
 /// section 4.3 forbids for a `const` just as it forbids replacing the list,
 /// and which the list's binding must already hold.
 fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
-    for (assignment.indices) |index| try self.requireIndex(index);
     const binding = self.find(assignment.name) orelse {
+        for (assignment.indices) |index| try self.requireIndex(index);
         _ = try self.typeOf(assignment.value);
         return;
     };
@@ -890,7 +893,8 @@ fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void
 
     // Walk down to the type of the element being replaced.
     var element = binding.type;
-    for (assignment.indices) |_| {
+    var index: usize = 0;
+    while (index < assignment.indices.len) {
         if (element.kind == .invalid) break;
         // Section 4.5: a list that may be absent has no element to assign to.
         if (element.optional) {
@@ -914,17 +918,41 @@ fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void
             element = .invalid;
             break;
         }
+        // Section 8.3: bracket assignment on a dictionary inserts a new entry
+        // or replaces an existing value, so the key is a key rather than a
+        // position and there is no such thing as a missing one.
+        if (element.kind == .dictionary) {
+            try self.requireKey(assignment.indices[index], element.key.?.*);
+            element = element.element.?.*;
+            index += 1;
+            continue;
+        }
+        try self.requireIndex(assignment.indices[index]);
+        if (element.kind == .set) {
+            try self.report(
+                assignment.target_span,
+                "a set has no keys to assign to",
+                .{},
+                "Put a value in with `add(value)`.",
+            );
+            element = .invalid;
+            break;
+        }
         if (element.kind != .list) {
             try self.report(
                 assignment.target_span,
                 "{f} cannot be indexed",
                 .{element},
-                "Only a list has elements to assign to.",
+                "Only a list or a dictionary has elements to assign to.",
             );
             element = .invalid;
             break;
         }
         element = element.element.?.*;
+        index += 1;
+    }
+    while (index < assignment.indices.len) : (index += 1) {
+        try self.requireIndex(assignment.indices[index]);
     }
 
     if (assignment.operation) |operation| {
@@ -961,6 +989,14 @@ fn checkElementAssignment(self: *Checker, assignment: Ast.Assignment) Error!void
 fn mismatchHelp(actual: Type, expected: Type, general: []const u8) []const u8 {
     if (actual.kind == .list and expected.kind == .list) {
         return "A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: [Float] = [1, 2]`.";
+    }
+    // Section 8.2: only a literal takes its kind from the expected type, so a
+    // list already in a binding needs the conversion 8.2 names.
+    if (actual.kind == .list and expected.kind == .set) {
+        return "Only a bracketed literal becomes a set from the type expected around it. Convert it with `.to_set()`.";
+    }
+    if (actual.kind == .set and expected.kind == .list) {
+        return "A set records what is in it, with no positions to index. Build a list from it, or keep a list instead if the order matters.";
     }
     return general;
 }
@@ -1444,6 +1480,21 @@ fn resolveTypeExpression(self: *Checker, annotation: Ast.TypeExpression) Error!T
 }
 
 fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type {
+    // A dictionary and a set both fill in `element`, so they are asked about
+    // before a bare `[T]` is.
+    if (annotation.key) |written_key| {
+        const key = try self.resolveTypeExpression(written_key.*);
+        const value = try self.resolveTypeExpression(annotation.element.?.*);
+        try self.requireEligibleKey(key, written_key.span);
+        return Type.dictionaryOf(self.arena, key, value);
+    }
+
+    if (annotation.set) {
+        const member = try self.resolveTypeExpression(annotation.element.?.*);
+        try self.requireEligibleMember(member, annotation.span);
+        return Type.setOf(self.arena, member);
+    }
+
     if (annotation.element) |element| {
         const inner = try self.resolveTypeExpression(element.*);
         return Type.listOf(self.arena, inner);
@@ -1657,6 +1708,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .range => self.rejectCountingValue(expression),
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
+        .dictionary_literal => self.typeOfDictionary(expression, null),
     };
 }
 
@@ -1691,7 +1743,73 @@ fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?
     if (expression.data == .list_literal) return self.typeOfList(expression, expected);
     if (expression.data == .lambda) return self.typeOfLambda(expression, expected);
     if (expression.data == .tuple_literal) return self.typeOfTuple(expression, expected);
+    if (expression.data == .dictionary_literal) return self.typeOfDictionary(expression, expected);
     return self.typeOf(expression);
+}
+
+/// Section 8.2's `["Ava": 12]`. Keys and values infer their types the way a
+/// list's elements do, and an expected dictionary type passes both down so that
+/// whole numbers written where `Float` values belong are built as `Float`s.
+fn typeOfDictionary(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
+    const entries = expression.data.dictionary_literal;
+    const wanted: ?Type = if (expected) |want| (if (want.kind == .dictionary) want else null) else null;
+
+    const key_types = try self.arena.alloc(Type, entries.len);
+    const value_types = try self.arena.alloc(Type, entries.len);
+    for (entries, key_types, value_types) |entry, *key_type, *value_type| {
+        key_type.* = try self.typeOfExpected(entry.key, if (wanted) |want| want.key.?.* else null);
+        value_type.* = try self.typeOfExpected(entry.value, if (wanted) |want| want.element.?.* else null);
+    }
+
+    const key = if (wanted) |want| want.key.?.* else unifiedType(key_types);
+    const value = if (wanted) |want| want.element.?.* else unifiedType(value_types);
+
+    for (entries, key_types, value_types) |entry, key_type, value_type| {
+        if (!key_type.assignableTo(key)) try self.report(
+            entry.key.span,
+            "this is {f}, but the dictionary's keys are {f}",
+            .{ key_type, key },
+            "A dictionary holds one type of key.",
+        );
+        if (!value_type.assignableTo(value)) try self.report(
+            entry.value.span,
+            "this is {f}, but the dictionary's values are {f}",
+            .{ value_type, value },
+            "A dictionary holds one type of value.",
+        );
+    }
+
+    try self.requireEligibleKey(key, expression.span);
+
+    const built = try Type.dictionaryOf(self.arena, key, value);
+    try self.literal_types.put(self.arena, expression, built);
+    return built;
+}
+
+/// The one type a literal's keys or values share, widening `Int` to `Float`
+/// when both appear, as a list literal's elements do (4.4). A type that fits
+/// none of the others is returned as-is, and the caller reports each entry that
+/// does not fit it.
+fn unifiedType(types: []const Type) Type {
+    if (types.len == 0) return .invalid;
+    var unified = types[0];
+    for (types) |candidate| {
+        if (candidate.isInvalid()) return .invalid;
+        if (candidate.assignableTo(unified)) continue;
+        if (unified.assignableTo(candidate)) unified = candidate;
+    }
+    return unified;
+}
+
+/// Section 8.3: a dictionary key needs stable equality and hashing.
+fn requireEligibleKey(self: *Checker, key: Type, span: Source.Span) Error!void {
+    if (key.eligibleKey()) return;
+    try self.report(
+        span,
+        "{f} cannot be a dictionary key",
+        .{key},
+        "A key must be a whole or decimal number, a `Bool`, a `String`, or a tuple of those. Anything that can change after it is stored could not be found again.",
+    );
 }
 
 /// Section 8.2's `("score", 10)`. Each position takes its own type, and an
@@ -1724,10 +1842,65 @@ fn typeOfTuple(self: *Checker, expression: *const Ast.Expression, expected: ?Typ
     return built;
 }
 
+/// Section 8.2's set literal: bracketed elements in a place whose type is a
+/// set. Without an expected set type a bracketed list is a list, so this is
+/// only ever reached with one in hand.
+fn typeOfSet(self: *Checker, expression: *const Ast.Expression, want: Type) Error!Type {
+    const elements = expression.data.list_literal;
+    const member = want.element.?.*;
+
+    for (elements) |element| {
+        const actual = try self.typeOfExpected(element, member);
+        if (!actual.assignableTo(member)) try self.report(
+            element.span,
+            "this is {f}, but the set holds {f}",
+            .{ actual, member },
+            "A set holds one type of value.",
+        );
+    }
+
+    try self.requireEligibleMember(member, expression.span);
+    try self.literal_types.put(self.arena, expression, want);
+    return want;
+}
+
+/// A set member is stored and found the same way a dictionary key is, so it
+/// answers to the same rule (8.3).
+fn requireEligibleMember(self: *Checker, member: Type, span: Source.Span) Error!void {
+    if (member.eligibleKey()) return;
+    try self.report(
+        span,
+        "a set cannot hold {f}",
+        .{member},
+        "A set holds whole or decimal numbers, `Bool`s, `String`s, or tuples of those. Anything that can change after it is stored could not be found again.",
+    );
+}
+
 /// Section 8.2. Nonempty literals infer their element type, widening `Int` to
 /// `Float` when both appear (4.4); an empty one needs the type from context.
 fn typeOfList(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
     const elements = expression.data.list_literal;
+
+    // Section 8.2: bracketed elements are a set where a set is expected, and an
+    // empty `[]` is whichever of the three the context asks for. Only a literal
+    // takes its kind this way; a list already in a binding stays a list.
+    if (expected) |want| {
+        if (want.kind == .set) return self.typeOfSet(expression, want);
+        if (want.kind == .dictionary) {
+            if (elements.len == 0) {
+                try self.literal_types.put(self.arena, expression, want);
+                return want;
+            }
+            try self.report(
+                expression.span,
+                "this is a list, but {f} was expected",
+                .{want},
+                "A dictionary is written with `key: value` entries, as in `[\"Ava\": 12]`.",
+            );
+            return .invalid;
+        }
+    }
+
     const expected_element: ?Type = if (expected) |list|
         (if (list.kind == .list) list.element.?.* else null)
     else
@@ -1739,7 +1912,7 @@ fn typeOfList(self: *Checker, expression: *const Ast.Expression, expected: ?Type
                 expression.span,
                 "an empty list needs a type",
                 .{},
-                "Say what it will hold, as in `var names: [Int] = []`.",
+                "Say what it will hold, as in `var names: [Int] = []`, `var ages: [String: Int] = []`, or `var seen: {String} = []`.",
             );
             return .invalid;
         };
@@ -1975,11 +2148,30 @@ fn checkLambdaBody(
 
 fn typeOfIndex(self: *Checker, index: Ast.Expression.Index) Error!Type {
     const base = try self.typeOf(index.base);
+
+    // Section 8.3: a dictionary is indexed by its key, and the lookup can miss,
+    // so it produces an optional. The non-nesting rule of 4.5 means a
+    // dictionary of optionals reads the same whether the entry is missing or
+    // holds `nothing`; `contains_key?` is what tells those apart.
+    if (base.kind == .dictionary) {
+        try self.requireKey(index.index, base.key.?.*);
+        return base.element.?.optionalOf();
+    }
+
     try self.requireIndex(index.index);
     if (base.kind == .invalid) return .invalid;
     if (!try self.requirePresent(base, index.base, null)) return .invalid;
     // Section 9.1: a string's index counts characters, and each is a String.
     if (base.kind == .string) return .string;
+    if (base.kind == .set) {
+        try self.report(
+            index.base.span,
+            "a set has no keys to look up",
+            .{},
+            "A set only records what is in it. Ask with `contains?(value)`.",
+        );
+        return .invalid;
+    }
     if (base.kind != .list) {
         try self.report(
             index.base.span,
@@ -1990,6 +2182,19 @@ fn typeOfIndex(self: *Checker, index: Ast.Expression.Index) Error!Type {
         return .invalid;
     }
     return base.element.?.*;
+}
+
+/// The key a dictionary is indexed by, which must be its key type rather than
+/// a position.
+fn requireKey(self: *Checker, index: *const Ast.Expression, key: Type) Error!void {
+    const actual = try self.typeOfExpected(index, key);
+    if (actual.assignableTo(key)) return;
+    try self.report(
+        index.span,
+        "this is {f}, but the dictionary's keys are {f}",
+        .{ actual, key },
+        "Look it up with a key of the dictionary's own type.",
+    );
 }
 
 fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
@@ -2066,6 +2271,13 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
         return .invalid;
     }
 
+    // Section 8.5: size is a read-only property on every collection.
+    if (base.kind == .dictionary or base.kind == .set) {
+        if (std.mem.eql(u8, member.name, "count")) return .int;
+        try self.reportUnknownMember(base, member, "property");
+        return .invalid;
+    }
+
     if (base.kind == .list or base.kind == .string) {
         if (std.mem.eql(u8, member.name, "count")) return .int;
         // Section 8.5: `first` and `last` are properties, and may be absent
@@ -2134,7 +2346,19 @@ fn typeOfMethodCall(
         return .int;
     }
 
+    if (base.kind == .dictionary or base.kind == .set) {
+        return self.typeOfMapMethod(expression, call, member, base);
+    }
+
     if (base.kind == .list) {
+        // Section 8.2 names this as the way to build a set where no set type is
+        // expected: `["red", "green"].to_set()`.
+        if (std.mem.eql(u8, member.name, "to_set")) {
+            _ = try self.requireArity(member, call.arguments, 0, 0);
+            const member_type = base.element.?.*;
+            try self.requireEligibleMember(member_type, member.name_span);
+            return Type.setOf(self.arena, member_type);
+        }
         if (std.mem.eql(u8, member.name, "each")) return self.typeOfEach(call, member, base);
         if (std.mem.eql(u8, member.name, "map")) return self.typeOfMap(call, member, base);
         // Section 8.6's searching pair. `find_index` is what 4.5 names as the
@@ -2316,6 +2540,152 @@ fn typeOfMap(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.M
 /// The single block argument a higher-order method takes, checked against a
 /// callable that receives one element. `result` of `invalid` asks for a block
 /// without saying what it must produce.
+/// Section 8.5's essential vocabulary for a dictionary and a set. The rest of
+/// section 8.6 arrives with the standard-library slice.
+fn typeOfMapMethod(
+    self: *Checker,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    base: Type,
+) Error!Type {
+    _ = expression;
+    const set = base.kind == .set;
+    const key = if (set) base.element.?.* else base.key.?.*;
+    const value = base.element.?.*;
+    const name = member.name;
+
+    // Shared by both, and by lists.
+    if (std.mem.eql(u8, name, "each")) return self.typeOfEach(call, member, base);
+    if (std.mem.eql(u8, name, "map")) return self.typeOfMap(call, member, base);
+    if (std.mem.eql(u8, name, "empty?")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return .bool;
+    }
+    if (std.mem.eql(u8, name, "count")) {
+        try self.report(
+            member.name_span,
+            "`count` is a property, so it takes no parentheses",
+            .{},
+            "Write `.count` without `()`.",
+        );
+        try self.typeArguments(call.arguments);
+        return .int;
+    }
+
+    // Section 8.5: a dictionary and a set each ask about membership with the
+    // name that reads correctly for what they hold.
+    const membership = if (set) "contains?" else "contains_key?";
+    if (std.mem.eql(u8, name, membership)) {
+        if (try self.requireArity(member, call.arguments, 1, 1)) {
+            try self.requireKey(call.arguments[0], key);
+        } else {
+            try self.typeArguments(call.arguments);
+        }
+        return .bool;
+    }
+
+    if (std.mem.eql(u8, name, "remove")) {
+        if (try self.requireArity(member, call.arguments, 1, 1)) {
+            try self.requireKey(call.arguments[0], key);
+        } else {
+            try self.typeArguments(call.arguments);
+        }
+        try self.requireMutableReceiver(member, name);
+        // Section 8.5's removal answers with what was there, and an entry that
+        // was never there is absence rather than an error, because a key that
+        // is not present is an ordinary thing to ask about.
+        return if (set) .nothing else value.optionalOf();
+    }
+
+    if (set) {
+        if (std.mem.eql(u8, name, "add")) {
+            if (try self.requireArity(member, call.arguments, 1, 1)) {
+                try self.requireKey(call.arguments[0], key);
+            } else {
+                try self.typeArguments(call.arguments);
+            }
+            try self.requireMutableReceiver(member, name);
+            return .nothing;
+        }
+        try self.reportUnknownMember(base, member, "method");
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+
+    if (std.mem.eql(u8, name, "contains_value?")) {
+        if (try self.requireArity(member, call.arguments, 1, 1)) {
+            const actual = try self.typeOfExpected(call.arguments[0], value);
+            if (!actual.assignableTo(value)) try self.report(
+                call.arguments[0].span,
+                "this is {f}, but the dictionary's values are {f}",
+                .{ actual, value },
+                "Ask with a value of the dictionary's own type.",
+            );
+        } else {
+            try self.typeArguments(call.arguments);
+        }
+        return .bool;
+    }
+
+    if (std.mem.eql(u8, name, "keys")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return Type.listOf(self.arena, key);
+    }
+    if (std.mem.eql(u8, name, "values")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return Type.listOf(self.arena, value);
+    }
+    if (std.mem.eql(u8, name, "entries")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return Type.listOf(self.arena, try self.itemType(base));
+    }
+    if (std.mem.eql(u8, name, "merge")) {
+        if (try self.requireArity(member, call.arguments, 1, 1)) {
+            const actual = try self.typeOfExpected(call.arguments[0], base);
+            if (!actual.assignableTo(base)) try self.report(
+                call.arguments[0].span,
+                "this is {f}, but `merge` needs {f}",
+                .{ actual, base },
+                "Both dictionaries must hold the same types.",
+            );
+        } else {
+            try self.typeArguments(call.arguments);
+        }
+        try self.requireMutableReceiver(member, name);
+        return .nothing;
+    }
+
+    try self.reportUnknownMember(base, member, "method");
+    try self.typeArguments(call.arguments);
+    return .invalid;
+}
+
+/// Section 4.3 and 7.1: a method that changes its receiver cannot be called on
+/// a `const`, a parameter, a loop variable, or a temporary.
+fn requireMutableReceiver(self: *Checker, member: Ast.Expression.Member, name: []const u8) Error!void {
+    if (member.base.data == .name) {
+        const binding = self.find(member.base.data.name) orelse return;
+        return self.requireMutable(member.base.data.name, member.base.span, binding.*);
+    }
+    if (member.base.data == .index or member.base.data == .member) return;
+    try self.reportWithHelp(
+        member.name_span,
+        "`{s}` changes what it is called on, and this value has nowhere to keep the change",
+        .{name},
+        "Put it in a `var` first, then call `{s}` on that.",
+        .{name},
+    );
+}
+
+/// Section 8.6: "every ordinary collection block receives one logical item",
+/// and a dictionary's item is a `(key, value)` tuple. That is also what a `for`
+/// loop over one visits, so both go through here.
+fn itemType(self: *Checker, collection: Type) Error!Type {
+    if (collection.kind != .dictionary) return collection.element.?.*;
+    return Type.tupleOf(self.arena, &.{ collection.key.?.*, collection.element.?.* });
+}
+
 fn requireBlock(
     self: *Checker,
     call: Ast.Expression.Call,
@@ -2335,7 +2705,7 @@ fn requireBlock(
     }
 
     const element = try self.arena.create(Type);
-    element.* = base.element.?.*;
+    element.* = try self.itemType(base);
     const expected = try Type.functionOf(self.arena, .{
         .parameters = element[0..1],
         .return_type = result,
@@ -2457,6 +2827,7 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
     const suggestion: ?[]const u8 = switch (base.kind) {
         .list => familiarListName(member.name),
         .string => familiarStringName(member.name),
+        .dictionary, .set => familiarMapName(member.name, base.kind == .set),
         else => null,
     };
     if (suggestion) |name| {
@@ -2474,10 +2845,59 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         .{ base, member.name },
         switch (base.kind) {
             .list => "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, and `clear`.",
+            .dictionary => "A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.",
+            .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
             .string => "A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `substring`, `split`, `lines`, `chars`, `to_int`, and `to_float`, among others.",
             else => "Check the spelling, or what kind of value this is.",
         },
     );
+}
+
+/// Names other languages use for dictionary and set operations Emerald spells
+/// differently.
+fn familiarMapName(name: []const u8, set: bool) ?[]const u8 {
+    const shared = std.StaticStringMap([]const u8).initComptime(.{
+        .{ "length", "count" },
+        .{ "size", "count" },
+        .{ "len", "count" },
+        .{ "is_empty", "empty?" },
+        .{ "isEmpty", "empty?" },
+        .{ "for_each", "each" },
+        .{ "delete", "remove" },
+        .{ "erase", "remove" },
+        .{ "discard", "remove" },
+    });
+    if (shared.get(name)) |shared_name| return shared_name;
+
+    if (set) {
+        const set_names = std.StaticStringMap([]const u8).initComptime(.{
+            .{ "contains_key?", "contains?" },
+            .{ "has", "contains?" },
+            .{ "includes", "contains?" },
+            .{ "member?", "contains?" },
+            .{ "insert", "add" },
+            .{ "append", "add" },
+            .{ "push", "add" },
+        });
+        return set_names.get(name);
+    }
+
+    const dictionary_names = std.StaticStringMap([]const u8).initComptime(.{
+        .{ "get", "[key]" },
+        .{ "put", "[key] =" },
+        .{ "set", "[key] =" },
+        .{ "add", "[key] =" },
+        .{ "insert", "[key] =" },
+        .{ "contains?", "contains_key?" },
+        .{ "has_key", "contains_key?" },
+        .{ "has_key?", "contains_key?" },
+        .{ "includes?", "contains_key?" },
+        .{ "key?", "contains_key?" },
+        .{ "items", "entries" },
+        .{ "pairs", "entries" },
+        .{ "update", "merge" },
+    });
+    return dictionary_names.get(name);
 }
 
 /// Names other languages use for string operations Emerald spells differently.

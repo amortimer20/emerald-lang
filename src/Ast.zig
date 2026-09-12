@@ -161,8 +161,13 @@ pub const TypeExpression = struct {
     span: Source.Span,
     /// The name, or empty for a list or function type.
     name: []const u8,
-    /// The element type of a list type, `T` in `[T]`; null otherwise.
+    /// The element type of a list type, `T` in `[T]`, the value type of a
+    /// dictionary, or the member type of a set; null otherwise.
     element: ?*const TypeExpression = null,
+    /// The key type of a dictionary type, `K` in `[K: V]`; null otherwise.
+    key: ?*const TypeExpression = null,
+    /// Whether `element` is section 8.2's `{T}` rather than `[T]`.
+    set: bool = false,
     /// The shape of a function type; null otherwise.
     signature: ?*const SignatureExpression = null,
     /// The position types of a tuple type, `(A, B)`; null otherwise.
@@ -240,9 +245,11 @@ pub const Expression = struct {
         string_literal: []const u8,
         /// Section 5.1's `"text #{expression} text"`, in order.
         interpolation: []const Part,
-        /// Section 8.2's `[a, b, c]`. Dictionary and set literals share the
-        /// bracket spelling and arrive with those collections.
+        /// Section 8.2's `[a, b, c]`. A set literal shares this spelling, and
+        /// is told apart by the type expected where it is written.
         list_literal: []const *const Expression,
+        /// Section 8.2's `["Ava": 12]`, recognized by its `key: value` entries.
+        dictionary_literal: []const Entry,
         /// Section 5.4's zero-based `base[index]`.
         index: Index,
         /// `base.name`: a property, or a method when it is the callee of a call.
@@ -280,6 +287,12 @@ pub const Expression = struct {
         /// receives is a tuple unpacked in the header; null for a plain
         /// parameter.
         pattern: ?Pattern = null,
+    };
+
+    /// One `key: value` of a dictionary literal.
+    pub const Entry = struct {
+        key: *const Expression,
+        value: *const Expression,
     };
 
     /// One piece of an interpolated string: finished text, or an expression

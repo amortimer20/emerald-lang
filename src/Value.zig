@@ -15,7 +15,7 @@ const unicode = @import("unicode.zig");
 
 const Value = @This();
 
-pub const Kind = enum { nothing, bool, int, float, string, list, tuple, closure };
+pub const Kind = enum { nothing, bool, int, float, string, list, tuple, map, closure };
 
 data: Data,
 
@@ -29,6 +29,8 @@ pub const Data = union(Kind) {
     list: *Heap.List,
     /// Section 8.2's `("score", 10)`, which never changes once built.
     tuple: *Heap.Tuple,
+    /// Section 8.2's dictionary or set, which share one structure.
+    map: *Heap.Map,
     /// Section 7.4's lambda, or section 7.5's captured function.
     closure: *Heap.Closure,
 };
@@ -66,6 +68,7 @@ pub fn typeName(self: Value) []const u8 {
         .string => "String",
         .list => "a list",
         .tuple => "a tuple",
+        .map => |map| if (map.is_set) "a set" else "a dictionary",
         .closure => "a function",
     };
 }
@@ -73,7 +76,7 @@ pub fn typeName(self: Value) []const u8 {
 /// Whether two values are numbers, which is what arithmetic and ordering need.
 pub fn isNumber(self: Value) bool {
     return switch (self.data) {
-        .nothing, .bool, .string, .list, .tuple, .closure => false,
+        .nothing, .bool, .string, .list, .tuple, .map, .closure => false,
         .int, .float => true,
     };
 }
@@ -91,7 +94,9 @@ pub fn display(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     return self.write(writer, false);
 }
 
-fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Error!void {
+/// The value as it would be written inside a collection: a string is quoted,
+/// so `["a, b"]` and `["a", "b"]` cannot be mistaken for each other.
+pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Error!void {
     switch (self.data) {
         .nothing => try writer.writeAll("nothing"),
         .bool => |value| try writer.writeAll(if (value) "true" else "false"),
@@ -116,11 +121,102 @@ fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Error!
             }
             try writer.writeAll(")");
         },
+        // Section 8.4 prints in insertion order. A set writes the braces of its
+        // type rather than the brackets its literal was written with, and an
+        // empty dictionary writes `[:]`, so neither can be read as a list.
+        .map => |map| {
+            if (map.is_set) {
+                try writer.writeAll("{");
+                for (map.entries.items, 0..) |entry, position| {
+                    if (position != 0) try writer.writeAll(", ");
+                    try entry.key.write(writer, true);
+                }
+                return writer.writeAll("}");
+            }
+            if (map.entries.items.len == 0) return writer.writeAll("[:]");
+            try writer.writeAll("[");
+            for (map.entries.items, 0..) |entry, position| {
+                if (position != 0) try writer.writeAll(", ");
+                try entry.key.write(writer, true);
+                try writer.writeAll(": ");
+                try entry.value.write(writer, true);
+            }
+            try writer.writeAll("]");
+        },
         .closure => |closure| switch (closure.function) {
             .named => |name| try writer.print("<func {s}>", .{name}),
             .lambda => try writer.writeAll("<lambda>"),
         },
     }
+}
+
+/// The hash a dictionary or set stores this value under.
+///
+/// It must agree with `equals`: two values that are equal must hash the same.
+/// For a string that means hashing its normalized form, because section 9.2
+/// compares strings after normalizing. The quick check answers "already
+/// normalized" for almost every string, and only the rest are converted, so the
+/// common case allocates nothing.
+///
+/// Section 8.4 makes the hash itself a runtime detail: nothing observable may
+/// depend on it, and the order a program sees comes from insertion order.
+pub fn hash(gpa: std.mem.Allocator, value: Value) std.mem.Allocator.Error!u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    try hashInto(gpa, value, &hasher);
+    return hasher.final();
+}
+
+/// A tag per kind, mixed in so that a tuple of two values cannot collide with
+/// something else built from the same parts. `Int` and `Float` share one,
+/// because `1 == 1.0` and equal values must hash alike.
+const HashTag = enum(u8) { nothing, bool, number, string, tuple, unhashable };
+
+fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.mem.Allocator.Error!void {
+    const tag: HashTag = switch (value.data) {
+        .nothing => .nothing,
+        .bool => .bool,
+        .int, .float => .number,
+        .string => .string,
+        .tuple => .tuple,
+        .list, .map, .closure => .unhashable,
+    };
+    hasher.update(&.{@intFromEnum(tag)});
+
+    switch (value.data) {
+        .nothing => {},
+        .bool => |flag| hasher.update(&.{@intFromBool(flag)}),
+        .int => |number| hasher.update(std.mem.asBytes(&number)),
+        .float => |number| {
+            // A whole `Float` hashes as the `Int` it equals, because `==` says
+            // they are equal. Negative zero equals zero, so it hashes as zero.
+            if (asWholeNumber(number)) |whole| {
+                hasher.update(std.mem.asBytes(&whole));
+            } else {
+                hasher.update(std.mem.asBytes(&number));
+            }
+        },
+        .string => |text| {
+            if (unicode.quickCheck(text.bytes) == .yes) {
+                hasher.update(text.bytes);
+            } else {
+                const normalized = try unicode.normalize(gpa, text.bytes);
+                defer gpa.free(normalized);
+                hasher.update(normalized);
+            }
+        },
+        .tuple => |tuple| for (tuple.items) |item| try hashInto(gpa, item, hasher),
+        // The checker rejects these as keys (8.3), so this is a safety net.
+        .list, .map, .closure => {},
+    }
+}
+
+/// The whole number a `Float` exactly equals, or null. `Int` and `Float` compare
+/// across types, so the two must hash alike wherever they can be equal.
+fn asWholeNumber(number: f64) ?i64 {
+    if (std.math.isNan(number) or std.math.isInf(number)) return null;
+    if (@floor(number) != number) return null;
+    if (number < -9223372036854775808.0 or number >= 9223372036854775808.0) return null;
+    return @intFromFloat(number);
 }
 
 /// A string as a double-quoted literal would write it, with section 5.1's
@@ -173,6 +269,20 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
             },
             else => false,
         },
+        // Section 8.4: a set compares by membership and a dictionary by its
+        // keys and values, neither by insertion order.
+        .map => |a| switch (right.data) {
+            .map => |b| blk: {
+                if (a.entries.items.len != b.entries.items.len) break :blk false;
+                for (a.entries.items) |entry| {
+                    const found = try Heap.lookupIn(gpa, b, entry.hash, entry.key) orelse break :blk false;
+                    if (a.is_set) continue;
+                    if (!try equals(gpa, entry.value, found.value)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        },
         // Section 8.4: tuples compare their values position by position. The
         // checker has already proved the arities match.
         .tuple => |a| switch (right.data) {
@@ -213,7 +323,7 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
         .int => |a| switch (right.data) {
             .int => |b| std.math.order(a, b),
             .float => |b| orderIntFloat(a, b),
-            .nothing, .bool, .string, .list, .tuple, .closure => null,
+            .nothing, .bool, .string, .list, .tuple, .map, .closure => null,
         },
         .float => |a| switch (right.data) {
             .int => |b| if (orderIntFloat(b, a)) |result| result.invert() else null,
@@ -221,9 +331,9 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
                 null
             else
                 std.math.order(a, b),
-            .nothing, .bool, .string, .list, .tuple, .closure => null,
+            .nothing, .bool, .string, .list, .tuple, .map, .closure => null,
         },
-        .nothing, .bool, .string, .list, .tuple, .closure => null,
+        .nothing, .bool, .string, .list, .tuple, .map, .closure => null,
     };
 }
 
@@ -401,4 +511,39 @@ test "NaN is unordered against everything, including itself" {
 test "a Bool is not ordered against a number" {
     try testing.expect(Value.order(.initBool(true), .initInt(1)) == null);
     try testing.expect(Value.order(.initInt(1), .initBool(true)) == null);
+}
+
+test "a hash agrees with equality for numbers" {
+    const gpa = testing.allocator;
+    // `1 == 1.0`, so the two must hash alike or a dictionary could hold both.
+    try testing.expectEqual(try hash(gpa, .initInt(1)), try hash(gpa, .initFloat(1.0)));
+    try testing.expectEqual(try hash(gpa, .initFloat(-0.0)), try hash(gpa, .initFloat(0.0)));
+    try testing.expectEqual(try hash(gpa, .initInt(0)), try hash(gpa, .initFloat(-0.0)));
+    try testing.expect(try hash(gpa, .initInt(1)) != try hash(gpa, .initInt(2)));
+    // A fraction is not a whole number, so it hashes as itself.
+    try testing.expect(try hash(gpa, .initFloat(1.5)) != try hash(gpa, .initInt(1)));
+    // A value out of `Int`'s range stays a `Float`, and must not be truncated.
+    try testing.expect(try hash(gpa, .initFloat(1e300)) != try hash(gpa, .initInt(0)));
+}
+
+test "a hash distinguishes values of different types" {
+    const gpa = testing.allocator;
+    try testing.expect(try hash(gpa, .initBool(false)) != try hash(gpa, .initInt(0)));
+    try testing.expect(try hash(gpa, .initBool(true)) != try hash(gpa, .initInt(1)));
+    try testing.expect(try hash(gpa, nothing) != try hash(gpa, .initInt(0)));
+}
+
+test "a hash agrees with equality for strings, which normalize first" {
+    const gpa = testing.allocator;
+    var heap: Heap = .init(gpa);
+    defer heap.deinit();
+
+    // The same text composed, and as `e` plus a combining acute accent.
+    const composed = try heap.copyText("café");
+    const decomposed = try heap.copyText("cafe\u{301}");
+    try testing.expect(try equals(gpa, composed, decomposed));
+    try testing.expectEqual(try hash(gpa, composed), try hash(gpa, decomposed));
+
+    const other = try heap.copyText("cafe");
+    try testing.expect(try hash(gpa, composed) != try hash(gpa, other));
 }
