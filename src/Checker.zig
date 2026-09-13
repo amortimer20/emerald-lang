@@ -60,7 +60,8 @@ pub const Checked = struct {
     changing_methods: Resolver.NameSet,
     /// For every call that reaches an instance method, keyed by its callee
     /// expression, the method's key. Only types can tell `bag.append(1)` on a
-    /// struct from the list method of the same name.
+    /// struct from the list method of the same name. A method captured as a
+    /// value (7.5) is keyed by its member expression the same way.
     method_calls: MethodCalls,
 
     pub fn ok(self: Checked) bool {
@@ -3163,7 +3164,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .member => |member| if (try self.referenceOf(expression)) |reference|
             self.typeOfQualified(expression, reference)
         else
-            self.typeOfMember(member),
+            self.typeOfMember(expression, member),
         .range => self.rejectCountingValue(expression),
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
@@ -3713,7 +3714,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
 }
 
 /// A property: `count` is the only one so far (8.5).
-fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
+fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Type {
     // `self.x` inside a constructor reads one field, which needs only that
     // field to be set, not all of them.
     if (self.constructing != null and member.base.data == .name and
@@ -3751,9 +3752,24 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
             }
             return set.type;
         }
+        const building = self.constructing.?.type;
+        if (self.receivers.contains(try Resolver.methodKey(self.arena, building.user.?.name, member.name))) {
+            // Section 10.2: capturing a method copies `self` (7.5), which
+            // needs every field, exactly as calling one does.
+            if (try self.firstUnsetField()) |field| {
+                if (!try self.reportInDefault(member.name_span, "capture a method of `self`")) try self.reportWithHelp(
+                    member.name_span,
+                    "`{s}` cannot be captured until every field of `self` is set",
+                    .{member.name},
+                    "Set `self.{s}` first. Capturing a method keeps a copy of `self`, so it has to wait for all of them.",
+                    .{field},
+                );
+                return .invalid;
+            }
+            return self.typeOfMethodValue(expression, building, member.name);
+        }
         // Not a field. Reported directly, since going through `typeOf(self)`
         // would first complain that `self` is not ready yet.
-        const building = self.constructing.?.type;
         if (try self.reportTypeMemberThroughValue(building, member.name, member.name_span)) return .invalid;
         try self.report(
             member.name_span,
@@ -3776,14 +3792,7 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
         if (try self.propertyOf(base, member.name)) |property| return self.typeOfPropertyRead(member, property);
         if (try self.reportTypeMemberThroughValue(base, member.name, member.name_span)) return .invalid;
         if (self.receivers.contains(try Resolver.methodKey(self.arena, base.user.?.name, member.name))) {
-            try self.reportWithHelp(
-                member.name_span,
-                "`{s}` is a method, so it needs parentheses",
-                .{member.name},
-                "Call it, as in `.{s}()`. Methods cannot be used as values yet.",
-                .{member.name},
-            );
-            return .invalid;
+            return self.typeOfMethodValue(expression, base, member.name);
         }
         try self.report(
             member.name_span,
@@ -3871,6 +3880,21 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
     }
     try self.reportUnknownMember(base, member, "property");
     return .invalid;
+}
+
+/// Section 7.5's `counter.increment` without parentheses: a function that
+/// calls the method on its own copy of the receiver, which a changing method
+/// keeps changing from one call to the next. Nothing about the receiver's
+/// place is checked, since the copy is the only thing that can change.
+fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: Type, name: []const u8) Error!Type {
+    const key = try Resolver.methodKey(self.arena, owner.user.?.name, name);
+    try self.method_calls.put(self.arena, expression, key);
+    const signature = try self.signatureFor(key);
+    return Type.functionOf(self.arena, .{
+        .parameters = signature.parameters,
+        .parameter_names = signature.parameter_names,
+        .return_type = signature.return_type,
+    });
 }
 
 /// A method call such as `scores.append(10)`.

@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the member privacy slice (10.5).
+Updated: 2026-09-13. Prepared after the method values slice (7.5).
 
 ## Current milestone
 
@@ -33,8 +33,9 @@ and writable, with nested mutation through one rejected. Section 7.3's default p
 named arguments work for functions, methods, and constructors, and fields have defaults that
 make them optional in the generated constructor. Type-level functions and fields work
 (`func Vector2.origin()`, `var Player.count = 0`), set up lazily the first time the type is
-reached. Members whose names start with `_` are private to their type's braces. Method
-values are the remaining struct sub-slice; `super(...)` waits for classes.
+reached. Members whose names start with `_` are private to their type's braces, and a
+struct method without parentheses is a function value holding its own copy of the receiver.
+Structs are complete apart from `super(...)`, which waits for classes.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -159,6 +160,37 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Method value decisions worth knowing
+
+- **A captured method is a closure with a receiver (7.5).** `Heap.Closure.Function` gained
+  `.method` (the method key), and `Closure.receiver` holds the copy, released with the
+  closure and counted, marked, and dropped by the collector like a field. The checker records
+  the member expression in `method_calls` (the map calls already use) and gives it the
+  method's function type; `evaluateProperty` builds the closure when that map has it.
+- **Every call through a value goes through `invokeClosure`.** A reading method gets a
+  retained receiver as `self`. A changing one takes the receiver out of the closure, sets
+  `running`, and leaves `self_out` behind as the new receiver, so the copy stays unique and
+  `self.items.append` does not copy the list on every call. Calling the same closure again
+  while `running` raises "already changing its captured copy"
+  (`runtime-errors/captured-method-called-again`). `callHigherOrder` works out the closure's
+  `Callable` once and passes it in, so `each` does not repeat that per element.
+- **Readiness in a constructor is the call rule.** Capturing `self.method` waits for every
+  field, and a field or parameter default cannot capture one
+  (`diagnostics/method-value-before-ready`). Privacy is checked before either.
+- **Capture analysis needed nothing new.** The resolver already records reading
+  `value.name` as a possible call of every member by that name, which covers calling the
+  captured value later.
+- **Display and equality.** A captured method prints as `<func name>`, and two are equal only
+  when they are the same closure, like lambdas.
+- **Not in this slice: built-in methods.** `numbers.append` without parentheses still says it
+  needs parentheses. 7.4's rule that every method is capturable, including the expected-type
+  rule for `numbers.map`, is still to do.
+- **Checked.** The heap test "a captured method keeps its receiver alive" fails without
+  either the mark or the internal count of the receiver. A 200,000-iteration program that
+  builds cycles through captured receivers stays at 3.5 MB, against 460 MB without the count.
+  Timing a closure-heavy program against the previous commit moved within code-layout noise
+  (a closure-free loop moved further, in the other direction).
 
 ### Privacy decisions worth knowing
 
@@ -346,10 +378,8 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 
 - **Scope.** `func` inside a struct body, `self` inside it, calls as `value.method(args)`,
   return-type inference exactly as for functions, and section 4.3's inferred mutation.
-  Deferred, each rejected with its own diagnostic or not yet parsed: method values
-  (`counter.peek` without parentheses, 7.5), member privacy (10.5, which should cover fields
-  and methods together), type-level `func Type.name()` and `var Type.name` (10.4), and
-  `self` inside a block (still rejected in methods, as in constructors).
+  Still rejected: `self` inside a block (in methods, as in constructors). Method values,
+  privacy, and type-level members arrived in later slices, recorded in their own sections.
 - **A method is a function under a key of its own.** `Board::record` (`Resolver.methodKey`;
   `::` appears in no name, path, or other key). The checker keeps it in `declarations`
   beside functions and the interpreter in `functions`, so `signatureFor`, inference,
@@ -1045,9 +1075,11 @@ what was covered.
 
 Continue section 20's slice 12. Structs now have stored fields with defaults, assignment
 through field paths, custom constructors, instance methods, computed properties,
-type-level functions and fields, and member privacy, and section 7.3's defaults and named
-arguments are in. What remains for structs is method values (7.5). After structs, section
-20's order continues with classes, traits, operators, and enums.
+type-level functions and fields, member privacy, and method values, and section 7.3's
+defaults and named arguments are in. Structs are complete. Two paths from here: capturing
+built-in methods (7.4's "every method remains capturable", with an expected type for
+`numbers.map`), which finishes section 7, or section 20's order onward, which continues with
+classes, traits, operators, and enums.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -1067,7 +1099,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 309 unit tests, 265 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 268 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

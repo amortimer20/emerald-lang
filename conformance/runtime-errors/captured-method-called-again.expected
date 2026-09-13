@@ -1,0 +1,5 @@
+runtime-errors/captured-method-called-again.em:7:9: `go` is already changing its captured copy, so it cannot be called again until that call finishes
+          hooks[0]()
+          ^^^^^^^^^^
+A captured method has its copy to itself while it changes it. Call the method on a value directly instead of through the captured one.
+in `go`, called at runtime-errors/captured-method-called-again.em:12:1

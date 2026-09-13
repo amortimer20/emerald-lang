@@ -1072,7 +1072,15 @@ const advance = private_copy.increment
 ```
 
 Nothing the captured method does is visible through the original binding, because a struct
-assignment never shares. Diagnostics for the related restriction in 7.4 — a struct method
+assignment never shares. A captured method that changes its copy keeps those changes from one
+call to the next, so `const draw = office.next` counts up on every call while `office` stays
+as it was. Like a changing method called directly (4.3), it has its copy to itself while it
+runs, so calling the same captured method again from inside that call is a runtime error.
+
+Capturing a method of `self` inside a constructor copies `self`, so it waits until every
+field is set, exactly as calling one does (10.2), and a field default cannot capture one. Two
+captured methods are equal only when they are the same captured value: each holds its own
+copy, so two captures are different functions even when they come from equal values. Diagnostics for the related restriction in 7.4 — a struct method
 may not create a closure that outlives and mutates its original `self` — should use this
 same framing and suggest the explicit local, which makes the copy visible in the source.
 
@@ -2873,6 +2881,8 @@ recorded in their normative sections:
 | Where a type-level member is declared (10.4) | Inside its own type's braces, naming that type | 10.4 shows `func Vector2.origin()` without saying where it goes. Inside the type keeps a type's members in one place for a reader and one declaration for the checker; accepting it elsewhere would be extension of a type from outside, a separate feature with its own questions about files, namespaces, and privacy. |
 | Type-level and instance member names (10.3, 10.4) | One name space for both | `Player.count` and `player.count` meaning different things would be legal but misleading, and the diagnostic for reaching a member the wrong way can only name the right way if the name identifies one member. |
 | Inferring a type-level field's type (4.1, 7.2, 10.4) | Optional annotation; inferred from the value on first need, and a cycle through a function whose return type is also inferred needs one of the two annotated | This matches module-level bindings, which the fields otherwise behave like. The cycle rule is 7.2's rule for recursive functions, reached through a field instead of a call. |
+| Calling a captured changing method from inside itself (4.3, 7.5) | Runtime error | The call has the copy to itself while it changes it, as a changing method has its receiver. Letting the inner call work on the same copy would make the outer call's result silently overwrite the inner one's changes. |
+| Equality of captured methods (7.5) | Equal only when they are the same captured value | A captured method carries state, like a lambda that captured variables, so equal-looking captures can behave differently after either is called. A named function carries none, which is why capturing it twice gives equal values. |
 | Where a private member can be reached (10.5) | Only from code inside its own type's braces, including other values of that type | `protected` is deferred, so a subclass would not see a private member either; the braces are the boundary a reader can see. Module-level privacy stops at the file because the file is a module's unit (14.2), but a type's unit is its declaration. Allowing `other._count` for another value of the same type keeps equality helpers and merges writable without a public accessor. |
 | Private fields and the generated constructor (7.3, 10.2, 10.5) | Still one parameter per field in declaration order; outside the type a call may not give a private field a value | Dropping private fields from the parameters would give a field a different position depending on who calls. Keeping them lets the type's own functions pass everything, while outside callers leave a private field to its default and name the fields after it. |
 | Narrowing a type-level field (4.5, 10.4) | Not narrowed, even after assigning a present value | The field is one binding the whole program shares, so any call between the proof and the use can set it back to `nothing`. `.or(...)`, or copying it into a local first, is the way to use one. |

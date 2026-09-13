@@ -1,0 +1,12 @@
+diagnostics/method-value-before-ready.em:4:35: a field default cannot capture a method of `self`
+      var later: func(): Int = self.total
+                                    ^^^^^
+A default runs while the value is still being built, so it can read only the earlier fields it needs, as in `self.width`.
+diagnostics/method-value-before-ready.em:8:24: `total` cannot be captured until every field of `self` is set
+          const f = self.total
+                         ^^^^^
+Set `self.b` first. Capturing a method keeps a copy of `self`, so it has to wait for all of them.
+diagnostics/method-value-before-ready.em:21:25: `_secret` is private to `Early`
+  const hidden = Early(1)._secret
+                          ^^^^^^^
+Only code written inside `Early`'s braces can reach a name that starts with `_`.

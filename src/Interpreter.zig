@@ -1283,7 +1283,7 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .member => |member| if (self.facts.qualified.get(expression)) |key|
             self.evaluateName(expression, key, key)
         else
-            self.evaluateProperty(member),
+            self.evaluateProperty(expression, member),
         .string_literal => |bytes| self.evaluateStringLiteral(expression, bytes),
         .interpolation => |parts| self.evaluateInterpolation(parts),
         .lambda => self.evaluateLambda(expression),
@@ -1335,6 +1335,22 @@ fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
     return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = name }, captured, self.file) } };
 }
 
+/// Section 7.5's captured method: a closure holding its own copy of the
+/// receiver, exactly as if the receiver had been copied into a local first.
+fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: []const u8) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    const captured = self.gpa.alloc(*Environment, 0) catch |err| {
+        self.heap.release(receiver);
+        return err;
+    };
+    const closure = self.heap.createClosure(.{ .method = key }, captured, self.file) catch |err| {
+        self.heap.release(receiver);
+        return err;
+    };
+    closure.receiver = receiver;
+    return .{ .data = .{ .closure = closure } };
+}
+
 // Every case of `evaluate` that needs locals of its own lives in a function
 // like these. `evaluate` runs once per level of nesting, so every byte of its
 // frame is multiplied by section 7.2's 1,000 calls times the deepest nesting
@@ -1342,7 +1358,8 @@ fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
 
 /// Section 8.5's properties: `count`, and a list's `first` and `last`. The
 /// checker allows nothing else here.
-fn evaluateProperty(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
+fn evaluateProperty(self: *Interpreter, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Value {
+    if (self.method_calls.get(expression)) |key| return self.evaluateMethodValue(member, key);
     const base = try self.evaluate(member.base);
     defer self.heap.release(base);
 
@@ -2224,12 +2241,55 @@ fn callValue(self: *Interpreter, call_span: Source.Span, call: Ast.Expression.Ca
     defer self.heap.release(callee);
     const arguments = try self.evaluateArguments(call.arguments);
     defer self.gpa.free(arguments);
-    return self.invoke(call_span, self.closureCallable(callee.data.closure), arguments);
+    return self.invokeClosure(call_span, callee.data.closure, self.closureCallable(callee.data.closure), arguments);
+}
+
+/// Runs a function value against already-evaluated arguments, which it takes
+/// ownership of. A captured method runs on the closure's copy of its receiver;
+/// a changing one takes that copy out while it runs and leaves the changed
+/// value behind, so the next call sees it (7.5). `callable` is the closure's
+/// `closureCallable`, which a caller running the same block many times works
+/// out once.
+fn invokeClosure(
+    self: *Interpreter,
+    call_span: Source.Span,
+    closure: *Heap.Closure,
+    closure_callable: Callable,
+    arguments: []const Value,
+) Error!Value {
+    var callable = closure_callable;
+    const key = switch (closure.function) {
+        .method => |key| key,
+        else => return self.invoke(call_span, callable, arguments),
+    };
+    if (!self.changing_methods.contains(key)) {
+        callable.self_value = Heap.retain(closure.receiver);
+        return self.invoke(call_span, callable, arguments);
+    }
+    if (closure.running) {
+        for (arguments) |argument| self.heap.release(argument);
+        return self.raiseFmt(
+            call_span,
+            "`{s}` is already changing its captured copy, so it cannot be called again until that call finishes",
+            .{callable.name},
+            "A captured method has its copy to itself while it changes it. Call the method on a value directly instead of through the captured one.",
+        );
+    }
+    callable.self_value = closure.receiver;
+    closure.receiver = Value.nothing;
+    closure.running = true;
+    var changed: Value = Value.nothing;
+    callable.self_out = &changed;
+    defer {
+        closure.running = false;
+        closure.receiver = changed;
+    }
+    return self.invoke(call_span, callable, arguments);
 }
 
 fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
     return switch (closure.function) {
-        .named => |name| self.namedCallable(name),
+        .named, .method => |name| self.namedCallable(name),
         .lambda => |expression| .{
             .name = "a block",
             .named = false,
@@ -2516,6 +2576,7 @@ fn callHigherOrder(
     defer self.heap.release(block);
 
     const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
 
     // Section 8.6: every collection block receives one logical item, and a
     // dictionary's is a `(key, value)` tuple. Building that list up front also
@@ -2543,7 +2604,7 @@ fn callHigherOrder(
 
     for (items, 0..) |item, index| {
         const argument = [_]Value{Heap.retain(item)};
-        const produced = try self.invoke(expression.span, callable, &argument);
+        const produced = try self.invokeClosure(expression.span, closure, callable, &argument);
         if (collected) |list| {
             list.items.appendAssumeCapacity(produced);
             continue;

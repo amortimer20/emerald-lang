@@ -13,5 +13,4 @@ struct Counter {
 var counter = Counter(0)
 counter.decrement()
 counter.count()
-print(counter.peek)
 counter.peek(1)

@@ -196,6 +196,12 @@ pub const Closure = struct {
     /// The file it was written in, which decides what its bare module-level
     /// names mean wherever it is eventually called (14.1).
     file: u32 = 0,
+    /// For a captured method (7.5), its own copy of the value it was captured
+    /// from, held. A changing method's changes stay here between calls.
+    receiver: Value = Value.nothing,
+    /// Whether a changing method is running on `receiver`, which it has to
+    /// itself until it finishes.
+    running: bool = false,
     /// Collector bookkeeping; see `collect`.
     marked: bool = false,
     internal: u32 = 0,
@@ -206,6 +212,8 @@ pub const Closure = struct {
     pub const Function = union(enum) {
         /// The name of a top-level function.
         named: []const u8,
+        /// The key of a struct method, called on `receiver`.
+        method: []const u8,
         /// The `.lambda` expression this runs.
         lambda: *const Ast.Expression,
     };
@@ -737,6 +745,7 @@ pub fn release(self: *Heap, value: Value) void {
         closure.references -= 1;
         if (closure.references > 0) return;
         for (closure.captured) |environment| self.releaseEnvironment(environment);
+        self.release(closure.receiver);
         self.unlinkClosure(closure);
         self.gpa.free(closure.captured);
         self.gpa.destroy(closure);
@@ -939,6 +948,7 @@ fn countInternalReferences(self: *Heap) void {
     var closures = self.live_closures;
     while (closures) |closure| : (closures = closure.next) {
         for (closure.captured) |environment| environment.internal += 1;
+        bumpInternal(closure.receiver);
     }
     var tuples = self.live_tuples;
     while (tuples) |tuple| : (tuples = tuple.next) {
@@ -1031,8 +1041,11 @@ fn markReachable(self: *Heap) bool {
                     }
                 }
             },
-            .closure => |closure| for (closure.captured) |environment| {
-                if (!environment.marked and !self.push(.{ .environment = environment })) return false;
+            .closure => |closure| {
+                for (closure.captured) |environment| {
+                    if (!environment.marked and !self.push(.{ .environment = environment })) return false;
+                }
+                if (!self.reach(closure.receiver)) return false;
             },
         }
     }
@@ -1084,6 +1097,7 @@ fn sweep(self: *Heap) void {
     while (closures) |closure| : (closures = closure.next) {
         if (!closure.marked) {
             for (closure.captured) |environment| environment.references -= 1;
+            dropReference(closure.receiver);
         }
     }
     var tuples = self.live_tuples;
@@ -1312,6 +1326,31 @@ test "the collector reclaims a cycle through a struct" {
     try testing.expect(heap.live_structs == null);
     try testing.expect(heap.live_closures == null);
     try testing.expect(heap.live_environments == null);
+}
+
+test "a captured method keeps its receiver alive, and a cycle through it is reclaimed" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    // A captured method whose copy of its receiver holds the capture in a field.
+    const closure = try heap.createClosure(.{ .method = "Task::run" }, try testing.allocator.alloc(*Environment, 0), 0);
+    const metadata = [_]Value.StructType.Field{.{ .name = "action", .kind = .closure }};
+    const descriptor: Value.StructType = .{ .name = "Task", .display_name = "Task", .fields = &metadata };
+    const fields = try testing.allocator.alloc(Value, 1);
+    fields[0] = .{ .data = .{ .closure = closure } };
+    const instance = try heap.createStruct(&descriptor, fields);
+    closure.receiver = .{ .data = .{ .struct_value = instance } };
+
+    closure.references += 1; // held from outside the heap
+    heap.collect();
+    try testing.expect(heap.live_structs != null);
+    try testing.expect(heap.live_closures != null);
+
+    closure.references -= 1; // and now only by the cycle
+    heap.collect();
+    try testing.expect(heap.live_structs == null);
+    try testing.expect(heap.live_closures == null);
+    try testing.expectEqual(@as(usize, 0), heap.live_objects);
 }
 
 test "the collector reclaims a cycle through a tuple" {

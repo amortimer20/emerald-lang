@@ -180,6 +180,8 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
         },
         .closure => |closure| switch (closure.function) {
             .named => |name| try writer.print("<func {s}>", .{name}),
+            // The method's own name, as a stack trace shows it.
+            .method => |key| try writer.print("<func {s}>", .{key[(std.mem.lastIndexOf(u8, key, "::") orelse 0) + 2 ..]}),
             .lambda => try writer.writeAll("<lambda>"),
         },
         .struct_value => |instance| {

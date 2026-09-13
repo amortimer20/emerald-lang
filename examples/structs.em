@@ -89,6 +89,12 @@ tally.mark("first")
 tally.mark("second")
 print(tally.summary(), tally.latest)
 
+## A method without parentheses is a function to call later. It keeps its own
+## copy of `tally`, so marks made through it stay in that copy.
+const mark_later = tally.mark
+mark_later("third")
+print(tally.summary())
+
 ## A field can be changed through as long a path as it takes, and a list in a
 ## field changes in place like any other.
 trip.stops[1].y = 8
