@@ -1,8 +1,8 @@
 diagnostics/type-field-reads-later.em:4:21: `Grid.width` is not set up yet when this runs
       var Grid.area = Grid.width * Grid.height
                       ^^^^^^^^^^
-A type-level field's value can read only the type-level fields declared before it. Move this field below that one.
+A type-level field's value can read only the type-level fields declared above it. Declare `Grid.width` above this field.
 diagnostics/type-field-reads-later.em:4:34: `Grid.height` is not set up yet when this runs
       var Grid.area = Grid.width * Grid.height
                                    ^^^^^^^^^^^
-A type-level field's value can read only the type-level fields declared before it. Move this field below that one.
+A type-level field's value can read only the type-level fields declared above it. Declare `Grid.height` above this field.

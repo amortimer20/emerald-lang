@@ -436,6 +436,28 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   stack trace names the frame "the constructor of `Account`", computed once per type rather
   than per construction; two million constructions in a loop ran in flat memory (1.9 MB).
 
+### Struct diagnostic decisions worth knowing
+
+- **A struct body recovers one member at a time** (`Parser.parseStructMember`), as a block
+  recovers one statement at a time. Before chunk 6 of the review, any fatal parse error
+  inside a struct also reported the struct's own `}` as "does not close anything".
+  `diagnostics/struct-member-habits` fails without it.
+- **Other languages' spellings get Emerald's.** `static`, `init(...)`, `func constructor`,
+  `self` in a parameter list, a field without `var` or `const`, a property without a type,
+  and `name = value` in a call each have their own message and correction
+  (`diagnostics/struct-member-habits`).
+- **A bare member name inside a type's own code says how to reach it.** The resolver works
+  out the enclosing type from `current_function` (`enclosingType`) and, for a name that is
+  one of its members, reports "reached through `self`" or "reached through the type"
+  instead of "not defined"; `this` is answered with `self` (`diagnostics/member-without-self`).
+- **Smaller wording and span fixes.** Argument-count errors on a method call underline the
+  method's name, as its other diagnostics do; a property read or setter assignment in the
+  capture check is no longer called a "call"; the duplicate-constructor correction points
+  at a type-level function; a type-level field with no value is underlined at its name; the
+  field-order corrections name the field to move; and a binding taken by a setter says
+  "changed by setting `reading`" (`Heap.Binding.Change.setter`), which made no measurable
+  difference to assignment or call timing.
+
 ### Struct decisions worth knowing
 
 - **Type identity is a stable metadata pointer.** Every reference to one declared struct
@@ -978,8 +1000,8 @@ still open.
 ## Code review of the struct slices
 
 The struct slices (`72e7df4..a90ed94`: constructors, methods, properties, defaults and named
-arguments, type-level members) are being reviewed in chunks, one area at a time, before
-member privacy starts. Each chunk reads its area's code afresh and checks it with small
+arguments, type-level members) were reviewed in chunks, one area at a time, before member
+privacy starts. All six chunks are done. Each chunk reads its area's code afresh and checks it with small
 `.em` programs in both Debug and ReleaseSafe builds. Every confirmed problem gets a fix, a
 conformance case, and a check that the case fails with the fix disabled. Any design
 decision a fix involves is recorded in `docs/rewrite-context.md`.
@@ -991,7 +1013,7 @@ decision a fix involves is recorded in `docs/rewrite-context.md`.
 | 3 | Type-level members: setup order and cycles, the section 7.1 capture check through `Resolver.typeSetupKey`, `settleTypeField` and the `inferring` set, the `find` redirect, the assignment rewrite through `Facts.type_assignments`, namespaced and private types, name clashes with instance members | Done, fixed in "Fix type-level member issues found in review" |
 | 4 | Which methods change `self` (`methodChanges` and its caching, `selfPathType`), the rule that a getter may not change `self`, assignment through properties, and nested changes through them | Done, fixed in "Fix property clash crash found in review" |
 | 5 | Defaults and named arguments: the checker and interpreter matching arguments to the same parameters (`src/arguments.zig`), which file and frame defaults run in, and field defaults under both kinds of constructor | Done, fixed in "Fix argument handling found in review" |
-| 6 | Diagnostic wording and spans across all five slices: wrong or misleading messages, cascades, and underlines in the wrong place | Not started |
+| 6 | Diagnostic wording and spans across all five slices: wrong or misleading messages, cascades, and underlines in the wrong place | Done, fixed in "Improve struct diagnostics found in review" |
 
 ## Next concrete step
 
@@ -1021,7 +1043,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 309 unit tests, 260 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 309 unit tests, 262 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

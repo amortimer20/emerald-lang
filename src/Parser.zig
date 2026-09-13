@@ -462,103 +462,16 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             "A struct body is enclosed in braces, as in `struct Marker { }`.",
         );
     }
-    var fields: std.ArrayList(Ast.StructDeclaration.Field) = .empty;
-    var constructor: ?Ast.StructDeclaration.Constructor = null;
-    var methods: std.ArrayList(Ast.FunctionDeclaration) = .empty;
-    var properties: std.ArrayList(Ast.StructDeclaration.Property) = .empty;
-    var type_functions: std.ArrayList(Ast.StructDeclaration.TypeFunction) = .empty;
-    var type_fields: std.ArrayList(Ast.StructDeclaration.TypeField) = .empty;
+    var members: StructMembers = .{};
     self.skipSeparators();
     while (!self.check(.right_brace) and !self.check(.eof)) {
-        const marker = self.peek();
-        if (marker.kind == .keyword_func and self.startsTypeMember(self.index + 1)) {
-            try type_functions.append(self.arena, try self.parseTypeFunction(name));
-            try self.expectStatementEnd();
-            self.skipSeparators();
-            continue;
-        }
-        if (marker.kind == .keyword_func) {
-            const saved_self = self.self_allowed;
-            self.self_allowed = .member;
-            defer self.self_allowed = saved_self;
-            const method = try self.parseFunctionDeclaration();
-            try self.expectStatementEnd();
-            try methods.append(self.arena, method.data.function_declaration);
-            self.skipSeparators();
-            continue;
-        }
-        if (marker.kind == .keyword_constructor) {
-            // Parsed in full even when it will be rejected, so recovery resumes
-            // after its closing brace.
-            const parsed = try self.parseConstructor();
-            if (constructor != null) {
-                return self.report(
-                    parsed.keyword_span,
-                    "a struct has at most one constructor",
-                    "Emerald has no overloading. Write a function that builds the value another way and calls this constructor.",
-                );
-            }
-            constructor = parsed;
-            self.skipSeparators();
-            continue;
-        }
-        const mutable = if (self.match(.keyword_var) != null)
-            true
-        else if (self.match(.keyword_const) != null)
-            false
-        else
-            return self.reportFmt(
-                marker.span,
-                "expected `var` or `const` for a stored field, found {s}",
-                .{marker.kind.describe()},
-                "A stored field makes its binding visible, as in `var x: Float`.",
-            );
-
-        const field_name = self.peek();
-        if (field_name.kind != .identifier) {
-            return self.reportFmt(
-                field_name.span,
-                "expected a field name, found {s}",
-                .{field_name.kind.describe()},
-                "A stored field has a name and type, as in `var x: Float`.",
-            );
-        }
-        _ = self.advance();
-        if (self.check(.dot)) {
-            try type_fields.append(self.arena, try self.parseTypeField(mutable, field_name, name));
-            self.skipSeparators();
-            continue;
-        }
-        if (self.match(.colon) == null) {
-            return self.reportFmt(
-                self.peek().span,
-                "expected `:` and a type after `{s}`, found {s}",
-                .{ self.text(field_name), self.peek().kind.describe() },
-                "Every stored field needs an explicit type, as in `var x: Float`.",
-            );
-        }
-        const annotation = try self.parseTypeExpression();
-        if (self.check(.left_brace)) {
-            try properties.append(self.arena, try self.parseProperty(mutable, field_name, annotation));
-            self.skipSeparators();
-            continue;
-        }
-        var default: ?*const Ast.Expression = null;
-        if (self.match(.equal) != null) {
-            // A default may read earlier fields through `self` (10.2).
-            const saved_self = self.self_allowed;
-            self.self_allowed = .member;
-            defer self.self_allowed = saved_self;
-            default = try self.parseExpression();
-        }
-        try self.expectStatementEnd();
-        try fields.append(self.arena, .{
-            .mutable = mutable,
-            .name = try self.identifier(field_name),
-            .name_span = field_name.span,
-            .annotation = annotation,
-            .default = default,
-        });
+        // One member at a time, like the statements of a block: a mistake in
+        // one resumes at the next, so the struct's own `}` is not then
+        // reported as closing nothing (17.2).
+        self.parseStructMember(name, &members) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.ParseFailed => self.skipToNextStatement(),
+        };
         self.skipSeparators();
     }
     if (self.check(.eof)) {
@@ -575,14 +488,155 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         .data = .{ .struct_declaration = .{
             .name = try self.identifier(name),
             .name_span = name.span,
-            .fields = try fields.toOwnedSlice(self.arena),
-            .constructor = constructor,
-            .methods = try methods.toOwnedSlice(self.arena),
-            .properties = try properties.toOwnedSlice(self.arena),
-            .type_functions = try type_functions.toOwnedSlice(self.arena),
-            .type_fields = try type_fields.toOwnedSlice(self.arena),
+            .fields = try members.fields.toOwnedSlice(self.arena),
+            .constructor = members.constructor,
+            .methods = try members.methods.toOwnedSlice(self.arena),
+            .properties = try members.properties.toOwnedSlice(self.arena),
+            .type_functions = try members.type_functions.toOwnedSlice(self.arena),
+            .type_fields = try members.type_fields.toOwnedSlice(self.arena),
         } },
     };
+}
+
+const StructMembers = struct {
+    fields: std.ArrayList(Ast.StructDeclaration.Field) = .empty,
+    constructor: ?Ast.StructDeclaration.Constructor = null,
+    methods: std.ArrayList(Ast.FunctionDeclaration) = .empty,
+    properties: std.ArrayList(Ast.StructDeclaration.Property) = .empty,
+    type_functions: std.ArrayList(Ast.StructDeclaration.TypeFunction) = .empty,
+    type_fields: std.ArrayList(Ast.StructDeclaration.TypeField) = .empty,
+};
+
+/// One member of a struct body, added to `members`. `name` is the struct's.
+fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!void {
+    const marker = self.peek();
+    if (marker.kind == .keyword_func and self.startsTypeMember(self.index + 1)) {
+        try members.type_functions.append(self.arena, try self.parseTypeFunction(name));
+        try self.expectStatementEnd();
+        return;
+    }
+    if (marker.kind == .keyword_func) {
+        const saved_self = self.self_allowed;
+        self.self_allowed = .member;
+        defer self.self_allowed = saved_self;
+        const method = try self.parseFunctionDeclaration();
+        try self.expectStatementEnd();
+        try members.methods.append(self.arena, method.data.function_declaration);
+        return;
+    }
+    if (marker.kind == .keyword_constructor) {
+        // Parsed in full even when it is rejected, so the next member starts
+        // after its closing brace.
+        const parsed = try self.parseConstructor();
+        if (members.constructor != null) {
+            try self.note(
+                parsed.keyword_span,
+                "a struct has at most one constructor",
+                try std.fmt.allocPrint(
+                    self.arena,
+                    "Emerald has no overloading. Build the value another way in a type-level function that calls this constructor, such as `func {s}.from_text(text: String): {s}`.",
+                    .{ self.text(name), self.text(name) },
+                ),
+            );
+            return;
+        }
+        members.constructor = parsed;
+        return;
+    }
+    // Words other languages put here, answered with Emerald's spelling.
+    if (marker.kind == .identifier) {
+        const word = self.text(marker);
+        if (std.mem.eql(u8, word, "static")) {
+            // Echo the member being declared, when it can be seen.
+            const keyword = if (self.index + 1 < self.tokens.len) self.tokens[self.index + 1] else marker;
+            const member = if (self.index + 2 < self.tokens.len) self.tokens[self.index + 2] else marker;
+            const help = if (member.kind == .identifier and (keyword.kind == .keyword_var or keyword.kind == .keyword_const))
+                try std.fmt.allocPrint(self.arena, "A member that belongs to the type puts the type's name in front instead, as in `{s} {s}.{s} = ...`.", .{ self.text(keyword), self.text(name), self.text(member) })
+            else if (member.kind == .identifier and keyword.kind == .keyword_func)
+                try std.fmt.allocPrint(self.arena, "A member that belongs to the type puts the type's name in front instead, as in `func {s}.{s}()`.", .{ self.text(name), self.text(member) })
+            else
+                try std.fmt.allocPrint(self.arena, "A member that belongs to the type puts the type's name in front instead, as in `var {s}.count = 0`.", .{self.text(name)});
+            return self.report(marker.span, "Emerald has no `static`", help);
+        }
+        if (std.mem.eql(u8, word, "init") and self.peekAfterNext().kind == .left_paren) {
+            return self.report(
+                marker.span,
+                "a constructor is written `constructor`",
+                "Write `constructor(...) { ... }`. Inside it, `self` is the value being built.",
+            );
+        }
+        if (self.peekAfterNext().kind == .colon) {
+            return self.reportFmt(
+                marker.span,
+                "`{s}` needs `var` or `const` in front",
+                .{word},
+                try std.fmt.allocPrint(self.arena, "A stored field says whether it can change, as in `var {s}: ...`.", .{word}),
+            );
+        }
+    }
+    const mutable = if (self.match(.keyword_var) != null)
+        true
+    else if (self.match(.keyword_const) != null)
+        false
+    else
+        return self.reportFmt(
+            marker.span,
+            "expected `var` or `const` for a stored field, found {s}",
+            .{marker.kind.describe()},
+            "A stored field makes its binding visible, as in `var x: Float`.",
+        );
+
+    const field_name = self.peek();
+    if (field_name.kind != .identifier) {
+        return self.reportFmt(
+            field_name.span,
+            "expected a field name, found {s}",
+            .{field_name.kind.describe()},
+            "A stored field has a name and type, as in `var x: Float`.",
+        );
+    }
+    _ = self.advance();
+    if (self.check(.dot)) {
+        try members.type_fields.append(self.arena, try self.parseTypeField(mutable, field_name, name));
+        return;
+    }
+    if (self.match(.colon) == null) {
+        if (self.check(.left_brace)) {
+            return self.reportFmt(
+                self.peek().span,
+                "`{s}` needs a type before its body",
+                .{self.text(field_name)},
+                try std.fmt.allocPrint(self.arena, "A property states the type it gives, as in `const {s}: Float {{ ... }}`.", .{self.text(field_name)}),
+            );
+        }
+        return self.reportFmt(
+            self.peek().span,
+            "expected `:` and a type after `{s}`, found {s}",
+            .{ self.text(field_name), self.peek().kind.describe() },
+            "Every stored field needs an explicit type, as in `var x: Float`.",
+        );
+    }
+    const annotation = try self.parseTypeExpression();
+    if (self.check(.left_brace)) {
+        try members.properties.append(self.arena, try self.parseProperty(mutable, field_name, annotation));
+        return;
+    }
+    var default: ?*const Ast.Expression = null;
+    if (self.match(.equal) != null) {
+        // A default may read earlier fields through `self` (10.2).
+        const saved_self = self.self_allowed;
+        self.self_allowed = .member;
+        defer self.self_allowed = saved_self;
+        default = try self.parseExpression();
+    }
+    try self.expectStatementEnd();
+    try members.fields.append(self.arena, .{
+        .mutable = mutable,
+        .name = try self.identifier(field_name),
+        .name_span = field_name.span,
+        .annotation = annotation,
+        .default = default,
+    });
 }
 
 /// Whether the tokens at `at` are a name followed by `.`: the type receiver
@@ -693,7 +747,7 @@ fn parseTypeField(
         initializer = try self.node(opening, .{ .nothing_literal = {} });
     } else if (self.match(.equal) == null) {
         try self.note(
-            self.peek().span,
+            spanning(receiver.span, member.span),
             try std.fmt.allocPrint(self.arena, "`{s}.{s}` needs its value here", .{ self.text(receiver), self.text(member) }),
             "A type-level field is set up once, from the value after `=`, as in `var Player.count = 0`.",
         );
@@ -1024,6 +1078,13 @@ fn parseFunctionDeclaration(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
 
     const name = self.peek();
+    if (name.kind == .keyword_constructor) {
+        return self.report(
+            name.span,
+            "a constructor is written without `func`",
+            "Write `constructor(...) { ... }` directly inside the struct.",
+        );
+    }
     if (name.kind != .identifier) {
         return self.reportFmt(
             name.span,
@@ -1117,6 +1178,13 @@ fn parseParameterList(self: *Parser, after: []const u8, missing_help: []const u8
 
 fn parseParameter(self: *Parser) Error!Ast.Parameter {
     const name = self.peek();
+    if (name.kind == .keyword_self) {
+        return self.report(
+            name.span,
+            "`self` is not listed as a parameter",
+            "Every method and constructor already has `self`. Remove it from the parameter list.",
+        );
+    }
     if (name.kind != .identifier) {
         return self.reportFmt(
             name.span,
@@ -2093,6 +2161,17 @@ fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Exp
             // Section 7.3's `punctuation: "?"`. A name followed by `:` cannot
             // begin an expression, so this is never ambiguous.
             var name: ?Ast.Expression.Call.ArgumentName = null;
+            // `name = value` is a habit from other languages; assignment is a
+            // statement here (5.2), so it can only have meant a name.
+            if (self.check(.identifier) and self.peekAfterNext().kind == .equal) {
+                const written = self.peek();
+                return self.reportFmt(
+                    self.tokens[self.index + 1].span,
+                    "a named argument is written with `:`",
+                    .{},
+                    try std.fmt.allocPrint(self.arena, "Write `{s}: ...` instead of `{s} = ...`.", .{ self.text(written), self.text(written) }),
+                );
+            }
             if (self.check(.identifier) and self.peekAfterNext().kind == .colon) {
                 const token = self.advance();
                 _ = self.advance();

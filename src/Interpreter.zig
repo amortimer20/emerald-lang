@@ -637,9 +637,11 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
     };
     var root = binding.value.?;
     binding.value = null;
+    // Only a setter runs code while the binding is taken, and it can only be
+    // reached through a last field step; an index step names the binding.
     binding.changing = switch (assignment.steps[assignment.steps.len - 1]) {
-        .field => |field| field.name,
-        .index => assignment.name,
+        .field => |field| .{ .name = field.name, .setter = true },
+        .index => .{ .name = assignment.name },
     };
     const stored = self.storeElement(assignment.target_span, &root, steps, value);
     const restored = self.find(assignment.name).?;
@@ -1141,7 +1143,11 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
                 span,
                 "`{s}` is still being set up, so `{s}` cannot be read yet",
                 .{ setup.display_name, try Resolver.displayKey(self.arena, reached) },
-                "Type-level fields are set up in the order they are declared. Move this field above the one whose value reaches it, or compute that value in a function instead.",
+                try std.fmt.allocPrint(
+                    self.arena,
+                    "Type-level fields are set up in the order they are declared. Declare `{s}` above the field whose value reaches it, or compute that value in a function instead.",
+                    .{try Resolver.displayKey(self.arena, reached)},
+                ),
             );
         },
         .failed => return self.raiseFmt(
@@ -2708,11 +2714,18 @@ fn placeBinding(self: *Interpreter, name: []const u8, span: Source.Span) Error!*
     return binding;
 }
 
-fn raiseChanging(self: *Interpreter, span: Source.Span, name: []const u8, method: []const u8) Error {
+fn raiseChanging(self: *Interpreter, span: Source.Span, name: []const u8, change: Heap.Binding.Change) Error {
+    const shown = try Resolver.displayKey(self.arena, name);
+    if (change.setter) return self.raiseFmt(
+        span,
+        "`{s}` is being changed by setting `{s}`, so it cannot be used until the setter finishes",
+        .{ shown, change.name },
+        "A setter has the value it changes to itself while it runs, as a changing method does. Have the setter change only `self`, and read anything else it needs before the assignment.",
+    );
     return self.raiseFmt(
         span,
         "`{s}` is being changed by `{s}`, so it cannot be used until that call finishes",
-        .{ try Resolver.displayKey(self.arena, name), method },
+        .{ shown, change.name },
         "A method that changes a value has it to itself while it runs. Pass what the method needs as an argument instead of reaching for it another way.",
     );
 }
@@ -2856,7 +2869,7 @@ fn takeReceiver(
     };
     const receiver = slot.*;
     slot.* = Value.nothing;
-    binding.changing = take.method;
+    binding.changing = .{ .name = take.method };
     take.slot = slot;
 
     // In place of the copy the defaults read, if there was one.

@@ -1,6 +1,6 @@
 runtime-errors/type-setup-cycle.em:11:9: `Vector2` is still being set up, so `Vector2.made` cannot be read yet
           Vector2.made += 1
           ^^^^^^^^^^^^
-Type-level fields are set up in the order they are declared. Move this field above the one whose value reaches it, or compute that value in a function instead.
+Type-level fields are set up in the order they are declared. Declare `Vector2.made` above the field whose value reaches it, or compute that value in a function instead.
 in `Vector2.origin`, called at runtime-errors/type-setup-cycle.em:7:26
 in the type-level fields of `Vector2`, called at runtime-errors/type-setup-cycle.em:17:7

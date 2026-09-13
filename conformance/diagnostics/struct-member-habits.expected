@@ -1,0 +1,32 @@
+diagnostics/struct-member-habits.em:5:5: Emerald has no `static`
+      static var made = 0
+      ^^^^^^
+A member that belongs to the type puts the type's name in front instead, as in `var Counter.made = ...`.
+diagnostics/struct-member-habits.em:6:5: `count` needs `var` or `const` in front
+      count: Int
+      ^^^^^
+A stored field says whether it can change, as in `var count: ...`.
+diagnostics/struct-member-habits.em:8:5: a constructor is written `constructor`
+      init(count: Int) {
+      ^^^^
+Write `constructor(...) { ... }`. Inside it, `self` is the value being built.
+diagnostics/struct-member-habits.em:12:5: Emerald has no `static`
+      static func make(): Counter {
+      ^^^^^^
+A member that belongs to the type puts the type's name in front instead, as in `func Counter.make()`.
+diagnostics/struct-member-habits.em:16:10: a constructor is written without `func`
+      func constructor(count: Int) {
+           ^^^^^^^^^^^
+Write `constructor(...) { ... }` directly inside the struct.
+diagnostics/struct-member-habits.em:19:15: `self` is not listed as a parameter
+      func grow(self, by: Int) {
+                ^^^^
+Every method and constructor already has `self`. Remove it from the parameter list.
+diagnostics/struct-member-habits.em:22:19: `doubled` needs a type before its body
+      const doubled {
+                    ^
+A property states the type it gives, as in `const doubled: Float { ... }`.
+diagnostics/struct-member-habits.em:32:12: a named argument is written with `:`
+  greet(name = "Ava")
+             ^
+Write `name: ...` instead of `name = ...`.

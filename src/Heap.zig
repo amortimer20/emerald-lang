@@ -157,10 +157,16 @@ pub const Binding = struct {
     /// Null until section 4.1's definite assignment says otherwise, and while
     /// a method that changes it has the value (see `changing`).
     value: ?Value,
-    /// The method that has taken this binding's value to change it, while that
-    /// call runs. Anything else reaching the binding meanwhile is an error
-    /// rather than a look at a value that is half changed.
-    changing: ?[]const u8 = null,
+    /// The method or setter that has taken this binding's value to change it,
+    /// while that call runs. Anything else reaching the binding meanwhile is an
+    /// error rather than a look at a value that is half changed.
+    changing: ?Change = null,
+
+    pub const Change = struct {
+        /// The method's name, or the property's for a setter.
+        name: []const u8,
+        setter: bool = false,
+    };
 };
 
 /// One block's, or one call's, names.

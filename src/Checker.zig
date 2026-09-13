@@ -1401,8 +1401,8 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                         element = (try self.signatureFor(property.getter)).return_type;
                         _ = try self.signatureFor(setter_key);
                         if (!self.in_function) {
-                            try self.checkCaptures(field.span, setter_key, field.name);
-                            if (assignment.operation != null) try self.checkCaptures(field.span, property.getter, field.name);
+                            try self.checkCapturesOf(field.span, setter_key, field.name, "this assignment");
+                            if (assignment.operation != null) try self.checkCapturesOf(field.span, property.getter, field.name, "this assignment");
                         }
                         index += 1;
                         continue;
@@ -2175,8 +2175,8 @@ fn reportTypeMemberThroughValue(self: *Checker, owner: Type, name: []const u8, s
     const written = try Resolver.displayKey(self.arena, key);
     try self.reportWithHelp(
         span,
-        "`{s}` belongs to the type {f}, not to each value",
-        .{ name, owner },
+        "`{s}` belongs to the type `{s}`, not to each value",
+        .{ name, owner.user.?.display_name },
         "Reach it through the type, as in `{s}`.",
         .{written},
     );
@@ -2547,7 +2547,7 @@ fn requireReadyForMember(self: *Checker, base: *const Ast.Expression, name: []co
 fn typeOfPropertyRead(self: *Checker, member: Ast.Expression.Member, property: PropertyInfo) Error!Type {
     if (try self.requireReadyForMember(member.base, member.name, member.name_span, "read")) return .invalid;
     const signature = try self.signatureFor(property.getter);
-    if (!self.in_function) try self.checkCaptures(member.name_span, property.getter, member.name);
+    if (!self.in_function) try self.checkCapturesOf(member.name_span, property.getter, member.name, "this");
     return signature.return_type;
 }
 
@@ -4946,13 +4946,19 @@ fn checkArguments(
 ) Error!void {
     const bound = try self.arena.alloc(?usize, parameters.names.len);
     const any_default = std.mem.indexOfScalar(bool, parameters.has_default, true) != null;
+    // A method's own name, not the whole receiver in front of it, which other
+    // diagnostics about a method call already point at the same way.
+    const callee_span = if (call.callee.data == .member and !self.facts.qualified.contains(call.callee))
+        call.callee.data.member.name_span
+    else
+        call.callee.span;
     const problem = call_arguments.bind(call, parameters.names, parameters.has_default, bound);
     switch (problem) {
         .none => {},
         .too_many => {
             const expected = parameters.names.len;
             try self.report(
-                call.callee.span,
+                callee_span,
                 "`{s}` takes {s}{d} argument{s}, but this call passes {d}",
                 .{ name, if (any_default) "at most " else "", expected, if (expected == 1) "" else "s", call.arguments.len },
                 parameters.arity_help,
@@ -4961,14 +4967,14 @@ fn checkArguments(
         .missing => |position| if (call.names.len == 0 and !any_default) {
             const expected = parameters.names.len;
             try self.report(
-                call.callee.span,
+                callee_span,
                 "`{s}` takes {d} argument{s}, but this call passes {d}",
                 .{ name, expected, if (expected == 1) "" else "s", call.arguments.len },
                 parameters.arity_help,
             );
         } else {
             try self.reportWithHelp(
-                call.callee.span,
+                callee_span,
                 "this call gives `{s}` no value for {s} `{s}`",
                 .{ name, parameters.noun, parameters.names[position] },
                 "{s}",

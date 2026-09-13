@@ -872,6 +872,45 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
         );
     }
 
+    // Inside a type's own code, a bare name that is one of its members, which
+    // is always reached through `self` or through the type (10.4).
+    if (try self.memberOfEnclosingType(name)) |member| {
+        const type_name = nameOf(member.type_key);
+        if (member.type_level) {
+            return self.reportWithHelpFmt(
+                span,
+                "`{s}` belongs to `{s}`, so it is reached through the type",
+                .{ name, type_name },
+                "Write `{s}.` in front, as in `{s}.{s}`.",
+                .{ type_name, type_name, name },
+            );
+        }
+        if (member.has_self) {
+            return self.reportWithHelpFmt(
+                span,
+                "`{s}` is a member of `{s}`, so it is reached through `self`",
+                .{ name, type_name },
+                "Write `self.` in front, as in `self.{s}`.",
+                .{name},
+            );
+        }
+        return self.reportWithHelpFmt(
+            span,
+            "`{s}` belongs to each `{s}` value, and a type-level member has no `self`",
+            .{ name, type_name },
+            "Take the value as a parameter and write `value.{s}`.",
+            .{name},
+        );
+    }
+    if (std.mem.eql(u8, name, "this") and self.enclosingType() != null and self.enclosingType().?.has_self) {
+        return self.report(
+            span,
+            "Emerald calls the current value `self`",
+            .{},
+            "Write `self` instead of `this`.",
+        );
+    }
+
     // Declared, but in another directory, so it needs its namespace.
     if (self.elsewhere.get(name)) |namespace| {
         return self.report(
@@ -906,6 +945,40 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
     }
 
     try self.report(span, "`{s}` is not defined", .{name}, help);
+}
+
+const EnclosingType = struct { type_key: []const u8, has_self: bool };
+
+/// The type whose own code is being walked, worked out from the key the body
+/// is recorded under: `Type::name` for a method, accessor, or type-level
+/// function, `Type::` for type-level field values, and the type's own key for
+/// its constructor and field defaults. Null in an ordinary function or at the
+/// top level.
+fn enclosingType(self: *Resolver) ?EnclosingType {
+    const key = self.current_function orelse return null;
+    if (std.mem.lastIndexOf(u8, key, method_separator)) |at| {
+        const member = key[at + method_separator.len ..];
+        const type_level = member.len == 0 or self.facts.type_members.contains(key);
+        return .{ .type_key = key[0..at], .has_self = !type_level };
+    }
+    const binding = self.scopes.items[module_scope].get(key) orelse return null;
+    if (binding.kind != .type) return null;
+    return .{ .type_key = key, .has_self = true };
+}
+
+const MemberOfType = struct { type_key: []const u8, type_level: bool, has_self: bool };
+
+/// Whether `name` is a member of the type whose code is being walked.
+fn memberOfEnclosingType(self: *Resolver, name: []const u8) Error!?MemberOfType {
+    const enclosing = self.enclosingType() orelse return null;
+    const key = try methodKey(self.arena, enclosing.type_key, name);
+    if (self.facts.type_members.contains(key)) {
+        return .{ .type_key = enclosing.type_key, .type_level = true, .has_self = enclosing.has_self };
+    }
+    if (self.instance_members.contains(key)) {
+        return .{ .type_key = enclosing.type_key, .type_level = false, .has_self = enclosing.has_self };
+    }
+    return null;
 }
 
 /// The namespace a short name stands for here, following a `using` alias.
@@ -1381,7 +1454,11 @@ fn qualifyTypeMember(
                 span,
                 "`{s}.{s}` is not set up yet when this runs",
                 .{ written, member },
-                "A type-level field's value can read only the type-level fields declared before it. Move this field below that one.",
+                try std.fmt.allocPrint(
+                    self.arena,
+                    "A type-level field's value can read only the type-level fields declared above it. Declare `{s}.{s}` above this field.",
+                    .{ written, member },
+                ),
             );
             return .reported;
         }

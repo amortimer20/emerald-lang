@@ -1,6 +1,6 @@
-diagnostics/type-field-needs-value.em:4:26: `Player.count` needs its value here
+diagnostics/type-field-needs-value.em:4:9: `Player.count` needs its value here
       var Player.count: Int
-                           ^
+          ^^^^^^^^^^^^
 A type-level field is set up once, from the value after `=`, as in `var Player.count = 0`.
 diagnostics/type-field-needs-value.em:5:29: a type-level property is not available
       const Player.total: Int {

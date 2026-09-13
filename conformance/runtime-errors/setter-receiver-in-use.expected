@@ -1,6 +1,6 @@
-runtime-errors/setter-receiver-in-use.em:18:11: `gauge` is being changed by `reading`, so it cannot be used until that call finishes
+runtime-errors/setter-receiver-in-use.em:18:11: `gauge` is being changed by setting `reading`, so it cannot be used until the setter finishes
       print(gauge)
             ^^^^^
-A method that changes a value has it to itself while it runs. Pass what the method needs as an argument instead of reaching for it another way.
+A setter has the value it changes to itself while it runs, as a changing method does. Have the setter change only `self`, and read anything else it needs before the assignment.
 in `announce`, called at runtime-errors/setter-receiver-in-use.em:10:13
 in `reading`, called at runtime-errors/setter-receiver-in-use.em:21:1

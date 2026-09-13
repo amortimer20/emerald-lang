@@ -1,0 +1,20 @@
+diagnostics/member-without-self.em:9:9: `made` belongs to `Counter`, so it is reached through the type
+          made += 1
+          ^^^^
+Write `Counter.` in front, as in `Counter.made`.
+diagnostics/member-without-self.em:13:9: `count` is a member of `Counter`, so it is reached through `self`
+          count += 1
+          ^^^^^
+Write `self.` in front, as in `self.count`.
+diagnostics/member-without-self.em:14:9: `show` is a member of `Counter`, so it is reached through `self`
+          show()
+          ^^^^
+Write `self.` in front, as in `self.show`.
+diagnostics/member-without-self.em:18:15: Emerald calls the current value `self`
+          print(this.count)
+                ^^^^
+Write `self` instead of `this`.
+diagnostics/member-without-self.em:22:24: `count` belongs to each `Counter` value, and a type-level member has no `self`
+          return Counter(count)
+                         ^^^^^
+Take the value as a parameter and write `value.count`.

@@ -1,4 +1,4 @@
 diagnostics/duplicate-constructor.em:8:5: a struct has at most one constructor
       constructor() {
       ^^^^^^^^^^^
-Emerald has no overloading. Write a function that builds the value another way and calls this constructor.
+Emerald has no overloading. Build the value another way in a type-level function that calls this constructor, such as `func Badge.from_text(text: String): Badge`.

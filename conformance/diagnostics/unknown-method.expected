@@ -10,7 +10,7 @@ diagnostics/unknown-method.em:16:15: `peek` is a method, so it needs parentheses
   print(counter.peek)
                 ^^^^
 Call it, as in `.peek()`. Methods cannot be used as values yet.
-diagnostics/unknown-method.em:17:1: `peek` takes 0 arguments, but this call passes 1
+diagnostics/unknown-method.em:17:9: `peek` takes 0 arguments, but this call passes 1
   counter.peek(1)
-  ^^^^^^^^^^^^
+          ^^^^
 Match the number of arguments to the method's parameters.
