@@ -1,0 +1,4 @@
+diagnostics/property-capture.em:12:14: `scaled` reads `scale`, which is not assigned yet here
+  print(length.scaled)
+               ^^^^^^
+Move this call below the line that assigns `scale`.

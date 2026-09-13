@@ -130,6 +130,8 @@ structs: Structs = .empty,
 constructors: std.StringHashMapUnmanaged(Ast.StructDeclaration) = .empty,
 /// For every instance method, keyed like `declarations`, the type it belongs to.
 receivers: Structs = .empty,
+/// Every computed property's getter key, mapped to whether it has a setter.
+properties: std.StringHashMapUnmanaged(bool) = .empty,
 /// Memoized by `methodChanges`. Only settled answers are stored.
 changes: std.StringHashMapUnmanaged(bool) = .empty,
 /// Methods `methodChanges` is working out, so a cycle of calls ends.
@@ -229,6 +231,18 @@ pub fn check(
                     try checker.declarations.put(arena, method_key, method);
                     try checker.receivers.put(arena, method_key, struct_type);
                 }
+                for (declaration.properties) |property| {
+                    const getter_key = try Resolver.methodKey(arena, key, property.name);
+                    if (checker.declarations.contains(getter_key)) continue;
+                    try checker.declarations.put(arena, getter_key, property.getter);
+                    try checker.receivers.put(arena, getter_key, struct_type);
+                    try checker.properties.put(arena, getter_key, property.setter != null);
+                    if (property.setter) |setter| {
+                        const setter_key = try Resolver.setterKey(arena, key, property.name);
+                        try checker.declarations.put(arena, setter_key, setter);
+                        try checker.receivers.put(arena, setter_key, struct_type);
+                    }
+                }
                 try module.put(arena, key, .{
                     .type = struct_type,
                     .declared = struct_type,
@@ -303,6 +317,28 @@ pub fn check(
                     for (declaration.methods) |method| {
                         try checker.ensureBodyChecked(try Resolver.methodKey(arena, type_key, method.name));
                     }
+                    for (declaration.properties) |property| {
+                        const getter_key = try Resolver.methodKey(arena, type_key, property.name);
+                        if (checker.properties.contains(getter_key)) {
+                            try checker.ensureBodyChecked(getter_key);
+                            // Section 10.3: "Properties should have no
+                            // surprising observable side effects." Changing
+                            // the value being read is the one the language
+                            // can see, and it would make reading a `const`
+                            // impossible to allow.
+                            if (try checker.methodChanges(getter_key)) {
+                                try checker.report(
+                                    property.name_span,
+                                    "reading `{s}` would change `self`",
+                                    .{property.name},
+                                    "Reading a property should never change the value it is read from. Make this a method instead.",
+                                );
+                            }
+                        }
+                        if (property.setter != null) {
+                            try checker.ensureBodyChecked(try Resolver.setterKey(arena, type_key, property.name));
+                        }
+                    }
                 },
                 else => {},
             }
@@ -335,19 +371,8 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
     const struct_type = self.structs.get(self.keyOf(declaration.name)).?;
     const user = @constCast(struct_type.user.?);
     const fields = try self.arena.alloc(Type.User.Field, declaration.fields.len);
-    var names: std.StringHashMapUnmanaged(void) = .empty;
 
     for (declaration.fields, fields) |field, *checked| {
-        if (names.contains(field.name)) {
-            try self.report(
-                field.name_span,
-                "`{s}` is already a field of `{s}`",
-                .{ field.name, declaration.name },
-                "Give each stored field a different name.",
-            );
-        } else {
-            try names.put(self.arena, field.name, {});
-        }
         checked.* = .{
             .name = field.name,
             .type = try self.resolveTypeExpression(field.annotation),
@@ -356,24 +381,52 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
     }
     user.fields = fields;
 
-    var method_names: std.StringHashMapUnmanaged(void) = .empty;
-    for (declaration.methods) |method| {
-        if (names.contains(method.name)) {
+    // Every member shares one name space, since `value.name` has to mean one
+    // of them. They are compared in the order they are written, so the one
+    // reported is always the later one.
+    const Member = struct {
+        name: []const u8,
+        span: Source.Span,
+        kind: enum { field, property, method },
+
+        fn earlier(_: void, a: @This(), b: @This()) bool {
+            return a.span.start < b.span.start;
+        }
+    };
+    var members: std.ArrayList(Member) = .empty;
+    for (declaration.fields) |field| try members.append(self.arena, .{ .name = field.name, .span = field.name_span, .kind = .field });
+    for (declaration.properties) |property| try members.append(self.arena, .{ .name = property.name, .span = property.name_span, .kind = .property });
+    for (declaration.methods) |method| try members.append(self.arena, .{ .name = method.name, .span = method.name_span, .kind = .method });
+    std.mem.sort(Member, members.items, {}, Member.earlier);
+
+    var seen: std.StringHashMapUnmanaged(Member) = .empty;
+    for (members.items) |member| {
+        const first = seen.get(member.name) orelse {
+            try seen.put(self.arena, member.name, member);
+            continue;
+        };
+        if (first.kind == .field and member.kind == .field) {
             try self.report(
-                method.name_span,
+                member.span,
                 "`{s}` is already a field of `{s}`",
-                .{ method.name, declaration.name },
-                "A field and a method cannot share a name, since `value.name` has to mean one of them. Rename one.",
+                .{ member.name, declaration.name },
+                "Give each stored field a different name.",
             );
-        } else if (method_names.contains(method.name)) {
+        } else if (first.kind == .method and member.kind == .method) {
             try self.report(
-                method.name_span,
+                member.span,
                 "`{s}` is already a method of `{s}`",
-                .{ method.name, declaration.name },
+                .{ member.name, declaration.name },
                 "Emerald has no overloading. Give each method a name of its own.",
             );
         } else {
-            try method_names.put(self.arena, method.name, {});
+            try self.reportWithHelp(
+                member.span,
+                "`{s}` is already a {s} of `{s}`",
+                .{ member.name, @tagName(first.kind), declaration.name },
+                "A field, a property, and a method cannot share a name, since `value.name` has to mean one of them. Rename one.",
+                .{},
+            );
         }
     }
 }
@@ -1131,6 +1184,9 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
     // `const` field freezes what it holds exactly as a `const` binding does,
     // so a struct step fails here the same way `requireMutable` fails above.
     var element = binding.type;
+    // The struct the final step was reached from, so a mismatch can say
+    // whether it was assigning a field or a property.
+    var last_owner: ?Type = null;
     var index: usize = 0;
     while (index < assignment.steps.len) {
         if (element.kind == .invalid) break;
@@ -1161,6 +1217,7 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
 
         switch (assignment.steps[index]) {
             .field => |field| {
+                last_owner = element;
                 if (element.kind != .struct_value) {
                     try self.report(
                         field.span,
@@ -1174,6 +1231,39 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                 const found = for (element.user.?.fields) |candidate| {
                     if (std.mem.eql(u8, candidate.name, field.name)) break candidate;
                 } else null;
+                if (found == null) {
+                    if (try self.propertyOf(element, field.name)) |property| {
+                        if (index + 1 < assignment.steps.len) {
+                            try self.reportComputedInPlace(field.name, field.span);
+                            element = .invalid;
+                            break;
+                        }
+                        if (!property.writable) {
+                            try self.reportWithHelp(
+                                field.span,
+                                "`{s}` is a read-only property of {f}",
+                                .{ field.name, element },
+                                "It is computed each time it is read. Change what it is computed from instead, or give it a `set` block as a `var` property.",
+                                .{},
+                            );
+                            element = .invalid;
+                            break;
+                        }
+                        if (index == 0 and try self.requireReadyForSet(assignment, field.name, field.span)) {
+                            element = .invalid;
+                            break;
+                        }
+                        const setter_key = try Resolver.setterKey(self.arena, element.user.?.name, field.name);
+                        element = (try self.signatureFor(property.getter)).return_type;
+                        _ = try self.signatureFor(setter_key);
+                        if (!self.in_function) {
+                            try self.checkCaptures(field.span, setter_key, field.name);
+                            if (assignment.operation != null) try self.checkCaptures(field.span, property.getter, field.name);
+                        }
+                        index += 1;
+                        continue;
+                    }
+                }
                 const stored = found orelse {
                     try self.report(
                         field.span,
@@ -1251,6 +1341,11 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         }
     }
 
+    const last_is_property = switch (assignment.steps[assignment.steps.len - 1]) {
+        .field => |field| element.kind != .invalid and last_owner != null and
+            (try self.propertyOf(last_owner.?, field.name)) != null,
+        .index => false,
+    };
     const last_field: ?[]const u8 = switch (assignment.steps[assignment.steps.len - 1]) {
         .field => |field| field.name,
         .index => null,
@@ -1275,7 +1370,14 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
 
     const value = try self.typeOfExpected(assignment.value, element);
     if (!value.assignableTo(element)) {
-        if (last_field) |name| {
+        if (last_is_property) {
+            try self.report(
+                assignment.value.span,
+                "this is {f}, but the property `{s}` holds {f}",
+                .{ value, last_field.?, element },
+                "Assign a value of the property's type, or convert it first.",
+            );
+        } else if (last_field) |name| {
             try self.report(
                 assignment.value.span,
                 "this is {f}, but `{s}` is a field holding {f}",
@@ -1291,6 +1393,31 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
             );
         }
     }
+}
+
+/// Section 10.3: "Nested mutation through a computed value is rejected rather
+/// than silently copying and writing back."
+fn reportComputedInPlace(self: *Checker, name: []const u8, span: Source.Span) Error!void {
+    try self.reportWithHelp(
+        span,
+        "`{s}` is a computed property, so what it gives back cannot be changed in place",
+        .{name},
+        "Read it into a `var`, change that, then assign it back with `.{s} = ...`.",
+        .{name},
+    );
+}
+
+fn requireReadyForSet(self: *Checker, assignment: Ast.Assignment, name: []const u8, span: Source.Span) Error!bool {
+    if (self.constructing == null or !std.mem.eql(u8, assignment.name, "self")) return false;
+    const field = try self.firstUnsetField() orelse return false;
+    try self.reportWithHelp(
+        span,
+        "`{s}` cannot be set until every field of `self` is set",
+        .{name},
+        "Set `self.{s}` first. A property may read any field, so it has to wait for all of them.",
+        .{field},
+    );
+    return true;
 }
 
 /// The correction for a value that does not fit where it is used. Two list
@@ -2030,6 +2157,41 @@ fn selfPathType(expression: *const Ast.Expression, receiver: Type) ?Type {
     }
 }
 
+/// The getter key of a computed property of `owner` named `name`, if there is
+/// one, with whether it can be set.
+const PropertyInfo = struct { getter: []const u8, writable: bool };
+
+fn propertyOf(self: *Checker, owner: Type, name: []const u8) Error!?PropertyInfo {
+    if (owner.kind != .struct_value) return null;
+    const key = try Resolver.methodKey(self.arena, owner.user.?.name, name);
+    const writable = self.properties.get(key) orelse return null;
+    return .{ .getter = key, .writable = writable };
+}
+
+/// Section 10.2: a property runs code that may read any field, so inside a
+/// constructor it waits for all of them, as a method call does. Returns
+/// whether it reported.
+fn requireReadyForMember(self: *Checker, base: *const Ast.Expression, name: []const u8, span: Source.Span, comptime verb: []const u8) Error!bool {
+    if (self.constructing == null or base.data != .name or !std.mem.eql(u8, base.data.name, "self")) return false;
+    const field = try self.firstUnsetField() orelse return false;
+    try self.reportWithHelp(
+        span,
+        "`{s}` cannot be " ++ verb ++ " until every field of `self` is set",
+        .{name},
+        "Set `self.{s}` first. A property may read any field, so it has to wait for all of them.",
+        .{field},
+    );
+    return true;
+}
+
+/// `shape.area`, a computed property read. It runs the getter.
+fn typeOfPropertyRead(self: *Checker, member: Ast.Expression.Member, property: PropertyInfo) Error!Type {
+    if (try self.requireReadyForMember(member.base, member.name, member.name_span, "read")) return .invalid;
+    const signature = try self.signatureFor(property.getter);
+    if (!self.in_function) try self.checkCaptures(member.name_span, property.getter, member.name);
+    return signature.return_type;
+}
+
 /// `value.area()` on a struct.
 fn typeOfStructMethodCall(
     self: *Checker,
@@ -2039,15 +2201,15 @@ fn typeOfStructMethodCall(
     base: Type,
 ) Error!Type {
     const key = try Resolver.methodKey(self.arena, base.user.?.name, member.name);
-    if (!self.receivers.contains(key)) {
-        const is_field = for (base.user.?.fields) |field| {
+    if (!self.receivers.contains(key) or self.properties.contains(key)) {
+        const is_field = self.properties.contains(key) or for (base.user.?.fields) |field| {
             if (std.mem.eql(u8, field.name, member.name)) break true;
         } else false;
         if (is_field) {
             try self.reportWithHelp(
                 member.name_span,
-                "`{s}` is a field of {f}, not a method",
-                .{ member.name, base },
+                "`{s}` is a {s} of {f}, not a method",
+                .{ member.name, if (self.properties.contains(key)) "property" else "field", base },
                 "Read it without parentheses, as in `.{s}`.",
                 .{member.name},
             );
@@ -3042,6 +3204,9 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
     if (self.constructing != null and member.base.data == .name and
         std.mem.eql(u8, member.base.data.name, "self") and member.position == null)
     {
+        if (try self.propertyOf(self.constructing.?.type, member.name)) |property| {
+            return self.typeOfPropertyRead(member, property);
+        }
         if (try self.fieldSetBinding(member.name)) |set| {
             if (!set.assigned) {
                 try self.reportWithHelp(
@@ -3074,6 +3239,7 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
         for (base.user.?.fields) |field| {
             if (std.mem.eql(u8, field.name, member.name)) return field.type;
         }
+        if (try self.propertyOf(base, member.name)) |property| return self.typeOfPropertyRead(member, property);
         if (self.receivers.contains(try Resolver.methodKey(self.arena, base.user.?.name, member.name))) {
             try self.reportWithHelp(
                 member.name_span,
@@ -3637,6 +3803,10 @@ fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
                 .typed => |typed| typed,
             };
             if (base.type.kind != .struct_value) return .{ .root = base.root };
+            if (try self.propertyOf(base.type, inner.name) != null) {
+                try self.reportComputedInPlace(inner.name, inner.name_span);
+                return .reported;
+            }
             for (base.type.user.?.fields) |field| {
                 if (!std.mem.eql(u8, field.name, inner.name)) continue;
                 if (!field.mutable) {

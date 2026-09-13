@@ -229,11 +229,24 @@ pub fn run(
                 for (checked_fields, fields) |field, *runtime| {
                     runtime.* = .{ .name = field.name, .kind = kindOf(field.type) };
                 }
+                const type_key = interpreter.keyOf(declaration.name);
+                const properties = try interpreter.arena.alloc(Value.StructType.Property, declaration.properties.len);
+                for (declaration.properties, properties) |property, *runtime| {
+                    const getter = try Resolver.methodKey(interpreter.arena, type_key, property.name);
+                    try interpreter.functions.put(interpreter.arena, getter, property.getter);
+                    var setter: ?[]const u8 = null;
+                    if (property.setter) |declared| {
+                        setter = try Resolver.setterKey(interpreter.arena, type_key, property.name);
+                        try interpreter.functions.put(interpreter.arena, setter.?, declared);
+                    }
+                    runtime.* = .{ .name = property.name, .getter = getter, .setter = setter };
+                }
                 const descriptor = try interpreter.arena.create(Value.StructType);
                 descriptor.* = .{
-                    .name = interpreter.keyOf(declaration.name),
+                    .name = type_key,
                     .display_name = checked.user.?.display_name,
                     .fields = fields,
+                    .properties = properties,
                 };
                 try interpreter.structs.put(
                     interpreter.arena,
@@ -522,44 +535,71 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
         };
     }
 
-    // Section 14.1: a non-entry file initializes on first use, which this is,
-    // exactly as a plain assignment already reaches before finding its slot.
-    const binding = try self.placeBinding(assignment.name, assignment.name_span);
-    const root = &binding.value.?;
-
-    if (assignment.operation) |operation| {
+    const value = if (assignment.operation) |operation| blk: {
         // Section 5.2: the current value is read once, before the right side,
-        // and held while the right side runs, as for a plain name.
-        const current = Heap.retain(try self.elementValue(root, steps));
+        // and held while the right side runs, as for a plain name. Section
+        // 14.1: a non-entry file initializes on first use, which this is,
+        // exactly as a plain assignment already reaches before finding its
+        // slot.
+        const binding = try self.placeBinding(assignment.name, assignment.name_span);
+        const current = try self.elementValue(assignment.target_span, &binding.value.?, steps);
         defer self.heap.release(current);
         const right = try self.evaluate(assignment.value);
         defer self.heap.release(right);
-        const result = try self.applyBinary(assignment.target_span, operation, current, right);
-        return self.storeElement(root, steps, result);
-    }
+        break :blk try self.applyBinary(assignment.target_span, operation, current, right);
+    } else try self.evaluate(assignment.value);
 
-    const value = try self.evaluate(assignment.value);
-    return self.storeElement(root, steps, value);
+    // Found only now, after everything above has run: reading a getter or
+    // evaluating the right side can initialize another file, which can move
+    // module bindings. The root is taken out of its binding while it changes,
+    // since a property's setter runs code that could otherwise reach it.
+    const binding = self.placeBinding(assignment.name, assignment.name_span) catch |err| {
+        self.heap.release(value);
+        return err;
+    };
+    var root = binding.value.?;
+    binding.value = null;
+    binding.changing = switch (assignment.steps[assignment.steps.len - 1]) {
+        .field => |field| field.name,
+        .index => assignment.name,
+    };
+    const stored = self.storeElement(assignment.target_span, &root, steps, value);
+    const restored = self.find(assignment.name).?;
+    restored.changing = null;
+    restored.value = root;
+    return stored;
 }
 
-/// The position of `name` among a struct instance's fields. The checker has
-/// already proved it exists, exactly as `evaluateProperty` trusts for a read.
-fn fieldPosition(instance: *const Heap.StructValue, name: []const u8) usize {
+/// The position of `name` among a struct instance's fields, or null when it
+/// is a computed property instead. The checker has proved it is one or the
+/// other.
+fn fieldPosition(instance: *const Heap.StructValue, name: []const u8) ?usize {
     for (instance.descriptor.fields, 0..) |field, index| {
         if (std.mem.eql(u8, field.name, name)) return index;
     }
-    unreachable;
+    return null;
 }
 
-/// What a compound assignment reads before it writes. A dictionary entry that
-/// is not there has no value to add to, which is the one place a bracket on a
-/// dictionary can fail.
-fn elementValue(self: *Interpreter, root: *Value, steps: []const PlaceStep) Error!Value {
+/// Section 10.3's getter, run on a value that only lends itself to the call.
+fn readProperty(self: *Interpreter, span: Source.Span, receiver: Value, name: []const u8) Error!Value {
+    const property = receiver.data.struct_value.descriptor.property(name).?;
+    var callable = self.namedCallable(property.getter);
+    callable.self_value = Heap.retain(receiver);
+    return self.invoke(span, callable, &.{});
+}
+
+/// What a compound assignment reads before it writes, held by the caller. A
+/// dictionary entry that is not there has no value to add to, which is the one
+/// place a bracket on a dictionary can fail. A computed property can only be
+/// the last step (10.3), and its getter runs here.
+fn elementValue(self: *Interpreter, span: Source.Span, root: *Value, steps: []const PlaceStep) Error!Value {
     var at = root.*;
     for (steps) |step| switch (step) {
         .field => |name| {
             const instance = at.data.struct_value;
-            at = instance.fields[fieldPosition(instance, name)];
+            at = instance.fields[fieldPosition(instance, name) orelse {
+                return self.readProperty(span, at, name);
+            }];
         },
         .index => |index| {
             if (at.data == .map) {
@@ -577,21 +617,22 @@ fn elementValue(self: *Interpreter, root: *Value, steps: []const PlaceStep) Erro
             at = list.items.items[position];
         },
     };
-    return at;
+    return Heap.retain(at);
 }
 
 /// Stores `value`, taking over one holder of it. Every container on the way is
 /// made safe to change first, which is where section 8.1's value semantics is
 /// enforced for structs and dictionaries as it already was for lists.
-fn storeElement(self: *Interpreter, root: *Value, steps: []const PlaceStep, value: Value) Error!void {
+fn storeElement(self: *Interpreter, span: Source.Span, root: *Value, steps: []const PlaceStep, value: Value) Error!void {
     var slot = root;
     for (steps, 0..) |step, step_index| {
         const last = step_index + 1 == steps.len;
 
         switch (step) {
             .field => |name| {
+                const position = fieldPosition(slot.data.struct_value, name) orelse
+                    return self.storeProperty(span, slot, name, value);
                 const instance = try self.heap.uniqueStruct(slot);
-                const position = fieldPosition(instance, name);
                 if (last) {
                     self.heap.release(instance.fields[position]);
                     instance.fields[position] = widen(value, instance.descriptor.fields[position].kind);
@@ -634,6 +675,22 @@ fn storeElement(self: *Interpreter, root: *Value, steps: []const PlaceStep, valu
     }
 }
 
+/// Section 10.3's setter. Like a changing method, it gets the receiver taken
+/// out of its slot and gives back what `self` holds when it ends.
+fn storeProperty(self: *Interpreter, span: Source.Span, slot: *Value, name: []const u8, value: Value) Error!void {
+    const property = slot.data.struct_value.descriptor.property(name).?;
+    const receiver = slot.*;
+    slot.* = Value.nothing;
+    var changed: Value = Value.nothing;
+    var callable = self.namedCallable(property.setter.?);
+    callable.self_value = receiver;
+    callable.self_out = &changed;
+    const arguments = [_]Value{value};
+    const result = self.invoke(span, callable, &arguments);
+    slot.* = changed;
+    self.heap.release(try result);
+}
+
 /// The slot a path of indices and fields reaches, for a method that changes
 /// what it finds there. Every container on the way is made safe to change
 /// first.
@@ -642,7 +699,7 @@ fn containerSlot(self: *Interpreter, root: *Value, steps: []const PlaceStep) Err
     for (steps) |step| switch (step) {
         .field => |name| {
             const instance = try self.heap.uniqueStruct(slot);
-            slot = &instance.fields[fieldPosition(instance, name)];
+            slot = &instance.fields[fieldPosition(instance, name).?];
         },
         .index => |index| {
             if (slot.data == .map) {
@@ -1134,10 +1191,9 @@ fn evaluateProperty(self: *Interpreter, member: Ast.Expression.Member) Error!Val
 
     if (base.data == .struct_value) {
         const instance = base.data.struct_value;
-        for (instance.descriptor.fields, 0..) |field, index| {
-            if (std.mem.eql(u8, field.name, member.name)) return Heap.retain(instance.fields[index]);
-        }
-        unreachable;
+        const position = fieldPosition(instance, member.name) orelse
+            return self.readProperty(member.name_span, base, member.name);
+        return Heap.retain(instance.fields[position]);
     }
 
     if (base.data == .string) {

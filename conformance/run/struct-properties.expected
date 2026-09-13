@@ -1,0 +1,7 @@
+3.0 2.0
+Circle(radius: 5.0)
+7.0
+8.0
+12.0 4.0
+[Circle(radius: 1.0), Circle(radius: 0.5)] true
+Square(side: 4)

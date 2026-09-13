@@ -1,0 +1,4 @@
+diagnostics/property-set-on-const.em:34:1: `box` is a `const`, so its contents cannot change
+  box.origin = Point(2)
+  ^^^
+Declare `box` with `var` if it needs to change.

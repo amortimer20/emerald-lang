@@ -451,6 +451,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     var fields: std.ArrayList(Ast.StructDeclaration.Field) = .empty;
     var constructor: ?Ast.StructDeclaration.Constructor = null;
     var methods: std.ArrayList(Ast.FunctionDeclaration) = .empty;
+    var properties: std.ArrayList(Ast.StructDeclaration.Property) = .empty;
     self.skipSeparators();
     while (!self.check(.right_brace) and !self.check(.eof)) {
         const marker = self.peek();
@@ -510,6 +511,11 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             );
         }
         const annotation = try self.parseTypeExpression();
+        if (self.check(.left_brace)) {
+            try properties.append(self.arena, try self.parseProperty(mutable, field_name, annotation));
+            self.skipSeparators();
+            continue;
+        }
         if (self.check(.equal)) {
             return self.report(
                 self.peek().span,
@@ -543,9 +549,127 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             .fields = try fields.toOwnedSlice(self.arena),
             .constructor = constructor,
             .methods = try methods.toOwnedSlice(self.arena),
+            .properties = try properties.toOwnedSlice(self.arena),
         } },
     };
 }
+
+/// Section 10.3. A `const` property's braces hold its getter's body directly;
+/// a `var` property's hold a `get` block and a `set` block.
+fn parseProperty(
+    self: *Parser,
+    mutable: bool,
+    name_token: Token,
+    annotation: Ast.TypeExpression,
+) Error!Ast.StructDeclaration.Property {
+    const name = try self.identifier(name_token);
+    const saved_self = self.self_allowed;
+    self.self_allowed = .member;
+    defer self.self_allowed = saved_self;
+
+    const accessor_form = self.startsAccessor(self.index + 1);
+    if (!mutable and !accessor_form) {
+        const body = try self.parseBlock();
+        try self.expectStatementEnd();
+        return .{
+            .mutable = false,
+            .name = name,
+            .name_span = name_token.span,
+            .annotation = annotation,
+            .getter = accessor(name, name_token.span, &.{}, annotation, body),
+            .setter = null,
+        };
+    }
+
+    const opening = self.advance();
+    try self.nest(opening.span);
+    defer self.unnest();
+    var get_body: ?Ast.Block = null;
+    var set_body: ?Ast.Block = null;
+    self.skipSeparators();
+    while (!self.check(.right_brace) and !self.check(.eof)) {
+        if (!self.startsAccessor(self.index)) {
+            return self.reportFmt(
+                self.peek().span,
+                "expected `get` or `set` in the property `{s}`, found {s}",
+                .{ name, self.peek().kind.describe() },
+                "A `var` property holds a `get` block that returns its value and a `set` block that receives the new one as `value`.",
+            );
+        }
+        const word = self.advance();
+        const is_get = std.mem.eql(u8, self.text(word), "get");
+        const body = try self.parseBlock();
+        const slot = if (is_get) &get_body else &set_body;
+        if (slot.* != null) {
+            try self.note(word.span, "this property already has this block", "Keep one `get` block and one `set` block.");
+        }
+        slot.* = body;
+        self.skipSeparators();
+    }
+    const closing = self.peek();
+    if (closing.kind != .right_brace) {
+        return self.reportFmt(
+            closing.span,
+            "expected `}}` to close the property `{s}`, found {s}",
+            .{ name, closing.kind.describe() },
+            "A `var` property holds exactly a `get` block and a `set` block.",
+        );
+    }
+    _ = self.advance();
+    try self.expectStatementEnd();
+
+    const empty: Ast.Block = .{ .span = closing.span, .statements = &.{} };
+    if (!mutable) {
+        try self.note(
+            name_token.span,
+            "a `const` property has no `get` or `set` blocks",
+            "Its braces hold the getter's body directly, as in `const area: Float { return self.width * self.height }`. Use `var` for a property that can be set.",
+        );
+    } else {
+        if (get_body == null) {
+            try self.note(name_token.span, "this property has no `get` block", "Add `get { return ... }`, which runs whenever the property is read.");
+        }
+        if (set_body == null) {
+            try self.note(
+                name_token.span,
+                "this `var` property has no `set` block",
+                "Add `set { ... }`, which receives the new value as `value`, or make it a `const` property if it is only read.",
+            );
+        }
+    }
+
+    const parameters = try self.arena.alloc(Ast.Parameter, 1);
+    parameters[0] = .{ .name = "value", .name_span = name_token.span, .annotation = annotation };
+    return .{
+        .mutable = mutable,
+        .name = name,
+        .name_span = name_token.span,
+        .annotation = annotation,
+        .getter = accessor(name, name_token.span, &.{}, annotation, get_body orelse empty),
+        .setter = if (mutable) accessor(name, name_token.span, parameters, null, set_body orelse empty) else null,
+    };
+}
+
+/// Whether the tokens at `at` are `get {` or `set {`. Neither word is a
+/// keyword, so this is the one place they mean anything.
+fn startsAccessor(self: *Parser, at: usize) bool {
+    if (at + 1 >= self.tokens.len) return false;
+    const word = self.tokens[at];
+    if (word.kind != .identifier or self.tokens[at + 1].kind != .left_brace) return false;
+    const spelled = self.text(word);
+    return std.mem.eql(u8, spelled, "get") or std.mem.eql(u8, spelled, "set");
+}
+
+fn accessor(
+    name: []const u8,
+    span: Source.Span,
+    parameters: []const Ast.Parameter,
+    result: ?Ast.TypeExpression,
+    body: Ast.Block,
+) Ast.FunctionDeclaration {
+    return .{ .name = name, .name_span = span, .parameters = parameters, .return_annotation = result, .body = body };
+}
+
 
 /// Section 10.2: `constructor(x: Float) { self.x = x }`.
 fn parseConstructor(self: *Parser) Error!Ast.StructDeclaration.Constructor {

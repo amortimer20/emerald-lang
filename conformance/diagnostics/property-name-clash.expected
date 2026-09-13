@@ -1,0 +1,8 @@
+diagnostics/property-name-clash.em:4:11: `left` is already a field of `Pair`
+      const left: Int {
+            ^^^^
+A field, a property, and a method cannot share a name, since `value.name` has to mean one of them. Rename one.
+diagnostics/property-name-clash.em:11:11: `right` is already a method of `Pair`
+      const right: Int {
+            ^^^^^
+A field, a property, and a method cannot share a name, since `value.name` has to mean one of them. Rename one.

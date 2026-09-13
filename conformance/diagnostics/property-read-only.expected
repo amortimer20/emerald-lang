@@ -1,0 +1,8 @@
+diagnostics/property-read-only.em:33:5: `size` is a read-only property of Box
+  box.size = 3
+      ^^^^
+It is computed each time it is read. Change what it is computed from instead, or give it a `set` block as a `var` property.
+diagnostics/property-read-only.em:34:5: `size` is a read-only property of Box
+  box.size += 1
+      ^^^^
+It is computed each time it is read. Change what it is computed from instead, or give it a `set` block as a `var` property.

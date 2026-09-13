@@ -1,0 +1,4 @@
+diagnostics/property-getter-changes-self.em:4:11: reading `next` would change `self`
+      const next: Int {
+            ^^^^
+Reading a property should never change the value it is read from. Make this a method instead.

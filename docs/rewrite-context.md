@@ -396,8 +396,8 @@ directly or through another method. The checker determines which struct methods 
 `self` from their bodies, so there is no `mutating` keyword. A diagnostic for mutating a
 `const` suggests `var` when a changing copy is what was meant.
 
-While a method that changes a struct runs, the binding it was called through belongs to that
-call. Reaching the same binding another way while the call is in progress — from a function
+While a method that changes a struct runs, or a property's setter, the binding it was called
+through belongs to that call. Reaching the same binding another way while the call is in progress — from a function
 or block the method calls — is a runtime error rather than a view of a half-changed value.
 This is what lets a changing method change a collection field where it lives instead of
 copying it on every call.
@@ -1662,7 +1662,12 @@ The setter receives the proposed value through the read-only `value` binding. Co
 assignment evaluates the receiver and getter once, calculates the result, then invokes the
 setter once. Nested mutation through a computed value is rejected rather than silently
 copying and writing back. Properties should have no surprising observable side effects;
-this is an API convention rather than a purity type system.
+this is an API convention rather than a purity type system, with one exception the checker
+can see: a getter may not change `self`, since reading a property of a `const` would
+otherwise have to be rejected. A setter changes `self` exactly as a changing method does,
+including 4.3's rule about reaching the value another way while it runs.
+
+A field, a property, and a method of one type share one name space.
 
 ### 10.4 Type-level members
 
@@ -2814,7 +2819,9 @@ recorded in their normative sections:
 | Constructor delegation (10.2, 21) | `self(...)` is deferred with overloading | 10.2 described `self(...)` delegating to "another constructor of the same type" while allowing each type at most one constructor, so there was never another constructor to call. Delegation only means something once a type can have several, which is exactly what deferring overloading rules out; the two arrive together. |
 | Which struct methods change `self` (4.3) | Worked out from the body's text: an assignment into `self`, a changing collection method reached from `self`, or a call to a method on `self` that changes it | 4.3 already rules out a `mutating` keyword. Following paths that start at `self` through field types gives the answer before any body is checked, so a call site never waits on inference, and `var copy = self` followed by a change to `copy` correctly changes nothing. |
 | Calling a changing method (4.3, 8.1) | The receiver is taken out of its place for the call and put back afterwards; its binding cannot be reached another way meanwhile | Sharing the receiver with the call would make every `self.items.append(x)` copy the list, turning a loop of calls quadratic. Taking it out is exact, and the one thing it gives up — seeing the value from elsewhere mid-call — is what Swift's exclusivity rule also forbids. It is a runtime error because a block can reach a binding in ways the checker does not track. |
-| Method and field names (10) | A method cannot share a name with a field of the same type, and a type cannot declare two methods of one name | `value.name` has to mean one thing, and overloading is deferred. |
+| Member names (10, 10.3) | A field, a property, and a method of one type share one name space, and a type cannot declare two methods of one name | `value.name` has to mean one thing, and overloading is deferred. |
+| A getter and `self` (10.3) | A getter may not change `self` | 10.3 leaves side effects to convention, but this one decides what a read may be called on: a getter that changed `self` would make reading a property of a `const` an error. The checker already infers which bodies change `self`, so the rule costs nothing to state or check. |
+| Accessors are methods (10.3) | A property's getter and setter are checked and run as methods of the type, keyed `Type::name` and `Type::name=` | Nothing about calling, inference, captures, or changing `self` differs from a method, so nothing is written twice; only reaching them differs, which is a member read or an assignment instead of a call. |
 | Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 
 ## 23. Consistency rules for future work

@@ -77,12 +77,28 @@ pub const StructDeclaration = struct {
     constructor: ?Constructor = null,
     /// Section 10's instance methods. Each sees the instance as `self`.
     methods: []const FunctionDeclaration = &.{},
+    /// Section 10.3's computed properties.
+    properties: []const Property = &.{},
 
     pub const Field = struct {
         mutable: bool,
         name: []const u8,
         name_span: Source.Span,
         annotation: TypeExpression,
+    };
+
+    /// `const area: Float { ... }`, or `var diameter: Float { get { ... } set
+    /// { ... } }`. The parser builds each accessor as an ordinary method
+    /// declaration — a getter with no parameters returning the property's
+    /// type, a setter taking `value` — so every later pass calls them the way
+    /// it calls any method.
+    pub const Property = struct {
+        mutable: bool,
+        name: []const u8,
+        name_span: Source.Span,
+        annotation: TypeExpression,
+        getter: FunctionDeclaration,
+        setter: ?FunctionDeclaration,
     };
 
     /// `constructor(x: Float) { self.x = x }`. It has no name and no return

@@ -1,0 +1,8 @@
+diagnostics/property-before-ready.em:7:20: `total` cannot be read until every field of `self` is set
+          print(self.total)
+                     ^^^^^
+Set `self.right` first. A property may read any field, so it has to wait for all of them.
+diagnostics/property-before-ready.em:8:14: `total` cannot be set until every field of `self` is set
+          self.total = 3
+               ^^^^^
+Set `self.right` first. A property may read any field, so it has to wait for all of them.

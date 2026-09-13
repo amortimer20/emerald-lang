@@ -52,12 +52,17 @@ struct Tally {
     func summary(): String {
         return "#{self.marks.count} marks"
     }
+
+    ## A property reads like a field but is worked out each time it is read.
+    const latest: String {
+        return self.marks.last.or("none yet")
+    }
 }
 
 var tally = Tally([])
 tally.mark("first")
 tally.mark("second")
-print(tally.summary())
+print(tally.summary(), tally.latest)
 
 ## A field can be changed through as long a path as it takes, and a list in a
 ## field changes in place like any other.

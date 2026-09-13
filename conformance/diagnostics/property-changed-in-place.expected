@@ -1,0 +1,12 @@
+diagnostics/property-changed-in-place.em:33:5: `origin` is a computed property, so what it gives back cannot be changed in place
+  box.origin.x = 5
+      ^^^^^^
+Read it into a `var`, change that, then assign it back with `.origin = ...`.
+diagnostics/property-changed-in-place.em:34:5: `labels` is a computed property, so what it gives back cannot be changed in place
+  box.labels.append("a")
+      ^^^^^^
+Read it into a `var`, change that, then assign it back with `.labels = ...`.
+diagnostics/property-changed-in-place.em:35:5: `labels` is a computed property, so what it gives back cannot be changed in place
+  box.labels[0] = "b"
+      ^^^^^^
+Read it into a `var`, change that, then assign it back with `.labels = ...`.

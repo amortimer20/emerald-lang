@@ -54,6 +54,15 @@ pub fn methodKey(arena: std.mem.Allocator, type_key: []const u8, name: []const u
     return std.fmt.allocPrint(arena, "{s}" ++ method_separator ++ "{s}", .{ type_key, name });
 }
 
+/// A property's getter is known by the method key of its name, so reading
+/// `value.area` and calling a method differ only in the call. Its setter adds
+/// this, which no name can end in.
+pub const setter_suffix = "=";
+
+pub fn setterKey(arena: std.mem.Allocator, type_key: []const u8, name: []const u8) std.mem.Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}" ++ method_separator ++ "{s}" ++ setter_suffix, .{ type_key, name });
+}
+
 /// Section 14.2's privacy: a leading underscore on a module-level declaration
 /// makes it private to its own file. `_` alone is the discard, not a name.
 pub fn isPrivate(name: []const u8) bool {
@@ -385,18 +394,38 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
         try self.noteElsewhere(declaration.name);
 
         for (declaration.methods) |method| {
-            const method_key = try methodKey(self.arena, key, method.name);
-            // A repeated method name is reported by the checker, beside a
-            // field of the same name; the first declaration keeps the key.
-            if (self.facts.owner.contains(method_key)) continue;
-            try self.facts.owner.put(self.arena, method_key, self.file);
-            try self.facts.module_reads.put(self.arena, method_key, .empty);
-            try self.facts.calls.put(self.arena, method_key, .empty);
-            const same_name = try self.methods_named.getOrPut(self.arena, method.name);
-            if (!same_name.found_existing) same_name.value_ptr.* = .empty;
-            try same_name.value_ptr.append(self.arena, method_key);
+            try self.hoistMember(method.name, try methodKey(self.arena, key, method.name));
+        }
+        for (declaration.properties) |property| {
+            try self.hoistMember(property.name, try methodKey(self.arena, key, property.name));
+            if (property.setter != null) {
+                const setter_name = try std.fmt.allocPrint(self.arena, "{s}" ++ setter_suffix, .{property.name});
+                try self.hoistMember(setter_name, try setterKey(self.arena, key, property.name));
+            }
         }
     }
+}
+
+/// A method or property accessor, whose body is walked like a function's.
+/// A repeated name is reported by the checker, beside a field of the same
+/// name; the first declaration keeps the key.
+fn hoistMember(self: *Resolver, name: []const u8, key: []const u8) Error!void {
+    if (self.facts.owner.contains(key)) return;
+    try self.facts.owner.put(self.arena, key, self.file);
+    try self.facts.module_reads.put(self.arena, key, .empty);
+    try self.facts.calls.put(self.arena, key, .empty);
+    const same_name = try self.methods_named.getOrPut(self.arena, name);
+    if (!same_name.found_existing) same_name.value_ptr.* = .empty;
+    try same_name.value_ptr.append(self.arena, key);
+}
+
+/// Records, for section 7.1's capture check, that the function being walked
+/// may run every member named `name`: a method or getter by that name, or with
+/// `setter_suffix`, a setter.
+fn noteMemberCall(self: *Resolver, name: []const u8) Error!void {
+    const caller = self.current_function orelse return;
+    const keys = self.methods_named.get(name) orelse return;
+    for (keys.items) |key| try self.facts.calls.getPtr(caller).?.put(self.arena, key, {});
 }
 
 fn hoistModuleName(
@@ -864,9 +893,16 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         },
 
         .assignment => |assignment| {
-            for (assignment.steps) |step| switch (step) {
+            for (assignment.steps, 0..) |step, position| switch (step) {
                 .index => |index| try self.walkExpression(index),
-                .field => {},
+                // Reaching a field may run a getter, and assigning the last
+                // one may run a setter.
+                .field => |field| {
+                    try self.noteMemberCall(field.name);
+                    if (position + 1 == assignment.steps.len) {
+                        try self.noteMemberCall(try std.fmt.allocPrint(self.arena, "{s}" ++ setter_suffix, .{field.name}));
+                    }
+                },
             };
             try self.walkExpression(assignment.value);
 
@@ -936,6 +972,22 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     method.body.statements,
                     true,
                 );
+            }
+            for (declaration.properties) |property| {
+                try self.walkBody(
+                    try methodKey(self.arena, type_key, property.name),
+                    &.{},
+                    property.getter.body.statements,
+                    true,
+                );
+                if (property.setter) |setter| {
+                    try self.walkBody(
+                        try setterKey(self.arena, type_key, property.name),
+                        setter.parameters,
+                        setter.body.statements,
+                        true,
+                    );
+                }
             }
         },
 
@@ -1307,11 +1359,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     }
                 }
                 if (call.callee.data == .member and !self.facts.qualified.contains(call.callee)) {
-                    if (self.methods_named.get(call.callee.data.member.name)) |keys| {
-                        for (keys.items) |method_key| {
-                            try self.facts.calls.getPtr(caller).?.put(self.arena, method_key, {});
-                        }
-                    }
+                    try self.noteMemberCall(call.callee.data.member.name);
                 }
             }
             for (call.arguments) |argument| try self.walkExpression(argument);
@@ -1342,7 +1390,11 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     }
                 },
                 .reported => {},
-                .none => try self.walkExpression(member.base),
+                .none => {
+                    // A property read runs its getter.
+                    try self.noteMemberCall(member.name);
+                    try self.walkExpression(member.base);
+                },
             }
         },
         .string_literal => {},

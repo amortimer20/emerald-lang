@@ -1,0 +1,4 @@
+diagnostics/property-const-with-blocks.em:4:11: a `const` property has no `get` or `set` blocks
+      const twice: Int {
+            ^^^^^
+Its braces hold the getter's body directly, as in `const area: Float { return self.width * self.height }`. Use `var` for a property that can be set.

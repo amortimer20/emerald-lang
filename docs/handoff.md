@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Claude after the struct instance-methods sub-slice.
+Updated: 2026-09-12. Prepared by Claude after the struct computed-properties sub-slice.
 
 ## Current milestone
 
@@ -28,8 +28,9 @@ constructor that replaces the generated one; inside it `self` is the value being
 each field must be set on every path before the constructor finishes, a field may be read
 once it is set, and `self` as a whole may be used once every field is. Structs have instance
 methods; the checker works out from each body whether it changes `self`, and a changing
-method can only be called on something that can change. Defaults, properties, type-level
-members, and member privacy are the remaining struct sub-slices; `super(...)` waits for
+method can only be called on something that can change. Computed properties work, read-only
+and writable, with nested mutation through one rejected. Defaults, type-level members, member
+privacy, and method values are the remaining struct sub-slices; `super(...)` waits for
 classes.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
@@ -155,6 +156,40 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Property decisions worth knowing
+
+- **An accessor is a method the parser writes.** `const area: Float { ... }` becomes a
+  getter declaration with no parameters returning `Float`; `var diameter` also gets a setter
+  taking `value: Float`. They are keyed `Circle::diameter` and `Circle::diameter=`
+  (`Resolver.setterKey`), so the resolver, checker, and interpreter treat them as methods:
+  inference, `ensureBodyChecked`, all-paths-return, captures, `self`, and `methodChanges`
+  are all reused. Only reaching them is new.
+- **Reads.** `typeOfMember` checks fields, then `propertyOf`. The runtime descriptor
+  (`Value.StructType.properties`) carries each property's accessor keys, so
+  `evaluateProperty` falls back from `fieldPosition`, now optional, to `readProperty` with no
+  allocation per read.
+- **Writes.** A property may only be the last step of an assignment path. Anywhere earlier,
+  and as the receiver of a changing method (`resolvePlace`), it gets 10.3's "nested mutation
+  through a computed value is rejected". A `const` property is read-only. `storeElement`
+  hands the final step to `storeProperty`, which takes the receiver out of its slot for the
+  setter exactly as `callStructMethod` does. A compound assignment runs the getter once in
+  `elementValue` and the setter once in `storeElement`.
+- **`assignElement` now takes its root out of the binding while it stores.** A setter runs
+  user code, which could otherwise see the half-stored value, and `Binding.changing` makes
+  that a runtime error naming the property (`runtime-errors/setter-receiver-in-use`,
+  confirmed to fail without it). The binding is also found again after the right side is
+  evaluated. Before, a pointer into the module scope was held across evaluating the right
+  side, which can initialize another file and grow that scope: a latent use-after-move,
+  never observed, now gone.
+- **A getter may not change `self`** (recorded in 10.3 and section 22). Reading a property
+  of a `const` would otherwise be an error, and `methodChanges` already answers the question.
+- **Member names share one space**, checked in one pass over fields, properties, and
+  methods in source order, so the later declaration is the one reported.
+- **Parser recovery.** A `var` property's `get` and `set` blocks may come in either order;
+  a missing block, a repeated one, or blocks inside a `const` property are reported without
+  failing the statement, since failing it inside a struct body reported every following `}`
+  as stray. `get` and `set` stay ordinary identifiers (`startsAccessor`).
 
 ### Method decisions worth knowing
 
@@ -797,15 +832,14 @@ still open.
 ## Next concrete step
 
 Continue section 20's slice 12. Stored fields, assignment through field paths, custom
-constructors, and instance methods are done. What remains for structs: default field values
-(10.2, run once per construction, in declaration order, may read earlier fields but not later
-ones, and skipped when a generated-constructor argument replaced them), properties (10.3,
-read-only `const` and writable `var` with `get`/`set`, where nested mutation through a
-computed property is rejected), type-level members (10.4), member privacy (10.5), and method
-values (7.5). Properties are the natural next piece: they are methods in field clothing, so
-they reuse the method machinery directly, and section 10.2's "nested assignment through a
-computed property is rejected" needs `resolvePlace` to learn about them before anything else
-builds on field paths. Classes, traits, operators, and enums follow in section 20's order.
+constructors, instance methods, and computed properties are done. What remains for structs:
+default field values (10.2, run once per construction, in declaration order, may read earlier
+fields but not later ones, and skipped when a generated-constructor argument replaced them),
+type-level members (10.4, `func Vector2.origin()` and `var Player.count = 0`), member privacy
+(10.5), and method values (7.5). Defaults are the natural next piece: they complete
+construction, which the generated constructor, custom constructors, and readiness tracking
+all have to agree on, and they interact with nothing added since. Classes, traits,
+operators, and enums follow in section 20's order.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -825,7 +859,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 306 unit tests, 203 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 306 unit tests, 215 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

@@ -1,0 +1,34 @@
+struct Point {
+    var x: Int
+}
+
+struct Box {
+    var corner: Point
+    var tags: [String]
+
+    const size: Int {
+        return self.corner.x * 2
+    }
+
+    var origin: Point {
+        get {
+            return self.corner
+        }
+        set {
+            self.corner = value
+        }
+    }
+
+    var labels: [String] {
+        get {
+            return self.tags
+        }
+        set {
+            self.tags = value
+        }
+    }
+}
+
+var box = Box(Point(1), [])
+box.size = 3
+box.size += 1

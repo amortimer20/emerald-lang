@@ -1,0 +1,4 @@
+diagnostics/property-missing-set.em:4:9: this `var` property has no `set` block
+      var twice: Int {
+          ^^^^^
+Add `set { ... }`, which receives the new value as `value`, or make it a `const` property if it is only read.

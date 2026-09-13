@@ -46,11 +46,27 @@ pub const StructType = struct {
     /// splitting on a namespace dot.
     display_name: []const u8,
     fields: []const Field,
+    /// Section 10.3's computed properties, which store nothing and so are
+    /// neither displayed nor compared. Each names the functions that run it.
+    properties: []const Property = &.{},
 
     pub const Field = struct {
         name: []const u8,
         kind: Kind,
     };
+
+    pub const Property = struct {
+        name: []const u8,
+        getter: []const u8,
+        setter: ?[]const u8,
+    };
+
+    pub fn property(self: *const StructType, name: []const u8) ?Property {
+        for (self.properties) |candidate| {
+            if (std.mem.eql(u8, candidate.name, name)) return candidate;
+        }
+        return null;
+    }
 };
 
 pub const nothing: Value = .{ .data = .nothing };

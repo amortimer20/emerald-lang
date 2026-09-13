@@ -1,7 +1,7 @@
 diagnostics/duplicate-method.em:4:10: `code` is already a field of `Badge`
       func code() {
            ^^^^
-A field and a method cannot share a name, since `value.name` has to mean one of them. Rename one.
+A field, a property, and a method cannot share a name, since `value.name` has to mean one of them. Rename one.
 diagnostics/duplicate-method.em:10:10: `show` is already a method of `Badge`
       func show() {
            ^^^^

@@ -70,7 +70,7 @@ arithmetic, comparison, bindings, conditionals, loops, functions, lists and thei
 semantics, dictionaries and sets with their insertion order and key rules, tuples and their
 unpacking, strings and their Unicode behavior, optionals and narrowing, input, structs with
 required fields and their value semantics, assignment through a path of indices and struct
-fields, custom constructors and the readiness of `self`, instance methods and which of them change `self`, projects of several files with their namespaces, `using`, privacy and lazy module
+fields, custom constructors and the readiness of `self`, instance methods and which of them change `self`, computed properties, projects of several files with their namespaces, `using`, privacy and lazy module
 initialization, and stack traces for runtime errors raised inside functions and across
 files. Unicode's own
 conformance data is checked separately, by the unit tests in `src/unicode.zig`. What

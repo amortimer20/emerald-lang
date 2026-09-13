@@ -1,0 +1,8 @@
+diagnostics/property-type-mismatch.em:33:14: this is Int, but the property `origin` holds Point
+  box.origin = 4
+               ^
+Assign a value of the property's type, or convert it first.
+diagnostics/property-type-mismatch.em:34:11: `size` is a property of Box, not a method
+  print(box.size())
+            ^^^^
+Read it without parentheses, as in `.size`.
