@@ -445,6 +445,9 @@ pub const Expression = struct {
         /// Section 7.3's named arguments, one per argument and null for a
         /// positional one. Empty when no argument is named.
         names: []const ?ArgumentName = &.{},
+        /// Whether the last argument is section 7.4's trailing block, written
+        /// after the parentheses. It always fills the final parameter.
+        trailing: bool = false,
 
         pub const ArgumentName = struct {
             text: []const u8,

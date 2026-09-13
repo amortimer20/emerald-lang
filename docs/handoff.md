@@ -245,6 +245,18 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   own copy (one of the open review findings); `typeOfValueCall` still has its own, since a
   function value has no names or defaults. Old arity wording is kept when nothing is named
   and nothing has a default, so existing diagnostics did not change.
+- **A trailing block fills the final parameter** (`Ast.Expression.Call.trailing`, handled in
+  `arguments.bind`), so it may follow named arguments, and a final function parameter may
+  follow defaulted ones. Naming the final parameter inside the parentheses as well reports
+  `trailing_duplicate`. Found in chunk 5 of the review, with `run/trailing-block-after-named-arguments`
+  and `diagnostics/trailing-block-arguments` guarding it.
+- **A rejected named argument ends that call's checking.** On a built-in method, `print`,
+  `input`, or a function value, `rejectNames` now reports once and the rest of the call is
+  only type-walked, instead of adding an arity or type mismatch computed from positions that
+  mean nothing (`diagnostics/named-argument-unsupported`).
+- **Constructor parameter defaults may read `self`.** The parser allows it, and
+  `Checker.in_parameter_default` gives readiness errors inside one default-specific wording,
+  since "set `self.x` first" is advice a default cannot take.
 - **Defaults are evaluated in the callee.** `Callable.omitted` marks parameters left to
   their defaults; `invoke` binds the explicit ones, switches to the callee's file and frame,
   then evaluates each omitted default in parameter order, so a default sees the parameters
@@ -978,7 +990,7 @@ decision a fix involves is recorded in `docs/rewrite-context.md`.
 | 2 | Constructor field tracking (`.x` and `!x` bindings) under `return`, `break`, `continue`, `while true`, and nesting; the `if` and loop narrowing fixes | Done, fixed in `5d72c7c` |
 | 3 | Type-level members: setup order and cycles, the section 7.1 capture check through `Resolver.typeSetupKey`, `settleTypeField` and the `inferring` set, the `find` redirect, the assignment rewrite through `Facts.type_assignments`, namespaced and private types, name clashes with instance members | Done, fixed in "Fix type-level member issues found in review" |
 | 4 | Which methods change `self` (`methodChanges` and its caching, `selfPathType`), the rule that a getter may not change `self`, assignment through properties, and nested changes through them | Done, fixed in "Fix property clash crash found in review" |
-| 5 | Defaults and named arguments: the checker and interpreter matching arguments to the same parameters (`src/arguments.zig`), which file and frame defaults run in, and field defaults under both kinds of constructor | Not started |
+| 5 | Defaults and named arguments: the checker and interpreter matching arguments to the same parameters (`src/arguments.zig`), which file and frame defaults run in, and field defaults under both kinds of constructor | Done, fixed in "Fix argument handling found in review" |
 | 6 | Diagnostic wording and spans across all five slices: wrong or misleading messages, cascades, and underlines in the wrong place | Not started |
 
 ## Next concrete step
@@ -1009,7 +1021,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 258 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 309 unit tests, 260 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

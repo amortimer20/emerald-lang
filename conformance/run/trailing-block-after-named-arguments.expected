@@ -1,0 +1,8 @@
+a 0 0
+a 1 0
+b 0 5
+b 0 6
+c 0 0
+repeat 0
+repeat 1
+Box(size: 3, label: "a:true") Box(size: 3, label: "b:false")

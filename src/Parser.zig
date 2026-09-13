@@ -832,6 +832,11 @@ fn accessor(
 /// Section 10.2: `constructor(x: Float) { self.x = x }`.
 fn parseConstructor(self: *Parser) Error!Ast.StructDeclaration.Constructor {
     const keyword = self.advance();
+    // A parameter's default may read `self` (7.3), as a method's may; the
+    // checker decides which fields it can see.
+    const saved_self = self.self_allowed;
+    self.self_allowed = .member;
+    defer self.self_allowed = saved_self;
     const parameters = try self.parseParameterList(
         "constructor",
         "A constructor declares its parameters in parentheses, even when there are none.",
@@ -846,9 +851,6 @@ fn parseConstructor(self: *Parser) Error!Ast.StructDeclaration.Constructor {
         );
     }
 
-    const saved_self = self.self_allowed;
-    self.self_allowed = .member;
-    defer self.self_allowed = saved_self;
     const body = try self.parseBlock();
     try self.expectStatementEnd();
 
@@ -1069,6 +1071,9 @@ fn parseParameterList(self: *Parser, after: []const u8, missing_help: []const u8
 
     var parameters: std.ArrayList(Ast.Parameter) = .empty;
     var first_default: ?[]const u8 = null;
+    // Required parameters written after a defaulted one, with the first
+    // defaulted name, reported once the whole list is known.
+    var misplaced: std.ArrayList(struct { parameter: Ast.Parameter, defaulted: []const u8 }) = .empty;
     if (!self.check(.right_paren)) {
         while (true) {
             const parameter = try self.parseParameter();
@@ -1078,15 +1083,23 @@ fn parseParameterList(self: *Parser, after: []const u8, missing_help: []const u8
             if (parameter.default != null) {
                 if (first_default == null) first_default = parameter.name;
             } else if (first_default) |defaulted| {
-                try self.note(
-                    parameter.name_span,
-                    try std.fmt.allocPrint(self.arena, "`{s}` has no default, so it cannot follow `{s}`, which has one", .{ parameter.name, defaulted }),
-                    "Move the parameters with defaults to the end, or give this one a default too.",
-                );
+                try misplaced.append(self.arena, .{ .parameter = parameter, .defaulted = defaulted });
             }
             try parameters.append(self.arena, parameter);
             if (self.match(.comma) == null) break;
         }
+    }
+    for (misplaced.items) |entry| {
+        // The one exception: a final function parameter, which section 7.4's
+        // trailing block reaches whatever the defaults before it were left as.
+        const last = &parameters.items[parameters.items.len - 1];
+        if (std.mem.eql(u8, entry.parameter.name, last.name) and entry.parameter.name_span.start == last.name_span.start and
+            last.annotation.signature != null) continue;
+        try self.note(
+            entry.parameter.name_span,
+            try std.fmt.allocPrint(self.arena, "`{s}` has no default, so it cannot follow `{s}`, which has one", .{ entry.parameter.name, entry.defaulted }),
+            "Move the parameters with defaults to the end, or give this one a default too. Only a final function parameter, which a trailing block can supply, may follow them.",
+        );
     }
 
     const closing = self.peek();
@@ -2404,7 +2417,7 @@ fn finishTrailingLambda(self: *Parser, base: *const Ast.Expression) Error!*const
     const callee = if (base.data == .call) blk: {
         try arguments.appendSlice(self.arena, base.data.call.arguments);
         if (base.data.call.names.len > 0) {
-            // The block is one more positional argument.
+            // The block has no name; `trailing` says where it goes.
             const extended = try self.arena.alloc(?Ast.Expression.Call.ArgumentName, base.data.call.names.len + 1);
             @memcpy(extended[0..base.data.call.names.len], base.data.call.names);
             extended[base.data.call.names.len] = null;
@@ -2418,6 +2431,7 @@ fn finishTrailingLambda(self: *Parser, base: *const Ast.Expression) Error!*const
         .callee = callee,
         .arguments = try arguments.toOwnedSlice(self.arena),
         .names = names,
+        .trailing = true,
     } });
 }
 

@@ -1,0 +1,16 @@
+diagnostics/trailing-block-arguments.em:8:32: the trailing block gives `block` a second value
+  each(block: { v => print(v) }) { v =>
+                                 ^^^^^^
+A block after the parentheses is `block`. Remove `block:` from inside them, or pass the block there instead.
+diagnostics/trailing-block-arguments.em:15:1: this call gives `grid` no value for parameter `cell`
+  grid(1)
+  ^^^^
+Pass it as a block after the parentheses, or by name as `cell: ...`.
+diagnostics/trailing-block-arguments.em:20:1: `nothing_to_fill` takes 0 arguments, but this call passes 1
+  nothing_to_fill() { =>
+  ^^^^^^^^^^^^^^^
+Match the number of arguments to the function's parameters.
+diagnostics/trailing-block-arguments.em:27:35: `self.label` is not set yet when this default runs
+      constructor(wide: Bool = self.label == "x") {
+                                    ^^^^^
+A parameter default runs before the constructor's body, so it can read only fields that have defaults of their own.

@@ -142,6 +142,10 @@ changes_in_progress: Resolver.NameSet = .empty,
 method_calls: MethodCalls = .empty,
 /// Section 10.4's type-level fields, by key.
 type_fields: std.StringHashMapUnmanaged(TypeField) = .empty,
+/// Whether a parameter's default is being checked. Inside a constructor it
+/// runs before the body, so it is told what it may read rather than to set a
+/// field first.
+in_parameter_default: bool = false,
 /// The struct whose constructor body is being checked, if any. Section 10.2's
 /// rules about `self` apply only here.
 constructing: ?Constructing = null,
@@ -2015,7 +2019,12 @@ fn checkBodyWithSelf(
                 );
             }
         }
-        const actual = try self.typeOfExpected(default, parameter_type);
+        self.in_parameter_default = true;
+        const actual = self.typeOfExpected(default, parameter_type) catch |err| {
+            self.in_parameter_default = false;
+            return err;
+        };
+        self.in_parameter_default = false;
         if (!actual.assignableTo(parameter_type)) {
             try self.report(
                 default.span,
@@ -2594,6 +2603,15 @@ fn typeOfStructMethodCall(
 /// reported, which it does only inside a default.
 fn reportInDefault(self: *Checker, span: Source.Span, comptime what: []const u8) Error!bool {
     const building = self.constructing orelse return false;
+    if (self.in_parameter_default) {
+        try self.report(
+            span,
+            "a parameter default cannot " ++ what ++ " yet",
+            .{},
+            "It runs before the constructor's body, while the value is still being built, so it can read only fields that have defaults of their own, as in `self.width`.",
+        );
+        return true;
+    }
     if (building.part != .default_of) return false;
     try self.report(
         span,
@@ -3642,13 +3660,15 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
         if (try self.fieldSetBinding(member.name)) |set| {
             if (!set.assigned) {
                 const building = self.constructing.?;
-                if (building.part == .default_of) {
+                if (building.part == .default_of or self.in_parameter_default) {
                     try self.reportWithHelp(
                         member.name_span,
                         "`self.{s}` is not set yet when this default runs",
                         .{member.name},
                         "{s}",
-                        .{if (building.declaration.constructor == null)
+                        .{if (self.in_parameter_default)
+                            "A parameter default runs before the constructor's body, so it can read only fields that have defaults of their own."
+                        else if (building.declaration.constructor == null)
                             "A default can read only the fields declared before it."
                         else
                             "A default runs before the constructor, so it can read only earlier fields that have defaults of their own."},
@@ -3816,7 +3836,14 @@ fn typeOfMethodCall(
         try self.typeArguments(call.arguments);
         return .invalid;
     }
-    if (base.kind != .struct_value or base.optional) try self.rejectNames(call);
+    if (base.kind != .struct_value or base.optional) {
+        // Nothing else about the call is checked, since a named value's
+        // position means nothing here and would only report again.
+        if (try self.rejectNames(call)) {
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
+    }
 
     // Section 4.5's `or` is the one thing you may do to a value that may be
     // absent without proving it is there, because supplying the fallback is
@@ -4865,7 +4892,10 @@ fn typeOfCall(
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
     if (!self.declarations.contains(reference.key)) {
-        try self.rejectNames(call);
+        if (try self.rejectNames(call)) {
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
         if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
             return self.typeOfInput(call, name);
         }
@@ -4941,8 +4971,11 @@ fn checkArguments(
                 call.callee.span,
                 "this call gives `{s}` no value for {s} `{s}`",
                 .{ name, parameters.noun, parameters.names[position] },
-                "Pass it by position, or by name as `{s}: ...`.",
-                .{parameters.names[position]},
+                "{s}",
+                .{if (position + 1 == parameters.names.len and parameters.types[position].kind == .function)
+                    try std.fmt.allocPrint(self.arena, "Pass it as a block after the parentheses, or by name as `{s}: ...`.", .{parameters.names[position]})
+                else
+                    try std.fmt.allocPrint(self.arena, "Pass it by position, or by name as `{s}: ...`.", .{parameters.names[position]})},
             );
         },
         .unknown_name => |index| try self.reportWithHelp(
@@ -4951,6 +4984,13 @@ fn checkArguments(
             .{ name, parameters.noun, call.names[index].?.text },
             "{s}",
             .{if (parameters.names.len == 0) "It takes no arguments." else "Check the spelling against the declaration."},
+        ),
+        .trailing_duplicate => |position| try self.reportWithHelp(
+            call.arguments[call.arguments.len - 1].span,
+            "the trailing block gives `{s}` a second value",
+            .{parameters.names[position]},
+            "A block after the parentheses is `{s}`. Remove `{s}:` from inside them, or pass the block there instead.",
+            .{ parameters.names[position], parameters.names[position] },
         ),
         .duplicate => |index| try self.report(
             call.names[index].?.span,
@@ -4983,16 +5023,19 @@ fn checkArguments(
 
 /// Section 7.3's names belong to a declaration's parameters, so a call through
 /// a value, to the prelude, or to a built-in method has none to match.
-fn rejectNames(self: *Checker, call: Ast.Expression.Call) Error!void {
+/// Returns whether it reported.
+fn rejectNames(self: *Checker, call: Ast.Expression.Call) Error!bool {
     for (call.names) |maybe| {
         const name = maybe orelse continue;
-        return self.report(
+        try self.report(
             name.span,
             "a named argument needs a function, method, or type called by its own name",
             .{},
             "Pass this value by position instead.",
         );
+        return true;
     }
+    return false;
 }
 
 /// A call through a value rather than a name: section 7.4's lambdas and
@@ -5001,8 +5044,7 @@ fn rejectNames(self: *Checker, call: Ast.Expression.Call) Error!void {
 /// `name` is the binding the value came from, when it came from one, so the
 /// diagnostic can say which name is not a function.
 fn typeOfValueCall(self: *Checker, call: Ast.Expression.Call, callee: Type, name: ?[]const u8) Error!Type {
-    try self.rejectNames(call);
-    if (callee.kind == .invalid) {
+    if (try self.rejectNames(call) or callee.kind == .invalid) {
         try self.typeArguments(call.arguments);
         return .invalid;
     }

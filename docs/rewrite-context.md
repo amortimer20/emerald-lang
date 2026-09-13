@@ -982,8 +982,13 @@ func greet(name: String, punctuation: String = "!") {
 }
 ```
 
+One required parameter may follow defaulted ones: a final parameter of function type, which
+a trailing block supplies (7.4).
+
 Named arguments may skip defaulted parameters and document call sites. A call must not
-supply the same parameter twice or place positional arguments after named arguments. The
+supply the same parameter twice or place positional arguments after named arguments. A
+trailing block always fills the final parameter, whatever was named or left to a default
+inside the parentheses, so `grid(2, height: 1) { x, y => ... }` is allowed. The
 parameter name is part of public override and trait contracts. Explicit arguments evaluate
 left to right as written, followed by omitted defaults in parameter order. A default may
 read earlier parameters but not itself or later parameters. An override inherits the
@@ -2858,6 +2863,9 @@ recorded in their normative sections:
 | When a changing method reaches its receiver (4.3, 5.2, 7.3) | The receiver is a place: its indices are evaluated first, and the place itself is reached once the arguments are, so an argument that replaces the variable is seen by the call. A method that only reads receives the receiver's value, read before its arguments | This is how assignment into a place and the changing collection methods already behave, and reaching the place first would make `items.append(items.count)`, and any argument that reads the receiver, an error under 4.3's exclusivity rule. A reading method has no place, only an operand, which 5.2 reads left to right. |
 | Defaults of a changing method (4.3, 7.3) | Evaluated before the call takes its receiver, seeing `self` as it is before the call; a default may not change `self` | 7.3 counts omitted defaults among a call's arguments, so exclusivity has not begun while they run, and `t.mark()` with a default that reads `t` is not an error. A default that changed `self` would be lost on a method that only reads, and would reach a `const`; like a getter (10.3), it only works out a value. |
 | Narrowing a module variable a function assigns (4.5, 7.1) | Never narrowed; a `const` copy is | 4.5 already refused narrowing where a called closure could reassign the binding, and a named function reaches module variables the same way. Tracking which calls could run the assigning function would be interprocedural analysis with the same over-reporting as the capture check, for a pattern a `const` copy states more clearly. Without this, `check` accepted a program that crashed. |
+| Where a trailing block goes (7.3, 7.4) | Always the final parameter, and exempt from "no positional arguments after named ones" | 7.4 already calls it the final argument position. Treating it as one more positional argument rejected `repeat(times: 2) { ... }`, and put the block into the next unfilled parameter when defaults were skipped. |
+| A function parameter after defaulted ones (7.3, 7.4) | Allowed when it is the final parameter and has a function type; any other required parameter after a defaulted one is still an error | 7.3's rule exists so a positional call can reach every required parameter. A trailing block reaches the final one, so `func grid(width: Int, height: Int = 2, cell: func(Int, Int))` loses nothing, and without the exception a function taking a block could have no defaults before it at all. |
+| `self` in a constructor's parameter defaults (7.3, 10.2) | Allowed, under construction's readiness rules: a default may read fields that have defaults of their own, since those run first | A method's defaults already read `self`, and the runtime binds `self` before evaluating defaults. The parser had rejected it with a message claiming `self` was only available inside a constructor. |
 | Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 
 ## 23. Consistency rules for future work

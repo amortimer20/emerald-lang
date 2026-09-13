@@ -1,4 +1,4 @@
 diagnostics/default-before-required.em:1:39: `name` has no default, so it cannot follow `punctuation`, which has one
   func greet(punctuation: String = "!", name: String) {
                                         ^^^^
-Move the parameters with defaults to the end, or give this one a default too.
+Move the parameters with defaults to the end, or give this one a default too. Only a final function parameter, which a trailing block can supply, may follow them.
