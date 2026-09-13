@@ -209,6 +209,9 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   a module-level name even when `using` gave that name its own key. The checker once looked
   the key up first and checked `shout("hi")` against an imported `shout` while the
   interpreter ran the local block (review chunk 2; `run/local-hides-imported-function`).
+- **Equality is a closure's identity.** A `.named` closure that captured scopes is a nested
+  function, and `Value.sameFunction` compares it like a lambda; only top-level functions
+  compare by name (review chunk 3).
 - **A duplicate is reported at whichever is written second.** A nested function is hoisted,
   so `var name` above `func name()` would otherwise be reported at the `var`.
 - **Not done: a better message for a variable declared below the function.** Reading one
@@ -1143,8 +1146,8 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 | --- | --- | --- |
 | 1 | Nested functions: resolver capture analysis and use checks | Done: destructuring-assignment crash and recursion false positive fixed |
 | 2 | Nested functions: checker body checking and runtime hoisting | Done: a local now hides an imported function in a call (an older bug next to the new code) |
-| 3 | Method values: receiver copy, write-back, collector, re-entry | Next |
-| 4 | Privacy: every path to a member | |
+| 3 | Method values: receiver copy, write-back, collector, re-entry | Done: no method value bugs; two calls' nested functions no longer compare equal |
+| 4 | Privacy: every path to a member | Next |
 | 5 | Nested tuple patterns and parser changes | |
 | 6 | Diagnostics across all four slices | Noted so far: the narrowing help says "a block can set it back" when a nested function is what does |
 

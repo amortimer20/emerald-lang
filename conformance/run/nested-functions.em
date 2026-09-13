@@ -106,3 +106,9 @@ func launch() {
     }
 }
 launch()
+
+# Each call makes its own `next`, with its own `count`, so the two are
+# different functions even though they have the same name.
+const first = counter()
+const second = counter()
+print(first == second, first == first)

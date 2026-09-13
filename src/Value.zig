@@ -362,14 +362,17 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
 
 /// Whether two callable values are the same function.
 ///
-/// Capturing a named function twice gives the same function both times, so the
-/// two captures are equal even though each capture is its own object. Two
-/// lambdas are equal only when they are the same closure: two evaluations of
-/// the same lambda capture different variables and are genuinely different
-/// functions.
+/// Capturing a top-level function twice gives the same function both times, so
+/// the two captures are equal even though each capture is its own object. Two
+/// lambdas, nested functions, or captured methods are equal only when they are
+/// the same closure: two evaluations of the same lambda capture different
+/// variables and are genuinely different functions.
 fn sameFunction(left: *Heap.Closure, right: *Heap.Closure) bool {
     if (left == right) return true;
     if (left.function != .named or right.function != .named) return false;
+    // A nested function (7.1) captured the scopes of one call, so like a
+    // lambda it is the same function only as the same closure.
+    if (left.captured.len > 0 or right.captured.len > 0) return false;
     return std.mem.eql(u8, left.function.named, right.function.named);
 }
 
