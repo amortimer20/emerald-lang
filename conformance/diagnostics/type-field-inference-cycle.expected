@@ -1,0 +1,4 @@
+diagnostics/type-field-inference-cycle.em:6:10: `Tally.next` needs an explicit return type
+      func Tally.next() {
+           ^^^^^^^^^^
+Working out what it returns reaches a type-level field whose value calls it. Add a return type, or give that field a type.

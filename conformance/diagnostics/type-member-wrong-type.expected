@@ -1,0 +1,8 @@
+diagnostics/type-member-wrong-type.em:5:9: this is declared inside `Counter`, not `Count`
+      var Count.start = 0
+          ^^^^^
+A type-level member names the type it is written in. Write `Counter.` here.
+diagnostics/type-member-wrong-type.em:7:10: this is declared inside `Counter`, not `Countr`
+      func Countr.make(): Counter {
+           ^^^^^^
+A type-level member names the type it is written in. Write `Counter.` here.

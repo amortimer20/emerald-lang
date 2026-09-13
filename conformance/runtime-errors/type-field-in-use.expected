@@ -1,0 +1,5 @@
+runtime-errors/type-field-in-use.em:8:15: `Board.cursor` is being changed by `shift`, so it cannot be used until that call finishes
+          print(Board.cursor)
+                ^^^^^^^^^^^^
+A method that changes a value has it to itself while it runs. Pass what the method needs as an argument instead of reaching for it another way.
+in `shift`, called at runtime-errors/type-field-in-use.em:16:1

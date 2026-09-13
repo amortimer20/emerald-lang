@@ -1,0 +1,12 @@
+diagnostics/instance-member-through-type.em:11:7: `name` belongs to each `Player` value, not to the type
+  print(Player.name)
+        ^^^^^^^^^^^
+Reach it through a value of `Player` instead. Only a member declared with the type's name in front, such as `var Player.count = 0`, belongs to the type.
+diagnostics/instance-member-through-type.em:12:1: `greet` belongs to each `Player` value, not to the type
+  Player.greet()
+  ^^^^^^^^^^^^
+Reach it through a value of `Player` instead. Only a member declared with the type's name in front, such as `var Player.count = 0`, belongs to the type.
+diagnostics/instance-member-through-type.em:13:7: `Player` has no type-level member named `count`
+  print(Player.count)
+        ^^^^^^^^^^^^
+Check the spelling. A type-level member is declared inside the type with its name in front, as in `var Player.count = ...`.

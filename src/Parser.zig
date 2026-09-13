@@ -64,7 +64,9 @@ in_control_header: bool = false,
 /// value escape before every field is set, or outlive a method that changes it.
 self_allowed: SelfContext = .nowhere,
 
-const SelfContext = enum { nowhere, member, member_lambda };
+/// `type_member` is section 10.4's type-level function or field, which belongs
+/// to the type rather than to any value, so it has no `self` to offer.
+const SelfContext = enum { nowhere, member, member_lambda, type_member };
 
 /// Section 3.4: "An implementation accepts at least 256 nested syntactic
 /// delimiters or declarations and checks its nesting budget before consuming
@@ -371,6 +373,17 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
         .keyword_func => blk: {
             const nested = !self.at_top_level;
             const keyword = self.peek().span;
+            // Section 10.4's `func Vector2.origin()` written outside the type
+            // it names. Parsed in full for recovery, then reported.
+            if (self.startsTypeMember(self.index + 1)) {
+                const receiver = self.tokens[self.index + 1];
+                const parsed = try self.parseTypeFunction(null);
+                return self.report(
+                    parsed.member_span,
+                    "a type-level function is declared inside its type",
+                    try std.fmt.allocPrint(self.arena, "Move it inside the braces of `struct {s}`.", .{self.text(receiver)}),
+                );
+            }
             // Parsed in full even when it will be rejected, so recovery
             // resumes after its closing brace instead of reporting that brace
             // as a second, unrelated error.
@@ -453,9 +466,17 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     var constructor: ?Ast.StructDeclaration.Constructor = null;
     var methods: std.ArrayList(Ast.FunctionDeclaration) = .empty;
     var properties: std.ArrayList(Ast.StructDeclaration.Property) = .empty;
+    var type_functions: std.ArrayList(Ast.StructDeclaration.TypeFunction) = .empty;
+    var type_fields: std.ArrayList(Ast.StructDeclaration.TypeField) = .empty;
     self.skipSeparators();
     while (!self.check(.right_brace) and !self.check(.eof)) {
         const marker = self.peek();
+        if (marker.kind == .keyword_func and self.startsTypeMember(self.index + 1)) {
+            try type_functions.append(self.arena, try self.parseTypeFunction(name));
+            try self.expectStatementEnd();
+            self.skipSeparators();
+            continue;
+        }
         if (marker.kind == .keyword_func) {
             const saved_self = self.self_allowed;
             self.self_allowed = .member;
@@ -503,6 +524,11 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             );
         }
         _ = self.advance();
+        if (self.check(.dot)) {
+            try type_fields.append(self.arena, try self.parseTypeField(mutable, field_name, name));
+            self.skipSeparators();
+            continue;
+        }
         if (self.match(.colon) == null) {
             return self.reportFmt(
                 self.peek().span,
@@ -553,7 +579,136 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             .constructor = constructor,
             .methods = try methods.toOwnedSlice(self.arena),
             .properties = try properties.toOwnedSlice(self.arena),
+            .type_functions = try type_functions.toOwnedSlice(self.arena),
+            .type_fields = try type_fields.toOwnedSlice(self.arena),
         } },
+    };
+}
+
+/// Whether the tokens at `at` are a name followed by `.`: the type receiver
+/// section 10.4 writes in front of a type-level member.
+fn startsTypeMember(self: *Parser, at: usize) bool {
+    if (at + 1 >= self.tokens.len) return false;
+    return self.tokens[at].kind == .identifier and self.tokens[at + 1].kind == .dot;
+}
+
+/// Section 10.4: a type-level member names the type it belongs to, and the
+/// type it is written inside is the only one it can name.
+fn checkTypeReceiver(self: *Parser, receiver: Token, type_name: ?Token) Error!void {
+    const expected = type_name orelse return;
+    if (std.mem.eql(u8, try self.identifier(receiver), try self.identifier(expected))) return;
+    try self.note(
+        receiver.span,
+        try std.fmt.allocPrint(self.arena, "this is declared inside `{s}`, not `{s}`", .{ self.text(expected), self.text(receiver) }),
+        try std.fmt.allocPrint(
+            self.arena,
+            "A type-level member names the type it is written in. Write `{s}.` here.",
+            .{self.text(expected)},
+        ),
+    );
+}
+
+/// `func Vector2.origin(): Vector2 { ... }`. `type_name` is the struct it is
+/// written inside, or null when it is written outside any.
+fn parseTypeFunction(self: *Parser, type_name: ?Token) Error!Ast.StructDeclaration.TypeFunction {
+    _ = self.advance(); // `func`
+    const receiver = self.advance();
+    _ = self.advance(); // `.`
+    const member = self.peek();
+    if (member.kind != .identifier) {
+        return self.reportFmt(
+            member.span,
+            "expected a name after `{s}.`, found {s}",
+            .{ self.text(receiver), member.kind.describe() },
+            "A type-level function is named after its type, as in `func Vector2.origin()`.",
+        );
+    }
+    _ = self.advance();
+    try self.checkTypeReceiver(receiver, type_name);
+
+    const member_name = try self.identifier(member);
+    const full_name = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ try self.identifier(receiver), member_name });
+    const parameters = try self.parseParameterList(
+        full_name,
+        "Every function declares its parameters in parentheses, even when there are none.",
+    );
+    var return_annotation: ?Ast.TypeExpression = null;
+    if (self.match(.colon) != null) return_annotation = try self.parseTypeExpression();
+
+    const saved_self = self.self_allowed;
+    self.self_allowed = .type_member;
+    defer self.self_allowed = saved_self;
+    const body = try self.parseBlock();
+
+    return .{
+        .member = member_name,
+        .member_span = member.span,
+        .declaration = .{
+            .name = full_name,
+            .name_span = spanning(receiver.span, member.span),
+            .parameters = parameters,
+            .return_annotation = return_annotation,
+            .body = body,
+        },
+    };
+}
+
+/// `var Player.count = 0`, with the parser just past `Player`.
+fn parseTypeField(
+    self: *Parser,
+    mutable: bool,
+    receiver: Token,
+    type_name: Token,
+) Error!Ast.StructDeclaration.TypeField {
+    _ = self.advance(); // `.`
+    const member = self.peek();
+    if (member.kind != .identifier) {
+        return self.reportFmt(
+            member.span,
+            "expected a name after `{s}.`, found {s}",
+            .{ self.text(receiver), member.kind.describe() },
+            "A type-level field is named after its type, as in `var Player.count = 0`.",
+        );
+    }
+    _ = self.advance();
+    try self.checkTypeReceiver(receiver, type_name);
+
+    var annotation: ?Ast.TypeExpression = null;
+    if (self.match(.colon) != null) annotation = try self.parseTypeExpression();
+    const saved_self = self.self_allowed;
+    self.self_allowed = .type_member;
+    defer self.self_allowed = saved_self;
+
+    // Both mistakes below are noted rather than reported, with the rest of
+    // the declaration still read, so the struct body carries on normally.
+    var initializer: *const Ast.Expression = undefined;
+    if (self.check(.left_brace)) {
+        const opening = self.peek().span;
+        _ = try self.parseBlock();
+        try self.note(
+            opening,
+            "a type-level property is not available",
+            "Use a type-level function instead, as in `func Player.total(): Int { ... }`.",
+        );
+        initializer = try self.node(opening, .{ .nothing_literal = {} });
+    } else if (self.match(.equal) == null) {
+        try self.note(
+            self.peek().span,
+            try std.fmt.allocPrint(self.arena, "`{s}.{s}` needs its value here", .{ self.text(receiver), self.text(member) }),
+            "A type-level field is set up once, from the value after `=`, as in `var Player.count = 0`.",
+        );
+        initializer = try self.node(member.span, .{ .nothing_literal = {} });
+    } else {
+        initializer = try self.parseExpression();
+    }
+    try self.expectStatementEnd();
+
+    return .{
+        .mutable = mutable,
+        .name = try self.identifier(member),
+        .name_span = spanning(receiver.span, member.span),
+        .annotation = annotation,
+        .initializer = initializer,
     };
 }
 
@@ -2554,6 +2709,11 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
             _ = self.advance();
             switch (self.self_allowed) {
                 .member => {},
+                .type_member => try self.note(
+                    token.span,
+                    "a type-level member has no `self`",
+                    "It belongs to the type, not to any one value. Take the value as a parameter, or leave out the type name to make this an instance member.",
+                ),
                 .member_lambda => try self.note(
                     token.span,
                     "a block cannot use `self` yet",

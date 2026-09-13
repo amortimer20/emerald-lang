@@ -1,0 +1,8 @@
+diagnostics/type-field-read-only.em:10:1: `Limits.most` cannot be reassigned
+  Limits.most = 20
+  ^^^^^^^^^^^
+It was declared with `const`. Use `var` if the value needs to change.
+diagnostics/type-field-read-only.em:11:1: `Limits.reset` is a function and cannot be assigned to
+  Limits.reset = Limits.reset
+  ^^^^^^^^^^^^
+Declare a variable with a different name to hold the value.

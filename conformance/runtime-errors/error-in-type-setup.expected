@@ -1,0 +1,7 @@
+runtime-errors/error-in-type-setup.em:6:16: floor division by zero
+          return a // b
+                 ^^^^^^
+Check the divisor before dividing. Division by zero has no result for either numeric type.
+in `Config.divide`, called at runtime-errors/error-in-type-setup.em:3:24
+in the type-level fields of `Config`, called at runtime-errors/error-in-type-setup.em:11:11
+in `show`, called at runtime-errors/error-in-type-setup.em:15:1

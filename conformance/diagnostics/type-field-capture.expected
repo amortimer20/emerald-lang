@@ -1,0 +1,8 @@
+diagnostics/type-field-capture.em:10:7: `Banner.default` reads `greeting`, which is not assigned yet here
+  print(Banner.default)
+        ^^^^^^^^^^^^^^
+Move this below the line that assigns `greeting`.
+diagnostics/type-field-capture.em:11:16: `Banner` reads `greeting`, which is not assigned yet here
+  const banner = Banner("hi")
+                 ^^^^^^^^^^^^
+Move this call below the line that assigns `greeting`.

@@ -63,6 +63,25 @@ pub fn setterKey(arena: std.mem.Allocator, type_key: []const u8, name: []const u
     return std.fmt.allocPrint(arena, "{s}" ++ method_separator ++ "{s}" ++ setter_suffix, .{ type_key, name });
 }
 
+/// Section 10.4's type-level fields are set up together, once, the first time
+/// the type is constructed or one of its type-level members is reached. What
+/// their values read is recorded under this key, which is the method key of
+/// an empty name and so can be no member's.
+pub fn typeSetupKey(arena: std.mem.Allocator, type_key: []const u8) std.mem.Allocator.Error![]const u8 {
+    return methodKey(arena, type_key, "");
+}
+
+/// A key as a reader would write it: `Vector2::origin` is `Vector2.origin`,
+/// and a private declaration drops the file it is private to.
+pub fn displayKey(arena: std.mem.Allocator, key: []const u8) std.mem.Allocator.Error![]const u8 {
+    const start = if (std.mem.indexOf(u8, key, private_separator)) |at| at + private_separator.len else 0;
+    return std.mem.replaceOwned(u8, arena, key[start..], method_separator, ".");
+}
+
+/// Where an assignment statement is written, which is how the passes after
+/// this one find what the resolver decided about it.
+pub const Site = struct { file: u32, start: u32 };
+
 /// Section 14.2's privacy: a leading underscore on a module-level declaration
 /// makes it private to its own file. `_` alone is the discard, not a name.
 pub fn isPrivate(name: []const u8) bool {
@@ -97,6 +116,13 @@ pub const Facts = struct {
     /// The file each module-level key is declared in, which is the unit section
     /// 14.1 initializes lazily.
     owner: std.StringHashMapUnmanaged(u32) = .empty,
+    /// Every type-level function and field (10.4), mapped to its type's key.
+    type_members: KeyMap = .empty,
+    /// Every assignment whose destination starts at a type-level field, such
+    /// as `Player.count += 1`, mapped to that field as written. The statement
+    /// names `Player` with `count` as its first step; this says the two are
+    /// one binding, which this file's keys find by that written name.
+    type_assignments: std.AutoHashMapUnmanaged(Site, []const u8) = .empty,
 
     /// The key a bare name has in `file`, or null when the name is not a
     /// module-level declaration visible there.
@@ -192,6 +218,13 @@ ambiguous: []KeyMap = &.{},
 /// the checker has types; for section 7.1's capture check it is recorded as a
 /// call to every method of that name, which can only over-report.
 methods_named: std.StringHashMapUnmanaged(std.ArrayList([]const u8)) = .empty,
+/// The method key of every instance field, method, and property, so reaching
+/// one through its type instead of a value can say exactly that.
+instance_members: NameSet = .empty,
+/// While a type-level field's value is walked, the keys of that field and
+/// every one after it, which section 10.4's declaration order has not set up
+/// yet.
+unready_type_fields: NameSet = .empty,
 /// The file `emerald run` selected, named by the diagnostics that explain why
 /// a statement cannot run where it is written.
 entry_path: []const u8 = "",
@@ -396,10 +429,43 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
         try self.facts.calls.put(self.arena, key, .empty);
         try self.noteElsewhere(declaration.name);
 
+        const setup = try typeSetupKey(self.arena, key);
+        try self.facts.owner.put(self.arena, setup, self.file);
+        try self.facts.module_reads.put(self.arena, setup, .empty);
+        try self.facts.calls.put(self.arena, setup, .empty);
+        // Constructing a value sets up the type's fields first.
+        try self.facts.calls.getPtr(key).?.put(self.arena, setup, {});
+
+        for (declaration.fields) |field| {
+            try self.instance_members.put(self.arena, try methodKey(self.arena, key, field.name), {});
+        }
         for (declaration.methods) |method| {
+            try self.instance_members.put(self.arena, try methodKey(self.arena, key, method.name), {});
             try self.hoistMember(method.name, try methodKey(self.arena, key, method.name));
         }
+        // Section 10.4's members live in the module scope under their method
+        // keys, so `Vector2.origin` is reached exactly as `Shapes.area` is.
+        // A name shared with an instance member is reported by the checker.
+        for (declaration.type_functions) |function| {
+            const member_key = try methodKey(self.arena, key, function.member);
+            if (module.contains(member_key) or self.facts.owner.contains(member_key)) continue;
+            try module.put(self.arena, member_key, .{ .mutable = false, .span = function.member_span, .kind = .function });
+            try self.facts.owner.put(self.arena, member_key, self.file);
+            try self.facts.module_reads.put(self.arena, member_key, .empty);
+            try self.facts.calls.put(self.arena, member_key, .empty);
+            try self.facts.type_members.put(self.arena, member_key, key);
+            // Calling it reaches the type, which sets up its fields first.
+            try self.facts.calls.getPtr(member_key).?.put(self.arena, setup, {});
+        }
+        for (declaration.type_fields) |field| {
+            const member_key = try methodKey(self.arena, key, field.name);
+            if (module.contains(member_key) or self.facts.owner.contains(member_key)) continue;
+            try module.put(self.arena, member_key, .{ .mutable = field.mutable, .span = field.name_span });
+            try self.facts.owner.put(self.arena, member_key, self.file);
+            try self.facts.type_members.put(self.arena, member_key, key);
+        }
         for (declaration.properties) |property| {
+            try self.instance_members.put(self.arena, try methodKey(self.arena, key, property.name), {});
             try self.hoistMember(property.name, try methodKey(self.arena, key, property.name));
             if (property.setter != null) {
                 const setter_name = try std.fmt.allocPrint(self.arena, "{s}" ++ setter_suffix, .{property.name});
@@ -756,6 +822,17 @@ fn visibleLocal(self: *Resolver, name: []const u8) ?Binding {
     return null;
 }
 
+fn reportWithHelpFmt(
+    self: *Resolver,
+    span: Source.Span,
+    comptime message_format: []const u8,
+    message_args: anytype,
+    comptime help_format: []const u8,
+    help_args: anytype,
+) Error!void {
+    try self.report(span, message_format, message_args, try std.fmt.allocPrint(self.arena, help_format, help_args));
+}
+
 fn report(
     self: *Resolver,
     span: Source.Span,
@@ -896,6 +973,9 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         },
 
         .assignment => |assignment| {
+            if (try self.typeFieldTarget(assignment)) |target| {
+                return self.walkTypeFieldAssignment(assignment, target);
+            }
             for (assignment.steps, 0..) |step, position| switch (step) {
                 .index => |index| try self.walkExpression(index),
                 // Reaching a field may run a getter, and assigning the last
@@ -977,6 +1057,15 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     true,
                 );
             }
+            for (declaration.type_functions) |function| {
+                try self.walkBody(
+                    try methodKey(self.arena, type_key, function.member),
+                    function.declaration.parameters,
+                    function.declaration.body.statements,
+                    false,
+                );
+            }
+            try self.walkTypeFields(type_key, declaration.type_fields);
             for (declaration.properties) |property| {
                 try self.walkBody(
                     try methodKey(self.arena, type_key, property.name),
@@ -1028,6 +1117,55 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 if (!found.binding.mutable) try self.reportReadOnly(name.text, name.span, found.binding.kind);
             }
         },
+    }
+}
+
+/// The type an assignment's destination starts at, when its name is a type
+/// and its first step names a member of it: `Player.count = 0`. Null for every
+/// other assignment.
+fn typeFieldTarget(self: *Resolver, assignment: Ast.Assignment) Error!?[]const u8 {
+    if (assignment.steps.len == 0 or assignment.steps[0] != .field) return null;
+    const found = self.lookup(assignment.name) orelse return null;
+    if (found.scope != module_scope or found.binding.kind != .type) return null;
+    return found.key;
+}
+
+/// Section 10.4's `Player.count += 1`, and `Registry.names[0] = "a"` below
+/// it. Assigning to the field sets up the type first, like reading it.
+fn walkTypeFieldAssignment(self: *Resolver, assignment: Ast.Assignment, type_key: []const u8) Error!void {
+    const first = assignment.steps[0].field;
+    for (assignment.steps[1..], 1..) |step, position| switch (step) {
+        .index => |index| try self.walkExpression(index),
+        .field => |field| {
+            try self.noteMemberCall(field.name);
+            if (position + 1 == assignment.steps.len) {
+                try self.noteMemberCall(try std.fmt.allocPrint(self.arena, "{s}" ++ setter_suffix, .{field.name}));
+            }
+        },
+    };
+    try self.walkExpression(assignment.value);
+
+    const span: Source.Span = .{ .start = assignment.name_span.start, .end = first.span.end };
+    switch (try self.qualifyTypeMember(span, type_key, assignment.name, first.name)) {
+        .key => |key| {
+            try self.noteTypeMember(key);
+            const binding = self.scopes.items[module_scope].get(key).?;
+            const written = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ assignment.name, first.name });
+            if (binding.kind == .function) return self.reportReadOnly(written, span, .function);
+            try self.facts.type_assignments.put(self.arena, .{ .file = self.file, .start = assignment.name_span.start }, written);
+            // The passes after this one treat the destination as the one
+            // binding `Player.count`, found through this file's keys like any
+            // module-level name. No bare name contains a dot, so this can
+            // shadow nothing.
+            try @constCast(&self.facts.module_keys[self.file]).put(self.arena, written, key);
+            if (assignment.operation != null or assignment.steps.len > 1) {
+                try self.noteRead(.{ .binding = binding, .scope = module_scope, .key = key });
+            }
+            if (assignment.steps.len == 1 and !binding.mutable) {
+                try self.reportReadOnly(written, span, .variable);
+            }
+        },
+        .reported, .none => {},
     }
 }
 
@@ -1178,6 +1316,82 @@ fn walkFieldDefaults(self: *Resolver, type_key: []const u8, fields: []const Ast.
     }
 }
 
+/// Section 10.4's type-level field values, in declaration order, recorded
+/// under the type's setup key. Each may read only the fields before it.
+fn walkTypeFields(self: *Resolver, type_key: []const u8, fields: []const Ast.StructDeclaration.TypeField) Error!void {
+    std.debug.assert(self.scopes.items.len == module_scope + 1);
+    try self.push();
+    const outer_boundary = self.function_boundary;
+    const outer_function = self.current_function;
+    self.function_boundary = self.scopes.items.len - 1;
+    self.current_function = try typeSetupKey(self.arena, type_key);
+    defer {
+        self.pop();
+        self.function_boundary = outer_boundary;
+        self.current_function = outer_function;
+        self.unready_type_fields = .empty;
+    }
+    for (fields) |field| {
+        try self.unready_type_fields.put(self.arena, try methodKey(self.arena, type_key, field.name), {});
+    }
+    for (fields) |field| {
+        try self.walkExpression(field.initializer);
+        _ = self.unready_type_fields.remove(try methodKey(self.arena, type_key, field.name));
+    }
+}
+
+/// Records that the function being walked reaches a type-level member, which
+/// first sets up the type's fields.
+fn noteTypeMember(self: *Resolver, key: []const u8) Error!void {
+    const caller = self.current_function orelse return;
+    const type_key = self.facts.type_members.get(key) orelse return;
+    const setup = try typeSetupKey(self.arena, type_key);
+    if (std.mem.eql(u8, caller, setup)) return;
+    try self.facts.calls.getPtr(caller).?.put(self.arena, setup, {});
+}
+
+/// `Vector2.origin` or `Player.count`: a member reached through its type.
+/// `written` is the type as the reader wrote it.
+fn qualifyTypeMember(
+    self: *Resolver,
+    span: Source.Span,
+    type_key: []const u8,
+    written: []const u8,
+    member: []const u8,
+) Error!Qualified {
+    const key = try methodKey(self.arena, type_key, member);
+    if (self.facts.type_members.contains(key)) {
+        if (self.unready_type_fields.contains(key)) {
+            try self.report(
+                span,
+                "`{s}.{s}` is not set up yet when this runs",
+                .{ written, member },
+                "A type-level field's value can read only the type-level fields declared before it. Move this field below that one.",
+            );
+            return .reported;
+        }
+        return .{ .key = key };
+    }
+    if (self.instance_members.contains(key)) {
+        try self.reportWithHelpFmt(
+            span,
+            "`{s}` belongs to each `{s}` value, not to the type",
+            .{ member, written },
+            "Reach it through a value of `{s}` instead. Only a member declared with the type's name in front, such as `var {s}.count = 0`, belongs to the type.",
+            .{ written, written },
+        );
+        return .reported;
+    }
+    try self.reportWithHelpFmt(
+        span,
+        "`{s}` has no type-level member named `{s}`",
+        .{ written, member },
+        "Check the spelling. A type-level member is declared inside the type with its name in front, as in `var {s}.{s} = ...`.",
+        .{ written, member },
+    );
+    return .reported;
+}
+
 /// Whether calling a module-level binding runs a body the checker has to follow
 /// for section 7.1's capture rule: a function's, or a type's constructor.
 fn isCallable(kind: BindingKind) bool {
@@ -1273,14 +1487,35 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     if (length < 2) return .none;
 
     // A local or a module binding of that name is a value; section 14.2's
-    // namespaces do not shadow it.
-    if (self.lookup(names[0]) != null) return .none;
+    // namespaces do not shadow it. A type is the one module-level name with
+    // members of its own (10.4).
+    if (self.lookup(names[0])) |found| {
+        if (length == 2 and found.scope == module_scope and found.binding.kind == .type) {
+            return self.qualifyTypeMember(expression.span, found.key, names[0], names[1]);
+        }
+        return .none;
+    }
 
     var path: []const u8 = self.namespaceFor(names[0]);
     for (names[1 .. length - 1]) |segment| {
         path = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ path, segment });
     }
-    if (!self.namespaces.contains(path)) return .none;
+    if (!self.namespaces.contains(path)) {
+        // `Shapes.Circle.unit`: a type reached through its namespace, then
+        // one of its type-level members.
+        if (length >= 3) {
+            const dot = std.mem.lastIndexOfScalar(u8, path, '.').?;
+            if (self.namespaces.contains(path[0..dot])) {
+                if (self.scopes.items[module_scope].get(path)) |binding| {
+                    if (binding.kind == .type) {
+                        const written = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ names[0], path[dot + 1 ..] });
+                        return self.qualifyTypeMember(expression.span, path, written, names[length - 1]);
+                    }
+                }
+            }
+        }
+        return .none;
+    }
 
     const last = names[length - 1];
     const key = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ path, last });
@@ -1423,6 +1658,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             switch (try self.qualify(expression)) {
                 .key => |key| {
                     try self.facts.qualified.put(self.arena, expression, key);
+                    try self.noteTypeMember(key);
                     if (self.scopes.items[module_scope].get(key)) |binding| {
                         try self.noteRead(.{ .binding = binding, .scope = module_scope, .key = key });
                         if (self.current_function) |caller| {

@@ -79,6 +79,33 @@ pub const StructDeclaration = struct {
     methods: []const FunctionDeclaration = &.{},
     /// Section 10.3's computed properties.
     properties: []const Property = &.{},
+    /// Section 10.4's `func Vector2.origin()`, which belongs to the type
+    /// rather than to each value, and so has no `self`.
+    type_functions: []const TypeFunction = &.{},
+    /// Section 10.4's `var Player.count = 0`.
+    type_fields: []const TypeField = &.{},
+
+    /// The declaration's own `name` is the whole `Vector2.origin` as written,
+    /// which is how a stack trace or a diagnostic about the function reads;
+    /// `member` is the part after the dot, which shares the type's member
+    /// name space.
+    pub const TypeFunction = struct {
+        member: []const u8,
+        member_span: Source.Span,
+        declaration: FunctionDeclaration,
+    };
+
+    pub const TypeField = struct {
+        mutable: bool,
+        name: []const u8,
+        name_span: Source.Span,
+        /// Optional, as for a module-level binding: the type can come from
+        /// the value.
+        annotation: ?TypeExpression,
+        /// Required: section 10.4's type-level fields "require initial
+        /// values", since nothing else runs to assign one.
+        initializer: *const Expression,
+    };
 
     pub const Field = struct {
         mutable: bool,

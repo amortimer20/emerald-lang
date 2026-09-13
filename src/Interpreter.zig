@@ -92,6 +92,17 @@ pub const RunError = std.mem.Allocator.Error || std.Io.Writer.Error;
 /// initialization-cycle error".
 const ModuleState = enum { pending, running, done, failed };
 
+/// Section 10.4's type-level fields "follow the same lazy rule" as a file's
+/// bindings, one type at a time.
+const TypeSetup = struct {
+    fields: []const Ast.StructDeclaration.TypeField,
+    display_name: []const u8,
+    /// What a stack trace calls the setup, so an error inside one says what
+    /// was running and what reached the type.
+    frame_name: []const u8,
+    state: ModuleState = .pending,
+};
+
 /// `Returned`, `Broke`, and `Continued` are control flow rather than failures:
 /// each unwinds through `execute` to the construct that handles it, the way
 /// `Raised` unwinds to the top. The checker guarantees every one has a handler.
@@ -146,6 +157,9 @@ functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// Struct types, keyed program-wide and carrying their short source name for
 /// display.
 structs: std.StringHashMapUnmanaged(*const Value.StructType) = .empty,
+/// Section 10.4: every struct with type-level fields, by its key, and how far
+/// setting them up has got.
+type_setups: std.StringHashMapUnmanaged(TypeSetup) = .empty,
 /// The structs that declare their own constructor (10.2), by the same keys.
 constructors: std.StringHashMapUnmanaged(Constructor) = .empty,
 /// Every struct's declaration and what calling its generated constructor
@@ -263,6 +277,24 @@ pub fn run(
                     const method_key = try Resolver.methodKey(interpreter.arena, interpreter.keyOf(declaration.name), method.name);
                     const hoisted = try interpreter.functions.getOrPut(interpreter.arena, method_key);
                     if (!hoisted.found_existing) hoisted.value_ptr.* = method;
+                }
+                // A type-level function is an ordinary function under its
+                // member key (10.4).
+                for (declaration.type_functions) |function| {
+                    const member_key = try Resolver.methodKey(interpreter.arena, type_key, function.member);
+                    const hoisted = try interpreter.functions.getOrPut(interpreter.arena, member_key);
+                    if (!hoisted.found_existing) hoisted.value_ptr.* = function.declaration;
+                }
+                if (declaration.type_fields.len > 0) {
+                    try interpreter.type_setups.put(interpreter.arena, type_key, .{
+                        .fields = declaration.type_fields,
+                        .display_name = descriptor.display_name,
+                        .frame_name = try std.fmt.allocPrint(
+                            interpreter.arena,
+                            "the type-level fields of `{s}`",
+                            .{descriptor.display_name},
+                        ),
+                    });
                 }
                 {
                     const field_names = try interpreter.arena.alloc([]const u8, declaration.fields.len);
@@ -479,7 +511,16 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
             try self.unpackInto(assignment.pattern, value, .assign);
         },
 
-        .assignment => |assignment| {
+        .assignment => |written| {
+            // Section 10.4's `Player.count += 1`: `Player` and its first step
+            // are one binding, found as `Player.count` (see the resolver).
+            var assignment = written;
+            if (self.facts.type_assignments.get(.{ .file = self.file, .start = written.name_span.start })) |name| {
+                const first = written.steps[0].field;
+                assignment.name = name;
+                assignment.name_span = .{ .start = written.name_span.start, .end = first.span.end };
+                assignment.steps = written.steps[1..];
+            }
             if (assignment.steps.len > 0) return self.assignElement(assignment);
             const slot = try self.placeBinding(assignment.name, assignment.name_span);
             const value = if (assignment.operation) |operation| blk: {
@@ -1056,6 +1097,81 @@ fn find(self: *Interpreter, name: []const u8) ?*Binding {
 /// anything reaches one of its members. Called wherever a module-level key is
 /// about to be read, assigned, or called.
 fn reach(self: *Interpreter, key: []const u8, span: Source.Span) Error!void {
+    // A type-level member belongs to its type, whose setup is separate from
+    // its file's: the fields' values reach whatever they read themselves.
+    if (self.facts.type_members.get(key)) |type_key| return self.setUpType(type_key, key, span);
+    try self.reachFile(key, span);
+    if (self.type_setups.contains(key)) try self.setUpType(key, null, span);
+}
+
+/// Section 10.4: "Type-level fields follow the same lazy rule, initializing
+/// once in declaration order when the type is first constructed or a
+/// type-level member is accessed." `member` is the member reached, or null
+/// when the type is being constructed.
+fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span: Source.Span) Error!void {
+    // Never added to while running, so this pointer stays put.
+    const setup = self.type_setups.getPtr(type_key) orelse return;
+    switch (setup.state) {
+        .done => return,
+        .pending => {},
+        .running => {
+            // Constructing the type, or calling one of its functions, while
+            // its fields are set up is not a cycle; reading a field it has
+            // not got to yet is.
+            const reached = member orelse return;
+            if (self.functions.contains(reached)) return;
+            if (self.module.get(reached)) |slot| {
+                if (slot.value != null) return;
+            }
+            return self.raiseFmt(
+                span,
+                "`{s}` is still being set up, so `{s}` cannot be read yet",
+                .{ setup.display_name, try Resolver.displayKey(self.arena, reached) },
+                "Type-level fields are set up in the order they are declared. Move this field above the one whose value reaches it, or compute that value in a function instead.",
+            );
+        },
+        .failed => return self.raiseFmt(
+            span,
+            "`{s}` could not be set up",
+            .{setup.display_name},
+            "An earlier error stopped it. Fix that first.",
+        ),
+    }
+
+    setup.state = .running;
+    errdefer setup.state = .failed;
+    try self.call_stack.append(self.gpa, .{
+        .function = setup.frame_name,
+        .call_span = span,
+        .file = self.file,
+        .named = false,
+    });
+    defer _ = self.call_stack.pop();
+    const owner = self.facts.owner.get(type_key).?;
+    const outer_file = self.file;
+    const outer_scopes = self.scopes;
+    self.file = owner;
+    self.scopes = .empty;
+    defer {
+        while (self.scopes.items.len > 0) self.popScope();
+        self.scopes.deinit(self.gpa);
+        self.scopes = outer_scopes;
+        self.file = outer_file;
+    }
+
+    for (setup.fields) |field| {
+        const value = try self.evaluate(field.initializer);
+        const kind: Value.Kind = if (field.annotation) |annotation| declaredKind(annotation) else value.kind();
+        const key = try Resolver.methodKey(self.arena, type_key, field.name);
+        self.module.put(self.arena, key, .{ .kind = kind, .value = widen(value, kind) }) catch |err| {
+            self.heap.release(value);
+            return err;
+        };
+    }
+    setup.state = .done;
+}
+
+fn reachFile(self: *Interpreter, key: []const u8, span: Source.Span) Error!void {
     const owner = self.facts.owner.get(key) orelse return;
     switch (self.module_states[owner]) {
         .done => return,
@@ -2503,6 +2619,8 @@ fn evaluateReceiverPath(self: *Interpreter, base: *const Ast.Expression) Error!R
                 receiver = index.base;
             },
             .member => |inner| {
+                // `Registry.names`: a type-level field is the root itself.
+                if (self.facts.qualified.contains(receiver)) break;
                 try path.append(self.gpa, .{ .field = .{ .name = inner.name, .span = inner.name_span } });
                 receiver = inner.base;
             },
@@ -2529,6 +2647,15 @@ fn evaluateReceiverPath(self: *Interpreter, base: *const Ast.Expression) Error!R
     return .{ .root = receiver, .steps = steps };
 }
 
+/// The name a receiver path's binding is found by: a plain name, or the key of
+/// a type-level field (10.4).
+fn rootName(self: *Interpreter, root: *const Ast.Expression) []const u8 {
+    return switch (root.data) {
+        .name => |name| name,
+        else => self.facts.qualified.get(root).?,
+    };
+}
+
 fn freeSteps(self: *Interpreter, steps: []PlaceStep) void {
     for (steps) |step| switch (step) {
         .index => |index| self.heap.release(index.value),
@@ -2550,7 +2677,7 @@ fn raiseChanging(self: *Interpreter, span: Source.Span, name: []const u8, method
     return self.raiseFmt(
         span,
         "`{s}` is being changed by `{s}`, so it cannot be used until that call finishes",
-        .{ name, method },
+        .{ try Resolver.displayKey(self.arena, name), method },
         "A method that changes a value has it to itself while it runs. Pass what the method needs as an argument instead of reaching for it another way.",
     );
 }
@@ -2571,7 +2698,7 @@ fn callChangingMethod(
 
     // Section 14.1: a non-entry file initializes on first use, which this is,
     // exactly as a plain assignment already reaches before finding its slot.
-    const binding = self.placeBinding(receiver.data.name, receiver.span) catch |err| {
+    const binding = self.placeBinding(self.rootName(receiver), receiver.span) catch |err| {
         for (arguments) |argument| self.heap.release(argument);
         return err;
     };
@@ -2624,7 +2751,7 @@ fn callStructMethod(
     defer if (bound.omitted) |omitted| self.gpa.free(omitted);
     callable.omitted = bound.omitted;
     const arguments = bound.values;
-    const root_name = path.root.data.name;
+    const root_name = self.rootName(path.root);
 
     const binding = self.placeBinding(root_name, path.root.span) catch |err| {
         for (arguments) |argument| self.heap.release(argument);

@@ -1,0 +1,8 @@
+diagnostics/type-field-type-mismatch.em:4:21: this is Int, but `Settings.name` holds String
+      Settings.name = 3
+                      ^
+Assign a value of the declared type, or convert it first.
+diagnostics/type-field-type-mismatch.em:8:32: this is String, but `Settings.volume` was declared as Int
+      var Settings.volume: Int = "loud"
+                                 ^^^^^^
+Give the declaration the type of its value, or convert the value to match.

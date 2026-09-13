@@ -1,0 +1,8 @@
+diagnostics/type-member-self.em:4:25: a type-level member has no `self`
+      var Counter.start = self.value
+                          ^^^^
+It belongs to the type, not to any one value. Take the value as a parameter, or leave out the type name to make this an instance member.
+diagnostics/type-member-self.em:7:24: a type-level member has no `self`
+          return Counter(self.value)
+                         ^^^^
+It belongs to the type, not to any one value. Take the value as a parameter, or leave out the type name to make this an instance member.

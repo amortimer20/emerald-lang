@@ -31,9 +31,10 @@ methods; the checker works out from each body whether it changes `self`, and a c
 method can only be called on something that can change. Computed properties work, read-only
 and writable, with nested mutation through one rejected. Section 7.3's default parameters and
 named arguments work for functions, methods, and constructors, and fields have defaults that
-make them optional in the generated constructor. Type-level members, member privacy, and method
-values are the remaining struct sub-slices; `super(...)` waits for
-classes.
+make them optional in the generated constructor. Type-level functions and fields work
+(`func Vector2.origin()`, `var Player.count = 0`), set up lazily the first time the type is
+reached. Member privacy and method values are the remaining struct sub-slices; `super(...)`
+waits for classes.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -158,6 +159,56 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Type-level member decisions worth knowing
+
+- **A type-level member is a module-level binding under its method key.** The resolver
+  hoists `func Vector2.origin()` and `var Player.count` into the module scope as
+  `Vector2::origin` and `Player::count`, and `qualify` recognizes a type's name followed by
+  one member (or `Shapes.Circle.unit` through a namespace) exactly as it recognizes
+  `Shapes.area`. Reads, calls, function values, captures, and stack traces then go through
+  the paths qualified names already had; nothing about calling a type-level function is new.
+  `Resolver.displayKey` turns a key back into what the reader wrote for diagnostics.
+- **Declared inside the type, one name space.** The parser accepts `func T.name` and
+  `var T.name = value` only inside `struct T`, noting a mismatched type name and rejecting
+  one written outside. Type-level members join the checker's single source-ordered
+  member-name pass. Both are recorded in section 22.
+- **Assignment is rewritten, not special-cased.** `Player.count += 1` parses as the name
+  `Player` with a field step. The resolver records the site in `Facts.type_assignments` and
+  adds `Player.count` to that file's `module_keys`, so the checker and interpreter rewrite the
+  statement to the one-name assignment `Player.count` and every existing assignment path,
+  message, and `const` check applies unchanged. No bare name contains a dot, so the added key
+  shadows nothing.
+- **In-place change works through a type-level field.** `resolvePlace`,
+  `requireMutableReceiver`, and `requireChangeable` accept a qualified root when it is a
+  type-level field, and `evaluateReceiverPath` stops at one (`rootName`), so
+  `Registry.names.append(x)`, `Board.cursor.shift()`, and the changing-method exclusivity
+  guard all work. Changing through an ordinary namespace-qualified binding is still
+  rejected, as before.
+- **Types are inferred on first need.** An annotated field's type is resolved after struct
+  metadata; an unannotated one is inferred by `settleTypeField` when first read, checked in a
+  module view like a function body. Re-entering a field while it is inferred reports "needs a
+  type"; re-entering a function while its return type is inferred (the `inferring` set)
+  reports "needs an explicit return type", since the call graph has already ruled out plain
+  recursion and only a field's value can close the loop. `find` returns the module scope's
+  own binding for a type-level field, because a function body's copy of the module scope can
+  predate the inference; `diagnostics/type-field-type-mismatch` fails without that.
+- **No narrowing.** Assigning a present value to an optional type-level field does not
+  narrow it, and reads use its declared type: it is one shared binding, and narrowing the
+  module scope's entry would have leaked the proof everywhere. `run/type-level-members`
+  fails without the guard.
+- **Setup is lazy, per type.** `Interpreter.reach` sends a type-level key to `setUpType`
+  instead of its file, and constructing a type sets it up after its file. Setup runs the
+  field values in order in the type's file, in a stack frame named "the type-level fields of
+  `Config`". While it runs, calling a type-level function or constructing the type is fine;
+  reading a field it has not reached raises the cycle error
+  (`runtime-errors/type-setup-cycle`).
+- **Section 7.1 through setup.** Field values are recorded under `Resolver.typeSetupKey`
+  (`Player::`). Constructing the type and calling a type-level function have call edges to
+  it, a function reaching any type-level member records one, and a top-level read or
+  assignment of a field checks it directly. `isRecursive` ignores setup edges, which would
+  otherwise make `func V.origin() { return V(0) }` look recursive whenever a field's value
+  calls it.
 
 ### Defaults and named-argument decisions worth knowing
 
@@ -870,12 +921,11 @@ still open.
 ## Next concrete step
 
 Continue section 20's slice 12. Structs now have stored fields with defaults, assignment
-through field paths, custom constructors, instance methods, and computed properties, and
-section 7.3's defaults and named arguments are in. What remains for structs: type-level
-members (10.4, `func Vector2.origin()` and `var Player.count = 0`), member privacy (10.5,
-covering fields, properties, and methods together), and method values (7.5). Type-level
-members are the natural next piece: 7.3 names type-level factory functions as what replaces
-overloaded constructors, so they are the missing half of the construction story. After
+through field paths, custom constructors, instance methods, computed properties, and
+type-level functions and fields, and section 7.3's defaults and named arguments are in. What
+remains for structs: member privacy (10.5, a leading underscore on fields, properties,
+methods, and type-level members alike, enforced by the checker) and method values (7.5).
+Privacy is the natural next piece, since every kind of member it covers now exists. After
 structs, section 20's order continues with classes, traits, operators, and enums.
 
 Section 8's collections are now finished, which was the argument for doing them first:
@@ -896,7 +946,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 230 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 248 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -1018,6 +1068,15 @@ behavioral failures:
   first pass and iterating that list for the second and third would filter once instead of
   three times.
 ### Known rough edges
+
+- Assigning to a type-level field through its namespace, `Shapes.Circle.made = 1`, is
+  reported as "`Shapes` is a namespace, not a value"; reading and calling through the
+  namespace work, and `using Shapes` then `Circle.made = 1` works. Assignment through a
+  namespace was never supported for module bindings either, so the two should be lifted
+  together.
+- The capture check over-approximates type setup: constructing a type counts what every
+  type-level field's value reads even after the type is set up, and reading one field
+  counts all of them. Moving the use below the assignment always works.
 
 - The capture check counts what a default reads even when the call supplies that argument,
   so `Box(width: 2)` above the assignment of a module variable only `width`'s default reads

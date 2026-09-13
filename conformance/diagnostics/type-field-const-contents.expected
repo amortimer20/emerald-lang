@@ -1,0 +1,8 @@
+diagnostics/type-field-const-contents.em:11:1: `Limits.names` is a `const`, so its contents cannot change
+  Limits.names.append("a")
+  ^^^^^^^^^^^^
+Declare `Limits.names` with `var` if it needs to change.
+diagnostics/type-field-const-contents.em:12:1: `Limits.corner` is a `const`, so its contents cannot change
+  Limits.corner.x = 1
+  ^^^^^^^^^^^^^
+Declare `Limits.corner` with `var` if it needs to change.

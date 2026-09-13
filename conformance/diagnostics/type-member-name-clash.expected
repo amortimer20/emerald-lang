@@ -1,0 +1,8 @@
+diagnostics/type-member-name-clash.em:5:9: `count` is already a field of `Player`
+      var Player.count = 0
+          ^^^^^^^^^^^^
+A type's members share one set of names, whether they belong to each value or to the type, so that a name means one thing wherever it is written. Rename one.
+diagnostics/type-member-name-clash.em:11:10: `create` is already a type-level function of `Player`
+      func create() {
+           ^^^^^^
+A type's members share one set of names, whether they belong to each value or to the type, so that a name means one thing wherever it is written. Rename one.

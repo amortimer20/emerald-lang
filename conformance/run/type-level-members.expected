@@ -1,0 +1,11 @@
+Vector2(x: 0.0, y: 0.0) 1
+0.0,0.0 (2 made)
+Vector2(x: 2.0, y: 0.0) Vector2(x: 0.0, y: 3.0)
+Vector2(x: 0.0, y: 0.0) 3
+["Ada", "grace"] ["ada": 1, "grace": 12] Vector2(x: 5.0, y: 3.0)
+done
+before
+setting up first
+setting up second
+second
+first

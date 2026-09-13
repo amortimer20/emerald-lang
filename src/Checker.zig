@@ -140,11 +140,17 @@ changes: std.StringHashMapUnmanaged(bool) = .empty,
 /// Methods `methodChanges` is working out, so a cycle of calls ends.
 changes_in_progress: Resolver.NameSet = .empty,
 method_calls: MethodCalls = .empty,
+/// Section 10.4's type-level fields, by key.
+type_fields: std.StringHashMapUnmanaged(TypeField) = .empty,
 /// The struct whose constructor body is being checked, if any. Section 10.2's
 /// rules about `self` apply only here.
 constructing: ?Constructing = null,
 /// Memoized by `signatureFor`.
 signatures: Type.Signatures = .empty,
+/// Functions whose return type is being inferred right now. Reaching one of
+/// these again can only happen through a type-level field's value (10.4),
+/// since the call graph has already ruled out recursion.
+inferring: Resolver.NameSet = .empty,
 /// Bodies already checked, so each is checked exactly once whichever of
 /// inference or the deferred pass reaches it first.
 bodies_checked: Resolver.NameSet = .empty,
@@ -196,6 +202,17 @@ const Constructing = struct {
                 (self.declaration.constructor == null or fields[field].default != null),
         };
     }
+};
+
+/// A type-level field. Its binding in the module scope holds its type; this
+/// holds how far working that type out has got.
+const TypeField = struct {
+    field: Ast.StructDeclaration.TypeField,
+    type_key: []const u8,
+    /// An annotated field's type is known from the start. An unannotated one's
+    /// is inferred from its value on first need, as a function's return type is.
+    state: enum { unknown, inferring, known } = .unknown,
+    value_checked: bool = false,
 };
 
 /// What the checker tracks about one enclosing loop.
@@ -267,6 +284,27 @@ pub fn check(
                         try checker.receivers.put(arena, setter_key, struct_type);
                     }
                 }
+                // Section 10.4. A name shared with an instance member is
+                // reported with the struct; the member keeps the key.
+                for (declaration.type_functions) |function| {
+                    const member_key = try Resolver.methodKey(arena, key, function.member);
+                    if (checker.declarations.contains(member_key) or module.contains(member_key)) continue;
+                    try checker.declarations.put(arena, member_key, function.declaration);
+                    try module.put(arena, member_key, .{ .type = .invalid, .declared = .invalid, .assigned = true, .is_function = true });
+                }
+                for (declaration.type_fields) |field| {
+                    const member_key = try Resolver.methodKey(arena, key, field.name);
+                    if (checker.declarations.contains(member_key) or module.contains(member_key)) continue;
+                    try checker.type_fields.put(arena, member_key, .{ .field = field, .type_key = key });
+                    // Always assigned: the type sets up its fields before
+                    // anything can reach one.
+                    try module.put(arena, member_key, .{
+                        .type = .invalid,
+                        .declared = .invalid,
+                        .assigned = true,
+                        .mutability = if (field.mutable) .variable else .constant,
+                    });
+                }
                 try module.put(arena, key, .{
                     .type = struct_type,
                     .declared = struct_type,
@@ -311,6 +349,20 @@ pub fn check(
         }
     }
 
+    // An annotated type-level field's type is known before anything reads it.
+    {
+        var fields = checker.type_fields.iterator();
+        while (fields.next()) |entry| {
+            const annotation = entry.value_ptr.field.annotation orelse continue;
+            checker.file = checker.facts.owner.get(entry.key_ptr.*).?;
+            const declared = try checker.resolveTypeExpression(annotation);
+            const binding = checker.module.getPtr(entry.key_ptr.*).?;
+            binding.type = declared;
+            binding.declared = declared;
+            entry.value_ptr.state = .known;
+        }
+    }
+
     // Section 14.1: a file that is not the entry has no statements that run,
     // and its bindings are initialized before anything can reach them, so they
     // are in place and assigned before the entry file is looked at.
@@ -341,6 +393,12 @@ pub fn check(
                     if (declaration.constructor != null) try checker.checkConstructorBody(type_key);
                     for (declaration.methods) |method| {
                         try checker.ensureBodyChecked(try Resolver.methodKey(arena, type_key, method.name));
+                    }
+                    for (declaration.type_functions) |function| {
+                        try checker.ensureBodyChecked(try Resolver.methodKey(arena, type_key, function.member));
+                    }
+                    for (declaration.type_fields) |field| {
+                        try checker.checkTypeFieldValue(try Resolver.methodKey(arena, type_key, field.name));
                     }
                     for (declaration.properties) |property| {
                         const getter_key = try Resolver.methodKey(arena, type_key, property.name);
@@ -412,7 +470,17 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
     const Member = struct {
         name: []const u8,
         span: Source.Span,
-        kind: enum { field, property, method },
+        kind: enum { field, property, method, type_function, type_field },
+
+        fn noun(member: @This()) []const u8 {
+            return switch (member.kind) {
+                .field => "field",
+                .property => "property",
+                .method => "method",
+                .type_function => "type-level function",
+                .type_field => "type-level field",
+            };
+        }
 
         fn earlier(_: void, a: @This(), b: @This()) bool {
             return a.span.start < b.span.start;
@@ -422,6 +490,8 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
     for (declaration.fields) |field| try members.append(self.arena, .{ .name = field.name, .span = field.name_span, .kind = .field });
     for (declaration.properties) |property| try members.append(self.arena, .{ .name = property.name, .span = property.name_span, .kind = .property });
     for (declaration.methods) |method| try members.append(self.arena, .{ .name = method.name, .span = method.name_span, .kind = .method });
+    for (declaration.type_functions) |function| try members.append(self.arena, .{ .name = function.member, .span = function.member_span, .kind = .type_function });
+    for (declaration.type_fields) |field| try members.append(self.arena, .{ .name = field.name, .span = field.name_span, .kind = .type_field });
     std.mem.sort(Member, members.items, {}, Member.earlier);
 
     var seen: std.StringHashMapUnmanaged(Member) = .empty;
@@ -445,12 +515,17 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
                 "Emerald has no overloading. Give each method a name of its own.",
             );
         } else {
+            const type_level = first.kind == .type_function or first.kind == .type_field or
+                member.kind == .type_function or member.kind == .type_field;
             try self.reportWithHelp(
                 member.span,
                 "`{s}` is already a {s} of `{s}`",
-                .{ member.name, @tagName(first.kind), declaration.name },
-                "A field, a property, and a method cannot share a name, since `value.name` has to mean one of them. Rename one.",
-                .{},
+                .{ member.name, first.noun(), declaration.name },
+                "{s}",
+                .{if (type_level)
+                    "A type's members share one set of names, whether they belong to each value or to the type, so that a name means one thing wherever it is written. Rename one."
+                else
+                    "A field, a property, and a method cannot share a name, since `value.name` has to mean one of them. Rename one."},
             );
         }
     }
@@ -523,11 +598,11 @@ const Reference = struct {
     display: []const u8,
 };
 
-fn referenceOf(self: *Checker, expression: *const Ast.Expression) ?Reference {
+fn referenceOf(self: *Checker, expression: *const Ast.Expression) Error!?Reference {
     return switch (expression.data) {
         .name => |name| .{ .key = self.keyOf(name), .display = name },
         .member => if (self.facts.qualified.get(expression)) |key|
-            .{ .key = key, .display = key }
+            .{ .key = key, .display = try Resolver.displayKey(self.arena, key) }
         else
             null,
         else => null,
@@ -539,6 +614,11 @@ fn referenceOf(self: *Checker, expression: *const Ast.Expression) ?Reference {
 /// because it is found in an inner scope first.
 fn find(self: *Checker, name: []const u8) ?*Binding {
     const key = self.facts.keyFor(self.file, name);
+    // A type-level field has one binding, the module scope's, whose type may
+    // have been inferred after a function body copied the scope.
+    if (key) |qualified| {
+        if (self.type_fields.contains(qualified)) return self.module.getPtr(qualified);
+    }
     var index = self.scopes.items.len;
     while (index > 0) {
         index -= 1;
@@ -1122,6 +1202,27 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
 }
 
 fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
+    const site: Resolver.Site = .{ .file = self.file, .start = assignment.name_span.start };
+    if (self.facts.type_assignments.get(site)) |written| {
+        // Section 10.4's `Player.count += 1`: `Player` and its first step are
+        // one binding, which the resolver made findable as `Player.count`.
+        const key = self.keyOf(written);
+        try self.settleTypeField(key);
+        const first = assignment.steps[0].field;
+        var rewritten = assignment;
+        rewritten.name = written;
+        rewritten.name_span = .{ .start = assignment.name_span.start, .end = first.span.end };
+        rewritten.steps = assignment.steps[1..];
+        if (!self.in_function) {
+            const field = self.type_fields.get(key).?;
+            try self.checkCapturesOf(rewritten.name_span, try Resolver.typeSetupKey(self.arena, field.type_key), rewritten.name, "this assignment");
+        }
+        return self.checkAssignmentTo(rewritten);
+    }
+    return self.checkAssignmentTo(assignment);
+}
+
+fn checkAssignmentTo(self: *Checker, assignment: Ast.Assignment) Error!void {
     if (assignment.steps.len > 0) return self.checkPlaceAssignment(assignment);
 
     const binding = self.find(assignment.name) orelse {
@@ -1174,7 +1275,11 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
     // Section 4.5: assigning a value that is certainly there proves it is, and
     // assigning anything else ends whatever an earlier test had proved.
     binding.type = binding.declared;
-    if (binding.declared.optional and !value.optional and value.kind != .nothing) {
+    // A type-level field has one binding for the whole program, which any
+    // function could set back to `nothing`, so nothing about it is narrowed.
+    if (binding.declared.optional and !value.optional and value.kind != .nothing and
+        !self.type_fields.contains(self.keyOf(assignment.name)))
+    {
         self.narrowName(assignment.name);
     }
     binding.assigned = true;
@@ -1654,7 +1759,22 @@ fn checkReturn(self: *Checker, return_statement: Ast.Return) Error!void {
 /// all the same, so a re-entrant call could never recurse forever.
 /// `key` names the declaration program-wide; see `Checker.keyOf`.
 fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
-    if (self.signatures.get(key)) |signature| return signature;
+    if (self.signatures.get(key)) |signature| {
+        if (self.inferring.contains(key)) {
+            _ = self.inferring.remove(key);
+            const declaration = self.declarations.get(key).?;
+            const outer_file = self.file;
+            defer self.file = outer_file;
+            if (self.facts.owner.get(key)) |owner| self.file = owner;
+            try self.report(
+                declaration.name_span,
+                "`{s}` needs an explicit return type",
+                .{declaration.name},
+                "Working out what it returns reaches a type-level field whose value calls it. Add a return type, or give that field a type.",
+            );
+        }
+        return signature;
+    }
 
     const declaration = self.declarations.get(key).?;
 
@@ -1696,7 +1816,9 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
         const saved_pending = self.pending_return_types;
         self.pending_return_types = .empty;
 
+        try self.inferring.put(self.arena, key, {});
         try self.checkKeyedBody(key, declaration, parameter_types, null);
+        _ = self.inferring.remove(key);
         try self.bodies_checked.put(self.arena, key, {});
 
         signature.return_type = try self.inferredReturnType(
@@ -1745,6 +1867,24 @@ fn checkFunctionBody(
     try self.checkBody(declaration.parameters, parameter_types, declaration.body.statements, expected_return_type, null);
 }
 
+/// The prelude and module scope as a body sees them: a copy in which every
+/// binding counts as assigned (see the module comment).
+fn moduleView(self: *Checker) Error!*Scope {
+    const view = try self.arena.create(Scope);
+    view.* = .empty;
+    // The module scope second, so a program function named like a prelude
+    // function shadows it, as it does at the top level.
+    for ([_]*const Scope{ self.prelude, self.module }) |source| {
+        var entries = source.iterator();
+        while (entries.next()) |entry| {
+            var binding = entry.value_ptr.*;
+            binding.assigned = true;
+            try view.put(self.arena, entry.key_ptr.*, binding);
+        }
+    }
+    return view;
+}
+
 /// The key a function body is known by decides whether it has a `self`.
 fn checkKeyedBody(
     self: *Checker,
@@ -1781,18 +1921,7 @@ fn checkBodyWithSelf(
     constructing: ?Constructing,
     receiver: ?Type,
 ) Error!void {
-    const view = try self.arena.create(Scope);
-    view.* = .empty;
-    // The module scope second, so a program function named like a prelude
-    // function shadows it, as it does at the top level.
-    for ([_]*const Scope{ self.prelude, self.module }) |source| {
-        var entries = source.iterator();
-        while (entries.next()) |entry| {
-            var binding = entry.value_ptr.*;
-            binding.assigned = true;
-            try view.put(self.arena, entry.key_ptr.*, binding);
-        }
-    }
+    const view = try self.moduleView();
 
     const parameters = try self.arena.create(Scope);
     parameters.* = .empty;
@@ -1910,6 +2039,115 @@ fn checkBodyWithSelf(
             }
         }
     }
+}
+
+// Type-level fields.
+
+/// Makes a type-level field's type known. One without an annotation takes the
+/// type of its value, which is checked here on first need; needing it again
+/// while that value is still being checked is a cycle, which an annotation
+/// breaks, exactly as section 7.2 has a recursive function state its return
+/// type.
+fn settleTypeField(self: *Checker, key: []const u8) Error!void {
+    const field = self.type_fields.getPtr(key) orelse return;
+    switch (field.state) {
+        .known => return,
+        .inferring => {
+            const outer_file = self.file;
+            defer self.file = outer_file;
+            self.file = self.facts.owner.get(key).?;
+            try self.reportWithHelp(
+                field.field.name_span,
+                "`{s}` needs a type, because working out its value needs its type",
+                .{try Resolver.displayKey(self.arena, key)},
+                "Write its type, as in `var {s}: Int = ...`.",
+                .{try Resolver.displayKey(self.arena, key)},
+            );
+            // Left invalid, so the reads inside the cycle stay quiet.
+            field.state = .known;
+            return;
+        },
+        .unknown => {},
+    }
+    field.state = .inferring;
+    const actual = try self.typeFieldValue(key);
+    // Found again: checking the value can reach other fields, though never add
+    // one, so the entry has not moved, but `field` is not used past here.
+    const binding = self.module.getPtr(key).?;
+    binding.type = actual;
+    binding.declared = actual;
+    const settled = self.type_fields.getPtr(key).?;
+    settled.state = .known;
+    settled.value_checked = true;
+}
+
+/// Checks a type-level field's value once, whichever of inference or the pass
+/// over every declaration gets there first.
+fn checkTypeFieldValue(self: *Checker, key: []const u8) Error!void {
+    const field = self.type_fields.get(key) orelse return;
+    if (field.value_checked) return;
+    if (field.field.annotation == null) return self.settleTypeField(key);
+    self.type_fields.getPtr(key).?.value_checked = true;
+    _ = try self.typeFieldValue(key);
+}
+
+/// The type of a type-level field's value, reported against its annotation if
+/// it has one. The value runs whenever the type is first reached, so like a
+/// function body it is checked against a module scope in which everything
+/// counts as assigned, and section 7.1's check happens where it is reached.
+fn typeFieldValue(self: *Checker, key: []const u8) Error!Type {
+    const field = self.type_fields.get(key).?;
+    const outer_file = self.file;
+    defer self.file = outer_file;
+    self.file = self.facts.owner.get(key).?;
+
+    const view = try self.moduleView();
+    const outer_scopes = self.scopes;
+    const outer_return_type = self.current_return_type;
+    const outer_in_function = self.in_function;
+    const outer_loops = self.loops;
+    const outer_constructing = self.constructing;
+    defer {
+        self.scopes = outer_scopes;
+        self.current_return_type = outer_return_type;
+        self.in_function = outer_in_function;
+        self.loops = outer_loops;
+        self.constructing = outer_constructing;
+    }
+    self.scopes = .empty;
+    self.loops = .empty;
+    try self.scopes.append(self.arena, view);
+    self.in_function = true;
+    self.constructing = null;
+
+    const expected: ?Type = if (field.field.annotation != null) self.module.get(key).?.declared else null;
+    const actual = try self.typeOfExpected(field.field.initializer, expected);
+    const declared = expected orelse return actual;
+    if (!actual.assignableTo(declared)) {
+        try self.report(
+            field.field.initializer.span,
+            "this is {f}, but `{s}` was declared as {f}",
+            .{ actual, try Resolver.displayKey(self.arena, key), declared },
+            mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
+        );
+    }
+    return declared;
+}
+
+/// `value.count` where `count` is a type-level member of its type. Returns
+/// whether it reported.
+fn reportTypeMemberThroughValue(self: *Checker, owner: Type, name: []const u8, span: Source.Span) Error!bool {
+    const key = try Resolver.methodKey(self.arena, owner.user.?.name, name);
+    if (!self.facts.type_members.contains(key)) return false;
+    const written = try Resolver.displayKey(self.arena, key);
+    try self.reportWithHelp(
+        span,
+        "`{s}` belongs to the type {f}, not to each value",
+        .{ name, owner },
+        "Reach it through the type, as in `{s}`.",
+        .{written},
+    );
+    return true;
 }
 
 // Constructors.
@@ -2293,7 +2531,9 @@ fn typeOfStructMethodCall(
         const is_field = self.properties.contains(key) or for (base.user.?.fields) |field| {
             if (std.mem.eql(u8, field.name, member.name)) break true;
         } else false;
-        if (is_field) {
+        if (try self.reportTypeMemberThroughValue(base, member.name, member.name_span)) {
+            // Reported.
+        } else if (is_field) {
             try self.reportWithHelp(
                 member.name_span,
                 "`{s}` is a {s} of {f}, not a method",
@@ -2425,6 +2665,10 @@ fn isRecursive(self: *Checker, name: []const u8) Error!bool {
         const callees = self.facts.calls.get(current) orelse continue;
         var it = callees.keyIterator();
         while (it.next()) |callee| {
+            // Reaching a type sets up its fields, but that is not a call
+            // whose result a return type could depend on; a field that needs
+            // its own type while it is inferred is reported where it is.
+            if (std.mem.endsWith(u8, callee.*, Resolver.method_separator)) continue;
             if (std.mem.eql(u8, callee.*, name)) return true;
             if (visited.contains(callee.*)) continue;
             try visited.put(self.arena, callee.*, {});
@@ -2475,6 +2719,18 @@ fn checkCaptures(
     callee: []const u8,
     display: []const u8,
 ) Error!void {
+    return self.checkCapturesOf(call_span, callee, display, "this call");
+}
+
+/// `checkCaptures`, for something other than a call that runs code: reaching
+/// a type-level field, which can set up its type (10.4).
+fn checkCapturesOf(
+    self: *Checker,
+    call_span: Source.Span,
+    callee: []const u8,
+    display: []const u8,
+    comptime what: []const u8,
+) Error!void {
     const reads = try self.capturesOf(callee);
 
     // Report the first unassigned name in alphabetical order, so the output
@@ -2493,7 +2749,7 @@ fn checkCaptures(
         call_span,
         "`{s}` reads `{s}`, which is not assigned yet here",
         .{ display, name },
-        "Move this call below the line that assigns `{s}`.",
+        "Move " ++ what ++ " below the line that assigns `{s}`.",
         .{name},
     );
 }
@@ -2785,7 +3041,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .index => |index| self.typeOfIndex(index),
         // A namespace-qualified name is a reference, not a property access:
         // `Shapes.area` names one declaration, as the resolver worked out.
-        .member => |member| if (self.referenceOf(expression)) |reference|
+        .member => |member| if (try self.referenceOf(expression)) |reference|
             self.typeOfQualified(expression, reference)
         else
             self.typeOfMember(member),
@@ -3295,6 +3551,15 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// Section 14.2's `Shapes.area` used as a value rather than called. It is the
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+    if (self.type_fields.get(reference.key)) |field| {
+        try self.settleTypeField(reference.key);
+        // Section 7.1, for section 10.4's setup: reading the field may be
+        // what sets up the type, and that reads whatever its fields' values do.
+        if (!self.in_function) {
+            try self.checkCapturesOf(expression.span, try Resolver.typeSetupKey(self.arena, field.type_key), reference.display, "this");
+        }
+        return self.module.get(reference.key).?.declared;
+    }
     const binding = self.findKey(reference.key) orelse return .invalid;
     if (binding.is_type) {
         try self.report(
@@ -3353,6 +3618,7 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
         // Not a field. Reported directly, since going through `typeOf(self)`
         // would first complain that `self` is not ready yet.
         const building = self.constructing.?.type;
+        if (try self.reportTypeMemberThroughValue(building, member.name, member.name_span)) return .invalid;
         try self.report(
             member.name_span,
             "{f} has no field named `{s}`",
@@ -3370,6 +3636,7 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
             if (std.mem.eql(u8, field.name, member.name)) return field.type;
         }
         if (try self.propertyOf(base, member.name)) |property| return self.typeOfPropertyRead(member, property);
+        if (try self.reportTypeMemberThroughValue(base, member.name, member.name_span)) return .invalid;
         if (self.receivers.contains(try Resolver.methodKey(self.arena, base.user.?.name, member.name))) {
             try self.reportWithHelp(
                 member.name_span,
@@ -3908,7 +4175,10 @@ fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
             // another file is not implemented; this is not the same as
             // `Shapes` alone being "a namespace, not a value" (checked
             // elsewhere), so it gets its own diagnostic.
-            if (self.facts.qualified.contains(expression)) {
+            if (self.facts.qualified.get(expression)) |key| {
+                if (self.type_fields.contains(key)) {
+                    return .{ .typed = .{ .root = expression, .type = self.module.get(key).?.declared } };
+                }
                 try self.report(
                     expression.span,
                     "changing a value through its namespace is not available yet",
@@ -3974,6 +4244,11 @@ fn requireMutableReceiver(self: *Checker, member: Ast.Expression.Member, name: [
     if (root.data == .name) {
         const binding = self.find(root.data.name) orelse return;
         return self.requireMutable(root.data.name, root.span, binding.*);
+    }
+    if (self.facts.qualified.get(root)) |key| {
+        if (self.type_fields.contains(key)) {
+            return self.requireMutable(try Resolver.displayKey(self.arena, key), root.span, self.module.get(key).?);
+        }
     }
     try self.reportWithHelp(
         member.name_span,
@@ -4115,6 +4390,11 @@ fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
         .reported => return,
         .root => |root| root,
     };
+    if (self.facts.qualified.get(root)) |key| {
+        if (self.type_fields.contains(key)) {
+            return self.requireMutable(try Resolver.displayKey(self.arena, key), root.span, self.module.get(key).?);
+        }
+    }
     if (root.data != .name) {
         return self.reportWithHelp(
             member.base.span,
@@ -4452,7 +4732,7 @@ fn typeOfCall(
 
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
     // resolver already decided which this is.
-    const reference = self.referenceOf(call.callee) orelse {
+    const reference = try self.referenceOf(call.callee) orelse {
         // A tuple position holding a block is called through its value, not as
         // a method of the tuple.
         if (call.callee.data == .member and call.callee.data.member.position == null) {

@@ -41,11 +41,22 @@ struct Trip {
         const dx = to.x - from.x
         const dy = to.y - from.y
         self.distance = (dx * dx + dy * dy) ** 0.5
+        Trip.planned += 1
+    }
+
+    ## A member written with the type's name in front belongs to the type
+    ## rather than to each value, and is always reached through the type. A
+    ## type-level function is a good way to build a value another way.
+    var Trip.planned = 0
+
+    func Trip.home(to: Point): Trip {
+        return Trip("home", Point(0, 0), to)
     }
 }
 
 var trip = Trip("to the corner", start, finish)
 print("#{trip.name} is #{trip.distance} long")
+print(Trip.home(Point(6, 8)).distance, "after #{Trip.planned} trips")
 
 ## A method belongs to the struct and sees the value it is called on as
 ## `self`. One that changes `self` can only be called on something that can

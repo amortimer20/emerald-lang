@@ -1,0 +1,12 @@
+diagnostics/type-member-through-value.em:12:40: `count` belongs to the type Player, not to each value
+          return "#{self.name} of #{self.count}"
+                                         ^^^^^
+Reach it through the type, as in `Player.count`.
+diagnostics/type-member-through-value.em:17:11: `count` belongs to the type Player, not to each value
+  print(ada.count)
+            ^^^^^
+Reach it through the type, as in `Player.count`.
+diagnostics/type-member-through-value.em:18:5: `named` belongs to the type Player, not to each value
+  ada.named("Grace")
+      ^^^^^
+Reach it through the type, as in `Player.named`.

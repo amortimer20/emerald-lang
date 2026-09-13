@@ -1699,6 +1699,22 @@ This adds no keyword, is locally visible, and cannot change meaning when a metho
 edited. Type-level fields may be `var` or `const`, require initial values, and use a leading
 underscore for privacy.
 
+A type-level member is declared inside the braces of its own type, and the type named in
+front of it must be that type. It is always reached through the type, including from the
+type's own methods, and never through a value; an instance member is never reached through
+the type. A type-level function has no `self`. Type-level members share the one name space
+of 10.3 with the type's fields, properties, and methods, so a name means one thing wherever
+it is written.
+
+A type-level field's annotation is optional: without one, the field holds the type of its
+value, as a module-level binding does. Its value may read only the type-level fields
+declared before it. Setting the fields up follows 14.1's lazy rule: once, in declaration
+order, the first time the type is constructed or one of its type-level members is reached;
+reaching a field that setup has not got to yet through a function is an initialization-cycle
+error. Because a type-level field is one binding for the whole program, which any function
+may change, 4.5 does not narrow it. Type-level computed properties are not part of the
+design; a type-level function covers the same need.
+
 ### 10.5 Privacy
 
 A leading underscore marks a private member. Privacy is enforced by the checker and does
@@ -2831,6 +2847,10 @@ recorded in their normative sections:
 | Member names (10, 10.3) | A field, a property, and a method of one type share one name space, and a type cannot declare two methods of one name | `value.name` has to mean one thing, and overloading is deferred. |
 | A getter and `self` (10.3) | A getter may not change `self` | 10.3 leaves side effects to convention, but this one decides what a read may be called on: a getter that changed `self` would make reading a property of a `const` an error. The checker already infers which bodies change `self`, so the rule costs nothing to state or check. |
 | Accessors are methods (10.3) | A property's getter and setter are checked and run as methods of the type, keyed `Type::name` and `Type::name=` | Nothing about calling, inference, captures, or changing `self` differs from a method, so nothing is written twice; only reaching them differs, which is a member read or an assignment instead of a call. |
+| Where a type-level member is declared (10.4) | Inside its own type's braces, naming that type | 10.4 shows `func Vector2.origin()` without saying where it goes. Inside the type keeps a type's members in one place for a reader and one declaration for the checker; accepting it elsewhere would be extension of a type from outside, a separate feature with its own questions about files, namespaces, and privacy. |
+| Type-level and instance member names (10.3, 10.4) | One name space for both | `Player.count` and `player.count` meaning different things would be legal but misleading, and the diagnostic for reaching a member the wrong way can only name the right way if the name identifies one member. |
+| Inferring a type-level field's type (4.1, 7.2, 10.4) | Optional annotation; inferred from the value on first need, and a cycle through a function whose return type is also inferred needs one of the two annotated | This matches module-level bindings, which the fields otherwise behave like. The cycle rule is 7.2's rule for recursive functions, reached through a field instead of a call. |
+| Narrowing a type-level field (4.5, 10.4) | Not narrowed, even after assigning a present value | The field is one binding the whole program shares, so any call between the proof and the use can set it back to `nothing`. `.or(...)`, or copying it into a local first, is the way to use one. |
 | Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 
 ## 23. Consistency rules for future work

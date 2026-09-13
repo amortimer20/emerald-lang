@@ -1,0 +1,5 @@
+start
+setting up Circle
+Circle(radius: 10.0) 1
+Circle(radius: 1.0) Circle(radius: 1.0)
+103
