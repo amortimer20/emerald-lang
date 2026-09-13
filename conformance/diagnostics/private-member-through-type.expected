@@ -1,0 +1,8 @@
+diagnostics/private-member-through-type.em:10:7: `_count` is private to `Counter`
+  print(Counter._count)
+        ^^^^^^^^^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-member-through-type.em:11:1: `_bump` is private to `Counter`
+  Counter._bump()
+  ^^^^^^^^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.

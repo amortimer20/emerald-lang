@@ -14,6 +14,14 @@ struct Counter {
         show()
     }
 
+    # A function nested in a method is part of the method's code.
+    func report() {
+        announce()
+        func announce() {
+            print(count)
+        }
+    }
+
     func show() {
         print(this.count)
     }

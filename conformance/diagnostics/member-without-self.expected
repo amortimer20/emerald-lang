@@ -10,11 +10,15 @@ diagnostics/member-without-self.em:14:9: `show` is a member of `Counter`, so it 
           show()
           ^^^^
 Write `self.` in front, as in `self.show`.
-diagnostics/member-without-self.em:18:15: Emerald calls the current value `self`
+diagnostics/member-without-self.em:21:19: `count` is a member of `Counter`, so it is reached through `self`
+              print(count)
+                    ^^^^^
+Write `self.` in front, as in `self.count`.
+diagnostics/member-without-self.em:26:15: Emerald calls the current value `self`
           print(this.count)
                 ^^^^
 Write `self` instead of `this`.
-diagnostics/member-without-self.em:22:24: `count` belongs to each `Counter` value, and a type-level member has no `self`
+diagnostics/member-without-self.em:30:24: `count` belongs to each `Counter` value, and a type-level member has no `self`
           return Counter(count)
                          ^^^^^
 Take the value as a parameter and write `value.count`.

@@ -2357,6 +2357,9 @@ fn isInstanceMember(self: *Checker, owner: Type, name: []const u8) Error!bool {
 fn reportTypeMemberThroughValue(self: *Checker, owner: Type, name: []const u8, span: Source.Span) Error!bool {
     const key = try Resolver.methodKey(self.arena, owner.user.?.name, name);
     if (!self.facts.type_members.contains(key)) return false;
+    // Section 10.5: pointing at the type would point at a path that is private
+    // too.
+    if (try self.reportPrivate(owner.user.?.name, name, span)) return true;
     const written = try Resolver.displayKey(self.arena, key);
     try self.reportWithHelp(
         span,

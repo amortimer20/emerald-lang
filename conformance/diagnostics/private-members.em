@@ -26,3 +26,4 @@ Counter._made = 4
 print(Counter._make())
 const f = Counter._make
 var s = Secret("x")
+print(c._made)

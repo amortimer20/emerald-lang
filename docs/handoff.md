@@ -212,6 +212,9 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - **Equality is a closure's identity.** A `.named` closure that captured scopes is a nested
   function, and `Value.sameFunction` compares it like a lambda; only top-level functions
   compare by name (review chunk 3).
+- **A nested function belongs to the code it is written in** for the resolver's
+  `enclosingType`, through `FunctionScope.enclosing`, so a bare member name inside one in a
+  method still gets the `self` correction (review chunk 4; `diagnostics/member-without-self`).
 - **A duplicate is reported at whichever is written second.** A nested function is hoisted,
   so `var name` above `func name()` would otherwise be reported at the `var`.
 - **Not done: a better message for a variable declared below the function.** Reading one
@@ -278,6 +281,11 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   ("cannot be built here"), and giving a private field a value is reported at that argument
   (at its name when passed by name), through `Parameters.private_to`. Inside the type,
   `Pair(5, 6)` sets private fields as usual.
+- **Privacy outranks "reach it the other way".** From outside the type, `Counter._count` (an
+  instance member through the type) and `c._made` (a type-level one through a value) report
+  that the member is private, since the other path is private too: the resolver decides
+  inside from `enclosingType`, the checker from `insideType` (review chunk 4;
+  `diagnostics/private-member-through-type`).
 - **No runtime part.** Privacy is purely a checker rule, so the interpreter is unchanged.
   Display and equality include private fields.
 - **Found while writing the example.** A `##` documentation comment before a type-level
@@ -1147,8 +1155,8 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 | 1 | Nested functions: resolver capture analysis and use checks | Done: destructuring-assignment crash and recursion false positive fixed |
 | 2 | Nested functions: checker body checking and runtime hoisting | Done: a local now hides an imported function in a call (an older bug next to the new code) |
 | 3 | Method values: receiver copy, write-back, collector, re-entry | Done: no method value bugs; two calls' nested functions no longer compare equal |
-| 4 | Privacy: every path to a member | Next |
-| 5 | Nested tuple patterns and parser changes | |
+| 4 | Privacy: every path to a member | Done: 15 outside paths and the inside ones all held; messages that sent a private member the other way now report privacy, and nested functions in methods got their member hints back |
+| 5 | Nested tuple patterns and parser changes | Next |
 | 6 | Diagnostics across all four slices | Noted so far: the narrowing help says "a block can set it back" when a nested function is what does |
 
 ## Next concrete step
@@ -1178,7 +1186,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 273 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 274 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

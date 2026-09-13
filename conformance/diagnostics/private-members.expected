@@ -38,3 +38,7 @@ diagnostics/private-members.em:28:9: `Secret` cannot be built here, because its 
   var s = Secret("x")
           ^^^^^^
 Give `_key` a default, or give `Secret` a constructor that sets it.
+diagnostics/private-members.em:29:9: `_made` is private to `Counter`
+  print(c._made)
+          ^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.

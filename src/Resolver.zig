@@ -282,7 +282,13 @@ enclosing_project: ?[]const u8 = null,
 /// it, and it is what a bare module-level name is resolved through.
 file: u32 = 0,
 
-const FunctionScope = struct { scope: usize, key: []const u8 };
+const FunctionScope = struct {
+    scope: usize,
+    key: []const u8,
+    /// What `current_function` was around it, which for a nested function is
+    /// the method, constructor, or type code it is written in.
+    enclosing: ?[]const u8,
+};
 
 const NestedUse = struct {
     expression: *const Ast.Expression,
@@ -1006,7 +1012,14 @@ const EnclosingType = struct { type_key: []const u8, has_self: bool };
 /// its constructor and field defaults. Null in an ordinary function or at the
 /// top level.
 fn enclosingType(self: *Resolver) ?EnclosingType {
-    const key = self.current_function orelse return null;
+    // A nested function (7.1) is part of the code it is written in, as a
+    // block is.
+    const outermost: ?FunctionScope = if (self.function_scopes.items.len > 0) self.function_scopes.items[0] else null;
+    const written_in = if (outermost) |function|
+        (if (self.facts.nested_functions.contains(function.key)) function.enclosing else function.key)
+    else
+        self.current_function;
+    const key = written_in orelse return null;
     if (std.mem.lastIndexOf(u8, key, method_separator)) |at| {
         const member = key[at + method_separator.len ..];
         const type_level = member.len == 0 or self.facts.type_members.contains(key);
@@ -1631,6 +1644,21 @@ fn qualifyTypeMember(
         return .{ .key = key };
     }
     if (self.instance_members.contains(key)) {
+        // Section 10.5: from outside the type, that it is private is the
+        // mistake, since reaching it through a value would fail too.
+        if (isPrivate(member)) {
+            const inside = if (self.enclosingType()) |enclosing| std.mem.eql(u8, enclosing.type_key, type_key) else false;
+            if (!inside) {
+                try self.reportWithHelpFmt(
+                    span,
+                    "`{s}` is private to `{s}`",
+                    .{ member, nameOf(type_key) },
+                    "Only code written inside `{s}`'s braces can reach a name that starts with `_`.",
+                    .{nameOf(type_key)},
+                );
+                return .reported;
+            }
+        }
         try self.reportWithHelpFmt(
             span,
             "`{s}` belongs to each `{s}` value, not to the type",
@@ -1682,7 +1710,11 @@ fn walkBody(
     // A nested function assigning a variable around it can do so between a
     // test and a use, exactly as a block can (4.5).
     self.lambda_depth = if (nested) outer_lambda_depth + 1 else 0;
-    try self.function_scopes.append(self.arena, .{ .scope = self.scopes.items.len - 1, .key = key });
+    try self.function_scopes.append(self.arena, .{
+        .scope = self.scopes.items.len - 1,
+        .key = key,
+        .enclosing = outer_function,
+    });
     defer {
         self.pop();
         self.function_boundary = outer_boundary;
