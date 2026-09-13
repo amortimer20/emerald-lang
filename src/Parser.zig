@@ -372,7 +372,6 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
         .keyword_if => self.parseIf(),
         .keyword_func => blk: {
             const nested = !self.at_top_level;
-            const keyword = self.peek().span;
             // Section 10.4's `func Vector2.origin()` written outside the type
             // it names. Parsed in full for recovery, then reported.
             if (self.startsTypeMember()) {
@@ -386,7 +385,6 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             }
             // Section 7.1's nested function, which captures what is around it
             // as a block does, and so cannot use `self` any more than one can.
-            _ = keyword;
             const saved_self = self.self_allowed;
             if (nested and (self.self_allowed == .member or self.self_allowed == .member_lambda)) {
                 self.self_allowed = .member_nested;
@@ -2473,18 +2471,26 @@ fn startsPattern(self: *Parser) bool {
     if (!self.check(.left_paren)) return false;
     var at = self.index;
     var expect_name = true;
+    // Whether a name has been seen since the last `(`, so `(a, b,)` with its
+    // trailing comma counts, as `parsePattern` accepts it, and `()` does not.
+    var any_name = false;
     while (at < self.tokens.len) : (at += 1) {
         switch (self.tokens[at].kind) {
-            .left_paren, .doc_comment, .newline => {},
+            .doc_comment, .newline => {},
+            .left_paren => {
+                if (!expect_name) return false;
+                any_name = false;
+            },
             .identifier, .underscore => {
                 if (!expect_name) return false;
                 expect_name = false;
+                any_name = true;
             },
             .comma => {
                 if (expect_name) return false;
                 expect_name = true;
             },
-            .right_paren => return !expect_name,
+            .right_paren => return any_name,
             else => return false,
         }
     }

@@ -229,6 +229,11 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   builds its pattern from the tuple literal it parsed as (`patternOfTuple`).
 - **Mismatch messages** count positions rather than names once a pattern nests, and a nested
   position that is not a tuple is reported at that position.
+- **`startsPattern` accepts a trailing comma**, as `parsePattern` always did: `const (a, b,)`
+  was read as a declaration missing its name (review chunk 5).
+- **A standalone lambda that unpacks a tuple** says it cannot tell what tuple it unpacks and
+  shows where to write the type, rather than "`` needs a type": a pattern parameter has no
+  name, and there is no syntax for annotating one.
 
 ### Method value decisions worth knowing
 
@@ -1156,8 +1161,8 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 | 2 | Nested functions: checker body checking and runtime hoisting | Done: a local now hides an imported function in a call (an older bug next to the new code) |
 | 3 | Method values: receiver copy, write-back, collector, re-entry | Done: no method value bugs; two calls' nested functions no longer compare equal |
 | 4 | Privacy: every path to a member | Done: 15 outside paths and the inside ones all held; messages that sent a private member the other way now report privacy, and nested functions in methods got their member hints back |
-| 5 | Nested tuple patterns and parser changes | Next |
-| 6 | Diagnostics across all four slices | Noted so far: the narrowing help says "a block can set it back" when a nested function is what does |
+| 5 | Nested tuple patterns and parser changes | Done: nesting held everywhere; a trailing comma in a pattern and a standalone lambda that unpacks a tuple (both older) fixed |
+| 6 | Diagnostics across all four slices | Next. Noted so far: the narrowing help says "a block can set it back" when a nested function is what does |
 
 ## Next concrete step
 

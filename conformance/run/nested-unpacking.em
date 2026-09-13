@@ -14,3 +14,7 @@ for (k, (_, y)) in [("a", (1, 2)), ("b", (3, 4))] {
 }
 const ages = ["Ava": (12, "red")]
 ages.each { (name, (age, color)) => print(name, age, color) }
+
+# A trailing comma is allowed in names being unpacked, nested or not.
+const (one, (two, three,),) = (1, (2, 3))
+print(one, two, three)

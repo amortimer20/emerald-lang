@@ -3613,6 +3613,16 @@ fn typeOfLambda(self: *Checker, expression: *const Ast.Expression, expected: ?Ty
             // a consequence of that, not a second mistake.
             .invalid
         else blk: {
+            if (parameter.pattern != null) {
+                // A tuple being unpacked has nowhere to write its type.
+                try self.report(
+                    parameter.name_span,
+                    "this lambda cannot tell what tuple it unpacks",
+                    .{},
+                    "Give it a type where it is stored, as in `const pick: func((Int, Int)): Int = { (a, b) => a }`, or pass it straight to a method such as `map`.",
+                );
+                break :blk .invalid;
+            }
             try self.report(
                 parameter.name_span,
                 "`{s}` needs a type",

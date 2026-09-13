@@ -10,3 +10,7 @@ diagnostics/nested-unpacking-mismatch.em:3:36: this unpacks 3 names, but (Int, I
   const x = [(1, (2, 3))].map { (a1, (b1, c1, d1)) => a1 }
                                      ^^^^^^^^^^^^
 Write one name for each position. Use `_` for a position you do not need.
+diagnostics/nested-unpacking-mismatch.em:4:22: this lambda cannot tell what tuple it unpacks
+  const standalone = { (first, (second, third)) => first }
+                       ^^^^^^^^^^^^^^^^^^^^^^^^
+Give it a type where it is stored, as in `const pick: func((Int, Int)): Int = { (a, b) => a }`, or pass it straight to a method such as `map`.
