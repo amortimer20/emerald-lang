@@ -1,0 +1,4 @@
+diagnostics/field-default-reads-later.em:2:27: `self.height` is not set yet when this default runs
+      var width: Int = self.height
+                            ^^^^^^
+A default can read only the fields declared before it.

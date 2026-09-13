@@ -1604,7 +1604,13 @@ field may change. Stored nested-field assignment updates the value in place; nes
 assignment through a computed property is rejected as described below.
 
 Default field values are allowed and run in declaration order, once per construction.
-They may read earlier initialized fields but not later ones. An explicitly supplied
+They may read earlier initialized fields but not later ones, through `self.`, and may not use
+`self` as a whole or call its methods or properties, since the value is still being built.
+The generated constructor takes one parameter per field in declaration order; a field with a
+default is an optional parameter that a call skips by naming the fields after it, as 7.3
+allows for any defaulted parameter. Under a custom constructor, defaults run before its
+body, so a field with a default starts out set there, and a default may read only earlier
+fields that also have defaults. An explicitly supplied
 generated-constructor argument replaces that field's default, which then does not run.
 Every remaining field must be definitely initialized before construction completes.
 Inside a constructor a `const` field is initialized exactly once: it may be set only where
@@ -2819,6 +2825,9 @@ recorded in their normative sections:
 | Constructor delegation (10.2, 21) | `self(...)` is deferred with overloading | 10.2 described `self(...)` delegating to "another constructor of the same type" while allowing each type at most one constructor, so there was never another constructor to call. Delegation only means something once a type can have several, which is exactly what deferring overloading rules out; the two arrive together. |
 | Which struct methods change `self` (4.3) | Worked out from the body's text: an assignment into `self`, a changing collection method reached from `self`, or a call to a method on `self` that changes it | 4.3 already rules out a `mutating` keyword. Following paths that start at `self` through field types gives the answer before any body is checked, so a call site never waits on inference, and `var copy = self` followed by a change to `copy` correctly changes nothing. |
 | Calling a changing method (4.3, 8.1) | The receiver is taken out of its place for the call and put back afterwards; its binding cannot be reached another way meanwhile | Sharing the receiver with the call would make every `self.items.append(x)` copy the list, turning a loop of calls quadratic. Taking it out is exact, and the one thing it gives up — seeing the value from elsewhere mid-call — is what Swift's exclusivity rule also forbids. It is a runtime error because a block can reach a binding in ways the checker does not track. |
+| Where named arguments apply (7.3) | Calls to a function, method, or type written by its own name | A name belongs to a declaration's parameter. A lambda or a function held in a variable has only a function type, which has no names, and the prelude and built-in methods declare none, so a name there would have nothing to match. |
+| The generated constructor's parameters (7.3, 10.2) | Every field, in declaration order, with a defaulted field optional; no ordering rule for fields | 7.3's "defaults follow required parameters" exists so a positional call can reach every required parameter. Imposing it on fields would dictate how a struct is laid out and displayed; named arguments already reach a required field after a defaulted one. |
+| A `const` field with a default (4.3, 10.2) | Its default always runs before a custom constructor, so the constructor cannot set it | It is set exactly once, by the default. A constructor that should decide the value is written without the default. |
 | Member names (10, 10.3) | A field, a property, and a method of one type share one name space, and a type cannot declare two methods of one name | `value.name` has to mean one thing, and overloading is deferred. |
 | A getter and `self` (10.3) | A getter may not change `self` | 10.3 leaves side effects to convention, but this one decides what a read may be called on: a getter that changed `self` would make reading a property of a `const` an error. The checker already infers which bodies change `self`, so the rule costs nothing to state or check. |
 | Accessors are methods (10.3) | A property's getter and setter are checked and run as methods of the type, keyed `Type::name` and `Type::name=` | Nothing about calling, inference, captures, or changing `self` differs from a method, so nothing is written twice; only reaching them differs, which is a member read or an assignment instead of a call. |

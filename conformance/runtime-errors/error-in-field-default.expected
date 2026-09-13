@@ -1,0 +1,5 @@
+runtime-errors/error-in-field-default.em:4:21: floor division by zero
+      var each: Int = self.total // self.parts
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+Check the divisor before dividing. Division by zero has no result for either numeric type.
+in the field defaults of `Share`, called at runtime-errors/error-in-field-default.em:7:7

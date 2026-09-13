@@ -1,0 +1,12 @@
+diagnostics/named-argument-unsupported.em:2:15: a named argument needs a function, method, or type called by its own name
+  scores.append(item: 2)
+                ^^^^
+Pass this value by position instead.
+diagnostics/named-argument-unsupported.em:3:7: a named argument needs a function, method, or type called by its own name
+  print(value: 1)
+        ^^^^^
+Pass this value by position instead.
+diagnostics/named-argument-unsupported.em:5:14: a named argument needs a function, method, or type called by its own name
+  print(double(n: 1))
+               ^
+Pass this value by position instead.

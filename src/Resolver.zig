@@ -132,7 +132,10 @@ pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe" };
 
 /// `self_value` is section 10.2's `self` inside a constructor: its fields are
 /// set one at a time, but the value itself is never replaced.
-pub const BindingKind = enum { variable, parameter, loop_variable, function, type, self_value };
+/// `later_parameter` is a parameter seen from a default before it, which section
+/// 7.3 says cannot read it: it is in scope only so that the name is reported
+/// rather than quietly resolving to something outside the function.
+pub const BindingKind = enum { variable, parameter, loop_variable, function, type, self_value, later_parameter };
 
 const Binding = struct {
     mutable: bool,
@@ -962,6 +965,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         ),
         .struct_declaration => |declaration| {
             const type_key = try self.keyOf(self.file, declaration.name);
+            try self.walkFieldDefaults(type_key, declaration.fields);
             if (declaration.constructor) |constructor| {
                 try self.walkBody(type_key, constructor.parameters, constructor.body.statements, true);
             }
@@ -1064,7 +1068,7 @@ fn reportReadOnly(
             .{name},
             "It was declared with `const`. Use `var` if the value needs to change.",
         ),
-        .parameter => try self.report(
+        .parameter, .later_parameter => try self.report(
             span,
             "`{s}` cannot be reassigned",
             .{name},
@@ -1149,6 +1153,31 @@ fn walkFor(self: *Resolver, loop: Ast.For) Error!void {
     try self.walkStatements(loop.body.statements);
 }
 
+/// Section 10.2's field defaults, which run as part of construction and so are
+/// recorded under the type's key, like its constructor. `self` is in scope; the
+/// checker decides which fields a default may read through it.
+fn walkFieldDefaults(self: *Resolver, type_key: []const u8, fields: []const Ast.StructDeclaration.Field) Error!void {
+    std.debug.assert(self.scopes.items.len == module_scope + 1);
+    try self.push();
+    const outer_boundary = self.function_boundary;
+    const outer_function = self.current_function;
+    self.function_boundary = self.scopes.items.len - 1;
+    self.current_function = type_key;
+    defer {
+        self.pop();
+        self.function_boundary = outer_boundary;
+        self.current_function = outer_function;
+    }
+    try self.scopes.items[self.scopes.items.len - 1].put(self.arena, "self", .{
+        .mutable = false,
+        .span = .{ .start = 0, .end = 0 },
+        .kind = .self_value,
+    });
+    for (fields) |field| {
+        if (field.default) |default| try self.walkExpression(default);
+    }
+}
+
 /// Whether calling a module-level binding runs a body the checker has to follow
 /// for section 7.1's capture rule: a function's, or a type's constructor.
 fn isCallable(kind: BindingKind) bool {
@@ -1207,8 +1236,14 @@ fn walkBody(
         try parameters.put(self.arena, parameter.name, .{
             .mutable = false, // Section 7.1: parameters are read-only.
             .span = parameter.name_span,
-            .kind = .parameter,
+            .kind = .later_parameter,
         });
+    }
+    // Section 7.3: "A default may read earlier parameters but not itself or
+    // later parameters." Each becomes readable once its own default is walked.
+    for (parameter_list) |parameter| {
+        if (parameter.default) |default| try self.walkExpression(default);
+        if (parameters.getPtr(parameter.name)) |binding| binding.kind = .parameter;
     }
 
     // The body's top level shares the parameters' scope, so a local that
@@ -1332,6 +1367,14 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                 );
             };
             if (!try self.declaredAbove(found, expression.span)) return;
+            if (found.binding.kind == .later_parameter) {
+                return self.report(
+                    expression.span,
+                    "`{s}` comes later in the parameter list, so this default cannot read it",
+                    .{name},
+                    "A default can read only the parameters before it. Reorder the parameters, or compute the value in the body.",
+                );
+            }
             try self.noteRead(found);
         },
 

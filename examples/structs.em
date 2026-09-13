@@ -13,6 +13,14 @@ struct Point {
     var y: Float
 }
 
+## A field with a default can be left out when the value is built. Name the
+## fields you do pass when they are not the first ones.
+struct Marker {
+    var label: String = "here"
+    var at: Point
+}
+print(Marker(at: Point(1, 2)), Marker("there", Point(0, 0)))
+
 var start = Point(0, 0)
 var finish = start
 finish.x = 3

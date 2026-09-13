@@ -327,6 +327,7 @@ test {
     _ = Heap;
     _ = unicode;
     _ = strings;
+    _ = @import("arguments.zig");
 }
 
 /// Runs a program and returns what it printed. The caller owns the result.

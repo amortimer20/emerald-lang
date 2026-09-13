@@ -1,0 +1,12 @@
+diagnostics/generated-constructor-named-fields.em:6:7: this call gives `Box` no value for field `height`
+  print(Box(2))
+        ^^^
+Pass it by position, or by name as `height: ...`.
+diagnostics/generated-constructor-named-fields.em:7:22: `Box` has no field named `depth`
+  print(Box(height: 2, depth: 3))
+                       ^^^^^
+Check the spelling against the declaration.
+diagnostics/generated-constructor-named-fields.em:8:29: this is String, but field `width` of `Box` needs Int
+  print(Box(height: 2, width: "wide"))
+                              ^^^^^^
+Pass a value of the field's declared type, or convert it first.

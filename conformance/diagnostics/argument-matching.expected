@@ -1,0 +1,28 @@
+diagnostics/argument-matching.em:5:1: this call gives `greet` no value for parameter `name`
+  greet()
+  ^^^^^
+Pass it by position, or by name as `name: ...`.
+diagnostics/argument-matching.em:6:1: `greet` takes at most 2 arguments, but this call passes 3
+  greet("Ava", "!", "?")
+  ^^^^^
+Match the number of arguments to the function's parameters.
+diagnostics/argument-matching.em:7:14: `greet` has no parameter named `mood`
+  greet("Ava", mood: "glad")
+               ^^^^
+Check the spelling against the declaration.
+diagnostics/argument-matching.em:8:14: `name` already has a value in this call
+  greet("Ava", name: "Bo")
+               ^^^^
+Pass each value once.
+diagnostics/argument-matching.em:9:20: a value without a name cannot follow a named one
+  greet(name: "Ava", "!")
+                     ^^^
+Put the values passed by position first, in order, and the named ones after them.
+diagnostics/argument-matching.em:10:1: this call gives `greet` no value for parameter `name`
+  greet(punctuation: "?")
+  ^^^^^
+Pass it by position, or by name as `name: ...`.
+diagnostics/argument-matching.em:11:27: this is Int, but parameter `punctuation` of `greet` needs String
+  greet("Ava", punctuation: 3)
+                            ^
+Pass a value of the expected type, or convert it first.

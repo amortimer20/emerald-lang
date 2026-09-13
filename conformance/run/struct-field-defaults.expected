@@ -1,0 +1,7 @@
+Settings(volume: 5, name: "quiet", loud: false, tags: [])
+Settings(volume: 9, name: "loud", loud: true, tags: [])
+Settings(volume: 5, name: "forced", loud: true, tags: [])
+["changed"] []
+Ticket(number: 1, row: 12) Ticket(number: 2, row: 3) 3
+Ratio(top: 3.0, bottom: 1.0)
+Counter(count: 12, step: 2)

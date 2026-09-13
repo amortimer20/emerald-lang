@@ -1,0 +1,4 @@
+diagnostics/const-field-default-set-in-constructor.em:5:14: `width` is a `const` field with a default, so the constructor cannot set it
+          self.width = 2
+               ^^^^^
+Its default runs before the constructor does. Remove the default if the constructor should decide `width`.

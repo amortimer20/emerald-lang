@@ -1,0 +1,8 @@
+diagnostics/default-reads-later-parameter.em:3:24: `end` comes later in the parameter list, so this default cannot read it
+  func span(start: Int = end, end: Int = 10): Int {
+                         ^^^
+A default can read only the parameters before it. Reorder the parameters, or compute the value in the body.
+diagnostics/default-reads-later-parameter.em:7:25: `count` comes later in the parameter list, so this default cannot read it
+  func twice(count: Int = count): Int {
+                          ^^^^^
+A default can read only the parameters before it. Reorder the parameters, or compute the value in the body.

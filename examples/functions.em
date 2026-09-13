@@ -26,3 +26,13 @@ func average(total: Int, count: Int) {
 print(grade(95), grade(70), grade(40))
 print(factorial(10))
 print(average(250, 4))
+
+# A parameter with a default can be left out, and a named argument can skip
+# straight past it to one further along.
+func label(score: Int, prefix: String = "Score", suffix: String = "") {
+    print("#{prefix}: #{score}#{suffix}")
+}
+
+label(88)
+label(88, "Final")
+label(88, suffix: " points")

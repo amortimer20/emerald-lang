@@ -1,0 +1,4 @@
+diagnostics/field-default-custom-constructor.em:3:26: `self.width` is not set yet when this default runs
+      var area: Int = self.width * 2
+                           ^^^^^
+A default runs before the constructor, so it can read only earlier fields that have defaults of their own.

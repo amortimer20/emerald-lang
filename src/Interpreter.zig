@@ -38,6 +38,7 @@ const Type = @import("Type.zig");
 const Value = @import("Value.zig");
 const strings = @import("strings.zig");
 const unicode = @import("unicode.zig");
+const call_arguments = @import("arguments.zig");
 
 const Interpreter = @This();
 
@@ -147,6 +148,9 @@ functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 structs: std.StringHashMapUnmanaged(*const Value.StructType) = .empty,
 /// The structs that declare their own constructor (10.2), by the same keys.
 constructors: std.StringHashMapUnmanaged(Constructor) = .empty,
+/// Every struct's declaration and what calling its generated constructor
+/// matches arguments against, by the same keys.
+struct_infos: std.StringHashMapUnmanaged(StructInfo) = .empty,
 /// What the checker proved about each function, including return types it
 /// inferred, which are needed to widen results the way it allowed.
 signatures: *const Type.Signatures,
@@ -259,6 +263,27 @@ pub fn run(
                     const method_key = try Resolver.methodKey(interpreter.arena, interpreter.keyOf(declaration.name), method.name);
                     const hoisted = try interpreter.functions.getOrPut(interpreter.arena, method_key);
                     if (!hoisted.found_existing) hoisted.value_ptr.* = method;
+                }
+                {
+                    const field_names = try interpreter.arena.alloc([]const u8, declaration.fields.len);
+                    const has_default = try interpreter.arena.alloc(bool, declaration.fields.len);
+                    var any_default = false;
+                    for (declaration.fields, field_names, has_default) |field, *name, *defaulted| {
+                        name.* = field.name;
+                        defaulted.* = field.default != null;
+                        any_default = any_default or defaulted.*;
+                    }
+                    try interpreter.struct_infos.put(interpreter.arena, type_key, .{
+                        .declaration = declaration,
+                        .field_names = field_names,
+                        .has_default = has_default,
+                        .any_default = any_default,
+                        .defaults_frame = try std.fmt.allocPrint(
+                            interpreter.arena,
+                            "the field defaults of `{s}`",
+                            .{descriptor.display_name},
+                        ),
+                    });
                 }
                 if (declaration.constructor) |constructor| {
                     try interpreter.constructors.put(interpreter.arena, interpreter.keyOf(declaration.name), .{
@@ -1678,8 +1703,8 @@ fn evaluateCall(
     // resolver decided which, and recorded it.
     if (self.facts.qualified.get(call.callee)) |key| {
         try self.reach(key, call.callee.span);
-        if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call.arguments);
-        if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
+        if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
+        if (self.functions.contains(key)) return self.callFunction(expression.span, key, call);
         return self.callValue(expression.span, call);
     }
     // A tuple position holding a block is called through its value.
@@ -1698,8 +1723,8 @@ fn evaluateCall(
     const key = self.keyOf(name);
     try self.reach(key, call.callee.span);
     if (self.find(name) != null) return self.callValue(expression.span, call);
-    if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call.arguments);
-    if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
+    if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
+    if (self.functions.contains(key)) return self.callFunction(expression.span, key, call);
     if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
         return self.evaluateInput(expression.span, call, std.mem.eql(u8, name, "input_maybe"));
     }
@@ -1711,31 +1736,47 @@ fn constructStruct(
     call_span: Source.Span,
     key: []const u8,
     descriptor: *const Value.StructType,
-    argument_expressions: []const *const Ast.Expression,
+    call: Ast.Expression.Call,
 ) Error!Value {
-    var built: Value = Value.nothing;
+    const info = self.struct_infos.get(key).?;
     const constructor = self.constructors.get(key) orelse {
-        const fields = try self.evaluateArguments(argument_expressions);
-        for (fields, descriptor.fields) |*field, metadata| field.* = widen(field.*, metadata.kind);
-        return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
+        const bound = try self.evaluateBound(call, info.field_names, info.has_default);
+        for (bound.values, descriptor.fields) |*field, metadata| field.* = widen(field.*, metadata.kind);
+        const instance: Value = .{ .data = .{ .struct_value = self.heap.createStruct(descriptor, bound.values) catch |err| {
+            if (bound.omitted) |omitted| self.gpa.free(omitted);
+            return err;
+        } } };
+        const omitted = bound.omitted orelse return instance;
+        defer self.gpa.free(omitted);
+        return self.runFieldDefaults(call_span, key, instance, omitted);
     };
 
     // Section 10.2's custom constructor. The arguments are evaluated in the
     // caller's scopes first, as for any call. The instance starts with every
     // field holding `nothing`; the checker has proved the body sets each one
-    // before anything can read it or `self` can go anywhere.
-    const arguments = try self.evaluateArguments(argument_expressions);
-    defer self.gpa.free(arguments);
+    // before anything can read it or `self` can go anywhere. Field defaults
+    // run before the body, so a field that has one starts out set.
+    const declared = constructor.declaration.parameters;
+    const bound = try self.evaluateBoundParameters(call, declared);
+    defer self.gpa.free(bound.values);
+    defer if (bound.omitted) |omitted| self.gpa.free(omitted);
     const fields = self.gpa.alloc(Value, descriptor.fields.len) catch |err| {
-        for (arguments) |argument| self.heap.release(argument);
+        self.releaseBound(bound);
         return err;
     };
     @memset(fields, Value.nothing);
-    const instance = self.heap.createStruct(descriptor, fields) catch |err| {
-        for (arguments) |argument| self.heap.release(argument);
+    var instance: Value = .{ .data = .{ .struct_value = self.heap.createStruct(descriptor, fields) catch |err| {
+        self.releaseBound(bound);
         return err;
-    };
+    } } };
+    if (info.any_default) {
+        instance = self.runFieldDefaults(call_span, key, instance, info.has_default) catch |err| {
+            self.releaseBound(bound);
+            return err;
+        };
+    }
 
+    var built: Value = Value.nothing;
     const result = try self.invoke(call_span, .{
         .name = constructor.frame_name,
         .named = false,
@@ -1743,12 +1784,134 @@ fn constructStruct(
         .signature = self.signatures.get(key).?,
         .body = .{ .statements = constructor.declaration.body.statements },
         .captured = &.{},
-        .self_value = .{ .data = .{ .struct_value = instance } },
+        .written = declared,
+        .omitted = bound.omitted,
+        .self_value = instance,
         .self_out = &built,
-    }, arguments);
+    }, bound.values);
     // A constructor's own result is always `nothing`; what it built is `self`.
     self.heap.release(result);
     return built;
+}
+
+/// Section 10.2: the defaults of the fields `which` marks, in declaration
+/// order, each seeing `self` as construction has left it so far. Takes the
+/// instance and gives it back finished.
+fn runFieldDefaults(
+    self: *Interpreter,
+    call_span: Source.Span,
+    key: []const u8,
+    instance: Value,
+    which: []const bool,
+) Error!Value {
+    const info = self.struct_infos.get(key).?;
+    const outer_scopes = self.scopes;
+    self.scopes = .empty;
+    defer {
+        while (self.scopes.items.len > 0) self.popScope();
+        self.scopes.deinit(self.gpa);
+        self.scopes = outer_scopes;
+    }
+    const frame = self.pushScope() catch |err| {
+        self.heap.release(instance);
+        return err;
+    };
+    frame.bindings.put(self.gpa, "self", .{ .kind = .struct_value, .value = instance }) catch |err| {
+        self.heap.release(instance);
+        return err;
+    };
+
+    try self.call_stack.append(self.gpa, .{
+        .function = info.defaults_frame,
+        .call_span = call_span,
+        .file = self.file,
+        .named = false,
+    });
+    defer _ = self.call_stack.pop();
+    const outer_file = self.file;
+    self.file = self.facts.owner.get(key) orelse self.file;
+    defer self.file = outer_file;
+
+    for (info.declaration.fields, which, 0..) |field, runs, position| {
+        if (!runs) continue;
+        const value = try self.evaluate(field.default.?);
+        const slot = &frame.bindings.getPtr("self").?.value.?;
+        const building = self.heap.uniqueStruct(slot) catch |err| {
+            self.heap.release(value);
+            return err;
+        };
+        self.heap.release(building.fields[position]);
+        building.fields[position] = widen(value, building.descriptor.fields[position].kind);
+    }
+    return Heap.retain(frame.bindings.get("self").?.value.?);
+}
+
+/// A call's arguments, evaluated left to right as written and then placed in
+/// parameter order (7.3). A parameter left to its default holds `nothing` and is
+/// marked in `omitted`, which is null when none is.
+const Bound = struct {
+    values: []Value,
+    omitted: ?[]bool,
+};
+
+fn evaluateBound(
+    self: *Interpreter,
+    call: Ast.Expression.Call,
+    parameter_names: []const []const u8,
+    has_default: []const bool,
+) Error!Bound {
+    const written = try self.evaluateArguments(call.arguments);
+    if (call_arguments.isPlain(call, parameter_names.len)) return .{ .values = written, .omitted = null };
+    defer self.gpa.free(written);
+
+    const positions = self.gpa.alloc(?usize, parameter_names.len) catch |err| {
+        for (written) |value| self.heap.release(value);
+        return err;
+    };
+    defer self.gpa.free(positions);
+    // The checker accepted this call, so the matching cannot fail here.
+    std.debug.assert(call_arguments.bind(call, parameter_names, has_default, positions) == .none);
+
+    const values = self.gpa.alloc(Value, parameter_names.len) catch |err| {
+        for (written) |value| self.heap.release(value);
+        return err;
+    };
+    const omitted = self.gpa.alloc(bool, parameter_names.len) catch |err| {
+        self.gpa.free(values);
+        for (written) |value| self.heap.release(value);
+        return err;
+    };
+    var any_omitted = false;
+    for (positions, values, omitted) |position, *value, *left| {
+        value.* = if (position) |index| written[index] else Value.nothing;
+        left.* = position == null;
+        any_omitted = any_omitted or left.*;
+    }
+    if (!any_omitted) {
+        self.gpa.free(omitted);
+        return .{ .values = values, .omitted = null };
+    }
+    return .{ .values = values, .omitted = omitted };
+}
+
+fn evaluateBoundParameters(self: *Interpreter, call: Ast.Expression.Call, written: []const Ast.Parameter) Error!Bound {
+    if (call_arguments.isPlain(call, written.len)) {
+        return .{ .values = try self.evaluateArguments(call.arguments), .omitted = null };
+    }
+    const names = try self.gpa.alloc([]const u8, written.len);
+    defer self.gpa.free(names);
+    const defaults = try self.gpa.alloc(bool, written.len);
+    defer self.gpa.free(defaults);
+    for (written, names, defaults) |parameter, *name, *defaulted| {
+        name.* = parameter.name;
+        defaulted.* = parameter.default != null;
+    }
+    return self.evaluateBound(call, names, defaults);
+}
+
+/// Releases what `evaluateBound` produced when the call it was for never runs.
+fn releaseBound(self: *Interpreter, bound: Bound) void {
+    for (bound.values) |value| self.heap.release(value);
 }
 
 /// Section 15.2's `input(prompt)` and `input_maybe(prompt)`: writes the prompt,
@@ -1817,6 +1980,15 @@ fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call, newline: bool) E
 /// One call, whatever form it was written in. `captured` is the scope stack the
 /// callee runs against: empty for a named function, which can only read the
 /// module, and section 7.4's captured scopes for a lambda.
+const StructInfo = struct {
+    declaration: Ast.StructDeclaration,
+    field_names: []const []const u8,
+    has_default: []const bool,
+    any_default: bool,
+    /// What a stack trace calls the frame field defaults run in.
+    defaults_frame: []const u8,
+};
+
 /// A custom constructor, with what a stack trace calls it worked out once
 /// rather than at every construction.
 const Constructor = struct {
@@ -1840,6 +2012,10 @@ const Callable = struct {
     signature: Type.Signature,
     body: Body,
     captured: []const *Environment,
+    /// A named function's parameters as written, for their defaults (7.3).
+    written: []const Ast.Parameter = &.{},
+    /// Which parameters the call left to their defaults; null when none.
+    omitted: ?[]const bool = null,
     /// For a constructor or method, the value bound as `self`, which the call
     /// takes ownership of.
     self_value: ?Value = null,
@@ -1860,13 +2036,16 @@ fn callFunction(
     self: *Interpreter,
     call_span: Source.Span,
     name: []const u8,
-    argument_expressions: []const *const Ast.Expression,
+    call: Ast.Expression.Call,
 ) Error!Value {
     // Arguments evaluate in the caller's scopes before the callee's replace
     // them.
-    const arguments = try self.evaluateArguments(argument_expressions);
-    defer self.gpa.free(arguments);
-    return self.invoke(call_span, self.namedCallable(name), arguments);
+    var callable = self.namedCallable(name);
+    const bound = try self.evaluateBoundParameters(call, callable.written);
+    defer self.gpa.free(bound.values);
+    defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+    callable.omitted = bound.omitted;
+    return self.invoke(call_span, callable, bound.values);
 }
 
 fn namedCallable(self: *Interpreter, key: []const u8) Callable {
@@ -1879,6 +2058,7 @@ fn namedCallable(self: *Interpreter, key: []const u8) Callable {
         .signature = self.signatures.get(key).?,
         .body = .{ .statements = declaration.body.statements },
         .captured = &.{},
+        .written = declaration.parameters,
     };
 }
 
@@ -1962,6 +2142,8 @@ fn invoke(
             self.heap.release(argument);
             continue;
         }
+        // Left to its default, which is evaluated below, inside the callee.
+        if (callable.omitted) |omitted| if (omitted[index]) continue;
         try frame.bindings.put(self.gpa, name, .{ .kind = kind, .value = widen(argument, kind) });
     }
 
@@ -1977,6 +2159,21 @@ fn invoke(
     const outer_file = self.file;
     self.file = callable.file;
     defer self.file = outer_file;
+
+    // Section 7.3: "Explicit arguments evaluate left to right as written,
+    // followed by omitted defaults in parameter order." A default sees the
+    // parameters before it, which are already bound.
+    if (callable.omitted) |omitted| {
+        for (omitted, callable.written, callable.signature.parameters) |left, parameter, parameter_type| {
+            if (!left) continue;
+            const kind = kindOf(parameter_type);
+            const value = try self.evaluate(parameter.default.?);
+            frame.bindings.put(self.gpa, parameter.name, .{ .kind = kind, .value = widen(value, kind) }) catch |err| {
+                self.heap.release(value);
+                return err;
+            };
+        }
+    }
 
     const result = switch (callable.body) {
         .expression => |body| try self.evaluate(body),
@@ -2406,22 +2603,27 @@ fn callStructMethod(
     member: Ast.Expression.Member,
     key: []const u8,
 ) Error!Value {
+    var callable = self.namedCallable(key);
     if (!self.changing_methods.contains(key)) {
         const receiver = try self.evaluate(member.base);
-        const arguments = self.evaluateArguments(call.arguments) catch |err| {
+        const bound = self.evaluateBoundParameters(call, callable.written) catch |err| {
             self.heap.release(receiver);
             return err;
         };
-        defer self.gpa.free(arguments);
-        var callable = self.namedCallable(key);
+        defer self.gpa.free(bound.values);
+        defer if (bound.omitted) |omitted| self.gpa.free(omitted);
         callable.self_value = receiver;
-        return self.invoke(expression.span, callable, arguments);
+        callable.omitted = bound.omitted;
+        return self.invoke(expression.span, callable, bound.values);
     }
 
     const path = try self.evaluateReceiverPath(member.base);
     defer self.freeSteps(path.steps);
-    const arguments = try self.evaluateArguments(call.arguments);
-    defer self.gpa.free(arguments);
+    const bound = try self.evaluateBoundParameters(call, callable.written);
+    defer self.gpa.free(bound.values);
+    defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+    callable.omitted = bound.omitted;
+    const arguments = bound.values;
     const root_name = path.root.data.name;
 
     const binding = self.placeBinding(root_name, path.root.span) catch |err| {
@@ -2443,7 +2645,6 @@ fn callStructMethod(
     binding.changing = member.name;
 
     var changed: Value = Value.nothing;
-    var callable = self.namedCallable(key);
     callable.self_value = receiver;
     callable.self_out = &changed;
     const result = self.invoke(expression.span, callable, arguments);

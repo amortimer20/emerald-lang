@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Claude after the struct computed-properties sub-slice.
+Updated: 2026-09-12. Prepared by Claude after the defaults and named-arguments sub-slice.
 
 ## Current milestone
 
@@ -29,8 +29,10 @@ each field must be set on every path before the constructor finishes, a field ma
 once it is set, and `self` as a whole may be used once every field is. Structs have instance
 methods; the checker works out from each body whether it changes `self`, and a changing
 method can only be called on something that can change. Computed properties work, read-only
-and writable, with nested mutation through one rejected. Defaults, type-level members, member
-privacy, and method values are the remaining struct sub-slices; `super(...)` waits for
+and writable, with nested mutation through one rejected. Section 7.3's default parameters and
+named arguments work for functions, methods, and constructors, and fields have defaults that
+make them optional in the generated constructor. Type-level members, member privacy, and method
+values are the remaining struct sub-slices; `super(...)` waits for
 classes.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
@@ -156,6 +158,42 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Defaults and named-argument decisions worth knowing
+
+- **Why they arrived together, and with field defaults.** 10.2's "an explicitly supplied
+  generated-constructor argument replaces that field's default" needs a way to supply a
+  field after a defaulted one, and 7.3's named arguments are that way. Doing field defaults
+  alone would have meant inventing a positional-only rule 7.3 does not have.
+- **Matching lives in one place, `src/arguments.zig`.** `bind` fills parameters from
+  positional arguments and names and reports the first problem; the checker reports it,
+  and the interpreter repeats the same matching on accepted calls (asserting it succeeds),
+  so the two cannot disagree. A call with no names and one argument per parameter
+  (`isPlain`) skips it entirely, which keeps ordinary calls as cheap as before.
+- **One argument check for every call by name.** `checkArguments` now takes a `Parameters`
+  view, built from a function's, method's, or custom constructor's declaration, or from a
+  struct's fields for its generated constructor. That retired the generated constructor's
+  own copy (one of the open review findings); `typeOfValueCall` still has its own, since a
+  function value has no names or defaults. Old arity wording is kept when nothing is named
+  and nothing has a default, so existing diagnostics did not change.
+- **Defaults are evaluated in the callee.** `Callable.omitted` marks parameters left to
+  their defaults; `invoke` binds the explicit ones, switches to the callee's file and frame,
+  then evaluates each omitted default in parameter order, so a default sees the parameters
+  before it. `run/defaults-and-named-arguments` checks 7.3's evaluation order directly.
+- **"Not itself or later parameters" is a resolver rule.** Every parameter enters scope as
+  `later_parameter` and becomes readable once its own default has been walked, so
+  `func f(a: Int = b, b: Int = 1)` is reported rather than quietly reading a module `b`.
+- **Field defaults reuse constructor readiness.** Each default is checked as its own part of
+  construction (`Constructing.part = .default_of`), with exactly the fields set that are set
+  when it runs: under the generated constructor every earlier field, under a custom
+  constructor only earlier defaulted ones. Reads, `self` as a whole, and method and property
+  calls get default-specific wording (`reportInDefault`). A custom constructor's body starts
+  with defaulted fields already set.
+- **At runtime** a generated constructor places explicit arguments, then
+  `runFieldDefaults` runs the missing defaults in a frame of their own, named "the field
+  defaults of `Share`" in a stack trace, with `self` bound to the value being built. A custom
+  constructor runs every default there before its body. Confirmed non-vacuous: running
+  replaced defaults too fails `run/struct-field-defaults`.
 
 ### Property decisions worth knowing
 
@@ -831,15 +869,14 @@ still open.
 
 ## Next concrete step
 
-Continue section 20's slice 12. Stored fields, assignment through field paths, custom
-constructors, instance methods, and computed properties are done. What remains for structs:
-default field values (10.2, run once per construction, in declaration order, may read earlier
-fields but not later ones, and skipped when a generated-constructor argument replaced them),
-type-level members (10.4, `func Vector2.origin()` and `var Player.count = 0`), member privacy
-(10.5), and method values (7.5). Defaults are the natural next piece: they complete
-construction, which the generated constructor, custom constructors, and readiness tracking
-all have to agree on, and they interact with nothing added since. Classes, traits,
-operators, and enums follow in section 20's order.
+Continue section 20's slice 12. Structs now have stored fields with defaults, assignment
+through field paths, custom constructors, instance methods, and computed properties, and
+section 7.3's defaults and named arguments are in. What remains for structs: type-level
+members (10.4, `func Vector2.origin()` and `var Player.count = 0`), member privacy (10.5,
+covering fields, properties, and methods together), and method values (7.5). Type-level
+members are the natural next piece: 7.3 names type-level factory functions as what replaces
+overloaded constructors, so they are the missing half of the construction story. After
+structs, section 20's order continues with classes, traits, operators, and enums.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -859,7 +896,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 306 unit tests, 215 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 230 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -904,7 +941,7 @@ easier to design once there are types to raise.
 ### Deferred
 
 - From section 7: nested function declarations (rejected with one diagnostic; a lambda in a
-  variable does the same job), default parameters and named arguments, variadics (already
+  variable does the same job), variadics (already
   deferred in the spec), tuple destructuring in a lambda parameter, and capturing a built-in
   such as `print`, which no written function type describes. A top-level `return`, which
   section 14.1 uses to end the program, is rejected outside a function for now.
@@ -981,6 +1018,11 @@ behavioral failures:
   first pass and iterating that list for the second and third would filter once instead of
   three times.
 ### Known rough edges
+
+- The capture check counts what a default reads even when the call supplies that argument,
+  so `Box(width: 2)` above the assignment of a module variable only `width`'s default reads
+  is reported. Moving the call down always works. Tracking default reads separately, per
+  parameter, would remove the false report.
 
 - A runtime error inside a changing method leaves `nothing` where the receiver was. Nothing
   can catch an error yet, so the program has already ended by then; once section 13 adds

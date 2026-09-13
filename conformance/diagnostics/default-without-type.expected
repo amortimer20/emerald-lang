@@ -1,0 +1,4 @@
+diagnostics/default-without-type.em:1:18: `times` needs a type before its default
+  func greet(times = 1) {
+                   ^
+Write the type first, as in `count: Int = 0`.

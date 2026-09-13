@@ -85,6 +85,9 @@ pub const StructDeclaration = struct {
         name: []const u8,
         name_span: Source.Span,
         annotation: TypeExpression,
+        /// Section 10.2's default, which runs when construction leaves the
+        /// field to it.
+        default: ?*const Expression = null,
     };
 
     /// `const area: Float { ... }`, or `var diameter: Float { get { ... } set
@@ -178,6 +181,8 @@ pub const Parameter = struct {
     name: []const u8,
     name_span: Source.Span,
     annotation: TypeExpression,
+    /// Section 7.3's default, evaluated when a call omits this parameter.
+    default: ?*const Expression = null,
 };
 
 pub const Return = struct {
@@ -410,6 +415,14 @@ pub const Expression = struct {
     pub const Call = struct {
         callee: *const Expression,
         arguments: []const *const Expression,
+        /// Section 7.3's named arguments, one per argument and null for a
+        /// positional one. Empty when no argument is named.
+        names: []const ?ArgumentName = &.{},
+
+        pub const ArgumentName = struct {
+            text: []const u8,
+            span: Source.Span,
+        };
     };
 };
 

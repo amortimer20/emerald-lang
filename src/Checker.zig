@@ -39,6 +39,7 @@ const Project = @import("Project.zig");
 const Resolver = @import("Resolver.zig");
 const Source = @import("Source.zig");
 const Type = @import("Type.zig");
+const call_arguments = @import("arguments.zig");
 
 const Checker = @This();
 
@@ -126,6 +127,8 @@ facts: Resolver.Facts,
 declarations: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// User-defined structs, keyed by the same resolved names as module bindings.
 structs: Structs = .empty,
+/// Every struct declaration, by the same keys.
+struct_declarations: std.StringHashMapUnmanaged(Ast.StructDeclaration) = .empty,
 /// Every struct that declares its own constructor, by the same keys.
 constructors: std.StringHashMapUnmanaged(Ast.StructDeclaration) = .empty,
 /// For every instance method, keyed like `declarations`, the type it belongs to.
@@ -173,6 +176,26 @@ file: u32 = 0,
 const Constructing = struct {
     type: Type,
     keyword_span: Source.Span,
+    declaration: Ast.StructDeclaration,
+    /// What is being checked: the constructor's body, which starts with every
+    /// defaulted field set (defaults run first), or one field's default.
+    part: union(enum) {
+        body,
+        default_of: usize,
+    } = .body,
+
+    /// Whether a field is certainly set when this part begins. A default runs
+    /// after the fields before it: under the generated constructor every one of
+    /// them has its value by then, from an argument or its own default, but
+    /// under a custom constructor only the defaulted ones do.
+    fn setAtStart(self: Constructing, field: usize) bool {
+        const fields = self.declaration.fields;
+        return switch (self.part) {
+            .body => fields[field].default != null,
+            .default_of => |current| field < current and
+                (self.declaration.constructor == null or fields[field].default != null),
+        };
+    }
 };
 
 /// What the checker tracks about one enclosing loop.
@@ -222,6 +245,7 @@ pub fn check(
                 user.* = .{ .name = key, .display_name = declaration.name };
                 const struct_type = Type.structOf(user);
                 try checker.structs.put(arena, key, struct_type);
+                try checker.struct_declarations.put(arena, key, declaration);
                 if (declaration.constructor != null) try checker.constructors.put(arena, key, declaration);
                 for (declaration.methods) |method| {
                     const method_key = try Resolver.methodKey(arena, key, method.name);
@@ -313,6 +337,7 @@ pub fn check(
                 .function_declaration => |function| try checker.ensureBodyChecked(checker.keyOf(function.name)),
                 .struct_declaration => |declaration| {
                     const type_key = checker.keyOf(declaration.name);
+                    try checker.checkFieldDefaults(type_key);
                     if (declaration.constructor != null) try checker.checkConstructorBody(type_key);
                     for (declaration.methods) |method| {
                         try checker.ensureBodyChecked(try Resolver.methodKey(arena, type_key, method.name));
@@ -1794,11 +1819,12 @@ fn checkBodyWithSelf(
             .declared = building.type,
             .assigned = true,
         });
-        for (building.type.user.?.fields) |field| {
+        for (building.type.user.?.fields, 0..) |field, position| {
+            const set = building.setAtStart(position);
             try parameters.put(self.arena, try fieldSetKey(self.arena, field.name), .{
                 .type = field.type,
                 .declared = field.type,
-                .assigned = false,
+                .assigned = set,
             });
             // Assigned here means "certainly not set yet", which intersects
             // the right way at a merge: a `const` field may be set only where
@@ -1806,7 +1832,7 @@ fn checkBodyWithSelf(
             try parameters.put(self.arena, try fieldUnsetKey(self.arena, field.name), .{
                 .type = field.type,
                 .declared = field.type,
-                .assigned = true,
+                .assigned = !set,
             });
         }
     }
@@ -1831,6 +1857,39 @@ fn checkBodyWithSelf(
     self.current_return_type = expected_return_type;
     self.in_function = true;
     self.constructing = constructing;
+
+    // Section 7.3's defaults, each against its parameter's type. The resolver
+    // has already kept each from reading itself or a later parameter.
+    for (parameter_list, parameter_types) |parameter, parameter_type| {
+        const default = parameter.default orelse continue;
+        const actual = try self.typeOfExpected(default, parameter_type);
+        if (!actual.assignableTo(parameter_type)) {
+            try self.report(
+                default.span,
+                "this default is {f}, but `{s}` is {f}",
+                .{ actual, parameter.name, parameter_type },
+                mismatchHelp(actual, parameter_type, "Give the parameter a default of its own type."),
+            );
+        }
+    }
+
+    if (constructing) |building| {
+        if (building.part == .default_of) {
+            const position = building.part.default_of;
+            const field = building.declaration.fields[position];
+            const wanted = building.type.user.?.fields[position].type;
+            const actual = try self.typeOfExpected(field.default.?, wanted);
+            if (!actual.assignableTo(wanted)) {
+                try self.report(
+                    field.default.?.span,
+                    "this default is {f}, but `{s}` is a field holding {f}",
+                    .{ actual, field.name, wanted },
+                    mismatchHelp(actual, wanted, "Give the field a default of its own type."),
+                );
+            }
+            return;
+        }
+    }
 
     // The body's top level shares the parameters' scope, as in the resolver.
     try self.checkStatements(statements);
@@ -1920,8 +1979,28 @@ fn checkConstructorBody(self: *Checker, key: []const u8) Error!void {
         signature.parameters,
         constructor.body.statements,
         .nothing,
-        .{ .type = self.structs.get(key).?, .keyword_span = constructor.keyword_span },
+        .{ .type = self.structs.get(key).?, .keyword_span = constructor.keyword_span, .declaration = self.constructors.get(key).? },
     );
+}
+
+/// Section 10.2's field defaults, each in the state construction is in when it
+/// runs, so reading a field that is not set yet is the same error it would be
+/// in a constructor body.
+fn checkFieldDefaults(self: *Checker, key: []const u8) Error!void {
+    const outer_file = self.file;
+    defer self.file = outer_file;
+    if (self.facts.owner.get(key)) |owner| self.file = owner;
+
+    const declaration = self.struct_declarations.get(key).?;
+    for (declaration.fields, 0..) |field, position| {
+        if (field.default == null) continue;
+        try self.checkBody(&.{}, &.{}, &.{}, .nothing, .{
+            .type = self.structs.get(key).?,
+            .keyword_span = field.name_span,
+            .declaration = declaration,
+            .part = .{ .default_of = position },
+        });
+    }
 }
 
 /// `self.x = value` and friends inside a constructor. Returns whether the
@@ -1970,6 +2049,14 @@ fn checkSelfAssignment(self: *Checker, assignment: Ast.Assignment) Error!bool {
                 "`{s}` is a `const` field, so it cannot be set inside a loop",
                 .{field.name},
                 "A loop can run more than once. Set `self.{s}` once, before or after the loop.",
+                .{field.name},
+            );
+        } else if (!unset.assigned and hasDefault(building.declaration, field.name)) {
+            try self.reportWithHelp(
+                field.span,
+                "`{s}` is a `const` field with a default, so the constructor cannot set it",
+                .{field.name},
+                "Its default runs before the constructor does. Remove the default if the constructor should decide `{s}`.",
                 .{field.name},
             );
         } else if (!unset.assigned) {
@@ -2174,6 +2261,7 @@ fn propertyOf(self: *Checker, owner: Type, name: []const u8) Error!?PropertyInfo
 fn requireReadyForMember(self: *Checker, base: *const Ast.Expression, name: []const u8, span: Source.Span, comptime verb: []const u8) Error!bool {
     if (self.constructing == null or base.data != .name or !std.mem.eql(u8, base.data.name, "self")) return false;
     const field = try self.firstUnsetField() orelse return false;
+    if (try self.reportInDefault(span, "read a property of `self`")) return true;
     try self.reportWithHelp(
         span,
         "`{s}` cannot be " ++ verb ++ " until every field of `self` is set",
@@ -2227,17 +2315,45 @@ fn typeOfStructMethodCall(
     try self.method_calls.put(self.arena, call.callee, key);
 
     const signature = try self.signatureFor(key);
-    try self.checkArguments(call, member.name, signature, "Match the number of arguments to the method's parameters.");
+    try self.checkArguments(call, member.name, try self.parametersOf(
+        signature,
+        self.declarations.get(key).?.parameters,
+        "Match the number of arguments to the method's parameters.",
+    ));
     if (try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
     if (!self.in_function) try self.checkCaptures(expression.span, key, member.name);
     return signature.return_type;
+}
+
+/// The same readiness rules, worded for a field default, which cannot set
+/// anything and so can only be told what it may read. Returns whether it
+/// reported, which it does only inside a default.
+fn reportInDefault(self: *Checker, span: Source.Span, comptime what: []const u8) Error!bool {
+    const building = self.constructing orelse return false;
+    if (building.part != .default_of) return false;
+    try self.report(
+        span,
+        "a field default cannot " ++ what,
+        .{},
+        "A default runs while the value is still being built, so it can read only the earlier fields it needs, as in `self.width`.",
+    );
+    return true;
+}
+
+fn hasDefault(declaration: Ast.StructDeclaration, name: []const u8) bool {
+    for (declaration.fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) return field.default != null;
+    }
+    return false;
 }
 
 /// Section 10.2: "Before all fields are ready, `self` may not escape or be or be
 /// passed elsewhere." Reading one field that is set is not escaping.
 fn requireSelfReady(self: *Checker, span: Source.Span) Error!void {
     const field = try self.firstUnsetField() orelse return;
-    try self.reportWithHelp(
+    if (try self.reportInDefault(span, "use `self` as a whole")) {
+        // Nothing to do after: a default is one expression.
+    } else try self.reportWithHelp(
         span,
         "`self` cannot be used as a whole until every field is set",
         .{},
@@ -3209,13 +3325,27 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
         }
         if (try self.fieldSetBinding(member.name)) |set| {
             if (!set.assigned) {
-                try self.reportWithHelp(
-                    member.name_span,
-                    "`self.{s}` is read here before it is set",
-                    .{member.name},
-                    "Set `self.{s}` first, as in `self.{s} = ...`.",
-                    .{ member.name, member.name },
-                );
+                const building = self.constructing.?;
+                if (building.part == .default_of) {
+                    try self.reportWithHelp(
+                        member.name_span,
+                        "`self.{s}` is not set yet when this default runs",
+                        .{member.name},
+                        "{s}",
+                        .{if (building.declaration.constructor == null)
+                            "A default can read only the fields declared before it."
+                        else
+                            "A default runs before the constructor, so it can read only earlier fields that have defaults of their own."},
+                    );
+                } else {
+                    try self.reportWithHelp(
+                        member.name_span,
+                        "`self.{s}` is read here before it is set",
+                        .{member.name},
+                        "Set `self.{s}` first, as in `self.{s} = ...`.",
+                        .{ member.name, member.name },
+                    );
+                }
                 set.assigned = true;
             }
             return set.type;
@@ -3351,7 +3481,7 @@ fn typeOfMethodCall(
         std.mem.eql(u8, member.base.data.name, "self"))
     {
         if (try self.firstUnsetField()) |field| {
-            try self.reportWithHelp(
+            if (!try self.reportInDefault(member.name_span, "call a method on `self`")) try self.reportWithHelp(
                 member.name_span,
                 "`{s}` cannot be called until every field of `self` is set",
                 .{member.name},
@@ -3368,6 +3498,7 @@ fn typeOfMethodCall(
         try self.typeArguments(call.arguments);
         return .invalid;
     }
+    if (base.kind != .struct_value or base.optional) try self.rejectNames(call);
 
     // Section 4.5's `or` is the one thing you may do to a value that may be
     // absent without proving it is there, because supplying the fallback is
@@ -3378,8 +3509,8 @@ fn typeOfMethodCall(
         return .invalid;
     }
 
-    if (base.kind == .string) return self.typeOfStringMethod(call, member);
     if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base);
+    if (base.kind == .string) return self.typeOfStringMethod(call, member);
     if ((base.kind == .int or base.kind == .float or base.kind == .bool) and
         std.mem.eql(u8, member.name, "to_string"))
     {
@@ -4342,48 +4473,51 @@ fn typeOfCall(
     if (binding.is_type) {
         // Section 10.2: a custom constructor replaces the generated one, so
         // its parameters are what a call must match.
+        if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
+        // Section 10.2: a custom constructor replaces the generated one, so
+        // its parameters are what a call must match.
         if (self.constructors.contains(reference.key)) {
-            const signature = try self.constructorSignature(reference.key);
-            try self.checkArguments(
-                call,
-                name,
-                signature,
+            const constructor = self.constructors.get(reference.key).?.constructor.?;
+            try self.checkArguments(call, name, try self.parametersOf(
+                try self.constructorSignature(reference.key),
+                constructor.parameters,
                 "Match the number of arguments to the constructor's parameters.",
-            );
-            if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
+            ));
             return binding.type;
         }
+        const declaration = self.struct_declarations.get(reference.key).?;
         const fields = binding.type.user.?.fields;
-        if (call.arguments.len != fields.len) {
-            if (fields.len == 0) {
-                try self.report(
-                    call.callee.span,
-                    "`{s}` takes no arguments, but this call passes {d}",
-                    .{ name, call.arguments.len },
-                    "This fieldless struct uses its generated zero-argument constructor.",
-                );
-            } else {
-                try self.report(
-                    call.callee.span,
-                    "`{s}` takes {d} argument{s}, but this call passes {d}",
-                    .{ name, fields.len, if (fields.len == 1) "" else "s", call.arguments.len },
-                    "Pass one value for each required field, in declaration order.",
-                );
-            }
+        if (fields.len == 0 and call.arguments.len > 0) {
+            try self.report(
+                call.callee.span,
+                "`{s}` takes no arguments, but this call passes {d}",
+                .{ name, call.arguments.len },
+                "This fieldless struct uses its generated zero-argument constructor.",
+            );
             try self.typeArguments(call.arguments);
-        } else {
-            for (call.arguments, fields) |argument, field| {
-                const actual = try self.typeOfExpected(argument, field.type);
-                if (!actual.assignableTo(field.type)) {
-                    try self.report(
-                        argument.span,
-                        "this is {f}, but field `{s}` of `{s}` needs {f}",
-                        .{ actual, field.name, name, field.type },
-                        mismatchHelp(actual, field.type, "Pass a value of the field's declared type, or convert it first."),
-                    );
-                }
-            }
+            return binding.type;
         }
+        const types = try self.arena.alloc(Type, fields.len);
+        const names = try self.arena.alloc([]const u8, fields.len);
+        const defaults = try self.arena.alloc(bool, fields.len);
+        var any_default = false;
+        for (fields, declaration.fields, types, names, defaults) |field, written, *t, *n, *d| {
+            t.* = field.type;
+            n.* = field.name;
+            d.* = written.default != null;
+            any_default = any_default or d.*;
+        }
+        try self.checkArguments(call, name, .{
+            .types = types,
+            .names = names,
+            .has_default = defaults,
+            .noun = "field",
+            .mismatch_help = "Pass a value of the field's declared type, or convert it first.",
+            .arity_help = if (any_default)
+                "Pass a value for each field without a default, in declaration order, or name the fields you pass."
+            else
+                "Pass one value for each required field, in declaration order.",
+        });
         return binding.type;
     }
 
@@ -4394,6 +4528,7 @@ fn typeOfCall(
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
     if (!self.declarations.contains(reference.key)) {
+        try self.rejectNames(call);
         if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
             return self.typeOfInput(call, name);
         }
@@ -4402,41 +4537,124 @@ fn typeOfCall(
     }
 
     const signature = try self.signatureFor(reference.key);
-    try self.checkArguments(call, name, signature, "Match the number of arguments to the function's parameters.");
+    try self.checkArguments(call, name, try self.parametersOf(
+        signature,
+        self.declarations.get(reference.key).?.parameters,
+        "Match the number of arguments to the function's parameters.",
+    ));
 
     if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
     return signature.return_type;
 }
 
-/// A call to a named declaration with parameter names: a function, or a type
-/// whose constructor is its own.
+/// What a call by name is matched against (7.3).
+const Parameters = struct {
+    types: []const Type,
+    names: []const []const u8,
+    has_default: []const bool,
+    /// What one of them is called in a diagnostic.
+    noun: []const u8 = "parameter",
+    arity_help: []const u8,
+    mismatch_help: []const u8 = "Pass a value of the expected type, or convert it first.",
+};
+
+fn parametersOf(self: *Checker, signature: Signature, written: []const Ast.Parameter, arity_help: []const u8) Error!Parameters {
+    const defaults = try self.arena.alloc(bool, written.len);
+    for (written, defaults) |parameter, *has| has.* = parameter.default != null;
+    return .{
+        .types = signature.parameters,
+        .names = signature.parameter_names,
+        .has_default = defaults,
+        .arity_help = arity_help,
+    };
+}
+
+/// A call to a named declaration with parameter names: a function, a method, or
+/// a type, whether its constructor is generated or its own.
 fn checkArguments(
     self: *Checker,
     call: Ast.Expression.Call,
     name: []const u8,
-    signature: Signature,
-    arity_help: []const u8,
+    parameters: Parameters,
 ) Error!void {
-    if (call.arguments.len != signature.parameters.len) {
-        const expected = signature.parameters.len;
-        try self.report(
-            call.callee.span,
-            "`{s}` takes {d} argument{s}, but this call passes {d}",
-            .{ name, expected, if (expected == 1) "" else "s", call.arguments.len },
-            arity_help,
-        );
-        return self.typeArguments(call.arguments);
+    const bound = try self.arena.alloc(?usize, parameters.names.len);
+    const any_default = std.mem.indexOfScalar(bool, parameters.has_default, true) != null;
+    const problem = call_arguments.bind(call, parameters.names, parameters.has_default, bound);
+    switch (problem) {
+        .none => {},
+        .too_many => {
+            const expected = parameters.names.len;
+            try self.report(
+                call.callee.span,
+                "`{s}` takes {s}{d} argument{s}, but this call passes {d}",
+                .{ name, if (any_default) "at most " else "", expected, if (expected == 1) "" else "s", call.arguments.len },
+                parameters.arity_help,
+            );
+        },
+        .missing => |position| if (call.names.len == 0 and !any_default) {
+            const expected = parameters.names.len;
+            try self.report(
+                call.callee.span,
+                "`{s}` takes {d} argument{s}, but this call passes {d}",
+                .{ name, expected, if (expected == 1) "" else "s", call.arguments.len },
+                parameters.arity_help,
+            );
+        } else {
+            try self.reportWithHelp(
+                call.callee.span,
+                "this call gives `{s}` no value for {s} `{s}`",
+                .{ name, parameters.noun, parameters.names[position] },
+                "Pass it by position, or by name as `{s}: ...`.",
+                .{parameters.names[position]},
+            );
+        },
+        .unknown_name => |index| try self.reportWithHelp(
+            call.names[index].?.span,
+            "`{s}` has no {s} named `{s}`",
+            .{ name, parameters.noun, call.names[index].?.text },
+            "{s}",
+            .{if (parameters.names.len == 0) "It takes no arguments." else "Check the spelling against the declaration."},
+        ),
+        .duplicate => |index| try self.report(
+            call.names[index].?.span,
+            "`{s}` already has a value in this call",
+            .{call.names[index].?.text},
+            "Pass each value once.",
+        ),
+        .positional_after_named => |index| try self.report(
+            call.arguments[index].span,
+            "a value without a name cannot follow a named one",
+            .{},
+            "Put the values passed by position first, in order, and the named ones after them.",
+        ),
     }
-    for (call.arguments, signature.parameters, signature.parameter_names) |argument, expected, parameter_name| {
+    if (problem != .none) return self.typeArguments(call.arguments);
+
+    for (bound, parameters.types, parameters.names) |argument_index, expected, parameter_name| {
+        const argument = call.arguments[argument_index orelse continue];
         const actual = try self.typeOfExpected(argument, expected);
         if (!actual.assignableTo(expected)) {
             try self.report(
                 argument.span,
-                "this is {f}, but parameter `{s}` of `{s}` needs {f}",
-                .{ actual, parameter_name, name, expected },
-                mismatchHelp(actual, expected, "Pass a value of the expected type, or convert it first."),
+                "this is {f}, but {s} `{s}` of `{s}` needs {f}",
+                .{ actual, parameters.noun, parameter_name, name, expected },
+                mismatchHelp(actual, expected, parameters.mismatch_help),
             );
         }
+    }
+}
+
+/// Section 7.3's names belong to a declaration's parameters, so a call through
+/// a value, to the prelude, or to a built-in method has none to match.
+fn rejectNames(self: *Checker, call: Ast.Expression.Call) Error!void {
+    for (call.names) |maybe| {
+        const name = maybe orelse continue;
+        return self.report(
+            name.span,
+            "a named argument needs a function, method, or type called by its own name",
+            .{},
+            "Pass this value by position instead.",
+        );
     }
 }
 
@@ -4446,6 +4664,7 @@ fn checkArguments(
 /// `name` is the binding the value came from, when it came from one, so the
 /// diagnostic can say which name is not a function.
 fn typeOfValueCall(self: *Checker, call: Ast.Expression.Call, callee: Type, name: ?[]const u8) Error!Type {
+    try self.rejectNames(call);
     if (callee.kind == .invalid) {
         try self.typeArguments(call.arguments);
         return .invalid;

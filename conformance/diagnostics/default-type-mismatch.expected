@@ -1,0 +1,8 @@
+diagnostics/default-type-mismatch.em:1:25: this default is String, but `times` is Int
+  func greet(times: Int = "twice") {
+                          ^^^^^^^
+Give the parameter a default of its own type.
+diagnostics/default-type-mismatch.em:5:21: this default is String, but `size` is a field holding Int
+      var size: Int = "large"
+                      ^^^^^^^
+Give the field a default of its own type.

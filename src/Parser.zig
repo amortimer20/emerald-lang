@@ -424,9 +424,10 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
     };
 }
 
-/// Section 10.2's stored fields, its one optional custom constructor, and its
-/// instance methods. Defaults are a later slice. Without a constructor, every field is one
-/// required generated-constructor argument, in declaration order.
+/// Section 10.2's stored fields with their defaults, its one optional custom
+/// constructor, its instance methods, and its computed properties. Without a
+/// constructor, every field is one generated-constructor parameter, in
+/// declaration order, which its default makes optional.
 fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
     const name = self.peek();
@@ -516,12 +517,13 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             self.skipSeparators();
             continue;
         }
-        if (self.check(.equal)) {
-            return self.report(
-                self.peek().span,
-                "default field values are not available yet",
-                "Pass this field to the generated constructor for now.",
-            );
+        var default: ?*const Ast.Expression = null;
+        if (self.match(.equal) != null) {
+            // A default may read earlier fields through `self` (10.2).
+            const saved_self = self.self_allowed;
+            self.self_allowed = .member;
+            defer self.self_allowed = saved_self;
+            default = try self.parseExpression();
         }
         try self.expectStatementEnd();
         try fields.append(self.arena, .{
@@ -529,6 +531,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             .name = try self.identifier(field_name),
             .name_span = field_name.span,
             .annotation = annotation,
+            .default = default,
         });
         self.skipSeparators();
     }
@@ -910,9 +913,23 @@ fn parseParameterList(self: *Parser, after: []const u8, missing_help: []const u8
     _ = self.advance();
 
     var parameters: std.ArrayList(Ast.Parameter) = .empty;
+    var first_default: ?[]const u8 = null;
     if (!self.check(.right_paren)) {
         while (true) {
-            try parameters.append(self.arena, try self.parseParameter());
+            const parameter = try self.parseParameter();
+            // Section 7.3: "Default-valued parameters follow required
+            // parameters." Otherwise a positional call could never reach the
+            // required one without also passing the default.
+            if (parameter.default != null) {
+                if (first_default == null) first_default = parameter.name;
+            } else if (first_default) |defaulted| {
+                try self.note(
+                    parameter.name_span,
+                    try std.fmt.allocPrint(self.arena, "`{s}` has no default, so it cannot follow `{s}`, which has one", .{ parameter.name, defaulted }),
+                    "Move the parameters with defaults to the end, or give this one a default too.",
+                );
+            }
+            try parameters.append(self.arena, parameter);
             if (self.match(.comma) == null) break;
         }
     }
@@ -943,10 +960,11 @@ fn parseParameter(self: *Parser) Error!Ast.Parameter {
     _ = self.advance();
 
     if (self.check(.equal)) {
-        return self.report(
+        return self.reportFmt(
             self.peek().span,
-            "default parameter values are not available yet",
-            "Give this parameter a value at every call site for now.",
+            "`{s}` needs a type before its default",
+            .{self.text(name)},
+            "Write the type first, as in `count: Int = 0`.",
         );
     }
 
@@ -960,7 +978,8 @@ fn parseParameter(self: *Parser) Error!Ast.Parameter {
     }
 
     const annotation = try self.parseTypeExpression();
-    return .{ .name = try self.identifier(name), .name_span = name.span, .annotation = annotation };
+    const default: ?*const Ast.Expression = if (self.match(.equal) != null) try self.parseExpression() else null;
+    return .{ .name = try self.identifier(name), .name_span = name.span, .annotation = annotation, .default = default };
 }
 
 /// Section 7.1 allows a bare `return` for a function with no result. Whether a
@@ -1899,8 +1918,20 @@ fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Exp
     _ = self.advance();
 
     var arguments: std.ArrayList(*const Ast.Expression) = .empty;
+    var names: std.ArrayList(?Ast.Expression.Call.ArgumentName) = .empty;
+    var any_named = false;
     if (!self.check(.right_paren)) {
         while (true) {
+            // Section 7.3's `punctuation: "?"`. A name followed by `:` cannot
+            // begin an expression, so this is never ambiguous.
+            var name: ?Ast.Expression.Call.ArgumentName = null;
+            if (self.check(.identifier) and self.peekAfterNext().kind == .colon) {
+                const token = self.advance();
+                _ = self.advance();
+                name = .{ .text = try self.identifier(token), .span = token.span };
+                any_named = true;
+            }
+            try names.append(self.arena, name);
             try arguments.append(self.arena, try self.parseExpression());
             if (self.match(.comma) == null) break;
         }
@@ -1920,6 +1951,7 @@ fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Exp
     return self.node(spanning(callee.span, closing.span), .{ .call = .{
         .callee = callee,
         .arguments = try arguments.toOwnedSlice(self.arena),
+        .names = if (any_named) try names.toOwnedSlice(self.arena) else &.{},
     } });
 }
 
@@ -2213,8 +2245,16 @@ fn finishTrailingLambda(self: *Parser, base: *const Ast.Expression) Error!*const
     const lambda = try self.parseLambda();
 
     var arguments: std.ArrayList(*const Ast.Expression) = .empty;
+    var names: []const ?Ast.Expression.Call.ArgumentName = &.{};
     const callee = if (base.data == .call) blk: {
         try arguments.appendSlice(self.arena, base.data.call.arguments);
+        if (base.data.call.names.len > 0) {
+            // The block is one more positional argument.
+            const extended = try self.arena.alloc(?Ast.Expression.Call.ArgumentName, base.data.call.names.len + 1);
+            @memcpy(extended[0..base.data.call.names.len], base.data.call.names);
+            extended[base.data.call.names.len] = null;
+            names = extended;
+        }
         break :blk base.data.call.callee;
     } else base;
     try arguments.append(self.arena, lambda);
@@ -2222,6 +2262,7 @@ fn finishTrailingLambda(self: *Parser, base: *const Ast.Expression) Error!*const
     return self.node(spanning(base.span, lambda.span), .{ .call = .{
         .callee = callee,
         .arguments = try arguments.toOwnedSlice(self.arena),
+        .names = names,
     } });
 }
 

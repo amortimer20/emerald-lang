@@ -1,0 +1,8 @@
+diagnostics/field-default-uses-self.em:3:28: a field default cannot use `self` as a whole
+      var label: String = "#{self}"
+                             ^^^^
+A default runs while the value is still being built, so it can read only the earlier fields it needs, as in `self.width`.
+diagnostics/field-default-uses-self.em:4:26: a field default cannot call a method on `self`
+      var area: Int = self.measure()
+                           ^^^^^^^
+A default runs while the value is still being built, so it can read only the earlier fields it needs, as in `self.width`.
