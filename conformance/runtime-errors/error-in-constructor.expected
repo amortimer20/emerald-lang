@@ -1,0 +1,5 @@
+runtime-errors/error-in-constructor.em:5:22: floor division by zero
+          self.value = top // bottom
+                       ^^^^^^^^^^^^^
+Check the divisor before dividing. Division by zero has no result for either numeric type.
+in the constructor of `Ratio`, called at runtime-errors/error-in-constructor.em:9:7

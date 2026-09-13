@@ -1,0 +1,4 @@
+diagnostics/constructor-self-escape.em:9:21: `self` cannot be used as a whole until every field is set
+          made.append(self)
+                      ^^^^
+Set `self.right` first. Until every field is set, only fields that are already set can be read.

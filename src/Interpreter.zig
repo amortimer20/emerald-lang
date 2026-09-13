@@ -142,9 +142,11 @@ scopes: std.ArrayList(*Environment) = .empty,
 spare_scopes: std.ArrayList(*Environment) = .empty,
 
 functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
-/// Fieldless struct constructors, keyed program-wide and carrying their short
-/// source name for display.
+/// Struct types, keyed program-wide and carrying their short source name for
+/// display.
 structs: std.StringHashMapUnmanaged(*const Value.StructType) = .empty,
+/// The structs that declare their own constructor (10.2), by the same keys.
+constructors: std.StringHashMapUnmanaged(Constructor) = .empty,
 /// What the checker proved about each function, including return types it
 /// inferred, which are needed to widen results the way it allowed.
 signatures: *const Type.Signatures,
@@ -231,6 +233,16 @@ pub fn run(
                     interpreter.keyOf(declaration.name),
                     descriptor,
                 );
+                if (declaration.constructor) |constructor| {
+                    try interpreter.constructors.put(interpreter.arena, interpreter.keyOf(declaration.name), .{
+                        .declaration = constructor,
+                        .frame_name = try std.fmt.allocPrint(
+                            interpreter.arena,
+                            "the constructor of `{s}`",
+                            .{descriptor.display_name},
+                        ),
+                    });
+                }
                 continue;
             }
             if (statement.data != .function_declaration) continue;
@@ -1596,7 +1608,7 @@ fn evaluateCall(
     // resolver decided which, and recorded it.
     if (self.facts.qualified.get(call.callee)) |key| {
         try self.reach(key, call.callee.span);
-        if (self.structs.get(key)) |descriptor| return self.constructStruct(descriptor, call.arguments);
+        if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call.arguments);
         if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
         return self.callValue(expression.span, call);
     }
@@ -1616,7 +1628,7 @@ fn evaluateCall(
     const key = self.keyOf(name);
     try self.reach(key, call.callee.span);
     if (self.find(name) != null) return self.callValue(expression.span, call);
-    if (self.structs.get(key)) |descriptor| return self.constructStruct(descriptor, call.arguments);
+    if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call.arguments);
     if (self.functions.contains(key)) return self.callFunction(expression.span, key, call.arguments);
     if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
         return self.evaluateInput(expression.span, call, std.mem.eql(u8, name, "input_maybe"));
@@ -1626,12 +1638,42 @@ fn evaluateCall(
 
 fn constructStruct(
     self: *Interpreter,
+    call_span: Source.Span,
+    key: []const u8,
     descriptor: *const Value.StructType,
-    arguments: []const *const Ast.Expression,
+    argument_expressions: []const *const Ast.Expression,
 ) Error!Value {
-    const fields = try self.evaluateArguments(arguments);
-    for (fields, descriptor.fields) |*field, metadata| field.* = widen(field.*, metadata.kind);
-    return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
+    const constructor = self.constructors.get(key) orelse {
+        const fields = try self.evaluateArguments(argument_expressions);
+        for (fields, descriptor.fields) |*field, metadata| field.* = widen(field.*, metadata.kind);
+        return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
+    };
+
+    // Section 10.2's custom constructor. The arguments are evaluated in the
+    // caller's scopes first, as for any call. The instance starts with every
+    // field holding `nothing`; the checker has proved the body sets each one
+    // before anything can read it or `self` can go anywhere.
+    const arguments = try self.evaluateArguments(argument_expressions);
+    defer self.gpa.free(arguments);
+    const fields = self.gpa.alloc(Value, descriptor.fields.len) catch |err| {
+        for (arguments) |argument| self.heap.release(argument);
+        return err;
+    };
+    @memset(fields, Value.nothing);
+    const instance = self.heap.createStruct(descriptor, fields) catch |err| {
+        for (arguments) |argument| self.heap.release(argument);
+        return err;
+    };
+
+    return self.invoke(call_span, .{
+        .name = constructor.frame_name,
+        .named = false,
+        .file = self.facts.owner.get(key) orelse self.file,
+        .signature = self.signatures.get(key).?,
+        .body = .{ .statements = constructor.declaration.body.statements },
+        .captured = &.{},
+        .constructing = .{ .data = .{ .struct_value = instance } },
+    }, arguments);
 }
 
 /// Section 15.2's `input(prompt)` and `input_maybe(prompt)`: writes the prompt,
@@ -1700,6 +1742,13 @@ fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call, newline: bool) E
 /// One call, whatever form it was written in. `captured` is the scope stack the
 /// callee runs against: empty for a named function, which can only read the
 /// module, and section 7.4's captured scopes for a lambda.
+/// A custom constructor, with what a stack trace calls it worked out once
+/// rather than at every construction.
+const Constructor = struct {
+    declaration: Ast.StructDeclaration.Constructor,
+    frame_name: []const u8,
+};
+
 const Callable = struct {
     /// What a stack trace calls it.
     name: []const u8,
@@ -1716,6 +1765,9 @@ const Callable = struct {
     signature: Type.Signature,
     body: Body,
     captured: []const *Environment,
+    /// For a constructor, the instance being built, bound as `self` and
+    /// produced as the result whatever the body returns. The callable owns it.
+    constructing: ?Value = null,
 
     const Body = union(enum) {
         statements: []const Ast.Statement,
@@ -1807,6 +1859,9 @@ fn invoke(
     try self.scopes.appendSlice(self.gpa, callable.captured);
 
     const frame = try self.pushScope();
+    if (callable.constructing) |instance| {
+        try frame.bindings.put(self.gpa, "self", .{ .kind = .struct_value, .value = instance });
+    }
     for (callable.signature.parameter_names, arguments, callable.signature.parameters, 0..) |name, argument, parameter_type, index| {
         // An `Int` passed to a `Float` parameter arrives as a `Float`.
         const kind = kindOf(parameter_type);
@@ -1851,6 +1906,13 @@ fn invoke(
             };
             const returned = self.return_value orelse Value.nothing;
             self.return_value = null;
+            // A constructor produces `self` as the body left it, which may no
+            // longer be the instance it started with if copy-on-write replaced
+            // it. The frame's binding still holds its own count, released
+            // when the frame ends.
+            if (callable.constructing != null) {
+                break :blk Heap.retain(frame.bindings.get("self").?.value.?);
+            }
             break :blk returned;
         },
     };

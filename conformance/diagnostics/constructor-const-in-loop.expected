@@ -1,0 +1,4 @@
+diagnostics/constructor-const-in-loop.em:7:18: `code` is a `const` field, so it cannot be set inside a loop
+              self.code = step
+                   ^^^^
+A loop can run more than once. Set `self.code` once, before or after the loop.

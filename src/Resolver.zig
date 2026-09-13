@@ -112,7 +112,9 @@ pub const Resolved = struct {
 /// declared by any program, so they live in a scope of their own.
 pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe" };
 
-pub const BindingKind = enum { variable, parameter, loop_variable, function, type };
+/// `self_value` is section 10.2's `self` inside a constructor: its fields are
+/// set one at a time, but the value itself is never replaced.
+pub const BindingKind = enum { variable, parameter, loop_variable, function, type, self_value };
 
 const Binding = struct {
     mutable: bool,
@@ -361,6 +363,11 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
             .kind = .type,
         });
         try self.facts.owner.put(self.arena, key, self.file);
+        // Constructing a value runs its constructor, which may read module
+        // variables and call functions like any function body, so a call to
+        // the type is recorded exactly as a call to a function is.
+        try self.facts.module_reads.put(self.arena, key, .empty);
+        try self.facts.calls.put(self.arena, key, .empty);
         try self.noteElsewhere(declaration.name);
     }
 }
@@ -884,8 +891,20 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
 
         .break_statement, .continue_statement => {},
 
-        .function_declaration => |function| try self.walkFunctionBody(function),
-        .struct_declaration => {},
+        .function_declaration => |function| try self.walkBody(
+            try self.keyOf(self.file, function.name),
+            function.parameters,
+            function.body.statements,
+            false,
+        ),
+        .struct_declaration => |declaration| if (declaration.constructor) |constructor| {
+            try self.walkBody(
+                try self.keyOf(self.file, declaration.name),
+                constructor.parameters,
+                constructor.body.statements,
+                true,
+            );
+        },
 
         .return_statement => |return_statement| {
             if (return_statement.value) |value| try self.walkExpression(value);
@@ -984,6 +1003,12 @@ fn reportReadOnly(
             .{name},
             "Declare a variable with a different name to hold a value.",
         ),
+        .self_value => try self.report(
+            span,
+            "`self` cannot be replaced",
+            .{},
+            "A constructor builds the value it was called for. Set its fields one at a time, as in `self.x = x`.",
+        ),
     }
 }
 
@@ -1039,21 +1064,35 @@ fn walkFor(self: *Resolver, loop: Ast.For) Error!void {
     try self.walkStatements(loop.body.statements);
 }
 
-/// Walks a function body where it is written. The module scope stays visible
-/// underneath, holding exactly the variables declared above this function plus
-/// every function (all hoisted), which is section 7.1's visibility.
+/// Whether calling a module-level binding runs a body the checker has to follow
+/// for section 7.1's capture rule: a function's, or a type's constructor.
+fn isCallable(kind: BindingKind) bool {
+    return kind == .function or kind == .type;
+}
+
+/// Walks a function or constructor body where it is written. The module scope
+/// stays visible underneath, holding exactly the variables declared above it
+/// plus every function (all hoisted), which is section 7.1's visibility. `key`
+/// is the declaration the body's reads and calls are recorded under; a
+/// constructor's are recorded under its type, since calling the type runs it.
 ///
-/// The parser only accepts a function declaration at the top level, so the
-/// scope stack here is always the prelude and the module scope and nothing else;
-/// no enclosing block's locals can leak in.
-fn walkFunctionBody(self: *Resolver, function: Ast.FunctionDeclaration) Error!void {
+/// The parser only accepts a function or struct declaration at the top level,
+/// so the scope stack here is always the prelude and the module scope and
+/// nothing else; no enclosing block's locals can leak in.
+fn walkBody(
+    self: *Resolver,
+    key: []const u8,
+    parameter_list: []const Ast.Parameter,
+    statements: []const Ast.Statement,
+    constructor: bool,
+) Error!void {
     std.debug.assert(self.scopes.items.len == module_scope + 1);
 
     try self.push();
     const outer_boundary = self.function_boundary;
     const outer_function = self.current_function;
     self.function_boundary = self.scopes.items.len - 1;
-    self.current_function = try self.keyOf(self.file, function.name);
+    self.current_function = key;
     defer {
         self.pop();
         self.function_boundary = outer_boundary;
@@ -1061,7 +1100,15 @@ fn walkFunctionBody(self: *Resolver, function: Ast.FunctionDeclaration) Error!vo
     }
 
     const parameters = &self.scopes.items[self.scopes.items.len - 1];
-    for (function.parameters) |parameter| {
+    if (constructor) {
+        // `self` is a keyword, so no parameter can already be called this.
+        try parameters.put(self.arena, "self", .{
+            .mutable = false,
+            .span = .{ .start = 0, .end = 0 },
+            .kind = .self_value,
+        });
+    }
+    for (parameter_list) |parameter| {
         if (parameters.contains(parameter.name)) {
             try self.report(
                 parameter.name_span,
@@ -1080,7 +1127,7 @@ fn walkFunctionBody(self: *Resolver, function: Ast.FunctionDeclaration) Error!vo
 
     // The body's top level shares the parameters' scope, so a local that
     // reuses a parameter's name is shadowing within the same function.
-    try self.walkStatements(function.body.statements);
+    try self.walkStatements(statements);
 }
 
 /// What a member expression turned out to be.
@@ -1220,7 +1267,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                 if (call.callee.data == .name) {
                     const callee = call.callee.data.name;
                     if (self.lookup(callee)) |found| {
-                        if (found.scope == module_scope and found.binding.kind == .function) {
+                        if (found.scope == module_scope and isCallable(found.binding.kind)) {
                             try self.facts.calls.getPtr(caller).?.put(self.arena, found.key, {});
                         }
                     }
@@ -1247,7 +1294,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     if (self.scopes.items[module_scope].get(key)) |binding| {
                         try self.noteRead(.{ .binding = binding, .scope = module_scope, .key = key });
                         if (self.current_function) |caller| {
-                            if (binding.kind == .function) {
+                            if (isCallable(binding.kind)) {
                                 try self.facts.calls.getPtr(caller).?.put(self.arena, key, {});
                             }
                         }

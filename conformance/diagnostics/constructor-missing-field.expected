@@ -1,0 +1,4 @@
+diagnostics/constructor-missing-field.em:5:5: this constructor can finish without setting `y`
+      constructor(x: Int) {
+      ^^^^^^^^^^^
+Set `self.y` on every path through the constructor.

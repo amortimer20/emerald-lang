@@ -72,12 +72,23 @@ pub const StructDeclaration = struct {
     name: []const u8,
     name_span: Source.Span,
     fields: []const Field,
+    /// Section 10.2's custom constructor, which replaces the generated one.
+    /// A type declares at most one, since overloading is deferred.
+    constructor: ?Constructor = null,
 
     pub const Field = struct {
         mutable: bool,
         name: []const u8,
         name_span: Source.Span,
         annotation: TypeExpression,
+    };
+
+    /// `constructor(x: Float) { self.x = x }`. It has no name and no return
+    /// type: calling the type runs it, and what it produces is always `self`.
+    pub const Constructor = struct {
+        keyword_span: Source.Span,
+        parameters: []const Parameter,
+        body: Block,
     };
 };
 

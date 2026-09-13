@@ -1,0 +1,4 @@
+diagnostics/self-in-block.em:6:33: a block cannot use `self` yet
+          const show = { => print(self.code) }
+                                  ^^^^
+Read what the block needs into a local first, as in `const x = self.x`, and use that inside the block.

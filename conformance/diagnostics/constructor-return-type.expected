@@ -1,0 +1,4 @@
+diagnostics/constructor-return-type.em:4:27: a constructor has no return type
+      constructor(code: Int): Badge {
+                            ^^^^^^^
+It always produces the value being built. Remove the `:` and the type.

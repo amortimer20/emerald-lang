@@ -1,0 +1,12 @@
+diagnostics/narrowing-undone-in-loop.em:8:15: addition needs numbers, but this is Int? and Int
+          print(score + 1)
+                ^^^^^^^^^
+One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first.
+diagnostics/narrowing-undone-in-loop.em:12:11: addition needs numbers, but this is Int? and Int
+      print(score + 1)
+            ^^^^^^^^^
+One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first.
+diagnostics/narrowing-undone-in-loop.em:18:15: addition needs numbers, but this is Int? and Int
+          print(bonus + step)
+                ^^^^^^^^^^^^
+One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first.

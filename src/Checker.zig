@@ -118,6 +118,11 @@ facts: Resolver.Facts,
 declarations: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// User-defined structs, keyed by the same resolved names as module bindings.
 structs: Structs = .empty,
+/// Every struct that declares its own constructor, by the same keys.
+constructors: std.StringHashMapUnmanaged(Ast.StructDeclaration) = .empty,
+/// The struct whose constructor body is being checked, if any. Section 10.2's
+/// rules about `self` apply only here.
+constructing: ?Constructing = null,
 /// Memoized by `signatureFor`.
 signatures: Type.Signatures = .empty,
 /// Bodies already checked, so each is checked exactly once whichever of
@@ -144,6 +149,14 @@ loops: std.ArrayList(Loop) = .empty,
 /// reported here and used to turn a bare module-level name into the one key
 /// the whole program knows it by.
 file: u32 = 0,
+
+/// The constructor being checked. Whether each field has been set is kept as
+/// bindings in the constructor's own scope (see `fieldSetKey`), so branches,
+/// loops, and early returns merge it exactly as they merge definite assignment.
+const Constructing = struct {
+    type: Type,
+    keyword_span: Source.Span,
+};
 
 /// What the checker tracks about one enclosing loop.
 const Loop = struct {
@@ -192,6 +205,7 @@ pub fn check(
                 user.* = .{ .name = key, .display_name = declaration.name };
                 const struct_type = Type.structOf(user);
                 try checker.structs.put(arena, key, struct_type);
+                if (declaration.constructor != null) try checker.constructors.put(arena, key, declaration);
                 try module.put(arena, key, .{
                     .type = struct_type,
                     .declared = struct_type,
@@ -258,8 +272,12 @@ pub fn check(
     for (programs, 0..) |program, index| {
         checker.file = @intCast(index);
         for (program.statements) |statement| {
-            if (statement.data == .function_declaration) {
-                try checker.ensureBodyChecked(checker.keyOf(statement.data.function_declaration.name));
+            switch (statement.data) {
+                .function_declaration => |function| try checker.ensureBodyChecked(checker.keyOf(function.name)),
+                .struct_declaration => |declaration| if (declaration.constructor != null) {
+                    try checker.checkConstructorBody(checker.keyOf(declaration.name));
+                },
+                else => {},
             }
         }
     }
@@ -607,11 +625,19 @@ fn checkDestructuringAssignment(self: *Checker, assignment: Ast.DestructuringAss
 /// from the state before the loop. That is exactly right for the first
 /// iteration, and later ones only know more, since nothing becomes unassigned.
 ///
+/// Narrowing is the exception, because a proof can be lost: a body that sets a
+/// name back to `nothing` leaves it absent for the next iteration and for the
+/// condition that decides whether there is one. So before either is checked,
+/// every name the body assigns gives up what was proved about it (4.5), and the
+/// body proves it again if it can. That is also what keeps the state restored
+/// after the loop from bringing back a proof the body undid.
+///
 /// The body may also run zero times, so after the loop only what was assigned
 /// before it is known. `while true` is the exception: it can end only through a
 /// `break`, so what follows it knows whatever every `break` knew, and when it
 /// has no `break` at all, nothing after it is reachable.
 fn checkWhile(self: *Checker, loop: Ast.While) Error!void {
+    self.forgetNarrowingAssignedIn(loop.body.statements);
     try self.requireCondition(loop.condition);
     const before = try self.snapshot();
     const infinite = isLiteralTrue(loop.condition);
@@ -632,7 +658,9 @@ fn checkWhile(self: *Checker, loop: Ast.While) Error!void {
 /// and a range may be empty, so as with `while`, only what was assigned before
 /// the loop is known after it.
 fn checkFor(self: *Checker, loop: Ast.For) Error!void {
+    // The iterable is evaluated once, before the body can change anything.
     const element = try self.typeOfIterable(loop.iterable);
+    self.forgetNarrowingAssignedIn(loop.body.statements);
     const before = try self.snapshot();
 
     try self.loops.append(self.arena, .{ .depth = self.scopes.items.len, .infinite = false });
@@ -654,6 +682,43 @@ fn checkFor(self: *Checker, loop: Ast.For) Error!void {
 
     // After the scope is gone, so the snapshot and the scopes line up again.
     self.restoreAfterLoop(before);
+}
+
+/// Undoes section 4.5's narrowing for every name a loop body assigns anywhere
+/// in its statements, nested blocks and loops included. Assignments inside a
+/// lambda are not looked for: a name assigned there is never narrowed at all.
+fn forgetNarrowingAssignedIn(self: *Checker, statements: []const Ast.Statement) void {
+    for (statements) |statement| switch (statement.data) {
+        // Assigning into a place changes what the name holds, not whether it
+        // is there, and a place cannot be reached through an optional anyway.
+        .assignment => |assignment| if (assignment.steps.len == 0) self.forgetNarrowing(assignment.name),
+        .destructuring_assignment => |assignment| for (assignment.pattern.names) |name| {
+            self.forgetNarrowing(name.text);
+        },
+        .conditional => |conditional| {
+            self.forgetNarrowingAssignedIn(conditional.then_block.statements);
+            if (conditional.otherwise) |otherwise| switch (otherwise) {
+                .block => |block| self.forgetNarrowingAssignedIn(block.statements),
+                .chained => |chained| self.forgetNarrowingAssignedIn(chained[0..1]),
+            };
+        },
+        .while_loop => |inner| self.forgetNarrowingAssignedIn(inner.body.statements),
+        .for_loop => |inner| self.forgetNarrowingAssignedIn(inner.body.statements),
+        .expression,
+        .declaration,
+        .break_statement,
+        .continue_statement,
+        .function_declaration,
+        .struct_declaration,
+        .return_statement,
+        .destructuring,
+        => {},
+    };
+}
+
+fn forgetNarrowing(self: *Checker, name: []const u8) void {
+    const binding = self.find(name) orelse return;
+    binding.type = binding.declared;
 }
 
 /// The type of each value a `for` loop visits. Only ranges so far, and a range
@@ -985,6 +1050,7 @@ fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
 /// name holds without replacing the name's own binding, which section 4.3
 /// forbids for a `const` just as it forbids replacing the whole value.
 fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
+    if (try self.checkSelfAssignment(assignment)) return;
     const binding = self.find(assignment.name) orelse {
         for (assignment.steps) |step| switch (step) {
             .index => |index| try self.requireIndex(index),
@@ -1243,9 +1309,14 @@ fn checkConditional(self: *Checker, conditional: Ast.If) Error!void {
     const then_returns = !blockCompletes(conditional.then_block.statements);
 
     const otherwise = conditional.otherwise orelse {
-        // No else: the block may not have run at all. This holds even when the
-        // block always returns, since reaching past it means it did not run.
+        // No else: the block may not have run at all, so what follows is the
+        // merge of running it and skipping it. A block that always returns
+        // is left out, since reaching past it means it did not run. Restoring
+        // alone is not a merge: it would keep a narrowing the block undid by
+        // assigning `nothing`, and a constructor's record that a `const`
+        // field is still unset after a block that set it.
         self.restore(before);
+        if (!then_returns) self.intersect(after_then);
         // Unless it always returns, in which case getting here proves the
         // condition failed. That is what makes a guard — `return if
         // name == nothing` — narrow the whole rest of the block.
@@ -1290,6 +1361,31 @@ fn checkReturn(self: *Checker, return_statement: Ast.Return) Error!void {
             .{},
             "Remove it, or move this code into a function.",
         );
+        return;
+    }
+
+    if (self.constructing != null) {
+        if (return_statement.value) |value| {
+            _ = try self.typeOf(value);
+            try self.report(
+                value.span,
+                "a constructor cannot return a value",
+                .{},
+                "It always produces the value being built. Use a bare `return` to finish early.",
+            );
+            return;
+        }
+        // Section 10.2: "A bare constructor `return` is allowed only after all
+        // fields are initialized."
+        if (try self.firstUnsetField()) |field| {
+            try self.reportWithHelp(
+                return_statement.keyword_span,
+                "this `return` finishes the constructor without setting `{s}`",
+                .{field},
+                "Set `self.{s}` before returning.",
+                .{field},
+            );
+        }
         return;
     }
 
@@ -1438,6 +1534,18 @@ fn checkFunctionBody(
     parameter_types: []const Type,
     expected_return_type: ?Type,
 ) Error!void {
+    try self.checkBody(declaration.parameters, parameter_types, declaration.body.statements, expected_return_type, null);
+}
+
+/// The one way a body is checked, whether a function's or a constructor's.
+fn checkBody(
+    self: *Checker,
+    parameter_list: []const Ast.Parameter,
+    parameter_types: []const Type,
+    statements: []const Ast.Statement,
+    expected_return_type: ?Type,
+    constructing: ?Constructing,
+) Error!void {
     const view = try self.arena.create(Scope);
     view.* = .empty;
     // The module scope second, so a program function named like a prelude
@@ -1453,7 +1561,7 @@ fn checkFunctionBody(
 
     const parameters = try self.arena.create(Scope);
     parameters.* = .empty;
-    for (declaration.parameters, parameter_types) |parameter, parameter_type| {
+    for (parameter_list, parameter_types) |parameter, parameter_type| {
         try parameters.put(self.arena, parameter.name, .{
             .type = parameter_type,
             .declared = parameter_type,
@@ -1461,16 +1569,42 @@ fn checkFunctionBody(
             .mutability = .parameter,
         });
     }
+    if (constructing) |building| {
+        // `self` itself is always there to set fields on; whether it may be
+        // used as a whole is decided from its fields (see `firstUnsetField`).
+        try parameters.put(self.arena, "self", .{
+            .type = building.type,
+            .declared = building.type,
+            .assigned = true,
+        });
+        for (building.type.user.?.fields) |field| {
+            try parameters.put(self.arena, try fieldSetKey(self.arena, field.name), .{
+                .type = field.type,
+                .declared = field.type,
+                .assigned = false,
+            });
+            // Assigned here means "certainly not set yet", which intersects
+            // the right way at a merge: a `const` field may be set only where
+            // every path into this point left it unset.
+            try parameters.put(self.arena, try fieldUnsetKey(self.arena, field.name), .{
+                .type = field.type,
+                .declared = field.type,
+                .assigned = true,
+            });
+        }
+    }
 
     const outer_scopes = self.scopes;
     const outer_return_type = self.current_return_type;
     const outer_in_function = self.in_function;
     const outer_loops = self.loops;
+    const outer_constructing = self.constructing;
     defer {
         self.scopes = outer_scopes;
         self.current_return_type = outer_return_type;
         self.in_function = outer_in_function;
         self.loops = outer_loops;
+        self.constructing = outer_constructing;
     }
 
     self.scopes = .empty;
@@ -1479,9 +1613,189 @@ fn checkFunctionBody(
     try self.scopes.append(self.arena, parameters);
     self.current_return_type = expected_return_type;
     self.in_function = true;
+    self.constructing = constructing;
 
     // The body's top level shares the parameters' scope, as in the resolver.
-    try self.checkStatements(declaration.body.statements);
+    try self.checkStatements(statements);
+
+    // Section 10.2: "Every remaining field must be definitely initialized
+    // before construction completes." A body that cannot fall off its end has
+    // had each of its `return`s checked instead.
+    if (constructing) |building| {
+        if (blockCompletes(statements)) {
+            if (try self.firstUnsetField()) |field| {
+                try self.reportWithHelp(
+                    building.keyword_span,
+                    "this constructor can finish without setting `{s}`",
+                    .{field},
+                    "Set `self.{s}` on every path through the constructor.",
+                    .{field},
+                );
+            }
+        }
+    }
+}
+
+// Constructors.
+
+/// The binding that records whether `self.name` has certainly been set. A
+/// leading `.` cannot begin any name or key, so it collides with nothing.
+fn fieldSetKey(arena: std.mem.Allocator, name: []const u8) Error![]const u8 {
+    return std.fmt.allocPrint(arena, ".{s}", .{name});
+}
+
+/// The binding that records whether `self.name` has certainly not been set
+/// yet. A leading `!` cannot begin any name either.
+fn fieldUnsetKey(arena: std.mem.Allocator, name: []const u8) Error![]const u8 {
+    return std.fmt.allocPrint(arena, "!{s}", .{name});
+}
+
+fn fieldSetBinding(self: *Checker, name: []const u8) Error!?*Binding {
+    return self.find(try fieldSetKey(self.arena, name));
+}
+
+/// The first field, in declaration order, not certainly set here. Declaration
+/// order keeps the report stable and matches how a reader scans the struct.
+fn firstUnsetField(self: *Checker) Error!?[]const u8 {
+    const building = self.constructing orelse return null;
+    for (building.type.user.?.fields) |field| {
+        const binding = try self.fieldSetBinding(field.name) orelse continue;
+        if (!binding.assigned) return field.name;
+    }
+    return null;
+}
+
+/// A struct's constructor, as a signature the interpreter can widen arguments
+/// through exactly as it does a function's. Stored under the type's key.
+fn constructorSignature(self: *Checker, key: []const u8) Error!Signature {
+    if (self.signatures.get(key)) |signature| return signature;
+    const declaration = self.constructors.get(key).?;
+    const constructor = declaration.constructor.?;
+
+    const outer_file = self.file;
+    defer self.file = outer_file;
+    if (self.facts.owner.get(key)) |owner| self.file = owner;
+
+    const parameter_types = try self.arena.alloc(Type, constructor.parameters.len);
+    const parameter_names = try self.arena.alloc([]const u8, constructor.parameters.len);
+    for (constructor.parameters, 0..) |parameter, index| {
+        parameter_types[index] = try self.resolveTypeExpression(parameter.annotation);
+        parameter_names[index] = parameter.name;
+    }
+    const signature: Signature = .{
+        .parameters = parameter_types,
+        .parameter_names = parameter_names,
+        .return_type = self.structs.get(key).?,
+    };
+    try self.signatures.put(self.arena, key, signature);
+    return signature;
+}
+
+fn checkConstructorBody(self: *Checker, key: []const u8) Error!void {
+    const outer_file = self.file;
+    defer self.file = outer_file;
+    if (self.facts.owner.get(key)) |owner| self.file = owner;
+
+    const signature = try self.constructorSignature(key);
+    const constructor = self.constructors.get(key).?.constructor.?;
+    try self.checkBody(
+        constructor.parameters,
+        signature.parameters,
+        constructor.body.statements,
+        .nothing,
+        .{ .type = self.structs.get(key).?, .keyword_span = constructor.keyword_span },
+    );
+}
+
+/// `self.x = value` and friends inside a constructor. Returns whether the
+/// assignment was fully handled here; the rest go on to the ordinary place
+/// check with `self` as their root, once the field they start from is known
+/// to be set.
+fn checkSelfAssignment(self: *Checker, assignment: Ast.Assignment) Error!bool {
+    const building = self.constructing orelse return false;
+    if (!std.mem.eql(u8, assignment.name, "self")) return false;
+    const field = switch (assignment.steps[0]) {
+        .field => |field| field,
+        // Indexing a struct is reported by the ordinary check.
+        .index => return false,
+    };
+
+    const set = try self.fieldSetBinding(field.name) orelse {
+        // Not a field at all, which the ordinary check reports.
+        return false;
+    };
+    const stored = for (building.type.user.?.fields) |candidate| {
+        if (std.mem.eql(u8, candidate.name, field.name)) break candidate;
+    } else unreachable;
+
+    if (assignment.steps.len > 1 or assignment.operation != null) {
+        // Reaching into a field, or combining with it, reads it first.
+        if (!set.assigned) {
+            try self.reportWithHelp(
+                field.span,
+                "`self.{s}` is read here before it is set",
+                .{field.name},
+                "Set `self.{s}` first, as in `self.{s} = ...`.",
+                .{ field.name, field.name },
+            );
+            set.assigned = true;
+        }
+        return false;
+    }
+
+    // Setting the field. Section 10.2 lets a constructor initialize a `const`
+    // field; section 4.3 still means it is set exactly once.
+    const unset = self.find(try fieldUnsetKey(self.arena, field.name)).?;
+    if (!stored.mutable) {
+        if (self.loops.items.len > 0) {
+            try self.reportWithHelp(
+                field.span,
+                "`{s}` is a `const` field, so it cannot be set inside a loop",
+                .{field.name},
+                "A loop can run more than once. Set `self.{s}` once, before or after the loop.",
+                .{field.name},
+            );
+        } else if (!unset.assigned) {
+            try self.reportWithHelp(
+                field.span,
+                "`{s}` is a `const` field and may already be set here",
+                .{field.name},
+                "A `const` field is set once. Declare it `var {s}: {f}` in {f} if it needs to change.",
+                .{ field.name, stored.type, building.type },
+            );
+        }
+    }
+
+    const value = try self.typeOfExpected(assignment.value, stored.type);
+    if (!value.assignableTo(stored.type)) {
+        try self.report(
+            assignment.value.span,
+            "this is {f}, but `{s}` is a field holding {f}",
+            .{ value, field.name, stored.type },
+            mismatchHelp(value, stored.type, "Assign a value of the field's type, or convert it first."),
+        );
+    }
+    set.assigned = true;
+    unset.assigned = false;
+    return true;
+}
+
+/// Section 10.2: "Before all fields are ready, `self` may not escape or be
+/// passed elsewhere." Reading one field that is set is not escaping.
+fn requireSelfReady(self: *Checker, span: Source.Span) Error!void {
+    const field = try self.firstUnsetField() orelse return;
+    try self.reportWithHelp(
+        span,
+        "`self` cannot be used as a whole until every field is set",
+        .{},
+        "Set `self.{s}` first. Until every field is set, only fields that are already set can be read.",
+        .{field},
+    );
+    // Treated as set from here, so one early use is reported once rather than
+    // at every later one, as an unassigned name is.
+    for (self.constructing.?.type.user.?.fields) |each| {
+        (try self.fieldSetBinding(each.name)).?.assigned = true;
+    }
 }
 
 /// Merges the types of every `return` in a body being inferred. Section 4.4's
@@ -1869,6 +2183,10 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             }
             if (binding.is_function) {
                 break :blk try self.typeOfFunctionValue(expression, .{ .key = self.keyOf(name), .display = name });
+            }
+            if (self.constructing != null and std.mem.eql(u8, name, "self")) {
+                try self.requireSelfReady(expression.span);
+                break :blk binding.type;
             }
             if (!binding.assigned) {
                 try self.reportUnassigned(expression.span, name, binding.*);
@@ -2428,6 +2746,35 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
 
 /// A property: `count` is the only one so far (8.5).
 fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
+    // `self.x` inside a constructor reads one field, which needs only that
+    // field to be set, not all of them.
+    if (self.constructing != null and member.base.data == .name and
+        std.mem.eql(u8, member.base.data.name, "self") and member.position == null)
+    {
+        if (try self.fieldSetBinding(member.name)) |set| {
+            if (!set.assigned) {
+                try self.reportWithHelp(
+                    member.name_span,
+                    "`self.{s}` is read here before it is set",
+                    .{member.name},
+                    "Set `self.{s}` first, as in `self.{s} = ...`.",
+                    .{ member.name, member.name },
+                );
+                set.assigned = true;
+            }
+            return set.type;
+        }
+        // Not a field. Reported directly, since going through `typeOf(self)`
+        // would first complain that `self` is not ready yet.
+        const building = self.constructing.?.type;
+        try self.report(
+            member.name_span,
+            "{f} has no field named `{s}`",
+            .{ building, member.name },
+            "Check the field name in the struct declaration.",
+        );
+        return .invalid;
+    }
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) return .invalid;
     if (!try self.requirePresent(base, member.base, member.name)) return .invalid;
@@ -2438,7 +2785,7 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
         }
         try self.report(
             member.name_span,
-            "`{f}` has no field named `{s}`",
+            "{f} has no field named `{s}`",
             .{ base, member.name },
             "Check the field name in the struct declaration.",
         );
@@ -3503,6 +3850,19 @@ fn typeOfCall(
     };
 
     if (binding.is_type) {
+        // Section 10.2: a custom constructor replaces the generated one, so
+        // its parameters are what a call must match.
+        if (self.constructors.contains(reference.key)) {
+            const signature = try self.constructorSignature(reference.key);
+            try self.checkArguments(
+                call,
+                name,
+                signature,
+                "Match the number of arguments to the constructor's parameters.",
+            );
+            if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
+            return binding.type;
+        }
         const fields = binding.type.user.?.fields;
         if (call.arguments.len != fields.len) {
             if (fields.len == 0) {
@@ -3552,32 +3912,42 @@ fn typeOfCall(
     }
 
     const signature = try self.signatureFor(reference.key);
+    try self.checkArguments(call, name, signature, "Match the number of arguments to the function's parameters.");
 
+    if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
+    return signature.return_type;
+}
+
+/// A call to a named declaration with parameter names: a function, or a type
+/// whose constructor is its own.
+fn checkArguments(
+    self: *Checker,
+    call: Ast.Expression.Call,
+    name: []const u8,
+    signature: Signature,
+    arity_help: []const u8,
+) Error!void {
     if (call.arguments.len != signature.parameters.len) {
         const expected = signature.parameters.len;
         try self.report(
             call.callee.span,
             "`{s}` takes {d} argument{s}, but this call passes {d}",
             .{ name, expected, if (expected == 1) "" else "s", call.arguments.len },
-            "Match the number of arguments to the function's parameters.",
+            arity_help,
         );
-        try self.typeArguments(call.arguments);
-    } else {
-        for (call.arguments, signature.parameters, signature.parameter_names) |argument, expected, parameter_name| {
-            const actual = try self.typeOfExpected(argument, expected);
-            if (!actual.assignableTo(expected)) {
-                try self.report(
-                    argument.span,
-                    "this is {f}, but parameter `{s}` of `{s}` needs {f}",
-                    .{ actual, parameter_name, name, expected },
-                    mismatchHelp(actual, expected, "Pass a value of the expected type, or convert it first."),
-                );
-            }
+        return self.typeArguments(call.arguments);
+    }
+    for (call.arguments, signature.parameters, signature.parameter_names) |argument, expected, parameter_name| {
+        const actual = try self.typeOfExpected(argument, expected);
+        if (!actual.assignableTo(expected)) {
+            try self.report(
+                argument.span,
+                "this is {f}, but parameter `{s}` of `{s}` needs {f}",
+                .{ actual, parameter_name, name, expected },
+                mismatchHelp(actual, expected, "Pass a value of the expected type, or convert it first."),
+            );
         }
     }
-
-    if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
-    return signature.return_type;
 }
 
 /// A call through a value rather than a name: section 7.4's lambdas and

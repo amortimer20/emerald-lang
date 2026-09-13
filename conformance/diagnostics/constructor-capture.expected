@@ -1,0 +1,8 @@
+diagnostics/constructor-capture.em:15:7: `Badge` reads `base`, which is not assigned yet here
+  print(Badge())
+        ^^^^^^^
+Move this call below the line that assigns `base`.
+diagnostics/constructor-capture.em:16:7: `make` reads `base`, which is not assigned yet here
+  print(make())
+        ^^^^^^
+Move this call below the line that assigns `base`.

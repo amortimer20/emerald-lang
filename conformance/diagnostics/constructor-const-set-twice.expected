@@ -1,0 +1,4 @@
+diagnostics/constructor-const-set-twice.em:8:14: `code` is a `const` field and may already be set here
+          self.code = code
+               ^^^^
+A `const` field is set once. Declare it `var code: Int` in Badge if it needs to change.

@@ -1,0 +1,4 @@
+diagnostics/constructor-branch-missing-field.em:4:5: this constructor can finish without setting `value`
+      constructor(value: Int) {
+      ^^^^^^^^^^^
+Set `self.value` on every path through the constructor.

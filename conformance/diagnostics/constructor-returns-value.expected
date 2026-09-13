@@ -1,0 +1,4 @@
+diagnostics/constructor-returns-value.em:6:16: a constructor cannot return a value
+          return self
+                 ^^^^
+It always produces the value being built. Use a bare `return` to finish early.

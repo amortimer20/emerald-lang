@@ -1601,15 +1601,20 @@ Default field values are allowed and run in declaration order, once per construc
 They may read earlier initialized fields but not later ones. An explicitly supplied
 generated-constructor argument replaces that field's default, which then does not run.
 Every remaining field must be definitely initialized before construction completes.
+Inside a constructor a `const` field is initialized exactly once: it may be set only where
+no path reaching that point has already set it, and never inside a loop, which could set it
+again.
 
 A custom constructor replaces the generated constructor. A type declares at most one, since
 overloading is deferred; alternative ways to build a value are type-level factory functions
 such as `func Vector2.from_angle(radians: Float): Vector2`, which name their intent. A
 derived constructor calls `super(...)` first when the base constructor requires arguments; a
 zero-argument base call is inserted when possible. Base construction finishes before
-derived field defaults and the rest of the derived constructor. `self(...)` delegates to
-another constructor of the same type, must be first, cannot be combined with `super(...)`,
-and may not form a cycle. A bare constructor `return` is allowed only after all fields are
+derived field defaults and the rest of the derived constructor. Constructor delegation,
+`self(...)`, is deferred with overloading: with at most one constructor per type there is no
+other constructor to delegate to. When overloaded constructors arrive, `self(...)` delegates
+to another constructor of the same type, must be first, cannot be combined with
+`super(...)`, and may not form a cycle. A bare constructor `return` is allowed only after all fields are
 initialized; constructors never return replacement values.
 
 A fieldless type receives the ordinary generated zero-argument constructor. A subclass
@@ -2614,7 +2619,8 @@ The following are deliberately outside the initial implementation:
 - broad user-declared generics;
 - a source-visible `Any` top type;
 - immutable collection views and collection covariance;
-- function and method overloading, and with it overloaded constructors;
+- function and method overloading, and with it overloaded constructors and constructor
+  delegation through `self(...)`;
 - mixed-type operator contracts such as `Vector2 + Float`;
 - nested optionals;
 - variadic functions;
@@ -2795,6 +2801,12 @@ recorded in their normative sections:
 | Value-type mutability (4.3, 7.1, 8.1, 10.2) | `const` and parameters freeze values; the rule stops at class references | Under value semantics, mutating and replacing are indistinguishable, so a shallow `const` protected nothing coherent, and mutating a parameter's copy was a silent no-op that a beginner would write and never understand. Replaces the earlier shallow `const`, which followed C# reference-type variables. |
 | A place is a path (4.3, 10.2) | Assigning to `a.b[i].c` and calling a changing method through the same shape both walk one path of indices and struct fields, and a `const` field freezes it exactly where it sits, not only at the top | 4.3 already says a `const` field can be "neither replaced nor changed", which only means something once a field can hold another struct. Checking each step as the path is walked, rather than only the root binding, is what makes `line.start.x = 1` fail when `start` is `const` even though `line` is a `var`. A tuple position is rejected the same way, since 8.2 gives no way to write through one at all. |
 | Assigning through a namespace (4.3, 14.2) | Not attempted; the existing "namespace, not a value" diagnostic already covers it | `Shapes.origin.x = 1` reaches the resolver as the bare name `Shapes` once member access is walked like any other step, and `Shapes` is not a value regardless of what follows it. Inventing a struct-field-specific diagnostic here would special-case one path to a capability (assigning through a namespace) that does not exist for any other kind of target either. |
+| Setting a `const` field in a constructor (4.3, 10.2) | Exactly once: only where no path into that point has set it, and never inside a loop | 10.2 lets a constructor initialize a `const` field and 4.3 says it then never changes, so a second assignment in the constructor is a change. "Never inside a loop" is the rule a reader can apply by eye; proving a loop body runs at most once is not worth what it would cost to explain. A `var` field may be set as often as the constructor likes. |
+| `self` before and after construction is ready (10.2) | Each field may be read once it is certainly set; `self` as a whole, including passing it anywhere, only once every field is | 10.2 forbids `self` escaping "before all fields are ready". Tracking readiness field by field, through the same flow analysis as definite assignment, lets `self.high = self.low + size` work once `low` is set, rather than forcing every read to wait for the last field. |
+| `self` inside a block in a constructor (7.4, 10.2) | Rejected for now | A block captures by reference and may run after the constructor has finished, or before every field is set, which 10.2's escape rule cannot see through. Reading what the block needs into a local first covers the need until methods give `self` a second home and the rule can be designed for both. |
+| A constructor's return type (10.2) | Writing one is an error | 10.2 says constructors never return replacement values, so a written return type could only restate the struct's own name or contradict it. |
+| Constructor delegation (10.2, 21) | `self(...)` is deferred with overloading | 10.2 described `self(...)` delegating to "another constructor of the same type" while allowing each type at most one constructor, so there was never another constructor to call. Delegation only means something once a type can have several, which is exactly what deferring overloading rules out; the two arrive together. |
+| Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 
 ## 23. Consistency rules for future work
 
@@ -2821,8 +2833,9 @@ question blocking the first interpreter slices. The following decisions intentio
 for working Emerald programs, implementation measurements, or a dedicated design pass:
 
 - nondecimal numeric literals and numeric suffixes;
-- overloading and mixed-type operator contracts, if real Emerald programs show that
-  defaults, named arguments, and named factory functions are genuinely insufficient;
+- overloading, including overloaded constructors and `self(...)` delegation between them,
+  and mixed-type operator contracts, if real Emerald programs show that defaults, named
+  arguments, and named factory functions are genuinely insufficient;
 - immutable collection views, covariance, `Any`, user generics, and user `Iterable`;
 - stable C ABI declarations and ownership rules based on an actual library binding;
 - what `emerald.toml` holds and how it interacts with `main.em`. The rest of the project

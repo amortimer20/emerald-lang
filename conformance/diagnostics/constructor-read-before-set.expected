@@ -1,0 +1,4 @@
+diagnostics/constructor-read-before-set.em:6:26: `self.low` is read here before it is set
+          self.high = self.low + size
+                           ^^^
+Set `self.low` first, as in `self.low = ...`.

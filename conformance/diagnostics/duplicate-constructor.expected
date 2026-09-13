@@ -1,0 +1,4 @@
+diagnostics/duplicate-constructor.em:8:5: a struct has at most one constructor
+      constructor() {
+      ^^^^^^^^^^^
+Emerald has no overloading. Write a function that builds the value another way and calls this constructor.

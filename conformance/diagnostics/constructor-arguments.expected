@@ -1,0 +1,8 @@
+diagnostics/constructor-arguments.em:10:7: `Badge` takes 1 argument, but this call passes 2
+  print(Badge(1, 2))
+        ^^^^^
+Match the number of arguments to the constructor's parameters.
+diagnostics/constructor-arguments.em:11:13: this is Int, but parameter `label` of `Badge` needs String
+  print(Badge(3))
+              ^
+Pass a value of the expected type, or convert it first.

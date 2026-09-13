@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Claude after the struct field-assignment sub-slice.
+Updated: 2026-09-12. Prepared by Claude after the struct custom-constructor sub-slice.
 
 ## Current milestone
 
@@ -23,8 +23,11 @@ semantics for values held by fields all work end to end. Fieldless structs retai
 generated zero-argument constructor. Assignment now reaches through a path of indices and
 struct fields, as in `line.start.x = 1`, `points[0].x = 1`, and `bag.values.append(2)`,
 with copy-on-write on the struct instance and section 4.3's `const` checked at every field
-the path passes through, not only at the root binding. Defaults, custom constructors,
-`self`, methods, and properties are the remaining sub-slices.
+the path passes through, not only at the root binding. A struct may declare one custom
+constructor that replaces the generated one; inside it `self` is the value being built,
+each field must be set on every path before the constructor finishes, a field may be read
+once it is set, and `self` as a whole may be used once every field is. Defaults, methods,
+and properties are the remaining sub-slices; `super(...)` waits for classes.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -120,10 +123,11 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   errors, section 4.1's definite assignment, and everything section 7 asks of functions.
 - `src/Value.zig` holds `Nothing`, `Bool`, `Int`, `Float`, and lists, implements section
   9.4's display rules, and compares and orders values.
-- The first two section 10 sub-slices carry user-defined struct identity and required stored
-  fields through the AST, resolver, checker, interpreter, and runtime representation.
-  Structs are hoisted, constructible, readable field by field, printable, structurally
-  comparable, and eligible as stable keys when every field recursively qualifies.
+- The section 10 sub-slices so far carry user-defined struct identity, required stored
+  fields, assignment through field paths, and custom constructors through the AST, resolver,
+  checker, interpreter, and runtime representation. Structs are hoisted, constructible,
+  readable field by field, printable, structurally comparable, and eligible as stable keys
+  when every field recursively qualifies.
 - `src/Heap.zig` owns list buffers, string texts, scope environments, closures, and struct
   instances:
   reference counts, copy-on-write, and section 19.5's mark-and-sweep collector, which walks
@@ -148,6 +152,68 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Constructor decisions worth knowing
+
+- **Scope.** One custom constructor per struct, `self.field = ...`, bare `return`, and every
+  check 10.2 states about readiness. `super(...)` needs classes. `self(...)` is deferred
+  with overloading (user decision): 10.2 described it delegating to "another constructor of
+  the same type" while allowing only one, so it only means something once overloaded
+  constructors exist. Recorded in 10.2, section 21, section 24's waiting list, and
+  section 22.
+- **Readiness is definite assignment, field by field.** Inside a constructor the checker
+  puts one hidden binding per field into the constructor's own scope (`.x`, a spelling no
+  name or key can have) recording whether that field is certainly set. Branches, loops,
+  `break`, and early `return` already merge bindings correctly, so they merge readiness with
+  no code of their own. `self.x` needs `.x`; `self` as a whole needs all of them; the end of
+  a body that can complete, and every bare `return`, need all of them.
+- **A `const` field is set exactly once, which needs the opposite question.** "May already
+  be set here" is not "not certainly set" — after `if c { self.x = 1 }` the field is neither.
+  A second hidden binding per field (`!x`) records "certainly still unset", which merges by
+  intersection exactly as the first does. Loops restore state rather than merging it, which
+  would be wrong for this binding, so a `const` field is never set inside a loop at all; that
+  is also the rule a reader can apply by eye (recorded in section 22).
+- **That exposed a real soundness bug, now fixed.** An `if` without `else` restored the
+  state from before the block instead of merging with it. For "assigned" that is the same
+  thing, since assignment only ever grows, which is why nothing noticed. It is not the same
+  for narrowing: `if score != nothing { if reset { score = nothing } print(score + 1) }`
+  passed `check` and then failed at runtime. It now intersects with the block's state when
+  the block can complete. Guarded by `diagnostics/narrowing-undone-in-if` and
+  `diagnostics/constructor-const-set-twice`; both were confirmed to fail with the merge
+  removed.
+- **Loops had the same hole, also fixed.** A loop body is checked once from the state
+  before the loop, which is exact for assignment but not for narrowing, since a proof can be
+  lost: `while i < 2 { print(x + 1); x = nothing }` passed `check` and failed on the second
+  iteration. `forgetNarrowingAssignedIn` now drops the narrowing of every name a body
+  assigns, anywhere in its nested statements, before the condition (or, for `for`, after the
+  iterable) and the body are checked; the body proves it again if it can, so `while line !=
+  nothing` still narrows and `latest = step * 10` still proves `latest` present below it.
+  Lambda bodies are not searched, because a name a lambda assigns is never narrowed at all.
+  Guarded by `diagnostics/narrowing-undone-in-loop`, confirmed to fail with the call
+  removed, and `run/narrowing-through-loops` for what must keep working.
+- **`self` is a keyword the parser turns into the name `self`.** Every later pass sees an
+  ordinary name, so `self.x = 1` is an ordinary place assignment rooted at `self` and
+  `self.items.append(1)` an ordinary changing method, reusing `resolvePlace`, copy-on-write,
+  and the `const`-field checks unchanged. No program can declare that name, so it collides
+  with nothing. Outside a constructor, and inside a block in one, the parser reports it and
+  carries on rather than failing the statement, which would have reported the enclosing
+  `}` as a second error.
+- **A constructor is recorded as its type's body.** The resolver walks it under the struct's
+  key, and records a call to a type the way it records a call to a function, so section
+  7.1's capture check follows `make()` into `Badge()` into the module variable the
+  constructor reads, with no new analysis. The checker stores the constructor's signature
+  under the type's key too, which is what the interpreter widens arguments through.
+- **Argument checking is now shared by functions and constructors.** `checkArguments`
+  replaced the named-function copy; the generated constructor and `typeOfValueCall` still
+  have their own (see Review findings still open).
+- **At runtime the instance exists before the body runs.** `constructStruct` creates it with
+  every field holding `nothing` and hands it to `invoke` as `Callable.constructing`, which
+  binds it as `self` and produces whatever `self` holds when the body ends. That is not
+  necessarily the starting instance: `opened.append(self)` followed by `self.balance += 1`
+  copies, so the stored value keeps the old balance, which `run/struct-constructor` checks.
+  The checker's readiness rules are what keep the placeholder `nothing`s unobservable. A
+  stack trace names the frame "the constructor of `Account`", computed once per type rather
+  than per construction; two million constructions in a loop ran in flat memory (1.9 MB).
 
 ### Struct decisions worth knowing
 
@@ -683,14 +749,15 @@ still open.
 
 ## Next concrete step
 
-Continue section 20's slice 12. Assignment to stored fields is done, including through
-nested paths, mixed list and dictionary indices, and changing methods reached through a
-field. What remains for the object model: default field values (10.2, run once per
-construction, in declaration order, only when no constructor argument replaced them),
-custom constructors (`self.x = ...`, `super(...)`, `self(...)`), `self` and instance
-methods, and properties (10.3, read-only `const` and writable `var` with `get`/`set`).
-Custom constructors are the natural next piece, since defaults and methods both need
-`self` to already work, and a constructor is where `self` is first meaningful.
+Continue section 20's slice 12. Stored fields, assignment through field paths, and custom
+constructors are done. What remains for the object model: instance methods (10.2's rules
+about calling methods before every field is ready, and `self` reaching a second home),
+default field values (10.2, run once per construction, in declaration order, may read
+earlier fields but not later ones, and skipped when a generated-constructor argument
+replaced them), and properties (10.3, read-only `const` and writable `var` with
+`get`/`set`). Methods are the natural next piece: defaults and properties both read `self`
+the way a method body does, and the `self`-in-a-block restriction should be designed once
+for both constructors and methods rather than twice.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -710,7 +777,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 306 unit tests, 170 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 306 unit tests, 192 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -784,7 +851,7 @@ Six subagents ran an adversarial review of `7214005^..ed868a4` (the fieldless st
 foundation and required-fields slices) before this handoff was next touched. Four of the
 six independently found the qualified-receiver bug fixed in `1850085`. The private-name,
 module-initialization, and recursively hidden NaN defects found in the same review are fixed
-in the pending changes. The remaining items are maintainability work rather than reproduced
+in `72e7df4`. The remaining items are maintainability work rather than reproduced
 behavioral failures:
 
 - **Struct field lookup is hand-written twice instead of resolved once.** `evaluateProperty`
@@ -798,8 +865,9 @@ behavioral failures:
   normalization). Worth resolving a field to its position once, the same way, before the
   object model grows further.
 - **Struct-constructor argument checking is a third copy of function-call checking.**
-  `typeOfCall`'s struct-construction branch, the same function's named-function-call branch,
-  and `typeOfValueCall` all independently implement "arity mismatch → report and
+  Partly addressed: named functions and custom constructors now share `checkArguments`.
+  `typeOfCall`'s generated-constructor branch and `typeOfValueCall` still independently
+  implement "arity mismatch → report and
   type-check-only via `typeArguments`; otherwise pairwise `typeOfExpected` + `assignableTo` +
   a mismatch report," differing only in wording. A generated constructor has no body and
   therefore no captures today, so this has not produced a behavioral failure. A shared
