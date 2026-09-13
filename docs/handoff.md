@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after chunk 4 of the struct-slice code review.
+Updated: 2026-09-13. Prepared after the chunked code review of the struct slices.
 
 ## Current milestone
 
@@ -242,7 +242,7 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - **One argument check for every call by name.** `checkArguments` now takes a `Parameters`
   view, built from a function's, method's, or custom constructor's declaration, or from a
   struct's fields for its generated constructor. That retired the generated constructor's
-  own copy (one of the open review findings); `typeOfValueCall` still has its own, since a
+  own copy (formerly one of the open review findings); `typeOfValueCall` still has its own, since a
   function value has no names or defaults. Old arity wording is kept when nothing is named
   and nothing has a default, so existing diagnostics did not change.
 - **A trailing block fills the final parameter** (`Ast.Expression.Call.trailing`, handled in
@@ -425,8 +425,8 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   constructor reads, with no new analysis. The checker stores the constructor's signature
   under the type's key too, which is what the interpreter widens arguments through.
 - **Argument checking is now shared by functions and constructors.** `checkArguments`
-  replaced the named-function copy; the generated constructor and `typeOfValueCall` still
-  have their own (see Review findings still open).
+  replaced the named-function copy, and the defaults slice moved the generated constructor
+  onto it too; only `typeOfValueCall` keeps its own.
 - **At runtime the instance exists before the body runs.** `constructStruct` creates it with
   every field holding `nothing` and hands it to `invoke` as `Callable.constructing`, which
   binds it as `self` and produces whatever `self` holds when the body ends. That is not
@@ -924,8 +924,8 @@ each now covered by unit tests and conformance cases:
   raw Zig error with status `1`, colliding with source diagnostics. They now print one line
   and exit `70`, as section 18.1 specifies.
 
-The review also restated the known Unicode identifier gap under "Known rough edges"; it is
-still open.
+The review also restated the Unicode identifier gap known at the time; the string slice
+later closed it (see "Names are XID and NFC" above).
 
 ### Checker decisions worth knowing
 
@@ -999,12 +999,12 @@ still open.
 
 ## Code review of the struct slices
 
-The struct slices (`72e7df4..a90ed94`: constructors, methods, properties, defaults and named
-arguments, type-level members) were reviewed in chunks, one area at a time, before member
-privacy starts. All six chunks are done. Each chunk reads its area's code afresh and checks it with small
-`.em` programs in both Debug and ReleaseSafe builds. Every confirmed problem gets a fix, a
-conformance case, and a check that the case fails with the fix disabled. Any design
-decision a fix involves is recorded in `docs/rewrite-context.md`.
+Complete. The struct slices (`72e7df4..a90ed94`: constructors, methods, properties, defaults
+and named arguments, type-level members) were reviewed in six chunks, one area at a time,
+each checked with small `.em` programs in Debug and ReleaseSafe. Every confirmed problem got
+a fix and a conformance case, and design decisions went into `docs/rewrite-context.md`. What
+each chunk changed is described in the decision sections above; this table is the record of
+what was covered.
 
 | Chunk | Area | Status |
 | --- | --- | --- |
@@ -1047,20 +1047,16 @@ easier to design once there are types to raise.
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
-- Chunk 4 added `diagnostics/writable-property-method-clash`. With its fix disabled, both
-  Debug and ReleaseSafe builds compile, then panic while body-checking the absent setter
-  after correctly reporting the member-name clash. The fixed builds report only the two
-  intended clash diagnostics. The fix is confined to the declaration-checking pass, so no
-  runtime call, assignment, or member-access path needed timing.
-- Chunk 3 added three type-level-member cases. Each was confirmed to fail with its fix
-  temporarily disabled: assignment during another type's setup silently kept the old value,
-  taking a type-level function value missed the setup capture diagnostic, and a qualified
-  type-level reference beyond eight segments was mistaken for a value member access.
+- The chunked review of the struct slices (see "Code review of the struct slices") confirmed
+  every fix non-vacuous the same way: each new conformance case fails with its fix
+  disabled, in a build that still compiles, and passes once the fix is restored. Fixes on a
+  path every call, assignment, or member access runs were timed against the previous commit
+  in ReleaseSafe.
 - The field-assignment slice's own copy-on-write unit test was confirmed non-vacuous:
   disabling `Heap.uniqueStruct`'s copy (forcing it to always return the shared instance)
   fails both that test and `run/struct-field-assignment`, and both pass again once it is
   restored. Checked in Debug and ReleaseSafe.
-- An adversarial review of this slice, run against the diff before it was committed, found
+- An adversarial review of the field-assignment slice, run against its diff before it was committed, found
   two real regressions (the duplicate diagnostic and the qualified-receiver crash, both
   described above) and one pre-existing crash the diff made easier to reach (the missing
   `reach` calls). All three were reproduced by running the program, not only by reading the
@@ -1126,8 +1122,9 @@ Six subagents ran an adversarial review of `7214005^..ed868a4` (the fieldless st
 foundation and required-fields slices) before this handoff was next touched. Four of the
 six independently found the qualified-receiver bug fixed in `1850085`. The private-name,
 module-initialization, and recursively hidden NaN defects found in the same review are fixed
-in `72e7df4`. The remaining items are maintainability work rather than reproduced
-behavioral failures:
+in `72e7df4`. The chunked review of the struct slices later retired the
+argument-checking duplication this list used to include. The remaining items are
+maintainability work rather than reproduced behavioral failures:
 
 - **Struct field lookup is hand-written twice instead of resolved once.** `evaluateProperty`
   (`Interpreter.zig`) and `typeOfMember` (`Checker.zig`) each independently scan
@@ -1135,31 +1132,22 @@ behavioral failures:
   position is resolved once, by the parser, into a numeric `Member.position`; a qualified
   name is resolved once, by the resolver, into `Facts.qualified`. A struct field never got
   the same treatment, so correctness depends on the checker's scan and the interpreter's
-  scan agreeing by construction rather than by sharing one answer, and the interpreter's
-  `unreachable` after its scan is a landmine if they ever diverge (case sensitivity, Unicode
-  normalization). Worth resolving a field to its position once, the same way, before the
-  object model grows further.
-- **Struct-constructor argument checking is a third copy of function-call checking.**
-  Partly addressed: named functions and custom constructors now share `checkArguments`.
-  `typeOfCall`'s generated-constructor branch and `typeOfValueCall` still independently
-  implement "arity mismatch → report and
-  type-check-only via `typeArguments`; otherwise pairwise `typeOfExpected` + `assignableTo` +
-  a mismatch report," differing only in wording. A generated constructor has no body and
-  therefore no captures today, so this has not produced a behavioral failure. A shared
-  helper taking the parameter types and a naming scheme would remove the copies before
-  custom constructors or methods add more call sites.
+  scans (`fieldPosition`, used by reads, stores, and `containerSlot`) agreeing by
+  construction rather than by sharing one answer. Since properties arrived, a name the
+  interpreter's scan misses is read as a property, so a divergence (case sensitivity,
+  Unicode normalization) would now fail on a missing property rather than an `unreachable`.
+  Worth resolving a member to its field position or accessor once, before the object model
+  grows further.
 - **Struct equality duplicates the tuple/list sequence-equality pattern.** The new
   `.struct_value` case in `Value.equals` — descriptor-identity check, then a paired loop
   calling `equals` recursively and stopping at the first mismatch — is structurally identical
   to the `.tuple` case immediately above it, and to `.list`'s. A small `equalsSequence(gpa,
   a, b)` helper would remove the third copy.
-- **Struct field parsing duplicates parameter parsing.** `parseParameter` already parses
-  "name → reject a `=` default → require `:` → `parseTypeExpression()`", including the
-  message "default parameter values are not available yet". The struct-field loop in
-  `parseStructDeclaration` reproduces the same sequence by hand, with "default field values
-  are not available yet", just checking for the default after the type annotation instead of
-  before it. When defaults are implemented for one, the other's hand-written copy needs the
-  same change or the two diverge.
+- **Struct field parsing duplicates parameter parsing.** `parseParameter` parses "name →
+  require `:` → `parseTypeExpression()` → optional `= default`", and `parseStructMember`
+  repeats the same sequence by hand for a stored field, with its own messages. Defaults
+  arrived for both at once, so they have not diverged yet, but a change to one (a new
+  annotation form, say) has to be made twice.
 - **Every parsed type annotation now allocates, even without a namespace path.**
   `parseTypeExpression` used to return a zero-copy slice straight from source text in the
   common case (`Int`, `String`, an element type with no `.`). This slice's qualified-path
@@ -1167,12 +1155,12 @@ behavioral failures:
   checking whether a `.` ever follows, so every parameter, return type, variable annotation,
   and now every struct field pays an allocation it did not need before. Start the list only
   once a `.` is actually seen.
-- **`check()` scans every statement three times to find struct declarations.** Three separate
+- **`check()` scans every statement four times to find struct declarations.** Four separate
   `for (programs) |program| for (program.statements) |statement|` loops each refilter
-  `statement.data == .struct_declaration` — once for identity and hoisting, once for field
-  resolution, once for dictionary-key eligibility. Collecting matches into a flat list on the
-  first pass and iterating that list for the second and third would filter once instead of
-  three times.
+  `statement.data == .struct_declaration` — for identity and hoisting, field resolution,
+  dictionary-key eligibility, and the final pass over bodies. Collecting matches into a flat
+  list on the first pass and iterating that list afterwards would filter once.
+
 ### Known rough edges
 
 - Assigning to a type-level field through its namespace, `Shapes.Circle.made = 1`, is
