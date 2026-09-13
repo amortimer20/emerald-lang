@@ -375,8 +375,8 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             const keyword = self.peek().span;
             // Section 10.4's `func Vector2.origin()` written outside the type
             // it names. Parsed in full for recovery, then reported.
-            if (self.startsTypeMember(self.index + 1)) {
-                const receiver = self.tokens[self.index + 1];
+            if (self.startsTypeMember()) {
+                const receiver = self.peekAfterNext();
                 const parsed = try self.parseTypeFunction(null);
                 return self.report(
                     parsed.member_span,
@@ -510,7 +510,7 @@ const StructMembers = struct {
 /// One member of a struct body, added to `members`. `name` is the struct's.
 fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!void {
     const marker = self.peek();
-    if (marker.kind == .keyword_func and self.startsTypeMember(self.index + 1)) {
+    if (marker.kind == .keyword_func and self.startsTypeMember()) {
         try members.type_functions.append(self.arena, try self.parseTypeFunction(name));
         try self.expectStatementEnd();
         return;
@@ -639,9 +639,13 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
     });
 }
 
-/// Whether the tokens at `at` are a name followed by `.`: the type receiver
-/// section 10.4 writes in front of a type-level member.
-fn startsTypeMember(self: *Parser, at: usize) bool {
+/// Whether the `func` about to be parsed is followed by a name and `.`: the
+/// type receiver section 10.4 writes in front of a type-level member.
+fn startsTypeMember(self: *Parser) bool {
+    // Past any documentation comment on the declaration and its `func`.
+    var at = self.index;
+    while (self.tokens[at].kind == .doc_comment) at += 1;
+    at += 1;
     if (at + 1 >= self.tokens.len) return false;
     return self.tokens[at].kind == .identifier and self.tokens[at + 1].kind == .dot;
 }

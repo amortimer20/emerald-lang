@@ -1730,6 +1730,20 @@ A leading underscore marks a private member. Privacy is enforced by the checker 
 not depend on convention alone. Public is the default; there is no `public` keyword.
 `protected` is deferred.
 
+The same rule covers every kind of member: fields, properties, methods, and type-level
+functions and fields. A private member can be reached only from code written inside its
+own type's braces. That includes lambdas written there, field defaults, type-level field
+values, and other values of the same type, as in `other._count`. Code outside the braces
+cannot reach it, even in the same file.
+
+Privacy does not change a generated constructor's parameters: every field is still one
+parameter, in declaration order. Called from outside the type, the generated constructor
+may not be given a private field, so that field keeps its default and any fields after it
+are passed by name. A private field with no default leaves no way to build the value
+outside the type; the type then needs a constructor, or a type-level function, of its own.
+Privacy limits which code can reach a member, not what a value is: equality and display
+still include private fields.
+
 Type-level visibility across directories is deferred until larger projects provide a
 concrete need.
 
@@ -2859,6 +2873,8 @@ recorded in their normative sections:
 | Where a type-level member is declared (10.4) | Inside its own type's braces, naming that type | 10.4 shows `func Vector2.origin()` without saying where it goes. Inside the type keeps a type's members in one place for a reader and one declaration for the checker; accepting it elsewhere would be extension of a type from outside, a separate feature with its own questions about files, namespaces, and privacy. |
 | Type-level and instance member names (10.3, 10.4) | One name space for both | `Player.count` and `player.count` meaning different things would be legal but misleading, and the diagnostic for reaching a member the wrong way can only name the right way if the name identifies one member. |
 | Inferring a type-level field's type (4.1, 7.2, 10.4) | Optional annotation; inferred from the value on first need, and a cycle through a function whose return type is also inferred needs one of the two annotated | This matches module-level bindings, which the fields otherwise behave like. The cycle rule is 7.2's rule for recursive functions, reached through a field instead of a call. |
+| Where a private member can be reached (10.5) | Only from code inside its own type's braces, including other values of that type | `protected` is deferred, so a subclass would not see a private member either; the braces are the boundary a reader can see. Module-level privacy stops at the file because the file is a module's unit (14.2), but a type's unit is its declaration. Allowing `other._count` for another value of the same type keeps equality helpers and merges writable without a public accessor. |
+| Private fields and the generated constructor (7.3, 10.2, 10.5) | Still one parameter per field in declaration order; outside the type a call may not give a private field a value | Dropping private fields from the parameters would give a field a different position depending on who calls. Keeping them lets the type's own functions pass everything, while outside callers leave a private field to its default and name the fields after it. |
 | Narrowing a type-level field (4.5, 10.4) | Not narrowed, even after assigning a present value | The field is one binding the whole program shares, so any call between the proof and the use can set it back to `nothing`. `.or(...)`, or copying it into a local first, is the way to use one. |
 | When a changing method reaches its receiver (4.3, 5.2, 7.3) | The receiver is a place: its indices are evaluated first, and the place itself is reached once the arguments are, so an argument that replaces the variable is seen by the call. A method that only reads receives the receiver's value, read before its arguments | This is how assignment into a place and the changing collection methods already behave, and reaching the place first would make `items.append(items.count)`, and any argument that reads the receiver, an error under 4.3's exclusivity rule. A reading method has no place, only an operand, which 5.2 reads left to right. |
 | Defaults of a changing method (4.3, 7.3) | Evaluated before the call takes its receiver, seeing `self` as it is before the call; a default may not change `self` | 7.3 counts omitted defaults among a call's arguments, so exclusivity has not begun while they run, and `t.mark()` with a default that reads `t` is not an error. A default that changed `self` would be lost on a method that only reads, and would reach a `const`; like a getter (10.3), it only works out a value. |

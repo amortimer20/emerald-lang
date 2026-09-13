@@ -38,9 +38,7 @@ struct Trip {
     constructor(name: String, from: Point, to: Point) {
         self.name = name
         self.stops = [from, to]
-        const dx = to.x - from.x
-        const dy = to.y - from.y
-        self.distance = (dx * dx + dy * dy) ** 0.5
+        self.distance = Trip._length(from, to)
         Trip.planned += 1
     }
 
@@ -51,6 +49,14 @@ struct Trip {
 
     func Trip.home(to: Point): Trip {
         return Trip("home", Point(0, 0), to)
+    }
+
+    ## A leading underscore keeps a member private: only code inside these
+    ## braces can reach `Trip._length`.
+    func Trip._length(from: Point, to: Point): Float {
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        return (dx * dx + dy * dy) ** 0.5
     }
 }
 

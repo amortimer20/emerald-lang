@@ -1,0 +1,40 @@
+diagnostics/private-members.em:19:17: `_count` is private to `Counter`, so this call cannot set it
+  var c = Counter(0, 2)
+                  ^
+Leave it to its default, passing any fields after it by name, or give `Counter` a constructor that takes this value.
+diagnostics/private-members.em:20:9: `_count` is private to `Counter`
+  print(c._count)
+          ^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-members.em:21:3: `_count` is private to `Counter`
+  c._count = 3
+    ^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-members.em:22:3: `_count` is private to `Counter`
+  c._count += 1
+    ^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-members.em:23:3: `_bump` is private to `Counter`
+  c._bump(1)
+    ^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-members.em:24:7: `_made` is private to `Counter`
+  print(Counter._made)
+        ^^^^^^^^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-members.em:25:1: `_made` is private to `Counter`
+  Counter._made = 4
+  ^^^^^^^^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-members.em:26:7: `_make` is private to `Counter`
+  print(Counter._make())
+        ^^^^^^^^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-members.em:27:11: `_make` is private to `Counter`
+  const f = Counter._make
+            ^^^^^^^^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-members.em:28:9: `Secret` cannot be built here, because its field `_key` is private and has no default
+  var s = Secret("x")
+          ^^^^^^
+Give `_key` a default, or give `Secret` a constructor that sets it.

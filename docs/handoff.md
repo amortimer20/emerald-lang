@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the chunked code review of the struct slices.
+Updated: 2026-09-13. Prepared after the member privacy slice (10.5).
 
 ## Current milestone
 
@@ -33,8 +33,8 @@ and writable, with nested mutation through one rejected. Section 7.3's default p
 named arguments work for functions, methods, and constructors, and fields have defaults that
 make them optional in the generated constructor. Type-level functions and fields work
 (`func Vector2.origin()`, `var Player.count = 0`), set up lazily the first time the type is
-reached. Member privacy and method values are the remaining struct sub-slices; `super(...)`
-waits for classes.
+reached. Members whose names start with `_` are private to their type's braces. Method
+values are the remaining struct sub-slice; `super(...)` waits for classes.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -159,6 +159,32 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Privacy decisions worth knowing
+
+- **The boundary is the type's braces (10.5).** `Checker.type_spans` records each struct's
+  declaration span; `insideType` asks whether an access is in that span and in the file
+  `facts.owner` records for the type. Lambdas, field defaults, and type-level field values
+  are checked with `self.file` set to where they are written, so they count as inside
+  without extra state. Another value of the same type is reachable (`other._count`).
+- **One helper, called from every way to reach a member.** `reportPrivate` (instance members,
+  by type key and name) and `reportPrivateTypeMember` (type-level members, by key) are called
+  from `typeOfMember`, `typeOfStructMethodCall`, the field steps of `checkPlaceAssignment`,
+  `typeOfQualified`, `typeOfCall`, and both assignment paths for a type-level field. An
+  instance check runs only when the name is a real instance member, so a missing `_name`
+  still says "has no field", and `value._type_member` still says to go through the type.
+  `resolvePlace` returns `.reported` without a message for a private field, because the
+  receiver's `typeOf` has already reported it.
+- **The generated constructor keeps every field as a parameter (user decision).** Called from
+  outside the type, a private field with no default makes the call an error at the callee
+  ("cannot be built here"), and giving a private field a value is reported at that argument
+  (at its name when passed by name), through `Parameters.private_to`. Inside the type,
+  `Pair(5, 6)` sets private fields as usual.
+- **No runtime part.** Privacy is purely a checker rule, so the interpreter is unchanged.
+  Display and equality include private fields.
+- **Found while writing the example.** A `##` documentation comment before a type-level
+  function made the parser miss its type receiver, because `startsTypeMember` indexed raw
+  tokens. It now steps over documentation comments first; `run/private-members` covers it.
 
 ### Type-level member decisions worth knowing
 
@@ -1018,12 +1044,10 @@ what was covered.
 ## Next concrete step
 
 Continue section 20's slice 12. Structs now have stored fields with defaults, assignment
-through field paths, custom constructors, instance methods, computed properties, and
-type-level functions and fields, and section 7.3's defaults and named arguments are in. What
-remains for structs: member privacy (10.5, a leading underscore on fields, properties,
-methods, and type-level members alike, enforced by the checker) and method values (7.5).
-Privacy is the natural next piece, since every kind of member it covers now exists. After
-structs, section 20's order continues with classes, traits, operators, and enums.
+through field paths, custom constructors, instance methods, computed properties,
+type-level functions and fields, and member privacy, and section 7.3's defaults and named
+arguments are in. What remains for structs is method values (7.5). After structs, section
+20's order continues with classes, traits, operators, and enums.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -1043,7 +1067,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 309 unit tests, 262 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 309 unit tests, 265 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

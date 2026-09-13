@@ -1,0 +1,24 @@
+diagnostics/private-member-other-file/main.em:7:24: `_count` is private to `Counter`
+          return counter._count
+                         ^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-member-other-file/main.em:12:15: `_count` is private to `Counter`
+  print(counter._count)
+                ^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-member-other-file/main.em:13:1: `_reset` is private to `Counter`
+  Counter._reset()
+  ^^^^^^^^^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-member-other-file/main.em:14:7: `_made` is private to `Counter`
+  print(Shapes.Counter._made)
+        ^^^^^^^^^^^^^^^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.
+diagnostics/private-member-other-file/main.em:15:15: `_count` is private to `Counter`, so this call cannot set it
+  print(Counter(_count: 3))
+                ^^^^^^
+Leave it to its default, passing any fields after it by name, or give `Counter` a constructor that takes this value.
+diagnostics/private-member-other-file/shapes/counter.em:12:20: `_count` is private to `Counter`
+      return counter._count
+                     ^^^^^^
+Only code written inside `Counter`'s braces can reach a name that starts with `_`.

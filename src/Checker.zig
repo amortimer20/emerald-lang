@@ -129,6 +129,10 @@ declarations: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 structs: Structs = .empty,
 /// Every struct declaration, by the same keys.
 struct_declarations: std.StringHashMapUnmanaged(Ast.StructDeclaration) = .empty,
+/// Where each struct is declared, by the same keys, so section 10.5 can tell
+/// whether a private member is reached from inside its braces. The file is
+/// the one `facts.owner` records.
+type_spans: std.StringHashMapUnmanaged(Source.Span) = .empty,
 /// Every struct that declares its own constructor, by the same keys.
 constructors: std.StringHashMapUnmanaged(Ast.StructDeclaration) = .empty,
 /// For every instance method, keyed like `declarations`, the type it belongs to.
@@ -267,6 +271,7 @@ pub fn check(
                 const struct_type = Type.structOf(user);
                 try checker.structs.put(arena, key, struct_type);
                 try checker.struct_declarations.put(arena, key, declaration);
+                try checker.type_spans.put(arena, key, statement.span);
                 if (declaration.constructor != null) try checker.constructors.put(arena, key, declaration);
                 for (declaration.methods) |method| {
                     const method_key = try Resolver.methodKey(arena, key, method.name);
@@ -1244,6 +1249,10 @@ fn checkAssignmentTo(self: *Checker, assignment: Ast.Assignment) Error!void {
         _ = try self.typeOf(assignment.value);
         return;
     };
+    if (try self.reportPrivateTypeMember(self.keyOf(assignment.name), assignment.name_span)) {
+        _ = try self.typeOf(assignment.value);
+        return;
+    }
     // Against the declared type, not the narrowed one: an assignment is free to
     // put `nothing` back into an optional that was proved present above it.
     const value = try self.typeOfExpected(
@@ -1312,6 +1321,10 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         _ = try self.typeOf(assignment.value);
         return;
     };
+    if (try self.reportPrivateTypeMember(self.keyOf(assignment.name), assignment.name_span)) {
+        _ = try self.typeOf(assignment.value);
+        return;
+    }
     if (binding.is_function) {
         try self.report(assignment.name_span, "`{s}` is a function, so it has no elements", .{assignment.name}, "Only a list can be indexed.");
         _ = try self.typeOf(assignment.value);
@@ -1369,6 +1382,12 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                         .{ element, field.name },
                         "Only a struct has fields.",
                     );
+                    element = .invalid;
+                    break;
+                }
+                if (try self.isInstanceMember(element, field.name) and
+                    try self.reportPrivate(element.user.?.name, field.name, field.span))
+                {
                     element = .invalid;
                     break;
                 }
@@ -2167,6 +2186,45 @@ fn typeFieldValue(self: *Checker, key: []const u8) Error!Type {
     return declared;
 }
 
+/// Section 10.5: a member whose name starts with `_` can be reached only from
+/// code written inside its own type's braces, which includes lambdas there and
+/// other values of the same type. Returns whether it reported.
+fn reportPrivate(self: *Checker, type_key: []const u8, name: []const u8, span: Source.Span) Error!bool {
+    if (!Resolver.isPrivate(name) or self.insideType(type_key, span)) return false;
+    const owner = self.structs.get(type_key).?.user.?.display_name;
+    try self.reportWithHelp(
+        span,
+        "`{s}` is private to `{s}`",
+        .{ name, owner },
+        "Only code written inside `{s}`'s braces can reach a name that starts with `_`.",
+        .{owner},
+    );
+    return true;
+}
+
+/// The same for a type-level member, known by its key. Returns whether it
+/// reported.
+fn reportPrivateTypeMember(self: *Checker, key: []const u8, span: Source.Span) Error!bool {
+    const type_key = self.facts.type_members.get(key) orelse return false;
+    const at = std.mem.lastIndexOf(u8, key, Resolver.method_separator).?;
+    return self.reportPrivate(type_key, key[at + Resolver.method_separator.len ..], span);
+}
+
+fn insideType(self: *Checker, type_key: []const u8, span: Source.Span) bool {
+    const extent = self.type_spans.get(type_key) orelse return true;
+    return self.facts.owner.get(type_key) == self.file and
+        span.start >= extent.start and span.end <= extent.end;
+}
+
+/// Whether `name` is one of a struct's instance members: a field, a property,
+/// or a method.
+fn isInstanceMember(self: *Checker, owner: Type, name: []const u8) Error!bool {
+    for (owner.user.?.fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) return true;
+    }
+    return self.receivers.contains(try Resolver.methodKey(self.arena, owner.user.?.name, name));
+}
+
 /// `value.count` where `count` is a type-level member of its type. Returns
 /// whether it reported.
 fn reportTypeMemberThroughValue(self: *Checker, owner: Type, name: []const u8, span: Source.Span) Error!bool {
@@ -2560,6 +2618,12 @@ fn typeOfStructMethodCall(
     base: Type,
 ) Error!Type {
     const key = try Resolver.methodKey(self.arena, base.user.?.name, member.name);
+    if (try self.isInstanceMember(base, member.name) and
+        try self.reportPrivate(base.user.?.name, member.name, member.name_span))
+    {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
     if (!self.receivers.contains(key) or self.properties.contains(key)) {
         const is_field = self.properties.contains(key) or for (base.user.?.fields) |field| {
             if (std.mem.eql(u8, field.name, member.name)) break true;
@@ -3606,6 +3670,7 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// Section 14.2's `Shapes.area` used as a value rather than called. It is the
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+    if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
     if (self.type_fields.get(reference.key)) |field| {
         try self.settleTypeField(reference.key);
         // Section 7.1, for section 10.4's setup: reading the field may be
@@ -3703,6 +3768,8 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
     if (!try self.requirePresent(base, member.base, member.name)) return .invalid;
 
     if (base.kind == .struct_value) {
+        if (try self.isInstanceMember(base, member.name) and
+            try self.reportPrivate(base.user.?.name, member.name, member.name_span)) return .invalid;
         for (base.user.?.fields) |field| {
             if (std.mem.eql(u8, field.name, member.name)) return field.type;
         }
@@ -4288,6 +4355,10 @@ fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
                 .typed => |typed| typed,
             };
             if (base.type.kind != .struct_value) return .{ .root = base.root };
+            // Already reported when the receiver was type-checked.
+            if (Resolver.isPrivate(inner.name) and !self.insideType(base.type.user.?.name, inner.name_span)) {
+                return .reported;
+            }
             if (try self.propertyOf(base.type, inner.name) != null) {
                 try self.reportComputedInPlace(inner.name, inner.name_span);
                 return .reported;
@@ -4833,6 +4904,10 @@ fn typeOfCall(
         try self.typeArguments(call.arguments);
         return .invalid;
     };
+    if (try self.reportPrivateTypeMember(reference.key, call.callee.span)) {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
 
     if (binding.is_type) {
         // Section 10.2: a custom constructor replaces the generated one, so
@@ -4851,6 +4926,22 @@ fn typeOfCall(
         }
         const declaration = self.struct_declarations.get(reference.key).?;
         const fields = binding.type.user.?.fields;
+        // Section 10.5: outside the type, the generated constructor cannot
+        // set a private field, so one without a default leaves no way to
+        // build the value there.
+        const outside = !self.insideType(reference.key, call.callee.span);
+        if (outside) for (declaration.fields) |field| {
+            if (!Resolver.isPrivate(field.name) or field.default != null) continue;
+            try self.reportWithHelp(
+                call.callee.span,
+                "`{s}` cannot be built here, because its field `{s}` is private and has no default",
+                .{ name, field.name },
+                "Give `{s}` a default, or give `{s}` a constructor that sets it.",
+                .{ field.name, binding.type.user.?.display_name },
+            );
+            try self.typeArguments(call.arguments);
+            return binding.type;
+        };
         if (fields.len == 0 and call.arguments.len > 0) {
             try self.report(
                 call.callee.span,
@@ -4876,6 +4967,7 @@ fn typeOfCall(
             .names = names,
             .has_default = defaults,
             .noun = "field",
+            .private_to = if (outside) binding.type.user.?.display_name else null,
             .mismatch_help = "Pass a value of the field's declared type, or convert it first.",
             .arity_help = if (any_default)
                 "Pass a value for each field without a default, in declaration order, or name the fields you pass."
@@ -4923,6 +5015,9 @@ const Parameters = struct {
     noun: []const u8 = "parameter",
     arity_help: []const u8,
     mismatch_help: []const u8 = "Pass a value of the expected type, or convert it first.",
+    /// The type whose private fields a generated constructor called from
+    /// outside it may not be given (10.5).
+    private_to: ?[]const u8 = null,
 };
 
 fn parametersOf(self: *Checker, signature: Signature, written: []const Ast.Parameter, arity_help: []const u8) Error!Parameters {
@@ -5015,6 +5110,19 @@ fn checkArguments(
 
     for (bound, parameters.types, parameters.names) |argument_index, expected, parameter_name| {
         const argument = call.arguments[argument_index orelse continue];
+        if (parameters.private_to) |owner| if (Resolver.isPrivate(parameter_name)) {
+            const named = if (argument_index.? < call.names.len) call.names[argument_index.?] else null;
+            const written = if (named) |label| label.span else argument.span;
+            try self.reportWithHelp(
+                written,
+                "`{s}` is private to `{s}`, so this call cannot set it",
+                .{ parameter_name, owner },
+                "Leave it to its default, passing any fields after it by name, or give `{s}` a constructor that takes this value.",
+                .{owner},
+            );
+            _ = try self.typeOf(argument);
+            continue;
+        };
         const actual = try self.typeOfExpected(argument, expected);
         if (!actual.assignableTo(expected)) {
             try self.report(
