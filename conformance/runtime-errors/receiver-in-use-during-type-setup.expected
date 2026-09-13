@@ -1,0 +1,7 @@
+runtime-errors/receiver-in-use-during-type-setup.em:8:15: `Board.log` is being changed by `add`, so it cannot be used until that call finishes
+          print(Board.log.lines.count)
+                ^^^^^^^^^
+A method that changes a value has it to itself while it runs. Pass what the method needs as an argument instead of reaching for it another way.
+in `add`, called at runtime-errors/receiver-in-use-during-type-setup.em:17:9
+in `Board.start`, called at runtime-errors/receiver-in-use-during-type-setup.em:14:23
+in the type-level fields of `Board`, called at runtime-errors/receiver-in-use-during-type-setup.em:22:7

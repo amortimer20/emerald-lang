@@ -320,6 +320,20 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   anything else raises "`meter` is being changed by `advance`" (recorded in 4.3 and section
   22; guarded by `runtime-errors/method-receiver-in-use`). Constructors now use the same
   `self_value`/`self_out` pair.
+- **The take-out happens inside `invoke`, after defaults.** Section 7.3 counts defaults as
+  arguments, so `callStructMethod` passes a `Take` describing the place and `invoke` calls
+  `takeReceiver` once the defaults have run. `takeReceiver` swaps the caller's scopes, file,
+  and stack frame back in while it finds the place, so an index out of range still reads as
+  the caller's error. When a default is omitted, the defaults see a retained copy of the
+  receiver as `self`, which the taken receiver replaces; the checker rejects a default that
+  would change `self`, so the copy can never diverge. Guarded by
+  `run/changing-method-arguments` and `diagnostics/default-changes-self`. The same case pins
+  the receiver timing recorded in section 22: an argument that replaces the variable is seen
+  by a changing call and not by a reading one.
+- **A taken binding is not an unset one.** While a file or type is still being set up, the
+  cycle check in `reach` and `setUpType` treats a binding with no value as not reached yet;
+  it now also lets a taken binding through, so reaching one raises "being changed" rather
+  than a misleading setup cycle (`runtime-errors/receiver-in-use-during-*-setup`).
 - **Both runtime mechanisms were confirmed non-vacuous.** Treating every method as
   read-only fails `run/struct-methods`; removing the `changing` guard fails
   `runtime-errors/method-receiver-in-use`.
@@ -946,7 +960,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 248 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 252 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -1087,6 +1101,13 @@ behavioral failures:
   can catch an error yet, so the program has already ended by then; once section 13 adds
   `catch`, `callStructMethod` has to put the receiver back on the error path, and decide
   whether a half-finished change is kept.
+- `invoke` does not release what it was handed when it fails before the body runs: at the
+  recursion limit, or on allocation failure while binding `self` and parameters, the
+  receiver, arguments, and a defaults copy of `self` are never released, and a changing
+  method whose receiver was already taken leaves `nothing` in its place. The heap frees
+  them when the program ends, so nothing can observe this until section 13 adds `catch`;
+  then every early return from `invoke` needs to release its inputs, and the taken receiver
+  needs putting back.
 - Reaching a receiver while its changing method runs is caught only at runtime. The common
   case — the method, or a function it calls, reads the module variable it was called on — is
   visible to the capture facts and could become a `check` diagnostic.

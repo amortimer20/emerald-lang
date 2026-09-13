@@ -1,0 +1,7 @@
+runtime-errors/receiver-in-use-during-module-setup/log.em:14:11: `log` is being changed by `add`, so it cannot be used until that call finishes
+      print(log.lines.count)
+            ^^^
+A method that changes a value has it to itself while it runs. Pass what the method needs as an argument instead of reaching for it another way.
+in `peek`, called at runtime-errors/receiver-in-use-during-module-setup/log.em:7:9
+in `add`, called at runtime-errors/receiver-in-use-during-module-setup/log.em:20:5
+in `start`, called at runtime-errors/receiver-in-use-during-module-setup/log.em:17:13

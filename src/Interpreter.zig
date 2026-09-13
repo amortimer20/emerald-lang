@@ -1121,7 +1121,9 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
             const reached = member orelse return;
             if (self.functions.contains(reached)) return;
             if (self.module.get(reached)) |slot| {
-                if (slot.value != null) return;
+                // Taken by a changing method is not unset: the read raises
+                // that instead.
+                if (slot.value != null or slot.changing != null) return;
             }
             return self.raiseFmt(
                 span,
@@ -1183,7 +1185,9 @@ fn reachFile(self: *Interpreter, key: []const u8, span: Source.Span) Error!void 
             // is finished.
             if (self.functions.contains(key) or self.structs.contains(key)) return;
             if (self.module.get(key)) |slot| {
-                if (slot.value != null) return;
+                // Taken by a changing method is not unset: the read raises
+                // that instead.
+                if (slot.value != null or slot.changing != null) return;
             }
             return self.raiseFmt(
                 span,
@@ -2138,12 +2142,29 @@ const Callable = struct {
     /// Where to leave what `self` holds when the body ends, for a caller that
     /// keeps the result: a constructor, or a method that changes `self`.
     self_out: ?*Value = null,
+    /// For a method that changes `self`, the place its receiver is taken from
+    /// once every argument, defaults included, has been evaluated.
+    take: ?*Take = null,
 
     const Body = union(enum) {
         statements: []const Ast.Statement,
         /// A single-expression lambda, whose value is its result (7.4).
         expression: *const Ast.Expression,
     };
+};
+
+/// Section 4.3's exclusive access, which begins when a changing method's
+/// arguments are all evaluated. Section 7.3 counts defaults among them, so a
+/// default may still read the variable the receiver lives in; `invoke` takes the
+/// receiver only after the defaults have run.
+const Take = struct {
+    root: *const Ast.Expression,
+    steps: []const PlaceStep,
+    method: []const u8,
+    /// What the root binding held, while it is taken.
+    root_value: Value = Value.nothing,
+    /// Where the receiver came from, inside `root_value`, once taken.
+    slot: ?*Value = null,
 };
 
 /// Section 7.1's calling convention. The checker has already proved arity and
@@ -2290,6 +2311,8 @@ fn invoke(
             };
         }
     }
+
+    if (callable.take) |take| try self.takeReceiver(take, frame, outer_scopes, outer_file);
 
     const result = switch (callable.body) {
         .expression => |body| try self.evaluate(body),
@@ -2753,36 +2776,90 @@ fn callStructMethod(
     const arguments = bound.values;
     const root_name = self.rootName(path.root);
 
-    const binding = self.placeBinding(root_name, path.root.span) catch |err| {
-        for (arguments) |argument| self.heap.release(argument);
-        return err;
-    };
-    // The slot lives inside the root's own objects, which `containerSlot` has
-    // made unique and nothing else can reach while the binding is taken, so it
-    // stays valid for the whole call. A root with no steps is its own slot.
-    var root = binding.value.?;
-    binding.value = null;
-    const slot: *Value = if (path.steps.len == 0) &root else self.containerSlot(&root, path.steps) catch |err| {
-        binding.value = root;
-        for (arguments) |argument| self.heap.release(argument);
-        return err;
-    };
-    const receiver = slot.*;
-    slot.* = Value.nothing;
-    binding.changing = member.name;
+    // A default can read `self`, so it sees the receiver as it is now, before
+    // the receiver is taken. The checker has proved no default changes it.
+    if (bound.omitted != null) {
+        const binding = self.placeBinding(root_name, path.root.span) catch |err| {
+            for (arguments) |argument| self.heap.release(argument);
+            return err;
+        };
+        callable.self_value = self.elementValue(path.root.span, &binding.value.?, path.steps) catch |err| {
+            for (arguments) |argument| self.heap.release(argument);
+            return err;
+        };
+    }
 
+    var take: Take = .{ .root = path.root, .steps = path.steps, .method = member.name };
     var changed: Value = Value.nothing;
-    callable.self_value = receiver;
+    callable.take = &take;
     callable.self_out = &changed;
     const result = self.invoke(expression.span, callable, arguments);
 
     // Found again rather than kept: the call may have initialized another
     // file, which can move module bindings.
-    const restored = self.find(root_name).?;
-    restored.changing = null;
-    slot.* = changed;
-    restored.value = root;
+    if (take.slot) |slot| {
+        const restored = self.find(root_name).?;
+        restored.changing = null;
+        slot.* = changed;
+        restored.value = take.root_value;
+    } else {
+        self.heap.release(changed);
+    }
     return result;
+}
+
+/// Takes a changing method's receiver out of its place and binds it as the
+/// callee's `self`, the moment `invoke` has finished evaluating defaults. The
+/// place is found as the caller sees it, and a failure here, such as an index
+/// out of range, is the caller's, so the callee's scopes, file, and stack frame
+/// are set aside meanwhile.
+fn takeReceiver(
+    self: *Interpreter,
+    take: *Take,
+    frame: *Environment,
+    caller_scopes: std.ArrayList(*Environment),
+    caller_file: u32,
+) Error!void {
+    const callee_scopes = self.scopes;
+    const callee_file = self.file;
+    const callee_frame = self.call_stack.pop().?;
+    self.scopes = caller_scopes;
+    self.file = caller_file;
+    defer {
+        self.scopes = callee_scopes;
+        self.file = callee_file;
+        self.call_stack.appendAssumeCapacity(callee_frame);
+    }
+
+    const root_name = self.rootName(take.root);
+    const binding = try self.placeBinding(root_name, take.root.span);
+    // The slot lives inside the root's own objects, which `containerSlot` has
+    // made unique and nothing else can reach while the binding is taken, so it
+    // stays valid for the whole call. A root with no steps is its own slot.
+    take.root_value = binding.value.?;
+    binding.value = null;
+    const slot: *Value = if (take.steps.len == 0) &take.root_value else self.containerSlot(&take.root_value, take.steps) catch |err| {
+        binding.value = take.root_value;
+        return err;
+    };
+    const receiver = slot.*;
+    slot.* = Value.nothing;
+    binding.changing = take.method;
+    take.slot = slot;
+
+    // In place of the copy the defaults read, if there was one.
+    if (frame.bindings.getPtr("self")) |bound| {
+        self.heap.release(bound.value.?);
+        bound.value = receiver;
+    } else {
+        frame.bindings.put(self.gpa, "self", .{ .kind = .struct_value, .value = receiver }) catch |err| {
+            slot.* = receiver;
+            take.slot = null;
+            binding.changing = null;
+            binding.value = take.root_value;
+            return err;
+        };
+    }
 }
 
 /// Section 8.2's `["red", "green"].to_set()`. Repeats collapse, and the first

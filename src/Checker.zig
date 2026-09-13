@@ -1991,6 +1991,20 @@ fn checkBodyWithSelf(
     // has already kept each from reading itself or a later parameter.
     for (parameter_list, parameter_types) |parameter, parameter_type| {
         const default = parameter.default orelse continue;
+        // A default works out a value for the call, as the arguments before
+        // it do, so like a getter (10.3) it may not change `self`. Its change
+        // could otherwise be lost, or reach a `const`, depending on whether
+        // the rest of the method happens to change `self` too.
+        if (receiver) |method_type| {
+            if (try self.expressionChangesSelf(default, method_type)) {
+                try self.report(
+                    default.span,
+                    "this default would change `self`",
+                    .{},
+                    "A default only works out a value for the call. Change `self` in the method's body instead.",
+                );
+            }
+        }
         const actual = try self.typeOfExpected(default, parameter_type);
         if (!actual.assignableTo(parameter_type)) {
             try self.report(

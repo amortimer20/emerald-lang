@@ -400,7 +400,9 @@ While a method that changes a struct runs, or a property's setter, the binding i
 through belongs to that call. Reaching the same binding another way while the call is in progress — from a function
 or block the method calls — is a runtime error rather than a view of a half-changed value.
 This is what lets a changing method change a collection field where it lives instead of
-copying it on every call.
+copying it on every call. The call has the binding from the moment its arguments, defaults
+included, have been evaluated, so an argument or a default may still read it. A default may
+not change `self`.
 
 Fields also use `var` and `const`. A `const` field is assigned during construction and is
 not later rebound, and it freezes a value it holds under the same rule. A `var` field may
@@ -2851,6 +2853,8 @@ recorded in their normative sections:
 | Type-level and instance member names (10.3, 10.4) | One name space for both | `Player.count` and `player.count` meaning different things would be legal but misleading, and the diagnostic for reaching a member the wrong way can only name the right way if the name identifies one member. |
 | Inferring a type-level field's type (4.1, 7.2, 10.4) | Optional annotation; inferred from the value on first need, and a cycle through a function whose return type is also inferred needs one of the two annotated | This matches module-level bindings, which the fields otherwise behave like. The cycle rule is 7.2's rule for recursive functions, reached through a field instead of a call. |
 | Narrowing a type-level field (4.5, 10.4) | Not narrowed, even after assigning a present value | The field is one binding the whole program shares, so any call between the proof and the use can set it back to `nothing`. `.or(...)`, or copying it into a local first, is the way to use one. |
+| When a changing method reaches its receiver (4.3, 5.2, 7.3) | The receiver is a place: its indices are evaluated first, and the place itself is reached once the arguments are, so an argument that replaces the variable is seen by the call. A method that only reads receives the receiver's value, read before its arguments | This is how assignment into a place and the changing collection methods already behave, and reaching the place first would make `items.append(items.count)`, and any argument that reads the receiver, an error under 4.3's exclusivity rule. A reading method has no place, only an operand, which 5.2 reads left to right. |
+| Defaults of a changing method (4.3, 7.3) | Evaluated before the call takes its receiver, seeing `self` as it is before the call; a default may not change `self` | 7.3 counts omitted defaults among a call's arguments, so exclusivity has not begun while they run, and `t.mark()` with a default that reads `t` is not an error. A default that changed `self` would be lost on a method that only reads, and would reach a `const`; like a getter (10.3), it only works out a value. |
 | Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 
 ## 23. Consistency rules for future work

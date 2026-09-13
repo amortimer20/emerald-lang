@@ -1,0 +1,4 @@
+diagnostics/default-changes-self.em:11:25: this default would change `self`
+      func show(id: Int = self.take()) {
+                          ^^^^^^^^^^^
+A default only works out a value for the call. Change `self` in the method's body instead.
