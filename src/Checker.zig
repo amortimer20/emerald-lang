@@ -3604,7 +3604,21 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         );
         return .invalid;
     }
-    if (binding.is_function) return self.typeOfFunctionValue(expression, reference);
+    if (binding.is_function) {
+        // Taking a type-level function as a value still reaches the member and
+        // sets up its type, even though the function body does not run yet.
+        if (!self.in_function) {
+            if (self.facts.type_members.get(reference.key)) |type_key| {
+                try self.checkCapturesOf(
+                    expression.span,
+                    try Resolver.typeSetupKey(self.arena, type_key),
+                    reference.display,
+                    "this",
+                );
+            }
+        }
+        return self.typeOfFunctionValue(expression, reference);
+    }
     if (!binding.assigned) {
         try self.reportUnassigned(expression.span, reference.display, binding.*);
         binding.assigned = true;

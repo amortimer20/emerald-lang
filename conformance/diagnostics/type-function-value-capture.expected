@@ -1,0 +1,4 @@
+diagnostics/type-function-value-capture.em:12:14: `Banner.make` reads `greeting`, which is not assigned yet here
+  const make = Banner.make
+               ^^^^^^^^^^^
+Move this below the line that assigns `greeting`.

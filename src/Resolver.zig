@@ -1557,9 +1557,10 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     return .reported;
 }
 
-/// A namespace path is a handful of segments at most; a longer chain is a
-/// property access on a value, which this is not about.
-const max_path_segments = 8;
+/// One segment per directory the project loader accepts, plus a declaration
+/// and its type-level member. A longer chain is a property access on a value,
+/// which this is not about.
+const max_path_segments = Project.max_depth + 2;
 
 /// Fills `names` with a chain of plain names, outermost last, and returns how
 /// many. Null when the chain does not bottom out in a name.

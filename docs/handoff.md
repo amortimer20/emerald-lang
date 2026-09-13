@@ -212,6 +212,21 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   assignment of a field checks it directly. `isRecursive` ignores setup edges, which would
   otherwise make `func V.origin() { return V(0) }` look recursive whenever a field's value
   calls it.
+- **Taking a type-level function as a value also sets up its type.** The checker applies the
+  setup capture check to `const make = Banner.make`, not the function body's captures; the
+  body has not run, but reaching the member already has. `diagnostics/type-function-value-capture`
+  covers the distinction.
+- **Assignments find their binding again after the right side.** An assignment reaches its
+  type-level destination before evaluating the value, but evaluating that value can set up
+  another type and grow the module table. The interpreter finds the binding again when the
+  module table's count changed while the value was evaluated; nothing is removed from that
+  table, so an unchanged count means the pointer is still good, and an ordinary assignment
+  pays for one lookup (always looking twice made a 3,000,000-assignment loop 28% slower).
+  `run/type-field-assignment-during-setup` forces the growth and guards the fix.
+- **Qualified-expression capacity follows the project limit.** A type-level reference may
+  contain all `Project.max_depth` namespace segments plus the type and member. The resolver's
+  fixed buffer is sized from that bound; `run/type-level-members-deep-project` covers a chain
+  longer than the old independent limit of eight segments.
 
 ### Defaults and named-argument decisions worth knowing
 
@@ -942,6 +957,24 @@ still open.
 - Documentation comments are tokens because the parser needs them. Line and block comments
   are skipped, which the formatter slice will have to revisit.
 
+## Code review of the struct slices
+
+The struct slices (`72e7df4..a90ed94`: constructors, methods, properties, defaults and named
+arguments, type-level members) are being reviewed in chunks, one area at a time, before
+member privacy starts. Each chunk reads its area's code afresh and checks it with small
+`.em` programs in both Debug and ReleaseSafe builds. Every confirmed problem gets a fix, a
+conformance case, and a check that the case fails with the fix disabled. Any design
+decision a fix involves is recorded in `docs/rewrite-context.md`.
+
+| Chunk | Area | Status |
+| --- | --- | --- |
+| 1 | Receiver handling in the interpreter: `callStructMethod`, `takeReceiver`, `assignElement`, `storeProperty`, `evaluateReceiverPath`. Values put back and counted on every path, and binding pointers held while the module scope can move | Done, fixed in `b7c3b64` |
+| 2 | Constructor field tracking (`.x` and `!x` bindings) under `return`, `break`, `continue`, `while true`, and nesting; the `if` and loop narrowing fixes | Done, fixed in `5d72c7c` |
+| 3 | Type-level members: setup order and cycles, the section 7.1 capture check through `Resolver.typeSetupKey`, `settleTypeField` and the `inferring` set, the `find` redirect, the assignment rewrite through `Facts.type_assignments`, namespaced and private types, name clashes with instance members | Done, fixed in "Fix type-level member issues found in review" |
+| 4 | Which methods change `self` (`methodChanges` and its caching, `selfPathType`), the rule that a getter may not change `self`, assignment through properties, and nested changes through them | Not started |
+| 5 | Defaults and named arguments: the checker and interpreter matching arguments to the same parameters (`src/arguments.zig`), which file and frame defaults run in, and field defaults under both kinds of constructor | Not started |
+| 6 | Diagnostic wording and spans across all five slices: wrong or misleading messages, cascades, and underlines in the wrong place | Not started |
+
 ## Next concrete step
 
 Continue section 20's slice 12. Structs now have stored fields with defaults, assignment
@@ -970,10 +1003,14 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 254 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 257 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
+- Chunk 3 added three type-level-member cases. Each was confirmed to fail with its fix
+  temporarily disabled: assignment during another type's setup silently kept the old value,
+  taking a type-level function value missed the setup capture diagnostic, and a qualified
+  type-level reference beyond eight segments was mistaken for a value member access.
 - The field-assignment slice's own copy-on-write unit test was confirmed non-vacuous:
   disabling `Heap.uniqueStruct`'s copy (forcing it to always return the shared instance)
   fails both that test and `run/struct-field-assignment`, and both pass again once it is

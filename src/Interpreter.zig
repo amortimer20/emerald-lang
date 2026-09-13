@@ -522,13 +522,20 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
                 assignment.steps = written.steps[1..];
             }
             if (assignment.steps.len > 0) return self.assignElement(assignment);
-            const slot = try self.placeBinding(assignment.name, assignment.name_span);
+            // Reaching the destination first sets up its file or type before
+            // the right side runs, just as reading it would.
+            const found = try self.placeBinding(assignment.name, assignment.name_span);
+            // Evaluating the right side can set up another file or type, whose
+            // new bindings can grow the module table and move `found`. Nothing
+            // is ever removed from that table, so an unchanged count means
+            // nothing moved, and the common case pays for one lookup.
+            const module_size = self.module.count();
             const value = if (assignment.operation) |operation| blk: {
                 // Section 5.3 lowers a compound assignment through the same
                 // operation as its binary form. The current value is read once.
                 // Held while the right side runs, which could reassign the
                 // same name through a function and release the old value.
-                const current = Heap.retain(slot.value orelse return self.raiseUnassigned(
+                const current = Heap.retain(found.value orelse return self.raiseUnassigned(
                     assignment.name_span,
                     assignment.name,
                 ));
@@ -537,6 +544,11 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
                 defer self.heap.release(right);
                 break :blk try self.applyBinary(statement.span, operation, current, right);
             } else try self.evaluate(assignment.value);
+
+            const slot = if (self.module.count() == module_size) found else self.placeBinding(assignment.name, assignment.name_span) catch |err| {
+                self.heap.release(value);
+                return err;
+            };
             if (slot.value) |old| self.heap.release(old);
             slot.value = widen(value, slot.kind);
         },
