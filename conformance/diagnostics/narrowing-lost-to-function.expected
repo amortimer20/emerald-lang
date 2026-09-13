@@ -1,0 +1,8 @@
+diagnostics/narrowing-lost-to-function.em:12:11: this is String?, so `count` may not be there to use
+      print(name.count)
+            ^^^^
+A test cannot prove `name` is there, because a function can set it back to `nothing` at any time. Copy it into a `const` and test that, or give it a fallback with `.or(...)`.
+diagnostics/narrowing-lost-to-function.em:16:11: this is String?, so `count` may not be there to use
+      print(name.count)
+            ^^^^
+A test cannot prove `name` is there, because a function can set it back to `nothing` at any time. Copy it into a `const` and test that, or give it a fallback with `.or(...)`.

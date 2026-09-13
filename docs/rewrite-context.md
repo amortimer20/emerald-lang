@@ -482,7 +482,9 @@ Narrowing does not assume that a mutable property remains unchanged between read
 the property to a local makes the proof explicit.
 
 A narrowed mutable binding loses that fact when it is reassigned or when a called closure
-could reassign its captured binding. `const` bindings and read-only parameters retain
+could reassign its captured binding. A module-level variable that any function, method,
+constructor, or accessor assigns is not narrowed at all, since any call between the test
+and the use could be that one. `const` bindings and read-only parameters retain
 narrowing because they cannot be rebound. Overload selection uses the type known at the
 call site after any such narrowing.
 
@@ -2855,6 +2857,7 @@ recorded in their normative sections:
 | Narrowing a type-level field (4.5, 10.4) | Not narrowed, even after assigning a present value | The field is one binding the whole program shares, so any call between the proof and the use can set it back to `nothing`. `.or(...)`, or copying it into a local first, is the way to use one. |
 | When a changing method reaches its receiver (4.3, 5.2, 7.3) | The receiver is a place: its indices are evaluated first, and the place itself is reached once the arguments are, so an argument that replaces the variable is seen by the call. A method that only reads receives the receiver's value, read before its arguments | This is how assignment into a place and the changing collection methods already behave, and reaching the place first would make `items.append(items.count)`, and any argument that reads the receiver, an error under 4.3's exclusivity rule. A reading method has no place, only an operand, which 5.2 reads left to right. |
 | Defaults of a changing method (4.3, 7.3) | Evaluated before the call takes its receiver, seeing `self` as it is before the call; a default may not change `self` | 7.3 counts omitted defaults among a call's arguments, so exclusivity has not begun while they run, and `t.mark()` with a default that reads `t` is not an error. A default that changed `self` would be lost on a method that only reads, and would reach a `const`; like a getter (10.3), it only works out a value. |
+| Narrowing a module variable a function assigns (4.5, 7.1) | Never narrowed; a `const` copy is | 4.5 already refused narrowing where a called closure could reassign the binding, and a named function reaches module variables the same way. Tracking which calls could run the assigning function would be interprocedural analysis with the same over-reporting as the capture check, for a pattern a `const` copy states more clearly. Without this, `check` accepted a program that crashed. |
 | Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 
 ## 23. Consistency rules for future work

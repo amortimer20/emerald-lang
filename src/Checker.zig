@@ -617,7 +617,14 @@ fn find(self: *Checker, name: []const u8) ?*Binding {
     // A type-level field has one binding, the module scope's, whose type may
     // have been inferred after a function body copied the scope.
     if (key) |qualified| {
-        if (self.type_fields.contains(qualified)) return self.module.getPtr(qualified);
+        if (self.type_fields.contains(qualified)) {
+            // Never narrowed, so its type is its declared type. Restoring the
+            // flow state after a block can put back a type saved before the
+            // field's type was inferred inside that block, so it is set again.
+            const binding = self.module.getPtr(qualified).?;
+            binding.type = binding.declared;
+            return binding;
+        }
     }
     var index = self.scopes.items.len;
     while (index > 0) {
@@ -2911,13 +2918,26 @@ fn presenceTest(comparison: Ast.Expression.Comparison) ?[]const u8 {
     return null;
 }
 
+/// Why section 4.5 will not narrow a name, or null when it will: a block
+/// assigns it, or it is a module variable a function assigns, since calling
+/// either between the test and the use could set it back to `nothing`. Keyed by
+/// name, so a local sharing the name is refused too, which errs on the side of
+/// not narrowing.
+fn unprovable(self: *Checker, name: []const u8) ?[]const u8 {
+    const binding = self.find(name) orelse return null;
+    if (binding.mutability != .variable) return null;
+    if (self.facts.assigned_in_lambda.contains(name)) return "a block";
+    if (self.facts.assigned_in_function.contains(self.keyOf(name))) return "a function";
+    return null;
+}
+
 fn narrowName(self: *Checker, name: []const u8) void {
     const binding = self.find(name) orelse return;
     if (binding.is_function or !binding.type.optional) return;
     // Section 4.5: a `const` and a read-only parameter keep the proof because
     // they cannot be rebound. A `var` a block assigns to can change between the
     // test and the use, since calling the block is all it takes.
-    if (binding.mutability == .variable and self.facts.assigned_in_lambda.contains(name)) return;
+    if (self.unprovable(name) != null) return;
     binding.type = binding.type.payload();
 }
 
@@ -3891,7 +3911,13 @@ fn requirePresent(
     if (!base.optional) return true;
     // A name can be proved present by testing it; anything else has to be put
     // in one first, which is what the correction says.
-    const help = if (at.data == .name)
+    const help = if (at.data == .name and self.unprovable(at.data.name) != null)
+        try std.fmt.allocPrint(
+            self.arena,
+            "A test cannot prove `{s}` is there, because {s} can set it back to `nothing` at any time. Copy it into a `const` and test that, or give it a fallback with `.or(...)`.",
+            .{ at.data.name, self.unprovable(at.data.name).? },
+        )
+    else if (at.data == .name)
         try std.fmt.allocPrint(
             self.arena,
             "Give it a fallback with `.or(...)`, or check it first with `if {s} != nothing {{ ... }}`.",

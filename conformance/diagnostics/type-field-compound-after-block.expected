@@ -1,0 +1,4 @@
+diagnostics/type-field-compound-after-block.em:10:1: `+` joins two Strings, but this is Int and String
+  Counter.total += "one"
+  ^^^^^^^^^^^^^
+Convert the value with `to_string()`, or use interpolation, as in `"#{name}: #{score}"`.

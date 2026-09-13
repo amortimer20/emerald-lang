@@ -196,7 +196,10 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - **No narrowing.** Assigning a present value to an optional type-level field does not
   narrow it, and reads use its declared type: it is one shared binding, and narrowing the
   module scope's entry would have leaked the proof everywhere. `run/type-level-members`
-  fails without the guard.
+  fails without the guard. `find` also resets a type-level field's `type` to its declared
+  type, because restoring the flow state after a block can put back a type saved before the
+  field was inferred inside it; without that, a compound assignment after the block went
+  unchecked (`diagnostics/type-field-compound-after-block`).
 - **Setup is lazy, per type.** `Interpreter.reach` sends a type-level key to `setUpType`
   instead of its file, and constructing a type sets it up after its file. Setup runs the
   field values in order in the type's file, in a stack frame named "the type-level fields of
@@ -591,6 +594,13 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   "a called closure could reassign its captured binding". The resolver already walks lambda
   bodies, so it records `assigned_in_lambda` and the checker refuses to narrow those names
   at all. A `const` and a parameter always narrow, because they cannot be rebound.
+- **Nor is a module variable a function assigns.** A function reaches a module variable
+  just as a closure reaches a captured one, and the chunk 2 review found `check` accepting
+  `if name != nothing { clear(); print(name.count) }`, which panicked at runtime; the hole
+  predated the struct slices. The resolver records `assigned_in_function` (by module key,
+  for any body with `current_function` set), and `Checker.unprovable` refuses both kinds,
+  with a correction that says why a test cannot help and suggests a `const` copy. Guarded
+  by `diagnostics/narrowing-lost-to-function`.
 - **`.or(...)` is lazy and is the one method allowed on a value not yet proved present.**
   Supplying the fallback is what proves it. The fallback is evaluated only when it is
   needed, matching the `or` operator's short-circuiting.
@@ -960,7 +970,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 252 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 254 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

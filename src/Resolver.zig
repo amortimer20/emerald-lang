@@ -101,6 +101,11 @@ pub const Facts = struct {
     /// one of these: a block holding the variable could be called between the
     /// test and the use, and set it back to `nothing`.
     assigned_in_lambda: NameSet = .empty,
+    /// Every module-level variable, by key, assigned inside a function,
+    /// method, constructor, or accessor. Section 4.5 will not narrow one of
+    /// these either: any call between the test and the use could be the one
+    /// that sets it back to `nothing`.
+    assigned_in_function: NameSet = .empty,
     /// For each file, what a bare module-level name means there: its own
     /// declarations, its namespace's, and whatever its `using` declarations
     /// brought in. Indexed by file.
@@ -1002,6 +1007,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             if (self.lambda_depth > 0) {
                 try self.facts.assigned_in_lambda.put(self.arena, assignment.name, {});
             }
+            try self.noteAssignedInFunction(found);
 
             // A compound assignment reads the current value first, so it needs
             // the variable to be assigned already; a plain one does not. An
@@ -1114,6 +1120,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 if (self.lambda_depth > 0) {
                     try self.facts.assigned_in_lambda.put(self.arena, name.text, {});
                 }
+                try self.noteAssignedInFunction(found);
                 if (!found.binding.mutable) try self.reportReadOnly(name.text, name.span, found.binding.kind);
             }
         },
@@ -1167,6 +1174,14 @@ fn walkTypeFieldAssignment(self: *Resolver, assignment: Ast.Assignment, type_key
         },
         .reported, .none => {},
     }
+}
+
+/// Records a module-level variable assigned inside a body that can be called
+/// from anywhere; see `Facts.assigned_in_function`.
+fn noteAssignedInFunction(self: *Resolver, found: Found) Error!void {
+    if (self.current_function == null) return;
+    if (found.scope != module_scope or found.binding.kind != .variable) return;
+    try self.facts.assigned_in_function.put(self.arena, found.key, {});
 }
 
 /// One name a pattern introduces. Section 8.2 makes `_` discard its position,
