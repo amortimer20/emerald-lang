@@ -417,9 +417,12 @@ pub fn check(
                                     "Reading a property should never change the value it is read from. Make this a method instead.",
                                 );
                             }
-                        }
-                        if (property.setter != null) {
-                            try checker.ensureBodyChecked(try Resolver.setterKey(arena, type_key, property.name));
+                            if (property.setter != null) {
+                                const setter_key = try Resolver.setterKey(arena, type_key, property.name);
+                                if (checker.declarations.contains(setter_key)) {
+                                    try checker.ensureBodyChecked(setter_key);
+                                }
+                            }
                         }
                     }
                 },

@@ -1,0 +1,8 @@
+diagnostics/writable-property-method-clash.em:8:9: `level` is already a method of `Gauge`
+      var level: Int {
+          ^^^^^
+A field, a property, and a method cannot share a name, since `value.name` has to mean one of them. Rename one.
+diagnostics/writable-property-method-clash.em:24:9: `reading` is already a property of `Meter`
+      var reading: Int {
+          ^^^^^^^
+A field, a property, and a method cannot share a name, since `value.name` has to mean one of them. Rename one.

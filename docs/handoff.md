@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Claude after the defaults and named-arguments sub-slice.
+Updated: 2026-09-13. Prepared after chunk 4 of the struct-slice code review.
 
 ## Current milestone
 
@@ -293,6 +293,12 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   of a `const` would otherwise be an error, and `methodChanges` already answers the question.
 - **Member names share one space**, checked in one pass over fields, properties, and
   methods in source order, so the later declaration is the one reported.
+- **Only registered accessors are body-checked.** When a writable property loses a
+  source-ordered name clash, neither its getter nor setter is registered as a declaration;
+  the later accessor pass checks each key exists before asking for its body. Without the
+  setter check, a method/property clash or a read-only/writable duplicate could panic in
+  `signatureFor` after reporting the intended clash. Covered by
+  `diagnostics/writable-property-method-clash`.
 - **Parser recovery.** A `var` property's `get` and `set` blocks may come in either order;
   a missing block, a repeated one, or blocks inside a `const` property are reported without
   failing the statement, since failing it inside a struct body reported every following `}`
@@ -971,7 +977,7 @@ decision a fix involves is recorded in `docs/rewrite-context.md`.
 | 1 | Receiver handling in the interpreter: `callStructMethod`, `takeReceiver`, `assignElement`, `storeProperty`, `evaluateReceiverPath`. Values put back and counted on every path, and binding pointers held while the module scope can move | Done, fixed in `b7c3b64` |
 | 2 | Constructor field tracking (`.x` and `!x` bindings) under `return`, `break`, `continue`, `while true`, and nesting; the `if` and loop narrowing fixes | Done, fixed in `5d72c7c` |
 | 3 | Type-level members: setup order and cycles, the section 7.1 capture check through `Resolver.typeSetupKey`, `settleTypeField` and the `inferring` set, the `find` redirect, the assignment rewrite through `Facts.type_assignments`, namespaced and private types, name clashes with instance members | Done, fixed in "Fix type-level member issues found in review" |
-| 4 | Which methods change `self` (`methodChanges` and its caching, `selfPathType`), the rule that a getter may not change `self`, assignment through properties, and nested changes through them | Not started |
+| 4 | Which methods change `self` (`methodChanges` and its caching, `selfPathType`), the rule that a getter may not change `self`, assignment through properties, and nested changes through them | Done, fixed in "Fix property clash crash found in review" |
 | 5 | Defaults and named arguments: the checker and interpreter matching arguments to the same parameters (`src/arguments.zig`), which file and frame defaults run in, and field defaults under both kinds of constructor | Not started |
 | 6 | Diagnostic wording and spans across all five slices: wrong or misleading messages, cascades, and underlines in the wrong place | Not started |
 
@@ -1003,10 +1009,15 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 257 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 308 unit tests, 258 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
+- Chunk 4 added `diagnostics/writable-property-method-clash`. With its fix disabled, both
+  Debug and ReleaseSafe builds compile, then panic while body-checking the absent setter
+  after correctly reporting the member-name clash. The fixed builds report only the two
+  intended clash diagnostics. The fix is confined to the declaration-checking pass, so no
+  runtime call, assignment, or member-access path needed timing.
 - Chunk 3 added three type-level-member cases. Each was confirmed to fail with its fix
   temporarily disabled: assignment during another type's setup silently kept the old value,
   taking a type-level function value missed the setup capture diagnostic, and a qualified
