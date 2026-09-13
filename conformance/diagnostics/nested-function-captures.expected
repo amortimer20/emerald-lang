@@ -10,3 +10,7 @@ diagnostics/nested-function-captures.em:27:20: this is String?, so `upper` may n
               return text.upper()
                      ^^^^
 Give it a fallback with `.or(...)`, or check it first with `if text != nothing { ... }`.
+diagnostics/nested-function-captures.em:36:15: this is String?, so `upper` may not be there to use
+          print(note.upper())
+                ^^^^
+A test cannot prove `note` is there, because a block or a nested function can set it back to `nothing` at any time. Copy it into a `const` and test that, or give it a fallback with `.or(...)`.

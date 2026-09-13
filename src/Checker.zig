@@ -3141,7 +3141,7 @@ fn presenceTest(comparison: Ast.Expression.Comparison) ?[]const u8 {
 fn unprovable(self: *Checker, name: []const u8) ?[]const u8 {
     const binding = self.find(name) orelse return null;
     if (binding.mutability != .variable) return null;
-    if (self.facts.assigned_in_lambda.contains(name)) return "a block";
+    if (self.facts.assigned_in_lambda.contains(name)) return "a block or a nested function";
     if (self.facts.assigned_in_function.contains(self.keyOf(name))) return "a function";
     return null;
 }

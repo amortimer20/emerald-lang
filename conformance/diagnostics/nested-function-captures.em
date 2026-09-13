@@ -28,3 +28,14 @@ func maybe(flag: Bool) {
         }
     }
 }
+
+func clears(maybe: String?) {
+    var note = maybe
+    if note != nothing {
+        clear()
+        print(note.upper())
+    }
+    func clear() {
+        note = nothing
+    }
+}

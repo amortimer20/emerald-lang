@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the section 7 slice (nested functions and nested patterns).
+Updated: 2026-09-13. Prepared after the second code review (section 7 and the last struct slices).
 
 ## Current milestone
 
@@ -217,8 +217,9 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   method still gets the `self` correction (review chunk 4; `diagnostics/member-without-self`).
 - **A duplicate is reported at whichever is written second.** A nested function is hoisted,
   so `var name` above `func name()` would otherwise be reported at the `var`.
-- **Not done: a better message for a variable declared below the function.** Reading one
-  still reports "is not defined", since the resolver has not seen the later declaration.
+- **A variable declared below a nested function** is reported as exactly that. A block that
+  declares nested functions pushes its own variables onto `Resolver.block_locals` while it is
+  walked, and `reportUndefined` looks there first (review chunk 6).
 
 ### Nested pattern decisions worth knowing
 
@@ -1152,7 +1153,7 @@ what was covered.
 
 ## Second code review (section 7 and the last struct slices)
 
-Reviewing `8ced94f..7ad9887` in chunks, inline. Design questions found in review are decided
+Reviewed `8ced94f..7ad9887` in six chunks, inline; complete. Design questions found in review are decided
 by the reviewer against Emerald's philosophy and modern language design, not put to the user.
 
 | # | Scope | Status |
@@ -1162,7 +1163,7 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 | 3 | Method values: receiver copy, write-back, collector, re-entry | Done: no method value bugs; two calls' nested functions no longer compare equal |
 | 4 | Privacy: every path to a member | Done: 15 outside paths and the inside ones all held; messages that sent a private member the other way now report privacy, and nested functions in methods got their member hints back |
 | 5 | Nested tuple patterns and parser changes | Done: nesting held everywhere; a trailing comma in a pattern and a standalone lambda that unpacks a tuple (both older) fixed |
-| 6 | Diagnostics across all four slices | Next. Noted so far: the narrowing help says "a block can set it back" when a nested function is what does |
+| 6 | Diagnostics across all four slices | Done: a variable declared below a nested function is named as such, the "declared later" help names the variable, and the narrowing help mentions nested functions |
 
 ## Next concrete step
 
@@ -1310,6 +1311,11 @@ maintainability work rather than reproduced behavioral failures:
   list on the first pass and iterating that list afterwards would filter once.
 
 ### Known rough edges
+
+- **What a block assigns is recorded by bare name.** `Facts.assigned_in_lambda` holds names,
+  not bindings, so a lambda or nested function assigning its own `text` stops narrowing of
+  every `text` in the program, and changes that one's help to say a block could set it back.
+  Conservative, never unsound; found in review chunk 6.
 
 - **A long chain of calls between top-level functions is slow to check.** 2,000 functions
   each calling the next take about 2 s in ReleaseSafe, before and after the section 7 slice.

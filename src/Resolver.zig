@@ -239,6 +239,10 @@ current_function: ?[]const u8 = null,
 function_scopes: std.ArrayList(FunctionScope) = .empty,
 /// Every use of a nested function, judged once every body is walked.
 nested_uses: std.ArrayList(NestedUse) = .empty,
+/// For each block being walked that declares a nested function, the variables
+/// it declares directly, so a nested function reading one declared below it
+/// can be told exactly that.
+block_locals: std.ArrayList(BlockLocals) = .empty,
 /// How many lambda bodies enclose the statement being walked.
 lambda_depth: u32 = 0,
 /// Every module-level variable and where it is declared, so a name used above
@@ -288,6 +292,12 @@ const FunctionScope = struct {
     /// What `current_function` was around it, which for a nested function is
     /// the method, constructor, or type code it is written in.
     enclosing: ?[]const u8,
+};
+
+const BlockLocals = struct {
+    /// The index of the block's scope.
+    scope: usize,
+    names: []const Ast.Pattern.Name,
 };
 
 const NestedUse = struct {
@@ -959,6 +969,24 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
             .{name},
         );
     }
+    // Section 7.1: a nested function sees only what is declared above it.
+    if (self.function_scopes.getLastOrNull()) |innermost| {
+        if (self.facts.nested_functions.get(innermost.key)) |function| {
+            for (self.block_locals.items) |block| {
+                if (block.scope >= innermost.scope) continue;
+                for (block.names) |declared| {
+                    if (!std.mem.eql(u8, declared.text, name) or declared.span.start < span.start) continue;
+                    return self.reportWithHelpFmt(
+                        span,
+                        "`{s}` is declared below `{s}`",
+                        .{ name, function.name },
+                        "A nested function can use only the variables declared above it, as a block can. Move the declaration of `{s}` above `func {s}`.",
+                        .{ name, function.name },
+                    );
+                }
+            }
+        }
+    }
     if (std.mem.eql(u8, name, "this") and self.enclosingType() != null and self.enclosingType().?.has_self) {
         return self.report(
             span,
@@ -1061,14 +1089,32 @@ fn noteRead(self: *Resolver, found: Found) Error!void {
 }
 
 fn walkStatements(self: *Resolver, statements: []const Ast.Statement) Error!void {
-    if (self.scopes.items.len > module_scope + 1) try self.hoistNestedFunctions(statements);
+    const hoisted = self.scopes.items.len > module_scope + 1 and try self.hoistNestedFunctions(statements);
+    defer if (hoisted) {
+        _ = self.block_locals.pop();
+    };
     for (statements) |statement| try self.walkStatement(statement);
 }
 
 /// Section 7.1: "Nested named functions ... are hoisted within their
 /// containing scope", so every one a block declares can be called anywhere in
 /// the block, including by the others.
-fn hoistNestedFunctions(self: *Resolver, statements: []const Ast.Statement) Error!void {
+/// Returns whether the block declares any, in which case its variables are
+/// pushed onto `block_locals` for the caller to pop.
+fn hoistNestedFunctions(self: *Resolver, statements: []const Ast.Statement) Error!bool {
+    var any = false;
+    var names: std.ArrayList(Ast.Pattern.Name) = .empty;
+    for (statements) |statement| switch (statement.data) {
+        .function_declaration => any = true,
+        .declaration => |declaration| try names.append(self.arena, .{ .text = declaration.name, .span = declaration.name_span }),
+        .destructuring => |destructuring| try names.appendSlice(self.arena, destructuring.pattern.names),
+        else => {},
+    };
+    if (!any) return false;
+    try self.block_locals.append(self.arena, .{
+        .scope = self.scopes.items.len - 1,
+        .names = try names.toOwnedSlice(self.arena),
+    });
     for (statements) |statement| {
         const function = switch (statement.data) {
             .function_declaration => |f| f,
@@ -1098,6 +1144,7 @@ fn hoistNestedFunctions(self: *Resolver, statements: []const Ast.Statement) Erro
             .function_key = key,
         });
     }
+    return true;
 }
 
 /// Records that the function being walked reaches a local of a function
@@ -1140,7 +1187,11 @@ fn judgeNestedUses(self: *Resolver) Error!void {
                             use.expression.span,
                             "`{s}` uses `{s}`, which is not declared until later",
                             .{ use.expression.data.name, capture.name },
-                            "Move this below the declaration of the variable the function uses.",
+                            try std.fmt.allocPrint(
+                                self.arena,
+                                "Move the declaration of `{s}` above this line, or move this below it.",
+                                .{capture.name},
+                            ),
                         );
                     }
                     reported = true;
