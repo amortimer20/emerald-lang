@@ -1,0 +1,4 @@
+diagnostics/method-changes-parameter.em:14:5: `counter` is a parameter, so a change to it would be lost when the function returns
+      counter.increment()
+      ^^^^^^^
+Copy it into a `var`, change the copy, and return it, as in `var changed = counter`.

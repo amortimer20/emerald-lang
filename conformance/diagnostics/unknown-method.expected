@@ -1,0 +1,16 @@
+diagnostics/unknown-method.em:14:9: Counter has no method named `decrement`
+  counter.decrement()
+          ^^^^^^^^^
+Check the method name in the struct declaration.
+diagnostics/unknown-method.em:15:9: `count` is a field of Counter, not a method
+  counter.count()
+          ^^^^^
+Read it without parentheses, as in `.count`.
+diagnostics/unknown-method.em:16:15: `peek` is a method, so it needs parentheses
+  print(counter.peek)
+                ^^^^
+Call it, as in `.peek()`. Methods cannot be used as values yet.
+diagnostics/unknown-method.em:17:1: `peek` takes 0 arguments, but this call passes 1
+  counter.peek(1)
+  ^^^^^^^^^^^^
+Match the number of arguments to the method's parameters.

@@ -45,6 +45,15 @@ pub const KeyMap = std.StringHashMapUnmanaged([]const u8);
 /// qualified one.
 pub const private_separator = "#";
 
+/// The key an instance method is known by: its type's key, then this, then the
+/// method's name. `::` cannot appear in a name, a path, or any other key, so a
+/// method never collides with a namespace-qualified function.
+pub const method_separator = "::";
+
+pub fn methodKey(arena: std.mem.Allocator, type_key: []const u8, name: []const u8) std.mem.Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}" ++ method_separator ++ "{s}", .{ type_key, name });
+}
+
 /// Section 14.2's privacy: a leading underscore on a module-level declaration
 /// makes it private to its own file. `_` alone is the discard, not a name.
 pub fn isPrivate(name: []const u8) bool {
@@ -166,6 +175,11 @@ namespace_aliases: []KeyMap = &.{},
 /// 14.2 reports these where one is used, not where they are imported, since a
 /// name nobody writes is not a conflict anyone has.
 ambiguous: []KeyMap = &.{},
+/// Every instance method in the program, by its bare name. A call written
+/// `value.area()` names no type, so which method it reaches is not known until
+/// the checker has types; for section 7.1's capture check it is recorded as a
+/// call to every method of that name, which can only over-report.
+methods_named: std.StringHashMapUnmanaged(std.ArrayList([]const u8)) = .empty,
 /// The file `emerald run` selected, named by the diagnostics that explain why
 /// a statement cannot run where it is written.
 entry_path: []const u8 = "",
@@ -369,6 +383,19 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
         try self.facts.module_reads.put(self.arena, key, .empty);
         try self.facts.calls.put(self.arena, key, .empty);
         try self.noteElsewhere(declaration.name);
+
+        for (declaration.methods) |method| {
+            const method_key = try methodKey(self.arena, key, method.name);
+            // A repeated method name is reported by the checker, beside a
+            // field of the same name; the first declaration keeps the key.
+            if (self.facts.owner.contains(method_key)) continue;
+            try self.facts.owner.put(self.arena, method_key, self.file);
+            try self.facts.module_reads.put(self.arena, method_key, .empty);
+            try self.facts.calls.put(self.arena, method_key, .empty);
+            const same_name = try self.methods_named.getOrPut(self.arena, method.name);
+            if (!same_name.found_existing) same_name.value_ptr.* = .empty;
+            try same_name.value_ptr.append(self.arena, method_key);
+        }
     }
 }
 
@@ -897,13 +924,19 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             function.body.statements,
             false,
         ),
-        .struct_declaration => |declaration| if (declaration.constructor) |constructor| {
-            try self.walkBody(
-                try self.keyOf(self.file, declaration.name),
-                constructor.parameters,
-                constructor.body.statements,
-                true,
-            );
+        .struct_declaration => |declaration| {
+            const type_key = try self.keyOf(self.file, declaration.name);
+            if (declaration.constructor) |constructor| {
+                try self.walkBody(type_key, constructor.parameters, constructor.body.statements, true);
+            }
+            for (declaration.methods) |method| {
+                try self.walkBody(
+                    try methodKey(self.arena, type_key, method.name),
+                    method.parameters,
+                    method.body.statements,
+                    true,
+                );
+            }
         },
 
         .return_statement => |return_statement| {
@@ -1007,7 +1040,7 @@ fn reportReadOnly(
             span,
             "`self` cannot be replaced",
             .{},
-            "A constructor builds the value it was called for. Set its fields one at a time, as in `self.x = x`.",
+            "Set its fields one at a time instead, as in `self.x = x`.",
         ),
     }
 }
@@ -1084,7 +1117,8 @@ fn walkBody(
     key: []const u8,
     parameter_list: []const Ast.Parameter,
     statements: []const Ast.Statement,
-    constructor: bool,
+    /// Whether `self` is in scope: a constructor's or a method's body.
+    has_self: bool,
 ) Error!void {
     std.debug.assert(self.scopes.items.len == module_scope + 1);
 
@@ -1100,7 +1134,7 @@ fn walkBody(
     }
 
     const parameters = &self.scopes.items[self.scopes.items.len - 1];
-    if (constructor) {
+    if (has_self) {
         // `self` is a keyword, so no parameter can already be called this.
         try parameters.put(self.arena, "self", .{
             .mutable = false,
@@ -1269,6 +1303,13 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     if (self.lookup(callee)) |found| {
                         if (found.scope == module_scope and isCallable(found.binding.kind)) {
                             try self.facts.calls.getPtr(caller).?.put(self.arena, found.key, {});
+                        }
+                    }
+                }
+                if (call.callee.data == .member and !self.facts.qualified.contains(call.callee)) {
+                    if (self.methods_named.get(call.callee.data.member.name)) |keys| {
+                        for (keys.items) |method_key| {
+                            try self.facts.calls.getPtr(caller).?.put(self.arena, method_key, {});
                         }
                     }
                 }

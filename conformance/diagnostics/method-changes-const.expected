@@ -1,0 +1,4 @@
+diagnostics/method-changes-const.em:15:1: `counter` is a `const`, so its contents cannot change
+  counter.increment()
+  ^^^^^^^
+Declare `counter` with `var` if it needs to change.

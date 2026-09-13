@@ -154,8 +154,13 @@ pub const Map = struct {
 /// as `1` rather than `1.0`.
 pub const Binding = struct {
     kind: Value.Kind,
-    /// Null until section 4.1's definite assignment says otherwise.
+    /// Null until section 4.1's definite assignment says otherwise, and while
+    /// a method that changes it has the value (see `changing`).
     value: ?Value,
+    /// The method that has taken this binding's value to change it, while that
+    /// call runs. Anything else reaching the binding meanwhile is an error
+    /// rather than a look at a value that is half changed.
+    changing: ?[]const u8 = null,
 };
 
 /// One block's, or one call's, names.

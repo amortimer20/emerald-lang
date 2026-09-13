@@ -1,0 +1,8 @@
+diagnostics/method-changes-const-field.em:18:14: `counter` is a `const` field of Holder, so it cannot change
+          self.counter.increment()
+               ^^^^^^^
+Declare it `var counter: Counter` in Holder if it needs to change.
+diagnostics/method-changes-const-field.em:19:14: `counts` is a `const` field of Holder, so it cannot change
+          self.counts.append(1)
+               ^^^^^^
+Declare it `var counts: [Int]` in Holder if it needs to change.

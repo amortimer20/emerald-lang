@@ -150,6 +150,9 @@ constructors: std.StringHashMapUnmanaged(Constructor) = .empty,
 /// What the checker proved about each function, including return types it
 /// inferred, which are needed to widen results the way it allowed.
 signatures: *const Type.Signatures,
+/// Instance methods that change `self`, and which method each call reaches.
+changing_methods: *const Resolver.NameSet,
+method_calls: *const Checker.MethodCalls,
 /// The type the checker gave each list literal, so `[1, 2]` where a `[Float]`
 /// is expected is built from `1.0` and `2.0`.
 literal_types: *const Checker.LiteralTypes,
@@ -172,6 +175,8 @@ pub fn run(
     signatures: *const Type.Signatures,
     literal_types: *const Checker.LiteralTypes,
     checked_structs: *const Checker.Structs,
+    changing_methods: *const Resolver.NameSet,
+    method_calls: *const Checker.MethodCalls,
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
@@ -199,6 +204,8 @@ pub fn run(
         .out = out,
         .in = in,
         .signatures = signatures,
+        .changing_methods = changing_methods,
+        .method_calls = method_calls,
         .literal_types = literal_types,
         .heap = .init(gpa),
         .stack = stack,
@@ -233,6 +240,13 @@ pub fn run(
                     interpreter.keyOf(declaration.name),
                     descriptor,
                 );
+                // A method is called like a function whose body also sees
+                // `self`, so it is kept with the functions, under its own key.
+                for (declaration.methods) |method| {
+                    const method_key = try Resolver.methodKey(interpreter.arena, interpreter.keyOf(declaration.name), method.name);
+                    const hoisted = try interpreter.functions.getOrPut(interpreter.arena, method_key);
+                    if (!hoisted.found_existing) hoisted.value_ptr.* = method;
+                }
                 if (declaration.constructor) |constructor| {
                     try interpreter.constructors.put(interpreter.arena, interpreter.keyOf(declaration.name), .{
                         .declaration = constructor,
@@ -321,6 +335,7 @@ fn unpackInto(self: *Interpreter, pattern: Ast.Pattern, value: Value, how: Unpac
         switch (how) {
             .assign => {
                 const slot = self.find(name.text).?;
+                if (slot.changing) |method| return self.raiseChanging(name.span, name.text, method);
                 const widened = widen(Heap.retain(item), slot.kind);
                 if (slot.value) |old| self.heap.release(old);
                 slot.value = widened;
@@ -428,8 +443,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
 
         .assignment => |assignment| {
             if (assignment.steps.len > 0) return self.assignElement(assignment);
-            try self.reach(self.keyOf(assignment.name), assignment.name_span);
-            const slot = self.find(assignment.name).?;
+            const slot = try self.placeBinding(assignment.name, assignment.name_span);
             const value = if (assignment.operation) |operation| blk: {
                 // Section 5.3 lowers a compound assignment through the same
                 // operation as its binary form. The current value is read once.
@@ -510,8 +524,7 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
 
     // Section 14.1: a non-entry file initializes on first use, which this is,
     // exactly as a plain assignment already reaches before finding its slot.
-    try self.reach(self.keyOf(assignment.name), assignment.name_span);
-    const binding = self.find(assignment.name).?;
+    const binding = try self.placeBinding(assignment.name, assignment.name_span);
     const root = &binding.value.?;
 
     if (assignment.operation) |operation| {
@@ -1081,6 +1094,7 @@ fn evaluateName(
     try self.reach(key, expression.span);
     if (self.find(written)) |slot| {
         if (slot.value) |value| return Heap.retain(value);
+        if (slot.changing) |method| return self.raiseChanging(expression.span, written, method);
         return self.raiseUnassigned(expression.span, written);
     }
     if (self.module.getPtr(key)) |slot| {
@@ -1643,6 +1657,7 @@ fn constructStruct(
     descriptor: *const Value.StructType,
     argument_expressions: []const *const Ast.Expression,
 ) Error!Value {
+    var built: Value = Value.nothing;
     const constructor = self.constructors.get(key) orelse {
         const fields = try self.evaluateArguments(argument_expressions);
         for (fields, descriptor.fields) |*field, metadata| field.* = widen(field.*, metadata.kind);
@@ -1665,15 +1680,19 @@ fn constructStruct(
         return err;
     };
 
-    return self.invoke(call_span, .{
+    const result = try self.invoke(call_span, .{
         .name = constructor.frame_name,
         .named = false,
         .file = self.facts.owner.get(key) orelse self.file,
         .signature = self.signatures.get(key).?,
         .body = .{ .statements = constructor.declaration.body.statements },
         .captured = &.{},
-        .constructing = .{ .data = .{ .struct_value = instance } },
+        .self_value = .{ .data = .{ .struct_value = instance } },
+        .self_out = &built,
     }, arguments);
+    // A constructor's own result is always `nothing`; what it built is `self`.
+    self.heap.release(result);
+    return built;
 }
 
 /// Section 15.2's `input(prompt)` and `input_maybe(prompt)`: writes the prompt,
@@ -1765,9 +1784,12 @@ const Callable = struct {
     signature: Type.Signature,
     body: Body,
     captured: []const *Environment,
-    /// For a constructor, the instance being built, bound as `self` and
-    /// produced as the result whatever the body returns. The callable owns it.
-    constructing: ?Value = null,
+    /// For a constructor or method, the value bound as `self`, which the call
+    /// takes ownership of.
+    self_value: ?Value = null,
+    /// Where to leave what `self` holds when the body ends, for a caller that
+    /// keeps the result: a constructor, or a method that changes `self`.
+    self_out: ?*Value = null,
 
     const Body = union(enum) {
         statements: []const Ast.Statement,
@@ -1859,8 +1881,11 @@ fn invoke(
     try self.scopes.appendSlice(self.gpa, callable.captured);
 
     const frame = try self.pushScope();
-    if (callable.constructing) |instance| {
-        try frame.bindings.put(self.gpa, "self", .{ .kind = .struct_value, .value = instance });
+    if (callable.self_value) |instance| {
+        frame.bindings.put(self.gpa, "self", .{ .kind = .struct_value, .value = instance }) catch |err| {
+            self.heap.release(instance);
+            return err;
+        };
     }
     for (callable.signature.parameter_names, arguments, callable.signature.parameters, 0..) |name, argument, parameter_type, index| {
         // An `Int` passed to a `Float` parameter arrives as a `Float`.
@@ -1906,13 +1931,10 @@ fn invoke(
             };
             const returned = self.return_value orelse Value.nothing;
             self.return_value = null;
-            // A constructor produces `self` as the body left it, which may no
-            // longer be the instance it started with if copy-on-write replaced
-            // it. The frame's binding still holds its own count, released
-            // when the frame ends.
-            if (callable.constructing != null) {
-                break :blk Heap.retain(frame.bindings.get("self").?.value.?);
-            }
+            // `self` as the body left it, which may no longer be the instance
+            // it started with if copy-on-write replaced it. The frame's
+            // binding still holds its own count, released when the frame ends.
+            if (callable.self_out) |out| out.* = Heap.retain(frame.bindings.get("self").?.value.?);
             break :blk returned;
         },
     };
@@ -2145,6 +2167,9 @@ fn callMethod(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
+    // Decided by the checker from the receiver's type, so a struct's own
+    // `append` or `each` is never mistaken for a collection's.
+    if (self.method_calls.get(call.callee)) |key| return self.callStructMethod(expression, call, member, key);
     // Section 4.5's way out of an optional, and the one method allowed on a
     // value that may be absent.
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
@@ -2207,15 +2232,17 @@ fn callReadingMethod(
 /// fields, which is exactly what makes the slot holding it reachable. A tuple
 /// position never appears on this path: the checker's `walkToPlaceRoot`
 /// rejects one before this runs, since a tuple can never be written through.
-fn callChangingMethod(
-    self: *Interpreter,
-    expression: *const Ast.Expression,
-    call: Ast.Expression.Call,
-    member: Ast.Expression.Member,
-) Error!Value {
+/// A receiver written as a name reached through indices and fields, with every
+/// index evaluated, left to right. The caller owns `steps`; see `freeSteps`.
+const ReceiverPath = struct {
+    root: *const Ast.Expression,
+    steps: []PlaceStep,
+};
+
+fn evaluateReceiverPath(self: *Interpreter, base: *const Ast.Expression) Error!ReceiverPath {
     var path: std.ArrayList(Ast.Step) = .empty;
     defer path.deinit(self.gpa);
-    var receiver = member.base;
+    var receiver = base;
     while (true) {
         switch (receiver.data) {
             .index => |index| {
@@ -2232,16 +2259,13 @@ fn callChangingMethod(
     std.mem.reverse(Ast.Step, path.items);
 
     const steps = try self.gpa.alloc(PlaceStep, path.items.len);
-    defer {
-        for (steps) |step| switch (step) {
+    var built: usize = 0;
+    errdefer {
+        for (steps[0..built]) |step| switch (step) {
             .index => |index| self.heap.release(index.value),
             .field => {},
         };
         self.gpa.free(steps);
-    }
-    var built: usize = 0;
-    errdefer {
-        for (steps[built..]) |*step| step.* = .{ .field = "" };
     }
     while (built < steps.len) : (built += 1) {
         steps[built] = switch (path.items[built]) {
@@ -2249,14 +2273,55 @@ fn callChangingMethod(
             .field => |field| .{ .field = field.name },
         };
     }
+    return .{ .root = receiver, .steps = steps };
+}
+
+fn freeSteps(self: *Interpreter, steps: []PlaceStep) void {
+    for (steps) |step| switch (step) {
+        .index => |index| self.heap.release(index.value),
+        .field => {},
+    };
+    self.gpa.free(steps);
+}
+
+/// The binding a place starts from, once section 14.1's lazy initialization
+/// has had its turn. A binding a changing method has taken is not available.
+fn placeBinding(self: *Interpreter, name: []const u8, span: Source.Span) Error!*Binding {
+    try self.reach(self.keyOf(name), span);
+    const binding = self.find(name).?;
+    if (binding.changing) |method| return self.raiseChanging(span, name, method);
+    return binding;
+}
+
+fn raiseChanging(self: *Interpreter, span: Source.Span, name: []const u8, method: []const u8) Error {
+    return self.raiseFmt(
+        span,
+        "`{s}` is being changed by `{s}`, so it cannot be used until that call finishes",
+        .{ name, method },
+        "A method that changes a value has it to itself while it runs. Pass what the method needs as an argument instead of reaching for it another way.",
+    );
+}
+
+fn callChangingMethod(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const path = try self.evaluateReceiverPath(member.base);
+    const receiver = path.root;
+    const steps = path.steps;
+    defer self.freeSteps(steps);
 
     const arguments = try self.evaluateArguments(call.arguments);
     defer self.gpa.free(arguments);
 
     // Section 14.1: a non-entry file initializes on first use, which this is,
     // exactly as a plain assignment already reaches before finding its slot.
-    try self.reach(self.keyOf(receiver.data.name), receiver.span);
-    const binding = self.find(receiver.data.name).?;
+    const binding = self.placeBinding(receiver.data.name, receiver.span) catch |err| {
+        for (arguments) |argument| self.heap.release(argument);
+        return err;
+    };
     var slot = &binding.value.?;
     if (steps.len > 0) slot = try self.containerSlot(slot, steps);
 
@@ -2266,6 +2331,74 @@ fn callChangingMethod(
     }
     const list = try self.heap.unique(slot);
     return self.mutateList(expression.span, list, member.name, arguments);
+}
+
+/// Section 10's instance method on a struct.
+///
+/// One that only reads `self` gets its receiver as a value, like any argument.
+/// One that changes `self` (4.3) takes the receiver out of the place it is
+/// reached through, runs, and puts back whatever `self` holds at the end.
+/// Taking it out rather than sharing it is what lets `self.items.append(x)`
+/// change the list where it lives instead of copying it on every call; while
+/// the call runs, the binding the place starts from is marked as taken, so a
+/// block or function reaching for it sees an error rather than a half-changed
+/// value.
+fn callStructMethod(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    key: []const u8,
+) Error!Value {
+    if (!self.changing_methods.contains(key)) {
+        const receiver = try self.evaluate(member.base);
+        const arguments = self.evaluateArguments(call.arguments) catch |err| {
+            self.heap.release(receiver);
+            return err;
+        };
+        defer self.gpa.free(arguments);
+        var callable = self.namedCallable(key);
+        callable.self_value = receiver;
+        return self.invoke(expression.span, callable, arguments);
+    }
+
+    const path = try self.evaluateReceiverPath(member.base);
+    defer self.freeSteps(path.steps);
+    const arguments = try self.evaluateArguments(call.arguments);
+    defer self.gpa.free(arguments);
+    const root_name = path.root.data.name;
+
+    const binding = self.placeBinding(root_name, path.root.span) catch |err| {
+        for (arguments) |argument| self.heap.release(argument);
+        return err;
+    };
+    // The slot lives inside the root's own objects, which `containerSlot` has
+    // made unique and nothing else can reach while the binding is taken, so it
+    // stays valid for the whole call. A root with no steps is its own slot.
+    var root = binding.value.?;
+    binding.value = null;
+    const slot: *Value = if (path.steps.len == 0) &root else self.containerSlot(&root, path.steps) catch |err| {
+        binding.value = root;
+        for (arguments) |argument| self.heap.release(argument);
+        return err;
+    };
+    const receiver = slot.*;
+    slot.* = Value.nothing;
+    binding.changing = member.name;
+
+    var changed: Value = Value.nothing;
+    var callable = self.namedCallable(key);
+    callable.self_value = receiver;
+    callable.self_out = &changed;
+    const result = self.invoke(expression.span, callable, arguments);
+
+    // Found again rather than kept: the call may have initialized another
+    // file, which can move module bindings.
+    const restored = self.find(root_name).?;
+    restored.changing = null;
+    slot.* = changed;
+    restored.value = root;
+    return result;
 }
 
 /// Section 8.2's `["red", "green"].to_set()`. Repeats collapse, and the first

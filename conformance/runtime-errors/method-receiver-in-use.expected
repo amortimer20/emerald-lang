@@ -1,0 +1,6 @@
+runtime-errors/method-receiver-in-use.em:15:11: `meter` is being changed by `advance`, so it cannot be used until that call finishes
+      print(meter)
+            ^^^^^
+A method that changes a value has it to itself while it runs. Pass what the method needs as an argument instead of reaching for it another way.
+in `report`, called at runtime-errors/method-receiver-in-use.em:6:9
+in `advance`, called at runtime-errors/method-receiver-in-use.em:18:1

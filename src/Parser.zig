@@ -59,12 +59,12 @@ recursion: u32 = 0,
 /// Any bracket or parenthesis clears it, because the body cannot begin inside
 /// one.
 in_control_header: bool = false,
-/// Where `self` means something: directly inside a constructor body (10.2).
-/// A lambda clears it, since a block that captured `self` could let the value
-/// escape before every field is set, and could outlive the construction.
+/// Where `self` means something: directly inside a constructor or method body
+/// (10.2). A lambda clears it, since a block that captured `self` could let the
+/// value escape before every field is set, or outlive a method that changes it.
 self_allowed: SelfContext = .nowhere,
 
-const SelfContext = enum { nowhere, constructor, constructor_lambda };
+const SelfContext = enum { nowhere, member, member_lambda };
 
 /// Section 3.4: "An implementation accepts at least 256 nested syntactic
 /// delimiters or declarations and checks its nesting budget before consuming
@@ -424,8 +424,8 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
     };
 }
 
-/// Section 10.2's stored fields and its one optional custom constructor.
-/// Defaults are a later slice. Without a constructor, every field is one
+/// Section 10.2's stored fields, its one optional custom constructor, and its
+/// instance methods. Defaults are a later slice. Without a constructor, every field is one
 /// required generated-constructor argument, in declaration order.
 fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
@@ -450,9 +450,20 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     }
     var fields: std.ArrayList(Ast.StructDeclaration.Field) = .empty;
     var constructor: ?Ast.StructDeclaration.Constructor = null;
+    var methods: std.ArrayList(Ast.FunctionDeclaration) = .empty;
     self.skipSeparators();
     while (!self.check(.right_brace) and !self.check(.eof)) {
         const marker = self.peek();
+        if (marker.kind == .keyword_func) {
+            const saved_self = self.self_allowed;
+            self.self_allowed = .member;
+            defer self.self_allowed = saved_self;
+            const method = try self.parseFunctionDeclaration();
+            try self.expectStatementEnd();
+            try methods.append(self.arena, method.data.function_declaration);
+            self.skipSeparators();
+            continue;
+        }
         if (marker.kind == .keyword_constructor) {
             // Parsed in full even when it will be rejected, so recovery resumes
             // after its closing brace.
@@ -531,6 +542,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             .name_span = name.span,
             .fields = try fields.toOwnedSlice(self.arena),
             .constructor = constructor,
+            .methods = try methods.toOwnedSlice(self.arena),
         } },
     };
 }
@@ -553,7 +565,7 @@ fn parseConstructor(self: *Parser) Error!Ast.StructDeclaration.Constructor {
     }
 
     const saved_self = self.self_allowed;
-    self.self_allowed = .constructor;
+    self.self_allowed = .member;
     defer self.self_allowed = saved_self;
     const body = try self.parseBlock();
     try self.expectStatementEnd();
@@ -2108,7 +2120,7 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     self.at_top_level = false;
     defer self.at_top_level = saved_top_level;
     const saved_self = self.self_allowed;
-    if (self.self_allowed == .constructor) self.self_allowed = .constructor_lambda;
+    if (self.self_allowed == .member) self.self_allowed = .member_lambda;
     defer self.self_allowed = saved_self;
 
     const header = try self.parseLambdaParameters(opening);
@@ -2376,16 +2388,16 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
         .keyword_self => {
             _ = self.advance();
             switch (self.self_allowed) {
-                .constructor => {},
-                .constructor_lambda => try self.note(
+                .member => {},
+                .member_lambda => try self.note(
                     token.span,
                     "a block cannot use `self` yet",
                     "Read what the block needs into a local first, as in `const x = self.x`, and use that inside the block.",
                 ),
                 .nowhere => try self.note(
                     token.span,
-                    "`self` is only available inside a constructor so far",
-                    "Methods, which also use `self`, are not available yet. Pass the value in as a parameter instead.",
+                    "`self` is only available inside a constructor or a method",
+                    "Declare this function inside the struct to make it a method, or pass the value in as a parameter.",
                 ),
             }
             return self.node(token.span, .{ .name = "self" });

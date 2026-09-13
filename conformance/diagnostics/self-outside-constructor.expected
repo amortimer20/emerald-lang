@@ -1,4 +1,0 @@
-diagnostics/self-outside-constructor.em:6:11: `self` is only available inside a constructor so far
-      print(self.code)
-            ^^^^
-Methods, which also use `self`, are not available yet. Pass the value in as a parameter instead.

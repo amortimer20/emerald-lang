@@ -1,0 +1,8 @@
+true
+Counter(count: 3, history: [1, 2, 3, 99]) 6
+3 4
+20 11 10
+[Counter(count: 0, history: []), Counter(count: 6, history: [6])]
+Tally(inner: Counter(count: 4, history: [2, 3, 4]))
+14
+Level(value: 3) Level(value: 10)

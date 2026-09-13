@@ -1,0 +1,4 @@
+diagnostics/method-capture.em:12:7: `make` reads `start`, which is not assigned yet here
+  print(maker.make())
+        ^^^^^^^^^^^^
+Move this call below the line that assigns `start`.

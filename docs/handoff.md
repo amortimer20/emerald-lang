@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-12. Prepared by Claude after the struct custom-constructor sub-slice.
+Updated: 2026-09-12. Prepared by Claude after the struct instance-methods sub-slice.
 
 ## Current milestone
 
@@ -26,8 +26,11 @@ with copy-on-write on the struct instance and section 4.3's `const` checked at e
 the path passes through, not only at the root binding. A struct may declare one custom
 constructor that replaces the generated one; inside it `self` is the value being built,
 each field must be set on every path before the constructor finishes, a field may be read
-once it is set, and `self` as a whole may be used once every field is. Defaults, methods,
-and properties are the remaining sub-slices; `super(...)` waits for classes.
+once it is set, and `self` as a whole may be used once every field is. Structs have instance
+methods; the checker works out from each body whether it changes `self`, and a changing
+method can only be called on something that can change. Defaults, properties, type-level
+members, and member privacy are the remaining struct sub-slices; `super(...)` waits for
+classes.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
@@ -152,6 +155,50 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Method decisions worth knowing
+
+- **Scope.** `func` inside a struct body, `self` inside it, calls as `value.method(args)`,
+  return-type inference exactly as for functions, and section 4.3's inferred mutation.
+  Deferred, each rejected with its own diagnostic or not yet parsed: method values
+  (`counter.peek` without parentheses, 7.5), member privacy (10.5, which should cover fields
+  and methods together), type-level `func Type.name()` and `var Type.name` (10.4), and
+  `self` inside a block (still rejected in methods, as in constructors).
+- **A method is a function under a key of its own.** `Board::record` (`Resolver.methodKey`;
+  `::` appears in no name, path, or other key). The checker keeps it in `declarations`
+  beside functions and the interpreter in `functions`, so `signatureFor`, inference,
+  `ensureBodyChecked`, `namedCallable`, and `invoke` all work unchanged; the only difference
+  is that `receivers` has the key, which puts `self` in the body's scope.
+- **Which method a call reaches is decided once, by the checker.** `method_calls` maps the
+  callee expression to the method key, and the interpreter consults it before any
+  collection-method dispatch, so a struct's own `append` or `each` is never mistaken for a
+  list's. This is the same pattern as `Facts.qualified`.
+- **Mutation is inferred from text plus field types (`methodChanges`).** A method changes
+  `self` when its body assigns into `self`, calls a changing collection method on a path
+  that starts at `self`, or calls a method on such a path that changes it. `selfPathType`
+  follows the path through field and element types, so the answer exists before any body is
+  checked and no call site waits on inference. Cycles of methods calling each other are
+  handled by caching only settled answers: `true` always, `false` only when nothing else is
+  in progress. A call to a changing method goes through the existing
+  `requireMutableReceiver`, so `const`, parameters, loop variables, temporaries, and `const`
+  fields on the way all get the corrections lists already had.
+- **Capture analysis cannot know a method call's type, so it over-approximates.** The
+  resolver records `value.area()` as a call to every method named `area` in the program
+  (`methods_named`). That can only report more, never less, and matches the capture check's
+  existing conservatism. A direct top-level method call is checked against its exact key.
+- **A changing method takes its receiver out of its place (`callStructMethod`).** Sharing it
+  would make `self.items.append(x)` copy the list on every call; 200,000 such calls now take
+  0.10 s in ReleaseSafe. The root binding's value is moved into a local, the path is made
+  unique with `containerSlot`, the receiver is moved out of its slot into `self`, and
+  `Callable.self_out` receives what `self` holds at the end, which goes back into the slot.
+  The slot pointer stays valid because the root is owned by the call alone. Meanwhile the
+  binding is marked `Heap.Binding.changing`, and reading, assigning, or changing it through
+  anything else raises "`meter` is being changed by `advance`" (recorded in 4.3 and section
+  22; guarded by `runtime-errors/method-receiver-in-use`). Constructors now use the same
+  `self_value`/`self_out` pair.
+- **Both runtime mechanisms were confirmed non-vacuous.** Treating every method as
+  read-only fails `run/struct-methods`; removing the `changing` guard fails
+  `runtime-errors/method-receiver-in-use`.
 
 ### Constructor decisions worth knowing
 
@@ -749,15 +796,16 @@ still open.
 
 ## Next concrete step
 
-Continue section 20's slice 12. Stored fields, assignment through field paths, and custom
-constructors are done. What remains for the object model: instance methods (10.2's rules
-about calling methods before every field is ready, and `self` reaching a second home),
-default field values (10.2, run once per construction, in declaration order, may read
-earlier fields but not later ones, and skipped when a generated-constructor argument
-replaced them), and properties (10.3, read-only `const` and writable `var` with
-`get`/`set`). Methods are the natural next piece: defaults and properties both read `self`
-the way a method body does, and the `self`-in-a-block restriction should be designed once
-for both constructors and methods rather than twice.
+Continue section 20's slice 12. Stored fields, assignment through field paths, custom
+constructors, and instance methods are done. What remains for structs: default field values
+(10.2, run once per construction, in declaration order, may read earlier fields but not later
+ones, and skipped when a generated-constructor argument replaced them), properties (10.3,
+read-only `const` and writable `var` with `get`/`set`, where nested mutation through a
+computed property is rejected), type-level members (10.4), member privacy (10.5), and method
+values (7.5). Properties are the natural next piece: they are methods in field clothing, so
+they reuse the method machinery directly, and section 10.2's "nested assignment through a
+computed property is rejected" needs `resolvePlace` to learn about them before anything else
+builds on field paths. Classes, traits, operators, and enums follow in section 20's order.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -777,7 +825,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 306 unit tests, 192 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 306 unit tests, 203 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -899,6 +947,14 @@ behavioral failures:
   first pass and iterating that list for the second and third would filter once instead of
   three times.
 ### Known rough edges
+
+- A runtime error inside a changing method leaves `nothing` where the receiver was. Nothing
+  can catch an error yet, so the program has already ended by then; once section 13 adds
+  `catch`, `callStructMethod` has to put the receiver back on the error path, and decide
+  whether a half-finished change is kept.
+- Reaching a receiver while its changing method runs is caught only at runtime. The common
+  case — the method, or a function it calls, reads the module variable it was called on — is
+  visible to the capture facts and could become a `check` diagnostic.
 
 - Recursive dictionary-key eligibility currently keeps a fixed path of 256 struct types.
   A cycle is correctly rejected, but an acyclic chain deeper than 256 is conservatively

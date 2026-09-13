@@ -39,6 +39,26 @@ struct Trip {
 var trip = Trip("to the corner", start, finish)
 print("#{trip.name} is #{trip.distance} long")
 
+## A method belongs to the struct and sees the value it is called on as
+## `self`. One that changes `self` can only be called on something that can
+## change, such as a `var`; one that only reads can be called on anything.
+struct Tally {
+    var marks: [String]
+
+    func mark(label: String) {
+        self.marks.append(label)
+    }
+
+    func summary(): String {
+        return "#{self.marks.count} marks"
+    }
+}
+
+var tally = Tally([])
+tally.mark("first")
+tally.mark("second")
+print(tally.summary())
+
 ## A field can be changed through as long a path as it takes, and a list in a
 ## field changes in place like any other.
 trip.stops[1].y = 8

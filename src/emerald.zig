@@ -253,6 +253,8 @@ fn analyze(
         &checked.signatures,
         &checked.literal_types,
         &checked.structs,
+        &checked.changing_methods,
+        &checked.method_calls,
         resolved.facts,
         running.out,
         running.in,

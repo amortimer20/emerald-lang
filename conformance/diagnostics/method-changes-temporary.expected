@@ -1,0 +1,4 @@
+diagnostics/method-changes-temporary.em:13:12: `increment` changes what it is called on, and this value has nowhere to keep the change
+  Counter(0).increment()
+             ^^^^^^^^^
+Put it in a `var` first, then call `increment` on that.

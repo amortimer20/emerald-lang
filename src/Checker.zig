@@ -54,6 +54,13 @@ pub const Checked = struct {
     /// Checked user-defined struct metadata, also used to build runtime
     /// descriptors without resolving source annotations a second time.
     structs: Structs,
+    /// Every instance method that changes `self`, which the interpreter calls
+    /// by taking the receiver out of its place and putting it back (4.3).
+    changing_methods: Resolver.NameSet,
+    /// For every call that reaches an instance method, keyed by its callee
+    /// expression, the method's key. Only types can tell `bag.append(1)` on a
+    /// struct from the list method of the same name.
+    method_calls: MethodCalls,
 
     pub fn ok(self: Checked) bool {
         return self.diagnostics.len == 0;
@@ -93,6 +100,7 @@ const Binding = struct {
 
 pub const LiteralTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 pub const Structs = std.StringHashMapUnmanaged(Type);
+pub const MethodCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
 
 /// Why a binding may or may not change. Each reason gets its own correction,
 /// because the fix for a `const` is not the fix for a parameter.
@@ -120,6 +128,13 @@ declarations: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 structs: Structs = .empty,
 /// Every struct that declares its own constructor, by the same keys.
 constructors: std.StringHashMapUnmanaged(Ast.StructDeclaration) = .empty,
+/// For every instance method, keyed like `declarations`, the type it belongs to.
+receivers: Structs = .empty,
+/// Memoized by `methodChanges`. Only settled answers are stored.
+changes: std.StringHashMapUnmanaged(bool) = .empty,
+/// Methods `methodChanges` is working out, so a cycle of calls ends.
+changes_in_progress: Resolver.NameSet = .empty,
+method_calls: MethodCalls = .empty,
 /// The struct whose constructor body is being checked, if any. Section 10.2's
 /// rules about `self` apply only here.
 constructing: ?Constructing = null,
@@ -206,6 +221,14 @@ pub fn check(
                 const struct_type = Type.structOf(user);
                 try checker.structs.put(arena, key, struct_type);
                 if (declaration.constructor != null) try checker.constructors.put(arena, key, declaration);
+                for (declaration.methods) |method| {
+                    const method_key = try Resolver.methodKey(arena, key, method.name);
+                    // A repeated name is reported with the struct; the first
+                    // declaration is the one calls reach.
+                    if (checker.declarations.contains(method_key)) continue;
+                    try checker.declarations.put(arena, method_key, method);
+                    try checker.receivers.put(arena, method_key, struct_type);
+                }
                 try module.put(arena, key, .{
                     .type = struct_type,
                     .declared = struct_type,
@@ -274,8 +297,12 @@ pub fn check(
         for (program.statements) |statement| {
             switch (statement.data) {
                 .function_declaration => |function| try checker.ensureBodyChecked(checker.keyOf(function.name)),
-                .struct_declaration => |declaration| if (declaration.constructor != null) {
-                    try checker.checkConstructorBody(checker.keyOf(declaration.name));
+                .struct_declaration => |declaration| {
+                    const type_key = checker.keyOf(declaration.name);
+                    if (declaration.constructor != null) try checker.checkConstructorBody(type_key);
+                    for (declaration.methods) |method| {
+                        try checker.ensureBodyChecked(try Resolver.methodKey(arena, type_key, method.name));
+                    }
                 },
                 else => {},
             }
@@ -285,6 +312,12 @@ pub fn check(
     // Bodies are checked after the top level and inference can check one early,
     // so diagnostics are collected out of order. The reader wants them in the
     // order of the file.
+    var changing: Resolver.NameSet = .empty;
+    var receivers = checker.receivers.keyIterator();
+    while (receivers.next()) |method_key| {
+        if (try checker.methodChanges(method_key.*)) try changing.put(arena, method_key.*, {});
+    }
+
     const owned = try checker.diagnostics.toOwnedSlice(arena);
     std.mem.sort(Diagnostic, owned, {}, earlierInSource);
     return .{
@@ -293,6 +326,8 @@ pub fn check(
         .signatures = checker.signatures,
         .literal_types = checker.literal_types,
         .structs = checker.structs,
+        .changing_methods = changing,
+        .method_calls = checker.method_calls,
     };
 }
 
@@ -320,6 +355,27 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
         };
     }
     user.fields = fields;
+
+    var method_names: std.StringHashMapUnmanaged(void) = .empty;
+    for (declaration.methods) |method| {
+        if (names.contains(method.name)) {
+            try self.report(
+                method.name_span,
+                "`{s}` is already a field of `{s}`",
+                .{ method.name, declaration.name },
+                "A field and a method cannot share a name, since `value.name` has to mean one of them. Rename one.",
+            );
+        } else if (method_names.contains(method.name)) {
+            try self.report(
+                method.name_span,
+                "`{s}` is already a method of `{s}`",
+                .{ method.name, declaration.name },
+                "Emerald has no overloading. Give each method a name of its own.",
+            );
+        } else {
+            try method_names.put(self.arena, method.name, {});
+        }
+    }
 }
 
 fn validateKeyAnnotations(self: *Checker, annotation: Ast.TypeExpression, resolved: Type) Error!void {
@@ -1488,7 +1544,7 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
         const saved_pending = self.pending_return_types;
         self.pending_return_types = .empty;
 
-        try self.checkFunctionBody(declaration, parameter_types, null);
+        try self.checkKeyedBody(key, declaration, parameter_types, null);
         try self.bodies_checked.put(self.arena, key, {});
 
         signature.return_type = try self.inferredReturnType(
@@ -1516,7 +1572,7 @@ fn ensureBodyChecked(self: *Checker, key: []const u8) Error!void {
     try self.bodies_checked.put(self.arena, key, {});
 
     const declaration = self.declarations.get(key).?;
-    try self.checkFunctionBody(declaration, signature.parameters, signature.return_type);
+    try self.checkKeyedBody(key, declaration, signature.parameters, signature.return_type);
     try self.checkAllPathsReturn(declaration, signature.return_type);
 }
 
@@ -1537,6 +1593,19 @@ fn checkFunctionBody(
     try self.checkBody(declaration.parameters, parameter_types, declaration.body.statements, expected_return_type, null);
 }
 
+/// The key a function body is known by decides whether it has a `self`.
+fn checkKeyedBody(
+    self: *Checker,
+    key: []const u8,
+    declaration: Ast.FunctionDeclaration,
+    parameter_types: []const Type,
+    expected_return_type: ?Type,
+) Error!void {
+    const receiver = self.receivers.get(key) orelse
+        return self.checkFunctionBody(declaration, parameter_types, expected_return_type);
+    try self.checkBodyWithSelf(declaration.parameters, parameter_types, declaration.body.statements, expected_return_type, null, receiver);
+}
+
 /// The one way a body is checked, whether a function's or a constructor's.
 fn checkBody(
     self: *Checker,
@@ -1545,6 +1614,20 @@ fn checkBody(
     statements: []const Ast.Statement,
     expected_return_type: ?Type,
     constructing: ?Constructing,
+) Error!void {
+    try self.checkBodyWithSelf(parameter_list, parameter_types, statements, expected_return_type, constructing, null);
+}
+
+/// `receiver` is a method's type, whose `self` is an ordinary changeable
+/// binding; whether the method changes it is worked out from the body.
+fn checkBodyWithSelf(
+    self: *Checker,
+    parameter_list: []const Ast.Parameter,
+    parameter_types: []const Type,
+    statements: []const Ast.Statement,
+    expected_return_type: ?Type,
+    constructing: ?Constructing,
+    receiver: ?Type,
 ) Error!void {
     const view = try self.arena.create(Scope);
     view.* = .empty;
@@ -1567,6 +1650,13 @@ fn checkBody(
             .declared = parameter_type,
             .assigned = true,
             .mutability = .parameter,
+        });
+    }
+    if (receiver) |method_type| {
+        try parameters.put(self.arena, "self", .{
+            .type = method_type,
+            .declared = method_type,
+            .assigned = true,
         });
     }
     if (constructing) |building| {
@@ -1780,7 +1870,208 @@ fn checkSelfAssignment(self: *Checker, assignment: Ast.Assignment) Error!bool {
     return true;
 }
 
-/// Section 10.2: "Before all fields are ready, `self` may not escape or be
+// Methods.
+
+/// Section 4.3: "The checker determines which struct methods mutate `self` from
+/// their bodies, so there is no `mutating` keyword." A method changes `self`
+/// when its body assigns into `self`, calls a changing collection method on
+/// something reached from `self`, or calls a method on `self` that does.
+///
+/// Worked out from the text, with field types to follow a path such as
+/// `self.inner.items.append(x)` to the method it reaches, so the answer is
+/// ready at any call site whether or not the body has been checked yet. Only
+/// a path that starts at `self` counts: `var copy = self` followed by
+/// `copy.x = 1` changes a copy, which is exactly what value semantics says.
+fn methodChanges(self: *Checker, key: []const u8) Error!bool {
+    if (self.changes.get(key)) |known| return known;
+    // A cycle of methods calling each other: the one being worked out adds
+    // nothing it does not already add through its own body.
+    if (self.changes_in_progress.contains(key)) return false;
+    try self.changes_in_progress.put(self.arena, key, {});
+    defer _ = self.changes_in_progress.remove(key);
+
+    const declaration = self.declarations.get(key).?;
+    const receiver = self.receivers.get(key).?;
+    const result = try self.statementsChangeSelf(declaration.body.statements, receiver);
+    // `true` is final whatever else is in progress. `false` is final only when
+    // nothing else is, since it may have leaned on a cycle's provisional answer.
+    if (result or self.changes_in_progress.count() == 1) try self.changes.put(self.arena, key, result);
+    return result;
+}
+
+fn statementsChangeSelf(self: *Checker, statements: []const Ast.Statement, receiver: Type) Error!bool {
+    for (statements) |statement| {
+        if (try self.statementChangesSelf(statement, receiver)) return true;
+    }
+    return false;
+}
+
+fn statementChangesSelf(self: *Checker, statement: Ast.Statement, receiver: Type) Error!bool {
+    return switch (statement.data) {
+        .expression => |expression| self.expressionChangesSelf(expression, receiver),
+        .declaration => |declaration| if (declaration.initializer) |initializer|
+            self.expressionChangesSelf(initializer, receiver)
+        else
+            false,
+        .assignment => |assignment| blk: {
+            if (assignment.steps.len > 0 and std.mem.eql(u8, assignment.name, "self")) break :blk true;
+            for (assignment.steps) |step| switch (step) {
+                .index => |index| if (try self.expressionChangesSelf(index, receiver)) break :blk true,
+                .field => {},
+            };
+            break :blk self.expressionChangesSelf(assignment.value, receiver);
+        },
+        .conditional => |conditional| blk: {
+            if (try self.expressionChangesSelf(conditional.condition, receiver)) break :blk true;
+            if (try self.statementsChangeSelf(conditional.then_block.statements, receiver)) break :blk true;
+            const otherwise = conditional.otherwise orelse break :blk false;
+            break :blk switch (otherwise) {
+                .block => |block| self.statementsChangeSelf(block.statements, receiver),
+                .chained => |chained| self.statementChangesSelf(chained.*, receiver),
+            };
+        },
+        .while_loop => |loop| try self.expressionChangesSelf(loop.condition, receiver) or
+            try self.statementsChangeSelf(loop.body.statements, receiver),
+        .for_loop => |loop| try self.expressionChangesSelf(loop.iterable, receiver) or
+            try self.statementsChangeSelf(loop.body.statements, receiver),
+        .return_statement => |return_statement| if (return_statement.value) |value|
+            self.expressionChangesSelf(value, receiver)
+        else
+            false,
+        .destructuring => |destructuring| self.expressionChangesSelf(destructuring.initializer, receiver),
+        .destructuring_assignment => |assignment| self.expressionChangesSelf(assignment.value, receiver),
+        .break_statement, .continue_statement, .function_declaration, .struct_declaration => false,
+    };
+}
+
+fn expressionChangesSelf(self: *Checker, expression: *const Ast.Expression, receiver: Type) Error!bool {
+    return switch (expression.data) {
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .string_literal => false,
+        .unary => |unary| self.expressionChangesSelf(unary.operand, receiver),
+        .binary => |binary| try self.expressionChangesSelf(binary.left, receiver) or
+            try self.expressionChangesSelf(binary.right, receiver),
+        .logical => |logical| try self.expressionChangesSelf(logical.left, receiver) or
+            try self.expressionChangesSelf(logical.right, receiver),
+        .comparison => |comparison| blk: {
+            for (comparison.operands) |operand| {
+                if (try self.expressionChangesSelf(operand, receiver)) break :blk true;
+            }
+            break :blk false;
+        },
+        .call => |call| blk: {
+            for (call.arguments) |argument| {
+                if (try self.expressionChangesSelf(argument, receiver)) break :blk true;
+            }
+            if (try self.expressionChangesSelf(call.callee, receiver)) break :blk true;
+            if (call.callee.data != .member) break :blk false;
+            const member = call.callee.data.member;
+            const reached = selfPathType(member.base, receiver) orelse break :blk false;
+            break :blk switch (reached.kind) {
+                .struct_value => if (self.receivers.contains(try Resolver.methodKey(self.arena, reached.user.?.name, member.name)))
+                    try self.methodChanges(try Resolver.methodKey(self.arena, reached.user.?.name, member.name))
+                else
+                    false,
+                .list => if (Type.list_methods.get(member.name)) |method| method.mutates else false,
+                .dictionary, .set => Type.map_mutators.has(member.name),
+                else => false,
+            };
+        },
+        .range => |range| try self.expressionChangesSelf(range.start, receiver) or
+            try self.expressionChangesSelf(range.end, receiver),
+        .interpolation => |parts| blk: {
+            for (parts) |part| switch (part) {
+                .text => {},
+                .expression => |inner| if (try self.expressionChangesSelf(inner, receiver)) break :blk true,
+            };
+            break :blk false;
+        },
+        .list_literal, .tuple_literal => |elements| blk: {
+            for (elements) |element| {
+                if (try self.expressionChangesSelf(element, receiver)) break :blk true;
+            }
+            break :blk false;
+        },
+        .dictionary_literal => |entries| blk: {
+            for (entries) |entry| {
+                if (try self.expressionChangesSelf(entry.key, receiver) or
+                    try self.expressionChangesSelf(entry.value, receiver)) break :blk true;
+            }
+            break :blk false;
+        },
+        .index => |index| try self.expressionChangesSelf(index.base, receiver) or
+            try self.expressionChangesSelf(index.index, receiver),
+        .member => |member| self.expressionChangesSelf(member.base, receiver),
+        // `self` cannot appear inside a block (see `Parser.self_allowed`).
+        .lambda => false,
+    };
+}
+
+/// The type reached by a path of fields and indices that starts at `self`, or
+/// null when the expression is not such a path.
+fn selfPathType(expression: *const Ast.Expression, receiver: Type) ?Type {
+    switch (expression.data) {
+        .name => |name| return if (std.mem.eql(u8, name, "self")) receiver else null,
+        .member => |member| {
+            if (member.position != null) return null;
+            const base = selfPathType(member.base, receiver) orelse return null;
+            if (base.kind != .struct_value or base.optional) return null;
+            for (base.user.?.fields) |field| {
+                if (std.mem.eql(u8, field.name, member.name)) return field.type;
+            }
+            return null;
+        },
+        .index => |index| {
+            const base = selfPathType(index.base, receiver) orelse return null;
+            if (base.optional) return null;
+            if (base.kind == .list or base.kind == .dictionary) return base.element.?.*;
+            return null;
+        },
+        else => return null,
+    }
+}
+
+/// `value.area()` on a struct.
+fn typeOfStructMethodCall(
+    self: *Checker,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    base: Type,
+) Error!Type {
+    const key = try Resolver.methodKey(self.arena, base.user.?.name, member.name);
+    if (!self.receivers.contains(key)) {
+        const is_field = for (base.user.?.fields) |field| {
+            if (std.mem.eql(u8, field.name, member.name)) break true;
+        } else false;
+        if (is_field) {
+            try self.reportWithHelp(
+                member.name_span,
+                "`{s}` is a field of {f}, not a method",
+                .{ member.name, base },
+                "Read it without parentheses, as in `.{s}`.",
+                .{member.name},
+            );
+        } else {
+            try self.report(
+                member.name_span,
+                "{f} has no method named `{s}`",
+                .{ base, member.name },
+                "Check the method name in the struct declaration.",
+            );
+        }
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+    try self.method_calls.put(self.arena, call.callee, key);
+
+    const signature = try self.signatureFor(key);
+    try self.checkArguments(call, member.name, signature, "Match the number of arguments to the method's parameters.");
+    if (try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
+    if (!self.in_function) try self.checkCaptures(expression.span, key, member.name);
+    return signature.return_type;
+}
+
+/// Section 10.2: "Before all fields are ready, `self` may not escape or be or be
 /// passed elsewhere." Reading one field that is set is not escaping.
 fn requireSelfReady(self: *Checker, span: Source.Span) Error!void {
     const field = try self.firstUnsetField() orelse return;
@@ -2783,6 +3074,16 @@ fn typeOfMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
         for (base.user.?.fields) |field| {
             if (std.mem.eql(u8, field.name, member.name)) return field.type;
         }
+        if (self.receivers.contains(try Resolver.methodKey(self.arena, base.user.?.name, member.name))) {
+            try self.reportWithHelp(
+                member.name_span,
+                "`{s}` is a method, so it needs parentheses",
+                .{member.name},
+                "Call it, as in `.{s}()`. Methods cannot be used as values yet.",
+                .{member.name},
+            );
+            return .invalid;
+        }
         try self.report(
             member.name_span,
             "{f} has no field named `{s}`",
@@ -2878,6 +3179,24 @@ fn typeOfMethodCall(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Type {
+    // Section 10.2: "Before all fields are ready ... instance methods may not
+    // be called."
+    if (self.constructing != null and member.base.data == .name and
+        std.mem.eql(u8, member.base.data.name, "self"))
+    {
+        if (try self.firstUnsetField()) |field| {
+            try self.reportWithHelp(
+                member.name_span,
+                "`{s}` cannot be called until every field of `self` is set",
+                .{member.name},
+                "Set `self.{s}` first. A method may read any field, so it has to wait for all of them.",
+                .{field},
+            );
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
+    }
+
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) {
         try self.typeArguments(call.arguments);
@@ -2894,6 +3213,7 @@ fn typeOfMethodCall(
     }
 
     if (base.kind == .string) return self.typeOfStringMethod(call, member);
+    if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base);
     if ((base.kind == .int or base.kind == .float or base.kind == .bool) and
         std.mem.eql(u8, member.name, "to_string"))
     {

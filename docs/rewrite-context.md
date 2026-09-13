@@ -396,6 +396,12 @@ directly or through another method. The checker determines which struct methods 
 `self` from their bodies, so there is no `mutating` keyword. A diagnostic for mutating a
 `const` suggests `var` when a changing copy is what was meant.
 
+While a method that changes a struct runs, the binding it was called through belongs to that
+call. Reaching the same binding another way while the call is in progress — from a function
+or block the method calls — is a runtime error rather than a view of a half-changed value.
+This is what lets a changing method change a collection field where it lives instead of
+copying it on every call.
+
 Fields also use `var` and `const`. A `const` field is assigned during construction and is
 not later rebound, and it freezes a value it holds under the same rule. A `var` field may
 be updated by methods.
@@ -2806,6 +2812,9 @@ recorded in their normative sections:
 | `self` inside a block in a constructor (7.4, 10.2) | Rejected for now | A block captures by reference and may run after the constructor has finished, or before every field is set, which 10.2's escape rule cannot see through. Reading what the block needs into a local first covers the need until methods give `self` a second home and the rule can be designed for both. |
 | A constructor's return type (10.2) | Writing one is an error | 10.2 says constructors never return replacement values, so a written return type could only restate the struct's own name or contradict it. |
 | Constructor delegation (10.2, 21) | `self(...)` is deferred with overloading | 10.2 described `self(...)` delegating to "another constructor of the same type" while allowing each type at most one constructor, so there was never another constructor to call. Delegation only means something once a type can have several, which is exactly what deferring overloading rules out; the two arrive together. |
+| Which struct methods change `self` (4.3) | Worked out from the body's text: an assignment into `self`, a changing collection method reached from `self`, or a call to a method on `self` that changes it | 4.3 already rules out a `mutating` keyword. Following paths that start at `self` through field types gives the answer before any body is checked, so a call site never waits on inference, and `var copy = self` followed by a change to `copy` correctly changes nothing. |
+| Calling a changing method (4.3, 8.1) | The receiver is taken out of its place for the call and put back afterwards; its binding cannot be reached another way meanwhile | Sharing the receiver with the call would make every `self.items.append(x)` copy the list, turning a loop of calls quadratic. Taking it out is exact, and the one thing it gives up — seeing the value from elsewhere mid-call — is what Swift's exclusivity rule also forbids. It is a runtime error because a block can reach a binding in ways the checker does not track. |
+| Method and field names (10) | A method cannot share a name with a field of the same type, and a type cannot declare two methods of one name | `value.name` has to mean one thing, and overloading is deferred. |
 | Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 
 ## 23. Consistency rules for future work

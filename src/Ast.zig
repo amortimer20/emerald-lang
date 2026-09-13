@@ -75,6 +75,8 @@ pub const StructDeclaration = struct {
     /// Section 10.2's custom constructor, which replaces the generated one.
     /// A type declares at most one, since overloading is deferred.
     constructor: ?Constructor = null,
+    /// Section 10's instance methods. Each sees the instance as `self`.
+    methods: []const FunctionDeclaration = &.{},
 
     pub const Field = struct {
         mutable: bool,

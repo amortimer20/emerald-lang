@@ -1,0 +1,4 @@
+diagnostics/method-before-ready.em:7:14: `show` cannot be called until every field of `self` is set
+          self.show()
+               ^^^^
+Set `self.right` first. A method may read any field, so it has to wait for all of them.

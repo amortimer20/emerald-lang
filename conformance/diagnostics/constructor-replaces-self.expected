@@ -1,4 +1,4 @@
 diagnostics/constructor-replaces-self.em:5:9: `self` cannot be replaced
           self = Badge(code)
           ^^^^
-A constructor builds the value it was called for. Set its fields one at a time, as in `self.x = x`.
+Set its fields one at a time instead, as in `self.x = x`.
