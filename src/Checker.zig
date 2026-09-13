@@ -88,6 +88,9 @@ const Binding = struct {
     /// A function's name. Its `type` is unused; a call goes through
     /// `signatureFor` instead.
     is_function: bool = false,
+    /// A nested function's key (7.1), which is how `signatureFor` knows it.
+    /// Null for a program function, whose key is its module key.
+    function_key: ?[]const u8 = null,
     /// A user-defined type name. It can be called to construct a value, but it
     /// is not itself a runtime value.
     is_type: bool = false,
@@ -145,6 +148,9 @@ changes: std.StringHashMapUnmanaged(bool) = .empty,
 /// Methods `methodChanges` is working out, so a cycle of calls ends.
 changes_in_progress: Resolver.NameSet = .empty,
 method_calls: MethodCalls = .empty,
+/// Every nested function (7.1) whose name has been hoisted, mapped to how
+/// many scopes were in force where it is declared: the ones its body sees.
+nested: std.StringHashMapUnmanaged(usize) = .empty,
 /// Section 10.4's type-level fields, by key.
 type_fields: std.StringHashMapUnmanaged(TypeField) = .empty,
 /// Whether a parameter's default is being checked. Inside a constructor it
@@ -700,7 +706,53 @@ fn pushScope(self: *Checker) Error!void {
 // Statements.
 
 fn checkStatements(self: *Checker, statements: []const Ast.Statement) Error!void {
+    if (self.scopes.items[self.scopes.items.len - 1] != self.module) try self.hoistNestedFunctions(statements);
     for (statements) |statement| try self.checkStatement(statement);
+}
+
+/// Section 7.1's nested functions, callable anywhere in the block that
+/// declares them. The resolver has already reported a name that is taken.
+fn hoistNestedFunctions(self: *Checker, statements: []const Ast.Statement) Error!void {
+    const current = self.scopes.items[self.scopes.items.len - 1];
+    for (statements) |statement| {
+        const function = switch (statement.data) {
+            .function_declaration => |f| f,
+            else => continue,
+        };
+        const key = self.nestedKey(function) orelse continue;
+        try self.declarations.put(self.arena, key, function);
+        try self.nested.put(self.arena, key, self.scopes.items.len);
+        try current.put(self.arena, function.name, .{
+            .type = .invalid,
+            .declared = .invalid,
+            .assigned = true,
+            .is_function = true,
+            .function_key = key,
+        });
+    }
+}
+
+fn nestedKey(self: *Checker, function: Ast.FunctionDeclaration) ?[]const u8 {
+    return self.facts.nested_keys.get(.{ .file = self.file, .start = function.name_span.start });
+}
+
+/// Section 7.1: "Hoisting never permits reading an uninitialized captured
+/// variable." The resolver has listed what a use of a nested function can
+/// read, and proved each is declared above it.
+fn checkNestedUse(self: *Checker, expression: *const Ast.Expression) Error!void {
+    const names = self.facts.nested_uses.get(expression) orelse return;
+    for (names) |name| {
+        const binding = self.find(name) orelse continue;
+        if (binding.assigned) continue;
+        try self.reportWithHelp(
+            expression.span,
+            "`{s}` reads `{s}`, which is not assigned yet here",
+            .{ expression.data.name, name },
+            "Assign `{s}` before this line.",
+            .{name},
+        );
+        return;
+    }
 }
 
 fn checkBlock(self: *Checker, block: Ast.Block) Error!void {
@@ -719,8 +771,12 @@ fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
         .for_loop => |loop| try self.checkFor(loop),
         .break_statement => |span| try self.checkBreak(span),
         .continue_statement => |span| _ = try self.enclosingLoop(span, "continue"),
-        // Checked after the top level; see the module comment.
-        .function_declaration => {},
+        // A program function is checked after the top level; see the module
+        // comment. A nested one is checked where it is written, unless a use
+        // above it needed it first.
+        .function_declaration => |function| if (self.nestedKey(function)) |key| {
+            if (self.nested.contains(key)) try self.ensureBodyChecked(key);
+        },
         .struct_declaration => {},
         .return_statement => |return_statement| try self.checkReturn(return_statement),
         .destructuring => |destructuring| try self.checkDestructuring(destructuring),
@@ -784,11 +840,16 @@ fn positionsFor(
         );
         return &.{};
     }
-    if (unpacked.elements.len != pattern.names.len) {
+    if (unpacked.elements.len != pattern.positions.len) {
         try self.reportWithHelp(
             pattern.span,
-            "this unpacks {d} names, but {f} has {d} positions",
-            .{ pattern.names.len, unpacked, unpacked.elements.len },
+            "this unpacks {d} {s}, but {f} has {d} positions",
+            .{
+                pattern.positions.len,
+                if (pattern.names.len == pattern.positions.len) "names" else "positions",
+                unpacked,
+                unpacked.elements.len,
+            },
             "Write one name for each position. Use `_` for a position you do not need.",
             .{},
         );
@@ -826,9 +887,12 @@ fn bindPattern(
     mutability: Mutability,
 ) Error!void {
     const positions = try self.positionsFor(unpacked, pattern, span);
-    for (pattern.names, 0..) |name, index| {
+    for (pattern.positions, 0..) |written, index| {
         const position: Type = if (index < positions.len) positions[index] else .invalid;
-        try self.bindPatternName(name, position, mutability);
+        switch (written) {
+            .name => |name| try self.bindPatternName(name, position, mutability),
+            .nested => |nested| try self.bindPattern(nested.*, position, nested.span, mutability),
+        }
     }
 }
 
@@ -836,12 +900,22 @@ fn bindPattern(
 /// already exist. The whole right side is checked first, as it is evaluated.
 fn checkDestructuringAssignment(self: *Checker, assignment: Ast.DestructuringAssignment) Error!void {
     const actual = try self.typeOf(assignment.value);
-    const positions = try self.positionsFor(actual, assignment.pattern, assignment.value.span);
+    try self.assignPattern(assignment.pattern, actual, assignment.value.span);
+}
 
-    for (assignment.pattern.names, 0..) |name, index| {
+fn assignPattern(self: *Checker, pattern: Ast.Pattern, unpacked: Type, span: Source.Span) Error!void {
+    const positions = try self.positionsFor(unpacked, pattern, span);
+    for (pattern.positions, 0..) |written, index| {
+        const position: Type = if (index < positions.len) positions[index] else .invalid;
+        const name = switch (written) {
+            .name => |name| name,
+            .nested => |nested| {
+                try self.assignPattern(nested.*, position, nested.span);
+                continue;
+            },
+        };
         if (std.mem.eql(u8, name.text, "_")) continue;
         const binding = self.find(name.text) orelse continue;
-        const position: Type = if (index < positions.len) positions[index] else .invalid;
         if (!position.assignableTo(binding.declared)) {
             try self.report(
                 name.span,
@@ -1927,9 +2001,47 @@ fn checkKeyedBody(
     parameter_types: []const Type,
     expected_return_type: ?Type,
 ) Error!void {
+    if (self.nested.get(key)) |depth| {
+        return self.checkNestedBody(depth, declaration, parameter_types, expected_return_type);
+    }
     const receiver = self.receivers.get(key) orelse
         return self.checkFunctionBody(declaration, parameter_types, expected_return_type);
     try self.checkBodyWithSelf(declaration.parameters, parameter_types, declaration.body.statements, expected_return_type, null, receiver);
+}
+
+/// A nested function's body, which sees the scopes in force where it is
+/// declared (7.1). It may run at any point after it is hoisted, so as for a
+/// program function, every variable counts as assigned and nothing proved
+/// about one applies; each use of the function checks instead.
+fn checkNestedBody(
+    self: *Checker,
+    depth: usize,
+    declaration: Ast.FunctionDeclaration,
+    parameter_types: []const Type,
+    expected_return_type: ?Type,
+) Error!void {
+    const before = try self.snapshot();
+    const outer_scopes = self.scopes;
+    defer {
+        self.scopes = outer_scopes;
+        self.restore(before);
+    }
+    for (outer_scopes.items[0..depth]) |scope| {
+        var values = scope.valueIterator();
+        while (values.next()) |binding| {
+            binding.assigned = true;
+            binding.type = binding.declared;
+        }
+    }
+    try self.checkBodyWithSelfIn(
+        outer_scopes.items[0..depth],
+        declaration.parameters,
+        parameter_types,
+        declaration.body.statements,
+        expected_return_type,
+        null,
+        null,
+    );
 }
 
 /// The one way a body is checked, whether a function's or a constructor's.
@@ -1956,7 +2068,21 @@ fn checkBodyWithSelf(
     receiver: ?Type,
 ) Error!void {
     const view = try self.moduleView();
+    return self.checkBodyWithSelfIn(&.{view}, parameter_list, parameter_types, statements, expected_return_type, constructing, receiver);
+}
 
+/// `enclosing` is what the body sees besides its parameters: a view of the
+/// module, or for a nested function the scopes around its declaration.
+fn checkBodyWithSelfIn(
+    self: *Checker,
+    enclosing: []const *Scope,
+    parameter_list: []const Ast.Parameter,
+    parameter_types: []const Type,
+    statements: []const Ast.Statement,
+    expected_return_type: ?Type,
+    constructing: ?Constructing,
+    receiver: ?Type,
+) Error!void {
     const parameters = try self.arena.create(Scope);
     parameters.* = .empty;
     for (parameter_list, parameter_types) |parameter, parameter_type| {
@@ -2015,7 +2141,7 @@ fn checkBodyWithSelf(
 
     self.scopes = .empty;
     self.loops = .empty;
-    try self.scopes.append(self.arena, view);
+    try self.scopes.appendSlice(self.arena, enclosing);
     try self.scopes.append(self.arena, parameters);
     self.current_return_type = expected_return_type;
     self.in_function = true;
@@ -3127,7 +3253,8 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
                 break :blk .invalid;
             }
             if (binding.is_function) {
-                break :blk try self.typeOfFunctionValue(expression, .{ .key = self.keyOf(name), .display = name });
+                try self.checkNestedUse(expression);
+                break :blk try self.typeOfFunctionValue(expression, .{ .key = binding.function_key orelse self.keyOf(name), .display = name });
             }
             if (self.constructing != null and std.mem.eql(u8, name, "self")) {
                 try self.requireSelfReady(expression.span);
@@ -4924,7 +5051,12 @@ fn typeOfCall(
     };
 
     const name = reference.display;
-    const binding = self.findKey(reference.key) orelse self.find(name) orelse {
+    // A nested function (7.1) is a local, found before any module-level name.
+    const nested: ?*Binding = if (call.callee.data == .name) blk: {
+        const local = self.find(name) orelse break :blk null;
+        break :blk if (local.function_key != null) local else null;
+    } else null;
+    const binding = nested orelse self.findKey(reference.key) orelse self.find(name) orelse {
         try self.typeArguments(call.arguments);
         return .invalid;
     };
@@ -5005,9 +5137,12 @@ fn typeOfCall(
     // a parameter or a local that received a lambda is used.
     if (!binding.is_function) return self.typeOfValueCall(call, binding.type, name);
 
+    const key = binding.function_key orelse reference.key;
+    if (binding.function_key != null) try self.checkNestedUse(call.callee);
+
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
-    if (!self.declarations.contains(reference.key)) {
+    if (!self.declarations.contains(key)) {
         if (try self.rejectNames(call)) {
             try self.typeArguments(call.arguments);
             return .invalid;
@@ -5019,14 +5154,14 @@ fn typeOfCall(
         return .nothing;
     }
 
-    const signature = try self.signatureFor(reference.key);
+    const signature = try self.signatureFor(key);
     try self.checkArguments(call, name, try self.parametersOf(
         signature,
-        self.declarations.get(reference.key).?.parameters,
+        self.declarations.get(key).?.parameters,
         "Match the number of arguments to the function's parameters.",
     ));
 
-    if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
+    if (!self.in_function) try self.checkCaptures(expression.span, key, name);
     return signature.return_type;
 }
 

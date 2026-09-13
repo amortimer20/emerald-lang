@@ -82,6 +82,26 @@ pub fn displayKey(arena: std.mem.Allocator, key: []const u8) std.mem.Allocator.E
 /// this one find what the resolver decided about it.
 pub const Site = struct { file: u32, start: u32 };
 
+/// The key a nested function (7.1) is known by: its name, then where its name
+/// is written. `@` appears in no name, so it collides with no other key.
+fn nestedKey(arena: std.mem.Allocator, file: u32, function: Ast.FunctionDeclaration) std.mem.Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}@{d}:{d}", .{ function.name, file, function.name_span.start });
+}
+
+/// A local variable of an enclosing function that a nested function reads or
+/// assigns (7.1).
+pub const Capture = struct {
+    name: []const u8,
+    /// The function whose body declares it, or "" for a block at the top
+    /// level of a file.
+    owner: []const u8,
+    /// Where it is declared, which a use of the function has to come after.
+    declared: u32,
+    /// Whether the function reads it, so it has to hold a value by then, and
+    /// not only exist.
+    read: bool,
+};
+
 /// Section 14.2's privacy: a leading underscore on a module-level declaration
 /// makes it private to its own file. `_` alone is the discard, not a name.
 pub fn isPrivate(name: []const u8) bool {
@@ -128,6 +148,18 @@ pub const Facts = struct {
     /// names `Player` with `count` as its first step; this says the two are
     /// one binding, which this file's keys find by that written name.
     type_assignments: std.AutoHashMapUnmanaged(Site, []const u8) = .empty,
+    /// Every nested function (7.1), by where its name is written, mapped to
+    /// its key; and its declaration, by that key.
+    nested_keys: std.AutoHashMapUnmanaged(Site, []const u8) = .empty,
+    nested_functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
+    /// For each nested function, the enclosing locals its own body reads or
+    /// assigns.
+    local_captures: std.StringHashMapUnmanaged(std.ArrayList(Capture)) = .empty,
+    /// Every place a nested function is called or used as a value, mapped to
+    /// the locals of the function it is used in that the call can read, through
+    /// the nested function and whatever it calls. Each is declared above the
+    /// use, which the resolver checks; the checker checks each holds a value.
+    nested_uses: std.AutoHashMapUnmanaged(*const Ast.Expression, []const []const u8) = .empty,
 
     /// The key a bare name has in `file`, or null when the name is not a
     /// module-level declaration visible there.
@@ -176,6 +208,8 @@ const Binding = struct {
     /// `const` read-only, section 7.1 makes a parameter read-only, section 6.4
     /// makes a loop variable read-only, and a function is not a variable at all.
     kind: BindingKind = .variable,
+    /// A nested function's key (7.1).
+    function_key: ?[]const u8 = null,
 };
 
 const Scope = std.StringHashMapUnmanaged(Binding);
@@ -199,6 +233,12 @@ facts: Facts = .{},
 function_boundary: usize = module_scope,
 /// The function whose body is being walked, or null at the top level.
 current_function: ?[]const u8 = null,
+/// The functions whose bodies enclose the statement being walked, outermost
+/// first, each with the index of its parameter scope. A local in a scope below
+/// the innermost one's belongs to an enclosing function.
+function_scopes: std.ArrayList(FunctionScope) = .empty,
+/// Every use of a nested function, judged once every body is walked.
+nested_uses: std.ArrayList(NestedUse) = .empty,
 /// How many lambda bodies enclose the statement being walked.
 lambda_depth: u32 = 0,
 /// Every module-level variable and where it is declared, so a name used above
@@ -241,6 +281,16 @@ enclosing_project: ?[]const u8 = null,
 /// Which file is being walked. Every diagnostic reported here is stamped with
 /// it, and it is what a bare module-level name is resolved through.
 file: u32 = 0,
+
+const FunctionScope = struct { scope: usize, key: []const u8 };
+
+const NestedUse = struct {
+    expression: *const Ast.Expression,
+    key: []const u8,
+    /// The function the use is written in, or "" at the top level.
+    caller: []const u8,
+    file: u32,
+};
 
 const Declared = struct {
     file: u32,
@@ -312,6 +362,7 @@ pub fn resolve(
         if (!file.entry) try resolver.checkModuleFile(program.statements);
         try resolver.walkStatements(program.statements);
     }
+    try resolver.judgeNestedUses();
 
     // Hoisting reports across every file before any file is walked, so the
     // order they were found in is not the order a reader reads them in.
@@ -997,7 +1048,106 @@ fn noteRead(self: *Resolver, found: Found) Error!void {
 }
 
 fn walkStatements(self: *Resolver, statements: []const Ast.Statement) Error!void {
+    if (self.scopes.items.len > module_scope + 1) try self.hoistNestedFunctions(statements);
     for (statements) |statement| try self.walkStatement(statement);
+}
+
+/// Section 7.1: "Nested named functions ... are hoisted within their
+/// containing scope", so every one a block declares can be called anywhere in
+/// the block, including by the others.
+fn hoistNestedFunctions(self: *Resolver, statements: []const Ast.Statement) Error!void {
+    for (statements) |statement| {
+        const function = switch (statement.data) {
+            .function_declaration => |f| f,
+            else => continue,
+        };
+        if (self.visibleLocal(function.name) != null) {
+            try self.report(
+                function.name_span,
+                "`{s}` is already declared",
+                .{function.name},
+                "Each name can have one declaration in a function. Choose a different name.",
+            );
+            continue;
+        }
+        const key = try nestedKey(self.arena, self.file, function);
+        try self.facts.nested_keys.put(self.arena, .{ .file = self.file, .start = function.name_span.start }, key);
+        try self.facts.nested_functions.put(self.arena, key, function);
+        try self.facts.owner.put(self.arena, key, self.file);
+        try self.facts.module_reads.put(self.arena, key, .empty);
+        try self.facts.calls.put(self.arena, key, .empty);
+        try self.facts.local_captures.put(self.arena, key, .empty);
+        const current = &self.scopes.items[self.scopes.items.len - 1];
+        try current.put(self.arena, function.name, .{
+            .mutable = false,
+            .span = function.name_span,
+            .kind = .function,
+            .function_key = key,
+        });
+    }
+}
+
+/// Records that the function being walked reaches a local of a function
+/// around it, which a use of the function has to come after (7.1).
+fn noteCapture(self: *Resolver, found: Found, read: bool) Error!void {
+    if (found.scope <= module_scope or found.binding.kind != .variable) return;
+    const innermost = self.function_scopes.getLastOrNull() orelse return;
+    if (found.scope >= innermost.scope) return;
+    // Owned by the innermost function whose scopes include it.
+    var owner: []const u8 = "";
+    for (self.function_scopes.items) |function| {
+        if (function.scope <= found.scope) owner = function.key;
+    }
+    try self.facts.local_captures.getPtr(innermost.key).?.append(self.arena, .{
+        .name = found.key,
+        .owner = owner,
+        .declared = found.binding.span.start,
+        .read = read,
+    });
+}
+
+/// Section 7.1: "Hoisting never permits reading an uninitialized captured
+/// variable." Each use of a nested function is judged against every local of
+/// its own function that the use can reach, through the functions it calls.
+fn judgeNestedUses(self: *Resolver) Error!void {
+    for (self.nested_uses.items) |use| {
+        var visited: NameSet = .empty;
+        var pending: std.ArrayList([]const u8) = .empty;
+        try visited.put(self.arena, use.key, {});
+        try pending.append(self.arena, use.key);
+        var needed: std.ArrayList([]const u8) = .empty;
+        var reported = false;
+        while (pending.pop()) |current| {
+            if (self.facts.local_captures.get(current)) |captures| for (captures.items) |capture| {
+                if (!std.mem.eql(u8, capture.owner, use.caller)) continue;
+                if (capture.declared > use.expression.span.start) {
+                    if (!reported) {
+                        self.file = use.file;
+                        try self.report(
+                            use.expression.span,
+                            "`{s}` uses `{s}`, which is not declared until later",
+                            .{ use.expression.data.name, capture.name },
+                            "Move this below the declaration of the variable the function uses.",
+                        );
+                    }
+                    reported = true;
+                    continue;
+                }
+                if (capture.read) try needed.append(self.arena, capture.name);
+            };
+            if (self.facts.calls.get(current)) |callees| {
+                var it = callees.keyIterator();
+                while (it.next()) |callee| {
+                    if (visited.contains(callee.*)) continue;
+                    try visited.put(self.arena, callee.*, {});
+                    try pending.append(self.arena, callee.*);
+                }
+            }
+        }
+        if (!reported and needed.items.len > 0) {
+            try self.facts.nested_uses.put(self.arena, use.expression, try needed.toOwnedSlice(self.arena));
+        }
+    }
 }
 
 fn walkBlock(self: *Resolver, block: Ast.Block) Error!void {
@@ -1030,11 +1180,18 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             }
 
             if (self.scopes.items.len > module_scope + 1 and self.visibleLocal(declaration.name) != null) {
+                // A nested function below is hoisted above this, but the one
+                // written second is the duplicate a reader finds.
+                const existing = self.visibleLocal(declaration.name).?;
+                const later = existing.kind == .function and existing.span.start > declaration.name_span.start;
                 try self.report(
-                    declaration.name_span,
+                    if (later) existing.span else declaration.name_span,
                     "`{s}` is already declared",
                     .{declaration.name},
-                    "Assign to the existing name instead of declaring it again, or choose a different name.",
+                    if (later)
+                        "A function and a variable in one function cannot share a name. Choose a different name for one of them."
+                    else
+                        "Assign to the existing name instead of declaring it again, or choose a different name.",
                 );
                 return;
             }
@@ -1081,6 +1238,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 try self.facts.assigned_in_lambda.put(self.arena, assignment.name, {});
             }
             try self.noteAssignedInFunction(found);
+            try self.noteCapture(found, assignment.operation != null or assignment.steps.len > 0);
 
             // A compound assignment reads the current value first, so it needs
             // the variable to be assigned already; a plain one does not. An
@@ -1116,12 +1274,14 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
 
         .break_statement, .continue_statement => {},
 
-        .function_declaration => |function| try self.walkBody(
-            try self.keyOf(self.file, function.name),
-            function.parameters,
-            function.body.statements,
-            false,
-        ),
+        .function_declaration => |function| {
+            if (self.scopes.items.len == module_scope + 1) {
+                return self.walkBody(try self.keyOf(self.file, function.name), function.parameters, function.body.statements, false);
+            }
+            // Not hoisted when its name was already taken, which is reported.
+            const key = self.facts.nested_keys.get(.{ .file = self.file, .start = function.name_span.start }) orelse return;
+            try self.walkBody(key, function.parameters, function.body.statements, false);
+        },
         .struct_declaration => |declaration| {
             const type_key = try self.keyOf(self.file, declaration.name);
             try self.walkFieldDefaults(type_key, declaration.fields);
@@ -1496,9 +1656,8 @@ fn isCallable(kind: BindingKind) bool {
 /// is the declaration the body's reads and calls are recorded under; a
 /// constructor's are recorded under its type, since calling the type runs it.
 ///
-/// The parser only accepts a function or struct declaration at the top level,
-/// so the scope stack here is always the prelude and the module scope and
-/// nothing else; no enclosing block's locals can leak in.
+/// A struct declaration is only accepted at the top level. A nested function
+/// (7.1) sees the locals declared above it, as a block does.
 fn walkBody(
     self: *Resolver,
     key: []const u8,
@@ -1507,17 +1666,23 @@ fn walkBody(
     /// Whether `self` is in scope: a constructor's or a method's body.
     has_self: bool,
 ) Error!void {
-    std.debug.assert(self.scopes.items.len == module_scope + 1);
-
+    const nested = self.scopes.items.len > module_scope + 1;
     try self.push();
     const outer_boundary = self.function_boundary;
     const outer_function = self.current_function;
+    const outer_lambda_depth = self.lambda_depth;
     self.function_boundary = self.scopes.items.len - 1;
     self.current_function = key;
+    // A nested function assigning a variable around it can do so between a
+    // test and a use, exactly as a block can (4.5).
+    self.lambda_depth = if (nested) outer_lambda_depth + 1 else 0;
+    try self.function_scopes.append(self.arena, .{ .scope = self.scopes.items.len - 1, .key = key });
     defer {
         self.pop();
         self.function_boundary = outer_boundary;
         self.current_function = outer_function;
+        self.lambda_depth = outer_lambda_depth;
+        _ = self.function_scopes.pop();
     }
 
     const parameters = &self.scopes.items[self.scopes.items.len - 1];
@@ -1704,6 +1869,18 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                 );
             }
             try self.noteRead(found);
+            try self.noteCapture(found, true);
+            if (found.binding.function_key) |key| {
+                if (self.current_function) |caller| {
+                    try self.facts.calls.getPtr(caller).?.put(self.arena, key, {});
+                }
+                try self.nested_uses.append(self.arena, .{
+                    .expression = expression,
+                    .key = key,
+                    .caller = self.current_function orelse "",
+                    .file = self.file,
+                });
+            }
         },
 
         .unary => |unary| try self.walkExpression(unary.operand),

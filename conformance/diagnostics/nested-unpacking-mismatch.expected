@@ -1,0 +1,12 @@
+diagnostics/nested-unpacking-mismatch.em:1:11: this is Int, which is not a tuple
+  const (a, (b, c)) = (1, 2)
+            ^^^^^^
+Only a tuple can be unpacked into names. Write one name for anything else.
+diagnostics/nested-unpacking-mismatch.em:2:11: this unpacks 2 names, but (Int, Int, Int) has 3 positions
+  const (d, (e, f)) = (1, (2, 3, 4))
+            ^^^^^^
+Write one name for each position. Use `_` for a position you do not need.
+diagnostics/nested-unpacking-mismatch.em:3:36: this unpacks 3 names, but (Int, Int) has 2 positions
+  const x = [(1, (2, 3))].map { (a1, (b1, c1, d1)) => a1 }
+                                     ^^^^^^^^^^^^
+Write one name for each position. Use `_` for a position you do not need.

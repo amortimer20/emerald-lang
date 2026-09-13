@@ -39,6 +39,10 @@ var second = "blue"
 (first, second) = (second, first)
 print(first, second)
 
+## A tuple inside a tuple unpacks in place, wherever names are unpacked.
+const (label, (x, y)) = ("corner", (3, 4))
+print(label, x + y)
+
 ## Tuples compare position by position, so two that were built separately are
 ## equal when their contents are.
 print(("a", 1) == ("a", 1))

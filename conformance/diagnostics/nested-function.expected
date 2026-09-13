@@ -1,4 +1,0 @@
-diagnostics/nested-function.em:5:5: nested functions are not available yet
-      func helper() {
-      ^^^^
-Move this function to the top level.

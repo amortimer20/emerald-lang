@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the method values slice (7.5).
+Updated: 2026-09-13. Prepared after the section 7 slice (nested functions and nested patterns).
 
 ## Current milestone
 
@@ -38,7 +38,8 @@ struct method without parentheses is a function value holding its own copy of th
 Structs are complete apart from `super(...)`, which waits for classes.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
-and stack traces on runtime errors. Loops work: `while`, `for` over an `Int` range, `break`,
+nested functions, and stack traces on runtime errors. Section 7 is complete apart from
+capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
 `continue`, and the trailing `if` guard. Lists work: literals, indexing, element assignment,
 the essential methods, equality, printing, and `for`, with value semantics through
 copy-on-write. Strings work: literals with escapes and interpolation, triple-quoted
@@ -53,7 +54,8 @@ a directory with a `main.em` is a program of many files, directories are namespa
 `using` shortens them, a leading underscore keeps a name inside its file, and a file that
 is not the entry initializes once, on first use. Tuples work: the `(String, Int)` type and
 `("score", 10)` literal, zero-based positions, equality position by position, and
-unpacking in declarations, `for` bindings, block parameters, and assignment. Dictionaries
+unpacking in declarations, `for` bindings, block parameters, and assignment, with nested
+patterns in all of them. Dictionaries
 and sets work: `[String: Int]` and `{String}`, their literals, bracket lookup producing an
 optional, bracket assignment, insertion order, equality by contents rather than order, and
 the essential vocabulary of 8.5. Memory is
@@ -160,6 +162,53 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Nested function decisions worth knowing
+
+- **Visibility is a lambda's (7.1, recorded in section 22).** A nested function sees the
+  variables declared above it. That is also what a top-level function sees of the module,
+  so an alternative where it saw its whole block was rejected: it would have been the one
+  function that could read below itself.
+- **Keys and hoisting.** A nested function is known as `name@file:start`
+  (`Resolver.nestedKey`), found from its declaration through `Facts.nested_keys` by `Site`,
+  so no pass allocates a key while running. Each pass hoists the names a block declares
+  before walking it: the resolver as a `.function` binding carrying `function_key`, the
+  checker as an `is_function` binding with the same key, and the interpreter as a closure
+  over the scopes in force at the start of the block (`hoistNestedFunctions` in
+  `executeAll`). The closure is `.named`, so `closureCallable` now passes a named closure's
+  captured scopes along; a program function's are empty. `callValue` binds a named closure's
+  arguments through `evaluateBoundParameters`, which is what gives nested functions defaults
+  and named arguments.
+- **The body is checked against the scopes around its declaration**
+  (`checkNestedBody`, through `checkBodyWithSelfIn`), with every variable there counted as
+  assigned and nothing narrowed, since it can run at any time. `Checker.nested` records how
+  many scopes that is; the same scope objects are still at those positions wherever the
+  function can be named. A use above the declaration can therefore infer its return type on
+  the spot, exactly as a top-level call does.
+- **Uses are judged in two halves.** The resolver records, for each nested function, the
+  locals of enclosing functions it reads or assigns (`Capture`, owned by the function that
+  declared them) and every use, then walks the call graph from each use once all bodies are
+  walked (`judgeNestedUses`). A capture owned by the function the use is in must be declared
+  above the use, or the resolver reports it; the ones it reads go to `Facts.nested_uses`,
+  and `checkNestedUse` reports any not certainly assigned there. Captures owned by another
+  function are left to the uses inside that function. A use inside a lambda is judged at the
+  lambda, which can only over-report.
+- **Assignments in a nested function count as assignments in a lambda** for narrowing (4.5),
+  through `lambda_depth`.
+- **A duplicate is reported at whichever is written second.** A nested function is hoisted,
+  so `var name` above `func name()` would otherwise be reported at the `var`.
+- **Not done: a better message for a variable declared below the function.** Reading one
+  still reports "is not defined", since the resolver has not seen the later declaration.
+
+### Nested pattern decisions worth knowing
+
+- **`Ast.Pattern` has `positions` and `names`.** `positions` is the structure, each a name or
+  a nested pattern; `names` is every name bound, flattened, which is all the resolver and the
+  name-only loops in the checker needed, so they are unchanged. `bindPattern`,
+  `assignPattern`, and `unpackInto` recurse through `positions`. A destructuring assignment
+  builds its pattern from the tuple literal it parsed as (`patternOfTuple`).
+- **Mismatch messages** count positions rather than names once a pattern nests, and a nested
+  position that is not a tuple is reported at that position.
 
 ### Method value decisions worth knowing
 
@@ -1076,9 +1125,8 @@ what was covered.
 Continue section 20's slice 12. Structs now have stored fields with defaults, assignment
 through field paths, custom constructors, instance methods, computed properties,
 type-level functions and fields, member privacy, and method values, and section 7.3's
-defaults and named arguments are in. Structs are complete. Two paths from here: capturing
-built-in methods (7.4's "every method remains capturable", with an expected type for
-`numbers.map`), which finishes section 7, or section 20's order onward, which continues with
+defaults and named arguments are in. Structs are complete, and so is section 7 apart from
+capturing built-in methods, which the user has put off. Section 20's order continues with
 classes, traits, operators, and enums.
 
 Section 8's collections are now finished, which was the argument for doing them first:
@@ -1099,7 +1147,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 268 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 272 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -1148,10 +1196,10 @@ easier to design once there are types to raise.
 
 ### Deferred
 
-- From section 7: nested function declarations (rejected with one diagnostic; a lambda in a
-  variable does the same job), variadics (already
-  deferred in the spec), tuple destructuring in a lambda parameter, and capturing a built-in
-  such as `print`, which no written function type describes. A top-level `return`, which
+- From section 7: capturing a built-in method such as `numbers.append` (7.4 says every
+  method is capturable, with an expected type for `numbers.map`; the user plans it for
+  later), variadics (already deferred in the spec), and capturing a built-in function such
+  as `print`, which no written function type describes. A top-level `return`, which
   section 14.1 uses to end the program, is rejected outside a function for now.
 - Section 14.1's warning for unreachable code after a `return`. Diagnostics have no
   severity yet; until they do, code after two branches that both return is treated as

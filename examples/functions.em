@@ -36,3 +36,20 @@ func label(score: Int, prefix: String = "Score", suffix: String = "") {
 label(88)
 label(88, "Final")
 label(88, suffix: " points")
+
+# A function can be declared inside another. It can be called anywhere in the
+# block around it, even above where it is written, and it shares that block's
+# variables, as a lambda does.
+func summarize(scores: [Int]): String {
+    var total = 0
+    for score in scores {
+        add(score)
+    }
+    return "#{scores.count} scores, #{total} in all"
+
+    func add(score: Int) {
+        total += score
+    }
+}
+
+print(summarize([88, 92, 75]))

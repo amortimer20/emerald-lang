@@ -141,14 +141,24 @@ pub const StructDeclaration = struct {
 };
 
 /// Section 8.2's `(name, age)`: the names a tuple is unpacked into. `_`
-/// discards its position, exactly as it does elsewhere.
+/// discards its position, exactly as it does elsewhere. A position may itself
+/// be a pattern, as in `(id, (x, y))` (7.4).
 pub const Pattern = struct {
     span: Source.Span,
+    /// One per position of the tuple, in order.
+    positions: []const Position,
+    /// Every name the pattern binds, nested ones included, in the order
+    /// written. What only needs the names, such as declaring them, reads this.
     names: []const Name,
 
     pub const Name = struct {
         text: []const u8,
         span: Source.Span,
+    };
+
+    pub const Position = union(enum) {
+        name: Name,
+        nested: *const Pattern,
     };
 };
 

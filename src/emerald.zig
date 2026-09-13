@@ -2052,14 +2052,11 @@ test "hoisting never permits reading an uninitialized captured variable" {
     try expectOutput("var total: Int\nfunc reset() {\n    total = 0\n}\nreset()\nprint(1)\n", "1\n");
 }
 
-test "nested functions are deferred, with one diagnostic" {
-    var source = try Source.init(testing.allocator, "test.em", "if true {\n    func helper() {\n        print(1)\n    }\n}\n");
-    defer source.deinit(testing.allocator);
-    var report = try check(testing.allocator, &source);
-    defer report.deinit();
-
-    try testing.expectEqual(@as(usize, 1), report.diagnostics.len);
-    try testing.expectEqualStrings("nested functions are not available yet", report.diagnostics[0].message);
+test "a nested function is hoisted within its block and shares its variables" {
+    try expectOutput(
+        "if true {\n    var total = 0\n    add(2)\n    add(3)\n    print(total)\n    func add(n: Int) {\n        total += n\n    }\n}\n",
+        "5\n",
+    );
 }
 
 test "an early return leaves a branch out of definite assignment" {

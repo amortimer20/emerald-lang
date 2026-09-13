@@ -42,8 +42,8 @@ source: *const Source,
 tokens: []const Token,
 index: usize = 0,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
-/// Nested function declarations are deferred, so `func` is legal only while
-/// this is true. Set false for the duration of any block body.
+/// Whether statements here are a file's own, which a struct declaration must
+/// be. Set false for the duration of any block body.
 at_top_level: bool = true,
 /// Open parentheses and braces. Section 3.4 guarantees at least 256.
 nesting: u32 = 0,
@@ -66,7 +66,7 @@ self_allowed: SelfContext = .nowhere,
 
 /// `type_member` is section 10.4's type-level function or field, which belongs
 /// to the type rather than to any value, so it has no `self` to offer.
-const SelfContext = enum { nowhere, member, member_lambda, type_member };
+const SelfContext = enum { nowhere, member, member_lambda, member_nested, type_member };
 
 /// Section 3.4: "An implementation accepts at least 256 nested syntactic
 /// delimiters or declarations and checks its nesting budget before consuming
@@ -384,18 +384,15 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
                     try std.fmt.allocPrint(self.arena, "Move it inside the braces of `struct {s}`.", .{self.text(receiver)}),
                 );
             }
-            // Parsed in full even when it will be rejected, so recovery
-            // resumes after its closing brace instead of reporting that brace
-            // as a second, unrelated error.
-            const statement = try self.parseFunctionDeclaration();
-            if (nested) {
-                return self.report(
-                    keyword,
-                    "nested functions are not available yet",
-                    "Move this function to the top level.",
-                );
+            // Section 7.1's nested function, which captures what is around it
+            // as a block does, and so cannot use `self` any more than one can.
+            _ = keyword;
+            const saved_self = self.self_allowed;
+            if (nested and (self.self_allowed == .member or self.self_allowed == .member_lambda)) {
+                self.self_allowed = .member_nested;
             }
-            break :blk statement;
+            defer self.self_allowed = saved_self;
+            break :blk try self.parseFunctionDeclaration();
         },
         .keyword_struct => blk: {
             const nested = !self.at_top_level;
@@ -1692,8 +1689,8 @@ fn parseBlock(self: *Parser) Error!Ast.Block {
         );
     }
 
-    // Every block, not only a function body: nested function declarations are
-    // deferred, and one inside a top-level `if` is just as nested.
+    // Every block, not only a function body: a declaration inside a top-level
+    // `if` is just as nested.
     const saved_top_level = self.at_top_level;
     self.at_top_level = false;
     defer self.at_top_level = saved_top_level;
@@ -1813,18 +1810,7 @@ fn finishDestructuringAssignment(
 ) Error!Ast.Statement {
     _ = self.advance();
 
-    var names: std.ArrayList(Ast.Pattern.Name) = .empty;
-    for (left.data.tuple_literal) |position| {
-        switch (position.data) {
-            .name => |name| try names.append(self.arena, .{ .text = name, .span = position.span }),
-            else => return self.report(
-                position.span,
-                "only a name can be assigned to here",
-                "Unpacking assigns to names that already exist, as in `(left, right) = (right, left)`. Write `_` for a position you do not need.",
-            ),
-        }
-    }
-
+    const pattern = try self.patternOfTuple(left);
     const value = try self.parseExpression();
     if (assignmentOperator(self.peek().kind) != null) {
         return self.report(
@@ -1837,10 +1823,42 @@ fn finishDestructuringAssignment(
     return self.finishSimpleStatement(.{
         .span = spanning(start.span, value.span),
         .data = .{ .destructuring_assignment = .{
-            .pattern = .{ .span = left.span, .names = try names.toOwnedSlice(self.arena) },
+            .pattern = pattern,
             .value = value,
         } },
     });
+}
+
+/// The names a tuple literal on the left of `=` assigns to, nested tuples
+/// included (7.4).
+fn patternOfTuple(self: *Parser, left: *const Ast.Expression) Error!Ast.Pattern {
+    var positions: std.ArrayList(Ast.Pattern.Position) = .empty;
+    var names: std.ArrayList(Ast.Pattern.Name) = .empty;
+    for (left.data.tuple_literal) |position| {
+        switch (position.data) {
+            .name => |written| {
+                const name: Ast.Pattern.Name = .{ .text = written, .span = position.span };
+                try positions.append(self.arena, .{ .name = name });
+                try names.append(self.arena, name);
+            },
+            .tuple_literal => {
+                const nested = try self.arena.create(Ast.Pattern);
+                nested.* = try self.patternOfTuple(position);
+                try positions.append(self.arena, .{ .nested = nested });
+                try names.appendSlice(self.arena, nested.names);
+            },
+            else => return self.report(
+                position.span,
+                "only a name can be assigned to here",
+                "Unpacking assigns to names that already exist, as in `(left, right) = (right, left)`. Write `_` for a position you do not need.",
+            ),
+        }
+    }
+    return .{
+        .span = left.span,
+        .positions = try positions.toOwnedSlice(self.arena),
+        .names = try names.toOwnedSlice(self.arena),
+    };
 }
 
 const Target = struct {
@@ -2363,6 +2381,7 @@ fn finishTupleLiteral(
 /// a bad assignment target.
 fn parsePattern(self: *Parser) Error!Ast.Pattern {
     const opening = self.advance();
+    var positions: std.ArrayList(Ast.Pattern.Position) = .empty;
     var names: std.ArrayList(Ast.Pattern.Name) = .empty;
 
     while (true) {
@@ -2371,11 +2390,24 @@ fn parsePattern(self: *Parser) Error!Ast.Pattern {
         switch (token.kind) {
             .identifier => {
                 _ = self.advance();
-                try names.append(self.arena, .{ .text = try self.identifier(token), .span = token.span });
+                const name: Ast.Pattern.Name = .{ .text = try self.identifier(token), .span = token.span };
+                try positions.append(self.arena, .{ .name = name });
+                try names.append(self.arena, name);
             },
             .underscore => {
                 _ = self.advance();
-                try names.append(self.arena, .{ .text = "_", .span = token.span });
+                const name: Ast.Pattern.Name = .{ .text = "_", .span = token.span };
+                try positions.append(self.arena, .{ .name = name });
+                try names.append(self.arena, name);
+            },
+            // Section 7.4: a position that is itself a tuple unpacks in place.
+            .left_paren => {
+                try self.nest(token.span);
+                defer self.unnest();
+                const nested = try self.arena.create(Ast.Pattern);
+                nested.* = try self.parsePattern();
+                try positions.append(self.arena, .{ .nested = nested });
+                try names.appendSlice(self.arena, nested.names);
             },
             else => return self.reportFmt(
                 token.span,
@@ -2401,7 +2433,7 @@ fn parsePattern(self: *Parser) Error!Ast.Pattern {
     }
     _ = self.advance();
 
-    if (names.items.len < 2) {
+    if (positions.items.len < 2) {
         return self.report(
             spanning(opening.span, closing.span),
             "a tuple is unpacked into at least two names",
@@ -2411,6 +2443,7 @@ fn parsePattern(self: *Parser) Error!Ast.Pattern {
 
     return .{
         .span = spanning(opening.span, closing.span),
+        .positions = try positions.toOwnedSlice(self.arena),
         .names = try names.toOwnedSlice(self.arena),
     };
 }
@@ -2528,8 +2561,7 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     try self.nest(opening.span);
     defer self.unnest();
 
-    // The body is a body, whatever the statement around it was doing, and
-    // nested function declarations remain deferred inside one.
+    // The body is a body, whatever the statement around it was doing.
     const saved_header = self.in_control_header;
     self.in_control_header = false;
     defer self.in_control_header = saved_header;
@@ -2815,6 +2847,11 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
                     token.span,
                     "a block cannot use `self` yet",
                     "Read what the block needs into a local first, as in `const x = self.x`, and use that inside the block.",
+                ),
+                .member_nested => try self.note(
+                    token.span,
+                    "a nested function cannot use `self` yet",
+                    "Read what the function needs into a local first, as in `const x = self.x`, and use that inside the function.",
                 ),
                 .nowhere => try self.note(
                     token.span,

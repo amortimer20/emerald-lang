@@ -179,7 +179,8 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             try writer.writeAll("]");
         },
         .closure => |closure| switch (closure.function) {
-            .named => |name| try writer.print("<func {s}>", .{name}),
+            // A nested function's key carries where it is written after `@`.
+            .named => |name| try writer.print("<func {s}>", .{name[0 .. std.mem.indexOfScalar(u8, name, '@') orelse name.len]}),
             // The method's own name, as a stack trace shows it.
             .method => |key| try writer.print("<func {s}>", .{key[(std.mem.lastIndexOf(u8, key, "::") orelse 0) + 2 ..]}),
             .lambda => try writer.writeAll("<lambda>"),

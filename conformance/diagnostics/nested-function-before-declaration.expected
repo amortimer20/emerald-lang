@@ -1,0 +1,12 @@
+diagnostics/nested-function-before-declaration.em:2:5: `show` uses `x`, which is not declared until later
+      show()
+      ^^^^
+Move this below the declaration of the variable the function uses.
+diagnostics/nested-function-before-declaration.em:24:15: `z` is not defined
+          print(z)
+                ^
+Check the spelling, or declare it before this line.
+diagnostics/nested-function-before-declaration.em:37:10: `name` is already declared
+      func name() {
+           ^^^^
+A function and a variable in one function cannot share a name. Choose a different name for one of them.

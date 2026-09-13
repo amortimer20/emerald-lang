@@ -929,6 +929,15 @@ from their declarations. Nested named functions are allowed, capture surrounding
 like lambdas, and are hoisted within their containing scope. Hoisting never permits reading
 an uninitialized captured variable.
 
+A nested function sees exactly what a lambda written in its place would: the variables
+declared above it, shared by reference, which is also what a top-level function sees of
+the module. It can be called anywhere in its block, including above its declaration and
+by the other functions the block declares. A use of one is checked against every variable
+it can reach, through the nested functions it calls: each must be declared above the use
+and, if it is read, certainly assigned there. A nested function shares the one name space
+of its enclosing function's locals, may not use `self` any more than a lambda can (7.4),
+and takes defaults and named arguments like any named function (7.3).
+
 ### 7.2 Inference and annotations
 
 Parameter annotations are normally explicit on named functions. Lambda parameter types
@@ -1189,8 +1198,10 @@ A tuple cannot be assigned to a position, so a `(Int, Int)` may be used where a
 `(Float, Int)` is expected, widening position by position. This is unlike a list, which is
 invariant precisely because it can be written through (4.4).
 
-Destructuring must match the arity and works in declarations, `for` bindings, and the
-parameters of a block (8.6). `_` discards a position wherever a tuple is unpacked. Existing
+Destructuring must match the arity and works in declarations, `for` bindings, the
+parameters of a block (8.6), and assignment. A position may itself be unpacked, as in
+`const (label, (x, y)) = entry`, in every one of those places. `_` discards a position wherever
+a tuple is unpacked. Existing
 local bindings may be updated together:
 
 ```emerald
@@ -2881,6 +2892,8 @@ recorded in their normative sections:
 | Where a type-level member is declared (10.4) | Inside its own type's braces, naming that type | 10.4 shows `func Vector2.origin()` without saying where it goes. Inside the type keeps a type's members in one place for a reader and one declaration for the checker; accepting it elsewhere would be extension of a type from outside, a separate feature with its own questions about files, namespaces, and privacy. |
 | Type-level and instance member names (10.3, 10.4) | One name space for both | `Player.count` and `player.count` meaning different things would be legal but misleading, and the diagnostic for reaching a member the wrong way can only name the right way if the name identifies one member. |
 | Inferring a type-level field's type (4.1, 7.2, 10.4) | Optional annotation; inferred from the value on first need, and a cycle through a function whose return type is also inferred needs one of the two annotated | This matches module-level bindings, which the fields otherwise behave like. The cycle rule is 7.2's rule for recursive functions, reached through a field instead of a call. |
+| What a nested function sees (7.1) | The variables above its declaration, as a lambda there would; uses are checked | 7.1 says both "capture surrounding bindings like lambdas" and "hoisted". Seeing only what is above matches a lambda and matches what a top-level function sees of the module, so one rule covers every function. Hoisting then only moves where it can be called from, and each call above the declaration is checked against what the function reads. |
+| Nested tuple patterns (7.4, 8.2) | Allowed wherever a tuple is unpacked | 7.4 requires them in lambda parameters. One pattern form everywhere is simpler to teach than a rule that nests in a block's header but not in `const (a, (b, c)) = ...`. |
 | Calling a captured changing method from inside itself (4.3, 7.5) | Runtime error | The call has the copy to itself while it changes it, as a changing method has its receiver. Letting the inner call work on the same copy would make the outer call's result silently overwrite the inner one's changes. |
 | Equality of captured methods (7.5) | Equal only when they are the same captured value | A captured method carries state, like a lambda that captured variables, so equal-looking captures can behave differently after either is called. A named function carries none, which is why capturing it twice gives equal values. |
 | Where a private member can be reached (10.5) | Only from code inside its own type's braces, including other values of that type | `protected` is deferred, so a subclass would not see a private member either; the braces are the boundary a reader can see. Module-level privacy stops at the file because the file is a module's unit (14.2), but a type's unit is its declaration. Allowing `other._count` for another value of the same type keeps equality helpers and merges writable without a public accessor. |

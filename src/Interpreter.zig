@@ -335,6 +335,10 @@ pub fn run(
         }
     }
     interpreter.file = entry;
+    {
+        var nested = interpreter.facts.nested_functions.iterator();
+        while (nested.next()) |entry_| try interpreter.functions.put(interpreter.arena, entry_.key_ptr.*, entry_.value_ptr.*);
+    }
 
     // Each block and call frees its own scope as it ends, including while an
     // error unwinds through it, so only the lists themselves are left.
@@ -387,7 +391,26 @@ fn guardStack(self: *Interpreter, span: Source.Span) Error!void {
 // Statements.
 
 fn executeAll(self: *Interpreter, statements: []const Ast.Statement) Error!void {
+    if (self.scopes.items.len > 0) try self.hoistNestedFunctions(statements);
     for (statements) |statement| try self.execute(statement);
+}
+
+/// Section 7.1's nested functions, each a closure over the scopes in force as
+/// the block begins, so it can be called anywhere in the block and sees what
+/// the block declares, as a lambda would.
+fn hoistNestedFunctions(self: *Interpreter, statements: []const Ast.Statement) Error!void {
+    for (statements) |statement| {
+        if (statement.data != .function_declaration) continue;
+        const function = statement.data.function_declaration;
+        const key = self.facts.nested_keys.get(.{ .file = self.file, .start = function.name_span.start }).?;
+        const captured = try self.gpa.dupe(*Environment, self.scopes.items);
+        const closure = try self.heap.createClosure(.{ .named = key }, captured, self.file);
+        const current = &self.scopes.items[self.scopes.items.len - 1].bindings;
+        current.put(self.gpa, function.name, .{ .kind = .closure, .value = .{ .data = .{ .closure = closure } } }) catch |err| {
+            self.heap.release(.{ .data = .{ .closure = closure } });
+            return err;
+        };
+    }
 }
 
 /// Whether a pattern's names are being introduced or already exist.
@@ -398,7 +421,14 @@ const Unpack = enum { declare, assign, bind_loop };
 /// The checker has already proved the arity matches.
 fn unpackInto(self: *Interpreter, pattern: Ast.Pattern, value: Value, how: Unpack) Error!void {
     const items = value.data.tuple.items;
-    for (pattern.names, items) |name, item| {
+    for (pattern.positions, items) |position, item| {
+        const name = switch (position) {
+            .name => |name| name,
+            .nested => |nested| {
+                try self.unpackInto(nested.*, item, how);
+                continue;
+            },
+        };
         // Section 8.2: `_` discards its position, so nothing holds it.
         if (std.mem.eql(u8, name.text, "_")) continue;
 
@@ -2239,9 +2269,19 @@ fn namedCallable(self: *Interpreter, key: []const u8) Callable {
 fn callValue(self: *Interpreter, call_span: Source.Span, call: Ast.Expression.Call) Error!Value {
     const callee = try self.evaluate(call.callee);
     defer self.heap.release(callee);
+    var callable = self.closureCallable(callee.data.closure);
+    // A named function, nested ones included, may leave parameters to their
+    // defaults and take arguments by name (7.3).
+    if (callee.data.closure.function == .named) {
+        const bound = try self.evaluateBoundParameters(call, callable.written);
+        defer self.gpa.free(bound.values);
+        defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+        callable.omitted = bound.omitted;
+        return self.invoke(call_span, callable, bound.values);
+    }
     const arguments = try self.evaluateArguments(call.arguments);
     defer self.gpa.free(arguments);
-    return self.invokeClosure(call_span, callee.data.closure, self.closureCallable(callee.data.closure), arguments);
+    return self.invokeClosure(call_span, callee.data.closure, callable, arguments);
 }
 
 /// Runs a function value against already-evaluated arguments, which it takes
@@ -2289,7 +2329,14 @@ fn invokeClosure(
 
 fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
     return switch (closure.function) {
-        .named, .method => |name| self.namedCallable(name),
+        .named => |name| blk: {
+            // A nested function (7.1) sees the scopes it was created in; a
+            // program function captured none.
+            var callable = self.namedCallable(name);
+            callable.captured = closure.captured;
+            break :blk callable;
+        },
+        .method => |name| self.namedCallable(name),
         .lambda => |expression| .{
             .name = "a block",
             .named = false,

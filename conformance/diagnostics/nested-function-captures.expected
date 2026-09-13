@@ -1,0 +1,12 @@
+diagnostics/nested-function-captures.em:3:5: `later` reads `y`, which is not assigned yet here
+      later()
+      ^^^^^
+Assign `y` before this line.
+diagnostics/nested-function-captures.em:15:10: `go` is recursive and needs an explicit return type
+      func go(k: Int) {
+           ^^
+Add a return type, so checking does not depend on inferring it from a call to itself.
+diagnostics/nested-function-captures.em:27:20: this is String?, so `upper` may not be there to use
+              return text.upper()
+                     ^^^^
+Give it a fallback with `.or(...)`, or check it first with `if text != nothing { ... }`.
