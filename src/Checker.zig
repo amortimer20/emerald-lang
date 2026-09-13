@@ -5051,12 +5051,11 @@ fn typeOfCall(
     };
 
     const name = reference.display;
-    // A nested function (7.1) is a local, found before any module-level name.
-    const nested: ?*Binding = if (call.callee.data == .name) blk: {
-        const local = self.find(name) orelse break :blk null;
-        break :blk if (local.function_key != null) local else null;
-    } else null;
-    const binding = nested orelse self.findKey(reference.key) orelse self.find(name) orelse {
+    // A bare name is looked up the way a read finds it, so a local — a nested
+    // function (7.1), or a variable holding a block — hides a module-level name
+    // even when `using` gave that name a key of its own.
+    const found = if (call.callee.data == .name) self.find(name) else self.findKey(reference.key);
+    const binding = found orelse {
         try self.typeArguments(call.arguments);
         return .invalid;
     };

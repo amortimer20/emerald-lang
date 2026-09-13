@@ -10,3 +10,7 @@ diagnostics/nested-function-before-declaration.em:37:10: `name` is already decla
       func name() {
            ^^^^
 A function and a variable in one function cannot share a name. Choose a different name for one of them.
+diagnostics/nested-function-before-declaration.em:44:5: `reset` uses `a`, which is not declared until later
+      reset()
+      ^^^^^
+Move this below the declaration of the variable the function uses.

@@ -38,3 +38,12 @@ func twice() {
     }
 }
 
+
+# Unpacking into a variable counts as using it, as a plain assignment does.
+func unpack_early() {
+    reset()
+    var a = 1
+    func reset() {
+        (a, _) = (0, 0)
+    }
+}

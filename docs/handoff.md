@@ -191,10 +191,24 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   walked (`judgeNestedUses`). A capture owned by the function the use is in must be declared
   above the use, or the resolver reports it; the ones it reads go to `Facts.nested_uses`,
   and `checkNestedUse` reports any not certainly assigned there. Captures owned by another
-  function are left to the uses inside that function. A use inside a lambda is judged at the
-  lambda, which can only over-report.
+  function are left to the uses inside that function. The walk follows only nested
+  functions, and never the function the use is in: calling that one, or any function that
+  is not nested, starts a frame of its own (review fix, guarded by the two `countdown`
+  programs in `run/nested-functions`). A destructuring assignment records what it writes,
+  as a plain one does; it once crashed the interpreter.
+- **A use inside a lambda, and taking the function as a value, are judged where written.**
+  That can reject a program that would have run, as in `const f2 = later` before the
+  variable `later` reads is assigned. Kept deliberately (section 22): 7.1 says hoisting
+  never permits reading an uninitialized captured variable, and a write through an
+  undeclared variable would crash rather than raise. Top-level functions do not yet check
+  these two forms at all and catch the read at runtime instead ("`n` is not assigned
+  yet"); bringing them in line is open.
 - **Assignments in a nested function count as assignments in a lambda** for narrowing (4.5),
   through `lambda_depth`.
+- **A call by a bare name finds its binding the way a read does** (`find`), so a local hides
+  a module-level name even when `using` gave that name its own key. The checker once looked
+  the key up first and checked `shout("hi")` against an imported `shout` while the
+  interpreter ran the local block (review chunk 2; `run/local-hides-imported-function`).
 - **A duplicate is reported at whichever is written second.** A nested function is hoisted,
   so `var name` above `func name()` would otherwise be reported at the `var`.
 - **Not done: a better message for a variable declared below the function.** Reading one
@@ -1120,6 +1134,20 @@ what was covered.
 | 5 | Defaults and named arguments: the checker and interpreter matching arguments to the same parameters (`src/arguments.zig`), which file and frame defaults run in, and field defaults under both kinds of constructor | Done, fixed in "Fix argument handling found in review" |
 | 6 | Diagnostic wording and spans across all five slices: wrong or misleading messages, cascades, and underlines in the wrong place | Done, fixed in "Improve struct diagnostics found in review" |
 
+## Second code review (section 7 and the last struct slices)
+
+Reviewing `8ced94f..7ad9887` in chunks, inline. Design questions found in review are decided
+by the reviewer against Emerald's philosophy and modern language design, not put to the user.
+
+| # | Scope | Status |
+| --- | --- | --- |
+| 1 | Nested functions: resolver capture analysis and use checks | Done: destructuring-assignment crash and recursion false positive fixed |
+| 2 | Nested functions: checker body checking and runtime hoisting | Done: a local now hides an imported function in a call (an older bug next to the new code) |
+| 3 | Method values: receiver copy, write-back, collector, re-entry | Next |
+| 4 | Privacy: every path to a member | |
+| 5 | Nested tuple patterns and parser changes | |
+| 6 | Diagnostics across all four slices | Noted so far: the narrowing help says "a block can set it back" when a nested function is what does |
+
 ## Next concrete step
 
 Continue section 20's slice 12. Structs now have stored fields with defaults, assignment
@@ -1147,7 +1175,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 272 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 273 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -1266,6 +1294,10 @@ maintainability work rather than reproduced behavioral failures:
   list on the first pass and iterating that list afterwards would filter once.
 
 ### Known rough edges
+
+- **A long chain of calls between top-level functions is slow to check.** 2,000 functions
+  each calling the next take about 2 s in ReleaseSafe, before and after the section 7 slice.
+  Found in review chunk 1; the checker's walks over the call graph are the likely cause.
 
 - Assigning to a type-level field through its namespace, `Shapes.Circle.made = 1`, is
   reported as "`Shapes` is a namespace, not a value"; reading and calling through the

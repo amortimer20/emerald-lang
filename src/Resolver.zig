@@ -1138,6 +1138,11 @@ fn judgeNestedUses(self: *Resolver) Error!void {
             if (self.facts.calls.get(current)) |callees| {
                 var it = callees.keyIterator();
                 while (it.next()) |callee| {
+                    // Only a nested function can reach this frame's locals.
+                    // Calling the function the use is in, or any other one,
+                    // starts a frame of its own.
+                    if (!self.facts.nested_functions.contains(callee.*)) continue;
+                    if (std.mem.eql(u8, callee.*, use.caller)) continue;
                     if (visited.contains(callee.*)) continue;
                     try visited.put(self.arena, callee.*, {});
                     try pending.append(self.arena, callee.*);
@@ -1354,6 +1359,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     try self.facts.assigned_in_lambda.put(self.arena, name.text, {});
                 }
                 try self.noteAssignedInFunction(found);
+                try self.noteCapture(found, false);
                 if (!found.binding.mutable) try self.reportReadOnly(name.text, name.span, found.binding.kind);
             }
         },

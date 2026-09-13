@@ -65,3 +65,44 @@ func fact(n: Int): Int {
 }
 print(fact(5))
 print(counter)
+
+# A nested function that calls the function around it starts a new call, with
+# variables of its own, so what `show` needs is not needed by `again`.
+func countdown(n: Int) {
+    if n > 0 {
+        again()
+    }
+    var label = "at #{n}"
+    show()
+
+    func again() {
+        countdown(n - 1)
+    }
+
+    func show() {
+        print(label)
+    }
+}
+countdown(2)
+
+# The same holds when the function that recurses is itself nested.
+func launch() {
+    countdown(1)
+
+    func countdown(n: Int) {
+        if n > 0 {
+            again()
+        }
+        var label = "lift-off in #{n}"
+        show()
+
+        func again() {
+            countdown(n - 1)
+        }
+
+        func show() {
+            print(label)
+        }
+    }
+}
+launch()
