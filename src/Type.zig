@@ -85,6 +85,9 @@ pub const Signature = struct {
 pub const User = struct {
     name: []const u8,
     display_name: []const u8,
+    /// Section 10.1: a class's values are shared references rather than
+    /// copied values.
+    class: bool = false,
     fields: []const Field = &.{},
 
     pub const Field = struct {
@@ -156,6 +159,9 @@ fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize) bool {
         .invalid => true,
         .struct_value => blk: {
             const user = self.user.?;
+            // Section 8.3: an object can change while it is a key, so
+            // classes are not initial dictionary keys.
+            if (user.class) break :blk false;
             for (seen[0..depth]) |earlier| {
                 if (earlier == user) break :blk false;
             }

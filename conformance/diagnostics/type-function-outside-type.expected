@@ -1,4 +1,4 @@
 diagnostics/type-function-outside-type.em:7:14: a type-level function is declared inside its type
   func Vector2.origin(): Vector2 {
                ^^^^^^
-Move it inside the braces of `struct Vector2`.
+Move it inside the braces of `Vector2`'s declaration.

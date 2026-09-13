@@ -274,7 +274,7 @@ pub fn check(
                 const declaration = statement.data.struct_declaration;
                 const key = checker.keyOf(declaration.name);
                 const user = try arena.create(Type.User);
-                user.* = .{ .name = key, .display_name = declaration.name };
+                user.* = .{ .name = key, .display_name = declaration.name, .class = declaration.class };
                 const struct_type = Type.structOf(user);
                 try checker.structs.put(arena, key, struct_type);
                 try checker.struct_declarations.put(arena, key, declaration);
@@ -1406,11 +1406,15 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         return;
     }
 
-    try self.requireMutable(assignment.name, assignment.name_span, binding.*);
     if (!binding.assigned) {
         try self.reportUnassigned(assignment.name_span, assignment.name, binding.*);
         binding.assigned = true;
     }
+    // Section 10.1: what freezes a path is decided once it is walked, since
+    // an object on it is shared and makes the binding and any `const` field
+    // before it irrelevant. Reported at the end, in the order written.
+    var root_frozen = true;
+    var frozen: ?Frozen = null;
 
     // Walk down to the type of the place being replaced. Section 10.2: a
     // `const` field freezes what it holds exactly as a `const` binding does,
@@ -1450,12 +1454,16 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         switch (assignment.steps[index]) {
             .field => |field| {
                 last_owner = element;
+                if (isClass(element)) {
+                    root_frozen = false;
+                    frozen = null;
+                }
                 if (element.kind != .struct_value) {
                     try self.report(
                         field.span,
                         "{f} has no field named `{s}`",
                         .{ element, field.name },
-                        "Only a struct has fields.",
+                        "Only a struct or class has fields.",
                     );
                     element = .invalid;
                     break;
@@ -1507,21 +1515,13 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                         field.span,
                         "{f} has no field named `{s}`",
                         .{ element, field.name },
-                        "Check the field name in the struct declaration.",
+                        "Check the field name in the type's declaration.",
                     );
                     element = .invalid;
                     break;
                 };
-                if (!stored.mutable) {
-                    try self.reportWithHelp(
-                        field.span,
-                        "`{s}` is a `const` field of {f}, so it cannot change",
-                        .{ field.name, element },
-                        "Declare it `var {s}: {f}` in {f} if it needs to change.",
-                        .{ field.name, stored.type, element },
-                    );
-                    element = .invalid;
-                    break;
+                if (!stored.mutable and frozen == null) {
+                    frozen = .{ .name = field.name, .span = field.span, .owner = element, .field_type = stored.type };
                 }
                 element = stored.type;
                 index += 1;
@@ -1577,6 +1577,11 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
             .index => |index_expression| try self.requireIndex(index_expression),
             .field => {},
         }
+    }
+    if (root_frozen) try self.requireMutable(assignment.name, assignment.name_span, binding.*);
+    if (frozen) |field| {
+        try self.reportFrozenField(field);
+        element = .invalid;
     }
 
     const last_is_property = switch (assignment.steps[assignment.steps.len - 1]) {
@@ -2155,7 +2160,7 @@ fn checkBodyWithSelfIn(
         // it do, so like a getter (10.3) it may not change `self`. Its change
         // could otherwise be lost, or reach a `const`, depending on whether
         // the rest of the method happens to change `self` too.
-        if (receiver) |method_type| {
+        if (receiver) |method_type| if (!method_type.user.?.class) {
             if (try self.expressionChangesSelf(default, method_type)) {
                 try self.report(
                     default.span,
@@ -2164,7 +2169,7 @@ fn checkBodyWithSelfIn(
                     "A default only works out a value for the call. Change `self` in the method's body instead.",
                 );
             }
-        }
+        };
         self.in_parameter_default = true;
         const actual = self.typeOfExpected(default, parameter_type) catch |err| {
             self.in_parameter_default = false;
@@ -2565,6 +2570,10 @@ fn methodChanges(self: *Checker, key: []const u8) Error!bool {
 
     const declaration = self.declarations.get(key).?;
     const receiver = self.receivers.get(key).?;
+    // Section 10.1: an object is shared, so a class method changing it
+    // changes it for everyone, and nothing about where it is called from
+    // has to allow that.
+    if (receiver.user.?.class) return false;
     const result = try self.statementsChangeSelf(declaration.body.statements, receiver);
     // `true` is final whatever else is in progress. `false` is final only when
     // nothing else is, since it may have leaned on a cycle's provisional answer.
@@ -2587,7 +2596,8 @@ fn statementChangesSelf(self: *Checker, statement: Ast.Statement, receiver: Type
         else
             false,
         .assignment => |assignment| blk: {
-            if (assignment.steps.len > 0 and std.mem.eql(u8, assignment.name, "self")) break :blk true;
+            if (assignment.steps.len > 0 and std.mem.eql(u8, assignment.name, "self") and
+                !stepsReachObject(assignment.steps, receiver)) break :blk true;
             for (assignment.steps) |step| switch (step) {
                 .index => |index| if (try self.expressionChangesSelf(index, receiver)) break :blk true,
                 .field => {},
@@ -2679,6 +2689,28 @@ fn expressionChangesSelf(self: *Checker, expression: *const Ast.Expression, rece
     };
 }
 
+/// Whether an assignment's steps from `self` pass through an object before the
+/// last one, so what they change is shared rather than part of `self` (10.1).
+fn stepsReachObject(steps: []const Ast.Step, receiver: Type) bool {
+    var at = receiver;
+    for (steps[0 .. steps.len - 1]) |step| {
+        switch (step) {
+            .field => |field| {
+                if (at.kind != .struct_value or at.optional) return false;
+                at = for (at.user.?.fields) |candidate| {
+                    if (std.mem.eql(u8, candidate.name, field.name)) break candidate.type;
+                } else return false;
+            },
+            .index => {
+                if (at.optional or (at.kind != .list and at.kind != .dictionary)) return false;
+                at = at.element.?.*;
+            },
+        }
+        if (isClass(at)) return true;
+    }
+    return false;
+}
+
 /// The type reached by a path of fields and indices that starts at `self`, or
 /// null when the expression is not such a path.
 fn selfPathType(expression: *const Ast.Expression, receiver: Type) ?Type {
@@ -2687,7 +2719,9 @@ fn selfPathType(expression: *const Ast.Expression, receiver: Type) ?Type {
         .member => |member| {
             if (member.position != null) return null;
             const base = selfPathType(member.base, receiver) orelse return null;
-            if (base.kind != .struct_value or base.optional) return null;
+            // Past an object the path is in something shared, not in `self`
+            // (10.1).
+            if (base.kind != .struct_value or base.optional or base.user.?.class) return null;
             for (base.user.?.fields) |field| {
                 if (std.mem.eql(u8, field.name, member.name)) return field.type;
             }
@@ -2773,7 +2807,7 @@ fn typeOfStructMethodCall(
                 member.name_span,
                 "{f} has no method named `{s}`",
                 .{ base, member.name },
-                "Check the method name in the struct declaration.",
+                "Check the method name in the type's declaration.",
             );
         }
         try self.typeArguments(call.arguments);
@@ -3398,7 +3432,7 @@ fn requireEligibleKey(self: *Checker, key: Type, span: Source.Span) Error!void {
         span,
         "{f} cannot be a dictionary key",
         .{key},
-        "A key must be a number, a `Bool`, a `String`, or a tuple or struct made only from valid key types. Lists and other mutable collections cannot be keys.",
+        "A key must be a number, a `Bool`, a `String`, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.",
     );
 }
 
@@ -3915,7 +3949,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             member.name_span,
             "{f} has no field named `{s}`",
             .{ building, member.name },
-            "Check the field name in the struct declaration.",
+            "Check the field name in the type's declaration.",
         );
         return .invalid;
     }
@@ -3938,7 +3972,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             member.name_span,
             "{f} has no field named `{s}`",
             .{ base, member.name },
-            "Check the field name in the struct declaration.",
+            "Check the field name in the type's declaration.",
         );
         return .invalid;
     }
@@ -4430,47 +4464,45 @@ fn typeOfMapMethod(
 /// on it has been walked. `.reported` means a `const` field, a tuple
 /// position, or a namespace-qualified place already produced the diagnostic,
 /// and the caller does nothing more.
-const PlaceRoot = union(enum) {
-    reported,
-    root: *const Ast.Expression,
-};
-
-/// The same, but carrying the type of what was reached, when it is known
-/// without asking `typeOf` again. A plain name's type comes straight from its
-/// binding; anything a step's mutability check does not need a type for —
-/// a temporary, a qualified reference — carries none, and an enclosing field
-/// step simply cannot validate through it (the root-level check downstream
-/// still runs on whatever is ultimately reached).
+/// Where a receiver path starts and what freezes it, once walked. `frozen` is the
+/// first `const` field after the last object on the path, which stops a change
+/// as a `const` binding would. `reference` says the path passes through an
+/// object (10.1): the object is shared, so the binding the path starts from is
+/// not what changes, and neither is anything frozen before the object.
 const Place = union(enum) {
     reported,
+    /// Nothing about the path is known beyond where it starts, so only that is
+    /// checked.
     root: *const Ast.Expression,
-    typed: struct { root: *const Ast.Expression, type: Type },
+    typed: Typed,
+
+    const Typed = struct {
+        root: *const Ast.Expression,
+        type: Type,
+        reference: bool = false,
+        frozen: ?Frozen = null,
+    };
 };
 
-/// Walks a receiver down through indices and struct fields to the expression
-/// it is ultimately reached from, checking along the way that nothing on the
-/// path is frozen. Section 4.3 freezes a `const` field exactly as it freezes
-/// a binding, a tuple position can never be written through at all since
-/// there is no way to change a tuple after it is built (8.2), and changing a
-/// value reached through a namespace is not implemented. Shared by
-/// assignment's changing-method check and lists', since both walk the same
-/// kind of path down to the same kind of root.
-fn walkToPlaceRoot(self: *Checker, start: *const Ast.Expression) Error!PlaceRoot {
-    return switch (try self.resolvePlace(start)) {
-        .reported => .reported,
-        .root => |root| .{ .root = root },
-        .typed => |typed| .{ .root = typed.root },
-    };
+const Frozen = struct {
+    name: []const u8,
+    span: Source.Span,
+    owner: Type,
+    field_type: Type,
+};
+
+fn isClass(t: Type) bool {
+    return t.kind == .struct_value and !t.optional and t.user.?.class;
 }
 
-/// The recursive step behind `walkToPlaceRoot`. Recursing to the root first
-/// and checking each field on the way back out means a struct field's owner
-/// type is read from the binding or the previous step, never from `typeOf`:
-/// the whole receiver chain was already type-checked once by the caller (the
-/// method-call or index type check that reached here), and asking `typeOf`
-/// again would repeat any diagnostic that first check produced along the way
-/// — a capture error inside an index expression, for instance — rather than
-/// only checking what this walk actually needs, which is field mutability.
+/// Walks a receiver down through indices and struct fields to the expression
+/// it is ultimately reached from. Section 4.3 freezes a `const` field exactly
+/// as it freezes a binding, a tuple position can never be written through at
+/// all since there is no way to change a tuple after it is built (8.2), and
+/// changing a value reached through a namespace is not implemented. Recursing
+/// to the root first and checking each field on the way back out means a
+/// field's owner type is read from the binding or the previous step, never
+/// from `typeOf`, which would repeat whatever the caller's own check reported.
 fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
     switch (expression.data) {
         .index => |index| {
@@ -4482,8 +4514,10 @@ fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
             const item = if (base.type.kind == .list or base.type.kind == .dictionary)
                 base.type.element.?.*
             else
-                null;
-            return if (item) |element| .{ .typed = .{ .root = base.root, .type = element } } else .{ .root = base.root };
+                return .{ .root = base.root };
+            var reached = base;
+            reached.type = item;
+            return .{ .typed = reached };
         },
         .member => |inner| {
             // `Shapes.scores` reaches a real value, but changing it from
@@ -4513,7 +4547,7 @@ fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
                 );
                 return .reported;
             }
-            const base = switch (try self.resolvePlace(inner.base)) {
+            var base = switch (try self.resolvePlace(inner.base)) {
                 .reported => return .reported,
                 .root => |root| return .{ .root = root },
                 .typed => |typed| typed,
@@ -4527,19 +4561,17 @@ fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
                 try self.reportComputedInPlace(inner.name, inner.name_span);
                 return .reported;
             }
+            if (isClass(base.type)) {
+                base.reference = true;
+                base.frozen = null;
+            }
             for (base.type.user.?.fields) |field| {
                 if (!std.mem.eql(u8, field.name, inner.name)) continue;
-                if (!field.mutable) {
-                    try self.reportWithHelp(
-                        inner.name_span,
-                        "`{s}` is a `const` field of {f}, so it cannot change",
-                        .{ inner.name, base.type },
-                        "Declare it `var {s}: {f}` in {f} if it needs to change.",
-                        .{ inner.name, field.type, base.type },
-                    );
-                    return .reported;
+                if (!field.mutable and base.frozen == null) {
+                    base.frozen = .{ .name = inner.name, .span = inner.name_span, .owner = base.type, .field_type = field.type };
                 }
-                return .{ .typed = .{ .root = base.root, .type = field.type } };
+                base.type = field.type;
+                return .{ .typed = base };
             }
             return .{ .root = base.root };
         },
@@ -4549,26 +4581,63 @@ fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
             }
             return .{ .root = expression };
         },
-        else => return .{ .root = expression },
+        // A temporary. Its type is worked out again, quietly, since the
+        // caller has already reported anything wrong with it; what matters
+        // here is only whether the path through it reaches an object.
+        else => {
+            const reported = self.diagnostics.items.len;
+            const temporary = try self.typeOf(expression);
+            self.diagnostics.shrinkRetainingCapacity(reported);
+            return .{ .typed = .{ .root = expression, .type = temporary, .reference = isClass(temporary) } };
+        },
     }
+}
+
+fn reportFrozenField(self: *Checker, frozen: Frozen) Error!void {
+    try self.reportWithHelp(
+        frozen.span,
+        "`{s}` is a `const` field of {f}, so it cannot change",
+        .{ frozen.name, frozen.owner },
+        "Declare it `var {s}: {f}` in {f} if it needs to change.",
+        .{ frozen.name, frozen.field_type, frozen.owner },
+    );
+}
+
+/// What a change through a receiver path needs of where it starts: a changing
+/// binding, unless the path reaches an object first. Returns the root when
+/// that is still for the caller to judge because it is a temporary with no
+/// object on the path.
+fn requireChangeablePath(self: *Checker, base: *const Ast.Expression) Error!?*const Ast.Expression {
+    const place = try self.resolvePlace(base);
+    const typed: Place.Typed = switch (place) {
+        .reported => return null,
+        .root => |root| .{ .root = root, .type = .invalid },
+        .typed => |typed| typed,
+    };
+    if (typed.frozen) |frozen| {
+        try self.reportFrozenField(frozen);
+        return null;
+    }
+    if (typed.reference) return null;
+    const root = typed.root;
+    if (root.data == .name) {
+        const binding = self.find(root.data.name) orelse return null;
+        try self.requireMutable(root.data.name, root.span, binding.*);
+        return null;
+    }
+    if (self.facts.qualified.get(root)) |key| {
+        if (self.type_fields.contains(key)) {
+            try self.requireMutable(try Resolver.displayKey(self.arena, key), root.span, self.module.get(key).?);
+        }
+        return null;
+    }
+    return root;
 }
 
 /// Section 4.3 and 7.1: a method that changes its receiver cannot be called on
 /// a `const`, a parameter, a loop variable, or a temporary.
 fn requireMutableReceiver(self: *Checker, member: Ast.Expression.Member, name: []const u8) Error!void {
-    const root = switch (try self.walkToPlaceRoot(member.base)) {
-        .reported => return,
-        .root => |root| root,
-    };
-    if (root.data == .name) {
-        const binding = self.find(root.data.name) orelse return;
-        return self.requireMutable(root.data.name, root.span, binding.*);
-    }
-    if (self.facts.qualified.get(root)) |key| {
-        if (self.type_fields.contains(key)) {
-            return self.requireMutable(try Resolver.displayKey(self.arena, key), root.span, self.module.get(key).?);
-        }
-    }
+    if (try self.requireChangeablePath(member.base) == null) return;
     try self.reportWithHelp(
         member.name_span,
         "`{s}` changes what it is called on, and this value has nowhere to keep the change",
@@ -4705,26 +4774,14 @@ fn requireArity(
 /// one a program can see again: held by a `var`, directly or through indexing.
 /// Changing a temporary, such as the result of a call, would be lost at once.
 fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
-    const root = switch (try self.walkToPlaceRoot(member.base)) {
-        .reported => return,
-        .root => |root| root,
-    };
-    if (self.facts.qualified.get(root)) |key| {
-        if (self.type_fields.contains(key)) {
-            return self.requireMutable(try Resolver.displayKey(self.arena, key), root.span, self.module.get(key).?);
-        }
-    }
-    if (root.data != .name) {
-        return self.reportWithHelp(
-            member.base.span,
-            "`{s}` changes a list, but this list is a temporary value, so the change would be lost",
-            .{member.name},
-            "Store the list in a `var` first, then call `{s}` on it.",
-            .{member.name},
-        );
-    }
-    const binding = self.find(root.data.name) orelse return;
-    try self.requireMutable(root.data.name, root.span, binding.*);
+    if (try self.requireChangeablePath(member.base) == null) return;
+    try self.reportWithHelp(
+        member.base.span,
+        "`{s}` changes a list, but this list is a temporary value, so the change would be lost",
+        .{member.name},
+        "Store the list in a `var` first, then call `{s}` on it.",
+        .{member.name},
+    );
 }
 
 /// A member that does not exist, with the Emerald name for what the writer
@@ -5115,7 +5172,7 @@ fn typeOfCall(
                 call.callee.span,
                 "`{s}` takes no arguments, but this call passes {d}",
                 .{ name, call.arguments.len },
-                "This fieldless struct uses its generated zero-argument constructor.",
+                "A type without fields has a generated constructor that takes no arguments.",
             );
             try self.typeArguments(call.arguments);
             return binding.type;

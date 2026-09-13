@@ -69,6 +69,9 @@ pub const Statement = struct {
 };
 
 pub const StructDeclaration = struct {
+    /// Section 10.1: a class declares a reference type with the same members a
+    /// struct has. Everything that differs follows from sharing.
+    class: bool = false,
     name: []const u8,
     name_span: Source.Span,
     fields: []const Field,
@@ -84,6 +87,11 @@ pub const StructDeclaration = struct {
     type_functions: []const TypeFunction = &.{},
     /// Section 10.4's `var Player.count = 0`.
     type_fields: []const TypeField = &.{},
+
+    /// The keyword it was declared with, for diagnostics.
+    pub fn keyword(self: StructDeclaration) []const u8 {
+        return if (self.class) "class" else "struct";
+    }
 
     /// The declaration's own `name` is the whole `Vector2.origin` as written,
     /// which is how a stack trace or a diagnostic about the function reads;

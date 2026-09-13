@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the second code review (section 7 and the last struct slices).
+Updated: 2026-09-13. Prepared after the class basics slice (10.1).
 
 ## Current milestone
 
@@ -35,7 +35,10 @@ make them optional in the generated constructor. Type-level functions and fields
 (`func Vector2.origin()`, `var Player.count = 0`), set up lazily the first time the type is
 reached. Members whose names start with `_` are private to their type's braces, and a
 struct method without parentheses is a function value holding its own copy of the receiver.
-Structs are complete apart from `super(...)`, which waits for classes.
+Structs are complete. Classes have everything structs have, as shared objects: assignment
+and passing share, `const` stops at the first object, identity equality, blocks that use
+`self`, and cycles the collector reclaims. Inheritance (`extends`, `super`, `@override`,
+`@abstract`) is the next class sub-slice.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
@@ -162,6 +165,40 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Class decisions worth knowing
+
+- **A class is a struct declaration with `class` set.** `Ast.StructDeclaration.class`,
+  `Type.User.class`, and `Value.StructType.class` carry it, so every member, the
+  constructor rules, privacy, type-level members, and method values are shared code. The
+  parser's `in_class` makes a member's `self` context `class_member`, which a block or nested
+  function keeps. `extends` and `with` are parsed far enough to say they are not available
+  (and that a struct never extends).
+- **The runtime never copies an object** (`Heap.uniqueStruct` returns a class instance as
+  it is) and compares objects by pointer (`Value.equals`). `Value.write` keeps a thread-local
+  stack of the objects being written and prints `Name(...)` for one met again.
+- **Changes through an object start from the object.** `objectOnPath` finds the deepest
+  object on a runtime path and the steps after it. Assignment (`storeInObject`), a changing
+  struct method (`callStructMethod`), and a changing list or dictionary method
+  (`callChangingMethod`) work from there, so no binding is taken while they run. A setter at
+  the end of the path runs on what it reaches; for a struct inside an object the setter or
+  changing method works on a copy stored back afterwards. A temporary root is evaluated
+  (`temporaryRoot`), which is how `make().items.append(x)` works.
+- **The checker's `const` rule stops at an object.** `resolvePlace` now returns
+  `Place.Typed` with `reference` (an object was crossed) and `frozen` (the first `const`
+  field after the last object); `requireChangeablePath` judges both for a receiver, and
+  `checkPlaceAssignment` tracks the same two while it walks. A temporary's type is worked out
+  again with its diagnostics discarded, to see whether the path through it reaches an object.
+  `methodChanges` is false for any class method, and `selfPathType` and `stepsReachObject`
+  stop at an object, so a struct method that changes only an object it holds is not
+  changing.
+- **Classes are not dictionary keys** (`Type.eligibleKey`), and a struct holding one is not
+  either.
+- **Checked.** Six mechanisms were disabled one at a time, each failing a class case:
+  never copying objects, identity, the `const` boundary, class methods never changing,
+  stopping change inference at an object, and assignment from the object (whose case is a
+  setter that reads the object's binding while it runs). 200,000 iterations building object
+  cycles stay at 4.1 MB.
 
 ### Nested function decisions worth knowing
 
@@ -1167,12 +1204,16 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 
 ## Next concrete step
 
-Continue section 20's slice 12. Structs now have stored fields with defaults, assignment
-through field paths, custom constructors, instance methods, computed properties,
-type-level functions and fields, member privacy, and method values, and section 7.3's
-defaults and named arguments are in. Structs are complete, and so is section 7 apart from
-capturing built-in methods, which the user has put off. Section 20's order continues with
-classes, traits, operators, and enums.
+Continue section 20's slice 12 with class inheritance (10.7): `extends`, `super(...)` in
+constructors (10.2's base-first order and the inserted zero-argument call), `super.method()`,
+`@override` and the missing-override diagnostic, `@abstract` classes and bodyless methods,
+subclass-to-base assignability, identity comparison across an inheritance relationship,
+and the rule against calling overridable methods through `self` during construction. The
+parser already recognizes `extends` and reports it. `is` and `type_name` (4.4) can follow.
+
+Structs are complete, class basics are in, and section 7 is complete apart from capturing
+built-in methods, which the user has put off. After classes, section 20's order continues
+with traits, operators, and enums.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -1192,7 +1233,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 274 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 279 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

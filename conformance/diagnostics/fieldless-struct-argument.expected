@@ -1,4 +1,4 @@
 diagnostics/fieldless-struct-argument.em:4:16: `Marker` takes no arguments, but this call passes 1
   const marker = Marker(1)
                  ^^^^^^
-This fieldless struct uses its generated zero-argument constructor.
+A type without fields has a generated constructor that takes no arguments.

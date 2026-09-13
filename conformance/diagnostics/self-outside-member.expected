@@ -1,4 +1,4 @@
 diagnostics/self-outside-member.em:6:11: `self` is only available inside a constructor or a method
       print(self.code)
             ^^^^
-Declare this function inside the struct to make it a method, or pass the value in as a parameter.
+Declare this function inside the struct or class to make it a method, or pass the value in as a parameter.

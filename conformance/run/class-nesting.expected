@@ -1,0 +1,7 @@
+Point(x: 10, y: 0) [Point(x: 5, y: 1)]
+via holder Point(x: 10, y: 9)
+Node(name: "via holder", at: Point(x: 10, y: 9), next: Node(...), points: [Point(x: 5, y: 1)])
+Node(name: "a", at: Point(x: 0, y: 0), next: Node(name: "b", at: Point(x: 0, y: 0), next: Node(...), points: []), points: [])
+["two"]
+panel is hello 1
+panel is hello 1

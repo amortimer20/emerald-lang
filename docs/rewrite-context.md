@@ -1607,6 +1607,25 @@ A class stored inside a struct still compares according to class identity. User-
 equality and hashing are deferred because they must be designed together with dictionary
 keys and set membership.
 
+A class declares the same members a struct does — stored fields with defaults, a
+constructor, methods, properties, type-level members, and private members — and follows the
+same construction rules. What differs follows from sharing. A change that reaches an object
+changes that object where it is, whoever else holds it, so 4.3's `const` stops there: a
+`const` binding, a parameter, a loop variable, a `const` list, or a temporary may all lead
+to an object that changes, while a `const` field of the object, or a value held in one,
+still cannot. A class method may change `self` and may be called through any of those, so
+the checker never asks which class methods change `self`, and a block or nested function
+inside one may use `self` (7.4). 4.3's rule that a changing call has its value to itself
+does not apply to an object, which is shared by design; a struct inside an object that a
+setter or changing method is called on is changed as a copy and stored back into the object
+when the call finishes. A getter of a class may change its object; 10.3's rule exists so a
+property of a `const` struct can be read. A struct method that changes only an object the
+struct holds does not change the struct.
+
+An object displays like a struct, field by field. Objects can refer to each other and to
+themselves, so an object met again while it is already being displayed shows as
+`Name(...)`.
+
 ### 10.2 Fields and construction
 
 Fields visibly use `var` or `const`:
@@ -2892,6 +2911,9 @@ recorded in their normative sections:
 | Where a type-level member is declared (10.4) | Inside its own type's braces, naming that type | 10.4 shows `func Vector2.origin()` without saying where it goes. Inside the type keeps a type's members in one place for a reader and one declaration for the checker; accepting it elsewhere would be extension of a type from outside, a separate feature with its own questions about files, namespaces, and privacy. |
 | Type-level and instance member names (10.3, 10.4) | One name space for both | `Player.count` and `player.count` meaning different things would be legal but misleading, and the diagnostic for reaching a member the wrong way can only name the right way if the name identifies one member. |
 | Inferring a type-level field's type (4.1, 7.2, 10.4) | Optional annotation; inferred from the value on first need, and a cycle through a function whose return type is also inferred needs one of the two annotated | This matches module-level bindings, which the fields otherwise behave like. The cycle rule is 7.2's rule for recursive functions, reached through a field instead of a call. |
+| Class display (10.1, 15.2) | Field by field like a struct, with `Name(...)` for an object already being displayed | Showing the fields is what a beginner needs while learning; an address or bare type name hides exactly what changed. Objects form cycles, which a struct cannot, and the marker ends one without losing the rest of the value. |
+| Exclusive access and objects (4.3, 10.1) | Not applied to objects; a struct inside an object is changed as a copy and stored back | 4.3 protects a value from being half-changed while it is reached another way, which only matters when a value has one owner. An object has many by design, as in Swift, where class references are not checked for exclusivity. Copying a struct that lives in an object keeps the struct's own rules without marking the object as in use. |
+| What `const` and the change inference see through (4.3, 10.1) | Both stop at the first object on a path | "The rule stops at the first reference, which is exactly where sharing begins." The same boundary decides whether a struct method changes its struct, so `self.log.lines.append(x)` on a struct holding a `Log` object leaves the struct unchanged and works on a `const`. |
 | What a nested function sees (7.1) | The variables above its declaration, as a lambda there would; uses are checked | 7.1 says both "capture surrounding bindings like lambdas" and "hoisted". Seeing only what is above matches a lambda and matches what a top-level function sees of the module, so one rule covers every function. Hoisting then only moves where it can be called from, and each call above the declaration is checked against what the function reads. |
 | Using a nested function in a lambda or as a value (7.1) | Judged where it is written | The function could run from there, and 7.1 says hoisting never permits reading an uninitialized captured variable. Judging where the lambda or value is finally called would need flow analysis through values. The cost is rejecting some programs that would run, and moving the use below the assignment always fixes that. |
 | Nested tuple patterns (7.4, 8.2) | Allowed wherever a tuple is unpacked | 7.4 requires them in lambda parameters. One pattern form everywhere is simpler to teach than a rule that nests in a block's header but not in `const (a, (b, c)) = ...`. |

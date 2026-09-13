@@ -1,0 +1,4 @@
+diagnostics/struct-extends.em:1:14: a struct cannot extend another type
+  struct Point extends Base {
+               ^^^^^^^
+Structs do not inherit. Declare a class instead if this needs a base class.

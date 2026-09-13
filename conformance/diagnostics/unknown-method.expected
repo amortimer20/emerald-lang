@@ -1,7 +1,7 @@
 diagnostics/unknown-method.em:14:9: Counter has no method named `decrement`
   counter.decrement()
           ^^^^^^^^^
-Check the method name in the struct declaration.
+Check the method name in the type's declaration.
 diagnostics/unknown-method.em:15:9: `count` is a field of Counter, not a method
   counter.count()
           ^^^^^

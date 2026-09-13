@@ -1,4 +1,4 @@
 diagnostics/unknown-struct-field.em:6:15: Student has no field named `grade`
   print(student.grade)
                 ^^^^^
-Check the field name in the struct declaration.
+Check the field name in the type's declaration.

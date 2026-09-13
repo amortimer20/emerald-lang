@@ -1,0 +1,4 @@
+diagnostics/class-extends.em:2:11: a class cannot extend another class yet
+  class Dog extends Animal {
+            ^^^^^^^
+Declare the fields and methods this class needs directly in it.

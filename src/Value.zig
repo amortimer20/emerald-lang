@@ -45,6 +45,9 @@ pub const StructType = struct {
     /// type's resolved key contains its file path and cannot be shortened by
     /// splitting on a namespace dot.
     display_name: []const u8,
+    /// Section 10.1: an instance of a class is one shared object, changed in
+    /// place and compared by identity.
+    class: bool = false,
     fields: []const Field,
     /// Section 10.3's computed properties, which store nothing and so are
     /// neither displayed nor compared. Each names the functions that run it.
@@ -70,6 +73,10 @@ pub const StructType = struct {
 };
 
 pub const nothing: Value = .{ .data = .nothing };
+
+/// The class instances `write` is inside of, outermost first.
+threadlocal var displaying: [256]*const Heap.StructValue = undefined;
+threadlocal var displaying_count: usize = 0;
 
 pub fn initBool(value: bool) Value {
     return .{ .data = .{ .bool = value } };
@@ -186,6 +193,22 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             .lambda => try writer.writeAll("<lambda>"),
         },
         .struct_value => |instance| {
+            // Objects can refer to each other, and to themselves, so one that is
+            // already being written shows as `Name(...)` there instead of
+            // going round forever.
+            if (instance.descriptor.class) {
+                const already = for (displaying[0..displaying_count]) |open| {
+                    if (open == instance) break true;
+                } else false;
+                if (already or displaying_count == displaying.len) {
+                    return writer.print("{s}(...)", .{instance.descriptor.display_name});
+                }
+                displaying[displaying_count] = instance;
+                displaying_count += 1;
+            }
+            defer if (instance.descriptor.class) {
+                displaying_count -= 1;
+            };
             try writer.print("{s}(", .{instance.descriptor.display_name});
             for (instance.fields, instance.descriptor.fields, 0..) |value, field, index| {
                 if (index != 0) try writer.writeAll(", ");
@@ -350,6 +373,8 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
         .struct_value => |a| switch (right.data) {
             .struct_value => |b| blk: {
                 if (a.descriptor != b.descriptor) break :blk false;
+                // Section 10.1: classes compare by identity.
+                if (a.descriptor.class) break :blk a == b;
                 for (a.fields, b.fields) |left_field, right_field| {
                     if (!try equals(gpa, left_field, right_field)) break :blk false;
                 }

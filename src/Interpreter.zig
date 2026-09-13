@@ -263,6 +263,7 @@ pub fn run(
                 descriptor.* = .{
                     .name = type_key,
                     .display_name = checked.user.?.display_name,
+                    .class = checked.user.?.class,
                     .fields = fields,
                     .properties = properties,
                 };
@@ -665,6 +666,9 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
         self.heap.release(value);
         return err;
     };
+    if (objectOnPath(binding.value.?, steps)) |in_object| {
+        return self.storeInObject(assignment.target_span, in_object, value);
+    }
     var root = binding.value.?;
     binding.value = null;
     // Only a setter runs code while the binding is taken, and it can only be
@@ -678,6 +682,76 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
     restored.changing = null;
     restored.value = root;
     return stored;
+}
+
+/// Section 10.1: the deepest class instance a path passes through, and the
+/// steps that continue from it. What those steps reach lives in that object,
+/// which is shared, so changing it changes the object where it is: nothing
+/// before it on the path is copied, and no binding is taken while it changes.
+const InObject = struct { object: Value, rest: []const PlaceStep };
+
+fn objectOnPath(root: Value, steps: []const PlaceStep) ?InObject {
+    var found: ?InObject = null;
+    var at = root;
+    for (steps, 0..) |step, position| {
+        switch (at.data) {
+            .struct_value => |instance| {
+                if (instance.descriptor.class) found = .{ .object = at, .rest = steps[position..] };
+                const name = switch (step) {
+                    .field => |name| name,
+                    .index => break,
+                };
+                at = instance.fields[fieldPosition(instance, name) orelse break];
+            },
+            .list => |list| {
+                const index = switch (step) {
+                    .index => |index| index,
+                    .field => break,
+                };
+                const position_in_list = index.value.data.int;
+                if (position_in_list < 0 or position_in_list >= list.items.items.len) break;
+                at = list.items.items[@intCast(position_in_list)];
+            },
+            // A dictionary entry is looked up where it is changed.
+            else => break,
+        }
+    }
+    return found;
+}
+
+/// Stores `value` through the steps that continue from an object, taking over
+/// one holder of it. A setter at the end runs on what the steps reach: an
+/// object shares itself, and a struct inside one is changed as a copy and
+/// stored back, since nothing marks the object as in use while it runs.
+fn storeInObject(self: *Interpreter, span: Source.Span, in_object: InObject, value: Value) Error!void {
+    var object = Heap.retain(in_object.object);
+    defer self.heap.release(object);
+    const rest = in_object.rest;
+    const prefix = rest[0 .. rest.len - 1];
+    const name = switch (rest[rest.len - 1]) {
+        .field => |name| name,
+        .index => return self.storeElement(span, &object, rest, value),
+    };
+    const owner = self.elementValue(span, &object, prefix) catch |err| {
+        self.heap.release(value);
+        return err;
+    };
+    const instance = owner.data.struct_value;
+    if (fieldPosition(instance, name) != null) {
+        self.heap.release(owner);
+        return self.storeElement(span, &object, rest, value);
+    }
+    const property = instance.descriptor.property(name).?;
+    var callable = self.namedCallable(property.setter.?);
+    callable.self_value = owner;
+    const arguments = [_]Value{value};
+    if (instance.descriptor.class) {
+        return self.heap.release(try self.invoke(span, callable, &arguments));
+    }
+    var changed: Value = Value.nothing;
+    callable.self_out = &changed;
+    self.heap.release(try self.invoke(span, callable, &arguments));
+    return self.storeElement(span, &object, prefix, changed);
 }
 
 /// The position of `name` among a struct instance's fields, or null when it
@@ -2805,6 +2879,13 @@ fn rootName(self: *Interpreter, root: *const Ast.Expression) []const u8 {
     };
 }
 
+/// A receiver path's root when it is a temporary rather than a binding, which
+/// only a path through an object can change (10.1).
+fn temporaryRoot(self: *Interpreter, root: *const Ast.Expression) Error!?Value {
+    if (root.data == .name or self.facts.qualified.contains(root)) return null;
+    return try self.evaluate(root);
+}
+
 fn freeSteps(self: *Interpreter, steps: []PlaceStep) void {
     for (steps) |step| switch (step) {
         .index => |index| self.heap.release(index.value),
@@ -2848,18 +2929,27 @@ fn callChangingMethod(
     const receiver = path.root;
     const steps = path.steps;
     defer self.freeSteps(steps);
+    // Section 10.1: a temporary can hold an object, and a list in the object
+    // is where the change lands.
+    var temporary = try self.temporaryRoot(receiver);
+    defer if (temporary) |value| self.heap.release(value);
 
     const arguments = try self.evaluateArguments(call.arguments);
     defer self.gpa.free(arguments);
 
     // Section 14.1: a non-entry file initializes on first use, which this is,
     // exactly as a plain assignment already reaches before finding its slot.
-    const binding = self.placeBinding(self.rootName(receiver), receiver.span) catch |err| {
+    const binding: ?*Binding = if (temporary != null) null else self.placeBinding(self.rootName(receiver), receiver.span) catch |err| {
         for (arguments) |argument| self.heap.release(argument);
         return err;
     };
-    var slot = &binding.value.?;
-    if (steps.len > 0) slot = try self.containerSlot(slot, steps);
+    var object: Value = Value.nothing;
+    defer self.heap.release(object);
+    var slot = if (binding) |found| &found.value.? else &temporary.?;
+    if (objectOnPath(slot.*, steps)) |in_object| {
+        object = Heap.retain(in_object.object);
+        slot = try self.containerSlot(&object, in_object.rest);
+    } else if (steps.len > 0) slot = try self.containerSlot(slot, steps);
 
     if (slot.data == .map) {
         defer for (arguments) |argument| self.heap.release(argument);
@@ -2902,11 +2992,34 @@ fn callStructMethod(
 
     const path = try self.evaluateReceiverPath(member.base);
     defer self.freeSteps(path.steps);
+    const temporary = try self.temporaryRoot(path.root);
+    defer if (temporary) |value| self.heap.release(value);
     const bound = try self.evaluateBoundParameters(call, callable.written);
     defer self.gpa.free(bound.values);
     defer if (bound.omitted) |omitted| self.gpa.free(omitted);
     callable.omitted = bound.omitted;
     const arguments = bound.values;
+
+    // Section 10.1: a struct inside an object is changed as a copy and stored
+    // back into the object, which nothing marks as in use meanwhile.
+    const start: Value = if (temporary) |value| value else (self.placeBinding(self.rootName(path.root), path.root.span) catch |err| {
+        for (arguments) |argument| self.heap.release(argument);
+        return err;
+    }).value.?;
+    if (objectOnPath(start, path.steps)) |in_object| {
+        var object = Heap.retain(in_object.object);
+        defer self.heap.release(object);
+        callable.self_value = self.elementValue(path.root.span, &object, in_object.rest) catch |err| {
+            for (arguments) |argument| self.heap.release(argument);
+            return err;
+        };
+        var changed: Value = Value.nothing;
+        callable.self_out = &changed;
+        const result = try self.invoke(expression.span, callable, arguments);
+        errdefer self.heap.release(result);
+        try self.storeElement(expression.span, &object, in_object.rest, changed);
+        return result;
+    }
     const root_name = self.rootName(path.root);
 
     // A default can read `self`, so it sees the receiver as it is now, before

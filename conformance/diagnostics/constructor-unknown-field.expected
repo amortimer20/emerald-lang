@@ -1,8 +1,8 @@
 diagnostics/constructor-unknown-field.em:5:20: Badge has no field named `name`
           print(self.name)
                      ^^^^
-Check the field name in the struct declaration.
+Check the field name in the type's declaration.
 diagnostics/constructor-unknown-field.em:6:14: Badge has no field named `name`
           self.name = "x"
                ^^^^
-Check the field name in the struct declaration.
+Check the field name in the type's declaration.

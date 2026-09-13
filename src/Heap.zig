@@ -499,7 +499,9 @@ fn unlinkStruct(self: *Heap, instance: *StructValue) void {
 /// keeps section 10.1's value semantics true once fields can be assigned.
 pub fn uniqueStruct(self: *Heap, slot: *Value) std.mem.Allocator.Error!*StructValue {
     const shared = slot.data.struct_value;
-    if (shared.references == 1) return shared;
+    // Section 10.1: a class instance is one object however many hold it, and
+    // is changed where it is.
+    if (shared.references == 1 or shared.descriptor.class) return shared;
 
     const fields = try self.gpa.alloc(Value, shared.fields.len);
     for (shared.fields, fields) |field, *copied| copied.* = retain(field);

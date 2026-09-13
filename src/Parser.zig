@@ -47,6 +47,8 @@ diagnostics: std.ArrayList(Diagnostic) = .empty,
 at_top_level: bool = true,
 /// Open parentheses and braces. Section 3.4 guarantees at least 256.
 nesting: u32 = 0,
+/// Whether the members being parsed are a class's rather than a struct's.
+in_class: bool = false,
 /// Recursion that opens no delimiter: prefix `-` and `not`, the right side of
 /// `**`, and `else if`. Bounded separately so that it cannot eat into the 256
 /// delimiters section 3.4 promises, and so a very long chain of any of them is
@@ -66,7 +68,10 @@ self_allowed: SelfContext = .nowhere,
 
 /// `type_member` is section 10.4's type-level function or field, which belongs
 /// to the type rather than to any value, so it has no `self` to offer.
-const SelfContext = enum { nowhere, member, member_lambda, member_nested, type_member };
+/// Where `self` is being parsed. A class's methods share their object, so a
+/// block or nested function inside one may use `self` (7.4), and
+/// `class_member` stays in force inside both; a struct's `member` does not.
+const SelfContext = enum { nowhere, member, class_member, member_lambda, member_nested, type_member };
 
 /// Section 3.4: "An implementation accepts at least 256 nested syntactic
 /// delimiters or declarations and checks its nesting budget before consuming
@@ -380,7 +385,7 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
                 return self.report(
                     parsed.member_span,
                     "a type-level function is declared inside its type",
-                    try std.fmt.allocPrint(self.arena, "Move it inside the braces of `struct {s}`.", .{self.text(receiver)}),
+                    try std.fmt.allocPrint(self.arena, "Move it inside the braces of `{s}`'s declaration.", .{self.text(receiver)}),
                 );
             }
             // Section 7.1's nested function, which captures what is around it
@@ -392,15 +397,16 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             defer self.self_allowed = saved_self;
             break :blk try self.parseFunctionDeclaration();
         },
-        .keyword_struct => blk: {
+        .keyword_struct, .keyword_class => blk: {
             const nested = !self.at_top_level;
-            const keyword = self.peek().span;
+            const keyword = self.peek();
             const statement = try self.parseStructDeclaration();
             if (nested) {
-                return self.report(
-                    keyword,
-                    "a struct declaration belongs at the top level",
-                    "Move this struct out of the enclosing block.",
+                return self.reportFmt(
+                    keyword.span,
+                    "a {s} declaration belongs at the top level",
+                    .{self.text(keyword)},
+                    try std.fmt.allocPrint(self.arena, "Move this {s} out of the enclosing block.", .{self.text(keyword)}),
                 );
             }
             break :blk statement;
@@ -438,25 +444,53 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
 /// declaration order, which its default makes optional.
 fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
+    const class = keyword.kind == .keyword_class;
+    const word = self.text(keyword);
     const name = self.peek();
     if (name.kind != .identifier) {
         return self.reportFmt(
             name.span,
-            "expected a name after `struct`, found {s}",
-            .{name.kind.describe()},
-            "A struct declaration needs a PascalCase name, as in `struct Marker { }`.",
+            "expected a name after `{s}`, found {s}",
+            .{ word, name.kind.describe() },
+            try std.fmt.allocPrint(self.arena, "A {s} declaration needs a PascalCase name, as in `{s} Marker {{ }}`.", .{ word, word }),
         );
     }
     _ = self.advance();
+
+    // Section 10.7's inheritance and section 11's traits come later.
+    if (self.check(.keyword_extends)) {
+        if (!class) {
+            return self.report(
+                self.peek().span,
+                "a struct cannot extend another type",
+                "Structs do not inherit. Declare a class instead if this needs a base class.",
+            );
+        }
+        return self.report(
+            self.peek().span,
+            "a class cannot extend another class yet",
+            "Declare the fields and methods this class needs directly in it.",
+        );
+    }
+    if (self.check(.keyword_with)) {
+        return self.report(
+            self.peek().span,
+            "traits are not available yet",
+            "Declare the members this type needs directly in it.",
+        );
+    }
 
     if (self.match(.left_brace) == null) {
         return self.reportFmt(
             self.peek().span,
             "expected `{{` after `{s}`, found {s}",
             .{ self.text(name), self.peek().kind.describe() },
-            "A struct body is enclosed in braces, as in `struct Marker { }`.",
+            try std.fmt.allocPrint(self.arena, "A {s} body is enclosed in braces, as in `{s} Marker {{ }}`.", .{ word, word }),
         );
     }
+    const saved_class = self.in_class;
+    self.in_class = class;
+    defer self.in_class = saved_class;
     var members: StructMembers = .{};
     self.skipSeparators();
     while (!self.check(.right_brace) and !self.check(.eof)) {
@@ -470,9 +504,10 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         self.skipSeparators();
     }
     if (self.check(.eof)) {
-        return self.report(
+        return self.reportFmt(
             self.peek().span,
-            "this struct body is missing its closing `}`",
+            "this {s} body is missing its closing `}}`",
+            .{word},
             "Add `}` after the final field.",
         );
     }
@@ -481,6 +516,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     return .{
         .span = spanning(keyword.span, closing.span),
         .data = .{ .struct_declaration = .{
+            .class = class,
             .name = try self.identifier(name),
             .name_span = name.span,
             .fields = try members.fields.toOwnedSlice(self.arena),
@@ -512,7 +548,7 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
     }
     if (marker.kind == .keyword_func) {
         const saved_self = self.self_allowed;
-        self.self_allowed = .member;
+        self.self_allowed = self.memberContext();
         defer self.self_allowed = saved_self;
         const method = try self.parseFunctionDeclaration();
         try self.expectStatementEnd();
@@ -526,7 +562,7 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
         if (members.constructor != null) {
             try self.note(
                 parsed.keyword_span,
-                "a struct has at most one constructor",
+                if (self.in_class) "a class has at most one constructor" else "a struct has at most one constructor",
                 try std.fmt.allocPrint(
                     self.arena,
                     "Emerald has no overloading. Build the value another way in a type-level function that calls this constructor, such as `func {s}.from_text(text: String): {s}`.",
@@ -620,7 +656,7 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
     if (self.match(.equal) != null) {
         // A default may read earlier fields through `self` (10.2).
         const saved_self = self.self_allowed;
-        self.self_allowed = .member;
+        self.self_allowed = self.memberContext();
         defer self.self_allowed = saved_self;
         default = try self.parseExpression();
     }
@@ -636,6 +672,11 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
 
 /// Whether the `func` about to be parsed is followed by a name and `.`: the
 /// type receiver section 10.4 writes in front of a type-level member.
+/// The `self` context of a member's own code.
+fn memberContext(self: *Parser) SelfContext {
+    return if (self.in_class) .class_member else .member;
+}
+
 fn startsTypeMember(self: *Parser) bool {
     // Past any documentation comment on the declaration and its `func`.
     var at = self.index;
@@ -775,7 +816,7 @@ fn parseProperty(
 ) Error!Ast.StructDeclaration.Property {
     const name = try self.identifier(name_token);
     const saved_self = self.self_allowed;
-    self.self_allowed = .member;
+    self.self_allowed = self.memberContext();
     defer self.self_allowed = saved_self;
 
     const accessor_form = self.startsAccessor(self.index + 1);
@@ -888,7 +929,7 @@ fn parseConstructor(self: *Parser) Error!Ast.StructDeclaration.Constructor {
     // A parameter's default may read `self` (7.3), as a method's may; the
     // checker decides which fields it can see.
     const saved_self = self.self_allowed;
-    self.self_allowed = .member;
+    self.self_allowed = self.memberContext();
     defer self.self_allowed = saved_self;
     const parameters = try self.parseParameterList(
         "constructor",
@@ -1081,7 +1122,7 @@ fn parseFunctionDeclaration(self: *Parser) Error!Ast.Statement {
         return self.report(
             name.span,
             "a constructor is written without `func`",
-            "Write `constructor(...) { ... }` directly inside the struct.",
+            if (self.in_class) "Write `constructor(...) { ... }` directly inside the class." else "Write `constructor(...) { ... }` directly inside the struct.",
         );
     }
     if (name.kind != .identifier) {
@@ -2843,7 +2884,7 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
         .keyword_self => {
             _ = self.advance();
             switch (self.self_allowed) {
-                .member => {},
+                .member, .class_member => {},
                 .type_member => try self.note(
                     token.span,
                     "a type-level member has no `self`",
@@ -2862,7 +2903,7 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
                 .nowhere => try self.note(
                     token.span,
                     "`self` is only available inside a constructor or a method",
-                    "Declare this function inside the struct to make it a method, or pass the value in as a parameter.",
+                    "Declare this function inside the struct or class to make it a method, or pass the value in as a parameter.",
                 ),
             }
             return self.node(token.span, .{ .name = "self" });

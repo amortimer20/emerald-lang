@@ -1,4 +1,4 @@
 diagnostics/unhashable-struct-key.em:5:16: Bag cannot be a dictionary key
   const labels: [Bag: String] = []
                  ^^^
-A key must be a number, a `Bool`, a `String`, or a tuple or struct made only from valid key types. Lists and other mutable collections cannot be keys.
+A key must be a number, a `Bool`, a `String`, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.
