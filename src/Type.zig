@@ -537,6 +537,34 @@ pub const string_methods = std.StaticStringMap(StringMethod).initComptime(.{
     .{ "to_float_or", StringMethod{ .parameters = &.{.float}, .result = .float } },
 });
 
+/// Section 9.3's methods on an `Int`. Every argument in this first numeric
+/// vocabulary is another `Int`; keeping the result here gives the checker one
+/// authoritative description of the callable surface.
+pub const IntMethod = struct {
+    parameters: usize,
+    result: Result,
+
+    pub const Result = enum { bool, int, float, ints, string };
+};
+
+pub const int_methods = std.StaticStringMap(IntMethod).initComptime(.{
+    .{ "abs", IntMethod{ .parameters = 0, .result = .int } },
+    .{ "clamp", IntMethod{ .parameters = 2, .result = .int } },
+    .{ "between?", IntMethod{ .parameters = 2, .result = .bool } },
+    .{ "zero?", IntMethod{ .parameters = 0, .result = .bool } },
+    .{ "positive?", IntMethod{ .parameters = 0, .result = .bool } },
+    .{ "negative?", IntMethod{ .parameters = 0, .result = .bool } },
+    .{ "even?", IntMethod{ .parameters = 0, .result = .bool } },
+    .{ "odd?", IntMethod{ .parameters = 0, .result = .bool } },
+    .{ "multiple_of?", IntMethod{ .parameters = 1, .result = .bool } },
+    .{ "digits", IntMethod{ .parameters = 0, .result = .ints } },
+    .{ "gcd", IntMethod{ .parameters = 1, .result = .int } },
+    .{ "lcm", IntMethod{ .parameters = 1, .result = .int } },
+    .{ "factorial", IntMethod{ .parameters = 0, .result = .int } },
+    .{ "to_float", IntMethod{ .parameters = 0, .result = .float } },
+    .{ "to_string", IntMethod{ .parameters = 0, .result = .string } },
+});
+
 /// The type of an arithmetic result, given both operand types, or null when the
 /// operands are not numbers.
 ///

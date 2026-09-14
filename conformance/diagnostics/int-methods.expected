@@ -1,0 +1,28 @@
+diagnostics/int-methods.em:1:3: `gcd` takes 1 argument, but this call passes 0
+  1.gcd()
+    ^^^
+Match the number of arguments to what the method needs.
+diagnostics/int-methods.em:2:3: `clamp` takes 2 arguments, but this call passes 1
+  1.clamp(0)
+    ^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/int-methods.em:3:3: `factorial` takes 0 arguments, but this call passes 1
+  1.factorial(2)
+    ^^^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/int-methods.em:4:7: this is Float, but `gcd` needs Int
+  1.gcd(2.0)
+        ^^^
+Pass a whole number.
+diagnostics/int-methods.em:5:3: Int has no method `unknown`
+  1.unknown()
+    ^^^^^^^
+An Int has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `to_float`, and `to_string`.
+diagnostics/int-methods.em:6:9: `even?` is a method, so it needs parentheses
+  print(1.even?)
+          ^^^^^
+Call it, as in `.even?()`. Methods cannot be used as values yet.
+diagnostics/int-methods.em:7:3: Int has no method `is_even`
+  1.is_even()
+    ^^^^^^^
+Emerald calls this `even?`.

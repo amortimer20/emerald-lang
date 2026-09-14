@@ -4144,8 +4144,7 @@ fn callToSet(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
     return result;
 }
 
-/// A method on a string, or `to_string` on a number or `Bool`. None of them
-/// changes its receiver.
+/// A method on an immutable scalar value. None changes its receiver.
 fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Value {
     const receiver = try self.evaluate(member.base);
     defer self.heap.release(receiver);
@@ -4156,12 +4155,179 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
     }
 
     if (receiver.data == .string) return self.stringMethod(span, receiver.data.string.bytes, member.name, arguments);
+    if (receiver.data == .int and !std.mem.eql(u8, member.name, "to_string")) {
+        return self.intMethod(span, receiver.data.int, member.name, arguments);
+    }
 
     // `to_string` on an `Int`, a `Float`, or a `Bool`: its display.
     var built: std.Io.Writer.Allocating = .init(self.gpa);
     defer built.deinit();
     try receiver.display(&built.writer);
     return .{ .data = .{ .string = try self.heap.createText(try built.toOwnedSlice()) } };
+}
+
+/// Section 9.3's integer vocabulary. The checker has proved each argument is
+/// an `Int`, leaving only value-dependent failures for the runtime to explain.
+fn intMethod(self: *Interpreter, span: Source.Span, value: i64, name: []const u8, arguments: []const Value) Error!Value {
+    const Method = enum {
+        abs,
+        clamp,
+        @"between?",
+        @"zero?",
+        @"positive?",
+        @"negative?",
+        @"even?",
+        @"odd?",
+        @"multiple_of?",
+        digits,
+        gcd,
+        lcm,
+        factorial,
+        to_float,
+    };
+
+    return switch (std.meta.stringToEnum(Method, name).?) {
+        .abs => if (value == std.math.minInt(i64))
+            self.raiseFmt(span, "the absolute value of {d} does not fit in Int", .{value}, integer_range_help)
+        else
+            .initInt(if (value < 0) -value else value),
+        .clamp => blk: {
+            const minimum = arguments[0].data.int;
+            const maximum = arguments[1].data.int;
+            try self.requireOrderedBounds(span, "clamp", minimum, maximum);
+            break :blk .initInt(@max(minimum, @min(maximum, value)));
+        },
+        .@"between?" => blk: {
+            const minimum = arguments[0].data.int;
+            const maximum = arguments[1].data.int;
+            try self.requireOrderedBounds(span, "between?", minimum, maximum);
+            break :blk .initBool(value >= minimum and value <= maximum);
+        },
+        .@"zero?" => .initBool(value == 0),
+        .@"positive?" => .initBool(value > 0),
+        .@"negative?" => .initBool(value < 0),
+        .@"even?" => .initBool(@mod(value, 2) == 0),
+        .@"odd?" => .initBool(@mod(value, 2) != 0),
+        .@"multiple_of?" => blk: {
+            const divisor = arguments[0].data.int;
+            if (divisor == 0) return self.raise(
+                span,
+                "`multiple_of?` cannot use zero as its divisor",
+                "Pass a nonzero Int. Zero itself is a multiple of every nonzero Int.",
+            );
+            // Every Int is divisible by -1, including the asymmetric minimum.
+            break :blk .initBool(divisor == -1 or @mod(value, divisor) == 0);
+        },
+        .digits => self.integerDigits(value),
+        .gcd => self.integerGcd(span, value, arguments[0].data.int),
+        .lcm => self.integerLcm(span, value, arguments[0].data.int),
+        .factorial => self.integerFactorial(span, value),
+        .to_float => .initFloat(@floatFromInt(value)),
+    };
+}
+
+fn requireOrderedBounds(self: *Interpreter, span: Source.Span, name: []const u8, minimum: i64, maximum: i64) Error!void {
+    if (minimum <= maximum) return;
+    return self.raiseFmt(
+        span,
+        "`{s}` has a minimum of {d}, greater than its maximum of {d}",
+        .{ name, minimum, maximum },
+        "Put the lower bound first and the upper bound second.",
+    );
+}
+
+/// The unsigned magnitude avoids overflowing on the one `Int` whose positive
+/// counterpart cannot be represented.
+fn integerMagnitude(value: i64) u64 {
+    if (value >= 0) return @intCast(value);
+    return @as(u64, @intCast(-(value + 1))) + 1;
+}
+
+fn integerDigits(self: *Interpreter, value: i64) Error!Value {
+    var magnitude = integerMagnitude(value);
+    var reversed: [20]i64 = undefined;
+    var count: usize = 0;
+    if (magnitude == 0) {
+        reversed[0] = 0;
+        count = 1;
+    } else {
+        while (magnitude != 0) : (magnitude /= 10) {
+            reversed[count] = @intCast(magnitude % 10);
+            count += 1;
+        }
+    }
+
+    const list = try self.heap.createList(.int, count);
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+    while (count > 0) {
+        count -= 1;
+        list.items.appendAssumeCapacity(.initInt(reversed[count]));
+    }
+    return result;
+}
+
+fn unsignedGcd(a_value: u64, b_value: u64) u64 {
+    var a = a_value;
+    var b = b_value;
+    while (b != 0) {
+        const remainder = a % b;
+        a = b;
+        b = remainder;
+    }
+    return a;
+}
+
+fn checkedMagnitude(self: *Interpreter, span: Source.Span, operation: []const u8, magnitude: u64) Error!Value {
+    if (magnitude > std.math.maxInt(i64)) return self.raiseFmt(
+        span,
+        "the result of `{s}` does not fit in Int",
+        .{operation},
+        integer_range_help,
+    );
+    return .initInt(@intCast(magnitude));
+}
+
+fn integerGcd(self: *Interpreter, span: Source.Span, left: i64, right: i64) Error!Value {
+    return self.checkedMagnitude(span, "gcd", unsignedGcd(integerMagnitude(left), integerMagnitude(right)));
+}
+
+fn integerLcm(self: *Interpreter, span: Source.Span, left: i64, right: i64) Error!Value {
+    const a = integerMagnitude(left);
+    const b = integerMagnitude(right);
+    if (a == 0 or b == 0) return .initInt(0);
+    const divided = a / unsignedGcd(a, b);
+    const result = @mulWithOverflow(divided, b);
+    if (result[1] != 0 or result[0] > std.math.maxInt(i64)) return self.raiseFmt(
+        span,
+        "the least common multiple of {d} and {d} does not fit in Int",
+        .{ left, right },
+        integer_range_help,
+    );
+    return .initInt(@intCast(result[0]));
+}
+
+fn integerFactorial(self: *Interpreter, span: Source.Span, value: i64) Error!Value {
+    if (value < 0) return self.raiseFmt(
+        span,
+        "a negative Int has no factorial, but this is {d}",
+        .{value},
+        "Call `factorial()` on 0 or a positive Int.",
+    );
+
+    var result: i64 = 1;
+    var factor: i64 = 2;
+    while (factor <= value) : (factor += 1) {
+        const multiplied = @mulWithOverflow(result, factor);
+        if (multiplied[1] != 0) return self.raiseFmt(
+            span,
+            "{d}! does not fit in Int",
+            .{value},
+            "The largest factorial an Int can hold is 20!.",
+        );
+        result = multiplied[0];
+    }
+    return .initInt(result);
 }
 
 /// Section 9.2's string methods, on the receiver's bytes. The checker has

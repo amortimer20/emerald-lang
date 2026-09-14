@@ -1,0 +1,4 @@
+runtime-errors/int-absolute-overflow.em:3:8: the absolute value of -9223372036854775808 does not fit in Int
+  print((-9223372036854775808).abs())
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807.

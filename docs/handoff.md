@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-14. Prepared after the errors and tests slice (sections 13 and 16).
+Updated: 2026-09-14. Prepared after part 1 of the standard-library slice.
 
 ## Current milestone
 
@@ -62,6 +62,15 @@ message, and reports both evaluated operands for a failed equality without evalu
 twice. Top-level `@test` functions are discovered by `emerald test`;
 entry statements are skipped, all tests run in deterministic source order, failures do not
 hide later tests, and status 3 distinguishes test failures.
+
+Slice 14 is in progress. Part 1 adds the settled `Int` vocabulary: `abs`, `clamp`,
+`between?`, sign and parity predicates, `multiple_of?`, `digits`, `gcd`, `lcm`,
+`factorial`, and `to_float`; the existing `to_string` now lives in the same checked method
+table. The runtime handles the asymmetric minimum Int without host overflow, checks all
+unrepresentable results, and gives value-specific diagnostics for bad bounds, a zero
+divisor, and factorial's domain. The rewrite context records the edge semantics. The
+counting forms `times`, `up_to`, and `down_to` stay with the later range-values part; their
+existing `for`-header forms are unchanged.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
@@ -1406,9 +1415,10 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 
 ## Next concrete step
 
-Section 20's first 13 vertical slices are complete. The next implementation work is slice
-14, standard-library growth. Choose one focused vocabulary group from section 15, add only
-the methods a representative Emerald program needs, and cover its behavior and diagnostics.
+Section 20's first 13 vertical slices are complete. Slice 14, standard-library growth, is
+underway: its `Int` part is complete. The next focused part is `Float`: shared numeric
+methods, rounding and classification, and `to_int`, with explicit edge behavior for NaN,
+infinity, large magnitudes, and negative decimal places.
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 
@@ -1430,7 +1440,8 @@ off. Deferred language features in section 21 remain deferred.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 314 unit tests, 322 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe after the `Int` implementation: 314 unit
+  tests, 326 conformance cases,
   and 10 command-line contract tests. The new cases cover typed and untyped catches, built-in
   runtime errors, bare re-raise, cleanup through return, loop control, and failure,
   secondary failures from cleanup, assertion operand reporting, mutation before a raised

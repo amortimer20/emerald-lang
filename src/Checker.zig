@@ -5768,6 +5768,18 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             return .invalid;
         }
     }
+    if ((base.kind == .int and Type.int_methods.has(member.name)) or
+        ((base.kind == .float or base.kind == .bool) and std.mem.eql(u8, member.name, "to_string")))
+    {
+        try self.reportWithHelp(
+            member.name_span,
+            "`{s}` is a method, so it needs parentheses",
+            .{member.name},
+            "Call it, as in `.{s}()`. Methods cannot be used as values yet.",
+            .{member.name},
+        );
+        return .invalid;
+    }
     try self.reportUnknownMember(base, member, "property");
     return .invalid;
 }
@@ -5846,7 +5858,8 @@ fn typeOfMethodCall(
 
     if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base);
     if (base.kind == .string) return self.typeOfStringMethod(call, member);
-    if ((base.kind == .int or base.kind == .float or base.kind == .bool) and
+    if (base.kind == .int) return self.typeOfIntMethod(call, member);
+    if ((base.kind == .float or base.kind == .bool) and
         std.mem.eql(u8, member.name, "to_string"))
     {
         _ = try self.requireArity(member, call.arguments, 0, 0);
@@ -6477,6 +6490,37 @@ fn typeOfStringMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Exp
     return if (method.maybe) result.optionalOf() else result;
 }
 
+/// Section 9.3's integer methods. Their arguments are deliberately all `Int`:
+/// widening one to `Float` would change what an integer-only operation means.
+fn typeOfIntMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    const method = Type.int_methods.get(member.name) orelse {
+        try self.reportUnknownMember(.int, member, "method");
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    };
+
+    if (try self.requireArity(member, call.arguments, method.parameters, method.parameters)) {
+        for (call.arguments) |argument| {
+            const actual = try self.typeOfExpected(argument, .int);
+            if (actual.assignableTo(.int)) continue;
+            try self.report(
+                argument.span,
+                "this is {f}, but `{s}` needs Int",
+                .{ actual, member.name },
+                "Pass a whole number.",
+            );
+        }
+    }
+
+    return switch (method.result) {
+        .bool => .bool,
+        .int => .int,
+        .float => .float,
+        .ints => try Type.listOf(self.arena, .int),
+        .string => .string,
+    };
+}
+
 /// Reports a call with too few or too many arguments, typing them anyway.
 /// True when the count is right.
 fn requireArity(
@@ -6527,6 +6571,7 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         .list => familiarListName(member.name),
         .string => familiarStringName(member.name),
         .dictionary, .set => familiarMapName(member.name, base.kind == .set),
+        .int => familiarIntName(member.name),
         else => null,
     };
     if (suggestion) |name| {
@@ -6547,9 +6592,24 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
             .dictionary => "A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.",
             .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
             .string => "A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `substring`, `split`, `lines`, `chars`, `to_int`, and `to_float`, among others.",
+            .int => "An Int has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `to_float`, and `to_string`.",
             else => "Check the spelling, or what kind of value this is.",
         },
     );
+}
+
+/// Common spellings from other languages for Emerald's integer methods.
+fn familiarIntName(name: []const u8) ?[]const u8 {
+    const familiar = std.StaticStringMap([]const u8).initComptime(.{
+        .{ "is_zero", "zero?" },
+        .{ "is_positive", "positive?" },
+        .{ "is_negative", "negative?" },
+        .{ "is_even", "even?" },
+        .{ "is_odd", "odd?" },
+        .{ "is_multiple_of", "multiple_of?" },
+        .{ "to_f", "to_float" },
+    });
+    return familiar.get(name);
 }
 
 /// Names other languages use for dictionary and set operations Emerald spells

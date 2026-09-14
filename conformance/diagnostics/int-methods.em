@@ -1,0 +1,7 @@
+1.gcd()
+1.clamp(0)
+1.factorial(2)
+1.gcd(2.0)
+1.unknown()
+print(1.even?)
+1.is_even()

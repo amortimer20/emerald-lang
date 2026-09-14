@@ -1534,6 +1534,22 @@ even?, odd?, multiple_of?, digits, gcd, lcm, factorial, times, up_to, down_to, t
 floor, ceil, round, round_to, truncate, finite?, infinite?, nan?, to_int
 ```
 
+The interval in `clamp(minimum, maximum)` and `between?(minimum, maximum)` is
+inclusive. The minimum must be no greater than the maximum; reversing the bounds is an
+error rather than a silent swap. This makes a misspelled interval visible to a beginner.
+
+Integer signs do not change number-theory answers: `(-12).digits()` is `[1, 2]`,
+`(-54).gcd(24)` is `6`, and `(-6).lcm(8)` is `24`. Digits are returned in the same
+left-to-right order in which the number is written, and `0.digits()` is `[0]`.
+`gcd(0, 0)` is `0`; an `lcm` with zero is zero. `multiple_of?` accepts negative divisors,
+but a zero divisor is an error. Factorial accepts zero and positive integers, with
+`0.factorial()` equal to `1`. An absolute value, GCD, LCM, or factorial that cannot fit in
+the signed 64-bit `Int` range raises a runtime error rather than wrapping.
+
+`times`, `up_to`, and `down_to` remain the counting forms described in 6.4. They work in
+`for` headers now; their block forms arrive with range values rather than being a second,
+special kind of integer method call.
+
 `round_to(places)` rounds to a requested number of decimal places and returns a `Float`.
 Positive places address digits after the decimal point, zero produces a whole-number-valued
 `Float`, and negative places round to tens, hundreds, and so on. Halfway values round away
