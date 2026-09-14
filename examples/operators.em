@@ -11,10 +11,17 @@ struct Money with Addable, Ordered {
     }
 
     ## `Ordered` gives `<`, `<=`, `>`, and `>=` through one method: a negative
-    ## result means `self` comes first.
+    ## result means `self` comes first. Comparing with `if` rather than
+    ## subtracting avoids overflowing `Int` at its extremes.
     @override
     func compare(other: Self): Int {
-        return self.cents - other.cents
+        if self.cents < other.cents {
+            return -1
+        }
+        if self.cents > other.cents {
+            return 1
+        }
+        return 0
     }
 
     const text: String {

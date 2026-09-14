@@ -42,3 +42,11 @@ diagnostics/operators.em:70:15: a subclass could override `compare`, so construc
           print(self > Level(0))
                 ^^^^^^^^^^^^^^^
 A subclass's version would run before that subclass has set its own fields. Move what it does into a private method, such as `_compare`, and use that instead.
+diagnostics/operators.em:90:7: `+` on Length needs Length on the right, but this is Length?
+  print(Length(1) + maybe_length)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+`+` runs `add(other: Length)`, and the right side may be absent. Check it against `nothing` first, or give it a fallback with `.or(...)`.
+diagnostics/operators.em:95:20: `Addible` is not a trait
+  struct Weight with Addible {
+                     ^^^^^^^
+Check the spelling, or declare `trait Addible` in this project.

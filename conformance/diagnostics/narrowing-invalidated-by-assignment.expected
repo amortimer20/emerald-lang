@@ -1,0 +1,8 @@
+diagnostics/narrowing-invalidated-by-assignment.em:14:15: Animal has no field named `tricks`
+      print(pet.tricks)
+                ^^^^^^
+`tricks` belongs to `Dog`, which extends Animal. The test that `pet` is `Dog` no longer holds here, because `pet` was given a new value since. Test it again closer to this line, or copy it into a `const` right after the test and use that.
+diagnostics/narrowing-invalidated-by-assignment.em:19:18: Animal has no field named `tricks`
+      print(animal.tricks)
+                   ^^^^^^
+`tricks` belongs to `Dog`, which extends Animal. Inside `if animal is Dog { ... }`, it can be reached.

@@ -75,3 +75,24 @@ class Level with Ordered {
         return self.rank - other.rank
     }
 }
+
+# The right operand may be absent, which needs a check of its own before it
+# can be compared with the left one.
+struct Length with Addable {
+    const metres: Int
+
+    @override
+    func add(other: Self): Self {
+        return Length(self.metres + other.metres)
+    }
+}
+const maybe_length: Length? = Length(3)
+print(Length(1) + maybe_length)
+
+# A `with` list naming something that is not a trait already says so; the
+# operator does not repeat the mistake by also saying `Weight` fails to
+# adopt it.
+struct Weight with Addible {
+    const kg: Int
+}
+print(Weight(1) + Weight(2))

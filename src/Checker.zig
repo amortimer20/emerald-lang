@@ -204,11 +204,22 @@ in_function: bool = false,
 /// How many scopes enclose the innermost block being checked, so a name found
 /// in one of them is one the block captures. Zero outside any block.
 block_scopes: usize = 0,
+/// The `is` tests currently proven true, while their `then` block is being
+/// checked, innermost last. Lets a member-not-found message tell a narrowing
+/// an assignment already undid from one that never held here (4.4, 4.5).
+active_narrows: std.ArrayList(ActiveNarrow) = .empty,
 pending_return_types: std.ArrayList(Type) = .empty,
 literal_types: LiteralTypes = .empty,
 /// Field metadata is completed for every struct before recursive key
 /// eligibility is judged, so declaration order cannot change the answer.
 resolving_struct_fields: bool = false,
+/// A type whose `with` list named something that turned out not to be a
+/// usable trait. Until that is fixed, an operator's "needs to adopt" is not
+/// worth reporting on it either: it would either repeat the same mistake, or
+/// guess whether the misspelled entry was meant to be the trait in question
+/// (11.2), matching how an already-invalid type is treated as usable
+/// elsewhere so one mistake is reported once.
+trait_list_errored: std.StringHashMapUnmanaged(void) = .empty,
 /// What `Self` means in the types being resolved: the type whose method's
 /// parameters and result they are (11.4), or null where `Self` means nothing.
 written_self: ?Type = null,
@@ -668,6 +679,7 @@ fn resolveTraits(self: *Checker, declaration: Ast.StructDeclaration) Error!void 
                 "Check the spelling, or declare `trait {s}` in this project.",
                 .{written.name},
             );
+            try self.trait_list_errored.put(self.arena, self.keyOf(declaration.name), {});
             continue;
         }
         const adopted = try self.resolveTypeExpression(written);
@@ -2822,7 +2834,10 @@ fn checkConditional(self: *Checker, conditional: Ast.If) Error!void {
     const before = try self.snapshot();
     // Section 4.5: inside the block, the condition held.
     self.narrow(conditional.condition, true);
+    const narrows_before = self.active_narrows.items.len;
+    try self.collectActiveNarrows(conditional.condition);
     try self.checkBlock(conditional.then_block);
+    self.active_narrows.items.len = narrows_before;
     const after_then = try self.snapshot();
     const then_returns = !self.blockCompletes(conditional.then_block.statements);
 
@@ -4576,6 +4591,46 @@ fn narrow(self: *Checker, condition: *const Ast.Expression, when_true: bool) voi
     }
 }
 
+/// A name, and the class `is` proved it while proving `Self.active_narrows`
+/// held; recorded so a member lookup that fails anyway can say the proof was
+/// lost, not suggest writing the very test the reader is already inside.
+const ActiveNarrow = struct {
+    name: []const u8,
+    owner: *const Type.User,
+};
+
+/// `narrow`'s `.type_test` case, but collecting into `active_narrows` instead
+/// of narrowing a binding: every plain-name class test an `and` chain proves
+/// when `condition` holds. Pushed while a `then` block is checked (4.4, 4.5).
+fn collectActiveNarrows(self: *Checker, condition: *const Ast.Expression) Error!void {
+    switch (condition.data) {
+        .logical => |logical| if (logical.operator == .conjunction) {
+            try self.collectActiveNarrows(logical.left);
+            try self.collectActiveNarrows(logical.right);
+        },
+        .type_test => |test_| {
+            if (test_.value.data != .name) return;
+            const tested = self.type_tests.get(condition) orelse return;
+            if (tested.target.kind != .struct_value or !tested.target.user.?.class) return;
+            try self.active_narrows.append(self.arena, .{ .name = test_.value.data.name, .owner = tested.target.user.? });
+        },
+        else => {},
+    }
+}
+
+/// The active narrow for `name`, if its target extends or is `owner` — so a
+/// message about `owner`'s member also matches a test for one of its
+/// subclasses.
+fn activeNarrowFor(self: *Checker, name: []const u8, owner: *const Type.User) ?*const Type.User {
+    var index = self.active_narrows.items.len;
+    while (index > 0) {
+        index -= 1;
+        const entry = self.active_narrows.items[index];
+        if (std.mem.eql(u8, entry.name, name) and entry.owner.extends(owner)) return entry.owner;
+    }
+    return null;
+}
+
 /// Whether knowing a value has type `target` says more than `current` does:
 /// the same type without the `?`, or a class that extends the one it has.
 fn narrowsTo(target: Type, current: Type) bool {
@@ -4904,7 +4959,7 @@ fn requireEligibleKey(self: *Checker, key: Type, span: Source.Span) Error!void {
         span,
         "{f} cannot be a dictionary key",
         .{key},
-        "A key must be a number, a `Bool`, a `String`, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.",
+        "A key must be a number, a `Bool`, a `String`, an enum value, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.",
     );
 }
 
@@ -4955,7 +5010,9 @@ fn typeOfSet(self: *Checker, expression: *const Ast.Expression, want: Type) Erro
         );
     }
 
-    try self.requireEligibleMember(member, expression.span);
+    // `want` is a set type only where one was built, and both places that
+    // build one (a written `{T}` and `.to_set()`) already require `T` to be
+    // eligible there; checking again here only duplicated that diagnostic.
     try self.literal_types.put(self.arena, expression, want);
     return want;
 }
@@ -4968,7 +5025,7 @@ fn requireEligibleMember(self: *Checker, member: Type, span: Source.Span) Error!
         span,
         "a set cannot hold {f}",
         .{member},
-        "A set holds whole or decimal numbers, `Bool`s, `String`s, or tuples of those. Anything that can change after it is stored could not be found again.",
+        "A set holds whole or decimal numbers, `Bool`s, `String`s, enum values, or tuples of those. Anything that can change after it is stored could not be found again.",
     );
 }
 
@@ -6624,7 +6681,7 @@ fn typeOfOperatorCall(
                 "This program declares its own `{s}`, which takes the prelude's place wherever the name is written, but operators run only through the prelude's. Rename this program's `{s}`.",
                 .{ contract.trait, contract.trait },
             );
-        } else {
+        } else if (!self.trait_list_errored.contains(user.name)) {
             try self.reportWithHelp(
                 span,
                 "`{s}` needs {f} to adopt `{s}`",
@@ -6656,13 +6713,23 @@ fn typeOfOperatorCall(
     const signature = try self.signatureOn(declared, left);
     const wanted = signature.parameters[0];
     if (!right.assignableTo(wanted)) {
-        try self.reportWithHelp(
-            span,
-            "`{s}` on {f} needs {f} on the right, but this is {f}",
-            .{ lexeme, left, wanted, right },
-            "`{s}` runs `{s}(other: {f})`, so both sides are the same type. For anything else, write a method with a name of its own, such as `scaled_by`.",
-            .{ lexeme, contract.method, wanted },
-        );
+        if (right.optional and right.payload().assignableTo(wanted)) {
+            try self.reportWithHelp(
+                span,
+                "`{s}` on {f} needs {f} on the right, but this is {f}",
+                .{ lexeme, left, wanted, right },
+                "`{s}` runs `{s}(other: {f})`, and the right side may be absent. Check it against `nothing` first, or give it a fallback with `.or(...)`.",
+                .{ lexeme, contract.method, wanted },
+            );
+        } else {
+            try self.reportWithHelp(
+                span,
+                "`{s}` on {f} needs {f} on the right, but this is {f}",
+                .{ lexeme, left, wanted, right },
+                "`{s}` runs `{s}(other: {f})`, so both sides are the same type. For anything else, write a method with a name of its own, such as `scaled_by`.",
+                .{ lexeme, contract.method, wanted },
+            );
+        }
     }
     // An operator's operands are left as they are, as they are for numbers.
     if (!isClass(left) and try self.methodChanges(key)) {
@@ -7266,6 +7333,13 @@ fn subclassMemberHelp(self: *Checker, base: Type, member: Ast.Expression.Member,
                 self.arena,
                 "`{s}` belongs to `{s}`, which extends {f}. A test outside this block cannot prove what `{s}` holds, because the block may run after `{s}` is given a new value. Test it inside the block, or copy it into a `const` before the block and use that.",
                 .{ member.name, owner.display_name, base, written, written },
+            );
+        }
+        if (self.activeNarrowFor(written, owner)) |target| {
+            return std.fmt.allocPrint(
+                self.arena,
+                "`{s}` belongs to `{s}`, which extends {f}. The test that `{s}` is `{s}` no longer holds here, because `{s}` was given a new value since. Test it again closer to this line, or copy it into a `const` right after the test and use that.",
+                .{ member.name, owner.display_name, base, written, target.display_name, written },
             );
         }
     } else {

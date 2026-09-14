@@ -1,0 +1,8 @@
+diagnostics/set-eligible.em:7:17: a set cannot hold Holder
+  const pointers: {Holder} = []
+                  ^^^^^^^^
+A set holds whole or decimal numbers, `Bool`s, `String`s, enum values, or tuples of those. Anything that can change after it is stored could not be found again.
+diagnostics/set-eligible.em:8:30: a set cannot hold Holder
+  const from_list = [Holder()].to_set()
+                               ^^^^^^
+A set holds whole or decimal numbers, `Bool`s, `String`s, enum values, or tuples of those. Anything that can change after it is stored could not be found again.
