@@ -34,3 +34,11 @@ diagnostics/case.em:66:10: `when` compares this with the subject by `==`, but Na
       when Pet("Rex") {
            ^^^^^^^^^^
 A struct compares by its fields and an object by identity, and a trait may hold either. Match on a concrete value instead.
+diagnostics/case.em:76:14: an earlier arm already matches this
+          when 1.0 then "one again"
+               ^^^
+Arms are tried from the top and the first match runs, so this one never could. Remove it.
+diagnostics/case.em:77:19: an earlier arm already matches this
+          when 0.5, 0.50 then "half"
+                    ^^^^
+Arms are tried from the top and the first match runs, so this one never could. Remove it.

@@ -67,3 +67,16 @@ case pet {
         print("Rex")
     }
 }
+
+# Numbers compare by value, so a `Float` alternative can repeat an `Int` one.
+# Only numbers exact in both types count as the same.
+func measure(size: Float): String {
+    return case size {
+        when 1 then "one"
+        when 1.0 then "one again"
+        when 0.5, 0.50 then "half"
+        when 9007199254740993 then "past exact"
+        when 9007199254740992.0 then "exact"
+        else then "other"
+    }
+}

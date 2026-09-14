@@ -21,3 +21,7 @@ struct Holder with Light {
 const light = Light()
 print(Light.red == 3)
 print(Light.red < Light.green)
+
+# A value is a type-level member, so assigning one through a value names that.
+var chosen = Light.red
+chosen.green = Light.green

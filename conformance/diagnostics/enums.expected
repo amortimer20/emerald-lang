@@ -26,3 +26,7 @@ diagnostics/enums.em:23:7: `<` needs Light to adopt `Ordered`
   print(Light.red < Light.green)
         ^^^^^^^^^^^^^^^^^^^^^^^
 Add `with Ordered` to `Light`, and give it `@override func compare(other: Light): Int`.
+diagnostics/enums.em:27:8: `green` belongs to the type `Light`, not to each value
+  chosen.green = Light.green
+         ^^^^^
+Reach it through the type, as in `Light.green`.

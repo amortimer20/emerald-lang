@@ -803,7 +803,8 @@ Coverage is known for an enum subject, for `Bool` (`true` and `false`), and for 
 when the subject may be absent; a `when nothing` arm matches absence. A statement `case`
 that covers every value runs one of its arms, so returns and definite assignment treat it
 as complete. Value arms agree on a type, with `Int` and `Float` giving `Float` and a
-`nothing` arm making the result optional. Known duplicates are literals and enum values.
+`nothing` arm making the result optional. Known duplicates are literals and enum values;
+numbers compare by value, so `when 1.0` repeats `when 1` when both are exact in `Float`.
 The warning for a nonexhaustive enum statement `case` waits for diagnostics with a
 severity.
 

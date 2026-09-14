@@ -2497,12 +2497,16 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                     }
                 }
                 const stored = found orelse {
-                    try self.report(
-                        field.span,
-                        "{f} has no field named `{s}`",
-                        .{ element, field.name },
-                        "Check the field name in the type's declaration.",
-                    );
+                    if (!try self.reportTypeMemberThroughValue(element, field.name, field.span) and
+                        !try self.reportTraitPrivate(element, field.name, field.span))
+                    {
+                        try self.report(
+                            field.span,
+                            "{f} has no field named `{s}`",
+                            .{ element, field.name },
+                            "Check the field name in the type's declaration.",
+                        );
+                    }
                     element = .invalid;
                     break;
                 };
@@ -6860,6 +6864,14 @@ fn checkAlternative(
 fn knownAlternative(self: *Checker, alternative: *const Ast.Expression) Error!?[]const u8 {
     return switch (alternative.data) {
         .int_literal => |value| try std.fmt.allocPrint(self.arena, "{d}", .{value}),
+        // `==` compares numbers by value (4.4), so `when 1` and `when 1.0` are
+        // the same alternative. A whole number small enough to be exact in
+        // both types shares the `Int` key; any other `Float` has a key no
+        // `Int` can have.
+        .float_literal => |value| if (@abs(value) <= 9007199254740992.0 and @floor(value) == value)
+            try std.fmt.allocPrint(self.arena, "{d}", .{@as(i64, @intFromFloat(value))})
+        else
+            try std.fmt.allocPrint(self.arena, "float {d}", .{value}),
         .bool_literal => |value| if (value) "true" else "false",
         .nothing_literal => "nothing",
         .string_literal => |text| try std.fmt.allocPrint(self.arena, "\"{s}\"", .{text}),
