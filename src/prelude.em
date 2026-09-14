@@ -1,3 +1,20 @@
+# Section 13's common root for every value that may be raised.
+class Error {
+    const message: String
+}
+
+class RuntimeError extends Error {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
+class AssertionError extends Error {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
 # Section 11.5's operator contracts. Every program sees these names, and a
 # program's own declaration of the same name takes its place.
 #

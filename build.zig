@@ -138,4 +138,31 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     reports_runtime.expectExitCode(2);
     reports_runtime.addCheck(.{ .expect_stderr_match = "overflows Int" });
     test_step.dependOn(&reports_runtime.step);
+
+    const passing_tests = fixtures.add("passing-tests.em", "print(\"entry must not run\")\n\nfunc announce(text: String): Int {\n    print(text)\n    return 1\n}\n\nfunc broken_pair(): (Int, Int) {\n    print(\"pair attempted\")\n    raise Error(\"no pair\")\n}\n\nconst reached = announce(\"reached\")\nconst untouched = announce(\"untouched\")\nconst (left, right) = broken_pair()\n\n@test\nfunc one() {\n    assert reached == 1\n}\n\n@test\nfunc two() {\n    assert true\n}\n\n@test\nfunc failed_left() {\n    try {\n        print(left)\n    }\n    catch error {\n    }\n}\n\n@test\nfunc failed_right() {\n    try {\n        print(right)\n    }\n    catch error {\n    }\n}\n");
+    const tests_pass = b.addRunArtifact(exe);
+    tests_pass.addArg("test");
+    tests_pass.addFileArg(passing_tests);
+    tests_pass.expectStdOutEqual("reached\npair attempted\n4 tests passed.\n");
+    tests_pass.expectExitCode(0);
+    test_step.dependOn(&tests_pass.step);
+
+    const single_test = fixtures.add("single-test.em", "@test\nfunc only() {\n    assert true\n}\n");
+    const single_test_passes = b.addRunArtifact(exe);
+    single_test_passes.addArg("test");
+    single_test_passes.addFileArg(single_test);
+    single_test_passes.expectStdOutEqual("1 test passed.\n");
+    single_test_passes.expectExitCode(0);
+    test_step.dependOn(&single_test_passes.step);
+
+    const failing_tests = fixtures.add("failing-tests.em", "@test\nfunc fails() {\n    assert 1 == 2\n}\n\n@test\nfunc still_runs() {\n    print(\"still ran\")\n}\n");
+    const tests_fail = b.addRunArtifact(exe);
+    tests_fail.addArg("test");
+    tests_fail.addFileArg(failing_tests);
+    tests_fail.expectExitCode(3);
+    tests_fail.addCheck(.{ .expect_stdout_match = "still ran" });
+    tests_fail.addCheck(.{ .expect_stdout_match = "2 tests, 1 failed." });
+    tests_fail.addCheck(.{ .expect_stderr_match = "test `fails` failed" });
+    tests_fail.addCheck(.{ .expect_stderr_match = "Left was 1; right was 2." });
+    test_step.dependOn(&tests_fail.step);
 }

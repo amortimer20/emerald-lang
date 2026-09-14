@@ -1,0 +1,11 @@
+small problem
+outer cleanup
+runtime error caught
+reraised small problem
+1
+1
+return cleanup
+caught assertion
+loop cleanup
+loop cleanup
+done

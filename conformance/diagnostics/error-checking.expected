@@ -1,0 +1,52 @@
+diagnostics/error-checking.em:1:7: only an Error can be raised, but this is Int
+  raise 1
+        ^
+Raise an Error value, such as `Error("what went wrong")`.
+diagnostics/error-checking.em:2:1: a bare `raise` needs an error being handled
+  raise
+  ^^^^^
+Use `raise SomeError("message")`, or put the bare `raise` inside a `catch` block.
+diagnostics/error-checking.em:6:14: a catch type must be an Error, but this is Int
+  catch error: Int {
+               ^^^
+Catch `Error`, or a class that extends it.
+diagnostics/error-checking.em:11:1: this catch already handles every Error
+  catch error {
+  ^^^^^
+Move the untyped catch after the typed catches.
+diagnostics/error-checking.em:16:8: a condition must be a Bool, but this is Int
+  assert 1, 2
+         ^
+Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.
+diagnostics/error-checking.em:16:11: an assertion message must be a String, but this is Int
+  assert 1, 2
+            ^
+Write the explanation in quotes.
+diagnostics/error-checking.em:22:9: `return` cannot leave a `finally` block
+          return
+          ^^^^^^
+Finish the cleanup block normally, then return after it.
+diagnostics/error-checking.em:31:11: `assigned_inside` may not have been assigned
+      print(assigned_inside)
+            ^^^^^^^^^^^^^^^
+Assign `assigned_inside` on every branch before reading it.
+diagnostics/error-checking.em:42:1: a test function cannot take parameters
+  @test
+  ^^^^^
+Remove the parameters; each test must be runnable on its own.
+diagnostics/error-checking.em:46:1: a test function cannot return a value
+  @test
+  ^^^^^
+Remove the returned value; use `assert` to check the result inside the test.
+diagnostics/error-checking.em:60:7: `MissingConstructor` needs a constructor, because building `DetailedError` takes arguments
+  class MissingConstructor extends DetailedError {
+        ^^^^^^^^^^^^^^^^^^
+Add a constructor to `MissingConstructor` that starts with `super(...)`, passing what `DetailedError` needs.
+diagnostics/error-checking.em:68:13: `break` cannot leave a `finally` block
+              break
+              ^^^^^
+Finish the cleanup block normally. A loop entirely inside `finally` may still use `break`.
+diagnostics/error-checking.em:78:13: `continue` cannot leave a `finally` block
+              continue
+              ^^^^^^^^
+Finish the cleanup block normally. A loop entirely inside `finally` may still use `continue`.

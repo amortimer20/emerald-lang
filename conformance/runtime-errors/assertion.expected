@@ -1,0 +1,4 @@
+runtime-errors/assertion.em:6:8: AssertionError: assertion failed: `value() == 5`
+  assert value() == 5, "expected the lesson answer"
+         ^^^^^^^^^^^^
+expected the lesson answer Left was 4; right was 5.

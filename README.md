@@ -11,11 +11,13 @@ implementation architecture, staged plan, and evidence-driven roadmap live in
 
 Emerald runs and type-checks. The whole frontend of section 19.2 exists — source manager,
 lexer, parser, name resolver, type checker, interpreter — so `emerald run` executes a
-program and `emerald check` reports its problems without running it.
+program, `emerald check` reports its problems without running it, and `emerald test` runs
+its top-level `@test` functions.
 
 Named bindings, type annotations, assignment, conditionals, comparison, arithmetic,
-functions, loops, lists, strings, and blocks work, and so does the first program of the
-language guide:
+functions, loops, collections, strings, projects, and blocks work. Structs, classes,
+inheritance, traits, enums, typed errors, assertions, and tests work too. The first program
+of the language guide runs:
 
 ```emerald
 var name = input("What is your name? ")
@@ -31,8 +33,8 @@ or kept in a variable, and it captures the variables around it rather than copie
 A value that may be absent is marked `?`, and the language makes you say what happens when
 it is missing — by checking it against `nothing`, which then lets you use it as an ordinary
 value, or by giving it a fallback. Memory is managed for you, by reference counting with a
-mark-and-sweep collector behind it for the cycles counting cannot reach. Dictionaries and
-sets arrive with later slices.
+mark-and-sweep collector behind it for the cycles counting cannot reach. Errors are typed
+values handled with `try` and `catch`; `finally` performs cleanup on every exit path.
 
 ```emerald
 func collatz_steps(start: Int): Int {
@@ -92,6 +94,7 @@ Build, test, and run:
 zig build                              # build zig-out/bin/emerald
 zig build test                         # unit tests and command-line contract tests
 zig build run -- run examples/greeter.em
+zig build run -- test path/to/project
 ```
 
 ### Layout

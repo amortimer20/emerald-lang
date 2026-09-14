@@ -201,6 +201,10 @@ current_return_type: ?Type = null,
 /// Whether `return` is legal here. Section 14.1's top-level `return`, which
 /// ends the program, is deferred, so it is rejected outside a function.
 in_function: bool = false,
+/// Bare `raise` is valid only while a catch body is being checked.
+catch_depth: usize = 0,
+/// The loop depth on entry to an active `finally`, for exits that would leave it.
+finally_loop_depth: ?usize = null,
 /// How many scopes enclose the innermost block being checked, so a name found
 /// in one of them is one the block captures. Zero outside any block.
 block_scopes: usize = 0,
@@ -480,7 +484,15 @@ pub fn check(
         checker.file = @intCast(index);
         for (program.statements) |statement| {
             switch (statement.data) {
-                .function_declaration => |function| try checker.ensureBodyChecked(checker.keyOf(function.name)),
+                .function_declaration => |function| {
+                    const key = checker.keyOf(function.name);
+                    try checker.ensureBodyChecked(key);
+                    if (function.test_span) |span| {
+                        if (function.parameters.len != 0) try checker.report(span, "a test function cannot take parameters", .{}, "Remove the parameters; each test must be runnable on its own.");
+                        const signature = try checker.signatureFor(key);
+                        if (signature.return_type.kind != .nothing and signature.return_type.kind != .invalid) try checker.report(span, "a test function cannot return a value", .{}, "Remove the returned value; use `assert` to check the result inside the test.");
+                    }
+                },
                 .struct_declaration => |declaration| {
                     const type_key = checker.keyOf(declaration.name);
                     try checker.checkInheritance(type_key);
@@ -1106,6 +1118,8 @@ fn checkInheritance(self: *Checker, key: []const u8) Error!void {
             );
             return;
         }
+        const root_error = self.errorType();
+        if (root_error.user != null and user.extends(root_error.user.?) and declaration.fields.len == 0 and user.fields.len == 1) return;
         if (try self.constructionNeedsArguments(base.name)) {
             try self.reportWithHelp(
                 declaration.name_span,
@@ -1758,9 +1772,86 @@ fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
         },
         .struct_declaration => {},
         .return_statement => |return_statement| try self.checkReturn(return_statement),
+        .raise_statement => |raised| try self.checkRaise(raised),
+        .try_statement => |protected| try self.checkTry(protected),
+        .assert_statement => |assertion| try self.checkAssert(assertion),
         .destructuring => |destructuring| try self.checkDestructuring(destructuring),
         .destructuring_assignment => |assignment| try self.checkDestructuringAssignment(assignment),
         .case_statement => |case| _ = try self.checkCase(case, null),
+    }
+}
+
+fn errorType(self: *Checker) Type {
+    return self.structs.get(Resolver.preludeKey("Error")) orelse .invalid;
+}
+
+fn checkRaise(self: *Checker, raised: Ast.Raise) Error!void {
+    const value = raised.value orelse {
+        if (self.catch_depth == 0) try self.report(raised.keyword_span, "a bare `raise` needs an error being handled", .{}, "Use `raise SomeError(\"message\")`, or put the bare `raise` inside a `catch` block.");
+        return;
+    };
+    const actual = try self.typeOfExpected(value, self.errorType());
+    if (actual.kind != .invalid and !actual.assignableTo(self.errorType())) try self.report(value.span, "only an Error can be raised, but this is {f}", .{actual}, "Raise an Error value, such as `Error(\"what went wrong\")`.");
+}
+
+fn checkAssert(self: *Checker, assertion: Ast.Assert) Error!void {
+    try self.requireCondition(assertion.condition);
+    if (assertion.message) |message| {
+        const actual = try self.typeOfExpected(message, .string);
+        if (actual.kind != .invalid and actual.kind != .string) try self.report(message.span, "an assertion message must be a String, but this is {f}", .{actual}, "Write the explanation in quotes.");
+    }
+}
+
+fn checkTry(self: *Checker, protected: Ast.Try) Error!void {
+    const before = try self.snapshot();
+    try self.checkBlock(protected.body);
+    var joined: ?Snapshot = if (self.blockCompletes(protected.body.statements)) try self.snapshot() else null;
+    for (protected.catches, 0..) |caught, index| {
+        self.restore(before);
+        const caught_type = if (caught.annotation) |annotation| try self.resolveTypeExpression(annotation) else self.errorType();
+        if (caught_type.kind != .invalid and !caught_type.assignableTo(self.errorType())) try self.report(caught.annotation.?.span, "a catch type must be an Error, but this is {f}", .{caught_type}, "Catch `Error`, or a class that extends it.");
+        if (caught.annotation == null and index + 1 < protected.catches.len) try self.report(caught.keyword_span, "this catch already handles every Error", .{}, "Move the untyped catch after the typed catches.");
+        try self.pushScope();
+        const scope = self.scopes.items[self.scopes.items.len - 1];
+        try scope.put(self.arena, caught.name, .{ .type = caught_type, .declared = caught_type, .assigned = true, .mutability = .constant });
+        self.catch_depth += 1;
+        try self.checkStatements(caught.body.statements);
+        self.catch_depth -= 1;
+        _ = self.scopes.pop();
+        if (self.blockCompletes(caught.body.statements)) {
+            const after = try self.snapshot();
+            if (joined) |existing| {
+                self.restore(existing);
+                self.intersect(after);
+                joined = try self.snapshot();
+            } else joined = after;
+        }
+    }
+    if (protected.finally_block) |cleanup| {
+        // A value can raise before any assignment in either the protected body
+        // or a catch. Cleanup therefore reads only what was known before the
+        // try, even though its own assignments join every path that continues.
+        self.restore(before);
+        const previous = self.finally_loop_depth;
+        self.finally_loop_depth = self.loops.items.len;
+        try self.checkBlock(cleanup);
+        self.finally_loop_depth = previous;
+        if (joined) |state| self.mergeAfterFinally(state, before) else self.markAllAssigned();
+    } else if (joined) |state| {
+        self.restore(state);
+    } else {
+        self.markAllAssigned();
+    }
+}
+
+fn mergeAfterFinally(self: *Checker, continued: Snapshot, before: Snapshot) void {
+    for (self.scopes.items, continued, before) |scope, prior_paths, before_try| {
+        var index: usize = 0;
+        var entries = scope.valueIterator();
+        while (entries.next()) |binding| : (index += 1) {
+            binding.assigned = binding.assigned or prior_paths[index].assigned;
+            if (binding.type.same(before_try[index].type)) binding.type = prior_paths[index].type;
+        }
     }
 }
 
@@ -1999,8 +2090,15 @@ fn forgetNarrowingAssignedIn(self: *Checker, statements: []const Ast.Statement) 
         .function_declaration,
         .struct_declaration,
         .return_statement,
+        .raise_statement,
+        .assert_statement,
         .destructuring,
         => {},
+        .try_statement => |protected| {
+            self.forgetNarrowingAssignedIn(protected.body.statements);
+            for (protected.catches) |caught| self.forgetNarrowingAssignedIn(caught.body.statements);
+            if (protected.finally_block) |cleanup| self.forgetNarrowingAssignedIn(cleanup.statements);
+        },
         .case_statement => |case| {
             for (case.arms) |arm| self.forgetNarrowingAssignedIn(arm.body.block.statements);
             if (case.otherwise) |otherwise| self.forgetNarrowingAssignedIn(otherwise.block.statements);
@@ -2191,6 +2289,10 @@ fn literalInt(expression: *const Ast.Expression) ?i64 {
 }
 
 fn checkBreak(self: *Checker, span: Source.Span) Error!void {
+    if (self.finally_loop_depth) |depth| if (self.loops.items.len <= depth) {
+        try self.report(span, "`break` cannot leave a `finally` block", .{}, "Finish the cleanup block normally. A loop entirely inside `finally` may still use `break`.");
+        return;
+    };
     const loop = try self.enclosingLoop(span, "break") orelse return;
     if (!loop.infinite) return;
 
@@ -2213,6 +2315,10 @@ fn checkBreak(self: *Checker, span: Source.Span) Error!void {
 /// The innermost loop, or a report that there is none. Loops do not reach
 /// across a function boundary, because `loops` starts empty in every body.
 fn enclosingLoop(self: *Checker, span: Source.Span, comptime keyword: []const u8) Error!?*Loop {
+    if (std.mem.eql(u8, keyword, "continue")) if (self.finally_loop_depth) |depth| if (self.loops.items.len <= depth) {
+        try self.report(span, "`continue` cannot leave a `finally` block", .{}, "Finish the cleanup block normally. A loop entirely inside `finally` may still use `continue`.");
+        return null;
+    };
     if (self.loops.items.len == 0) {
         try self.report(
             span,
@@ -2887,6 +2993,11 @@ fn checkConditional(self: *Checker, conditional: Ast.If) Error!void {
 }
 
 fn checkReturn(self: *Checker, return_statement: Ast.Return) Error!void {
+    if (self.finally_loop_depth != null) {
+        if (return_statement.value) |value| _ = try self.typeOf(value);
+        try self.report(return_statement.keyword_span, "`return` cannot leave a `finally` block", .{}, "Finish the cleanup block normally, then return after it.");
+        return;
+    }
     if (!self.in_function) {
         try self.report(
             return_statement.keyword_span,
@@ -3372,16 +3483,22 @@ fn checkBodyWithSelfIn(
     const outer_in_function = self.in_function;
     const outer_loops = self.loops;
     const outer_constructing = self.constructing;
+    const outer_catch_depth = self.catch_depth;
+    const outer_finally_loop_depth = self.finally_loop_depth;
     defer {
         self.scopes = outer_scopes;
         self.current_return_type = outer_return_type;
         self.in_function = outer_in_function;
         self.loops = outer_loops;
         self.constructing = outer_constructing;
+        self.catch_depth = outer_catch_depth;
+        self.finally_loop_depth = outer_finally_loop_depth;
     }
 
     self.scopes = .empty;
     self.loops = .empty;
+    self.catch_depth = 0;
+    self.finally_loop_depth = null;
     try self.scopes.appendSlice(self.arena, enclosing);
     try self.scopes.append(self.arena, parameters);
     self.current_return_type = expected_return_type;
@@ -3973,6 +4090,15 @@ fn statementChangesSelf(self: *Checker, statement: Ast.Statement, receiver: Type
             self.expressionChangesSelf(value, receiver)
         else
             false,
+        .raise_statement => |raised| if (raised.value) |value| self.expressionChangesSelf(value, receiver) else false,
+        .assert_statement => |assertion| try self.expressionChangesSelf(assertion.condition, receiver) or
+            if (assertion.message) |message| try self.expressionChangesSelf(message, receiver) else false,
+        .try_statement => |protected| blk: {
+            if (try self.statementsChangeSelf(protected.body.statements, receiver)) break :blk true;
+            for (protected.catches) |caught| if (try self.statementsChangeSelf(caught.body.statements, receiver)) break :blk true;
+            if (protected.finally_block) |cleanup| if (try self.statementsChangeSelf(cleanup.statements, receiver)) break :blk true;
+            break :blk false;
+        },
         .destructuring => |destructuring| self.expressionChangesSelf(destructuring.initializer, receiver),
         .destructuring_assignment => |assignment| self.expressionChangesSelf(assignment.value, receiver),
         .break_statement, .continue_statement, .function_declaration, .struct_declaration => false,
@@ -5272,18 +5398,24 @@ fn checkLambdaBody(
     const outer_in_function = self.in_function;
     const outer_loops = self.loops;
     const outer_pending = self.pending_return_types;
+    const outer_catch_depth = self.catch_depth;
+    const outer_finally_loop_depth = self.finally_loop_depth;
     defer {
         _ = self.scopes.pop();
         self.current_return_type = outer_return_type;
         self.in_function = outer_in_function;
         self.loops = outer_loops;
         self.pending_return_types = outer_pending;
+        self.catch_depth = outer_catch_depth;
+        self.finally_loop_depth = outer_finally_loop_depth;
         // A lambda may never run, and may run long after this point, so what it
         // assigns to a captured variable cannot make that variable assigned
         // here.
         self.restore(before);
     }
     self.loops = .empty;
+    self.catch_depth = 0;
+    self.finally_loop_depth = null;
     self.pending_return_types = .empty;
     self.in_function = true;
     self.current_return_type = wanted_result;
@@ -7228,6 +7360,20 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
         return;
     }
     const declaration = self.struct_declarations.get(key).?;
+    // A fieldless error subclass inherits Error(message), keeping custom
+    // errors as small as their declaration in section 13's example.
+    const error_type = self.errorType();
+    if (built.user.?.base != null and error_type.user != null and built.user.?.extends(error_type.user.?) and declaration.fields.len == 0 and built.user.?.fields.len == 1) {
+        try self.checkArguments(call, name, .{
+            .types = &.{Type.string},
+            .names = &.{"message"},
+            .has_default = &.{false},
+            .noun = "parameter",
+            .mismatch_help = "Pass a String that explains what went wrong.",
+            .arity_help = "Pass one error message, as in `InvalidScore(\"Score cannot be negative\")`.",
+        });
+        return;
+    }
     // Section 10.2: a subclass without a constructor of its own gets one only
     // when nothing needs an argument, and it takes none.
     if (built.user.?.base != null) {
@@ -7769,7 +7915,7 @@ fn blockCompletes(self: *const Checker, statements: []const Ast.Statement) bool 
 
 fn stmtCompletes(self: *const Checker, statement: Ast.Statement) bool {
     return switch (statement.data) {
-        .return_statement, .break_statement, .continue_statement => false,
+        .return_statement, .raise_statement, .break_statement, .continue_statement => false,
         .destructuring, .destructuring_assignment => true,
         .conditional => |conditional| blk: {
             if (self.blockCompletes(conditional.then_block.statements)) break :blk true;
@@ -7781,7 +7927,13 @@ fn stmtCompletes(self: *const Checker, statement: Ast.Statement) bool {
         },
         // Only a `break` ends `while true`. Any other loop can end on its own.
         .while_loop => |loop| !isLiteralTrue(loop.condition) or self.blockBreaks(loop.body.statements),
-        .for_loop, .expression, .declaration, .assignment, .function_declaration, .struct_declaration => true,
+        .for_loop, .expression, .declaration, .assignment, .function_declaration, .struct_declaration, .assert_statement => true,
+        .try_statement => |protected| blk: {
+            if (protected.finally_block) |cleanup| if (!self.blockCompletes(cleanup.statements)) break :blk false;
+            if (self.blockCompletes(protected.body.statements)) break :blk true;
+            for (protected.catches) |caught| if (self.blockCompletes(caught.body.statements)) break :blk true;
+            break :blk false;
+        },
         // A `case` that may match nothing carries on past it; one that covers
         // everything carries on only through an arm that does.
         .case_statement => |case| blk: {
@@ -7815,7 +7967,7 @@ fn stmtBreaks(self: *const Checker, statement: Ast.Statement) bool {
                 .chained => |chained| self.stmtBreaks(chained.*),
             };
         },
-        .while_loop, .for_loop, .return_statement, .continue_statement => false,
+        .while_loop, .for_loop, .return_statement, .raise_statement, .continue_statement, .assert_statement => false,
         .destructuring, .destructuring_assignment => false,
         .expression, .declaration, .assignment, .function_declaration, .struct_declaration => false,
         .case_statement => |case| blk: {
@@ -7824,6 +7976,12 @@ fn stmtBreaks(self: *const Checker, statement: Ast.Statement) bool {
             }
             const otherwise = case.otherwise orelse break :blk false;
             break :blk self.blockBreaks(otherwise.block.statements);
+        },
+        .try_statement => |protected| blk: {
+            if (self.blockBreaks(protected.body.statements)) break :blk true;
+            for (protected.catches) |caught| if (self.blockBreaks(caught.body.statements)) break :blk true;
+            if (protected.finally_block) |cleanup| break :blk self.blockBreaks(cleanup.statements);
+            break :blk false;
         },
     };
 }
@@ -7859,6 +8017,13 @@ fn statementHasValueReturn(self: *const Checker, statement: Ast.Statement) bool 
         .destructuring, .destructuring_assignment => false,
         .expression, .declaration, .assignment, .function_declaration, .struct_declaration => false,
         .break_statement, .continue_statement => false,
+        .raise_statement, .assert_statement => false,
+        .try_statement => |protected| blk: {
+            if (self.blockHasValueReturn(protected.body.statements)) break :blk true;
+            for (protected.catches) |caught| if (self.blockHasValueReturn(caught.body.statements)) break :blk true;
+            if (protected.finally_block) |cleanup| break :blk self.blockHasValueReturn(cleanup.statements);
+            break :blk false;
+        },
         .case_statement => |case| blk: {
             for (case.arms) |arm| {
                 if (self.blockHasValueReturn(arm.body.block.statements)) break :blk true;

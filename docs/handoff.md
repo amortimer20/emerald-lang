@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the enums and `case` slice (section 12 and 6.3).
+Updated: 2026-09-14. Prepared after the errors and tests slice (sections 13 and 16).
 
 ## Current milestone
 
@@ -50,6 +50,19 @@ with methods, properties, type-level members, and traits, and so does `case`/`wh
 statement and as a value, with coverage of enum and `Bool` subjects. The object model of
 section 20's slice 12 is complete.
 
+Slice 13 is complete. `Error` is the prelude root for typed error values; compact subclasses
+whose only stored state is its message get one-message construction. `raise`, typed and
+untyped `catch`, bare re-raise, and `finally` work through ordinary calls and runtime
+failures, with cleanup on normal completion, return, and failure. Interpreter-detected
+errors are catchable as
+`RuntimeError`. A changing method or setter that raises returns its receiver to its place,
+with completed mutations still visible, rather than leaving the place empty. `assert` is
+compiler-known, remains active in optimized builds, accepts an optional comma-separated
+message, and reports both evaluated operands for a failed equality without evaluating them
+twice. Top-level `@test` functions are discovered by `emerald test`;
+entry statements are skipped, all tests run in deterministic source order, failures do not
+hide later tests, and status 3 distinguishes test failures.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
@@ -76,9 +89,8 @@ managed: reference counting reclaims promptly
 and section 19.5's mark-and-sweep collector reclaims the cycles counting cannot, so a loop
 that keeps making blocks runs in flat memory. Every expression has a static type before
 execution and
-definite assignment is proved through control flow. What remains at runtime is only what
-cannot be known statically: integer overflow, division by zero, and exceeding the
-recursion limit.
+definite assignment is proved through control flow. Failures that cannot be known
+statically travel as typed Emerald errors and may be handled by the program.
 
 ## Completed foundation
 
@@ -1394,22 +1406,14 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 
 ## Next concrete step
 
-Enums and `case` are in, which finishes section 20's slice 12, the object model. Slice 13
-is next: typed errors, `raise`, `try`/`catch`/`finally`, `assert`, and `emerald test`
-(section 13).
+Section 20's first 13 vertical slices are complete. The next implementation work is slice
+14, standard-library growth. Choose one focused vocabulary group from section 15, add only
+the methods a representative Emerald program needs, and cover its behavior and diagnostics.
+The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
+follow it because both benefit from a stable formatter and the now-complete core language.
 
-Section 7 is complete apart from capturing built-in methods, which the user has put off.
-
-Section 8's collections are now finished, which was the argument for doing them first:
-`Type` now carries resolved identity for a user-declared struct alongside its kind. The
-remaining object-model sub-slices can extend that identity with members and relationships
-without redesigning the collection types underneath it.
-
-The remaining alternative is section 13, errors and tests: typed errors, `raise`,
-`try`/`catch`/`finally`, `assert`, and `emerald test`. It is smaller than the object model
-and it would make the conformance suite able to test failure directly rather than through
-the runner. But the object model is what the language is missing most, and errors are
-easier to design once there are types to raise.
+Section 7 remains complete apart from capturing built-in methods, which the user has put
+off. Deferred language features in section 21 remain deferred.
 
 ## Validation and blockers
 
@@ -1418,10 +1422,14 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 314 unit tests, 307 conformance cases,
-  and 7 command-line contract tests asserting the section 18.1 exit codes against the real
-  binary. Every case kind was confirmed to fail when a case is broken, so none of them are
-  vacuous.
+- `zig build test` passes in Debug and ReleaseSafe: 314 unit tests, 322 conformance cases,
+  and 10 command-line contract tests. The new cases cover typed and untyped catches, built-in
+  runtime errors, bare re-raise, cleanup through return, loop control, and failure,
+  secondary failures from cleanup, assertion operand reporting, mutation before a raised
+  error, catch types reached through a namespace alias, repeated access after caught module
+  and type setup errors, test
+  failure isolation, status 3, skipped entry statements, and per-binding lazy entry
+  initialization in test mode.
 - The chunked review of the struct slices (see "Code review of the struct slices") confirmed
   every fix non-vacuous the same way: each new conformance case fails with its fix
   disabled, in a build that still compiles, and passes once the fix is restored. Fixes on a
@@ -1579,20 +1587,16 @@ maintainability work rather than reproduced behavioral failures:
   is reported. Moving the call down always works. Tracking default reads separately, per
   parameter, would remove the false report.
 
-- A runtime error inside a changing method leaves `nothing` where the receiver was. Nothing
-  can catch an error yet, so the program has already ended by then; once section 13 adds
-  `catch`, `callStructMethod` has to put the receiver back on the error path, and decide
-  whether a half-finished change is kept.
-- `invoke` does not release what it was handed when it fails before the body runs: at the
-  recursion limit, or on allocation failure while binding `self` and parameters, the
-  receiver, arguments, and a defaults copy of `self` are never released, and a changing
-  method whose receiver was already taken leaves `nothing` in its place. The heap frees
-  them when the program ends, so nothing can observe this until section 13 adds `catch`;
-  then every early return from `invoke` needs to release its inputs, and the taken receiver
-  needs putting back.
 - Reaching a receiver while its changing method runs is caught only at runtime. The common
   case — the method, or a function it calls, reads the module variable it was called on — is
   visible to the capture facts and could become a `check` diagnostic.
+
+- `invoke` restores a changing receiver and releases its inputs for every Emerald error and
+  for the recursion limit. A host allocation failure while it is still constructing the
+  call frame can leave some argument counts high until the interpreter heap is torn down.
+  Host allocation failure stops the run and cannot be caught by Emerald, so this is not
+  observable language behavior, but the ownership path should be made fully transactional
+  when allocator-failure testing is added.
 
 - Recursive dictionary-key eligibility currently keeps a fixed path of 256 struct types.
   A cycle is correctly rejected, but an acyclic chain deeper than 256 is conservatively

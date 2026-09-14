@@ -1544,6 +1544,25 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             if (return_statement.value) |value| try self.walkExpression(value);
         },
 
+        .raise_statement => |raised| if (raised.value) |value| try self.walkExpression(value),
+
+        .assert_statement => |assertion| {
+            try self.walkExpression(assertion.condition);
+            if (assertion.message) |message| try self.walkExpression(message);
+        },
+
+        .try_statement => |protected| {
+            try self.walkBlock(protected.body);
+            for (protected.catches) |caught| {
+                try self.push();
+                const scope = &self.scopes.items[self.scopes.items.len - 1];
+                try scope.put(self.arena, caught.name, .{ .mutable = false, .span = caught.name_span });
+                try self.walkStatements(caught.body.statements);
+                self.pop();
+            }
+            if (protected.finally_block) |cleanup| try self.walkBlock(cleanup);
+        },
+
         .destructuring => |destructuring| {
             try self.walkExpression(destructuring.initializer);
             for (destructuring.pattern.names) |name| {

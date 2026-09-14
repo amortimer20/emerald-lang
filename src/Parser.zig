@@ -448,6 +448,9 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             "Move it out to the top level. `using` applies to the whole file wherever it is written.",
         ),
         .keyword_return => self.parseReturn(),
+        .keyword_raise => self.parseRaise(),
+        .keyword_try => self.parseTry(),
+        .keyword_assert => self.parseAssert(),
         .keyword_case => blk: {
             const parsed = try self.parseCase();
             if (parsed.producesValue()) {
@@ -480,6 +483,7 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
 const Annotations = struct {
     override: ?Source.Span = null,
     abstract: ?Source.Span = null,
+    test_annotation: ?Source.Span = null,
 };
 
 const known_annotations = [_][]const u8{ "override", "abstract", "test" };
@@ -499,18 +503,12 @@ fn parseAnnotations(self: *Parser) Error!Annotations {
         _ = self.advance();
         const span = spanning(at.span, name.span);
         const word = self.text(name);
-        if (std.mem.eql(u8, word, "override") or std.mem.eql(u8, word, "abstract")) {
-            const slot = if (std.mem.eql(u8, word, "override")) &found.override else &found.abstract;
+        if (std.mem.eql(u8, word, "override") or std.mem.eql(u8, word, "abstract") or std.mem.eql(u8, word, "test")) {
+            const slot = if (std.mem.eql(u8, word, "override")) &found.override else if (std.mem.eql(u8, word, "abstract")) &found.abstract else &found.test_annotation;
             if (slot.* != null) {
                 try self.reportFmtNote(span, "`@{s}` is already written on this declaration", .{word}, "Write each annotation once.");
             }
             slot.* = span;
-        } else if (std.mem.eql(u8, word, "test")) {
-            try self.note(
-                span,
-                "`@test` is not available yet",
-                "Tests arrive with `emerald test`. Remove the annotation for now.",
-            );
         } else if (closestAnnotation(word)) |suggestion| {
             try self.reportFmtNote(
                 span,
@@ -579,10 +577,20 @@ fn parseAnnotatedStatement(self: *Parser) Error!Ast.Statement {
         );
     }
     if (next.kind == .keyword_class) {
+        if (annotations.test_annotation) |span| try self.note(span, "`@test` belongs on a function", "Move `@test` to a top-level function with no parameters and no result.");
         var statement = try self.parseStatement();
         if (statement.data == .struct_declaration) statement.data.struct_declaration.abstract_span = annotations.abstract;
         return statement;
     }
+    if (next.kind == .keyword_func and annotations.test_annotation != null) {
+        var statement = try self.parseFunctionDeclaration();
+        if (!self.at_top_level) {
+            try self.note(annotations.test_annotation.?, "a test must be a top-level function", "Move this function out of the enclosing block, then keep `@test` on it.");
+        } else statement.data.function_declaration.test_span = annotations.test_annotation;
+        if (annotations.abstract) |span| try self.note(span, "a test function cannot be abstract", "Remove `@abstract`; a test needs a body to run.");
+        return statement;
+    }
+    if (annotations.test_annotation) |span| try self.note(span, "`@test` belongs on a function", "Move `@test` to a top-level function with no parameters and no result.");
     if (annotations.abstract) |span| {
         if (next.kind == .keyword_trait) {
             try self.note(
@@ -821,6 +829,10 @@ const StructMembers = struct {
 /// One member of a struct body, added to `members`. `name` is the struct's.
 fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!void {
     var annotations = try self.parseAnnotations();
+    if (annotations.test_annotation) |span| {
+        try self.note(span, "a test must be a top-level function", "Move this function outside the type, then keep `@test` on it.");
+        annotations.test_annotation = null;
+    }
     const marker = self.peek();
     if (self.in_enum and self.startsEnumValue()) {
         _ = self.advance();
@@ -1352,7 +1364,6 @@ fn accessor(
     return .{ .name = name, .name_span = span, .parameters = parameters, .return_annotation = result, .body = body };
 }
 
-
 /// Section 10.2: `constructor(x: Float) { self.x = x }`.
 fn parseConstructor(self: *Parser) Error!Ast.StructDeclaration.Constructor {
     const keyword = self.advance();
@@ -1765,6 +1776,71 @@ fn parseReturn(self: *Parser) Error!Ast.Statement {
         .span = if (value) |v| spanning(keyword.span, v.span) else keyword.span,
         .data = .{ .return_statement = .{ .keyword_span = keyword.span, .value = value } },
     });
+}
+
+fn parseRaise(self: *Parser) Error!Ast.Statement {
+    const keyword = self.advance();
+    const next = self.peek();
+    const value = switch (next.kind) {
+        .newline, .eof, .right_brace, .keyword_if => null,
+        else => try self.parseExpression(),
+    };
+    return self.finishSimpleStatement(.{
+        .span = if (value) |v| spanning(keyword.span, v.span) else keyword.span,
+        .data = .{ .raise_statement = .{ .keyword_span = keyword.span, .value = value } },
+    });
+}
+
+fn parseAssert(self: *Parser) Error!Ast.Statement {
+    const keyword = self.advance();
+    const condition = try self.parseExpression();
+    const message = if (self.match(.comma) != null) try self.parseExpression() else null;
+    return self.finishSimpleStatement(.{
+        .span = if (message) |m| spanning(keyword.span, m.span) else spanning(keyword.span, condition.span),
+        .data = .{ .assert_statement = .{ .keyword_span = keyword.span, .condition = condition, .message = message } },
+    });
+}
+
+fn parseTry(self: *Parser) Error!Ast.Statement {
+    const keyword = self.advance();
+    const body = try self.parseBlock();
+    var catches: std.ArrayList(Ast.Catch) = .empty;
+    var cleanup: ?Ast.Block = null;
+    var end = body.span;
+    while (self.peekPastNewlines().kind == .keyword_catch) {
+        self.skipSeparators();
+        const catch_keyword = self.advance();
+        const name = self.peek();
+        if (name.kind != .identifier) return self.report(name.span, "expected a name after `catch`", "Name the caught error, as in `catch error: FileError {`.");
+        _ = self.advance();
+        var annotation: ?Ast.TypeExpression = null;
+        if (self.match(.colon) != null) annotation = try self.parseTypeExpression();
+        const catch_body = try self.parseBlock();
+        try catches.append(self.arena, .{
+            .keyword_span = catch_keyword.span,
+            .name = try self.identifier(name),
+            .name_span = name.span,
+            .annotation = annotation,
+            .body = catch_body,
+        });
+        end = catch_body.span;
+    }
+    if (self.peekPastNewlines().kind == .keyword_finally) {
+        self.skipSeparators();
+        _ = self.advance();
+        cleanup = try self.parseBlock();
+        end = cleanup.?.span;
+    }
+    if (catches.items.len == 0 and cleanup == null) return self.report(body.span, "`try` needs a `catch` or `finally`", "Add a handler with `catch error { ... }`, cleanup with `finally { ... }`, or remove `try`.");
+    return .{
+        .span = spanning(keyword.span, end),
+        .data = .{ .try_statement = .{
+            .keyword_span = keyword.span,
+            .body = body,
+            .catches = try catches.toOwnedSlice(self.arena),
+            .finally_block = cleanup,
+        } },
+    };
 }
 
 /// Section 4.3: `var` permits rebinding, `const` does not. Both introduce one

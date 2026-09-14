@@ -60,6 +60,9 @@ pub const Statement = struct {
         /// Section 10's user-defined value type and its stored fields.
         struct_declaration: StructDeclaration,
         return_statement: Return,
+        raise_statement: Raise,
+        try_statement: Try,
+        assert_statement: Assert,
         /// Section 8.2's `var (name, age) = entry`.
         destructuring: Destructuring,
         /// Section 8.2's `(left, right) = (right, left)`, which assigns to
@@ -284,6 +287,8 @@ pub const FunctionDeclaration = struct {
     /// supply, or for a trait's method written without a body, which is a
     /// requirement (11.1), its name. Its `body` is empty.
     abstract_span: ?Source.Span = null,
+    /// Section 16.1's test discovery marker. Tests remain ordinary functions.
+    test_span: ?Source.Span = null,
 };
 
 pub const Parameter = struct {
@@ -299,6 +304,32 @@ pub const Return = struct {
     /// Null for a bare `return`, which section 7.1 allows for a function with
     /// no result.
     value: ?*const Expression,
+};
+
+pub const Raise = struct {
+    keyword_span: Source.Span,
+    value: ?*const Expression,
+};
+
+pub const Try = struct {
+    keyword_span: Source.Span,
+    body: Block,
+    catches: []const Catch,
+    finally_block: ?Block,
+};
+
+pub const Catch = struct {
+    keyword_span: Source.Span,
+    name: []const u8,
+    name_span: Source.Span,
+    annotation: ?TypeExpression,
+    body: Block,
+};
+
+pub const Assert = struct {
+    keyword_span: Source.Span,
+    condition: *const Expression,
+    message: ?*const Expression,
 };
 
 pub const Declaration = struct {

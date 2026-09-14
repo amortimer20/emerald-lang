@@ -13,6 +13,7 @@ const ExitCode = enum(u8) {
     success = 0,
     source_diagnostics = 1,
     runtime_error = 2,
+    test_failures = 3,
     invalid_usage = 64,
     internal_failure = 70,
 };
@@ -23,10 +24,11 @@ const usage =
     \\commands:
     \\  check   report problems without running the program
     \\  run     report problems, then run the program
+    \\  test    report problems, then run every @test function
     \\
 ;
 
-const Command = enum { check, run };
+const Command = enum { check, run, @"test" };
 
 /// The allocator a program's runtime work goes through. Zig's default for a
 /// ReleaseSafe build without libc is its leak-checking debug allocator, which
@@ -79,6 +81,7 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     const analysis = switch (command) {
         .check => emerald.checkProject(gpa, &project),
         .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface }),
+        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface }),
     };
     var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();
@@ -93,6 +96,25 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     if (report.failure) |failure| {
         try writeDiagnostics(gpa, io, sources, &.{failure});
         return @intFromEnum(ExitCode.runtime_error);
+    }
+
+    if (command == .@"test") {
+        if (report.test_failures.len != 0) {
+            try writeDiagnostics(gpa, io, sources, report.test_failures);
+            var buffer: [128]u8 = undefined;
+            const summary = if (report.test_count == 1)
+                try std.fmt.bufPrint(&buffer, "1 test, {d} failed.\n", .{report.test_failures.len})
+            else
+                try std.fmt.bufPrint(&buffer, "{d} tests, {d} failed.\n", .{ report.test_count, report.test_failures.len });
+            try writeAll(io, .stdout, summary);
+            return @intFromEnum(ExitCode.test_failures);
+        }
+        var buffer: [128]u8 = undefined;
+        const summary = if (report.test_count == 1)
+            try std.fmt.bufPrint(&buffer, "1 test passed.\n", .{})
+        else
+            try std.fmt.bufPrint(&buffer, "{d} tests passed.\n", .{report.test_count});
+        try writeAll(io, .stdout, summary);
     }
 
     if (command == .check) try writeAll(io, .stdout, "No problems found.\n");

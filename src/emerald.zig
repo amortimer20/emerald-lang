@@ -39,9 +39,12 @@ pub const Report = struct {
     diagnostics: []const Diagnostic,
     /// The error that stopped execution, when execution started and failed.
     failure: ?Diagnostic = null,
+    /// Failures collected by `emerald test`, which does not stop at the first.
+    test_failures: []const Diagnostic = &.{},
+    test_count: usize = 0,
 
     pub fn ok(self: Report) bool {
-        return self.diagnostics.len == 0 and self.failure == null;
+        return self.diagnostics.len == 0 and self.failure == null and self.test_failures.len == 0;
     }
 
     pub fn deinit(self: *Report) void {
@@ -66,7 +69,7 @@ pub fn check(gpa: std.mem.Allocator, source: *const Source) Error!Report {
 
 /// The same, for a whole project (14.1).
 pub fn checkProject(gpa: std.mem.Allocator, project: *const Project) Error!Report {
-    return onLargeStack(gpa, project, null);
+    return onLargeStack(gpa, project, null, false);
 }
 
 /// A single file is a complete program, so it is a project of one. Nothing
@@ -97,7 +100,12 @@ pub fn run(gpa: std.mem.Allocator, source: *const Source, streams: Streams) Erro
 
 /// The same, for a whole project (14.1).
 pub fn runProject(gpa: std.mem.Allocator, project: *const Project, streams: Streams) Error!Report {
-    return onLargeStack(gpa, project, streams);
+    return onLargeStack(gpa, project, streams, false);
+}
+
+/// Checks a project, skips its entry statements, and runs every `@test` function.
+pub fn testProject(gpa: std.mem.Allocator, project: *const Project, streams: Streams) Error!Report {
+    return onLargeStack(gpa, project, streams, true);
 }
 
 /// Reserved rather than committed: the host maps a thread's stack lazily, so
@@ -114,15 +122,16 @@ comptime {
     );
 }
 
-fn onLargeStack(gpa: std.mem.Allocator, project: *const Project, streams: ?Streams) Error!Report {
+fn onLargeStack(gpa: std.mem.Allocator, project: *const Project, streams: ?Streams, test_mode: bool) Error!Report {
     const Task = struct {
         gpa: std.mem.Allocator,
         project: *const Project,
         streams: ?Streams,
+        test_mode: bool,
         result: Error!Report = undefined,
 
         fn go(task: *@This(), available: usize) void {
-            task.result = analyze(task.gpa, task.project, task.streams, .here(available));
+            task.result = analyze(task.gpa, task.project, task.streams, task.test_mode, .here(available));
         }
     };
 
@@ -133,7 +142,7 @@ fn onLargeStack(gpa: std.mem.Allocator, project: *const Project, streams: ?Strea
     // is the host's choice, as little as 1 MiB, so the guard could not be told
     // honestly how much there is, and a program within section 7.2's
     // guarantees could fail or crash. Failing to start is the honest outcome.
-    var task: Task = .{ .gpa = gpa, .project = project, .streams = streams };
+    var task: Task = .{ .gpa = gpa, .project = project, .streams = streams, .test_mode = test_mode };
     const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
@@ -148,6 +157,7 @@ fn analyze(
     gpa: std.mem.Allocator,
     project: *const Project,
     streams: ?Streams,
+    test_mode: bool,
     stack: Interpreter.StackLimit,
 ) Error!Report {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
@@ -276,6 +286,7 @@ fn analyze(
         running.out,
         running.in,
         stack,
+        test_mode,
     );
     defer outcome.deinit();
 
@@ -284,7 +295,8 @@ fn analyze(
     else
         null;
 
-    return .{ .arena_state = arena_state, .diagnostics = &.{}, .failure = failure };
+    const test_failures = try dupeDiagnostics(arena, outcome.test_failures);
+    return .{ .arena_state = arena_state, .diagnostics = &.{}, .failure = failure, .test_failures = test_failures, .test_count = outcome.test_count };
 }
 
 /// Copies one file's diagnostics into the report's arena, stamping the file
@@ -318,6 +330,11 @@ fn dupeDiagnostic(arena: std.mem.Allocator, diagnostic: Diagnostic) !Diagnostic 
     copy.message = try arena.dupe(u8, diagnostic.message);
     copy.help = try arena.dupe(u8, diagnostic.help);
     copy.trace = trace;
+    if (diagnostic.related) |related| {
+        const related_copy = try arena.create(Diagnostic);
+        related_copy.* = try dupeDiagnostic(arena, related.*);
+        copy.related = related_copy;
+    }
     return copy;
 }
 

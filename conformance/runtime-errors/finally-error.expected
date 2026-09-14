@@ -1,0 +1,9 @@
+runtime-errors/finally-error.em:11:5: CleanupError: cleanup failed
+      raise CleanupError("cleanup failed")
+      ^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.
+while handling this earlier error:
+runtime-errors/finally-error.em:8:5: FirstError: work failed
+      raise FirstError("work failed")
+      ^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.

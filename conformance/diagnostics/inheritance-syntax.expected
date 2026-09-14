@@ -6,10 +6,10 @@ diagnostics/inheritance-syntax.em:4:5: `@banana` is not an annotation
       @banana
       ^^^^^^^
 Emerald's annotations are `@override`, `@abstract`, and `@test`.
-diagnostics/inheritance-syntax.em:7:5: `@test` is not available yet
+diagnostics/inheritance-syntax.em:7:5: a test must be a top-level function
       @test
       ^^^^^
-Tests arrive with `emerald test`. Remove the annotation for now.
+Move this function outside the type, then keep `@test` on it.
 diagnostics/inheritance-syntax.em:11:1: a struct cannot be abstract
   @abstract
   ^^^^^^^^^

@@ -52,6 +52,8 @@ help: []const u8,
 /// The calls active when a runtime error was raised, innermost first. Empty for
 /// every diagnostic reported before a program runs.
 trace: []const Frame = &.{},
+/// An earlier failure that was already propagating when cleanup also failed.
+related: ?*const Diagnostic = null,
 /// Which of the program's files `span` is measured in, indexing the sources
 /// `render` is given. Zero for a single-file program, which is every program
 /// outside a project (14.1).
@@ -106,6 +108,10 @@ pub fn render(self: Diagnostic, sources: []const Source, writer: *std.Io.Writer)
         try writer.writeAll("\n");
 
         index += repeats;
+    }
+    if (self.related) |earlier| {
+        try writer.writeAll("while handling this earlier error:\n");
+        try earlier.render(sources, writer);
     }
 }
 

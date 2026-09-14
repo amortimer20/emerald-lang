@@ -42,15 +42,16 @@ const call_arguments = @import("arguments.zig");
 
 const Interpreter = @This();
 
-/// What running a program produced. A failure is the Emerald error that stopped
-/// it; section 13 will turn these into catchable values, but nothing can catch
-/// anything yet, so one unhandled failure ends the program.
+/// What running a program produced. An unhandled Emerald error stops an ordinary
+/// run; test mode collects one failure per test and continues discovery order.
 pub const Outcome = struct {
     arena_state: std.heap.ArenaAllocator,
     failure: ?Diagnostic,
+    test_failures: []const Diagnostic = &.{},
+    test_count: usize = 0,
 
     pub fn ok(self: Outcome) bool {
-        return self.failure == null;
+        return self.failure == null and self.test_failures.len == 0;
     }
 
     pub fn deinit(self: *Outcome) void {
@@ -101,6 +102,8 @@ const TypeSetup = struct {
     /// was running and what reached the type.
     frame_name: []const u8,
     state: ModuleState = .pending,
+    failed_value: ?Value = null,
+    failed_diagnostic: ?Diagnostic = null,
 };
 
 /// `Returned`, `Broke`, and `Continued` are control flow rather than failures:
@@ -122,6 +125,11 @@ programs: []const Ast.Program = &.{},
 /// How far each file's module-level bindings have got. The entry file is
 /// `.done` from the start, because its top level is the program.
 module_states: []ModuleState = &.{},
+module_failed_values: []?Value = &.{},
+module_failed_diagnostics: []?Diagnostic = &.{},
+test_mode: bool = false,
+test_binding_states: std.StringHashMapUnmanaged(ModuleState) = .empty,
+test_binding_failures: std.StringHashMapUnmanaged(struct { value: Value, diagnostic: Diagnostic }) = .empty,
 /// Which file the statement being executed was written in. It decides what a
 /// bare module-level name means and which file a diagnostic points into.
 file: u32 = 0,
@@ -130,6 +138,11 @@ out: *std.Io.Writer,
 /// Where `input` reads lines from.
 in: *std.Io.Reader,
 failure: ?Diagnostic = null,
+/// The typed Emerald value traveling with `error.Raised`.
+raised_value: ?Value = null,
+/// The error currently handled by the innermost catch, for bare `raise`.
+caught_value: ?Value = null,
+caught_failure: ?Diagnostic = null,
 /// One string for each string literal, made the first time the literal runs
 /// and shared by every run after it, so a loop that prints a literal does not
 /// allocate.
@@ -219,15 +232,22 @@ pub fn run(
     out: *std.Io.Writer,
     in: *std.Io.Reader,
     stack: StackLimit,
+    test_mode: bool,
 ) RunError!Outcome {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
 
     const states = try gpa.alloc(ModuleState, files.len);
     defer gpa.free(states);
+    const module_failed_values = try gpa.alloc(?Value, files.len);
+    defer gpa.free(module_failed_values);
+    const module_failed_diagnostics = try gpa.alloc(?Diagnostic, files.len);
+    defer gpa.free(module_failed_diagnostics);
+    @memset(module_failed_values, null);
+    @memset(module_failed_diagnostics, null);
     var entry: u32 = 0;
     for (files, states, 0..) |file, *state, index| {
-        state.* = if (file.entry) .done else .pending;
+        state.* = if (file.entry and !test_mode) .done else .pending;
         if (file.entry) entry = @intCast(index);
     }
 
@@ -237,6 +257,8 @@ pub fn run(
         .files = files,
         .programs = programs,
         .module_states = states,
+        .module_failed_values = module_failed_values,
+        .module_failed_diagnostics = module_failed_diagnostics,
         .file = entry,
         .facts = facts,
         .out = out,
@@ -251,6 +273,7 @@ pub fn run(
         .literal_types = literal_types,
         .heap = .init(gpa),
         .stack = stack,
+        .test_mode = test_mode,
     };
     // Whatever the counts did not reclaim, including lists still held by
     // module bindings and anything an error skipped releasing.
@@ -421,6 +444,36 @@ pub fn run(
             gpa.destroy(environment);
         }
         interpreter.spare_scopes.deinit(gpa);
+    }
+
+    if (test_mode) {
+        var failures: std.ArrayList(Diagnostic) = .empty;
+        var count: usize = 0;
+        for (programs, 0..) |program, file_index| {
+            for (program.statements) |statement| {
+                if (statement.data != .function_declaration) continue;
+                const function = statement.data.function_declaration;
+                if (function.test_span == null) continue;
+                count += 1;
+                interpreter.file = @intCast(file_index);
+                const key = interpreter.keyOf(function.name);
+                const result = interpreter.invoke(function.name_span, interpreter.namedCallable(key), &.{}) catch |err| switch (err) {
+                    error.Raised => {
+                        var diagnostic = interpreter.failure.?;
+                        diagnostic.message = try std.fmt.allocPrint(interpreter.arena, "test `{s}` failed: {s}", .{ function.name, diagnostic.message });
+                        try failures.append(interpreter.arena, diagnostic);
+                        if (interpreter.raised_value) |value| interpreter.heap.release(value);
+                        interpreter.raised_value = null;
+                        interpreter.failure = null;
+                        continue;
+                    },
+                    error.Returned, error.Broke, error.Continued => unreachable,
+                    else => |other| return other,
+                };
+                interpreter.heap.release(result);
+            }
+        }
+        return .{ .arena_state = arena_state, .failure = null, .test_failures = failures.items, .test_count = count };
     }
 
     interpreter.executeAll(programs[entry].statements) catch |err| switch (err) {
@@ -788,7 +841,142 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
                 Value.nothing;
             return error.Returned;
         },
+        .raise_statement => |raised| {
+            if (raised.value) |expression| {
+                const value = try self.evaluate(expression);
+                self.raised_value = value;
+                const object = value.data.struct_value;
+                const position = fieldPosition(object, "message").?;
+                const message = object.fields[position].data.string.bytes;
+                return self.raiseTyped(raised.keyword_span, value.typeName(), message, "Handle this error with `try` and `catch`, or correct the condition that raised it.");
+            }
+            self.raised_value = if (self.caught_value) |value| Heap.retain(value) else unreachable;
+            self.failure = self.caught_failure;
+            return error.Raised;
+        },
+        .assert_statement => |assertion| {
+            return self.executeAssert(assertion);
+        },
+        .try_statement => |protected| try self.executeTry(protected),
     }
+}
+
+fn executeAssert(self: *Interpreter, assertion: Ast.Assert) Error!void {
+    var actual_help: ?[]const u8 = null;
+    const holds = if (assertion.condition.data == .comparison and assertion.condition.data.comparison.operators.len == 1 and assertion.condition.data.comparison.operators[0].isEquality()) blk: {
+        const comparison = assertion.condition.data.comparison;
+        const left = try self.evaluate(comparison.operands[0]);
+        defer self.heap.release(left);
+        const right = try self.evaluate(comparison.operands[1]);
+        defer self.heap.release(right);
+        const equal = try Value.equals(self.gpa, left, right);
+        const result = equal == (comparison.operators[0] == .equal);
+        if (!result) {
+            const left_text = try self.displayAlloc(left);
+            const right_text = try self.displayAlloc(right);
+            actual_help = try std.fmt.allocPrint(self.arena, "Left was {s}; right was {s}.", .{ left_text, right_text });
+        }
+        break :blk result;
+    } else try self.condition(assertion.condition);
+    if (holds) return;
+
+    const user_help = if (assertion.message) |message| blk: {
+        const value = try self.evaluate(message);
+        defer self.heap.release(value);
+        break :blk value.data.string.bytes;
+    } else null;
+    const help = if (user_help) |written|
+        if (actual_help) |actual| try std.fmt.allocPrint(self.arena, "{s} {s}", .{ written, actual }) else written
+    else
+        actual_help orelse "The condition was false.";
+    const expression = self.files[self.file].source.text[assertion.condition.span.start..assertion.condition.span.end];
+    const message = try std.fmt.allocPrint(self.arena, "assertion failed: `{s}`", .{expression});
+    self.raised_value = try self.makeError(Resolver.preludeKey("AssertionError"), user_help orelse message);
+    return self.raiseTyped(assertion.condition.span, "AssertionError", message, help);
+}
+
+fn displayAlloc(self: *Interpreter, value: Value) RunError![]const u8 {
+    var allocating: std.Io.Writer.Allocating = .init(self.arena);
+    value.write(&allocating.writer, true) catch return error.WriteFailed;
+    return allocating.toOwnedSlice();
+}
+
+fn executeTry(self: *Interpreter, protected: Ast.Try) Error!void {
+    var pending: ?Error = null;
+    self.executeBlock(protected.body) catch |err| {
+        pending = err;
+    };
+
+    const body_raised = if (pending) |err| err == error.Raised else false;
+    if (body_raised) {
+        const raised = self.raised_value.?;
+        const original = self.failure.?;
+        self.raised_value = null;
+        self.failure = null;
+        var handled = false;
+        for (protected.catches) |caught| {
+            const key = if (caught.annotation) |annotation| try self.typeKeyOf(annotation.name) else Resolver.preludeKey("Error");
+            if (!raised.data.struct_value.descriptor.isOrExtends(key)) continue;
+            handled = true;
+            const previous_value = self.caught_value;
+            const previous_failure = self.caught_failure;
+            self.caught_value = raised;
+            self.caught_failure = original;
+            const environment = try self.pushScope();
+            environment.bindings.put(self.gpa, caught.name, .{ .kind = .struct_value, .value = Heap.retain(raised) }) catch |err| {
+                self.popScope();
+                return err;
+            };
+            pending = null;
+            self.executeAll(caught.body.statements) catch |err| {
+                pending = err;
+            };
+            self.popScope();
+            self.caught_value = previous_value;
+            self.caught_failure = previous_failure;
+            break;
+        }
+        if (!handled) {
+            self.raised_value = raised;
+            self.failure = original;
+        } else self.heap.release(raised);
+    }
+
+    if (protected.finally_block) |cleanup| {
+        const propagating_raised = if (pending) |previous| previous == error.Raised else false;
+        const propagating_value = if (propagating_raised) self.raised_value else null;
+        const propagating_failure = if (propagating_raised) self.failure else null;
+        if (propagating_raised) {
+            // Keep the original failure aside so cleanup can raise and handle
+            // its own errors without overwriting or leaking the first value.
+            self.raised_value = null;
+            self.failure = null;
+        }
+        var cleanup_error: ?Error = null;
+        self.executeBlock(cleanup) catch |err| {
+            cleanup_error = err;
+        };
+        if (cleanup_error) |err| {
+            if (propagating_value) |value| self.heap.release(value);
+            if (pending) |previous| if (previous == error.Returned) {
+                if (self.return_value) |value| self.heap.release(value);
+                self.return_value = null;
+            };
+            if (propagating_raised and err == error.Raised) {
+                if (propagating_failure) |earlier| {
+                    const saved = try self.arena.create(Diagnostic);
+                    saved.* = earlier;
+                    self.failure.?.related = saved;
+                }
+            }
+            return err;
+        }
+        if (propagating_raised) {
+            self.raised_value = propagating_value;
+            self.failure = propagating_failure;
+        }
+    }
+    if (pending) |err| return err;
 }
 
 /// One step of a runtime path, evaluated from `Ast.Step`: an index carries the
@@ -953,14 +1141,16 @@ fn changeInObject(
     }
     var changed: Value = Value.nothing;
     callable.self_out = &changed;
-    const result = try self.invoke(span, callable, arguments);
-    errdefer self.heap.release(result);
+    const result = self.invoke(span, callable, arguments);
     if (rest.len == 1) {
         root = changed;
     } else {
-        try self.storeElement(span, &root, rest[1..], changed);
+        self.storeElement(span, &root, rest[1..], changed) catch |store_error| {
+            if (result) |produced| self.heap.release(produced) else |_| {}
+            return store_error;
+        };
     }
-    return result;
+    return try result;
 }
 
 fn objectOnPath(root: Value, steps: []const PlaceStep) ?InObject {
@@ -1510,6 +1700,15 @@ fn keyOf(self: *Interpreter, name: []const u8) []const u8 {
     return self.facts.keyFor(self.file, name) orelse name;
 }
 
+/// Resolves the same namespace alias at the front of a written type that the
+/// checker resolved, such as `using E = Errors` followed by `catch e: E.Bad`.
+fn typeKeyOf(self: *Interpreter, name: []const u8) RunError![]const u8 {
+    if (self.facts.keyFor(self.file, name)) |key| return key;
+    const dot = std.mem.indexOfScalar(u8, name, '.') orelse return name;
+    const namespace = self.facts.namespaceAliasFor(self.file, name[0..dot]) orelse return name;
+    return std.fmt.allocPrint(self.arena, "{s}{s}", .{ namespace, name[dot..] });
+}
+
 fn find(self: *Interpreter, name: []const u8) ?*Binding {
     var index = self.scopes.items.len;
     while (index > 0) {
@@ -1562,16 +1761,24 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
                 ),
             );
         },
-        .failed => return self.raiseFmt(
-            span,
-            "`{s}` could not be set up",
-            .{setup.display_name},
-            "An earlier error stopped it. Fix that first.",
-        ),
+        .failed => {
+            if (setup.failed_value) |value| {
+                self.raised_value = Heap.retain(value);
+                self.failure = setup.failed_diagnostic;
+                return error.Raised;
+            }
+            return self.raiseFmt(span, "`{s}` could not be set up", .{setup.display_name}, "An earlier error stopped it. Fix that first.");
+        },
     }
 
     setup.state = .running;
-    errdefer setup.state = .failed;
+    errdefer |setup_error| {
+        setup.state = .failed;
+        if (setup_error == error.Raised) {
+            setup.failed_value = if (self.raised_value) |value| Heap.retain(value) else null;
+            setup.failed_diagnostic = self.failure;
+        }
+    }
     try self.call_stack.append(self.gpa, .{
         .function = setup.frame_name,
         .call_span = span,
@@ -1595,9 +1802,9 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
         const value = try self.evaluate(field.initializer);
         const kind: Value.Kind = if (field.annotation) |annotation| declaredKind(annotation) else value.kind();
         const key = try Resolver.methodKey(self.arena, type_key, field.name);
-        self.module.put(self.arena, key, .{ .kind = kind, .value = widen(value, kind) }) catch |err| {
+        self.module.put(self.arena, key, .{ .kind = kind, .value = widen(value, kind) }) catch {
             self.heap.release(value);
-            return err;
+            return error.OutOfMemory;
         };
     }
     setup.state = .done;
@@ -1605,9 +1812,20 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
 
 fn reachFile(self: *Interpreter, key: []const u8, span: Source.Span) Error!void {
     const owner = self.facts.owner.get(key) orelse return;
+    if (self.test_mode and self.files[owner].entry) {
+        if (self.functions.contains(key) or self.structs.contains(key)) return;
+        return self.initializeTestBinding(owner, key, span);
+    }
     switch (self.module_states[owner]) {
         .done => return,
-        .pending => return self.initializeModule(owner),
+        .pending => return self.initializeModule(owner) catch |err| {
+            self.module_states[owner] = .failed;
+            if (err == error.Raised) {
+                self.module_failed_values[owner] = if (self.raised_value) |value| Heap.retain(value) else null;
+                self.module_failed_diagnostics[owner] = self.failure;
+            }
+            return err;
+        },
         .running => {
             // Section 14.1's cycle is a cycle "reaching an unfinished
             // binding". Functions and struct types are hoisted, so reaching
@@ -1626,22 +1844,95 @@ fn reachFile(self: *Interpreter, key: []const u8, span: Source.Span) Error!void 
                 "Two values are waiting on each other. Break the cycle by moving one into a function, which runs when it is called rather than when the file is set up.",
             );
         },
-        // Unreachable while nothing can catch a failure: the first one ends the
-        // program. Section 13 is where a later access becomes possible.
-        .failed => return self.raiseFmt(
-            span,
-            "`{s}` could not be set up",
-            .{self.files[owner].source.path},
-            "An earlier error stopped it. Fix that first.",
-        ),
+        // A caught setup error leaves the module reachable again. Re-raise the
+        // same value and source diagnostic on every later access.
+        .failed => {
+            if (self.module_failed_values[owner]) |value| {
+                self.raised_value = Heap.retain(value);
+                self.failure = self.module_failed_diagnostics[owner];
+                return error.Raised;
+            }
+            return self.raiseFmt(span, "`{s}` could not be set up", .{self.files[owner].source.path}, "An earlier error stopped it. Fix that first.");
+        },
     }
+}
+
+/// Test mode gives each entry-file binding its own lazy state. Application
+/// statements never run, and reaching one binding does not trigger unrelated
+/// initializers with side effects.
+fn initializeTestBinding(self: *Interpreter, file: u32, key: []const u8, span: Source.Span) Error!void {
+    switch (self.test_binding_states.get(key) orelse .pending) {
+        .done => return,
+        .running => return self.raiseFmt(span, "`{s}` is still being initialized", .{key}, "Two entry-file values are waiting on each other. Move one computation into a function to break the cycle."),
+        .failed => {
+            const failed = self.test_binding_failures.get(key).?;
+            self.raised_value = Heap.retain(failed.value);
+            self.failure = failed.diagnostic;
+            return error.Raised;
+        },
+        .pending => {},
+    }
+
+    const outer_file = self.file;
+    const outer_scopes = self.scopes;
+    self.file = file;
+    self.scopes = .empty;
+    defer {
+        while (self.scopes.items.len > 0) self.popScope();
+        self.scopes.deinit(self.gpa);
+        self.scopes = outer_scopes;
+        self.file = outer_file;
+    }
+    for (self.programs[file].statements) |statement| {
+        if (!self.statementDeclaresKey(statement, key)) continue;
+        // One destructuring declaration has one initializer. All of its names
+        // begin, finish, or fail together, just as they do in ordinary mode.
+        try self.markTestBindingStates(statement, file, .running);
+        self.execute(statement) catch |err| {
+            if (err == error.Raised) try self.markTestBindingsFailed(statement, file, self.raised_value.?, self.failure.?);
+            return err;
+        };
+        try self.markTestBindingStates(statement, file, .done);
+        return;
+    }
+}
+
+fn statementDeclaresKey(self: *Interpreter, statement: Ast.Statement, key: []const u8) bool {
+    return switch (statement.data) {
+        .declaration => |declaration| std.mem.eql(u8, self.facts.keyFor(self.file, declaration.name) orelse declaration.name, key),
+        .destructuring => |destructuring| blk: {
+            for (destructuring.pattern.names) |name| if (std.mem.eql(u8, self.facts.keyFor(self.file, name.text) orelse name.text, key)) break :blk true;
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+fn markTestBindingStates(self: *Interpreter, statement: Ast.Statement, file: u32, state: ModuleState) RunError!void {
+    switch (statement.data) {
+        .declaration => |declaration| try self.test_binding_states.put(self.arena, self.facts.keyFor(file, declaration.name) orelse declaration.name, state),
+        .destructuring => |destructuring| for (destructuring.pattern.names) |name| try self.test_binding_states.put(self.arena, self.facts.keyFor(file, name.text) orelse name.text, state),
+        else => unreachable,
+    }
+}
+
+fn markTestBindingsFailed(self: *Interpreter, statement: Ast.Statement, file: u32, value: Value, diagnostic: Diagnostic) RunError!void {
+    switch (statement.data) {
+        .declaration => |declaration| try self.markTestBindingFailed(self.facts.keyFor(file, declaration.name) orelse declaration.name, value, diagnostic),
+        .destructuring => |destructuring| for (destructuring.pattern.names) |name| try self.markTestBindingFailed(self.facts.keyFor(file, name.text) orelse name.text, value, diagnostic),
+        else => unreachable,
+    }
+}
+
+fn markTestBindingFailed(self: *Interpreter, key: []const u8, value: Value, diagnostic: Diagnostic) RunError!void {
+    try self.test_binding_states.put(self.arena, key, .failed);
+    try self.test_binding_failures.put(self.arena, key, .{ .value = Heap.retain(value), .diagnostic = diagnostic });
 }
 
 /// Section 14.1: the file's module-level bindings, in declaration order, run
 /// once. Only `reach` calls this, and only for a file that has not started.
 fn initializeModule(self: *Interpreter, file: u32) Error!void {
     self.module_states[file] = .running;
-    errdefer self.module_states[file] = .failed;
 
     // Its declarations run against the module scope alone, in the file they
     // were written in, whatever was executing when they were reached.
@@ -2431,6 +2722,12 @@ fn constructStruct(
     call: Ast.Expression.Call,
 ) Error!Value {
     const info = self.struct_infos.get(key).?;
+    if (info.base != null and descriptor.isOrExtends(Resolver.preludeKey("Error")) and info.declaration.fields.len == 0 and descriptor.fields.len == 1 and !self.constructors.contains(key)) {
+        const bound = try self.evaluateBound(call, &.{"message"}, &.{false});
+        const instance: Value = .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, bound.values) } };
+        if (bound.omitted) |omitted| self.gpa.free(omitted);
+        return instance;
+    }
     // Section 10.7: an object of a subclass is built one class at a time,
     // starting from the class every other extends.
     if (info.base != null) {
@@ -2481,7 +2778,7 @@ fn constructStruct(
     }
 
     var built: Value = Value.nothing;
-    const result = try self.invoke(call_span, .{
+    const result = self.invoke(call_span, .{
         .name = constructor.frame_name,
         .named = false,
         .file = self.facts.owner.get(key) orelse self.file,
@@ -2492,7 +2789,10 @@ fn constructStruct(
         .omitted = bound.omitted,
         .self_value = instance,
         .self_out = &built,
-    }, bound.values);
+    }, bound.values) catch |err| {
+        self.heap.release(built);
+        return err;
+    };
     // A constructor's own result is always `nothing`; what it built is `self`.
     self.heap.release(result);
     return built;
@@ -2550,7 +2850,7 @@ fn buildPart(
             }
         }
         var built: Value = Value.nothing;
-        const result = try self.invoke(call_span, .{
+        const result = self.invoke(call_span, .{
             .name = constructor.frame_name,
             .named = false,
             .file = self.facts.owner.get(key) orelse self.file,
@@ -2562,7 +2862,10 @@ fn buildPart(
             .self_value = Heap.retain(instance),
             .self_out = &built,
             .construct = if (info.base != null) key else null,
-        }, bound.values);
+        }, bound.values) catch |err| {
+            self.heap.release(built);
+            return err;
+        };
         self.heap.release(result);
         self.heap.release(built);
         return;
@@ -3123,6 +3426,10 @@ fn invoke(
     arguments: []const Value,
 ) Error!Value {
     if (self.call_stack.items.len >= max_call_depth) {
+        for (arguments) |argument| self.heap.release(argument);
+        if (callable.self_value) |instance| {
+            if (callable.self_out) |out| out.* = instance else self.heap.release(instance);
+        }
         return self.raiseTooMuchRecursion(call_span, callable.name, true);
     }
 
@@ -3168,6 +3475,17 @@ fn invoke(
         if (callable.omitted) |omitted| if (omitted[index]) continue;
         try frame.bindings.put(self.gpa, name, .{ .kind = kind, .value = widen(argument, kind) });
     }
+
+    // A changing value is returned to its place even when the body or a
+    // default raises. Mutations completed before the error remain visible,
+    // just as changes to a class do.
+    errdefer if (callable.self_out) |out| {
+        if (out.data == .nothing) {
+            if (frame.bindings.get("self")) |binding| {
+                if (binding.value) |instance| out.* = Heap.retain(instance);
+            }
+        }
+    };
 
     try self.call_stack.append(self.gpa, .{
         .function = callable.name,
@@ -4130,11 +4448,29 @@ const integer_range_help =
 /// Every runtime error carries the calls active when it was raised, innermost
 /// first, which is section 13.2's stack trace.
 fn raise(self: *Interpreter, span: Source.Span, message: []const u8, help: []const u8) Error {
+    self.raised_value = try self.makeError(Resolver.preludeKey("RuntimeError"), message);
+    return self.raiseTyped(span, "", message, help);
+}
+
+fn makeError(self: *Interpreter, key: []const u8, message: []const u8) RunError!Value {
+    const text = try self.heap.copyText(message);
+    const fields = try self.gpa.alloc(Value, 1);
+    fields[0] = text;
+    return .{ .data = .{ .struct_value = try self.heap.createStruct(self.structs.get(key).?, fields) } };
+}
+
+fn raiseTyped(self: *Interpreter, span: Source.Span, type_name: []const u8, message: []const u8, help: []const u8) Error {
     const trace = try self.arena.alloc(Diagnostic.Frame, self.call_stack.items.len);
     for (trace, 0..) |*frame, index| {
         frame.* = self.call_stack.items[self.call_stack.items.len - 1 - index];
     }
-    self.failure = .{ .message = message, .span = span, .help = help, .trace = trace, .file = self.file };
+    self.failure = .{
+        .message = if (type_name.len == 0) try self.arena.dupe(u8, message) else try std.fmt.allocPrint(self.arena, "{s}: {s}", .{ type_name, message }),
+        .span = span,
+        .help = try self.arena.dupe(u8, help),
+        .trace = trace,
+        .file = self.file,
+    };
     return error.Raised;
 }
 

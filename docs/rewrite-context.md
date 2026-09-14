@@ -405,6 +405,12 @@ copying it on every call. The call has the binding from the moment its arguments
 included, have been evaluated, so an argument or a default may still read it. A default may
 not change `self`.
 
+If a changing method or setter raises after changing its receiver, the receiver is still
+returned to its place and the changes already made remain visible. An error does not roll
+back ordinary mutations; this is the same behavior as mutating a class object before an
+error. Code that needs all-or-nothing behavior prepares a separate value and stores it only
+after the operation succeeds.
+
 Fields also use `var` and `const`. A `const` field is assigned during construction and is
 not later rebound, and it freezes a value it holds under the same rule. A `var` field may
 be updated by methods.
@@ -2109,6 +2115,14 @@ class InvalidScore extends Error {
 raise InvalidScore("Score cannot be negative")
 ```
 
+`Error` stores a read-only `message: String`. An error subclass whose complete stored state
+is only that inherited message gets the one-argument `Error(message)` construction, so the
+compact example above is complete. An error hierarchy that adds stored fields declares
+ordinary constructors and begins each subclass constructor with `super(...)` as usual.
+Interpreter-detected failures use
+`RuntimeError`, while a failed assertion uses `AssertionError`; both are ordinary subclasses
+that a typed or untyped catch may handle.
+
 There is no `raises` annotation on function signatures. Error effects are dynamic in that
 narrow sense; error values and catch bindings remain statically typed.
 
@@ -2483,7 +2497,8 @@ A failure reports the source expression, relevant actual values, and location. I
 test/assertion error that normal test reporting understands.
 
 Assertions remain active in ordinary and optimized builds. An optional message may explain
-the expectation. Equality assertions show both operands while evaluating each exactly once.
+the expectation, separated from the condition by a comma: `assert score > 0, "score must be
+positive"`. Equality assertions show both operands while evaluating each exactly once.
 
 `check` is not a second assertion spelling. One clear construct is enough.
 
@@ -2585,6 +2600,10 @@ Process statuses are stable: `0` means success, `1` means source or formatting d
 `2` means an uncaught runtime error, `3` means tests completed with failures, `64` means
 invalid command usage, and `70` means an internal Emerald failure. An explicit
 `exit(code)` from a running program uses the requested valid code.
+
+The initial test runner prints `N tests passed.` when all tests pass, or
+`N tests, F failed.` after running the complete discovered set. Assertion failures identify
+the test function in their diagnostic, and test failures use status 3.
 
 `build`, `debug`, package `add`, and a distribution command are later tooling. Names should
 describe user goals in full words.
@@ -3049,6 +3068,7 @@ recorded in their normative sections:
 | Narrowing a type-level field (4.5, 10.4) | Not narrowed, even after assigning a present value | The field is one binding the whole program shares, so any call between the proof and the use can set it back to `nothing`. `.or(...)`, or copying it into a local first, is the way to use one. |
 | When a changing method reaches its receiver (4.3, 5.2, 7.3) | The receiver is a place: its indices are evaluated first, and the place itself is reached once the arguments are, so an argument that replaces the variable is seen by the call. A method that only reads receives the receiver's value, read before its arguments | This is how assignment into a place and the changing collection methods already behave, and reaching the place first would make `items.append(items.count)`, and any argument that reads the receiver, an error under 4.3's exclusivity rule. A reading method has no place, only an operand, which 5.2 reads left to right. |
 | Defaults of a changing method (4.3, 7.3) | Evaluated before the call takes its receiver, seeing `self` as it is before the call; a default may not change `self` | 7.3 counts omitted defaults among a call's arguments, so exclusivity has not begun while they run, and `t.mark()` with a default that reads `t` is not an error. A default that changed `self` would be lost on a method that only reads, and would reach a `const`; like a getter (10.3), it only works out a value. |
+| A changing method or setter that raises (4.3, 13.2) | Returns its receiver to its place with mutations completed before the error still visible | Errors do not provide transaction semantics for class objects, collections, or other ordinary state. Restoring the changed struct keeps value methods consistent with that rule and avoids replacing a reachable value with `nothing` during unwinding. Prepare a separate value before assignment when a change must be all-or-nothing. |
 | Narrowing a module variable a function assigns (4.5, 7.1) | Never narrowed; a `const` copy is | 4.5 already refused narrowing where a called closure could reassign the binding, and a named function reaches module variables the same way. Tracking which calls could run the assigning function would be interprocedural analysis with the same over-reporting as the capture check, for a pattern a `const` copy states more clearly. Without this, `check` accepted a program that crashed. |
 | Where a trailing block goes (7.3, 7.4) | Always the final parameter, and exempt from "no positional arguments after named ones" | 7.4 already calls it the final argument position. Treating it as one more positional argument rejected `repeat(times: 2) { ... }`, and put the block into the next unfilled parameter when defaults were skipped. |
 | A function parameter after defaulted ones (7.3, 7.4) | Allowed when it is the final parameter and has a function type; any other required parameter after a defaulted one is still an error | 7.3's rule exists so a positional call can reach every required parameter. A trailing block reaches the final one, so `func grid(width: Int, height: Int = 2, cell: func(Int, Int))` loses nothing, and without the exception a function taking a block could have no defaults before it at all. |
@@ -3058,6 +3078,8 @@ recorded in their normative sections:
 | Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 | Naming a lost class narrowing (4.4, 4.5) | The member-not-found help names the `is` test that once held and says an assignment since then is why it no longer does, rather than suggesting the reader write the very test they are already inside | `if a is Dog { a = Animal(); print(a.tricks) }` told the reader to wrap the read in `if a is Dog { ... }`, which reads as nonsense already being inside one. Tracked only for a plain-name class test, since that is the shape a member lookup like this comes from. Found in the diagnostics review. |
 | A trait an unresolved `with` name might have meant (11.2, 11.5) | An operator's "needs to adopt" is not reported for a type whose `with` list has any name that failed to resolve | `struct Money with Addible { ... }` followed by `Money(1) + Money(2)` reported the typo and then, separately, that `Money` does not adopt `Addable`, guessing that unresolved name was meant to be it. Matches the existing rule that an already-invalid type is treated as usable so one mistake is reported once, rather than judging conformance a broken `with` list cannot yet state. Found in the diagnostics review. |
+| Constructing a message-only error subclass (13.1) | It gets `Error(message)` when it declares no constructor and its complete stored state is only the inherited message; a hierarchy with more fields uses ordinary subclass constructors | Section 13's canonical `class InvalidScore extends Error { }` is immediately raised as `InvalidScore("...")`. Requiring boilerplate that only forwards the message would contradict that teaching example and make the most common custom error need ceremony, while bypassing fields or constructor arguments from an intermediate error class would create an invalid object. |
+| An assertion's optional message (16.2) | Written after a comma: `assert condition, "explanation"` | The comma reads as one assertion with supporting context, requires no new keyword or parentheses, and leaves the condition as the first thing a beginner sees. The message is evaluated only when the assertion fails. |
 
 ## 23. Consistency rules for future work
 
