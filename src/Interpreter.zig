@@ -3728,7 +3728,21 @@ fn callHigherOrder(
         break :blk built.?;
     } else receiver.data.list.items.items;
 
-    const Kind = enum { each, each_with_index, reverse_each, map, filter, reject, find, find_index };
+    const Kind = enum {
+        each,
+        each_with_index,
+        reverse_each,
+        map,
+        filter,
+        reject,
+        @"any?",
+        @"all?",
+        @"none?",
+        @"one?",
+        count_where,
+        find,
+        find_index,
+    };
     const kind = std.meta.stringToEnum(Kind, member.name).?;
 
     const collected: ?*Heap.List = switch (kind) {
@@ -3739,6 +3753,7 @@ fn callHigherOrder(
     const result: Value = if (collected) |list| .{ .data = .{ .list = list } } else Value.nothing;
     errdefer self.heap.release(result);
 
+    var matches: i64 = 0;
     var visited: usize = 0;
     while (visited < items.len) : (visited += 1) {
         const index = if (kind == .reverse_each) items.len - visited - 1 else visited;
@@ -3766,15 +3781,35 @@ fn callHigherOrder(
             self.heap.release(produced);
             continue;
         }
-        // Searching stops at the first element the block accepts, and reports
-        // absence when none does (4.5).
-        if (!produced.data.bool) continue;
-        return switch (kind) {
-            .find => Heap.retain(item),
-            else => .initInt(@intCast(index)),
-        };
+        const accepted = produced.data.bool;
+        self.heap.release(produced);
+        switch (kind) {
+            // These questions stop as soon as later values cannot change the
+            // answer. `one?` can stop after its second accepted value.
+            .@"any?" => if (accepted) return .initBool(true),
+            .@"all?" => if (!accepted) return .initBool(false),
+            .@"none?" => if (accepted) return .initBool(false),
+            .@"one?" => if (accepted) {
+                matches += 1;
+                if (matches == 2) return .initBool(false);
+            },
+            .count_where => {
+                if (accepted) matches += 1;
+            },
+            // Searching stops at the first element the block accepts, and
+            // reports absence when none does (4.5).
+            .find => if (accepted) return Heap.retain(item),
+            .find_index => if (accepted) return .initInt(@intCast(index)),
+            else => unreachable,
+        }
     }
-    return result;
+    return switch (kind) {
+        .@"any?" => .initBool(false),
+        .@"all?", .@"none?" => .initBool(true),
+        .@"one?" => .initBool(matches == 1),
+        .count_where => .initInt(matches),
+        else => result,
+    };
 }
 
 /// Section 8.5's list methods. The checker has proved the receiver is a list,
@@ -3799,7 +3834,9 @@ fn callMethod(
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "reverse_each") or std.mem.eql(u8, member.name, "map") or
-        std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or
+        std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or std.mem.eql(u8, member.name, "any?") or
+        std.mem.eql(u8, member.name, "all?") or std.mem.eql(u8, member.name, "none?") or std.mem.eql(u8, member.name, "one?") or
+        std.mem.eql(u8, member.name, "count_where") or
         std.mem.eql(u8, member.name, "find") or std.mem.eql(u8, member.name, "find_index"))
     {
         return self.callHigherOrder(expression, call, member);

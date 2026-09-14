@@ -5900,6 +5900,13 @@ fn typeOfMethodCall(
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
         }
+        if (std.mem.eql(u8, member.name, "any?") or std.mem.eql(u8, member.name, "all?") or
+            std.mem.eql(u8, member.name, "none?") or std.mem.eql(u8, member.name, "one?") or
+            std.mem.eql(u8, member.name, "count_where"))
+        {
+            _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+            return if (std.mem.eql(u8, member.name, "count_where")) .int else .bool;
+        }
         // Section 8.6's searching pair. `find_index` is what 4.5 names as the
         // companion for a list whose elements may themselves be `nothing`.
         if (std.mem.eql(u8, member.name, "find")) {
@@ -6123,6 +6130,13 @@ fn typeOfMapMethod(
     if (std.mem.eql(u8, name, "each")) return self.typeOfEach(call, member, base, false);
     if (std.mem.eql(u8, name, "each_with_index")) return self.typeOfEach(call, member, base, true);
     if (std.mem.eql(u8, name, "map")) return self.typeOfMap(call, member, base);
+    if (std.mem.eql(u8, name, "any?") or std.mem.eql(u8, name, "all?") or
+        std.mem.eql(u8, name, "none?") or std.mem.eql(u8, name, "one?") or
+        std.mem.eql(u8, name, "count_where"))
+    {
+        _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+        return if (std.mem.eql(u8, name, "count_where")) .int else .bool;
+    }
     if (std.mem.eql(u8, name, "empty?")) {
         _ = try self.requireArity(member, call.arguments, 0, 0);
         return .bool;

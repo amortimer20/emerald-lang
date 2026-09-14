@@ -26,6 +26,7 @@ print(ages.map { (name, age) => "#{name}=#{age}" })
 ages.each_with_index { (name, age), index =>
     print(index, name, age)
 }
+print(ages.any? { (name, age) => name == "Mia" }, ages.count_where { (_, age) => age >= 20 })
 
 ## Section 8.4: contents decide equality, not insertion order.
 print(["a": 1, "b": 2] == ["b": 2, "a": 1])

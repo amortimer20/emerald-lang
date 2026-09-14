@@ -1419,6 +1419,13 @@ insertion order of Dictionaries and Sets.
 items from last to first, and does not change its receiver. Dictionary and Set reverse
 traversal is deferred with their remaining callback vocabulary.
 
+The predicate questions `any?`, `all?`, `none?`, and `one?`, plus `count_where`, are
+available on Lists, Dictionaries, and Sets. Each takes a `Bool`-producing block over one
+logical item; a Dictionary item remains its `(key, value)` entry. `any?`, `all?`, and
+`none?` stop at the first accepted or rejected item that decides their answer, and `one?`
+stops at its second accepted item. `count_where` visits every item. On an empty collection,
+the answers are `false`, `true`, `true`, `false`, and `0`, respectively.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs

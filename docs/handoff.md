@@ -126,6 +126,13 @@ returns `Nothing`, and leaves the List unchanged. Its arity and missing-block di
 led to a small shared diagnostic improvement: a callback-method help example now names the
 method the reader actually called. Dictionary and Set reverse traversal remains deferred.
 
+Part 8 adds the predicate questions `any?`, `all?`, `none?`, `one?`, and `count_where` to
+Lists, Dictionaries, and Sets. The `Bool` predicate receives each collection's ordinary
+logical item, with a dictionary's tuple entry unchanged. The four questions short-circuit
+when their result is decided; `count_where` visits all items. Empty inputs give `false`,
+`true`, `true`, `false`, and `0`, in that order. Conformance covers all collection shapes,
+empty inputs, each short-circuit boundary, predicate types, and missing blocks.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
@@ -1470,11 +1477,11 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 ## Next concrete step
 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
-String, List value-transform, filtering, and traversal parts are complete. The next
-standard-library part should consider the remaining callback-based List methods, beginning
-with the predicate questions `any?`, `all?`, `none?`, `one?`, and `count_where`; `Iterable`
-stays deferred. The advanced String operations listed below are deliberately deferred too,
-rather than being incomplete work in this slice.
+String, List value-transform, filtering, traversal, and predicate-question parts are
+complete. The next standard-library part should consider the remaining callback-based List
+methods, beginning with `take_while` and `drop_while`; `Iterable` stays deferred. The
+advanced String operations listed below are deliberately deferred too, rather than being
+incomplete work in this slice.
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 

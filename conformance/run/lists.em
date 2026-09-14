@@ -52,6 +52,45 @@ var reverse_seen: [Int] = []
 sequence.reverse_each { number => reverse_seen.append(number) }
 print(reverse_seen, sequence)
 
+var any_seen: [Int] = []
+const has_even = sequence.any? { number =>
+    any_seen.append(number)
+    return number.even?()
+}
+print(has_even, any_seen)
+var short_seen: [Int] = []
+const all_small = sequence.all? { number =>
+    short_seen.append(number)
+    return number < 2
+}
+print(all_small, short_seen)
+short_seen.clear()
+const no_twos = sequence.none? { number =>
+    short_seen.append(number)
+    return number == 2
+}
+print(no_twos, short_seen)
+short_seen.clear()
+const one_even = sequence.one? { number =>
+    short_seen.append(number)
+    return number.even?()
+}
+print(one_even, short_seen)
+print(
+    sequence.all? { number => number > 0 },
+    sequence.none? { number => number < 0 },
+    sequence.one? { number => number == 3 },
+    sequence.count_where { number => number.even?() }
+)
+const empty_numbers: [Int] = []
+print(
+    empty_numbers.any? { number => number > 0 },
+    empty_numbers.all? { number => number > 0 },
+    empty_numbers.none? { number => number > 0 },
+    empty_numbers.one? { number => number > 0 },
+    empty_numbers.count_where { number => number > 0 }
+)
+
 # An empty list takes its type from context.
 var names: [Int] = []
 print(names, names == [])
