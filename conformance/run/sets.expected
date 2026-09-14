@@ -5,6 +5,8 @@ true false
 red
 blue
 ["RED", "BLUE"]
+0 red
+1 blue
 {1, 2, 3}
 true
 {} true

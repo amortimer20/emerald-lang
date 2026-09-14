@@ -5892,7 +5892,8 @@ fn typeOfMethodCall(
             try self.requireEligibleMember(member_type, member.name_span);
             return Type.setOf(self.arena, member_type);
         }
-        if (std.mem.eql(u8, member.name, "each")) return self.typeOfEach(call, member, base);
+        if (std.mem.eql(u8, member.name, "each")) return self.typeOfEach(call, member, base, false);
+        if (std.mem.eql(u8, member.name, "each_with_index")) return self.typeOfEach(call, member, base, true);
         if (std.mem.eql(u8, member.name, "map")) return self.typeOfMap(call, member, base);
         if (std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject")) {
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
@@ -6053,15 +6054,24 @@ fn typeOfOr(
 /// except a body that is a single expression producing a value, which is
 /// section 5.2's unused result and is almost always a `map` written as an
 /// `each`.
-fn typeOfEach(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
-    const block = try self.requireBlock(call, member, base, .invalid) orelse return .nothing;
+fn typeOfEach(
+    self: *Checker,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    base: Type,
+    with_index: bool,
+) Error!Type {
+    const block = if (with_index)
+        try self.requireIndexedBlock(call, member, base) orelse return .nothing
+    else
+        try self.requireBlock(call, member, base, .invalid) orelse return .nothing;
     if (block.data == .lambda and block.data.lambda.body == .expression) {
         const body = block.data.lambda.body.expression;
         if (body.data != .call) {
             try self.report(
                 body.span,
-                "this block produces a value, and `each` does not use it",
-                .{},
+                "this block produces a value, and `{s}` does not use it",
+                .{member.name},
                 "Use `map` to collect the results into a list, or do something with each element here.",
             );
         }
@@ -6109,7 +6119,8 @@ fn typeOfMapMethod(
     const name = member.name;
 
     // Shared by both, and by lists.
-    if (std.mem.eql(u8, name, "each")) return self.typeOfEach(call, member, base);
+    if (std.mem.eql(u8, name, "each")) return self.typeOfEach(call, member, base, false);
+    if (std.mem.eql(u8, name, "each_with_index")) return self.typeOfEach(call, member, base, true);
     if (std.mem.eql(u8, name, "map")) return self.typeOfMap(call, member, base);
     if (std.mem.eql(u8, name, "empty?")) {
         _ = try self.requireArity(member, call.arguments, 0, 0);
@@ -6447,6 +6458,47 @@ fn requireBlock(
             "`{s}` needs a block, but this is {f}",
             .{ member.name, actual },
             "Write the block after the method, as in `numbers.each { number => print(number) }`.",
+        );
+        return null;
+    }
+    return block;
+}
+
+/// Section 8.6's `each_with_index`: one logical collection item, followed by
+/// its zero-based position in that collection's deterministic traversal order.
+fn requireIndexedBlock(
+    self: *Checker,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    base: Type,
+) Error!?*const Ast.Expression {
+    if (call.arguments.len != 1) {
+        try self.report(
+            member.name_span,
+            "`{s}` takes 1 block, but this call passes {d} argument{s}",
+            .{ member.name, call.arguments.len, if (call.arguments.len == 1) "" else "s" },
+            "Write the block after the method, as in `numbers.each_with_index { number, index => print(index, number) }`.",
+        );
+        try self.typeArguments(call.arguments);
+        return null;
+    }
+
+    const parameters = try self.arena.alloc(Type, 2);
+    parameters[0] = try self.itemType(base);
+    parameters[1] = .int;
+    const expected = try Type.functionOf(self.arena, .{
+        .parameters = parameters,
+        .return_type = .invalid,
+    });
+
+    const block = call.arguments[0];
+    const actual = try self.typeOfExpected(block, expected);
+    if (actual.kind != .function and actual.kind != .invalid) {
+        try self.report(
+            block.span,
+            "`{s}` needs a block, but this is {f}",
+            .{ member.name, actual },
+            "Write the block after the method, as in `numbers.each_with_index { number, index => print(index, number) }`.",
         );
         return null;
     }

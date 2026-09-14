@@ -41,6 +41,13 @@ const even = sequence.filter { number =>
 const odd = sequence.reject { number => number.even?() }
 print(even, odd, calls, sequence)
 
+# Traversal positions are zero-based and do not change the list.
+var indexed: [Int] = []
+sequence.each_with_index { number, index =>
+    indexed.append(number + index)
+}
+print(indexed, sequence)
+
 # An empty list takes its type from context.
 var names: [Int] = []
 print(names, names == [])

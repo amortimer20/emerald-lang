@@ -1409,6 +1409,12 @@ left to right, returns a new List in input order, and leaves the receiver unchan
 `filter` keeps the items whose predicate is true; `reject` keeps those whose predicate is
 false. Dictionary and Set forms are deferred with their broader transformation vocabulary.
 
+`each_with_index` is available on Lists, Dictionaries, and Sets. It returns `Nothing` and
+calls its block once for each logical item, left to right, with that item followed by its
+zero-based `Int` position. A Dictionary's first argument remains its destructurable
+`(key, value)` entry. Its positions therefore follow List order and the deterministic
+insertion order of Dictionaries and Sets.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs

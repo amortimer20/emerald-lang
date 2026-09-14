@@ -1,0 +1,8 @@
+diagnostics/each-with-index.em:1:24: this lambda takes 1 value, but it will be given 2
+  [1, 2].each_with_index { number => print(number) }
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Match the number of parameters to the number of values passed to it.
+diagnostics/each-with-index.em:2:8: `each_with_index` takes 1 block, but this call passes 0 arguments
+  [1, 2].each_with_index()
+         ^^^^^^^^^^^^^^^
+Write the block after the method, as in `numbers.each_with_index { number, index => print(index, number) }`.

@@ -12,6 +12,9 @@ Ava 1
 Mia 9
 Zed 40
 ["Ava=1", "Mia=9", "Zed=40"]
+0 Ava 1
+1 Mia 9
+2 Zed 40
 true
 false
 [:] true

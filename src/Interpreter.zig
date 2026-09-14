@@ -3570,7 +3570,7 @@ fn callOr(
     return widen(try self.evaluate(call.arguments[0]), kindOf(present));
 }
 
-/// Section 8.5's `each` and section 8.6's `map`.
+/// Section 8.5's `each` and section 8.6's callback collection methods.
 ///
 /// The receiver is held for the whole traversal, so the list being visited
 /// cannot change underneath it: a block that changes the same variable finds
@@ -3728,7 +3728,7 @@ fn callHigherOrder(
         break :blk built.?;
     } else receiver.data.list.items.items;
 
-    const Kind = enum { each, map, filter, reject, find, find_index };
+    const Kind = enum { each, each_with_index, map, filter, reject, find, find_index };
     const kind = std.meta.stringToEnum(Kind, member.name).?;
 
     const collected: ?*Heap.List = switch (kind) {
@@ -3740,8 +3740,13 @@ fn callHigherOrder(
     errdefer self.heap.release(result);
 
     for (items, 0..) |item, index| {
-        const argument = [_]Value{Heap.retain(item)};
-        const produced = try self.invokeClosure(expression.span, closure, callable, &argument);
+        const produced = if (kind == .each_with_index) blk: {
+            const arguments = [_]Value{ Heap.retain(item), .initInt(@intCast(index)) };
+            break :blk try self.invokeClosure(expression.span, closure, callable, &arguments);
+        } else blk: {
+            const argument = [_]Value{Heap.retain(item)};
+            break :blk try self.invokeClosure(expression.span, closure, callable, &argument);
+        };
         if (collected) |list| {
             if (kind == .map) {
                 list.items.appendAssumeCapacity(produced);
@@ -3754,7 +3759,7 @@ fn callHigherOrder(
             }
             continue;
         }
-        if (kind == .each) {
+        if (kind == .each or kind == .each_with_index) {
             self.heap.release(produced);
             continue;
         }
@@ -3790,7 +3795,7 @@ fn callMethod(
     // value that may be absent.
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     // A block, on a list, a dictionary, or a set.
-    if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "map") or
+    if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "map") or
         std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or
         std.mem.eql(u8, member.name, "find") or std.mem.eql(u8, member.name, "find_index"))
     {

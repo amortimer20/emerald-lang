@@ -23,6 +23,9 @@ for (name, age) in ages {
     print(name, age)
 }
 print(ages.map { (name, age) => "#{name}=#{age}" })
+ages.each_with_index { (name, age), index =>
+    print(index, name, age)
+}
 
 ## Section 8.4: contents decide equality, not insertion order.
 print(["a": 1, "b": 2] == ["b": 2, "a": 1])

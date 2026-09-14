@@ -14,6 +14,9 @@ for colour in seen {
     print(colour)
 }
 print(seen.map { colour => colour.upper() })
+seen.each_with_index { colour, index =>
+    print(index, colour)
+}
 
 ## Without an expected set type, brackets build a list, so 8.2 names this.
 print([1, 2, 2, 3].to_set())
