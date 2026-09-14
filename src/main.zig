@@ -30,7 +30,8 @@ const usage =
     \\  format          rewrite a file, or its project, in the canonical style
     \\  format --check  report which files would change, without writing them
     \\  repl            start an interactive session
-    \\  lsp             start a language server over stdio
+    \\  lsp             start a language server over stdio (an optional
+    \\                  trailing --stdio is accepted and ignored)
     \\
 ;
 
@@ -69,9 +70,14 @@ pub fn main(init: std.process.Init) !u8 {
 
     if (command == .lsp) {
         // Like `repl`, `emerald lsp` names no file: it serves whatever
-        // documents the editor opens over stdio (18.5).
-        if (args.len != 2) return misuse(io);
-        return executeLsp(gpa, io);
+        // documents the editor opens over stdio (18.5). stdio is the only
+        // transport this implements, but an optional trailing `--stdio` is
+        // still accepted and ignored: LSP clients (`vscode-languageclient`
+        // included) that support multiple transports conventionally pass it
+        // to select this one explicitly, even when a server offers no other.
+        if (args.len == 2) return executeLsp(gpa, io);
+        if (args.len == 3 and std.mem.eql(u8, args[2], "--stdio")) return executeLsp(gpa, io);
+        return misuse(io);
     }
 
     if (args.len != 3) return misuse(io);

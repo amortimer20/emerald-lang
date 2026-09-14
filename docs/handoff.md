@@ -389,7 +389,24 @@ knowing" below.
   safe rename, and completion (see the milestone paragraph above for what each needs);
   `$/cancelRequest` and genuinely concurrent request handling (one message is processed
   at a time, synchronously); incremental (range-based) `didChange` sync, full-document
-  sync only; a real editor/VS Code extension round-trip.
+  sync only.
+- **A real editor round-trip (via `../emerald-vscode`) found a real bug the hand-framed
+  JSON-RPC testing above could not have caught: `emerald lsp` rejected the exact command
+  line a real LSP client uses.** `vscode-languageclient`'s `Executable` transport
+  unconditionally appends `--stdio` to the server's arguments for `TransportKind.stdio`
+  (the ecosystem convention for servers that support more than one transport, even
+  though this one only ever offers stdio) — so the real invocation is `emerald lsp
+  --stdio`, not the bare `emerald lsp` every manual test above used. `main.zig`'s arg
+  count check treated the extra argument as misuse, printed the usage text, and exited
+  64, which `vscode-languageclient` reports as a cryptic `Pending response rejected
+  since connection got disposed` (and, after five failures in three minutes, gives up
+  restarting the server entirely) — nothing about that message points at "wrong
+  argument count" without reading the actual `Server process exited with code 64` /
+  usage-text lines above it in the "Emerald Language Server" output channel. Fixed by
+  accepting and ignoring an optional trailing `--stdio` after `lsp`. Lesson for next
+  time: a hand-framed stdio test exercises the protocol but not the real argv a client
+  spawns the server with — worth checking that separately before calling an LSP slice
+  done.
 
 ### REPL decisions worth knowing
 
