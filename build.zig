@@ -54,6 +54,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_conformance = b.addRunArtifact(conformance_tests);
 
+    // `Repl.zig` is `main.zig`'s sibling, not `emerald_module`'s, so its own
+    // tests (the completeness heuristic) need their own module: `zig build
+    // test`'s module-based test discovery, unlike plain `zig test <file>`,
+    // does not walk into a root's own `@import`s on its own.
+    const repl_module = b.createModule(.{
+        .root_source_file = b.path("src/Repl.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "emerald", .module = emerald_module }},
+    });
+    const repl_tests = b.addTest(.{
+        .name = "emerald-repl",
+        .root_module = repl_module,
+    });
+    const run_repl_tests = b.addRunArtifact(repl_tests);
+
     // `zig build unicode-conformance -- <database directory>` checks all of
     // Unicode's NormalizationTest.txt, which is too large to commit. Part of
     // regenerating the Unicode tables; see tools/unicode/generate.zig.
@@ -73,6 +89,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_conformance.step);
+    test_step.dependOn(&run_repl_tests.step);
     addCliTests(b, exe, test_step);
 }
 

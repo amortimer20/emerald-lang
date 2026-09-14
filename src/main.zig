@@ -7,6 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const emerald = @import("emerald");
+const Repl = @import("Repl.zig");
 
 /// Section 18.1 fixes these, so they are named rather than written as bare numbers.
 const ExitCode = enum(u8) {
@@ -27,10 +28,11 @@ const usage =
     \\  test            report problems, then run every @test function
     \\  format          rewrite a file, or its project, in the canonical style
     \\  format --check  report which files would change, without writing them
+    \\  repl            start an interactive session
     \\
 ;
 
-const Command = enum { check, run, @"test", format };
+const Command = enum { check, run, @"test", format, repl };
 
 /// The allocator a program's runtime work goes through. Zig's default for a
 /// ReleaseSafe build without libc is its leak-checking debug allocator, which
@@ -45,7 +47,7 @@ pub fn main(init: std.process.Init) !u8 {
     const io = init.io;
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len < 3) return misuse(io);
+    if (args.len < 2) return misuse(io);
 
     const command = std.meta.stringToEnum(Command, args[1]) orelse return misuse(io);
 
@@ -55,6 +57,12 @@ pub fn main(init: std.process.Init) !u8 {
         if (args.len == 3) return executeFormat(gpa, io, args[2], false);
         if (args.len == 4 and std.mem.eql(u8, args[2], "--check")) return executeFormat(gpa, io, args[3], true);
         return misuse(io);
+    }
+
+    if (command == .repl) {
+        // Unlike every other command, `emerald repl` names no file (18.1).
+        if (args.len != 2) return misuse(io);
+        return executeRepl(gpa, io);
     }
 
     if (args.len != 3) return misuse(io);
@@ -94,8 +102,9 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
         .check => emerald.checkProject(gpa, &project),
         .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface }),
         .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface }),
-        // `main` routes `format` to `executeFormat` before this is reached.
-        .format => unreachable,
+        // `main` routes `format` and `repl` to their own functions before
+        // this is reached.
+        .format, .repl => unreachable,
     };
     var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();
@@ -182,6 +191,27 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
 
 /// A failure of Emerald itself rather than of the program, which section 18.1
 /// keeps apart from source and runtime errors with its own status.
+/// `emerald repl` (18.4). Both the REPL's own prompt-reading and any typed
+/// code's `input()` calls read from this one shared, long-lived stdin
+/// stream — see `Repl.run`'s doc comment.
+fn executeRepl(gpa: std.mem.Allocator, io: std.Io) !u8 {
+    var out_buffer: [4096]u8 = undefined;
+    var out = std.Io.File.stdout().writerStreaming(io, &out_buffer);
+    var in_buffer: [4096]u8 = undefined;
+    var in = std.Io.File.stdin().readerStreaming(io, &in_buffer);
+
+    Repl.run(gpa, &in.interface, &out.interface) catch |err| switch (err) {
+        error.OutOfMemory => return internalFailure(io, error.OutOfMemory),
+        error.WriteFailed => return internalFailure(io, error.WriteFailed),
+        error.ReadFailed => {
+            try writeAll(io, .stderr, "emerald: could not read from the terminal\n");
+            return @intFromEnum(ExitCode.internal_failure);
+        },
+        error.StackUnavailable => return internalFailure(io, error.StackUnavailable),
+    };
+    return @intFromEnum(ExitCode.success);
+}
+
 fn internalFailure(io: std.Io, err: emerald.Error) !u8 {
     const message = switch (err) {
         error.OutOfMemory => "emerald: ran out of memory\n",

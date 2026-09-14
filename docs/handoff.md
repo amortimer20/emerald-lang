@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-14. Prepared after the canonical formatter's adversarial review (slice 15).
+Updated: 2026-09-14. Prepared after the REPL (slice 15).
 
 ## Current milestone
 
@@ -290,6 +290,10 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - `src/Formatter.zig` is section 18.3's canonical formatter, `emerald.zig`'s
   `formatProject` the pipeline that reaches it, and `main.zig`'s `format`/`format --check`
   the CLI. See "Formatter decisions worth knowing" below.
+- `src/Repl.zig` is section 18.4's `emerald repl`, and `main.zig`'s `executeRepl` the CLI
+  entry point. Unlike every other stage, it is not `emerald.zig`'s: it calls the existing,
+  unmodified `emerald.run` directly rather than adding anything to the shared pipeline. See
+  "REPL decisions worth knowing" below.
 
 Section 20's slice 15, part 1 (the canonical formatter) is complete, and its adversarial
 review (structs, classes, traits, enums, `case`, `try`/`catch`, tuples, destructuring,
@@ -306,6 +310,90 @@ after being formatted; and `zig build test` passes in Debug and ReleaseSafe with
 `conformance/format/` cases (including one added by the review), `Formatter.zig`'s own unit
 tests, and CLI contract tests for the new command alongside everything else. The REPL and
 LSP remain queued to follow the formatter, per the roadmap; see "Next concrete step".
+
+`src/Repl.zig` is section 18.4's `emerald repl`, complete. It keeps declarations and
+values across entries, prints a bare expression's value, enforces the ordinary binding
+rules (redeclaration and `const` reassignment rejected, `var` reassignment allowed) with
+no REPL-specific logic at all, and clears with `:reset`. See "REPL decisions worth
+knowing" below for how, and for one subtle, genuinely hard-won bug found while building
+it. The LSP remains queued next, per the roadmap.
+
+### REPL decisions worth knowing
+
+- **A session is one single, always-growing "entry" file, re-run from scratch by the
+  unmodified pipeline on every accepted entry — not a persistent interpreter.** Explored
+  first and rejected: threading `Interpreter.run`'s heap and module scope across separate
+  calls, since nothing about them survives past one call today (`defer
+  interpreter.heap.deinit()` runs unconditionally), and reconciling `Checker.check`'s
+  `Type.User` — compared by pointer, rebuilt fresh every call — across repeated calls
+  would be a genuine correctness hazard, not just a performance one. Modeling the session
+  as one growing file instead sidesteps 14.1's one-entry-file restriction entirely (there
+  is only ever one file, always the entry) and gives every binding rule for free, at the
+  cost of redoing the whole session's work on every entry — invisible at typing speed,
+  and exactly correct rather than an approximation, since every language feature that
+  exists today is observable only through `print`/`input` (no clock, filesystem, network,
+  or randomness).
+- **A bare expression is rejected by the parser, not the checker** — found while wiring
+  the "wrap a bare expression in `print(...)`" rule, which first assumed the opposite.
+  `Parser.finishExpressionStatement` enforces 5.2's "only a call" rule immediately: a
+  non-call expression statement never becomes an AST node to inspect, it becomes a parse
+  diagnostic, "this result is never used." A REPL entry that is exactly this one
+  diagnostic, with nothing else parsed alongside it, is section 18.4's "a bare
+  expression"; the entry's own literal source text is wrapped in `print(...)` and tried
+  again, rather than the classifier ever inspecting an `Expression.Data` shape that the
+  parser does not actually produce for this case.
+- **Two different diagnostic shapes both mean "ran out of input," and only one of them is
+  positioned at true end-of-file.** A closing delimiter expected somewhere other than a
+  block's `}` (a call's `)`, an index's `]`, ...) is reported as `"expected ... found {s}"`
+  at the lexer's one always-present, zero-width `.eof` token — structurally checkable by
+  position alone. A `{ ... }` body — a block, `case`, or lambda — instead reports "this
+  block/`case`/lambda is never closed" at its *opening* brace, so the reader sees which
+  block is unclosed rather than only "found EOF"; each is only ever reached after its own
+  parse loop breaks specifically on `.eof`, so the message text alone is exactly as
+  reliable a signal here as position is for the other family. The lexer has its own,
+  analogous pair: `"this block comment is never closed"` and `"this string is never
+  closed"` both fire only when the scanner runs off the true end of input — except the
+  string message is shared with a single-quoted or raw string illegally spanning a bare
+  newline (a permanent error, since neither may span a line by grammar), told apart from
+  a genuinely incomplete triple-quoted string only by the reported span's length (1 byte
+  for the single-character delimiter, 3 for `"""`), not by its text.
+- **The replay reader's costliest bug: pulling more from the live stream than the current
+  read strictly needs strands the surplus somewhere that gets thrown away.** The first
+  version forwarded whatever `limit` its caller passed straight to the live reader,
+  bounded only by its own scratch buffer's capacity — large enough, in practice, to drain
+  an entire waiting line (or more) from the terminal in one call, since a pipe or terminal
+  buffer commonly hands over everything available at once. Those extra bytes landed in
+  the `ReplayReader`'s own per-turn buffer, a stack local discarded at the end of that one
+  `tryEntry` call — permanently gone from the *one shared, long-lived* reader that both
+  the REPL's own prompt-reading and every entry's `input()` share for the whole session.
+  Symptom: typing an `input()`-driven entry followed by ordinary code silently ate the
+  following lines and ended the session at the next prompt, as if Ctrl-D had been pressed.
+  The fix — request at most one byte at a time from the live reader specifically,
+  regardless of what the caller's own limit allows, per the vtable's explicit invitation
+  to make short reads — costs nothing in practice, since the live reader's *own* buffering
+  (already relied on elsewhere, e.g. `Interpreter.evaluateInput`'s `peekGreedy`/`toss`)
+  absorbs the real cost of talking to the terminal one syscall at a time, not one byte at
+  a time. Replaying already-recorded bytes needed no such care, since re-serving a large
+  chunk from an in-memory slice never destroys anything a later read might still want.
+- **`zig build`'s module-based test discovery does not walk a root's own `@import`s the
+  way plain `zig test <file>` does.** `Repl.zig`'s own tests were invisible to `zig build
+  test` until they got their own module (`repl_module` in `build.zig`, mirroring
+  `conformance_module`'s shape) rather than relying on `main.zig`'s `@import("Repl.zig")`
+  to pull them in — confirmed by first adding a trivial test directly in `main.zig`
+  (found immediately) and then one of `Repl.zig`'s (invisible, `pub` on the import made no
+  difference either) before landing on the fix.
+- **Checked.** Every fix above was confirmed non-vacuous by reverting it and observing the
+  specific behavior break under manual interactive testing (piped stdin scripts covering
+  every scenario in this slice's plan) before restoring it; `Repl.zig`'s own unit tests
+  cover the completeness heuristic's every branch, including both "never closed" families
+  and the single-quoted/triple-quoted string distinction, and are wired into `zig build
+  test` via `repl_module`.
+- **Deferred**, matching this slice's scope: an interpolation left open across a physical
+  newline is a hard error rather than "keep typing," since the lexer's diagnostic for it
+  does not distinguish that case from a single-line string illegally spanning a newline;
+  no custom Ctrl-C handling, so the terminal's default (process exit) applies; and
+  performance is O(session length) per entry (a full replay every turn), invisible at
+  human typing speed and revisited only if a real session ever feels slow.
 
 ### Formatter decisions worth knowing
 
@@ -1638,15 +1726,25 @@ standard-library part would be List `filter_map`, applying the existing optional
 rule carefully, with `Iterable` and the advanced String operations listed below still
 deferred rather than incomplete work in this slice.
 
-The user chose to begin slice 15 instead, and it is complete through its adversarial
-review: struct, class, trait, and enum declarations and their members, `case`/`when`,
-`try`/`catch`/`finally`, `raise`, `assert`, tuples, destructuring, dictionaries, sets, list
-literals, lambdas, `is`, qualified names/`using`, optional and function types, and every
-literal form each held up under small, adversarial `.em` programs in Debug and
-ReleaseSafe; the review's own two findings — a trailing-block call's parentheses needing
-to survive in an `if`/`while`/`for`/`case` header — are fixed and guarded. See "Formatter
-decisions worth knowing" above. The REPL and LSP are next, per the roadmap, whenever the
-user chooses to start them; nothing further is queued specifically for the formatter.
+The user chose to begin slice 15 instead. The formatter is complete through its
+adversarial review: struct, class, trait, and enum declarations and their members,
+`case`/`when`, `try`/`catch`/`finally`, `raise`, `assert`, tuples, destructuring,
+dictionaries, sets, list literals, lambdas, `is`, qualified names/`using`, optional and
+function types, and every literal form each held up under small, adversarial `.em`
+programs in Debug and ReleaseSafe; the review's own two findings — a trailing-block
+call's parentheses needing to survive in an `if`/`while`/`for`/`case` header — are fixed
+and guarded. See "Formatter decisions worth knowing" above.
+
+The REPL is also complete: `emerald repl` keeps declarations and values across entries,
+prints a bare expression's value, and clears with `:reset`, all manually verified
+interactively (a `var`/`const` declaration read back later; reassigning a `var` and
+rejecting a `const` reassignment or a redeclaration; a bare expression and an ordinary
+call statement, side by side; a multi-line `{`/`(`/`[`/block-comment/triple-quoted-string
+entry; a genuine syntax error not affecting later entries; an uncaught runtime error
+followed by the session continuing normally; two sequential `input()` calls across
+separate entries, replaying correctly on a later turn; `:reset`; a clean Ctrl-D exit); see
+"REPL decisions worth knowing" above. The LSP is next, per the roadmap, whenever the user
+chooses to start it; nothing further is queued specifically for the formatter or the REPL.
 
 Slice 16 is queued as one test-infrastructure and hardening pass: CI for Debug and
 ReleaseSafe with the pinned Zig version, allocator-failure testing, lexer/parser fuzzing,
@@ -1661,6 +1759,17 @@ off. Deferred language features in section 21 remain deferred.
 
 ## Validation and blockers
 
+- The REPL (slice 15) was checked in Debug and ReleaseSafe: `zig build test` passes both,
+  including `Repl.zig`'s own unit tests for the completeness heuristic (wired in as
+  `repl_module`/`emerald-repl` in `build.zig`, since module-based test discovery does not
+  walk into `main.zig`'s own `@import`s on its own). Beyond the suite, every scenario in
+  this slice's plan was driven manually through piped stdin scripts, listed in "Next
+  concrete step" above. One real bug was caught only this way: the replay reader's first
+  version could silently drain far more of the shared stdin stream than one `input()`
+  call actually needed, stranding the surplus in a buffer discarded at the end of that
+  turn and permanently losing it from the one shared reader every later prompt and
+  `input()` call depends on — the symptom was a session that quietly ended, as if Ctrl-D
+  had been pressed, right after any entry that called `input()`.
 - The formatter (slice 15) was checked in Debug and ReleaseSafe: `zig build test` passes
   both, including `Formatter.zig`'s own unit tests (blank-line collapsing, a same-line
   trailing comment, a block comment's verbatim interior, both parenthesization cases
