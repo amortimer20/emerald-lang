@@ -2578,6 +2578,13 @@ fn assignmentTarget(self: *Parser, expression: *const Ast.Expression) Error!Targ
             else => break,
         }
     }
+    if (current.data == .call and steps.items.len > 0) {
+        return self.report(
+            expression.span,
+            "an assignment has to start from a name, not a call",
+            "Keep what the call gives in a name first, as in `const found = find()`, then assign through it, as in `found.score = 1`. When it is an object, the change reaches the same object.",
+        );
+    }
     if (current.data != .name) {
         return self.report(
             expression.span,

@@ -349,7 +349,9 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   struct method (`callStructMethod`), and a changing list or dictionary method
   (`callChangingMethod`) work from there, so no binding is taken while they run. A setter at
   the end of the path runs on what it reaches; for a struct inside an object the setter or
-  changing method works on a copy stored back afterwards. A temporary root is evaluated
+  changing method takes the object's field out while it runs (`changeInObject`, with
+  `taken_fields` checked where a field is read or written), a rule the object model review
+  added in place of storing a copy back. A temporary root is evaluated
   (`temporaryRoot`), which is how `make().items.append(x)` works.
 - **The checker's `const` rule stops at an object.** `resolvePlace` now returns
   `Place.Typed` with `reference` (an object was crossed) and `frozen` (the first `const`
@@ -1369,6 +1371,23 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 | 5 | Nested tuple patterns and parser changes | Done: nesting held everywhere; a trailing comma in a pattern and a standalone lambda that unpacks a tuple (both older) fixed |
 | 6 | Diagnostics across all four slices | Done: a variable declared below a nested function is named as such, the "declared later" help names the variable, and the narrowing help mentions nested functions |
 
+## Third code review (the object model slices)
+
+Reviewing `8015cde..93cb720` (classes, inheritance, type tests, traits, `Self` and operators,
+enums and `case`) in seven chunks, inline, adversarially: each claim is attacked with small
+`.em` programs in Debug and ReleaseSafe, every confirmed problem gets a fix and a conformance
+case, and design questions are decided by the reviewer.
+
+| # | Scope | Status |
+| --- | --- | --- |
+| 1 | Classes: sharing through every place and method path, the `const` boundary, identity, cycles in display and the collector, blocks and nested functions using `self` | Done: releasing a long object chain no longer overflows the stack (`Heap.max_release_depth` leaves the rest to the collector); a struct in an object's field is now taken out while a changing method or setter runs, instead of a copy silently overwriting changes made meanwhile; assigning through a call gets a message saying to name the result first |
+| 2 | Inheritance: construction order, `super`, overrides and abstract dispatch, defaults through overrides, the build-depth guard | Pending |
+| 3 | Type tests: `is` at runtime, narrowing through `and`/`or` and reassignment, `type_name` | Pending |
+| 4 | Traits: conformance and conflicts, dispatch and value semantics through trait values, change inference, `Trait.method` | Pending |
+| 5 | `Self`, operators, and the prelude: substitution, adoption through classes, shadowing, captures | Pending |
+| 6 | Enums and `case`: coverage, flow analysis, runtime matching, the lexer's brace change | Pending |
+| 7 | Diagnostics across all six slices | Pending |
+
 ## Next concrete step
 
 Enums and `case` are in, which finishes section 20's slice 12, the object model. Slice 13
@@ -1443,6 +1462,12 @@ easier to design once there are types to raise.
   `addExecutable` and `addTest` take a `root_module` built by `b.createModule`.
 
 ### Deferred
+
+- From the object model review: assignment through a call's result, as in
+  `find().score += 1`. Changing methods already work on a temporary, but assignment is
+  checked from a named root; `const found = find()` first is the way to write it.
+- Displaying more than 256 objects nested inside one another shows the innermost as
+  `Name(...)`, the same notation as a cycle, since the display stack is fixed.
 
 - From section 4.4: the warning for a type test whose answer is known before the program
   runs, which needs diagnostics with a severity.

@@ -192,6 +192,9 @@ literal_types: *const Checker.LiteralTypes,
 /// it.
 heap: Heap,
 call_stack: std.ArrayList(Diagnostic.Frame) = .empty,
+/// Fields of objects whose struct a changing method or setter has taken out
+/// while it runs, innermost last (4.3, 10.1).
+taken_fields: std.ArrayList(TakenField) = .empty,
 /// Set by a `return` for `callFunction` to collect. `return` unwinds through
 /// `execute` as `error.Returned`, and this carries its value, the way
 /// `failure` carries `error.Raised`'s.
@@ -409,6 +412,7 @@ pub fn run(
     // error unwinds through it, so only the lists themselves are left.
     defer interpreter.scopes.deinit(gpa);
     defer interpreter.call_stack.deinit(gpa);
+    defer interpreter.taken_fields.deinit(gpa);
     // A recycled environment is out of the heap's live list, so it is this
     // list's to free.
     defer {
@@ -892,6 +896,73 @@ fn assignThroughSuper(self: *Interpreter, assignment: Ast.Assignment, setter: []
 /// before it on the path is copied, and no binding is taken while it changes.
 const InObject = struct { object: Value, rest: []const PlaceStep };
 
+/// Section 4.3's exclusivity, for a struct held in an object's field: a
+/// changing method or setter reached through the object takes the field's
+/// value out while it runs, as it takes a variable's, so that code reaching the
+/// field another way meanwhile is an error rather than a change the call then
+/// overwrites.
+const TakenField = struct {
+    object: *const Heap.StructValue,
+    position: usize,
+    change: Heap.Binding.Change,
+};
+
+/// Raises when the object field is taken by a running call.
+fn requireFieldFree(self: *Interpreter, span: Source.Span, instance: *const Heap.StructValue, position: usize) Error!void {
+    if (self.taken_fields.items.len == 0 or !instance.descriptor.class) return;
+    for (self.taken_fields.items) |taken| {
+        if (taken.object == instance and taken.position == position) {
+            return self.raiseChanging(span, instance.descriptor.fields[position].name, taken.change);
+        }
+    }
+}
+
+/// Runs `callable`, a changing method or setter whose `self` is reached from
+/// `object` through `rest`, with the object's field at `rest[0]` taken out
+/// meanwhile, and stores what `self` holds at the end back. `callable` takes
+/// over `arguments`.
+fn changeInObject(
+    self: *Interpreter,
+    span: Source.Span,
+    object: *Heap.StructValue,
+    rest: []const PlaceStep,
+    callable_in: Callable,
+    arguments: []const Value,
+    change: Heap.Binding.Change,
+) Error!Value {
+    var callable = callable_in;
+    const position = fieldPosition(object, rest[0].field).?;
+    self.requireFieldFree(span, object, position) catch |err| {
+        for (arguments) |argument| self.heap.release(argument);
+        return err;
+    };
+    var root = object.fields[position];
+    object.fields[position] = Value.nothing;
+    defer object.fields[position] = root;
+    try self.taken_fields.append(self.gpa, .{ .object = object, .position = position, .change = change });
+    defer _ = self.taken_fields.pop();
+
+    if (rest.len == 1) {
+        callable.self_value = root;
+        root = Value.nothing;
+    } else {
+        callable.self_value = self.elementValue(span, &root, rest[1..]) catch |err| {
+            for (arguments) |argument| self.heap.release(argument);
+            return err;
+        };
+    }
+    var changed: Value = Value.nothing;
+    callable.self_out = &changed;
+    const result = try self.invoke(span, callable, arguments);
+    errdefer self.heap.release(result);
+    if (rest.len == 1) {
+        root = changed;
+    } else {
+        try self.storeElement(span, &root, rest[1..], changed);
+    }
+    return result;
+}
+
 fn objectOnPath(root: Value, steps: []const PlaceStep) ?InObject {
     var found: ?InObject = null;
     var at = root;
@@ -923,8 +994,8 @@ fn objectOnPath(root: Value, steps: []const PlaceStep) ?InObject {
 
 /// Stores `value` through the steps that continue from an object, taking over
 /// one holder of it. A setter at the end runs on what the steps reach: an
-/// object shares itself, and a struct inside one is changed as a copy and
-/// stored back, since nothing marks the object as in use while it runs.
+/// object shares itself, and a struct inside one is taken out of the object's
+/// field while the setter runs and stored back.
 fn storeInObject(self: *Interpreter, span: Source.Span, in_object: InObject, value: Value) Error!void {
     var object = Heap.retain(in_object.object);
     defer self.heap.release(object);
@@ -949,15 +1020,13 @@ fn storeInObject(self: *Interpreter, span: Source.Span, in_object: InObject, val
         return err;
     };
     var callable = self.namedCallable(property.setter.?);
-    callable.self_value = owner;
     const arguments = [_]Value{value};
     if (instance.descriptor.class) {
+        callable.self_value = owner;
         return self.heap.release(try self.invoke(span, callable, &arguments));
     }
-    var changed: Value = Value.nothing;
-    callable.self_out = &changed;
-    self.heap.release(try self.invoke(span, callable, &arguments));
-    return self.storeElement(span, &object, prefix, changed);
+    self.heap.release(owner);
+    return self.heap.release(try self.changeInObject(span, object.data.struct_value, prefix, callable, &arguments, .{ .name = name, .setter = true }));
 }
 
 /// The position of `name` among a struct instance's fields, or null when it
@@ -987,9 +1056,9 @@ fn elementValue(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
     for (steps) |step| switch (step) {
         .field => |name| {
             const instance = at.data.struct_value;
-            at = instance.fields[fieldPosition(instance, name) orelse {
-                return self.readProperty(span, at, name);
-            }];
+            const position = fieldPosition(instance, name) orelse return self.readProperty(span, at, name);
+            try self.requireFieldFree(span, instance, position);
+            at = instance.fields[position];
         },
         .index => |index| {
             if (at.data == .map) {
@@ -1022,6 +1091,10 @@ fn storeElement(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
             .field => |name| {
                 const position = fieldPosition(slot.data.struct_value, name) orelse
                     return self.storeProperty(span, slot, name, value);
+                self.requireFieldFree(span, slot.data.struct_value, position) catch |err| {
+                    self.heap.release(value);
+                    return err;
+                };
                 const instance = try self.heap.uniqueStruct(slot);
                 if (last) {
                     self.heap.release(instance.fields[position]);
@@ -1087,12 +1160,14 @@ fn storeProperty(self: *Interpreter, span: Source.Span, slot: *Value, name: []co
 /// The slot a path of indices and fields reaches, for a method that changes
 /// what it finds there. Every container on the way is made safe to change
 /// first.
-fn containerSlot(self: *Interpreter, root: *Value, steps: []const PlaceStep) Error!*Value {
+fn containerSlot(self: *Interpreter, span: Source.Span, root: *Value, steps: []const PlaceStep) Error!*Value {
     var slot = root;
     for (steps) |step| switch (step) {
         .field => |name| {
+            const position = fieldPosition(slot.data.struct_value, name).?;
+            try self.requireFieldFree(span, slot.data.struct_value, position);
             const instance = try self.heap.uniqueStruct(slot);
-            slot = &instance.fields[fieldPosition(instance, name).?];
+            slot = &instance.fields[position];
         },
         .index => |index| {
             if (slot.data == .map) {
@@ -1814,6 +1889,7 @@ fn evaluateProperty(self: *Interpreter, expression: *const Ast.Expression, membe
         const instance = base.data.struct_value;
         const position = fieldPosition(instance, member.name) orelse
             return self.readProperty(member.name_span, base, member.name);
+        try self.requireFieldFree(member.name_span, instance, position);
         return Heap.retain(instance.fields[position]);
     }
 
@@ -3537,8 +3613,8 @@ fn callChangingMethod(
     var slot = if (binding) |found| &found.value.? else &temporary.?;
     if (objectOnPath(slot.*, steps)) |in_object| {
         object = Heap.retain(in_object.object);
-        slot = try self.containerSlot(&object, in_object.rest);
-    } else if (steps.len > 0) slot = try self.containerSlot(slot, steps);
+        slot = try self.containerSlot(expression.span, &object, in_object.rest);
+    } else if (steps.len > 0) slot = try self.containerSlot(expression.span, slot, steps);
 
     if (slot.data == .map) {
         defer for (arguments) |argument| self.heap.release(argument);
@@ -3609,25 +3685,16 @@ fn callStructMethod(
     callable.omitted = bound.omitted;
     const arguments = bound.values;
 
-    // Section 10.1: a struct inside an object is changed as a copy and stored
-    // back into the object, which nothing marks as in use meanwhile.
+    // Section 10.1: a struct inside an object is taken out of the object's
+    // field while it changes, and stored back.
     const start: Value = if (temporary) |value| value else (self.placeBinding(self.rootName(path.root), path.root.span) catch |err| {
         for (arguments) |argument| self.heap.release(argument);
         return err;
     }).value.?;
     if (objectOnPath(start, path.steps)) |in_object| {
-        var object = Heap.retain(in_object.object);
+        const object = Heap.retain(in_object.object);
         defer self.heap.release(object);
-        callable.self_value = self.elementValue(path.root.span, &object, in_object.rest) catch |err| {
-            for (arguments) |argument| self.heap.release(argument);
-            return err;
-        };
-        var changed: Value = Value.nothing;
-        callable.self_out = &changed;
-        const result = try self.invoke(expression.span, callable, arguments);
-        errdefer self.heap.release(result);
-        try self.storeElement(expression.span, &object, in_object.rest, changed);
-        return result;
+        return self.changeInObject(expression.span, object.data.struct_value, in_object.rest, callable, arguments, .{ .name = member.name });
     }
     const root_name = self.rootName(path.root);
 
@@ -3693,7 +3760,7 @@ fn takeReceiver(
     // stays valid for the whole call. A root with no steps is its own slot.
     take.root_value = binding.value.?;
     binding.value = null;
-    const slot: *Value = if (take.steps.len == 0) &take.root_value else self.containerSlot(&take.root_value, take.steps) catch |err| {
+    const slot: *Value = if (take.steps.len == 0) &take.root_value else self.containerSlot(take.root.span, &take.root_value, take.steps) catch |err| {
         binding.value = take.root_value;
         return err;
     };

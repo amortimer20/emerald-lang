@@ -80,7 +80,8 @@ shared_logger.rename("two")
 print(shared_logger.log.lines)
 
 # A setter on an object, or on a struct inside one, can reach the object while
-# it runs: nothing is taken out, since the object is shared.
+# it runs, since the object is shared. Only the field a struct's setter is
+# changing is taken out meanwhile; see runtime-errors/object-field-taken.
 class Panel {
     var size: Size = Size(1)
     var label: String = ""
@@ -112,7 +113,7 @@ struct Size {
 
 const panel = Panel()
 func report() {
-    print("panel is", panel.label, panel.size.width)
+    print("panel is", panel.label)
 }
 panel.caption = "hello"
 panel.size.doubled = 10

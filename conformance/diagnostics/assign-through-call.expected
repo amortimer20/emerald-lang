@@ -1,0 +1,4 @@
+diagnostics/assign-through-call.em:12:1: an assignment has to start from a name, not a call
+  counter().count += 1
+  ^^^^^^^^^^^^^^^
+Keep what the call gives in a name first, as in `const found = find()`, then assign through it, as in `found.score = 1`. When it is an object, the change reaches the same object.

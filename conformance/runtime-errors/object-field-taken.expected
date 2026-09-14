@@ -1,0 +1,6 @@
+runtime-errors/object-field-taken.em:25:27: `home` is being changed by `add_twice`, so it cannot be used until that call finishes
+  board.home.add_twice { => board.home.count = 100 }
+                            ^^^^^^^^^^^^^^^^
+A method that changes a value has it to itself while it runs. Pass what the method needs as an argument instead of reaching for it another way.
+in a block, called at runtime-errors/object-field-taken.em:11:9
+in `add_twice`, called at runtime-errors/object-field-taken.em:25:1

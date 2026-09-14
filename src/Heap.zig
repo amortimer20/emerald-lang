@@ -267,6 +267,15 @@ collect_after: usize = minimum_threshold,
 /// The collector's worklist, kept between collections so that tracing rarely
 /// allocates after the first one.
 work: std.ArrayList(Object) = .empty,
+/// How many objects `release` is freeing inside one another right now.
+release_depth: u32 = 0,
+
+/// How deep `release` follows what a freed object held before leaving the
+/// rest to the collector. A chain of objects can be as long as a program
+/// makes it, a million `Node`s linked by `next`, and freeing each inside the
+/// last would exhaust the host stack. An object past this depth keeps a count
+/// of zero and stays in its live list, which is exactly what `sweep` frees.
+const max_release_depth = 1000;
 
 /// Small enough that the collector is exercised by ordinary programs and tests
 /// rather than only by large ones.
@@ -755,6 +764,9 @@ pub fn release(self: *Heap, value: Value) void {
         const closure = value.data.closure;
         closure.references -= 1;
         if (closure.references > 0) return;
+        if (self.release_depth >= max_release_depth) return;
+        self.release_depth += 1;
+        defer self.release_depth -= 1;
         for (closure.captured) |environment| self.releaseEnvironment(environment);
         self.release(closure.receiver);
         self.unlinkClosure(closure);
@@ -766,6 +778,9 @@ pub fn release(self: *Heap, value: Value) void {
         const tuple = value.data.tuple;
         tuple.references -= 1;
         if (tuple.references > 0) return;
+        if (self.release_depth >= max_release_depth) return;
+        self.release_depth += 1;
+        defer self.release_depth -= 1;
         for (tuple.items) |item| self.release(item);
         self.unlinkTuple(tuple);
         self.destroyTuple(tuple);
@@ -775,6 +790,9 @@ pub fn release(self: *Heap, value: Value) void {
         const map = value.data.map;
         map.references -= 1;
         if (map.references > 0) return;
+        if (self.release_depth >= max_release_depth) return;
+        self.release_depth += 1;
+        defer self.release_depth -= 1;
         for (map.entries.items) |entry| {
             self.release(entry.key);
             self.release(entry.value);
@@ -787,6 +805,9 @@ pub fn release(self: *Heap, value: Value) void {
         const instance = value.data.struct_value;
         instance.references -= 1;
         if (instance.references > 0) return;
+        if (self.release_depth >= max_release_depth) return;
+        self.release_depth += 1;
+        defer self.release_depth -= 1;
         for (instance.fields) |field| self.release(field);
         self.unlinkStruct(instance);
         self.destroyStruct(instance);
@@ -796,6 +817,9 @@ pub fn release(self: *Heap, value: Value) void {
     const list = value.data.list;
     list.references -= 1;
     if (list.references > 0) return;
+    if (self.release_depth >= max_release_depth) return;
+    self.release_depth += 1;
+    defer self.release_depth -= 1;
 
     for (list.items.items) |item| self.release(item);
     self.unlink(list);
@@ -832,6 +856,9 @@ fn unlinkClosure(self: *Heap, closure: *Closure) void {
 pub fn releaseEnvironment(self: *Heap, environment: *Environment) void {
     environment.references -= 1;
     if (environment.references > 0) return;
+    if (self.release_depth >= max_release_depth) return;
+    self.release_depth += 1;
+    defer self.release_depth -= 1;
     self.releaseBindings(environment);
     self.unlinkEnvironment(environment);
     environment.bindings.deinit(self.gpa);
@@ -1640,4 +1667,24 @@ test "a literal's text is never swept, however it is held" {
     heap.collect();
     try testing.expect(heap.live_texts == literal);
     try testing.expectEqualStrings("hello", literal.bytes);
+}
+
+test "releasing a chain longer than the release depth leaves the rest to the collector" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+
+    const metadata = [_]Value.StructType.Field{.{ .name = "next", .kind = .struct_value }};
+    const descriptor: Value.StructType = .{ .name = "Node", .display_name = "Node", .class = true, .fields = &metadata };
+    var head: Value = Value.nothing;
+    for (0..max_release_depth * 3) |_| {
+        const fields = try testing.allocator.alloc(Value, 1);
+        fields[0] = head;
+        head = .{ .data = .{ .struct_value = try heap.createStruct(&descriptor, fields) } };
+    }
+
+    heap.release(head);
+    try testing.expectEqual(@as(u32, 0), heap.release_depth);
+    try testing.expect(heap.live_structs != null);
+    heap.collect();
+    try testing.expect(heap.live_structs == null);
 }
