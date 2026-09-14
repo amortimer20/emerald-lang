@@ -255,6 +255,7 @@ fn analyze(
         &checked.structs,
         &checked.changing_methods,
         &checked.method_calls,
+        &checked.super_members,
         resolved.facts,
         running.out,
         running.in,

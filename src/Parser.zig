@@ -49,6 +49,10 @@ at_top_level: bool = true,
 nesting: u32 = 0,
 /// Whether the members being parsed are a class's rather than a struct's.
 in_class: bool = false,
+/// The type whose members are being parsed, and whether it names a base class
+/// with `extends`, which is what gives `super` a meaning (10.7).
+type_name: []const u8 = "",
+has_base: bool = false,
 /// Recursion that opens no delimiter: prefix `-` and `not`, the right side of
 /// `**`, and `else if`. Bounded separately so that it cannot eat into the 256
 /// delimiters section 3.4 promises, and so a very long chain of any of them is
@@ -397,6 +401,7 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             defer self.self_allowed = saved_self;
             break :blk try self.parseFunctionDeclaration();
         },
+        .at => self.parseAnnotatedStatement(),
         .keyword_struct, .keyword_class => blk: {
             const nested = !self.at_top_level;
             const keyword = self.peek();
@@ -438,6 +443,140 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
     };
 }
 
+/// Section 16.1's annotations, collected from the lines in front of a
+/// declaration. An unknown one is noted and skipped, so the declaration it was
+/// written on is still read.
+const Annotations = struct {
+    override: ?Source.Span = null,
+    abstract: ?Source.Span = null,
+};
+
+const known_annotations = [_][]const u8{ "override", "abstract", "test" };
+
+fn parseAnnotations(self: *Parser) Error!Annotations {
+    var found: Annotations = .{};
+    while (self.check(.at)) {
+        const at = self.advance();
+        const name = self.peek();
+        if (name.kind != .identifier) {
+            return self.report(
+                at.span,
+                "expected an annotation name after `@`",
+                "Write the annotation's name right after `@`, as in `@override`.",
+            );
+        }
+        _ = self.advance();
+        const span = spanning(at.span, name.span);
+        const word = self.text(name);
+        if (std.mem.eql(u8, word, "override") or std.mem.eql(u8, word, "abstract")) {
+            const slot = if (std.mem.eql(u8, word, "override")) &found.override else &found.abstract;
+            if (slot.* != null) {
+                try self.reportFmtNote(span, "`@{s}` is already written on this declaration", .{word}, "Write each annotation once.");
+            }
+            slot.* = span;
+        } else if (std.mem.eql(u8, word, "test")) {
+            try self.note(
+                span,
+                "`@test` is not available yet",
+                "Tests arrive with `emerald test`. Remove the annotation for now.",
+            );
+        } else if (closestAnnotation(word)) |suggestion| {
+            try self.reportFmtNote(
+                span,
+                "`@{s}` is not an annotation",
+                .{word},
+                try std.fmt.allocPrint(self.arena, "Did you mean `@{s}`?", .{suggestion}),
+            );
+        } else {
+            try self.reportFmtNote(
+                span,
+                "`@{s}` is not an annotation",
+                .{word},
+                "Emerald's annotations are `@override`, `@abstract`, and `@test`.",
+            );
+        }
+        self.skipSeparators();
+    }
+    return found;
+}
+
+/// The known annotation a misspelling was probably meant to be: one at most
+/// two edits away, ignoring case.
+fn closestAnnotation(word: []const u8) ?[]const u8 {
+    for (known_annotations) |known| {
+        if (editDistance(word, known) <= 2) return known;
+    }
+    return null;
+}
+
+fn editDistance(a: []const u8, b: []const u8) usize {
+    if (a.len > 32 or b.len > 32) return std.math.maxInt(usize);
+    var previous: [33]usize = undefined;
+    var current: [33]usize = undefined;
+    for (0..b.len + 1) |j| previous[j] = j;
+    for (a, 0..) |left, i| {
+        current[0] = i + 1;
+        for (b, 0..) |right, j| {
+            const substitution = previous[j] + @intFromBool(std.ascii.toLower(left) != std.ascii.toLower(right));
+            current[j + 1] = @min(substitution, @min(previous[j + 1], current[j]) + 1);
+        }
+        @memcpy(previous[0 .. b.len + 1], current[0 .. b.len + 1]);
+    }
+    return previous[b.len];
+}
+
+fn reportFmtNote(
+    self: *Parser,
+    span: Source.Span,
+    comptime message_format: []const u8,
+    message_args: anytype,
+    help: []const u8,
+) Error!void {
+    try self.note(span, try std.fmt.allocPrint(self.arena, message_format, message_args), help);
+}
+
+/// A declaration written after annotations outside any type: a class, which
+/// may be `@abstract`, or something no annotation applies to.
+fn parseAnnotatedStatement(self: *Parser) Error!Ast.Statement {
+    const annotations = try self.parseAnnotations();
+    const next = self.peek();
+    if (annotations.override) |span| {
+        try self.note(
+            span,
+            "`@override` belongs on a method or property of a class",
+            "Only a member of a class that extends another can replace one of its base class's members. Remove `@override` here.",
+        );
+    }
+    if (next.kind == .keyword_class) {
+        var statement = try self.parseStatement();
+        if (statement.data == .struct_declaration) statement.data.struct_declaration.abstract_span = annotations.abstract;
+        return statement;
+    }
+    if (annotations.abstract) |span| {
+        if (next.kind == .keyword_struct) {
+            try self.note(
+                span,
+                "a struct cannot be abstract",
+                "Only a class can be `@abstract`, since only a class can be extended. Remove `@abstract`, or declare a class.",
+            );
+        } else {
+            try self.note(
+                span,
+                "`@abstract` belongs on a class or on one of its methods",
+                "Remove `@abstract` here.",
+            );
+        }
+    }
+    if (next.kind == .eof or next.kind == .right_brace) {
+        return self.report(
+            next.span,
+            "an annotation needs a declaration after it",
+            "Write the class or method it belongs to on the next line.",
+        );
+    }
+    return self.parseStatement();
+}
+
 /// Section 10.2's stored fields with their defaults, its one optional custom
 /// constructor, its instance methods, and its computed properties. Without a
 /// constructor, every field is one generated-constructor parameter, in
@@ -457,7 +596,8 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     }
     _ = self.advance();
 
-    // Section 10.7's inheritance and section 11's traits come later.
+    // Section 10.7's single inheritance. Section 11's traits come later.
+    var base: ?Ast.TypeExpression = null;
     if (self.check(.keyword_extends)) {
         if (!class) {
             return self.report(
@@ -466,11 +606,24 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
                 "Structs do not inherit. Declare a class instead if this needs a base class.",
             );
         }
-        return self.report(
-            self.peek().span,
-            "a class cannot extend another class yet",
-            "Declare the fields and methods this class needs directly in it.",
-        );
+        _ = self.advance();
+        const written = try self.parseTypeExpression();
+        if (written.name.len == 0 or written.question_span != null) {
+            try self.note(
+                written.span,
+                "a class can only extend another class",
+                "Name the base class, as in `class Dog extends Animal`.",
+            );
+        } else {
+            base = written;
+        }
+        if (self.check(.comma)) {
+            return self.report(
+                self.peek().span,
+                "a class extends at most one class",
+                "Emerald has single inheritance. Keep one base class.",
+            );
+        }
     }
     if (self.check(.keyword_with)) {
         return self.report(
@@ -489,8 +642,16 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         );
     }
     const saved_class = self.in_class;
+    const saved_type_name = self.type_name;
+    const saved_has_base = self.has_base;
     self.in_class = class;
-    defer self.in_class = saved_class;
+    self.type_name = self.text(name);
+    self.has_base = base != null;
+    defer {
+        self.in_class = saved_class;
+        self.type_name = saved_type_name;
+        self.has_base = saved_has_base;
+    }
     var members: StructMembers = .{};
     self.skipSeparators();
     while (!self.check(.right_brace) and !self.check(.eof)) {
@@ -519,6 +680,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             .class = class,
             .name = try self.identifier(name),
             .name_span = name.span,
+            .base = base,
             .fields = try members.fields.toOwnedSlice(self.arena),
             .constructor = members.constructor,
             .methods = try members.methods.toOwnedSlice(self.arena),
@@ -540,7 +702,29 @@ const StructMembers = struct {
 
 /// One member of a struct body, added to `members`. `name` is the struct's.
 fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!void {
+    const annotations = try self.parseAnnotations();
     const marker = self.peek();
+    if (annotations.override != null or annotations.abstract != null) {
+        if (marker.kind == .keyword_func and self.startsTypeMember()) {
+            try self.note(
+                (annotations.override orelse annotations.abstract).?,
+                "a type-level function cannot be overridden or abstract",
+                "It belongs to its own type and is never inherited. Remove the annotation.",
+            );
+        } else if (marker.kind == .keyword_constructor) {
+            try self.note(
+                (annotations.override orelse annotations.abstract).?,
+                "a constructor cannot be overridden or abstract",
+                "Constructors are not inherited. A subclass declares its own and calls `super(...)` first.",
+            );
+        } else if (!self.in_class) {
+            try self.note(
+                (annotations.override orelse annotations.abstract).?,
+                if (annotations.override != null) "a struct has nothing to override" else "a struct's methods cannot be abstract",
+                "Structs do not inherit. Remove the annotation, or declare a class.",
+            );
+        }
+    }
     if (marker.kind == .keyword_func and self.startsTypeMember()) {
         try members.type_functions.append(self.arena, try self.parseTypeFunction(name));
         try self.expectStatementEnd();
@@ -550,9 +734,9 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
         const saved_self = self.self_allowed;
         self.self_allowed = self.memberContext();
         defer self.self_allowed = saved_self;
-        const method = try self.parseFunctionDeclaration();
+        const method = try self.parseMethod(annotations);
         try self.expectStatementEnd();
-        try members.methods.append(self.arena, method.data.function_declaration);
+        try members.methods.append(self.arena, method);
         return;
     }
     if (marker.kind == .keyword_constructor) {
@@ -628,6 +812,11 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
     }
     _ = self.advance();
     if (self.check(.dot)) {
+        if (self.in_class) if (annotations.override orelse annotations.abstract) |span| try self.note(
+            span,
+            "a type-level field cannot be overridden or abstract",
+            "It belongs to its own type and is never inherited. Remove the annotation.",
+        );
         try members.type_fields.append(self.arena, try self.parseTypeField(mutable, field_name, name));
         return;
     }
@@ -649,7 +838,16 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
     }
     const annotation = try self.parseTypeExpression();
     if (self.check(.left_brace)) {
-        try members.properties.append(self.arena, try self.parseProperty(mutable, field_name, annotation));
+        var property = try self.parseProperty(mutable, field_name, annotation);
+        if (self.in_class) {
+            property.override_span = annotations.override;
+            if (annotations.abstract) |span| try self.note(
+                span,
+                "an abstract property is not available yet",
+                "Declare an abstract method instead, such as `@abstract func area(): Float`.",
+            );
+        }
+        try members.properties.append(self.arena, property);
         return;
     }
     var default: ?*const Ast.Expression = null;
@@ -661,6 +859,18 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
         default = try self.parseExpression();
     }
     try self.expectStatementEnd();
+    if (self.in_class) {
+        if (annotations.override) |span| try self.note(
+            span,
+            "a stored field cannot be overridden",
+            "Only methods and properties can be replaced by a subclass. Remove `@override`, and give this field a name of its own.",
+        );
+        if (annotations.abstract) |span| try self.note(
+            span,
+            "a stored field cannot be abstract",
+            "Remove `@abstract`. A field that every subclass sets can be set by the base class's constructor.",
+        );
+    }
     try members.fields.append(self.arena, .{
         .mutable = mutable,
         .name = try self.identifier(field_name),
@@ -1114,7 +1324,25 @@ fn finishSimpleStatement(self: *Parser, statement: Ast.Statement) Error!Ast.Stat
 /// Section 7.1's shape: `func name(params): ReturnType { body }`. Parameter
 /// defaults and nested declarations are deferred; every parameter needs an
 /// explicit type, which section 7.2 calls the normal case for named functions.
+/// A method, which in a class may carry `@override`, or `@abstract` in place
+/// of its body (10.7).
+fn parseMethod(self: *Parser, annotations: Annotations) Error!Ast.FunctionDeclaration {
+    const abstract = self.in_class and annotations.abstract != null;
+    var method = (try self.parseFunctionDeclarationWith(true, abstract)).data.function_declaration;
+    if (self.in_class) {
+        method.override_span = annotations.override;
+        method.abstract_span = annotations.abstract;
+    }
+    return method;
+}
+
 fn parseFunctionDeclaration(self: *Parser) Error!Ast.Statement {
+    return self.parseFunctionDeclarationWith(false, false);
+}
+
+/// `abstract` allows the body to be left out, which is what an `@abstract`
+/// method does. `method` is whether this is a member of a type.
+fn parseFunctionDeclarationWith(self: *Parser, method: bool, abstract: bool) Error!Ast.Statement {
     const keyword = self.advance();
 
     const name = self.peek();
@@ -1142,6 +1370,35 @@ fn parseFunctionDeclaration(self: *Parser) Error!Ast.Statement {
 
     var return_annotation: ?Ast.TypeExpression = null;
     if (self.match(.colon) != null) return_annotation = try self.parseTypeExpression();
+
+    if (abstract and !self.check(.left_brace)) {
+        const end = if (return_annotation) |annotation| annotation.span else name.span;
+        return .{
+            .span = spanning(keyword.span, end),
+            .data = .{ .function_declaration = .{
+                .name = try self.identifier(name),
+                .name_span = name.span,
+                .parameters = parameters,
+                .return_annotation = return_annotation,
+                .body = .{ .span = end, .statements = &.{} },
+            } },
+        };
+    }
+    if (abstract) {
+        try self.reportFmtNote(
+            self.peek().span,
+            "`{s}` is abstract, so it has no body",
+            .{self.text(name)},
+            "Remove the body, and let each subclass supply one with `@override`. Or remove `@abstract` to keep this body.",
+        );
+    } else if (method and self.in_class and self.check(.newline)) {
+        return self.reportFmt(
+            self.peek().span,
+            "`{s}` needs a body",
+            .{self.text(name)},
+            "Add its body in braces. A method that each subclass supplies instead is marked `@abstract`, in an `@abstract` class.",
+        );
+    }
 
     const body = try self.parseBlock();
 
@@ -2907,6 +3164,42 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
                 ),
             }
             return self.node(token.span, .{ .name = "self" });
+        },
+        // Section 10.7's `super`, which reaches the base class's version of a
+        // member, or its constructor. It is seen as a name, like `self`.
+        .keyword_super => {
+            _ = self.advance();
+            if (!self.check(.dot) and !self.check(.left_paren)) {
+                return self.report(
+                    token.span,
+                    "`super` is not a value on its own",
+                    "Reach the base class's version of a member, as in `super.speak()`, or call its constructor with `super(...)`. Use `self` for the object itself.",
+                );
+            }
+            switch (self.self_allowed) {
+                .class_member => if (!self.has_base) try self.reportFmtNote(
+                    token.span,
+                    "`{s}` has no base class, so there is no `super`",
+                    .{self.type_name},
+                    try std.fmt.allocPrint(self.arena, "Give it one with `extends`, as in `class {s} extends Base`, or reach its own members through `self`.", .{self.type_name}),
+                ),
+                .member, .member_lambda, .member_nested => try self.note(
+                    token.span,
+                    "a struct has no base class, so there is no `super`",
+                    "Structs do not inherit. Reach the struct's own members through `self`.",
+                ),
+                .type_member => try self.note(
+                    token.span,
+                    "a type-level member has no `super`",
+                    "It belongs to the type, not to any one object, so there is no base class's version of it to reach.",
+                ),
+                .nowhere => try self.note(
+                    token.span,
+                    "`super` is only available inside a class that extends another",
+                    "Inside a subclass's method, `super.name` reaches the base class's version of a member.",
+                ),
+            }
+            return self.node(token.span, .{ .name = "super" });
         },
         .left_paren => {
             try self.nest(token.span);

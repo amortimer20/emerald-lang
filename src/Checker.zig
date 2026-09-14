@@ -63,6 +63,11 @@ pub const Checked = struct {
     /// struct from the list method of the same name. A method captured as a
     /// value (7.5) is keyed by its member expression the same way.
     method_calls: MethodCalls,
+    /// Every `super.name` that reads or sets a base class's property (10.7):
+    /// a read by its member expression, mapped to the getter's key, and an
+    /// assignment by its value, mapped to the setter's. Unlike `value.name`, which runs whatever
+    /// property the object's own class has, these always run this one.
+    super_members: MethodCalls,
 
     pub fn ok(self: Checked) bool {
         return self.diagnostics.len == 0;
@@ -148,6 +153,10 @@ changes: std.StringHashMapUnmanaged(bool) = .empty,
 /// Methods `methodChanges` is working out, so a cycle of calls ends.
 changes_in_progress: Resolver.NameSet = .empty,
 method_calls: MethodCalls = .empty,
+super_members: MethodCalls = .empty,
+/// Structs and classes whose fields have been resolved, so a subclass can make
+/// sure its base class's come first (10.7).
+structs_checked: Resolver.NameSet = .empty,
 /// Every nested function (7.1) whose name has been hoisted, mapped to how
 /// many scopes were in force where it is declared: the ones its body sees.
 nested: std.StringHashMapUnmanaged(usize) = .empty,
@@ -199,22 +208,31 @@ const Constructing = struct {
     keyword_span: Source.Span,
     declaration: Ast.StructDeclaration,
     /// What is being checked: the constructor's body, which starts with every
-    /// defaulted field set (defaults run first), or one field's default.
+    /// defaulted field set (defaults run first), or the default of one of the
+    /// type's own fields, counted among its own.
     part: union(enum) {
         body,
         default_of: usize,
     } = .body,
+    /// Section 10.7's `super(...)` at the start of the body, which is the one
+    /// call to it allowed. Until it has run, no inherited field is set.
+    super_call: ?*const Ast.Expression = null,
 
-    /// Whether a field is certainly set when this part begins. A default runs
-    /// after the fields before it: under the generated constructor every one of
-    /// them has its value by then, from an argument or its own default, but
-    /// under a custom constructor only the defaulted ones do.
+    /// Whether a field, counted among every field the value has, is certainly
+    /// set when this part begins. A base class's part of the value is built
+    /// first, by `super(...)` or, without one, before anything else. A default
+    /// runs after the fields before it: under the generated constructor every
+    /// one of them has its value by then, from an argument or its own default,
+    /// but under a custom constructor only the defaulted ones do.
     fn setAtStart(self: Constructing, field: usize) bool {
+        const inherited = self.type.user.?.inherited;
+        if (field < inherited) return self.part == .default_of or self.super_call == null;
+        const own = field - inherited;
         const fields = self.declaration.fields;
         return switch (self.part) {
-            .body => fields[field].default != null,
-            .default_of => |current| field < current and
-                (self.declaration.constructor == null or fields[field].default != null),
+            .body => fields[own].default != null,
+            .default_of => |current| own < current and
+                (self.declaration.constructor == null or fields[own].default != null),
         };
     }
 };
@@ -339,6 +357,23 @@ pub fn check(
         }
     }
 
+    // Section 10.7: every base class is known before any field is resolved,
+    // since a subclass's fields begin with its base class's.
+    for (programs, 0..) |program, index| {
+        checker.file = @intCast(index);
+        for (program.statements) |statement| {
+            if (statement.data != .struct_declaration) continue;
+            try checker.resolveBase(statement.data.struct_declaration);
+        }
+    }
+    for (programs, 0..) |program, index| {
+        checker.file = @intCast(index);
+        for (program.statements) |statement| {
+            if (statement.data != .struct_declaration) continue;
+            try checker.breakBaseCycle(statement.data.struct_declaration);
+        }
+    }
+
     // Every type identity exists before any field annotation is resolved, so
     // fields may name a type declared later or in another file.
     checker.resolving_struct_fields = true;
@@ -346,7 +381,7 @@ pub fn check(
         checker.file = @intCast(index);
         for (program.statements) |statement| {
             if (statement.data != .struct_declaration) continue;
-            try checker.checkStructDeclaration(statement.data.struct_declaration);
+            try checker.ensureStructChecked(checker.keyOf(statement.data.struct_declaration.name));
         }
     }
     checker.resolving_struct_fields = false;
@@ -358,8 +393,8 @@ pub fn check(
         for (program.statements) |statement| {
             if (statement.data != .struct_declaration) continue;
             const declaration = statement.data.struct_declaration;
-            const fields = checker.structs.get(checker.keyOf(declaration.name)).?.user.?.fields;
-            for (declaration.fields, fields) |field, checked_field| {
+            const user = checker.structs.get(checker.keyOf(declaration.name)).?.user.?;
+            for (declaration.fields, user.fields[user.inherited..]) |field, checked_field| {
                 try checker.validateKeyAnnotations(field.annotation, checked_field.type);
             }
         }
@@ -405,10 +440,19 @@ pub fn check(
                 .function_declaration => |function| try checker.ensureBodyChecked(checker.keyOf(function.name)),
                 .struct_declaration => |declaration| {
                     const type_key = checker.keyOf(declaration.name);
+                    try checker.checkInheritance(type_key);
                     try checker.checkFieldDefaults(type_key);
                     if (declaration.constructor != null) try checker.checkConstructorBody(type_key);
                     for (declaration.methods) |method| {
-                        try checker.ensureBodyChecked(try Resolver.methodKey(arena, type_key, method.name));
+                        const method_key = try Resolver.methodKey(arena, type_key, method.name);
+                        // An abstract method has no body to check (10.7).
+                        if (method.abstract_span != null) {
+                            if (checker.declarations.get(method_key)) |declared| {
+                                if (declared.abstract_span != null) _ = try checker.signatureFor(method_key);
+                            }
+                            continue;
+                        }
+                        try checker.ensureBodyChecked(method_key);
                     }
                     for (declaration.type_functions) |function| {
                         try checker.ensureBodyChecked(try Resolver.methodKey(arena, type_key, function.member));
@@ -466,55 +510,168 @@ pub fn check(
         .structs = checker.structs,
         .changing_methods = changing,
         .method_calls = checker.method_calls,
+        .super_members = checker.super_members,
     };
 }
 
-fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
-    const struct_type = self.structs.get(self.keyOf(declaration.name)).?;
-    const user = @constCast(struct_type.user.?);
-    const fields = try self.arena.alloc(Type.User.Field, declaration.fields.len);
+/// What a member of a type is, for the diagnostics that compare two.
+const MemberKind = enum {
+    field,
+    property,
+    method,
+    type_function,
+    type_field,
 
-    for (declaration.fields, fields) |field, *checked| {
+    fn noun(kind: MemberKind) []const u8 {
+        return switch (kind) {
+            .field => "field",
+            .property => "property",
+            .method => "method",
+            .type_function => "type-level function",
+            .type_field => "type-level field",
+        };
+    }
+};
+
+/// One member as written, with the `@override` in front of it, if any.
+const Member = struct {
+    name: []const u8,
+    span: Source.Span,
+    kind: MemberKind,
+    override_span: ?Source.Span = null,
+
+    fn noun(member: Member) []const u8 {
+        return member.kind.noun();
+    }
+
+    fn earlier(_: void, a: Member, b: Member) bool {
+        return a.span.start < b.span.start;
+    }
+};
+
+/// Every member a declaration writes, in the order written.
+fn membersOf(self: *Checker, declaration: Ast.StructDeclaration) Error![]Member {
+    var members: std.ArrayList(Member) = .empty;
+    for (declaration.fields) |field| try members.append(self.arena, .{ .name = field.name, .span = field.name_span, .kind = .field });
+    for (declaration.properties) |property| try members.append(self.arena, .{ .name = property.name, .span = property.name_span, .kind = .property, .override_span = property.override_span });
+    for (declaration.methods) |method| try members.append(self.arena, .{ .name = method.name, .span = method.name_span, .kind = .method, .override_span = method.override_span });
+    for (declaration.type_functions) |function| try members.append(self.arena, .{ .name = function.member, .span = function.member_span, .kind = .type_function });
+    for (declaration.type_fields) |field| try members.append(self.arena, .{ .name = field.name, .span = field.name_span, .kind = .type_field });
+    std.mem.sort(Member, members.items, {}, Member.earlier);
+    return members.items;
+}
+
+/// Section 10.7's `extends`, which has to name a class.
+fn resolveBase(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
+    const written = declaration.base orelse return;
+    const user = @constCast(self.structs.get(self.keyOf(declaration.name)).?.user.?);
+    if (Type.fromName(written.name) == null and !self.structs.contains(try self.typeKeyOf(written.name))) {
+        try self.reportWithHelp(
+            written.span,
+            "`{s}` is not a class",
+            .{written.name},
+            "Check the spelling, or declare `class {s}` in this project.",
+            .{written.name},
+        );
+        return;
+    }
+    const base = try self.resolveTypeExpression(written);
+    if (base.kind == .invalid) return;
+    if (base.kind != .struct_value) {
+        try self.reportWithHelp(
+            written.span,
+            "`{s}` can only extend a class, and {f} is not one",
+            .{ declaration.name, base },
+            "Name a class declared with `class`, as in `class {s} extends Animal`.",
+            .{declaration.name},
+        );
+        return;
+    }
+    if (!base.user.?.class) {
+        try self.reportWithHelp(
+            written.span,
+            "`{s}` is a struct, so it cannot be extended",
+            .{base.user.?.display_name},
+            "Structs do not inherit. Declare `{s}` with `class` to use it as a base class.",
+            .{base.user.?.display_name},
+        );
+        return;
+    }
+    user.base = base.user.?;
+}
+
+/// A class that extends itself, directly or through others, has no base class
+/// to start from. Reported once, on the class whose `extends` closes the loop
+/// first in the order written, which then has no base.
+fn breakBaseCycle(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
+    const user = @constCast(self.structs.get(self.keyOf(declaration.name)).?.user.?);
+    const base = user.base orelse return;
+    var at: ?*const Type.User = base;
+    var steps: usize = 0;
+    while (at) |current| : (at = current.base) {
+        if (current == user) break;
+        steps += 1;
+        if (steps > self.structs.count()) return;
+    } else return;
+    if (base == user) {
+        try self.reportWithHelp(
+            declaration.base.?.span,
+            "`{s}` cannot extend itself",
+            .{declaration.name},
+            "Name a different class after `extends`, or remove `extends`.",
+            .{},
+        );
+    } else {
+        try self.reportWithHelp(
+            declaration.base.?.span,
+            "`{s}` cannot extend `{s}`, because `{s}` already extends `{s}`",
+            .{ declaration.name, base.display_name, base.display_name, declaration.name },
+            "A class's base classes can never lead back to it. Remove one of the `extends`.",
+            .{},
+        );
+    }
+    user.base = null;
+}
+
+/// Resolves a type's fields once, a base class's before its subclasses'.
+fn ensureStructChecked(self: *Checker, key: []const u8) Error!void {
+    if (self.structs_checked.contains(key)) return;
+    try self.structs_checked.put(self.arena, key, {});
+    const outer_file = self.file;
+    defer self.file = outer_file;
+    self.file = self.facts.owner.get(key).?;
+    try self.checkStructDeclaration(self.struct_declarations.get(key).?);
+}
+
+fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
+    const key = self.keyOf(declaration.name);
+    const struct_type = self.structs.get(key).?;
+    const user = @constCast(struct_type.user.?);
+    const inherited: []const Type.User.Field = if (user.base) |base| blk: {
+        try self.ensureStructChecked(base.name);
+        break :blk base.fields;
+    } else &.{};
+    const fields = try self.arena.alloc(Type.User.Field, inherited.len + declaration.fields.len);
+    @memcpy(fields[0..inherited.len], inherited);
+
+    for (declaration.fields, fields[inherited.len..]) |field, *checked| {
         checked.* = .{
             .name = field.name,
             .type = try self.resolveTypeExpression(field.annotation),
             .mutable = field.mutable,
+            .owner = key,
         };
     }
     user.fields = fields;
+    user.inherited = inherited.len;
 
     // Every member shares one name space, since `value.name` has to mean one
     // of them. They are compared in the order they are written, so the one
     // reported is always the later one.
-    const Member = struct {
-        name: []const u8,
-        span: Source.Span,
-        kind: enum { field, property, method, type_function, type_field },
-
-        fn noun(member: @This()) []const u8 {
-            return switch (member.kind) {
-                .field => "field",
-                .property => "property",
-                .method => "method",
-                .type_function => "type-level function",
-                .type_field => "type-level field",
-            };
-        }
-
-        fn earlier(_: void, a: @This(), b: @This()) bool {
-            return a.span.start < b.span.start;
-        }
-    };
-    var members: std.ArrayList(Member) = .empty;
-    for (declaration.fields) |field| try members.append(self.arena, .{ .name = field.name, .span = field.name_span, .kind = .field });
-    for (declaration.properties) |property| try members.append(self.arena, .{ .name = property.name, .span = property.name_span, .kind = .property });
-    for (declaration.methods) |method| try members.append(self.arena, .{ .name = method.name, .span = method.name_span, .kind = .method });
-    for (declaration.type_functions) |function| try members.append(self.arena, .{ .name = function.member, .span = function.member_span, .kind = .type_function });
-    for (declaration.type_fields) |field| try members.append(self.arena, .{ .name = field.name, .span = field.name_span, .kind = .type_field });
-    std.mem.sort(Member, members.items, {}, Member.earlier);
+    const members = try self.membersOf(declaration);
 
     var seen: std.StringHashMapUnmanaged(Member) = .empty;
-    for (members.items) |member| {
+    for (members) |member| {
         const first = seen.get(member.name) orelse {
             try seen.put(self.arena, member.name, member);
             continue;
@@ -548,6 +705,366 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
             );
         }
     }
+
+    // Section 10.7: a class shares its names with the classes it extends.
+    if (user.base) |base| {
+        for (members) |member| {
+            if (seen.get(member.name)) |first| if (first.span.start != member.span.start) continue;
+            try self.checkInheritedName(member, base);
+        }
+    } else if (declaration.base == null) {
+        for (members) |member| {
+            if (member.override_span == null) continue;
+            try self.reportWithHelp(
+                member.span,
+                "`{s}` does not override anything",
+                .{member.name},
+                "`{s}` does not extend another class. Remove `@override`, or give `{s}` a base class with `extends`.",
+                .{ declaration.name, declaration.name },
+            );
+        }
+    }
+}
+
+/// A member of a class's base classes, the nearest one first.
+const Inherited = struct {
+    kind: MemberKind,
+    /// The class that declares it.
+    owner: *const Type.User,
+    /// Its method key, for a method or a property's getter.
+    key: ?[]const u8 = null,
+};
+
+fn inheritedMember(self: *Checker, base: *const Type.User, name: []const u8) Error!?Inherited {
+    var at: ?*const Type.User = base;
+    while (at) |user| : (at = user.base) {
+        const declaration = self.struct_declarations.get(user.name).?;
+        for (declaration.fields) |field| {
+            if (std.mem.eql(u8, field.name, name)) return .{ .kind = .field, .owner = user };
+        }
+        for (declaration.properties) |property| {
+            if (std.mem.eql(u8, property.name, name)) return .{ .kind = .property, .owner = user, .key = try Resolver.methodKey(self.arena, user.name, name) };
+        }
+        for (declaration.methods) |method| {
+            if (std.mem.eql(u8, method.name, name)) return .{ .kind = .method, .owner = user, .key = try Resolver.methodKey(self.arena, user.name, name) };
+        }
+        for (declaration.type_functions) |function| {
+            if (std.mem.eql(u8, function.member, name)) return .{ .kind = .type_function, .owner = user };
+        }
+        for (declaration.type_fields) |field| {
+            if (std.mem.eql(u8, field.name, name)) return .{ .kind = .type_field, .owner = user };
+        }
+    }
+    return null;
+}
+
+/// One member of a subclass against the names its base classes already use:
+/// replacing one takes `@override`, and only a public method or property can
+/// be replaced, by one of its own kind.
+fn checkInheritedName(self: *Checker, member: Member, base: *const Type.User) Error!void {
+    const found = try self.inheritedMember(base, member.name) orelse {
+        if (member.override_span != null) {
+            try self.reportWithHelp(
+                member.span,
+                "`{s}` does not override anything",
+                .{member.name},
+                "`{s}` and the classes it extends have no {s} named `{s}` to replace. Check the name, or remove `@override`.",
+                .{ base.display_name, member.noun(), member.name },
+            );
+        }
+        return;
+    };
+    const owner = found.owner.display_name;
+    const replaceable = found.kind == .method or found.kind == .property;
+    if (member.override_span != null) {
+        if (replaceable and found.kind == member.kind and !Resolver.isPrivate(member.name)) return;
+        if (replaceable and found.kind == member.kind) {
+            try self.reportWithHelp(
+                member.span,
+                "`{s}` is private to `{s}`, so it cannot be overridden",
+                .{ member.name, owner },
+                "Only code inside `{s}`'s braces can reach it. Give this {s} a name of its own.",
+                .{ owner, member.noun() },
+            );
+        } else {
+            try self.reportWithHelp(
+                member.span,
+                "`{s}` is a {s} of `{s}`, so this {s} cannot override it",
+                .{ member.name, found.kind.noun(), owner, member.noun() },
+                "A method can override only a method, and a property only a property. Give this {s} a name of its own.",
+                .{member.noun()},
+            );
+        }
+        return;
+    }
+    if (replaceable and found.kind == member.kind and !Resolver.isPrivate(member.name)) {
+        try self.reportWithHelp(
+            member.span,
+            "`{s}` is already a {s} of `{s}`",
+            .{ member.name, found.kind.noun(), owner },
+            "Write `@override` on the line before it to replace `{s}`'s version, or give it a name of its own.",
+            .{owner},
+        );
+        return;
+    }
+    try self.reportWithHelp(
+        member.span,
+        "`{s}` is already a {s} of `{s}`",
+        .{ member.name, found.kind.noun(), owner },
+        "A class shares one set of names with the classes it extends, private names included, so that a name means one thing. Rename this one.",
+        .{},
+    );
+}
+
+/// Section 10.7's rules that need signatures: an override matches what it
+/// replaces, an abstract method lives in an abstract class, a class that can be
+/// constructed supplies every abstract method it inherits, and a subclass with
+/// no constructor of its own can be built without arguments.
+fn checkInheritance(self: *Checker, key: []const u8) Error!void {
+    const outer_file = self.file;
+    defer self.file = outer_file;
+    self.file = self.facts.owner.get(key).?;
+
+    const declaration = self.struct_declarations.get(key).?;
+    const user = self.structs.get(key).?.user.?;
+    for (declaration.methods) |method| {
+        const span = method.abstract_span orelse continue;
+        if (declaration.abstract_span != null) continue;
+        try self.reportWithHelp(
+            span,
+            "`{s}` is abstract, so `{s}` has to be `@abstract` too",
+            .{ method.name, declaration.name },
+            "Write `@abstract` on the line before `class {s}`, or give `{s}` a body.",
+            .{ declaration.name, method.name },
+        );
+    }
+    const base = user.base orelse return;
+
+    for (declaration.methods) |method| {
+        if (method.override_span == null or Resolver.isPrivate(method.name)) continue;
+        const found = try self.inheritedMember(base, method.name) orelse continue;
+        if (found.kind != .method) continue;
+        const own_key = try Resolver.methodKey(self.arena, key, method.name);
+        if (self.declarations.get(own_key)) |declared| if (declared.name_span.start != method.name_span.start) continue;
+        try self.checkOverride(method, own_key, found);
+    }
+    for (declaration.properties) |property| {
+        if (property.override_span == null or Resolver.isPrivate(property.name)) continue;
+        const found = try self.inheritedMember(base, property.name) orelse continue;
+        if (found.kind != .property) continue;
+        const own_key = try Resolver.methodKey(self.arena, key, property.name);
+        if (self.declarations.get(own_key)) |declared| if (declared.name_span.start != property.name_span.start) continue;
+        try self.checkPropertyOverride(property, own_key, found);
+    }
+
+    if (declaration.abstract_span == null) try self.checkImplemented(declaration, user);
+
+    if (declaration.constructor == null) {
+        for (declaration.fields) |field| {
+            if (field.default != null) continue;
+            try self.reportWithHelp(
+                declaration.name_span,
+                "`{s}` needs a constructor, because its field `{s}` has no default",
+                .{ declaration.name, field.name },
+                "A class that extends another is built with no arguments unless it has a constructor of its own. Give `{s}` a default, or add a constructor that starts with `super(...)` and sets it.",
+                .{field.name},
+            );
+            return;
+        }
+        if (try self.constructionNeedsArguments(base.name)) {
+            try self.reportWithHelp(
+                declaration.name_span,
+                "`{s}` needs a constructor, because building `{s}` takes arguments",
+                .{ declaration.name, base.display_name },
+                "Add a constructor to `{s}` that starts with `super(...)`, passing what `{s}` needs.",
+                .{ declaration.name, base.display_name },
+            );
+        }
+    }
+}
+
+/// Whether building a type needs arguments: its constructor has a parameter
+/// without a default, or it has no constructor and a field without one. A
+/// class that extends another and has no constructor takes none (10.2).
+fn constructionNeedsArguments(self: *Checker, key: []const u8) Error!bool {
+    const declaration = self.struct_declarations.get(key).?;
+    if (declaration.constructor) |constructor| {
+        for (constructor.parameters) |parameter| {
+            if (parameter.default == null) return true;
+        }
+        return false;
+    }
+    if (self.structs.get(key).?.user.?.base != null) return false;
+    for (declaration.fields) |field| {
+        if (field.default == null) return true;
+    }
+    return false;
+}
+
+/// Section 7.3 and 10.7: "The parameter name is part of public override ...
+/// contracts", and "an override inherits the original declaration's default
+/// and cannot replace it."
+fn checkOverride(self: *Checker, method: Ast.FunctionDeclaration, own_key: []const u8, found: Inherited) Error!void {
+    const mine = try self.signatureFor(own_key);
+    const theirs = try self.signatureFor(found.key.?);
+    const owner = found.owner.display_name;
+
+    var matches = mine.parameters.len == theirs.parameters.len;
+    if (matches) {
+        for (mine.parameters, theirs.parameters, mine.parameter_names, theirs.parameter_names) |a, b, a_name, b_name| {
+            if (!a.same(b) or !std.mem.eql(u8, a_name, b_name)) matches = false;
+        }
+    }
+    if (!matches) {
+        var written: std.Io.Writer.Allocating = .init(self.arena);
+        for (theirs.parameters, theirs.parameter_names, 0..) |parameter, name, position| {
+            if (position != 0) written.writer.writeAll(", ") catch return error.OutOfMemory;
+            written.writer.print("{s}: {f}", .{ name, parameter }) catch return error.OutOfMemory;
+        }
+        try self.reportWithHelp(
+            method.name_span,
+            "`{s}` takes different parameters from the `{s}` of `{s}` it overrides",
+            .{ method.name, method.name, owner },
+            "An override takes exactly the parameters it replaces, with the same names and types, since a call through `{s}` passes them: `({s})`.",
+            .{ owner, written.written() },
+        );
+    }
+    for (method.parameters) |parameter| {
+        const default = parameter.default orelse continue;
+        try self.reportWithHelp(
+            default.span,
+            "an override cannot give `{s}` a default",
+            .{parameter.name},
+            "It uses whatever `{s}` declares for it, whichever version runs. Remove the default here.",
+            .{owner},
+        );
+    }
+    if (!returnsReplace(mine.return_type, theirs.return_type)) {
+        try self.reportWithHelp(
+            if (method.return_annotation) |annotation| annotation.span else method.name_span,
+            "`{s}` gives {f}, but the `{s}` of `{s}` it overrides gives {f}",
+            .{ method.name, mine.return_type, method.name, owner, theirs.return_type },
+            "An override gives what it replaces, or a subclass of that class. Write `: {f}`.",
+            .{theirs.return_type},
+        );
+    }
+}
+
+/// Whether an override's result can stand in for the one it replaces: the
+/// same type, or an object of a subclass where an object of a class is given,
+/// which needs nothing done to it at runtime.
+fn returnsReplace(mine: Type, theirs: Type) bool {
+    if (mine.same(theirs)) return true;
+    if (mine.optional != theirs.optional) return false;
+    if (mine.kind != .struct_value or theirs.kind != .struct_value) return false;
+    return mine.user.?.class and mine.user.?.extends(theirs.user.?);
+}
+
+fn checkPropertyOverride(self: *Checker, property: Ast.StructDeclaration.Property, own_key: []const u8, found: Inherited) Error!void {
+    const owner = found.owner.display_name;
+    const replaced = for (self.struct_declarations.get(found.owner.name).?.properties) |candidate| {
+        if (std.mem.eql(u8, candidate.name, property.name)) break candidate;
+    } else unreachable;
+    if (replaced.mutable != property.mutable) {
+        try self.reportWithHelp(
+            property.name_span,
+            "`{s}` has to be a `{s}` property, as it is in `{s}`",
+            .{ property.name, if (replaced.mutable) "var" else "const", owner },
+            "{s}",
+            .{if (replaced.mutable)
+                "Code that uses the property through the base class can set it, so the override needs `get` and `set` blocks."
+            else
+                "The override replaces a read-only property, so it gives its value directly, as in `const name: Type { ... }`."},
+        );
+        return;
+    }
+    const mine = (try self.signatureFor(own_key)).return_type;
+    const theirs = (try self.signatureFor(found.key.?)).return_type;
+    if (!mine.same(theirs)) {
+        try self.reportWithHelp(
+            property.annotation.span,
+            "`{s}` holds {f}, but the `{s}` of `{s}` it overrides holds {f}",
+            .{ property.name, mine, property.name, owner, theirs },
+            "An overriding property holds the same type as the one it replaces. Write `: {f}`.",
+            .{theirs},
+        );
+    }
+}
+
+/// Every abstract method a class inherits has to be supplied by it or by a
+/// class between it and the one that declares it.
+fn checkImplemented(self: *Checker, declaration: Ast.StructDeclaration, user: *const Type.User) Error!void {
+    var reported: Resolver.NameSet = .empty;
+    var at = user.base;
+    while (at) |ancestor| : (at = ancestor.base) {
+        for (self.struct_declarations.get(ancestor.name).?.methods) |method| {
+            if (method.abstract_span == null or reported.contains(method.name)) continue;
+            const nearest = try self.memberKey(Type.structOf(user), method.name) orelse continue;
+            if (self.declarations.get(nearest).?.abstract_span == null) continue;
+            try reported.put(self.arena, method.name, {});
+            try self.reportWithHelp(
+                declaration.name_span,
+                "`{s}` does not supply the abstract method `{s}` of `{s}`",
+                .{ declaration.name, method.name, ancestor.display_name },
+                "Add `@override func {s}(...)` with a body to `{s}`, or mark `{s}` `@abstract`.",
+                .{ method.name, declaration.name, declaration.name },
+            );
+        }
+    }
+}
+
+/// The key of the method or property getter `name` reaches on a value of
+/// `owner`: its own class's, or else the nearest base class's (10.7).
+fn memberKey(self: *Checker, owner: Type, name: []const u8) Error!?[]const u8 {
+    if (owner.kind != .struct_value) return null;
+    var at: ?*const Type.User = owner.user;
+    while (at) |user| : (at = user.base) {
+        const key = try Resolver.methodKey(self.arena, user.name, name);
+        if (self.receivers.contains(key)) return key;
+    }
+    return null;
+}
+
+/// The key of the type that declares the instance member `name` of `owner`,
+/// which is where section 10.5's privacy is judged: a field, a property, or a
+/// method, its own or inherited.
+fn memberOwner(self: *Checker, owner: Type, name: []const u8) Error!?[]const u8 {
+    if (owner.kind != .struct_value) return null;
+    for (owner.user.?.fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) return field.owner;
+    }
+    const key = try self.memberKey(owner, name) orelse return null;
+    return self.receivers.get(key).?.user.?.name;
+}
+
+/// The declaration whose parameter defaults a method uses: its own, or for an
+/// override, those of the declaration it ultimately replaces (7.3).
+fn declarationWithDefaults(self: *Checker, key: []const u8) Error!Ast.FunctionDeclaration {
+    var current = key;
+    while (true) {
+        const declaration = self.declarations.get(current).?;
+        if (declaration.override_span == null) return declaration;
+        const receiver = self.receivers.get(current) orelse return declaration;
+        const base = receiver.user.?.base orelse return declaration;
+        current = try self.memberKey(Type.structOf(base), declaration.name) orelse return declaration;
+    }
+}
+
+/// Section 10.2: "Calls to overridable methods through `self` are forbidden
+/// throughout construction." Every public method and property of a class is
+/// overridable. Returns whether it reported.
+fn reportOverridable(self: *Checker, name: []const u8, span: Source.Span, comptime verb: []const u8) Error!bool {
+    const building = self.constructing orelse return false;
+    if (!building.type.user.?.class or Resolver.isPrivate(name)) return false;
+    if (try self.memberKey(building.type, name) == null) return false;
+    try self.reportWithHelp(
+        span,
+        "a subclass could override `{s}`, so construction cannot " ++ verb ++ " it through `self`",
+        .{name},
+        "A subclass's version would run before that subclass has set its own fields. Move what it does into a private method, such as `_{s}`, and use that instead.",
+        .{name},
+    );
+    return true;
 }
 
 fn validateKeyAnnotations(self: *Checker, annotation: Ast.TypeExpression, resolved: Type) Error!void {
@@ -1387,6 +1904,7 @@ fn checkAssignmentTo(self: *Checker, assignment: Ast.Assignment) Error!void {
 /// name holds without replacing the name's own binding, which section 4.3
 /// forbids for a `const` just as it forbids replacing the whole value.
 fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
+    if (std.mem.eql(u8, assignment.name, "super")) return self.checkSuperAssignment(assignment);
     if (try self.checkSelfAssignment(assignment)) return;
     const binding = self.find(assignment.name) orelse {
         for (assignment.steps) |step| switch (step) {
@@ -1468,11 +1986,11 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                     element = .invalid;
                     break;
                 }
-                if (try self.isInstanceMember(element, field.name) and
-                    try self.reportPrivate(element.user.?.name, field.name, field.span))
-                {
-                    element = .invalid;
-                    break;
+                if (try self.memberOwner(element, field.name)) |owner| {
+                    if (try self.reportPrivate(owner, field.name, field.span)) {
+                        element = .invalid;
+                        break;
+                    }
                 }
                 const found = for (element.user.?.fields) |candidate| {
                     if (std.mem.eql(u8, candidate.name, field.name)) break candidate;
@@ -1499,7 +2017,7 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                             element = .invalid;
                             break;
                         }
-                        const setter_key = try Resolver.setterKey(self.arena, element.user.?.name, field.name);
+                        const setter_key = try std.fmt.allocPrint(self.arena, "{s}" ++ Resolver.setter_suffix, .{property.getter});
                         element = (try self.signatureFor(property.getter)).return_type;
                         _ = try self.signatureFor(setter_key);
                         if (!self.in_function) {
@@ -1638,6 +2156,107 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
     }
 }
 
+/// `super.size = 3`: section 10.7's way for an overriding property's setter to
+/// run the base class's version.
+fn checkSuperAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
+    const base = try self.typeOfSuper(assignment.name_span);
+    const field = switch (assignment.steps[0]) {
+        .field => |field| field,
+        .index => |index| {
+            try self.report(
+                assignment.target_span,
+                "`super` has no elements to assign to",
+                .{},
+                "`super` reaches a base class's version of a method or property. Write `super.name = ...`.",
+            );
+            try self.requireIndex(index);
+            _ = try self.typeOf(assignment.value);
+            return;
+        },
+    };
+    if (base.kind == .invalid) {
+        _ = try self.typeOf(assignment.value);
+        return;
+    }
+    if (assignment.steps.len > 1) {
+        try self.reportWithHelp(
+            field.span,
+            "what `super.{s}` gives back cannot be changed in place",
+            .{field.name},
+            "`super` reaches a base class's version of a property. Read it into a `var`, change that, then assign it back with `super.{s} = ...`.",
+            .{field.name},
+        );
+        _ = try self.typeOf(assignment.value);
+        return;
+    }
+    if (try self.memberOwner(base, field.name)) |owner| {
+        if (try self.reportPrivate(owner, field.name, field.span)) {
+            _ = try self.typeOf(assignment.value);
+            return;
+        }
+    }
+    for (base.user.?.fields) |stored| {
+        if (!std.mem.eql(u8, stored.name, field.name)) continue;
+        try self.reportWithHelp(
+            field.span,
+            "`{s}` is a field, so set it through `self`",
+            .{field.name},
+            "`super` reaches a base class's version of a method or property. A subclass never replaces a field, so `self.{s}` is the same one.",
+            .{field.name},
+        );
+        _ = try self.typeOf(assignment.value);
+        return;
+    }
+    const property = try self.propertyOf(base, field.name) orelse {
+        try self.report(
+            field.span,
+            "{f} has no property named `{s}`",
+            .{ base, field.name },
+            "Check the property name in the base class's declaration.",
+        );
+        _ = try self.typeOf(assignment.value);
+        return;
+    };
+    if (!property.writable) {
+        try self.reportWithHelp(
+            field.span,
+            "`{s}` is a read-only property of {f}",
+            .{ field.name, base },
+            "It is computed each time it is read, and has no `set` block to run.",
+            .{},
+        );
+        _ = try self.typeOf(assignment.value);
+        return;
+    }
+    const setter_key = try std.fmt.allocPrint(self.arena, "{s}" ++ Resolver.setter_suffix, .{property.getter});
+    const element = (try self.signatureFor(property.getter)).return_type;
+    _ = try self.signatureFor(setter_key);
+    try self.super_members.put(self.arena, assignment.value, setter_key);
+
+    if (assignment.operation) |operation| {
+        const value = try self.typeOf(assignment.value);
+        const result = try self.arithmetic(assignment.target_span, operation, element, value);
+        if (!result.assignableTo(element)) {
+            try self.report(
+                assignment.target_span,
+                "`{s}` produces {f}, but this property is {f}",
+                .{ operation.lexeme(), result, element },
+                "Use an operation whose result the property can hold.",
+            );
+        }
+        return;
+    }
+    const value = try self.typeOfExpected(assignment.value, element);
+    if (!value.assignableTo(element)) {
+        try self.report(
+            assignment.value.span,
+            "this is {f}, but the property `{s}` holds {f}",
+            .{ value, field.name, element },
+            "Assign a value of the property's type, or convert it first.",
+        );
+    }
+}
+
 /// Section 10.3: "Nested mutation through a computed value is rejected rather
 /// than silently copying and writing back."
 fn reportComputedInPlace(self: *Checker, name: []const u8, span: Source.Span) Error!void {
@@ -1652,6 +2271,7 @@ fn reportComputedInPlace(self: *Checker, name: []const u8, span: Source.Span) Er
 
 fn requireReadyForSet(self: *Checker, assignment: Ast.Assignment, name: []const u8, span: Source.Span) Error!bool {
     if (self.constructing == null or !std.mem.eql(u8, assignment.name, "self")) return false;
+    if (try self.reportOverridable(name, span, "set")) return true;
     const field = try self.firstUnsetField() orelse return false;
     try self.reportWithHelp(
         span,
@@ -2190,7 +2810,7 @@ fn checkBodyWithSelfIn(
         if (building.part == .default_of) {
             const position = building.part.default_of;
             const field = building.declaration.fields[position];
-            const wanted = building.type.user.?.fields[position].type;
+            const wanted = building.type.user.?.fields[building.type.user.?.inherited + position].type;
             const actual = try self.typeOfExpected(field.default.?, wanted);
             if (!actual.assignableTo(wanted)) {
                 try self.report(
@@ -2351,25 +2971,27 @@ fn insideType(self: *Checker, type_key: []const u8, span: Source.Span) bool {
 /// Whether `name` is one of a struct's instance members: a field, a property,
 /// or a method.
 fn isInstanceMember(self: *Checker, owner: Type, name: []const u8) Error!bool {
-    for (owner.user.?.fields) |field| {
-        if (std.mem.eql(u8, field.name, name)) return true;
-    }
-    return self.receivers.contains(try Resolver.methodKey(self.arena, owner.user.?.name, name));
+    return try self.memberOwner(owner, name) != null;
 }
 
 /// `value.count` where `count` is a type-level member of its type. Returns
 /// whether it reported.
 fn reportTypeMemberThroughValue(self: *Checker, owner: Type, name: []const u8, span: Source.Span) Error!bool {
-    const key = try Resolver.methodKey(self.arena, owner.user.?.name, name);
-    if (!self.facts.type_members.contains(key)) return false;
+    // Type-level members are not inherited (10.7), but one of a base class is
+    // still what the reader was reaching for.
+    var at: ?*const Type.User = owner.user;
+    const declaring, const key = while (at) |user| : (at = user.base) {
+        const candidate = try Resolver.methodKey(self.arena, user.name, name);
+        if (self.facts.type_members.contains(candidate)) break .{ user, candidate };
+    } else return false;
     // Section 10.5: pointing at the type would point at a path that is private
     // too.
-    if (try self.reportPrivate(owner.user.?.name, name, span)) return true;
+    if (try self.reportPrivate(declaring.name, name, span)) return true;
     const written = try Resolver.displayKey(self.arena, key);
     try self.reportWithHelp(
         span,
         "`{s}` belongs to the type `{s}`, not to each value",
-        .{ name, owner.user.?.display_name },
+        .{ name, declaring.display_name },
         "Reach it through the type, as in `{s}`.",
         .{written},
     );
@@ -2438,12 +3060,29 @@ fn checkConstructorBody(self: *Checker, key: []const u8) Error!void {
 
     const signature = try self.constructorSignature(key);
     const constructor = self.constructors.get(key).?.constructor.?;
+    const super_call = superCallOf(constructor.body.statements);
+    if (self.structs.get(key).?.user.?.base) |base| {
+        if (super_call == null and try self.constructionNeedsArguments(base.name)) {
+            try self.reportWithHelp(
+                constructor.keyword_span,
+                "this constructor has to start with `super(...)`, because building `{s}` takes arguments",
+                .{base.display_name},
+                "Pass what `{s}` needs on the constructor's first line, as in `super(...)`, before anything else.",
+                .{base.display_name},
+            );
+        }
+    }
     try self.checkBody(
         constructor.parameters,
         signature.parameters,
         constructor.body.statements,
         .nothing,
-        .{ .type = self.structs.get(key).?, .keyword_span = constructor.keyword_span, .declaration = self.constructors.get(key).? },
+        .{
+            .type = self.structs.get(key).?,
+            .keyword_span = constructor.keyword_span,
+            .declaration = self.constructors.get(key).?,
+            .super_call = super_call,
+        },
     );
 }
 
@@ -2484,6 +3123,12 @@ fn checkSelfAssignment(self: *Checker, assignment: Ast.Assignment) Error!bool {
         // Not a field at all, which the ordinary check reports.
         return false;
     };
+    if (try self.memberOwner(building.type, field.name)) |owner| {
+        if (try self.reportPrivate(owner, field.name, field.span)) {
+            _ = try self.typeOf(assignment.value);
+            return true;
+        }
+    }
     const stored = for (building.type.user.?.fields) |candidate| {
         if (std.mem.eql(u8, candidate.name, field.name)) break candidate;
     } else unreachable;
@@ -2506,7 +3151,17 @@ fn checkSelfAssignment(self: *Checker, assignment: Ast.Assignment) Error!bool {
     // Setting the field. Section 10.2 lets a constructor initialize a `const`
     // field; section 4.3 still means it is set exactly once.
     const unset = self.find(try fieldUnsetKey(self.arena, field.name)).?;
-    if (!stored.mutable) {
+    if (!stored.mutable and !std.mem.eql(u8, stored.owner, building.type.user.?.name)) {
+        // Section 10.7: the base class's part is built before this runs.
+        const owner = self.structs.get(stored.owner).?.user.?.display_name;
+        try self.reportWithHelp(
+            field.span,
+            "`{s}` is a `const` field that `{s}` sets",
+            .{ field.name, owner },
+            "A subclass cannot change it. Pass the value to `super(...)` so `{s}` sets it.",
+            .{owner},
+        );
+    } else if (!stored.mutable) {
         if (self.loops.items.len > 0) {
             try self.reportWithHelp(
                 field.span,
@@ -2742,8 +3397,7 @@ fn selfPathType(expression: *const Ast.Expression, receiver: Type) ?Type {
 const PropertyInfo = struct { getter: []const u8, writable: bool };
 
 fn propertyOf(self: *Checker, owner: Type, name: []const u8) Error!?PropertyInfo {
-    if (owner.kind != .struct_value) return null;
-    const key = try Resolver.methodKey(self.arena, owner.user.?.name, name);
+    const key = try self.memberKey(owner, name) orelse return null;
     const writable = self.properties.get(key) orelse return null;
     return .{ .getter = key, .writable = writable };
 }
@@ -2781,12 +3435,12 @@ fn typeOfStructMethodCall(
     member: Ast.Expression.Member,
     base: Type,
 ) Error!Type {
-    const key = try Resolver.methodKey(self.arena, base.user.?.name, member.name);
-    if (try self.isInstanceMember(base, member.name) and
-        try self.reportPrivate(base.user.?.name, member.name, member.name_span))
-    {
-        try self.typeArguments(call.arguments);
-        return .invalid;
+    const key = try self.memberKey(base, member.name) orelse try Resolver.methodKey(self.arena, base.user.?.name, member.name);
+    if (try self.memberOwner(base, member.name)) |owner| {
+        if (try self.reportPrivate(owner, member.name, member.name_span)) {
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
     }
     if (!self.receivers.contains(key) or self.properties.contains(key)) {
         const is_field = self.properties.contains(key) or for (base.user.?.fields) |field| {
@@ -2813,12 +3467,16 @@ fn typeOfStructMethodCall(
         try self.typeArguments(call.arguments);
         return .invalid;
     }
+    if (try self.reportAbstractThroughSuper(member, key)) {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
     try self.method_calls.put(self.arena, call.callee, key);
 
     const signature = try self.signatureFor(key);
     try self.checkArguments(call, member.name, try self.parametersOf(
         signature,
-        self.declarations.get(key).?.parameters,
+        (try self.declarationWithDefaults(key)).parameters,
         "Match the number of arguments to the method's parameters.",
     ));
     if (try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
@@ -2960,6 +3618,19 @@ fn capturesOf(self: *Checker, name: []const u8) Error!Resolver.NameSet {
     try pending.append(self.arena, name);
 
     while (pending.pop()) |current| {
+        // Section 10.7: calling a class's method may run any subclass's
+        // override of it instead.
+        if (self.receivers.get(current)) |receiver| if (receiver.user.?.class) {
+            const member = current[std.mem.lastIndexOf(u8, current, Resolver.method_separator).? + Resolver.method_separator.len ..];
+            var types = self.structs.valueIterator();
+            while (types.next()) |candidate| {
+                if (candidate.user == receiver.user or !candidate.user.?.extends(receiver.user.?)) continue;
+                const override = try Resolver.methodKey(self.arena, candidate.user.?.name, member);
+                if (!self.receivers.contains(override) or visited.contains(override)) continue;
+                try visited.put(self.arena, override, {});
+                try pending.append(self.arena, override);
+            }
+        };
         if (self.facts.module_reads.get(current)) |own| {
             var it = own.keyIterator();
             while (it.next()) |read| try reads.put(self.arena, read.*, {});
@@ -3276,6 +3947,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .nothing_literal => .nothing,
 
         .name => |name| blk: {
+            if (std.mem.eql(u8, name, "super")) break :blk try self.typeOfSuper(expression.span);
             // Missing only when the resolver already reported the name, or
             // while inferring early for a call that `checkCaptures` rejects.
             const binding = self.find(name) orelse break :blk .invalid;
@@ -3894,7 +4566,12 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
     if (self.constructing != null and member.base.data == .name and
         std.mem.eql(u8, member.base.data.name, "self") and member.position == null)
     {
+        // Section 10.5: a base class's private members stay private to it.
+        if (try self.memberOwner(self.constructing.?.type, member.name)) |owner| {
+            if (try self.reportPrivate(owner, member.name, member.name_span)) return .invalid;
+        }
         if (try self.propertyOf(self.constructing.?.type, member.name)) |property| {
+            if (try self.reportOverridable(member.name, member.name_span, "read")) return .invalid;
             return self.typeOfPropertyRead(member, property);
         }
         if (try self.fieldSetBinding(member.name)) |set| {
@@ -3927,7 +4604,8 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             return set.type;
         }
         const building = self.constructing.?.type;
-        if (self.receivers.contains(try Resolver.methodKey(self.arena, building.user.?.name, member.name))) {
+        if (try self.memberKey(building, member.name) != null) {
+            if (try self.reportOverridable(member.name, member.name_span, "capture")) return .invalid;
             // Section 10.2: capturing a method copies `self` (7.5), which
             // needs every field, exactly as calling one does.
             if (try self.firstUnsetField()) |field| {
@@ -3958,14 +4636,30 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
     if (!try self.requirePresent(base, member.base, member.name)) return .invalid;
 
     if (base.kind == .struct_value) {
-        if (try self.isInstanceMember(base, member.name) and
-            try self.reportPrivate(base.user.?.name, member.name, member.name_span)) return .invalid;
-        for (base.user.?.fields) |field| {
-            if (std.mem.eql(u8, field.name, member.name)) return field.type;
+        if (try self.memberOwner(base, member.name)) |owner| {
+            if (try self.reportPrivate(owner, member.name, member.name_span)) return .invalid;
         }
-        if (try self.propertyOf(base, member.name)) |property| return self.typeOfPropertyRead(member, property);
+        for (base.user.?.fields) |field| {
+            if (!std.mem.eql(u8, field.name, member.name)) continue;
+            if (isSuper(member.base)) {
+                try self.reportWithHelp(
+                    member.name_span,
+                    "`{s}` is a field, so reach it through `self`",
+                    .{member.name},
+                    "`super` reaches a base class's version of a method or property. A subclass never replaces a field, so `self.{s}` is the same one.",
+                    .{member.name},
+                );
+                return .invalid;
+            }
+            return field.type;
+        }
+        if (try self.propertyOf(base, member.name)) |property| {
+            if (isSuper(member.base)) try self.super_members.put(self.arena, expression, property.getter);
+            return self.typeOfPropertyRead(member, property);
+        }
         if (try self.reportTypeMemberThroughValue(base, member.name, member.name_span)) return .invalid;
-        if (self.receivers.contains(try Resolver.methodKey(self.arena, base.user.?.name, member.name))) {
+        if (try self.memberKey(base, member.name)) |key| {
+            if (try self.reportAbstractThroughSuper(member, key)) return .invalid;
             return self.typeOfMethodValue(expression, base, member.name);
         }
         try self.report(
@@ -4061,7 +4755,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
 /// keeps changing from one call to the next. Nothing about the receiver's
 /// place is checked, since the copy is the only thing that can change.
 fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: Type, name: []const u8) Error!Type {
-    const key = try Resolver.methodKey(self.arena, owner.user.?.name, name);
+    const key = (try self.memberKey(owner, name)).?;
     try self.method_calls.put(self.arena, expression, key);
     const signature = try self.signatureFor(key);
     return Type.functionOf(self.arena, .{
@@ -4083,6 +4777,10 @@ fn typeOfMethodCall(
     if (self.constructing != null and member.base.data == .name and
         std.mem.eql(u8, member.base.data.name, "self"))
     {
+        if (try self.reportOverridable(member.name, member.name_span, "call")) {
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
         if (try self.firstUnsetField()) |field| {
             if (!try self.reportInDefault(member.name_span, "call a method on `self`")) try self.reportWithHelp(
                 member.name_span,
@@ -4554,8 +5252,9 @@ fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
             };
             if (base.type.kind != .struct_value) return .{ .root = base.root };
             // Already reported when the receiver was type-checked.
-            if (Resolver.isPrivate(inner.name) and !self.insideType(base.type.user.?.name, inner.name_span)) {
-                return .reported;
+            if (Resolver.isPrivate(inner.name)) {
+                const owner = try self.memberOwner(base.type, inner.name) orelse base.type.user.?.name;
+                if (!self.insideType(owner, inner.name_span)) return .reported;
             }
             if (try self.propertyOf(base.type, inner.name) != null) {
                 try self.reportComputedInPlace(inner.name, inner.name_span);
@@ -5061,12 +5760,15 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
         const numeric = left.isNumber() and right.isNumber();
         const unknown = left.kind == .invalid or right.kind == .invalid;
 
-        if (!unknown and !numeric and !left.same(right) and !comparableOptional(left, right)) {
+        if (!unknown and !numeric and !left.same(right) and !comparableOptional(left, right) and !relatedClasses(left, right)) {
             try self.report(
                 pair,
                 "{f} and {f} cannot be compared",
                 .{ left, right },
-                "`==` and `!=` compare two values of the same type, and Int and Float compare with each other.",
+                if (isClass(left.payload()) and isClass(right.payload()))
+                    "Two objects can be compared only when one's class is the other's or extends it, since only then can they be the same object."
+                else
+                    "`==` and `!=` compare two values of the same type, and Int and Float compare with each other.",
             );
         } else if (!unknown and !numeric and !operator.isEquality() and
             !(left.kind == .string and !left.optional and !right.optional))
@@ -5092,6 +5794,15 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
 ///
 /// Ordering is not included: `<` on something that may be absent has no answer,
 /// so it stays rejected.
+/// Section 10.1: "Class values may be compared when their static types have an
+/// inheritance relationship", since both may be the same object.
+fn relatedClasses(left: Type, right: Type) bool {
+    const a = left.payload();
+    const b = right.payload();
+    if (a.kind != .struct_value or b.kind != .struct_value or !a.user.?.class) return false;
+    return a.user.?.extends(b.user.?) or b.user.?.extends(a.user.?);
+}
+
 fn comparableOptional(left: Type, right: Type) bool {
     if (!left.optional and !right.optional) return false;
     if (left.kind == .nothing or right.kind == .nothing) return true;
@@ -5105,6 +5816,7 @@ fn typeOfCall(
     call: Ast.Expression.Call,
 ) Error!Type {
     if (isCounting(expression)) return self.rejectCountingValue(expression);
+    if (isSuper(call.callee)) return self.typeOfSuperCall(expression, call);
 
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
     // resolver already decided which this is.
@@ -5135,70 +5847,20 @@ fn typeOfCall(
     }
 
     if (binding.is_type) {
-        // Section 10.2: a custom constructor replaces the generated one, so
-        // its parameters are what a call must match.
         if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
-        // Section 10.2: a custom constructor replaces the generated one, so
-        // its parameters are what a call must match.
-        if (self.constructors.contains(reference.key)) {
-            const constructor = self.constructors.get(reference.key).?.constructor.?;
-            try self.checkArguments(call, name, try self.parametersOf(
-                try self.constructorSignature(reference.key),
-                constructor.parameters,
-                "Match the number of arguments to the constructor's parameters.",
-            ));
-            return binding.type;
-        }
         const declaration = self.struct_declarations.get(reference.key).?;
-        const fields = binding.type.user.?.fields;
-        // Section 10.5: outside the type, the generated constructor cannot
-        // set a private field, so one without a default leaves no way to
-        // build the value there.
-        const outside = !self.insideType(reference.key, call.callee.span);
-        if (outside) for (declaration.fields) |field| {
-            if (!Resolver.isPrivate(field.name) or field.default != null) continue;
+        if (declaration.abstract_span != null) {
             try self.reportWithHelp(
                 call.callee.span,
-                "`{s}` cannot be built here, because its field `{s}` is private and has no default",
-                .{ name, field.name },
-                "Give `{s}` a default, or give `{s}` a constructor that sets it.",
-                .{ field.name, binding.type.user.?.display_name },
-            );
-            try self.typeArguments(call.arguments);
-            return binding.type;
-        };
-        if (fields.len == 0 and call.arguments.len > 0) {
-            try self.report(
-                call.callee.span,
-                "`{s}` takes no arguments, but this call passes {d}",
-                .{ name, call.arguments.len },
-                "A type without fields has a generated constructor that takes no arguments.",
+                "`{s}` is abstract, so it cannot be constructed",
+                .{name},
+                "An abstract class is only a base for other classes. Construct one of the classes that extend `{s}` instead.",
+                .{binding.type.user.?.display_name},
             );
             try self.typeArguments(call.arguments);
             return binding.type;
         }
-        const types = try self.arena.alloc(Type, fields.len);
-        const names = try self.arena.alloc([]const u8, fields.len);
-        const defaults = try self.arena.alloc(bool, fields.len);
-        var any_default = false;
-        for (fields, declaration.fields, types, names, defaults) |field, written, *t, *n, *d| {
-            t.* = field.type;
-            n.* = field.name;
-            d.* = written.default != null;
-            any_default = any_default or d.*;
-        }
-        try self.checkArguments(call, name, .{
-            .types = types,
-            .names = names,
-            .has_default = defaults,
-            .noun = "field",
-            .private_to = if (outside) binding.type.user.?.display_name else null,
-            .mismatch_help = "Pass a value of the field's declared type, or convert it first.",
-            .arity_help = if (any_default)
-                "Pass a value for each field without a default, in declaration order, or name the fields you pass."
-            else
-                "Pass one value for each required field, in declaration order.",
-        });
+        try self.checkConstruction(call, reference.key, name);
         return binding.type;
     }
 
@@ -5232,6 +5894,178 @@ fn typeOfCall(
 
     if (!self.in_function) try self.checkCaptures(expression.span, key, name);
     return signature.return_type;
+}
+
+/// The arguments of a call that builds a value of the type `key`: calling the
+/// type, or a subclass's `super(...)`. `name` is the type as written there.
+fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8, name: []const u8) Error!void {
+    const built = self.structs.get(key).?;
+    // Section 10.2: a custom constructor replaces the generated one, so its
+    // parameters are what a call must match.
+    if (self.constructors.contains(key)) {
+        const constructor = self.constructors.get(key).?.constructor.?;
+        try self.checkArguments(call, name, try self.parametersOf(
+            try self.constructorSignature(key),
+            constructor.parameters,
+            "Match the number of arguments to the constructor's parameters.",
+        ));
+        return;
+    }
+    const declaration = self.struct_declarations.get(key).?;
+    // Section 10.2: a subclass without a constructor of its own gets one only
+    // when nothing needs an argument, and it takes none.
+    if (built.user.?.base != null) {
+        if (call.arguments.len > 0) {
+            try self.reportWithHelp(
+                call.callee.span,
+                "`{s}` takes no arguments, but this call passes {d}",
+                .{ name, call.arguments.len },
+                "A class that extends another has no generated constructor to take its fields. Give `{s}` a constructor of its own to take these values.",
+                .{built.user.?.display_name},
+            );
+            try self.typeArguments(call.arguments);
+        }
+        return;
+    }
+    const fields = built.user.?.fields;
+    // Section 10.5: outside the type, the generated constructor cannot set a
+    // private field, so one without a default leaves no way to build the value
+    // there.
+    const outside = !self.insideType(key, call.callee.span);
+    if (outside) for (declaration.fields) |field| {
+        if (!Resolver.isPrivate(field.name) or field.default != null) continue;
+        try self.reportWithHelp(
+            call.callee.span,
+            "`{s}` cannot be built here, because its field `{s}` is private and has no default",
+            .{ name, field.name },
+            "Give `{s}` a default, or give `{s}` a constructor that sets it.",
+            .{ field.name, built.user.?.display_name },
+        );
+        try self.typeArguments(call.arguments);
+        return;
+    };
+    if (fields.len == 0 and call.arguments.len > 0) {
+        try self.report(
+            call.callee.span,
+            "`{s}` takes no arguments, but this call passes {d}",
+            .{ name, call.arguments.len },
+            "A type without fields has a generated constructor that takes no arguments.",
+        );
+        try self.typeArguments(call.arguments);
+        return;
+    }
+    const types = try self.arena.alloc(Type, fields.len);
+    const names = try self.arena.alloc([]const u8, fields.len);
+    const defaults = try self.arena.alloc(bool, fields.len);
+    var any_default = false;
+    for (fields, declaration.fields, types, names, defaults) |field, written, *t, *n, *d| {
+        t.* = field.type;
+        n.* = field.name;
+        d.* = written.default != null;
+        any_default = any_default or d.*;
+    }
+    try self.checkArguments(call, name, .{
+        .types = types,
+        .names = names,
+        .has_default = defaults,
+        .noun = "field",
+        .private_to = if (outside) built.user.?.display_name else null,
+        .mismatch_help = "Pass a value of the field's declared type, or convert it first.",
+        .arity_help = if (any_default)
+            "Pass a value for each field without a default, in declaration order, or name the fields you pass."
+        else
+            "Pass one value for each required field, in declaration order.",
+    });
+}
+
+/// Whether an expression is section 10.7's `super`.
+fn isSuper(expression: *const Ast.Expression) bool {
+    return expression.data == .name and std.mem.eql(u8, expression.data.name, "super");
+}
+
+/// `super`, as the receiver of `super.name`: the object, seen as its base
+/// class. The parser has already said where it may be written.
+fn typeOfSuper(self: *Checker, span: Source.Span) Error!Type {
+    const receiver = self.find("self") orelse return .invalid;
+    if (receiver.type.kind != .struct_value) return .invalid;
+    const base = receiver.type.user.?.base orelse return .invalid;
+    if (self.constructing != null) {
+        if (try self.firstUnsetField()) |field| {
+            if (!try self.reportInDefault(span, "use `super`")) try self.reportWithHelp(
+                span,
+                "`super` cannot be used until every field of `self` is set",
+                .{},
+                "Set `self.{s}` first. The base class's version may run code that reads any field.",
+                .{field},
+            );
+            for (self.constructing.?.type.user.?.fields) |each| {
+                (try self.fieldSetBinding(each.name)).?.assigned = true;
+            }
+        }
+    }
+    return Type.structOf(base);
+}
+
+/// `super.area()` where the base class leaves `area` abstract, so there is no
+/// version of it there to run. Returns whether it reported.
+fn reportAbstractThroughSuper(self: *Checker, member: Ast.Expression.Member, key: []const u8) Error!bool {
+    if (!isSuper(member.base)) return false;
+    const declaration = self.declarations.get(key) orelse return false;
+    if (declaration.abstract_span == null) return false;
+    const owner = self.receivers.get(key).?.user.?.display_name;
+    try self.reportWithHelp(
+        member.name_span,
+        "`{s}` is abstract in `{s}`, so there is no version of it for `super` to reach",
+        .{ member.name, owner },
+        "Call it through `self` to run this class's version, or give `{s}` a body in `{s}`.",
+        .{ member.name, owner },
+    );
+    return true;
+}
+
+/// Section 10.2's `super(...)`, which builds the base class's part of the
+/// object. It is allowed only as the first statement of a constructor.
+fn typeOfSuperCall(self: *Checker, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Type {
+    const building = self.constructing orelse {
+        try self.report(
+            call.callee.span,
+            "`super(...)` can only begin a constructor",
+            .{},
+            "It builds the base class's part of a new object, which only a constructor does. To run the base class's version of a method, write `super.name(...)`.",
+        );
+        try self.typeArguments(call.arguments);
+        return .nothing;
+    };
+    if (building.super_call != expression) {
+        try self.report(
+            call.callee.span,
+            "`super(...)` can only begin a constructor",
+            .{},
+            "Move it to the first line of the constructor, so the base class's part of the object is built before anything else runs.",
+        );
+        try self.typeArguments(call.arguments);
+        return .nothing;
+    }
+    const user = building.type.user.?;
+    const base = user.base orelse {
+        try self.typeArguments(call.arguments);
+        return .nothing;
+    };
+    try self.checkConstruction(call, base.name, base.display_name);
+    // The base class's part is built: every inherited field is set.
+    for (user.fields[0..user.inherited]) |field| {
+        (try self.fieldSetBinding(field.name)).?.assigned = true;
+        self.find(try fieldUnsetKey(self.arena, field.name)).?.assigned = false;
+    }
+    return .nothing;
+}
+
+/// Whether a constructor body starts with `super(...)`, and if so that call.
+fn superCallOf(statements: []const Ast.Statement) ?*const Ast.Expression {
+    if (statements.len == 0 or statements[0].data != .expression) return null;
+    const expression = statements[0].data.expression;
+    if (expression.data != .call or !isSuper(expression.data.call.callee)) return null;
+    return expression;
 }
 
 /// What a call by name is matched against (7.3).

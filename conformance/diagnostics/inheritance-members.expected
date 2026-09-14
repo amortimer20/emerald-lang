@@ -1,0 +1,48 @@
+diagnostics/inheritance-members.em:8:14: a subclass could override `reset`, so construction cannot call it through `self`
+          self.reset()
+               ^^^^^
+A subclass's version would run before that subclass has set its own fields. Move what it does into a private method, such as `_reset`, and use that instead.
+diagnostics/inheritance-members.em:9:24: a subclass could override `reset`, so construction cannot capture it through `self`
+          const r = self.reset
+                         ^^^^^
+A subclass's version would run before that subclass has set its own fields. Move what it does into a private method, such as `_reset`, and use that instead.
+diagnostics/inheritance-members.em:10:20: a subclass could override `doubled`, so construction cannot read it through `self`
+          print(self.doubled)
+                     ^^^^^^^
+A subclass's version would run before that subclass has set its own fields. Move what it does into a private method, such as `_doubled`, and use that instead.
+diagnostics/inheritance-members.em:11:14: a subclass could override `doubled`, so construction cannot set it through `self`
+          self.doubled = 4
+               ^^^^^^^
+A subclass's version would run before that subclass has set its own fields. Move what it does into a private method, such as `_doubled`, and use that instead.
+diagnostics/inheritance-members.em:33:9: `super` cannot be used until every field of `self` is set
+          super.reset()
+          ^^^^^
+Set `self.name` first. The base class's version may run code that reads any field.
+diagnostics/inheritance-members.em:35:21: `count` is a field, so reach it through `self`
+          print(super.count)
+                      ^^^^^
+`super` reaches a base class's version of a method or property. A subclass never replaces a field, so `self.count` is the same one.
+diagnostics/inheritance-members.em:36:15: `count` is a field, so set it through `self`
+          super.count = 3
+                ^^^^^
+`super` reaches a base class's version of a method or property. A subclass never replaces a field, so `self.count` is the same one.
+diagnostics/inheritance-members.em:37:20: `_hidden` is private to `Base`
+          print(self._hidden)
+                     ^^^^^^^
+Only code written inside `Base`'s braces can reach a name that starts with `_`.
+diagnostics/inheritance-members.em:38:25: this is String, but the property `doubled` holds Int
+          super.doubled = "x"
+                          ^^^
+Assign a value of the property's type, or convert it first.
+diagnostics/inheritance-members.em:47:15: Derived and Other cannot be compared
+  print(d == b, d == Other())
+                ^^^^^^^^^^^^
+Two objects can be compared only when one's class is the other's or extends it, since only then can they be the same object.
+diagnostics/inheritance-members.em:48:23: this is Base, but `back` was declared as Derived
+  const back: Derived = b
+                        ^
+Give the declaration the type of its value, or convert the value to match.
+diagnostics/inheritance-members.em:49:9: `total` belongs to the type `Base`, not to each value
+  print(d.total)
+          ^^^^^
+Reach it through the type, as in `Base.total`.

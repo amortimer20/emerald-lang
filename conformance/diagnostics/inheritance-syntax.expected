@@ -1,0 +1,72 @@
+diagnostics/inheritance-syntax.em:2:1: `@overide` is not an annotation
+  @overide
+  ^^^^^^^^
+Did you mean `@override`?
+diagnostics/inheritance-syntax.em:4:5: `@banana` is not an annotation
+      @banana
+      ^^^^^^^
+Emerald's annotations are `@override`, `@abstract`, and `@test`.
+diagnostics/inheritance-syntax.em:7:5: `@test` is not available yet
+      @test
+      ^^^^^
+Tests arrive with `emerald test`. Remove the annotation for now.
+diagnostics/inheritance-syntax.em:11:1: a struct cannot be abstract
+  @abstract
+  ^^^^^^^^^
+Only a class can be `@abstract`, since only a class can be extended. Remove `@abstract`, or declare a class.
+diagnostics/inheritance-syntax.em:14:1: `@override` belongs on a method or property of a class
+  @override
+  ^^^^^^^^^
+Only a member of a class that extends another can replace one of its base class's members. Remove `@override` here.
+diagnostics/inheritance-syntax.em:18:5: a stored field cannot be overridden
+      @override
+      ^^^^^^^^^
+Only methods and properties can be replaced by a subclass. Remove `@override`, and give this field a name of its own.
+diagnostics/inheritance-syntax.em:20:5: a constructor cannot be overridden or abstract
+      @abstract
+      ^^^^^^^^^
+Constructors are not inherited. A subclass declares its own and calls `super(...)` first.
+diagnostics/inheritance-syntax.em:24:5: a type-level function cannot be overridden or abstract
+      @override
+      ^^^^^^^^^
+It belongs to its own type and is never inherited. Remove the annotation.
+diagnostics/inheritance-syntax.em:30:5: a struct has nothing to override
+      @override
+      ^^^^^^^^^
+Structs do not inherit. Remove the annotation, or declare a class.
+diagnostics/inheritance-syntax.em:34:9: a struct has no base class, so there is no `super`
+          super.g()
+          ^^^^^
+Structs do not inherit. Reach the struct's own members through `self`.
+diagnostics/inheritance-syntax.em:40:24: `area` is abstract, so it has no body
+      func area(): Float {
+                         ^
+Remove the body, and let each subclass supply one with `@override`. Or remove `@abstract` to keep this body.
+diagnostics/inheritance-syntax.em:43:28: `perimeter` needs a body
+      func perimeter(): Float
+                             ^
+Add its body in braces. A method that each subclass supplies instead is marked `@abstract`, in an `@abstract` class.
+diagnostics/inheritance-syntax.em:45:9: a type-level member has no `super`
+          super.make()
+          ^^^^^
+It belongs to the type, not to any one object, so there is no base class's version of it to reach.
+diagnostics/inheritance-syntax.em:48:18: a class extends at most one class
+  class C extends A, B {
+                   ^
+Emerald has single inheritance. Keep one base class.
+diagnostics/inheritance-syntax.em:50:17: a class can only extend another class
+  class D extends [Int] {
+                  ^^^^^
+Name the base class, as in `class Dog extends Animal`.
+diagnostics/inheritance-syntax.em:54:9: `E` has no base class, so there is no `super`
+          super.f()
+          ^^^^^
+Give it one with `extends`, as in `class E extends Base`, or reach its own members through `self`.
+diagnostics/inheritance-syntax.em:55:19: `super` is not a value on its own
+          const x = super
+                    ^^^^^
+Reach the base class's version of a member, as in `super.speak()`, or call its constructor with `super(...)`. Use `self` for the object itself.
+diagnostics/inheritance-syntax.em:59:5: `super` is only available inside a class that extends another
+      super.h()
+      ^^^^^
+Inside a subclass's method, `super.name` reaches the base class's version of a member.

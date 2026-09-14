@@ -90,6 +90,11 @@ pub const StructValue = struct {
     references: u32 = 1,
     descriptor: *const Value.StructType,
     fields: []Value,
+    /// Section 10.7: while a subclass's object is being built, base class
+    /// first, the `depth` of the deepest class whose part of it has begun. A
+    /// version of a method declared deeper than this would read fields that
+    /// are not set yet. Every finished object is past any class's depth.
+    built: u32 = std.math.maxInt(u32),
     marked: bool = false,
     internal: u32 = 0,
     previous: ?*StructValue = null,

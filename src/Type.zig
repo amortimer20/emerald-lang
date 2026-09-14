@@ -88,13 +88,31 @@ pub const User = struct {
     /// Section 10.1: a class's values are shared references rather than
     /// copied values.
     class: bool = false,
+    /// Section 10.7's base class, for a class that extends one.
+    base: ?*const User = null,
+    /// Every stored field, a base class's first, in declaration order.
     fields: []const Field = &.{},
+    /// How many of `fields` come from base classes.
+    inherited: usize = 0,
 
     pub const Field = struct {
         name: []const u8,
         type: Type,
         mutable: bool,
+        /// The key of the type that declares it, which section 10.5's
+        /// privacy is judged against.
+        owner: []const u8 = "",
     };
+
+    /// Whether this is `other` or extends it, directly or through its base
+    /// classes (10.7).
+    pub fn extends(self: *const User, other: *const User) bool {
+        var at: ?*const User = self;
+        while (at) |current| : (at = current.base) {
+            if (current == other) return true;
+        }
+        return false;
+    }
 };
 
 pub const Signatures = std.StringHashMapUnmanaged(Signature);
@@ -348,6 +366,12 @@ pub fn assignableTo(self: Type, target: Type) bool {
 
     if (self.kind == .int and target.kind == .float) return true;
 
+    // Section 10.7: an object of a subclass is also one of its base class,
+    // and it is shared rather than converted, so nothing changes at runtime.
+    if (self.kind == .struct_value and target.kind == .struct_value) {
+        return self.user.?.extends(target.user.?);
+    }
+
     // A tuple widens position by position, unlike a list. Section 8.2 gives no
     // way to assign to a position, so a `(Int, Int)` used as a `(Float, Int)`
     // can never be written through and observed as the wrong type — which is
@@ -532,4 +556,20 @@ test "type names round-trip through their source spelling" {
     try testing.expectEqual(Type.Kind.bool, Type.fromName("Bool").?.kind);
     try testing.expectEqual(Type.Kind.nothing, Type.fromName("Nothing").?.kind);
     try testing.expect(Type.fromName("Player") == null);
+}
+
+test "an object of a subclass is assignable to its base class but not the reverse" {
+    var animal: User = .{ .name = "Animal", .display_name = "Animal", .class = true };
+    var dog: User = .{ .name = "Dog", .display_name = "Dog", .class = true, .base = &animal };
+    const puppy: User = .{ .name = "Puppy", .display_name = "Puppy", .class = true, .base = &dog };
+    const other: User = .{ .name = "Other", .display_name = "Other", .class = true };
+    try testing.expect(structOf(&puppy).assignableTo(structOf(&animal)));
+    try testing.expect(structOf(&dog).assignableTo(structOf(&animal).optionalOf()));
+    try testing.expect(!structOf(&animal).assignableTo(structOf(&dog)));
+    try testing.expect(!structOf(&other).assignableTo(structOf(&animal)));
+    // Lists stay invariant (4.4).
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const dogs = try listOf(arena_state.allocator(), structOf(&dog));
+    try testing.expect(!dogs.assignableTo(try listOf(arena_state.allocator(), structOf(&animal))));
 }

@@ -1,0 +1,4 @@
+diagnostics/capture-through-override.em:23:7: `greet` reads `title`, which is not assigned yet here
+  print(greeter.greet())
+        ^^^^^^^^^^^^^^^
+Move this call below the line that assigns `title`.

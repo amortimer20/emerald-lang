@@ -1,0 +1,72 @@
+diagnostics/inheritance-overrides.em:31:10: `speak` is already a method of `Animal`
+      func speak() {
+           ^^^^^
+Write `@override` on the line before it to replace `Animal`'s version, or give it a name of its own.
+diagnostics/inheritance-overrides.em:35:10: `bark` does not override anything
+      func bark() {
+           ^^^^
+`Animal` and the classes it extends have no method named `bark` to replace. Check the name, or remove `@override`.
+diagnostics/inheritance-overrides.em:39:10: `_helper` is private to `Animal`, so it cannot be overridden
+      func _helper() {
+           ^^^^^^^
+Only code inside `Animal`'s braces can reach it. Give this method a name of its own.
+diagnostics/inheritance-overrides.em:42:9: `_secret` is already a field of `Animal`
+      var _secret: Int = 1
+          ^^^^^^^
+A class shares one set of names with the classes it extends, private names included, so that a name means one thing. Rename this one.
+diagnostics/inheritance-overrides.em:45:11: `name` is a field of `Animal`, so this property cannot override it
+      const name: String {
+            ^^^^
+A method can override only a method, and a property only a property. Give this property a name of its own.
+diagnostics/inheritance-overrides.em:49:10: `size` is already a property of `Animal`
+      func size() {
+           ^^^^
+A class shares one set of names with the classes it extends, private names included, so that a name means one thing. Rename this one.
+diagnostics/inheritance-overrides.em:52:9: `count` is already a type-level field of `Animal`
+      var count: Int = 0
+          ^^^^^
+A class shares one set of names with the classes it extends, private names included, so that a name means one thing. Rename this one.
+diagnostics/inheritance-overrides.em:55:9: `size` is already a method of `Dog`
+      var size: Int {
+          ^^^^
+A field, a property, and a method cannot share a name, since `value.name` has to mean one of them. Rename one.
+diagnostics/inheritance-overrides.em:64:11: `weight` has to be a `var` property, as it is in `Animal`
+      const weight: String {
+            ^^^^^^
+Code that uses the property through the base class can set it, so the override needs `get` and `set` blocks.
+diagnostics/inheritance-overrides.em:69:10: `fetch` takes different parameters from the `fetch` of `Animal` it overrides
+      func fetch(count: Int, loud: Bool = true): Int {
+           ^^^^^
+An override takes exactly the parameters it replaces, with the same names and types, since a call through `Animal` passes them: `(times: Int, loud: Bool)`.
+diagnostics/inheritance-overrides.em:69:41: an override cannot give `loud` a default
+      func fetch(count: Int, loud: Bool = true): Int {
+                                          ^^^^
+It uses whatever `Animal` declares for it, whichever version runs. Remove the default here.
+diagnostics/inheritance-overrides.em:69:48: `fetch` gives Int, but the `fetch` of `Animal` it overrides gives Animal
+      func fetch(count: Int, loud: Bool = true): Int {
+                                                 ^^^
+An override gives what it replaces, or a subclass of that class. Write `: Animal`.
+diagnostics/inheritance-overrides.em:76:10: `alone` does not override anything
+      func alone() {
+           ^^^^^
+`Loner` does not extend another class. Remove `@override`, or give `Loner` a base class with `extends`.
+diagnostics/inheritance-overrides.em:82:25: `Point` is a struct, so it cannot be extended
+  class NotAClass extends Point {
+                          ^^^^^
+Structs do not inherit. Declare `Point` with `class` to use it as a base class.
+diagnostics/inheritance-overrides.em:84:24: `Missing` is not a class
+  class NotAType extends Missing {
+                         ^^^^^^^
+Check the spelling, or declare `class Missing` in this project.
+diagnostics/inheritance-overrides.em:86:23: `Builtin` can only extend a class, and Int is not one
+  class Builtin extends Int {
+                        ^^^
+Name a class declared with `class`, as in `class Builtin extends Animal`.
+diagnostics/inheritance-overrides.em:88:25: `Ouroboros` cannot extend itself
+  class Ouroboros extends Ouroboros {
+                          ^^^^^^^^^
+Name a different class after `extends`, or remove `extends`.
+diagnostics/inheritance-overrides.em:90:21: `First` cannot extend `Second`, because `Second` already extends `First`
+  class First extends Second {
+                      ^^^^^^
+A class's base classes can never lead back to it. Remove one of the `extends`.

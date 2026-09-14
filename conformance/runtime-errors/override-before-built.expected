@@ -1,0 +1,7 @@
+runtime-errors/override-before-built.em:3:11: `Dog`'s version of `describe` ran before this `Dog` was built
+      print(animal.describe())
+            ^^^^^^^^^^^^^^^^^
+A base class's constructor let the object be used before the classes that extend it were built. Finish building the object before passing `self` on or running code that calls its methods.
+in `announce`, called at runtime-errors/override-before-built.em:11:9
+in the constructor of `Animal`, called at runtime-errors/override-before-built.em:23:9
+in the constructor of `Dog`, called at runtime-errors/override-before-built.em:34:13

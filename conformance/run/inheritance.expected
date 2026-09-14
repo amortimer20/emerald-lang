@@ -1,0 +1,25 @@
+Rex says woof
+Rex says woofwoof dog, which is an animal
+3 ["sit"]
+Generic says ... / animal
+Rex says woof / dog, which is an animal
+(small) Bit says WOOF / dog, which is an animal
+true true false
+true
+woof
+Puppy(name: "Bit", sound_count: 1, tricks: ["sit"])
+WOOF
+base default
+base constructor, label none
+middle default
+top default
+top constructor
+base default
+base constructor, label given
+labelled constructor
+NamedPoint(x: 0, y: 5, label: "p")
+100.0
+25.0
+Buddy says woof
+Savings(balance: 100, rate: 2)
+(small) Bit says WOOF

@@ -17,4 +17,4 @@ A key must be a number, a `Bool`, a `String`, or a tuple or struct made only fro
 diagnostics/class-mutability.em:30:7: Account and Other cannot be compared
   print(a == Other())
         ^^^^^^^^^^^^
-`==` and `!=` compare two values of the same type, and Int and Float compare with each other.
+Two objects can be compared only when one's class is the other's or extends it, since only then can they be the same object.

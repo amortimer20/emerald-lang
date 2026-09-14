@@ -74,6 +74,11 @@ pub const StructDeclaration = struct {
     class: bool = false,
     name: []const u8,
     name_span: Source.Span,
+    /// Section 10.7's `extends Animal`: the one base class a class may have.
+    base: ?TypeExpression = null,
+    /// Section 10.7's `@abstract`, which keeps the class from being constructed
+    /// and lets its methods leave out their bodies.
+    abstract_span: ?Source.Span = null,
     fields: []const Field,
     /// Section 10.2's custom constructor, which replaces the generated one.
     /// A type declares at most one, since overloading is deferred.
@@ -137,6 +142,8 @@ pub const StructDeclaration = struct {
         annotation: TypeExpression,
         getter: FunctionDeclaration,
         setter: ?FunctionDeclaration,
+        /// Section 10.7's `@override`, which replaces a base class's property.
+        override_span: ?Source.Span = null,
     };
 
     /// `constructor(x: Float) { self.x = x }`. It has no name and no return
@@ -220,6 +227,11 @@ pub const FunctionDeclaration = struct {
     /// `Nothing`, exactly as if `: Nothing` were written (section 7.2).
     return_annotation: ?TypeExpression,
     body: Block,
+    /// Section 10.7's `@override`, which replaces a base class's method.
+    override_span: ?Source.Span = null,
+    /// Section 10.7's `@abstract`, on a method with no body for a subclass to
+    /// supply. Its `body` is empty.
+    abstract_span: ?Source.Span = null,
 };
 
 pub const Parameter = struct {

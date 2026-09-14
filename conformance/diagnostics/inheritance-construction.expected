@@ -1,0 +1,60 @@
+diagnostics/inheritance-construction.em:18:5: `nothing_here` is abstract, so `Lazy` has to be `@abstract` too
+      @abstract
+      ^^^^^^^^^
+Write `@abstract` on the line before `class Lazy`, or give `nothing_here` a body.
+diagnostics/inheritance-construction.em:22:7: `Square` does not supply the abstract method `perimeter` of `Shape`
+  class Square extends Shape {
+        ^^^^^^
+Add `@override func perimeter(...)` with a body to `Square`, or mark `Square` `@abstract`.
+diagnostics/inheritance-construction.em:31:22: `area` is abstract in `Shape`, so there is no version of it for `super` to reach
+          return super.area()
+                       ^^^^
+Call it through `self` to run this class's version, or give `area` a body in `Shape`.
+diagnostics/inheritance-construction.em:35:15: `Shape` is abstract, so it cannot be constructed
+  const shape = Shape("s")
+                ^^^^^
+An abstract class is only a base for other classes. Construct one of the classes that extend `Shape` instead.
+diagnostics/inheritance-construction.em:37:7: `Needy` does not supply the abstract method `area` of `Shape`
+  class Needy extends Shape {
+        ^^^^^
+Add `@override func area(...)` with a body to `Needy`, or mark `Needy` `@abstract`.
+diagnostics/inheritance-construction.em:37:7: `Needy` does not supply the abstract method `perimeter` of `Shape`
+  class Needy extends Shape {
+        ^^^^^
+Add `@override func perimeter(...)` with a body to `Needy`, or mark `Needy` `@abstract`.
+diagnostics/inheritance-construction.em:37:7: `Needy` needs a constructor, because its field `extra` has no default
+  class Needy extends Shape {
+        ^^^^^
+A class that extends another is built with no arguments unless it has a constructor of its own. Give `extra` a default, or add a constructor that starts with `super(...)` and sets it.
+diagnostics/inheritance-construction.em:41:7: `NoFields` needs a constructor, because building `Shape` takes arguments
+  class NoFields extends Shape {
+        ^^^^^^^^
+Add a constructor to `NoFields` that starts with `super(...)`, passing what `Shape` needs.
+diagnostics/inheritance-construction.em:54:5: this constructor has to start with `super(...)`, because building `Shape` takes arguments
+      constructor() {
+      ^^^^^^^^^^^
+Pass what `Shape` needs on the constructor's first line, as in `super(...)`, before anything else.
+diagnostics/inheritance-construction.em:55:14: `label` is a `const` field that `Shape` sets
+          self.label = "x"
+               ^^^^^
+A subclass cannot change it. Pass the value to `super(...)` so `Shape` sets it.
+diagnostics/inheritance-construction.em:72:5: this constructor has to start with `super(...)`, because building `Shape` takes arguments
+      constructor() {
+      ^^^^^^^^^^^
+Pass what `Shape` needs on the constructor's first line, as in `super(...)`, before anything else.
+diagnostics/inheritance-construction.em:74:9: `super(...)` can only begin a constructor
+          super("late")
+          ^^^^^
+Move it to the first line of the constructor, so the base class's part of the object is built before anything else runs.
+diagnostics/inheritance-construction.em:78:9: `super(...)` can only begin a constructor
+          super("again")
+          ^^^^^
+It builds the base class's part of a new object, which only a constructor does. To run the base class's version of a method, write `super.name(...)`.
+diagnostics/inheritance-construction.em:98:18: this is String, but field `n` of `Plain` needs Int
+          super(n: "one")
+                   ^^^^^
+Pass a value of the field's declared type, or convert it first.
+diagnostics/inheritance-construction.em:105:11: `Generated` takes no arguments, but this call passes 1
+  const g = Generated(5)
+            ^^^^^^^^^
+A class that extends another has no generated constructor to take its fields. Give `Generated` a constructor of its own to take these values.

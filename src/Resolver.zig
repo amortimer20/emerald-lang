@@ -160,6 +160,10 @@ pub const Facts = struct {
     /// the nested function and whatever it calls. Each is declared above the
     /// use, which the resolver checks; the checker checks each holds a value.
     nested_uses: std.AutoHashMapUnmanaged(*const Ast.Expression, []const []const u8) = .empty,
+    /// Every class that extends another (10.7), mapped to its base class's
+    /// key. Only a name that reaches a type is recorded; the checker reports
+    /// the rest.
+    bases: KeyMap = .empty,
 
     /// The key a bare name has in `file`, or null when the name is not a
     /// module-level declaration visible there.
@@ -373,6 +377,11 @@ pub fn resolve(
         try resolver.applyUsing(program.using, &key_maps[index]);
     }
 
+    for (programs, 0..) |program, index| {
+        resolver.file = @intCast(index);
+        try resolver.recordBases(program.statements);
+    }
+
     for (files, programs, 0..) |file, program, index| {
         resolver.file = @intCast(index);
         if (!file.entry) try resolver.checkModuleFile(program.statements);
@@ -545,6 +554,51 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
             }
         }
     }
+}
+
+/// Section 10.7: which class each class extends, once every file's names are
+/// known. Constructing a subclass runs its base class's constructor, so the
+/// call is recorded as one for section 7.1's capture check.
+fn recordBases(self: *Resolver, statements: []const Ast.Statement) Error!void {
+    for (statements) |statement| {
+        const declaration = switch (statement.data) {
+            .struct_declaration => |value| value,
+            else => continue,
+        };
+        const written = declaration.base orelse continue;
+        const key = try self.typeKeyOf(written.name) orelse continue;
+        const type_key = try self.keyOf(self.file, declaration.name);
+        // A repeated type name is reported where it is hoisted.
+        if (self.facts.bases.contains(type_key)) continue;
+        try self.facts.bases.put(self.arena, type_key, key);
+        try self.facts.calls.getPtr(type_key).?.put(self.arena, key, {});
+    }
+}
+
+/// The key of the type a written type name reaches in the file being walked,
+/// following a namespace alias at its front, or null when it reaches none.
+fn typeKeyOf(self: *Resolver, written: []const u8) Error!?[]const u8 {
+    const module = &self.scopes.items[module_scope];
+    const key = self.facts.keyFor(self.file, written) orelse blk: {
+        const dot = std.mem.indexOfScalar(u8, written, '.') orelse return null;
+        break :blk try std.fmt.allocPrint(self.arena, "{s}{s}", .{ self.namespaceFor(written[0..dot]), written[dot..] });
+    };
+    const binding = module.get(key) orelse return null;
+    return if (binding.kind == .type) key else null;
+}
+
+/// Whether `name` is an instance member of the type `type_key` or of any class
+/// it extends, and if so the key of the type that declares it.
+fn instanceMemberOwner(self: *Resolver, type_key: []const u8, name: []const u8) Error!?[]const u8 {
+    var at: ?[]const u8 = type_key;
+    var steps: usize = 0;
+    while (at) |current| : (steps += 1) {
+        // A cycle of bases is reported by the checker; stop going round it.
+        if (steps > self.facts.bases.count()) return null;
+        if (self.instance_members.contains(try methodKey(self.arena, current, name))) return current;
+        at = self.facts.bases.get(current);
+    }
+    return null;
 }
 
 /// A method or property accessor, whose body is walked like a function's.
@@ -1067,7 +1121,7 @@ fn memberOfEnclosingType(self: *Resolver, name: []const u8) Error!?MemberOfType 
     if (self.facts.type_members.contains(key)) {
         return .{ .type_key = enclosing.type_key, .type_level = true, .has_self = enclosing.has_self };
     }
-    if (self.instance_members.contains(key)) {
+    if (try self.instanceMemberOwner(enclosing.type_key, name) != null) {
         return .{ .type_key = enclosing.type_key, .type_level = false, .has_self = enclosing.has_self };
     }
     return null;
@@ -1292,6 +1346,8 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 },
             };
             try self.walkExpression(assignment.value);
+            // `super.size = 3` sets a base class's property (10.7).
+            if (std.mem.eql(u8, assignment.name, "super")) return;
 
             try self.checkAmbiguous(assignment.name, assignment.name_span);
             const found = self.lookup(assignment.name) orelse {
@@ -1694,7 +1750,7 @@ fn qualifyTypeMember(
         }
         return .{ .key = key };
     }
-    if (self.instance_members.contains(key)) {
+    if (try self.instanceMemberOwner(type_key, member) != null) {
         // Section 10.5: from outside the type, that it is private is the
         // mistake, since reaching it through a value would fail too.
         if (isPrivate(member)) {
@@ -1940,6 +1996,9 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
         .int_literal, .float_literal, .bool_literal, .nothing_literal => {},
 
         .name => |name| {
+            // Section 10.7's `super` is the object itself, seen as its base
+            // class, and the parser has already said where it may appear.
+            if (std.mem.eql(u8, name, "super")) return;
             try self.checkAmbiguous(name, expression.span);
             const found = self.lookup(name) orelse {
                 return self.reportUndefined(

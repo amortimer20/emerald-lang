@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the class basics slice (10.1).
+Updated: 2026-09-13. Prepared after the class inheritance slice (10.7).
 
 ## Current milestone
 
@@ -37,8 +37,9 @@ reached. Members whose names start with `_` are private to their type's braces, 
 struct method without parentheses is a function value holding its own copy of the receiver.
 Structs are complete. Classes have everything structs have, as shared objects: assignment
 and passing share, `const` stops at the first object, identity equality, blocks that use
-`self`, and cycles the collector reclaims. Inheritance (`extends`, `super`, `@override`,
-`@abstract`) is the next class sub-slice.
+`self`, and cycles the collector reclaims. Classes inherit: `extends`, `super(...)` and
+`super.name`, `@override`, `@abstract` classes and methods, subclass objects usable as their
+base class, and each object running its own class's version of a method or property.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
@@ -165,6 +166,43 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Inheritance decisions worth knowing
+
+- **Syntax.** `Ast.StructDeclaration.base` and `abstract_span`, and `override_span` and
+  `abstract_span` on methods and properties. The parser reads annotations
+  (`parseAnnotations`, with spelling suggestions and `@test` reported as not available) and
+  says where each cannot go; an `@abstract` method leaves out its body. `super` parses as the
+  name `super`, only before `.` or `(`, and `Parser.has_base` says whether it means anything.
+- **Resolver.** `Facts.bases` maps a class to its base class's key, recorded once every
+  file's names are known, and the base class is recorded as a call of the subclass for the
+  capture check. `super` is never looked up.
+- **Checker.** `resolveBase` and `breakBaseCycle` run before fields; `ensureStructChecked`
+  resolves a base class's fields first, and `Type.User.fields` holds every field, base
+  class's first, with `inherited` counting them and `Field.owner` naming the declaring type
+  for privacy. `memberKey` finds the nearest declaration of a method or getter and
+  `memberOwner` the declaring type; every member lookup goes through them.
+  `checkInheritedName` judges names against the base classes and `checkInheritance` judges
+  overrides, abstract methods, and a subclass without a constructor.
+  `declarationWithDefaults` gives an override the defaults of what it replaces. Construction
+  records `Constructing.super_call`; inherited fields are unset until that call is checked,
+  or set from the start without one. `reportOverridable` enforces 10.2's rule for calls,
+  reads, sets, and captures through `self`. `capturesOf` follows a class method to every
+  override of it. `Checked.super_members` records `super.name` property reads (by member
+  expression, getter key) and assignments (by value, setter key).
+- **Runtime.** `Value.StructType.depth` and `methods` (name to the version this class runs,
+  with its class's depth), and inherited properties replaced in place, are filled in by
+  `Interpreter.inherit`. `dispatch` picks the version unless the receiver is `super`, and
+  `propertyOf` does the same for properties. `Interpreter.overrides` maps an override to the
+  declaration whose defaults it uses, with `Callable.defaults_file`. A subclass object is
+  built by `buildPart`, base class first; a constructor of a class that extends another is
+  invoked with `Callable.construct`, and `buildBaseFirst` runs its `super(...)` or the
+  zero-argument call, then its field defaults. `Heap.StructValue.built` is the deepest class
+  whose part has begun, and a version declared deeper raises (`raiseUnbuilt`).
+- **Checked.** Eight mechanisms were disabled one at a time, each failing a case: dispatch,
+  override defaults, the defaults' file, the build-depth guard, following overrides in the
+  capture check, `super` property reads, privacy of a base class's fields in a subclass's
+  constructor, and setting the build depth for a generated constructor.
 
 ### Class decisions worth knowing
 
@@ -1204,16 +1242,11 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 
 ## Next concrete step
 
-Continue section 20's slice 12 with class inheritance (10.7): `extends`, `super(...)` in
-constructors (10.2's base-first order and the inserted zero-argument call), `super.method()`,
-`@override` and the missing-override diagnostic, `@abstract` classes and bodyless methods,
-subclass-to-base assignability, identity comparison across an inheritance relationship,
-and the rule against calling overridable methods through `self` during construction. The
-parser already recognizes `extends` and reports it. `is` and `type_name` (4.4) can follow.
+Classes are complete apart from 4.4's `is` and `type_name`, which need a runtime check of an
+object's class and would finish the object model's first half. After that, section 20's
+order continues with traits, operators, and enums.
 
-Structs are complete, class basics are in, and section 7 is complete apart from capturing
-built-in methods, which the user has put off. After classes, section 20's order continues
-with traits, operators, and enums.
+Section 7 is complete apart from capturing built-in methods, which the user has put off.
 
 Section 8's collections are now finished, which was the argument for doing them first:
 `Type` now carries resolved identity for a user-declared struct alongside its kind. The
@@ -1233,7 +1266,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 310 unit tests, 279 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 312 unit tests, 286 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -1352,6 +1385,11 @@ maintainability work rather than reproduced behavioral failures:
   list on the first pass and iterating that list afterwards would filter once.
 
 ### Known rough edges
+
+- **A literal mixing sibling classes needs its type written.** `[Dog(), Cat()]` is reported
+  as a list holding `Dog`, since inference never looks for a common base class; `const pets:
+  [Animal] = [Dog(), Cat()]` works. A common-base rule would need designing with `if`
+  branches and `or`, which infer the same way.
 
 - **What a block assigns is recorded by bare name.** `Facts.assigned_in_lambda` holds names,
   not bindings, so a lambda or nested function assigning its own `text` stops narrowing of

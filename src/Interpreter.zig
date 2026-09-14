@@ -171,6 +171,11 @@ signatures: *const Type.Signatures,
 /// Instance methods that change `self`, and which method each call reaches.
 changing_methods: *const Resolver.NameSet,
 method_calls: *const Checker.MethodCalls,
+/// Every `super.name` that reaches a base class's property (10.7).
+super_members: *const Checker.MethodCalls,
+/// Every method that overrides another, mapped to the declaration it
+/// ultimately replaces, whose parameter defaults it uses (7.3).
+overrides: std.StringHashMapUnmanaged([]const u8) = .empty,
 /// The type the checker gave each list literal, so `[1, 2]` where a `[Float]`
 /// is expected is built from `1.0` and `2.0`.
 literal_types: *const Checker.LiteralTypes,
@@ -195,6 +200,7 @@ pub fn run(
     checked_structs: *const Checker.Structs,
     changing_methods: *const Resolver.NameSet,
     method_calls: *const Checker.MethodCalls,
+    super_members: *const Checker.MethodCalls,
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
@@ -224,6 +230,7 @@ pub fn run(
         .signatures = signatures,
         .changing_methods = changing_methods,
         .method_calls = method_calls,
+        .super_members = super_members,
         .literal_types = literal_types,
         .heap = .init(gpa),
         .stack = stack,
@@ -260,13 +267,21 @@ pub fn run(
                     runtime.* = .{ .name = property.name, .getter = getter, .setter = setter };
                 }
                 const descriptor = try interpreter.arena.create(Value.StructType);
+                var depth: u32 = 0;
+                var ancestor = checked.user.?.base;
+                while (ancestor) |user| : (ancestor = user.base) depth += 1;
                 descriptor.* = .{
                     .name = type_key,
                     .display_name = checked.user.?.display_name,
                     .class = checked.user.?.class,
                     .fields = fields,
                     .properties = properties,
+                    .depth = depth,
                 };
+                for (properties) |*property| {
+                    property.depth = depth;
+                    property.owner = descriptor.display_name;
+                }
                 try interpreter.structs.put(
                     interpreter.arena,
                     interpreter.keyOf(declaration.name),
@@ -311,6 +326,8 @@ pub fn run(
                         .field_names = field_names,
                         .has_default = has_default,
                         .any_default = any_default,
+                        .base = if (checked.user.?.base) |base| base.name else null,
+                        .offset = checked.user.?.inherited,
                         .defaults_frame = try std.fmt.allocPrint(
                             interpreter.arena,
                             "the field defaults of `{s}`",
@@ -336,6 +353,16 @@ pub fn run(
         }
     }
     interpreter.file = entry;
+    // Section 10.7: a class that extends another has its base classes' properties
+    // and methods too, which are known once every class is hoisted.
+    {
+        var bases: std.StringHashMapUnmanaged(void) = .empty;
+        var infos = interpreter.struct_infos.valueIterator();
+        while (infos.next()) |info| if (info.base) |base| try bases.put(interpreter.arena, base, {});
+        var finished: std.StringHashMapUnmanaged(void) = .empty;
+        var keys = interpreter.struct_infos.keyIterator();
+        while (keys.next()) |key| try interpreter.inherit(key.*, &bases, &finished);
+    }
     {
         var nested = interpreter.facts.nested_functions.iterator();
         while (nested.next()) |entry_| try interpreter.functions.put(interpreter.arena, entry_.key_ptr.*, entry_.value_ptr.*);
@@ -366,6 +393,74 @@ pub fn run(
 
     const failure = interpreter.failure;
     return .{ .arena_state = arena_state, .failure = failure };
+}
+
+/// Completes a class's descriptor with what it inherits, its base classes'
+/// first: every property, each at the nearest version to this class, and for
+/// a class in a hierarchy, the table of which version each method name runs.
+fn inherit(
+    self: *Interpreter,
+    key: []const u8,
+    bases: *const std.StringHashMapUnmanaged(void),
+    finished: *std.StringHashMapUnmanaged(void),
+) RunError!void {
+    if (finished.contains(key)) return;
+    try finished.put(self.arena, key, {});
+    const info = self.struct_infos.get(key).?;
+    const descriptor: *Value.StructType = @constCast(self.structs.get(key).?);
+    if (info.base == null and !bases.contains(key)) return;
+
+    const methods = try self.arena.create(Value.StructType.Methods);
+    methods.* = .empty;
+    var properties: std.ArrayList(Value.StructType.Property) = .empty;
+    if (info.base) |base| {
+        try self.inherit(base, bases, finished);
+        const inherited = self.structs.get(base).?;
+        try properties.appendSlice(self.arena, inherited.properties);
+        var entries = inherited.methods.?.iterator();
+        while (entries.next()) |entry| try methods.put(self.arena, entry.key_ptr.*, entry.value_ptr.*);
+    }
+    own: for (descriptor.properties) |property| {
+        for (properties.items) |*existing| {
+            if (!std.mem.eql(u8, existing.name, property.name)) continue;
+            existing.* = property;
+            continue :own;
+        }
+        try properties.append(self.arena, property);
+    }
+    for (info.declaration.methods) |method| {
+        const method_key = try Resolver.methodKey(self.arena, key, method.name);
+        if (method.override_span != null) {
+            if (info.base) |base| {
+                if (self.structs.get(base).?.methods.?.get(method.name)) |replaced| {
+                    const original = self.overrides.get(replaced.key) orelse replaced.key;
+                    try self.overrides.put(self.arena, method_key, original);
+                } else if (try self.abstractKey(base, method.name)) |abstract| {
+                    try self.overrides.put(self.arena, method_key, self.overrides.get(abstract) orelse abstract);
+                }
+            }
+        }
+        if (method.abstract_span != null) continue;
+        try methods.put(self.arena, method.name, .{
+            .key = try Resolver.methodKey(self.arena, key, method.name),
+            .depth = descriptor.depth,
+            .owner = descriptor.display_name,
+        });
+    }
+    descriptor.properties = properties.items;
+    descriptor.methods = methods;
+}
+
+/// The key of the abstract method `name` that a class or one of its base
+/// classes declares, which has no entry in a method table since it cannot run.
+fn abstractKey(self: *Interpreter, key: []const u8, name: []const u8) RunError!?[]const u8 {
+    var at: ?[]const u8 = key;
+    while (at) |current| : (at = self.struct_infos.get(current).?.base) {
+        for (self.struct_infos.get(current).?.declaration.methods) |method| {
+            if (std.mem.eql(u8, method.name, name)) return try Resolver.methodKey(self.arena, current, name);
+        }
+    }
+    return null;
 }
 
 /// Raises before the host stack runs out, whatever the shape of the program.
@@ -624,6 +719,7 @@ const PlaceStep = union(enum) {
 /// copy-on-write: one another binding also holds is copied before anything in
 /// it changes.
 fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
+    if (self.super_members.get(assignment.value)) |setter| return self.assignThroughSuper(assignment, setter);
     const steps = try self.gpa.alloc(PlaceStep, assignment.steps.len);
     defer {
         for (steps) |step| switch (step) {
@@ -684,6 +780,26 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
     return stored;
 }
 
+/// Section 10.7's `super.size = value`, which runs the base class's setter on
+/// the object, reading its getter first for a compound assignment.
+fn assignThroughSuper(self: *Interpreter, assignment: Ast.Assignment, setter: []const u8) Error!void {
+    const object = try self.evaluateName(assignment.value, "self", "self");
+    defer self.heap.release(object);
+    const value = if (assignment.operation) |operation| blk: {
+        var reader = self.namedCallable(setter[0 .. setter.len - Resolver.setter_suffix.len]);
+        reader.self_value = Heap.retain(object);
+        const current = try self.invoke(assignment.target_span, reader, &.{});
+        defer self.heap.release(current);
+        const right = try self.evaluate(assignment.value);
+        defer self.heap.release(right);
+        break :blk try self.applyBinary(assignment.target_span, operation, current, right);
+    } else try self.evaluate(assignment.value);
+    var callable = self.namedCallable(setter);
+    callable.self_value = Heap.retain(object);
+    const arguments = [_]Value{value};
+    self.heap.release(try self.invoke(assignment.target_span, callable, &arguments));
+}
+
 /// Section 10.1: the deepest class instance a path passes through, and the
 /// steps that continue from it. What those steps reach lives in that object,
 /// which is shared, so changing it changes the object where it is: nothing
@@ -741,7 +857,11 @@ fn storeInObject(self: *Interpreter, span: Source.Span, in_object: InObject, val
         self.heap.release(owner);
         return self.storeElement(span, &object, rest, value);
     }
-    const property = instance.descriptor.property(name).?;
+    const property = self.propertyOf(span, instance, name) catch |err| {
+        self.heap.release(owner);
+        self.heap.release(value);
+        return err;
+    };
     var callable = self.namedCallable(property.setter.?);
     callable.self_value = owner;
     const arguments = [_]Value{value};
@@ -766,7 +886,7 @@ fn fieldPosition(instance: *const Heap.StructValue, name: []const u8) ?usize {
 
 /// Section 10.3's getter, run on a value that only lends itself to the call.
 fn readProperty(self: *Interpreter, span: Source.Span, receiver: Value, name: []const u8) Error!Value {
-    const property = receiver.data.struct_value.descriptor.property(name).?;
+    const property = try self.propertyOf(span, receiver.data.struct_value, name);
     var callable = self.namedCallable(property.getter);
     callable.self_value = Heap.retain(receiver);
     return self.invoke(span, callable, &.{});
@@ -862,7 +982,10 @@ fn storeElement(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
 /// Section 10.3's setter. Like a changing method, it gets the receiver taken
 /// out of its slot and gives back what `self` holds when it ends.
 fn storeProperty(self: *Interpreter, span: Source.Span, slot: *Value, name: []const u8, value: Value) Error!void {
-    const property = slot.data.struct_value.descriptor.property(name).?;
+    const property = self.propertyOf(span, slot.data.struct_value, name) catch |err| {
+        self.heap.release(value);
+        return err;
+    };
     const receiver = slot.*;
     slot.* = Value.nothing;
     var changed: Value = Value.nothing;
@@ -1370,7 +1493,12 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .bool_literal => |value| .initBool(value),
         .nothing_literal => Value.nothing,
         // Reading a name makes a new holder of what it holds.
-        .name => |name| self.evaluateName(expression, self.keyOf(name), name),
+        // Section 10.7's `super` is the object itself; only which version of
+        // a member it reaches differs, and that is decided where it is used.
+        .name => |name| if (std.mem.eql(u8, name, "super"))
+            self.evaluateName(expression, "self", "self")
+        else
+            self.evaluateName(expression, self.keyOf(name), name),
         .unary => |unary| self.evaluateUnary(expression, unary),
         .binary => |binary| self.evaluateBinary(expression, binary),
         .logical => |logical| self.evaluateLogical(logical),
@@ -1443,11 +1571,16 @@ fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
 /// receiver, exactly as if the receiver had been copied into a local first.
 fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: []const u8) Error!Value {
     const receiver = try self.evaluate(member.base);
+    // Section 10.7: the version the object's own class runs, decided now.
+    const version = if (isSuper(member.base)) key else self.dispatch(member.name_span, receiver, key) catch |err| {
+        self.heap.release(receiver);
+        return err;
+    };
     const captured = self.gpa.alloc(*Environment, 0) catch |err| {
         self.heap.release(receiver);
         return err;
     };
-    const closure = self.heap.createClosure(.{ .method = key }, captured, self.file) catch |err| {
+    const closure = self.heap.createClosure(.{ .method = version }, captured, self.file) catch |err| {
         self.heap.release(receiver);
         return err;
     };
@@ -1464,6 +1597,12 @@ fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: [
 /// checker allows nothing else here.
 fn evaluateProperty(self: *Interpreter, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Value {
     if (self.method_calls.get(expression)) |key| return self.evaluateMethodValue(member, key);
+    // Section 10.7's `super.area`, which runs the base class's getter.
+    if (self.super_members.get(expression)) |getter| {
+        var callable = self.namedCallable(getter);
+        callable.self_value = try self.evaluate(member.base);
+        return self.invoke(member.name_span, callable, &.{});
+    }
     const base = try self.evaluate(member.base);
     defer self.heap.release(base);
 
@@ -1998,6 +2137,18 @@ fn constructStruct(
     call: Ast.Expression.Call,
 ) Error!Value {
     const info = self.struct_infos.get(key).?;
+    // Section 10.7: an object of a subclass is built one class at a time,
+    // starting from the class every other extends.
+    if (info.base != null) {
+        const fields = try self.gpa.alloc(Value, descriptor.fields.len);
+        @memset(fields, Value.nothing);
+        const object = try self.heap.createStruct(descriptor, fields);
+        object.built = 0;
+        const instance: Value = .{ .data = .{ .struct_value = object } };
+        errdefer self.heap.release(instance);
+        try self.buildPart(call_span, key, instance, call);
+        return instance;
+    }
     const constructor = self.constructors.get(key) orelse {
         const bound = try self.evaluateBound(call, info.field_names, info.has_default);
         for (bound.values, descriptor.fields) |*field, metadata| field.* = widen(field.*, metadata.kind);
@@ -2053,6 +2204,164 @@ fn constructStruct(
     return built;
 }
 
+/// Builds the part of an object of a subclass that the class `key` declares,
+/// after its base classes' parts (10.2). `instance` stays the caller's. `call`
+/// supplies the arguments: the construction itself, a `super(...)`, or null
+/// for the call with no arguments that a constructor without `super(...)`, or a
+/// class without a constructor, makes.
+fn buildPart(
+    self: *Interpreter,
+    call_span: Source.Span,
+    key: []const u8,
+    instance: Value,
+    call: ?Ast.Expression.Call,
+) Error!void {
+    const info = self.struct_infos.get(key).?;
+    const object = instance.data.struct_value;
+    if (self.constructors.get(key)) |constructor| {
+        const declared = constructor.declaration.parameters;
+        const bound = if (call) |arguments| try self.evaluateBoundParameters(arguments, declared) else try self.omittedBound(declared.len);
+        defer self.gpa.free(bound.values);
+        defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+        if (info.base == null) {
+            object.built = @max(object.built, self.structs.get(key).?.depth);
+            if (info.any_default) {
+                const same = self.runFieldDefaults(call_span, key, Heap.retain(instance), info.has_default) catch |err| {
+                    self.releaseBound(bound);
+                    return err;
+                };
+                self.heap.release(same);
+            }
+        }
+        var built: Value = Value.nothing;
+        const result = try self.invoke(call_span, .{
+            .name = constructor.frame_name,
+            .named = false,
+            .file = self.facts.owner.get(key) orelse self.file,
+            .signature = self.signatures.get(key).?,
+            .body = .{ .statements = constructor.declaration.body.statements },
+            .captured = &.{},
+            .written = declared,
+            .omitted = bound.omitted,
+            .self_value = Heap.retain(instance),
+            .self_out = &built,
+            .construct = if (info.base != null) key else null,
+        }, bound.values);
+        self.heap.release(result);
+        self.heap.release(built);
+        return;
+    }
+
+    if (info.base) |base| try self.buildPart(call_span, base, instance, null);
+    object.built = self.structs.get(key).?.depth;
+    var which = info.has_default;
+    var omitted_owned: ?[]bool = null;
+    defer if (omitted_owned) |omitted| self.gpa.free(omitted);
+    if (info.base == null) if (call) |arguments| {
+        const bound = try self.evaluateBound(arguments, info.field_names, info.has_default);
+        defer self.gpa.free(bound.values);
+        const end = info.offset + info.field_names.len;
+        for (bound.values, object.fields[info.offset..end], object.descriptor.fields[info.offset..end]) |value, *field, metadata| {
+            self.heap.release(field.*);
+            field.* = widen(value, metadata.kind);
+        }
+        omitted_owned = bound.omitted;
+        which = bound.omitted orelse return;
+    };
+    const same = try self.runFieldDefaults(call_span, key, Heap.retain(instance), which);
+    self.heap.release(same);
+}
+
+/// Every parameter left to its default, for the call a subclass's constructor
+/// makes to its base class's when it has no `super(...)`.
+fn omittedBound(self: *Interpreter, count: usize) Error!Bound {
+    const values = try self.gpa.alloc(Value, count);
+    @memset(values, Value.nothing);
+    if (count == 0) return .{ .values = values, .omitted = null };
+    const omitted = self.gpa.alloc(bool, count) catch |err| {
+        self.gpa.free(values);
+        return err;
+    };
+    @memset(omitted, true);
+    return .{ .values = values, .omitted = omitted };
+}
+
+/// At the start of the constructor of a class that extends another: builds
+/// the base class's part, through the `super(...)` that begins the body if
+/// there is one, then runs this class's field defaults. Returns the rest of the
+/// body.
+fn buildBaseFirst(
+    self: *Interpreter,
+    call_span: Source.Span,
+    key: []const u8,
+    frame: *Environment,
+    statements: []const Ast.Statement,
+) Error![]const Ast.Statement {
+    const info = self.struct_infos.get(key).?;
+    const instance = frame.bindings.get("self").?.value.?;
+    var rest = statements;
+    if (superCallOf(statements)) |expression| {
+        try self.buildPart(expression.span, info.base.?, instance, expression.data.call);
+        rest = statements[1..];
+    } else {
+        try self.buildPart(call_span, info.base.?, instance, null);
+    }
+    instance.data.struct_value.built = self.structs.get(key).?.depth;
+    if (info.any_default) {
+        self.heap.release(try self.runFieldDefaults(call_span, key, Heap.retain(instance), info.has_default));
+    }
+    return rest;
+}
+
+/// A constructor's `super(...)`, which can only be its first statement.
+fn superCallOf(statements: []const Ast.Statement) ?*const Ast.Expression {
+    if (statements.len == 0 or statements[0].data != .expression) return null;
+    const expression = statements[0].data.expression;
+    if (expression.data != .call or !isSuper(expression.data.call.callee)) return null;
+    return expression;
+}
+
+fn isSuper(expression: *const Ast.Expression) bool {
+    return expression.data == .name and std.mem.eql(u8, expression.data.name, "super");
+}
+
+/// Section 10.7: the version of the method `key` that an object's own class
+/// runs. An object still being built may not run a version declared by a class
+/// whose part of it has not begun, since that version could read fields that
+/// hold nothing yet.
+fn dispatch(self: *Interpreter, span: Source.Span, receiver: Value, key: []const u8) Error![]const u8 {
+    if (receiver.data != .struct_value) return key;
+    const object = receiver.data.struct_value;
+    const methods = object.descriptor.methods orelse return key;
+    const name = key[std.mem.lastIndexOf(u8, key, Resolver.method_separator).? + Resolver.method_separator.len ..];
+    const method = methods.get(name) orelse return key;
+    if (method.depth > object.built) return self.raiseUnbuilt(span, name, method.owner, object.descriptor.display_name);
+    return method.key;
+}
+
+/// A property of an object, at the version its own class has, under the same
+/// rule as `dispatch`.
+fn propertyOf(self: *Interpreter, span: Source.Span, object: *const Heap.StructValue, name: []const u8) Error!Value.StructType.Property {
+    const property = object.descriptor.property(name).?;
+    if (property.depth > object.built) return self.raiseUnbuilt(span, name, property.owner, object.descriptor.display_name);
+    return property;
+}
+
+fn raiseUnbuilt(self: *Interpreter, span: Source.Span, name: []const u8, owner: []const u8, class: []const u8) Error {
+    if (std.mem.eql(u8, owner, class)) return self.raiseFmt(
+        span,
+        "`{s}`'s version of `{s}` ran before this `{s}` was built",
+        .{ owner, name, class },
+        "A base class's constructor let the object be used before the classes that extend it were built. Finish building the object before passing `self` on or running code that calls its methods.",
+    );
+    return self.raiseFmt(
+        span,
+        "`{s}`'s version of `{s}` ran before the `{s}` part of this `{s}` was built",
+        .{ owner, name, owner, class },
+        "A base class's constructor let the object be used before the classes that extend it were built. Finish building the object before passing `self` on or running code that calls its methods.",
+    );
+}
+
 /// Section 10.2: the defaults of the fields `which` marks, in declaration
 /// order, each seeing `self` as construction has left it so far. Takes the
 /// instance and gives it back finished.
@@ -2099,8 +2408,8 @@ fn runFieldDefaults(
             self.heap.release(value);
             return err;
         };
-        self.heap.release(building.fields[position]);
-        building.fields[position] = widen(value, building.descriptor.fields[position].kind);
+        self.heap.release(building.fields[info.offset + position]);
+        building.fields[info.offset + position] = widen(value, building.descriptor.fields[info.offset + position].kind);
     }
     return Heap.retain(frame.bindings.get("self").?.value.?);
 }
@@ -2241,9 +2550,14 @@ fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call, newline: bool) E
 /// module, and section 7.4's captured scopes for a lambda.
 const StructInfo = struct {
     declaration: Ast.StructDeclaration,
+    /// The type's own fields, which follow its base classes' in a value.
     field_names: []const []const u8,
     has_default: []const bool,
     any_default: bool,
+    /// Section 10.7's base class, by key.
+    base: ?[]const u8 = null,
+    /// Where the type's own fields start among all of a value's fields.
+    offset: usize = 0,
     /// What a stack trace calls the frame field defaults run in.
     defaults_frame: []const u8,
 };
@@ -2284,6 +2598,13 @@ const Callable = struct {
     /// For a method that changes `self`, the place its receiver is taken from
     /// once every argument, defaults included, has been evaluated.
     take: ?*Take = null,
+    /// For the constructor of a class that extends another, its key: the base
+    /// class's part of `self` is built before the body runs (10.2).
+    construct: ?[]const u8 = null,
+    /// The file an overridden method's parameter defaults were written in,
+    /// when it is not the one its body was: an override uses the defaults of
+    /// the declaration it replaces (7.3).
+    defaults_file: ?u32 = null,
 
     const Body = union(enum) {
         statements: []const Ast.Statement,
@@ -2326,6 +2647,19 @@ fn callFunction(
 
 fn namedCallable(self: *Interpreter, key: []const u8) Callable {
     const declaration = self.functions.get(key).?;
+    // Section 7.3: an override uses the defaults of the declaration it
+    // replaces, which are written with that declaration's parameters.
+    if (self.overrides.get(key)) |original| {
+        return .{
+            .name = declaration.name,
+            .file = self.facts.owner.get(key) orelse self.file,
+            .signature = self.signatures.get(key).?,
+            .body = .{ .statements = declaration.body.statements },
+            .captured = &.{},
+            .written = self.functions.get(original).?.parameters,
+            .defaults_file = self.facts.owner.get(original) orelse self.file,
+        };
+    }
     return .{
         // The name as it was written, not the key: a stack trace should read
         // the way the file reads.
@@ -2500,6 +2834,8 @@ fn invoke(
     // followed by omitted defaults in parameter order." A default sees the
     // parameters before it, which are already bound.
     if (callable.omitted) |omitted| {
+        if (callable.defaults_file) |file| self.file = file;
+        defer self.file = callable.file;
         for (omitted, callable.written, callable.signature.parameters) |left, parameter, parameter_type| {
             if (!left) continue;
             const kind = kindOf(parameter_type);
@@ -2516,7 +2852,8 @@ fn invoke(
     const result = switch (callable.body) {
         .expression => |body| try self.evaluate(body),
         .statements => |statements| blk: {
-            self.executeAll(statements) catch |err| switch (err) {
+            const body = if (callable.construct) |key| try self.buildBaseFirst(call_span, key, frame, statements) else statements;
+            self.executeAll(body) catch |err| switch (err) {
                 error.Returned => {},
                 else => return err,
             };
@@ -2979,6 +3316,16 @@ fn callStructMethod(
     var callable = self.namedCallable(key);
     if (!self.changing_methods.contains(key)) {
         const receiver = try self.evaluate(member.base);
+        // Section 10.7: an object runs its own class's version, unless
+        // `super` asked for the base class's. The parameters, and so their
+        // defaults, are the ones the call was checked against.
+        if (!isSuper(member.base)) {
+            const version = self.dispatch(expression.span, receiver, key) catch |err| {
+                self.heap.release(receiver);
+                return err;
+            };
+            if (version.ptr != key.ptr) callable = self.namedCallable(version);
+        }
         const bound = self.evaluateBoundParameters(call, callable.written) catch |err| {
             self.heap.release(receiver);
             return err;

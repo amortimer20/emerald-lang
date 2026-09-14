@@ -1850,6 +1850,30 @@ zero-argument constructor only when its base and all its fields can be initializ
 arguments. An `@abstract` class cannot be constructed even when it implements every
 requirement, allowing an intentionally base-only class to state that purpose explicitly.
 
+A class shares one set of names with the classes it extends, including their fields,
+type-level members, and private members, so a name means one thing on every object that
+has it. Only a public method or property can be replaced, and only by one of its own kind:
+an overriding method takes exactly the parameters it replaces, with the same names and
+types, and gives the same type or a subclass of a class it gives; an overriding property is
+`var` or `const` as the one it replaces is, and holds the same type. A private member cannot
+be overridden, so a constructor may call a private method once every field is set. Abstract
+properties are deferred. Type-level members are not inherited: `Animal.count` is reached
+through `Animal` from a subclass too.
+
+`super.name` reaches the base class's version of a method or property, including a
+property's setter through `super.name = value`, and is allowed wherever `self` is, once every
+field is set. It never reaches a field, which a subclass never replaces, or an abstract
+method, which has no version to run. `super(...)` may only be a constructor's first
+statement. A subclass without a constructor of its own is built with no arguments.
+
+An object runs its own class's version of each method and property, however it is reached,
+and a captured method is that version. Calls through `self` are forbidden during
+construction, but a base class's constructor can still pass `self` on once its own fields
+are set, and the code it reaches could run a subclass's version before that subclass's
+fields are. The implementation tracks how much of an object is built, base class first, and
+running a version whose class's part has not begun is a runtime error rather than a read of
+a field with no value.
+
 ## 11. Traits and operators
 
 ### 11.1 Trait purpose
@@ -2912,6 +2936,10 @@ recorded in their normative sections:
 | Type-level and instance member names (10.3, 10.4) | One name space for both | `Player.count` and `player.count` meaning different things would be legal but misleading, and the diagnostic for reaching a member the wrong way can only name the right way if the name identifies one member. |
 | Inferring a type-level field's type (4.1, 7.2, 10.4) | Optional annotation; inferred from the value on first need, and a cycle through a function whose return type is also inferred needs one of the two annotated | This matches module-level bindings, which the fields otherwise behave like. The cycle rule is 7.2's rule for recursive functions, reached through a field instead of a call. |
 | Class display (10.1, 15.2) | Field by field like a struct, with `Name(...)` for an object already being displayed | Showing the fields is what a beginner needs while learning; an address or bare type name hides exactly what changed. Objects form cycles, which a struct cannot, and the marker ends one without losing the rest of the value. |
+| Reusing a base class's names (10.7) | Not allowed for any member, private ones included, except a public method or property replaced with `@override` | 10.4 already keeps one name space so a name means one thing. Allowing a private name to be reused would give one object two fields of one name, each seen from different braces, which is harder to explain than a rename. |
+| Override results (10.7) | The same type, or a subclass where the replaced method gives a class; parameters must match exactly | A subclass object needs nothing done to it to stand in for its base class, so a covariant result costs nothing and lets `clone()` or a factory give its own class. Parameter variance is the confusing direction and is not needed yet. Numeric widening is excluded because it would need a conversion the calling code does not know to make. |
+| Reaching an override too early (10.2, 10.7) | A runtime error when an object runs a version of a method or property declared by a class whose part of it has not begun | The base-first order and the permission to pass `self` on once a base class's fields are set leave a way for a subclass's override to read an unset field, which a static rule could close only by forbidding that permission too. Checking at dispatch costs one comparison where an override is taken. |
+| A subclass without a constructor (10.2, 10.7) | Built with no arguments; its own fields all need defaults and its base class must build without arguments | 10.2 states this. A generated constructor taking a subclass's fields as well as its base class's would have to invent an order and names across two declarations. |
 | Exclusive access and objects (4.3, 10.1) | Not applied to objects; a struct inside an object is changed as a copy and stored back | 4.3 protects a value from being half-changed while it is reached another way, which only matters when a value has one owner. An object has many by design, as in Swift, where class references are not checked for exclusivity. Copying a struct that lives in an object keeps the struct's own rules without marking the object as in use. |
 | What `const` and the change inference see through (4.3, 10.1) | Both stop at the first object on a path | "The rule stops at the first reference, which is exactly where sharing begins." The same boundary decides whether a struct method changes its struct, so `self.log.lines.append(x)` on a struct holding a `Log` object leaves the struct unchanged and works on a `const`. |
 | What a nested function sees (7.1) | The variables above its declaration, as a lambda there would; uses are checked | 7.1 says both "capture surrounding bindings like lambdas" and "hoisted". Seeing only what is above matches a lambda and matches what a top-level function sees of the module, so one rule covers every function. Hoisting then only moves where it can be called from, and each call above the declaration is checked against what the function reads. |

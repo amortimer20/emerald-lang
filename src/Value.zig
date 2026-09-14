@@ -50,8 +50,16 @@ pub const StructType = struct {
     class: bool = false,
     fields: []const Field,
     /// Section 10.3's computed properties, which store nothing and so are
-    /// neither displayed nor compared. Each names the functions that run it.
+    /// neither displayed nor compared. Each names the functions that run it:
+    /// for a class, the nearest version to the object's own class (10.7).
     properties: []const Property = &.{},
+    /// Section 10.7: how many classes this one extends, counting through its
+    /// base classes. A class that extends none is 0.
+    depth: u32 = 0,
+    /// For a class that extends another or is extended, the method each name
+    /// runs on an object of exactly this class: its own, or the nearest base
+    /// class's. Null for every other type, whose methods are the ones called.
+    methods: ?*const Methods = null,
 
     pub const Field = struct {
         name: []const u8,
@@ -62,6 +70,19 @@ pub const StructType = struct {
         name: []const u8,
         getter: []const u8,
         setter: ?[]const u8,
+        /// The `depth` of the class that declares this version.
+        depth: u32 = 0,
+        owner: []const u8 = "",
+    };
+
+    pub const Methods = std.StringHashMapUnmanaged(Method);
+
+    pub const Method = struct {
+        key: []const u8,
+        /// The `depth` of the class that declares this version, and its name
+        /// as a reader writes it.
+        depth: u32,
+        owner: []const u8,
     };
 
     pub fn property(self: *const StructType, name: []const u8) ?Property {
