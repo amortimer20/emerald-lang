@@ -1378,17 +1378,19 @@ fn checkOverride(self: *Checker, method: Ast.FunctionDeclaration, own_key: []con
             if (method.return_annotation) |annotation| annotation.span else method.name_span,
             "`{s}` gives {f}, but the `{s}` of `{s}` it overrides gives {f}",
             .{ method.name, mine.return_type, method.name, owner, theirs.return_type },
-            "An override gives what it replaces, or a subclass of that class. Write `: {f}`.",
+            "An override gives what it replaces, a subclass of a class it gives, or a value that is always there where it gives an optional. Write `: {f}`.",
             .{theirs.return_type},
         );
     }
 }
 
 /// Whether an override's result can stand in for the one it replaces: the
-/// same type, or an object of a subclass where an object of a class is given,
-/// which needs nothing done to it at runtime.
+/// same type, an object of a subclass where an object of a class is given, or
+/// a value that is always present where an optional is given. None of these
+/// needs anything done to the value at runtime.
 fn returnsReplace(mine: Type, theirs: Type) bool {
     if (mine.same(theirs)) return true;
+    if (theirs.optional and !mine.optional) return returnsReplace(mine, theirs.payload());
     if (mine.optional != theirs.optional) return false;
     if (mine.kind != .struct_value or theirs.kind != .struct_value) return false;
     return mine.user.?.class and mine.user.?.extends(theirs.user.?);

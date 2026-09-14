@@ -1880,7 +1880,8 @@ A class shares one set of names with the classes it extends, including their fie
 type-level members, and private members, so a name means one thing on every object that
 has it. Only a public method or property can be replaced, and only by one of its own kind:
 an overriding method takes exactly the parameters it replaces, with the same names and
-types, and gives the same type or a subclass of a class it gives; an overriding property is
+types, and gives the same type, a subclass of a class it gives, or a value that is always
+present where it gives an optional of that type; an overriding property is
 `var` or `const` as the one it replaces is, and holds the same type. A private member cannot
 be overridden, so a constructor may call a private method once every field is set. Abstract
 properties are deferred. Type-level members are not inherited: `Animal.count` is reached
@@ -1898,7 +1899,8 @@ construction, but a base class's constructor can still pass `self` on once its o
 are set, and the code it reaches could run a subclass's version before that subclass's
 fields are. The implementation tracks how much of an object is built, base class first, and
 running a version whose class's part has not begun is a runtime error rather than a read of
-a field with no value.
+a field with no value. Taking a method from such an object runs nothing, so it is allowed,
+and the check is made when the taken method is called.
 
 ## 11. Traits and operators
 
@@ -3025,8 +3027,8 @@ recorded in their normative sections:
 | Narrowing inside `and` and `or` (4.4, 4.5) | The right side is checked knowing how the left side went | It runs only then, so the proof holds, and without it `animal is Dog and animal.tricks > 0` and `x != nothing and x > 3` needed a nested `if`. |
 | The always-known type test warning (4.4) | Deferred with diagnostic severities; such a test is simply a `Bool` | Diagnostics have no warnings yet, and reporting it as an error would reject programs 4.4 calls valid. |
 | Reusing a base class's names (10.7) | Not allowed for any member, private ones included, except a public method or property replaced with `@override` | 10.4 already keeps one name space so a name means one thing. Allowing a private name to be reused would give one object two fields of one name, each seen from different braces, which is harder to explain than a rename. |
-| Override results (10.7) | The same type, or a subclass where the replaced method gives a class; parameters must match exactly | A subclass object needs nothing done to it to stand in for its base class, so a covariant result costs nothing and lets `clone()` or a factory give its own class. Parameter variance is the confusing direction and is not needed yet. Numeric widening is excluded because it would need a conversion the calling code does not know to make. |
-| Reaching an override too early (10.2, 10.7) | A runtime error when an object runs a version of a method or property declared by a class whose part of it has not begun | The base-first order and the permission to pass `self` on once a base class's fields are set leave a way for a subclass's override to read an unset field, which a static rule could close only by forbidding that permission too. Checking at dispatch costs one comparison where an override is taken. |
+| Override results (10.7) | The same type, a subclass where the replaced method gives a class, or a value always present where it gives an optional of that type; parameters must match exactly | A subclass object needs nothing done to it to stand in for its base class, and neither does a present value for its optional, so a covariant result costs nothing and lets `clone()` or a factory give its own class, or a subclass promise the value a base class may not have (as Swift and Kotlin allow). Found in the inheritance review. Parameter variance is the confusing direction and is not needed yet. Numeric widening is excluded because it would need a conversion the calling code does not know to make. |
+| Reaching an override too early (10.2, 10.7) | A runtime error when an object runs a version of a method or property declared by a class whose part of it has not begun | The base-first order and the permission to pass `self` on once a base class's fields are set leave a way for a subclass's override to read an unset field, which a static rule could close only by forbidding that permission too. Checking at dispatch costs one comparison where an override runs. A method taken from the object is checked when called rather than when taken, since taking it runs nothing (found in the inheritance review). |
 | A subclass without a constructor (10.2, 10.7) | Built with no arguments; its own fields all need defaults and its base class must build without arguments | 10.2 states this. A generated constructor taking a subclass's fields as well as its base class's would have to invent an order and names across two declarations. |
 | Exclusive access and objects (4.3, 10.1) | Not applied to an object as a whole; a struct in an object's field is taken out of the field while a setter or changing method runs on it, and reaching that field meanwhile is a runtime error | The class slice first stored a copy back instead, which silently discarded any change made to the field during the call and let the call's own code read the old value. That is the half-changed state 4.3 exists to prevent, and Swift likewise enforces exclusive access to a class's stored properties at runtime while leaving the reference itself unchecked. Found in the object model review. |
 | What `const` and the change inference see through (4.3, 10.1) | Both stop at the first object on a path | "The rule stops at the first reference, which is exactly where sharing begins." The same boundary decides whether a struct method changes its struct, so `self.log.lines.append(x)` on a struct holding a `Log` object leaves the struct unchanged and works on a `const`. |

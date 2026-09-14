@@ -25,7 +25,7 @@ An override takes exactly the parameters it replaces, with the same names and ty
 diagnostics/traits.em:33:32: `greet` gives Int, but the `greet` of `Named` it overrides gives String
       func greet(other: String): Int {
                                  ^^^
-An override gives what it replaces, or a subclass of that class. Write `: String`.
+An override gives what it replaces, a subclass of a class it gives, or a value that is always there where it gives an optional. Write `: String`.
 diagnostics/traits.em:42:10: `greet` is a method of the trait `Named`
       func greet(): String {
            ^^^^^

@@ -1,0 +1,7 @@
+runtime-errors/captured-override-before-built.em:18:11: `TitledGuest`'s version of `introduce` ran before this `TitledGuest` was built
+      print(introduce())
+            ^^^^^^^^^^^
+A base class's constructor let the object be used before the classes that extend it were built. Finish building the object before passing `self` on or running code that calls its methods.
+in `greet`, called at runtime-errors/captured-override-before-built.em:8:9
+in the constructor of `Guest`, called at runtime-errors/captured-override-before-built.em:25:9
+in the constructor of `TitledGuest`, called at runtime-errors/captured-override-before-built.em:36:16

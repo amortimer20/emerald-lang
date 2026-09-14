@@ -91,3 +91,28 @@ class First extends Second {
 }
 class Second extends First {
 }
+
+# A value that is always there stands in for an optional only when it needs
+# nothing done to it, so an Int does not replace a Float?, and an optional
+# never replaces a value that is always there.
+class Scale {
+    func reading(): Float? {
+        return nothing
+    }
+
+    func unit(): String {
+        return "kg"
+    }
+}
+
+class Precise extends Scale {
+    @override
+    func reading(): Int {
+        return 1
+    }
+
+    @override
+    func unit(): String? {
+        return nothing
+    }
+}

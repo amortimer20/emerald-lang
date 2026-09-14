@@ -1,0 +1,6 @@
+runtime-errors/constructor-recursion.em:7:21: too much recursion calling the constructor of `Chain`
+          self.next = Chain()
+                      ^^^^^^^
+Emerald supports at least 1,000 active calls. Check that the recursion has a case that stops it.
+in the constructor of `Chain`, called at runtime-errors/constructor-recursion.em:7:21 (999 times)
+in the constructor of `Chain`, called at runtime-errors/constructor-recursion.em:11:15

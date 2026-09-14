@@ -1885,12 +1885,29 @@ fn qualifyTypeMember(
         );
         return .reported;
     }
+    // Section 10.7: type-level members are not inherited.
+    var base = self.facts.bases.get(type_key);
+    var steps: usize = 0;
+    while (base) |base_key| : (base = self.facts.bases.get(base_key)) {
+        // A cycle of bases is reported by the checker; stop going round it.
+        steps += 1;
+        if (steps > self.facts.bases.count()) break;
+        if (!self.facts.type_members.contains(try methodKey(self.arena, base_key, member))) continue;
+        try self.reportWithHelpFmt(
+            span,
+            "`{s}` belongs to the type `{s}`, and a class does not inherit type-level members",
+            .{ member, nameOf(base_key) },
+            "Reach it through the type that declares it, as in `{s}.{s}`.",
+            .{ nameOf(base_key), member },
+        );
+        return .reported;
+    }
     try self.reportWithHelpFmt(
         span,
         "`{s}` has no type-level member named `{s}`",
         .{ written, member },
-        "Check the spelling. A type-level member is declared inside the type with its name in front, as in `var {s}.{s} = ...`.",
-        .{ written, member },
+        "Check the spelling. A type-level member is declared inside the type with its name in front, as in `var {s}.{s} = ...` or `func {s}.{s}()`.",
+        .{ written, member, written, member },
     );
     return .reported;
 }

@@ -1,0 +1,8 @@
+diagnostics/type-member-not-inherited.em:14:7: `total` belongs to the type `Base`, and a class does not inherit type-level members
+  print(Derived.total)
+        ^^^^^^^^^^^^^
+Reach it through the type that declares it, as in `Base.total`.
+diagnostics/type-member-not-inherited.em:15:14: `make` belongs to the type `Base`, and a class does not inherit type-level members
+  const made = Derived.make()
+               ^^^^^^^^^^^^
+Reach it through the type that declares it, as in `Base.make`.

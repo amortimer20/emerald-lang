@@ -1785,10 +1785,9 @@ fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
 fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: []const u8) Error!Value {
     const receiver = try self.evaluate(member.base);
     // Section 10.7: the version the object's own class runs, decided now.
-    const version = if (isSuper(member.base)) key else self.dispatch(member.name_span, receiver, key) catch |err| {
-        self.heap.release(receiver);
-        return err;
-    };
+    // Taking it runs nothing, so whether that class's part is built yet is
+    // checked when the method is called.
+    const version = if (isSuper(member.base)) key else if (versionOf(receiver, key)) |method| method.key else key;
     const captured = self.gpa.alloc(*Environment, 0) catch |err| {
         self.heap.release(receiver);
         return err;
@@ -2647,15 +2646,31 @@ fn isSuper(expression: *const Ast.Expression) bool {
 /// whose part of it has not begun, since that version could read fields that
 /// hold nothing yet.
 fn dispatch(self: *Interpreter, span: Source.Span, receiver: Value, key: []const u8) Error![]const u8 {
-    if (receiver.data != .struct_value) return key;
-    const object = receiver.data.struct_value;
-    const methods = object.descriptor.methods orelse return key;
-    const name = key[std.mem.lastIndexOf(u8, key, Resolver.method_separator).? + Resolver.method_separator.len ..];
-    // A private method is never replaced, and two traits may each have one.
-    if (Resolver.isPrivate(name)) return key;
-    const method = methods.get(name) orelse return key;
-    if (method.depth > object.built) return self.raiseUnbuilt(span, name, method.owner, object.descriptor.display_name);
+    const method = versionOf(receiver, key) orelse return key;
+    try self.requireVersionBuilt(span, receiver, key, method);
     return method.key;
+}
+
+/// Raises when an object still being built has not begun the part of the
+/// class that declares `method`, the version of the method `key` it runs.
+fn requireVersionBuilt(self: *Interpreter, span: Source.Span, receiver: Value, key: []const u8, method: Value.StructType.Method) Error!void {
+    const object = receiver.data.struct_value;
+    if (method.depth > object.built) return self.raiseUnbuilt(span, methodName(key), method.owner, object.descriptor.display_name);
+}
+
+/// The entry for the version of the method `key` that the receiver's own
+/// class runs, or null when nothing can replace it.
+fn versionOf(receiver: Value, key: []const u8) ?Value.StructType.Method {
+    if (receiver.data != .struct_value) return null;
+    const methods = receiver.data.struct_value.descriptor.methods orelse return null;
+    const name = methodName(key);
+    // A private method is never replaced, and two traits may each have one.
+    if (Resolver.isPrivate(name)) return null;
+    return methods.get(name);
+}
+
+fn methodName(key: []const u8) []const u8 {
+    return key[std.mem.lastIndexOf(u8, key, Resolver.method_separator).? + Resolver.method_separator.len ..];
 }
 
 /// A property of an object, at the version its own class has, under the same
@@ -3037,6 +3052,15 @@ fn invokeClosure(
     const key = switch (closure.function) {
         .method => |key| key,
         else => return self.invoke(call_span, callable, arguments),
+    };
+    // Section 10.7: a method taken from an object still being built runs only
+    // once its class's part has begun. A `super` version is never the object's
+    // own, and is reachable only once its part is.
+    if (versionOf(closure.receiver, key)) |method| if (std.mem.eql(u8, method.key, key)) {
+        self.requireVersionBuilt(call_span, closure.receiver, key, method) catch |err| {
+            for (arguments) |argument| self.heap.release(argument);
+            return err;
+        };
     };
     if (!self.changing_methods.contains(key)) {
         callable.self_value = Heap.retain(closure.receiver);
@@ -4148,10 +4172,13 @@ fn raiseDivisionByZero(
 /// `at_limit` distinguishes reaching the 1,000-call guarantee from running out
 /// of stack before it, which only a pathologically nested body can do.
 fn raiseTooMuchRecursion(self: *Interpreter, span: Source.Span, name: []const u8, at_limit: bool) Error {
+    // A program's own names never hold a space; a description such as "the
+    // constructor of `Node`" or "a block" already reads as prose.
+    const quote = if (std.mem.indexOfScalar(u8, name, ' ') == null) "`" else "";
     return self.raiseFmt(
         span,
-        "too much recursion calling `{s}`",
-        .{name},
+        "too much recursion calling {s}{s}{s}",
+        .{ quote, name, quote },
         if (at_limit)
             "Emerald supports at least 1,000 active calls. Check that the recursion has a case that stops it."
         else

@@ -9,4 +9,4 @@ Reach it through a value of `Player` instead. Only a member declared with the ty
 diagnostics/instance-member-through-type.em:13:7: `Player` has no type-level member named `count`
   print(Player.count)
         ^^^^^^^^^^^^
-Check the spelling. A type-level member is declared inside the type with its name in front, as in `var Player.count = ...`.
+Check the spelling. A type-level member is declared inside the type with its name in front, as in `var Player.count = ...` or `func Player.count()`.

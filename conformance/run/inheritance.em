@@ -205,6 +205,31 @@ class DogShelter extends Shelter {
 const shelter: Shelter = DogShelter()
 print(shelter.adopt().speak())
 
+# An override may give a value that is always there where the method it
+# replaces gives an optional.
+class Kennel {
+    func resident(): Animal? {
+        return nothing
+    }
+}
+
+class FullKennel extends Kennel {
+    @override
+    func resident(): Dog {
+        return Dog("Scout")
+    }
+}
+
+const kennels: [Kennel] = [Kennel(), FullKennel()]
+for kennel in kennels {
+    const resident = kennel.resident()
+    if resident != nothing {
+        print(resident.speak())
+    } else {
+        print("empty")
+    }
+}
+
 # Private methods cannot be overridden, so a constructor may call one.
 class Account {
     var balance: Int
@@ -232,3 +257,42 @@ print(Savings())
 # declaration it replaces gives.
 const bit = Puppy("Bit")
 print(bit.speak())
+
+# Taking a method from an object still being built runs nothing, so a base
+# class's constructor may hand one on; it runs the object's own version once
+# the object is built.
+var introductions: [func(): String] = []
+
+class Guest {
+    const name: String
+
+    constructor(name: String) {
+        self.name = name
+        remember(self)
+    }
+
+    func introduce(): String {
+        return self.name
+    }
+}
+
+func remember(guest: Guest) {
+    introductions.append(guest.introduce)
+}
+
+class TitledGuest extends Guest {
+    const title: String
+
+    constructor(name: String, title: String) {
+        super(name)
+        self.title = title
+    }
+
+    @override
+    func introduce(): String {
+        return "#{self.title} #{self.name}"
+    }
+}
+
+const guest = TitledGuest("Ada", "Dr")
+print(introductions[0]())

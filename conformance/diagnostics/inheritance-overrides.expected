@@ -45,7 +45,7 @@ It uses whatever `Animal` declares for it, whichever version runs. Remove the de
 diagnostics/inheritance-overrides.em:69:48: `fetch` gives Int, but the `fetch` of `Animal` it overrides gives Animal
       func fetch(count: Int, loud: Bool = true): Int {
                                                  ^^^
-An override gives what it replaces, or a subclass of that class. Write `: Animal`.
+An override gives what it replaces, a subclass of a class it gives, or a value that is always there where it gives an optional. Write `: Animal`.
 diagnostics/inheritance-overrides.em:76:10: `alone` does not override anything
       func alone() {
            ^^^^^
@@ -70,3 +70,11 @@ diagnostics/inheritance-overrides.em:90:21: `First` cannot extend `Second`, beca
   class First extends Second {
                       ^^^^^^
 A class's base classes can never lead back to it. Remove one of the `extends`.
+diagnostics/inheritance-overrides.em:110:21: `reading` gives Int, but the `reading` of `Scale` it overrides gives Float?
+      func reading(): Int {
+                      ^^^
+An override gives what it replaces, a subclass of a class it gives, or a value that is always there where it gives an optional. Write `: Float?`.
+diagnostics/inheritance-overrides.em:115:18: `unit` gives String?, but the `unit` of `Scale` it overrides gives String
+      func unit(): String? {
+                   ^^^^^^
+An override gives what it replaces, a subclass of a class it gives, or a value that is always there where it gives an optional. Write `: String`.
