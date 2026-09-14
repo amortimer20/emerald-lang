@@ -439,7 +439,7 @@ const Printer = struct {
         }
 
         try self.write("if ");
-        try self.printExpr(node.condition);
+        try self.printHeaderExpr(node.condition);
         try self.write(" ");
         try self.printBlock(node.then_block);
 
@@ -456,7 +456,7 @@ const Printer = struct {
 
     fn printWhile(self: *Printer, w: Ast.While) PrintError!void {
         try self.write("while ");
-        try self.printExpr(w.condition);
+        try self.printHeaderExpr(w.condition);
         try self.write(" ");
         try self.printBlock(w.body);
     }
@@ -465,9 +465,51 @@ const Printer = struct {
         try self.write("for ");
         if (f.pattern) |pattern| try self.printPattern(pattern) else try self.write(f.name);
         try self.write(" in ");
-        try self.printExpr(f.iterable);
+        try self.printHeaderExpr(f.iterable);
         try self.write(" ");
         try self.printBlock(f.body);
+    }
+
+    /// The condition of `if`/`while`, and the iterable of `for`, are parsed
+    /// with `Parser.in_control_header` set, so the `{` right after a call
+    /// there always opens the statement's body rather than the call's
+    /// trailing block (7.4) — a bare, unparenthesized trailing-block call is
+    /// therefore never valid directly in one of these three positions, and
+    /// reading it back would fail exactly where the body was meant to begin.
+    /// Any bracket or parenthesis reopens the possibility beneath it, so only
+    /// a header expression that reaches one *without* first crossing into
+    /// one needs wrapping; `headerNeedsParens` follows exactly the set of
+    /// nodes that sit bare in that position.
+    fn printHeaderExpr(self: *Printer, expr: *const Ast.Expression) PrintError!void {
+        if (headerNeedsParens(expr)) {
+            try self.write("(");
+            try self.printExpr(expr);
+            try self.write(")");
+        } else {
+            try self.printExpr(expr);
+        }
+    }
+
+    fn headerNeedsParens(expr: *const Ast.Expression) bool {
+        return switch (expr.data) {
+            .call => |c| c.trailing or headerNeedsParens(c.callee),
+            .binary => |b| headerNeedsParens(b.left) or headerNeedsParens(b.right),
+            .logical => |l| headerNeedsParens(l.left) or headerNeedsParens(l.right),
+            .unary => |u| headerNeedsParens(u.operand),
+            .range => |r| headerNeedsParens(r.start) or headerNeedsParens(r.end),
+            .type_test => |t| headerNeedsParens(t.value),
+            .member => |m| headerNeedsParens(m.base),
+            .index => |i| headerNeedsParens(i.base),
+            .comparison => |c| {
+                for (c.operands) |operand| if (headerNeedsParens(operand)) return true;
+                return false;
+            },
+            // Every other kind is either a leaf or already bracketed
+            // (a list/dictionary/tuple literal, a lambda's own body, a
+            // call's ordinary parenthesized arguments): none of them can
+            // put an unbracketed `{` right where the header ends.
+            else => false,
+        };
     }
 
     fn printTry(self: *Printer, t: Ast.Try) PrintError!void {
@@ -528,7 +570,10 @@ const Printer = struct {
         try self.write("case");
         if (case.subject) |subject| {
             try self.write(" ");
-            try self.printExpr(subject);
+            // The subject sits in exactly the same position as an `if`'s
+            // condition: a `{` right after it opens the case's first arm,
+            // not a trailing block (see `printHeaderExpr`).
+            try self.printHeaderExpr(subject);
         }
         try self.write(" {\n");
         self.indent += 1;

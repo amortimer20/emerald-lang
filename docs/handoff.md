@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-14. Prepared after slice 15's part 1, the canonical formatter.
+Updated: 2026-09-14. Prepared after the canonical formatter's adversarial review (slice 15).
 
 ## Current milestone
 
@@ -291,18 +291,21 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `formatProject` the pipeline that reaches it, and `main.zig`'s `format`/`format --check`
   the CLI. See "Formatter decisions worth knowing" below.
 
-Section 20's slice 15, part 1 (the canonical formatter) is complete. `emerald format
-<path>` and `emerald format --check <path>` format every file of whatever project `path`
-names (14.1), exactly as `check`/`run` see the same project, refusing to write anything if
-any file does not lex or parse safely (18.3). Every file under `examples/` round-trips
-byte for byte; the whole `conformance/` corpus (399 files) formats without crashing and is
-idempotent; every `conformance/run/` program still runs to the same output after being
-formatted; and `zig build test` passes in Debug and ReleaseSafe with `conformance/format/`
-cases, `Formatter.zig`'s own unit tests, and CLI contract tests for the new command
-alongside everything else. Part 2 — structs, classes, traits, enums, `case`, `try`/`catch`,
-tuples, dictionaries and sets, and the remaining expression forms this slice's chosen test
-corpus already exercises correctly, but which deserve their own adversarial review before
-the slice is called done — is the next step; see "Next concrete step".
+Section 20's slice 15, part 1 (the canonical formatter) is complete, and its adversarial
+review (structs, classes, traits, enums, `case`, `try`/`catch`, tuples, destructuring,
+dictionaries, sets, lists, lambdas, `using`/qualified names, optional and function types,
+and every literal form, each attacked with small `.em` programs in Debug and ReleaseSafe)
+found and fixed two real bugs, both `runtime-errors`-grade — a formatted program that no
+longer parsed at all — described in "Formatter decisions worth knowing" below. `emerald
+format <path>` and `emerald format --check <path>` format every file of whatever project
+`path` names (14.1), exactly as `check`/`run` see the same project, refusing to write
+anything if any file does not lex or parse safely (18.3). Every file under `examples/`
+round-trips byte for byte; the whole `conformance/` corpus (407 files) formats without
+crashing and is idempotent; every `conformance/run/` program still runs to the same output
+after being formatted; and `zig build test` passes in Debug and ReleaseSafe with
+`conformance/format/` cases (including one added by the review), `Formatter.zig`'s own unit
+tests, and CLI contract tests for the new command alongside everything else. The REPL and
+LSP remain queued to follow the formatter, per the roadmap; see "Next concrete step".
 
 ### Formatter decisions worth knowing
 
@@ -381,18 +384,34 @@ the slice is called done — is the next step; see "Next concrete step".
   gives it the `.block` form even when written all on one line right after `=>`
   (`Parser.parseLambda`'s `brokeLine` check) — printing every `.block` body as multi-line
   would have reformatted `{ price => total += price }` into three lines on every run.
+- **A trailing-block call's disambiguating parentheses have to survive in three more
+  positions than a plain operand does: an `if`/`while` condition, a `for`'s iterable, and
+  a `case` subject** (found in the adversarial review, chunk 7). `Parser.in_control_header`
+  makes the `{` right after a call in exactly these three positions open the statement's
+  own body rather than the call's trailing block (7.4), so `if items.any? { n => n > 0 } {`
+  fails to parse at all — only a bracket or parenthesis beneath the header re-admits a
+  trailing block underneath it. `printHeaderExpr`/`headerNeedsParens` wrap the whole header
+  expression in parentheses whenever a `Call.trailing` sits anywhere in it without first
+  crossing one, which covers a bare `items.any? { ... }` and an arbitrarily nested one alike
+  (`items.filter { ... }.count > 0`) with the same, single check. Confirmed non-vacuous by
+  reformatting `if (items.any? { n => n > 2 }) { ... }` with the fix disabled: the result
+  failed to parse on a second formatting pass, which is exactly the bug this closes —
+  `conformance/format/control-header-trailing-block.em` guards both the bare and the
+  nested case.
 - **Checked.** Every fix above was confirmed non-vacuous by reverting it and watching a
   specific conformance case fail, then restoring it. Beyond `conformance/format/`: every
   file under `examples/` is a round-trip fixture (formatting it must produce the file
   unchanged); the whole `conformance/` corpus (`run/`, `runtime-errors/`, `diagnostics/`,
-  `lexical/`, and their own `format/`, 399 files) formats without crashing and is
+  `lexical/`, and their own `format/`, 407 files) formats without crashing and is
   idempotent; and every `conformance/run/` program prints identically before and after
   being formatted.
 - **Deferred**, matching the user's line-wrapping decision and this slice's chosen scope:
   a full width-based reflow engine; reformatting code written inside string
-  interpolation; wrapping a parameter list that spans more than one line (every example in
-  the language keeps signatures short enough that this has not come up); the REPL and LSP,
-  queued to follow the formatter per the roadmap.
+  interpolation; wrapping a parameter list or a `case` arm's alternatives that spans more
+  than one line (every example in the language keeps both short enough that this has not
+  come up, and joining a wrapped alternatives list onto one line, as the review found `case
+  f(1, 2, 3) { when 6,\n    7 { ... } }` does, is a reformatting rather than a correctness
+  problem); the REPL and LSP, queued to follow the formatter per the roadmap.
 
 ### Enum and `case` decisions worth knowing
 
@@ -1619,19 +1638,15 @@ standard-library part would be List `filter_map`, applying the existing optional
 rule carefully, with `Iterable` and the advanced String operations listed below still
 deferred rather than incomplete work in this slice.
 
-The user chose to begin slice 15 instead, and part 1 (the canonical formatter) is
-complete; see "Formatter decisions worth knowing" above. Part 2 is the next step: struct,
-class, trait, and enum declarations and their members, `case`/`when`, `try`/`catch`/
-`finally`, `raise`, `assert`, tuples, destructuring, dictionaries, sets, list literals,
-lambdas, `is`, and qualified names/`using` all already print correctly (part 1's
-`conformance/format/object-model.em` exercises structs, a trait, a class, an enum with a
-`case`-valued property, and a subject `case` statement together, and every file under
-`examples/` — which uses all of the above — round-trips byte for byte), but part 2 is
-where they get the same chunked, adversarial review with small `.em` programs that every
-other slice in this project has had before being called done, since part 1's own review
-so far is breadth (does it crash, is it idempotent, does formatted code still run
-identically) rather than depth on each construct. The REPL and LSP remain queued to follow
-the formatter once it does.
+The user chose to begin slice 15 instead, and it is complete through its adversarial
+review: struct, class, trait, and enum declarations and their members, `case`/`when`,
+`try`/`catch`/`finally`, `raise`, `assert`, tuples, destructuring, dictionaries, sets, list
+literals, lambdas, `is`, qualified names/`using`, optional and function types, and every
+literal form each held up under small, adversarial `.em` programs in Debug and
+ReleaseSafe; the review's own two findings — a trailing-block call's parentheses needing
+to survive in an `if`/`while`/`for`/`case` header — are fixed and guarded. See "Formatter
+decisions worth knowing" above. The REPL and LSP are next, per the roadmap, whenever the
+user chooses to start them; nothing further is queued specifically for the formatter.
 
 Slice 16 is queued as one test-infrastructure and hardening pass: CI for Debug and
 ReleaseSafe with the pinned Zig version, allocator-failure testing, lexer/parser fuzzing,
@@ -1646,19 +1661,25 @@ off. Deferred language features in section 21 remain deferred.
 
 ## Validation and blockers
 
-- The formatter (slice 15, part 1) was checked in Debug and ReleaseSafe: `zig build test`
-  passes both, including `Formatter.zig`'s own unit tests (blank-line collapsing, a
-  same-line trailing comment, a block comment's verbatim interior, both parenthesization
-  cases below, the call-versus-literal trailing-comma difference, and a self-format
-  no-op), the new `conformance/format/` cases, and CLI contract tests for `format` and
-  `format --check`. Beyond the suite: every file under `examples/` round-trips byte for
-  byte; formatting every file under `conformance/` (399 files total) neither crashes nor
-  needs a second pass to reach a fixed point; and running every `conformance/run/` program
-  before and after formatting it prints identically. Two real bugs were caught only this
-  way, not by any unit test written in advance: `(dx * dx + dy * dy) ** 0.5` losing its
-  parentheses (and its meaning) in `examples/structs.em`, and a trailing comma the printer
-  added after a multi-line call's last argument, which `Parser.finishCall`'s grammar
-  (unlike a list literal's) does not accept, in `conformance/run/lists.em`.
+- The formatter (slice 15) was checked in Debug and ReleaseSafe: `zig build test` passes
+  both, including `Formatter.zig`'s own unit tests (blank-line collapsing, a same-line
+  trailing comment, a block comment's verbatim interior, both parenthesization cases
+  below, the call-versus-literal trailing-comma difference, and a self-format no-op), the
+  `conformance/format/` cases (including one added by the adversarial review), and CLI
+  contract tests for `format` and `format --check`. Beyond the suite: every file under
+  `examples/` round-trips byte for byte; formatting every file under `conformance/` (407
+  files total) neither crashes nor needs a second pass to reach a fixed point; and running
+  every `conformance/run/` program before and after formatting it prints identically. Three
+  real bugs were caught only this way, not by any unit test written in advance: `(dx * dx +
+  dy * dy) ** 0.5` losing its parentheses (and its meaning) in `examples/structs.em`; a
+  trailing comma the printer added after a multi-line call's last argument, which
+  `Parser.finishCall`'s grammar (unlike a list literal's) does not accept, in
+  `conformance/run/lists.em`; and, found by the review chunk that deliberately attacked
+  every remaining construct with small adversarial programs rather than only the existing
+  corpus, a trailing-block call losing its disambiguating parentheses in an `if`/`while`
+  condition, a `for`'s iterable, or a `case` subject, at any nesting depth — in each case
+  producing formatted output that failed to parse at all, confirmed by reformatting the
+  fix's own conformance case with the fix disabled and watching the second pass fail.
 - Writing this slice found a bug that only a ReleaseSafe run could find. `check` and `run`
   wrap their one file in a `Project`, and the first version built it with `&.{ ... }`,
   which is a pointer to a temporary that dies at the return. Debug passed every test;
