@@ -1,0 +1,6 @@
+`clamp` has a minimum of 9.0, greater than its maximum of 2.0
+`between?` cannot use NaN as a bound
+`floor` cannot produce an Int from a non-finite Float
+`to_int` cannot produce an Int from a non-finite Float
+the result of `truncate` is outside the range of Int
+-9223372036854775808

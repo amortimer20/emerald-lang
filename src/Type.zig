@@ -565,6 +565,36 @@ pub const int_methods = std.StaticStringMap(IntMethod).initComptime(.{
     .{ "to_string", IntMethod{ .parameters = 0, .result = .string } },
 });
 
+/// Section 9.3's methods on a `Float`. An `Int` is accepted for a `.float`
+/// operand through Emerald's ordinary widening rule; `round_to` takes an
+/// integer count of decimal places.
+pub const FloatMethod = struct {
+    parameters: []const Operand,
+    result: Result,
+
+    pub const Operand = enum { float, int };
+    pub const Result = enum { bool, int, float, string };
+};
+
+pub const float_methods = std.StaticStringMap(FloatMethod).initComptime(.{
+    .{ "abs", FloatMethod{ .parameters = &.{}, .result = .float } },
+    .{ "clamp", FloatMethod{ .parameters = &.{ .float, .float }, .result = .float } },
+    .{ "between?", FloatMethod{ .parameters = &.{ .float, .float }, .result = .bool } },
+    .{ "zero?", FloatMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "positive?", FloatMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "negative?", FloatMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "floor", FloatMethod{ .parameters = &.{}, .result = .int } },
+    .{ "ceil", FloatMethod{ .parameters = &.{}, .result = .int } },
+    .{ "round", FloatMethod{ .parameters = &.{}, .result = .int } },
+    .{ "round_to", FloatMethod{ .parameters = &.{.int}, .result = .float } },
+    .{ "truncate", FloatMethod{ .parameters = &.{}, .result = .int } },
+    .{ "finite?", FloatMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "infinite?", FloatMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "nan?", FloatMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "to_int", FloatMethod{ .parameters = &.{}, .result = .int } },
+    .{ "to_string", FloatMethod{ .parameters = &.{}, .result = .string } },
+});
+
 /// The type of an arithmetic result, given both operand types, or null when the
 /// operands are not numbers.
 ///

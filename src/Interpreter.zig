@@ -1988,14 +1988,22 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .tuple_literal => |positions| self.evaluateTuple(expression, positions),
         .index => |index| self.evaluateIndex(expression, index),
         // A namespace-qualified name is a reference, not a property access.
-        .member => |member| if (self.facts.qualified.get(expression)) |key|
-            self.evaluateName(expression, key, key)
-        else
-            self.evaluateProperty(expression, member),
+        .member => |member| self.evaluateMember(expression, member),
         .string_literal => |bytes| self.evaluateStringLiteral(expression, bytes),
         .interpolation => |parts| self.evaluateInterpolation(parts),
         .type_test, .lambda, .enum_value, .case_expression => self.evaluateByNode(expression),
     };
+}
+
+/// Keeps qualified built-ins and ordinary property dispatch out of
+/// `evaluate`'s recursion-sensitive stack frame.
+fn evaluateMember(self: *Interpreter, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Value {
+    if (self.facts.qualified.get(expression)) |key| {
+        if (std.mem.eql(u8, key, Resolver.float_infinity_key)) return .initFloat(std.math.inf(f64));
+        if (std.mem.eql(u8, key, Resolver.float_nan_key)) return .initFloat(std.math.nan(f64));
+        return self.evaluateName(expression, key, key);
+    }
+    return self.evaluateProperty(expression, member);
 }
 
 /// The expressions whose helpers need only the node, sharing one call site:
@@ -4158,6 +4166,9 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
     if (receiver.data == .int and !std.mem.eql(u8, member.name, "to_string")) {
         return self.intMethod(span, receiver.data.int, member.name, arguments);
     }
+    if (receiver.data == .float and !std.mem.eql(u8, member.name, "to_string")) {
+        return self.floatMethod(span, receiver.data.float, member.name, arguments);
+    }
 
     // `to_string` on an `Int`, a `Float`, or a `Bool`: its display.
     var built: std.Io.Writer.Allocating = .init(self.gpa);
@@ -4328,6 +4339,117 @@ fn integerFactorial(self: *Interpreter, span: Source.Span, value: i64) Error!Val
         result = multiplied[0];
     }
     return .initInt(result);
+}
+
+/// Section 9.3's floating-point vocabulary. Rounding operations that return an
+/// `Int` all pass through one range and finiteness check before host conversion.
+fn floatMethod(self: *Interpreter, span: Source.Span, value: f64, name: []const u8, arguments: []const Value) Error!Value {
+    const Method = enum {
+        abs,
+        clamp,
+        @"between?",
+        @"zero?",
+        @"positive?",
+        @"negative?",
+        floor,
+        ceil,
+        round,
+        round_to,
+        truncate,
+        @"finite?",
+        @"infinite?",
+        @"nan?",
+        to_int,
+    };
+
+    return switch (std.meta.stringToEnum(Method, name).?) {
+        .abs => .initFloat(@abs(value)),
+        .clamp => blk: {
+            const minimum = toFloat(arguments[0]);
+            const maximum = toFloat(arguments[1]);
+            try self.requireFloatBounds(span, "clamp", minimum, maximum);
+            break :blk .initFloat(if (value < minimum) minimum else if (value > maximum) maximum else value);
+        },
+        .@"between?" => blk: {
+            const minimum = toFloat(arguments[0]);
+            const maximum = toFloat(arguments[1]);
+            try self.requireFloatBounds(span, "between?", minimum, maximum);
+            break :blk .initBool(value >= minimum and value <= maximum);
+        },
+        .@"zero?" => .initBool(value == 0),
+        .@"positive?" => .initBool(value > 0),
+        .@"negative?" => .initBool(value < 0),
+        .floor => self.floatResultToInt(span, "floor", @floor(value)),
+        .ceil => self.floatResultToInt(span, "ceil", @ceil(value)),
+        .round => self.floatResultToInt(span, "round", @round(value)),
+        .round_to => .initFloat(roundFloatTo(value, arguments[0].data.int)),
+        .truncate, .to_int => self.floatResultToInt(span, name, @trunc(value)),
+        .@"finite?" => .initBool(std.math.isFinite(value)),
+        .@"infinite?" => .initBool(std.math.isInf(value)),
+        .@"nan?" => .initBool(std.math.isNan(value)),
+    };
+}
+
+fn requireFloatBounds(self: *Interpreter, span: Source.Span, name: []const u8, minimum: f64, maximum: f64) Error!void {
+    if (std.math.isNan(minimum) or std.math.isNan(maximum)) return self.raiseFmt(
+        span,
+        "`{s}` cannot use NaN as a bound",
+        .{name},
+        "Use ordered Float bounds. NaN is not less than, equal to, or greater than any value.",
+    );
+    if (minimum <= maximum) return;
+
+    var minimum_text: std.Io.Writer.Allocating = .init(self.gpa);
+    defer minimum_text.deinit();
+    try Value.initFloat(minimum).display(&minimum_text.writer);
+    var maximum_text: std.Io.Writer.Allocating = .init(self.gpa);
+    defer maximum_text.deinit();
+    try Value.initFloat(maximum).display(&maximum_text.writer);
+    return self.raiseFmt(
+        span,
+        "`{s}` has a minimum of {s}, greater than its maximum of {s}",
+        .{ name, minimum_text.written(), maximum_text.written() },
+        "Put the lower bound first and the upper bound second.",
+    );
+}
+
+/// Converts an already-rounded Float only after proving Zig's `@intFromFloat`
+/// is defined. The upper comparison is inclusive because 2^63 is exactly
+/// representable as a Float but is one beyond the greatest `Int`.
+fn floatResultToInt(self: *Interpreter, span: Source.Span, operation: []const u8, value: f64) Error!Value {
+    if (!std.math.isFinite(value)) return self.raiseFmt(
+        span,
+        "`{s}` cannot produce an Int from a non-finite Float",
+        .{operation},
+        "Check `finite?()` first. NaN and infinity cannot be represented by Int.",
+    );
+    if (value >= 9223372036854775808.0 or value < -9223372036854775808.0) return self.raiseFmt(
+        span,
+        "the result of `{s}` is outside the range of Int",
+        .{operation},
+        integer_range_help,
+    );
+    return .initInt(@intFromFloat(value));
+}
+
+/// Decimal-place rounding over binary64. Scaling that would overflow on the
+/// right of the decimal point means the requested precision cannot change the
+/// stored value, while a place beyond the left edge rounds a finite value to
+/// signed zero.
+fn roundFloatTo(value: f64, places: i64) f64 {
+    if (!std.math.isFinite(value) or value == 0) return value;
+    if (places > 308) return value;
+    if (places < -308) return std.math.copysign(@as(f64, 0), value);
+
+    if (places >= 0) {
+        const scale = std.math.pow(f64, 10, @as(f64, @floatFromInt(places)));
+        const scaled = value * scale;
+        if (!std.math.isFinite(scaled)) return value;
+        return @round(scaled) / scale;
+    }
+
+    const scale = std.math.pow(f64, 10, @as(f64, @floatFromInt(-places)));
+    return @round(value / scale) * scale;
 }
 
 /// Section 9.2's string methods, on the receiver's bytes. The checker has

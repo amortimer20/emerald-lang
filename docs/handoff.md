@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-14. Prepared after part 1 of the standard-library slice.
+Updated: 2026-09-14. Prepared after part 2 of the standard-library slice.
 
 ## Current milestone
 
@@ -71,6 +71,23 @@ unrepresentable results, and gives value-specific diagnostics for bad bounds, a 
 divisor, and factorial's domain. The rewrite context records the edge semantics. The
 counting forms `times`, `up_to`, and `down_to` stay with the later range-values part; their
 existing `for`-header forms are unchanged.
+
+Part 2 adds the settled `Float` vocabulary: the shared numeric methods, `floor`, `ceil`,
+`round`, `round_to`, `truncate`, the three classification predicates, and `to_int`; the
+existing `to_string` is checked through the same table, and `Float.infinity` and
+`Float.nan` expose the two special values. Rounding-to-Int checks finiteness
+and the exact asymmetric bounds before invoking Zig's conversion. `round_to` accepts
+positive and negative decimal places, ties away from zero, and defines its behavior beyond
+binary64's decimal range. Float method arguments perform Emerald's ordinary `Int` widening
+at runtime as well as in the checker. A conformance case now reaches section 8.3's NaN-key
+guard through strict string conversion, retiring the stale claim that no Emerald program
+could produce NaN.
+
+The first implementation evaluated `Float.infinity` and `Float.nan` directly in the
+interpreter's recursive expression switch. In Debug that enlarged the hot stack frame
+enough to fail the existing test of 1,000 calls whose bodies are nested 250 levels deep.
+`evaluateMember` now isolates qualified constants and ordinary properties from that frame;
+the stress test passes again.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
@@ -1416,9 +1433,8 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 ## Next concrete step
 
 Section 20's first 13 vertical slices are complete. Slice 14, standard-library growth, is
-underway: its `Int` part is complete. The next focused part is `Float`: shared numeric
-methods, rounding and classification, and `to_int`, with explicit edge behavior for NaN,
-infinity, large magnitudes, and negative decimal places.
+underway: its `Int` and `Float` parts are complete. The next focused part is the remaining
+`String` vocabulary from section 9.2 that is not explicitly deferred.
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 
@@ -1440,8 +1456,8 @@ off. Deferred language features in section 21 remain deferred.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe after the `Int` implementation: 314 unit
-  tests, 326 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe after the `Float` implementation: 314
+  unit tests, 333 conformance cases,
   and 10 command-line contract tests. The new cases cover typed and untyped catches, built-in
   runtime errors, bare re-raise, cleanup through return, loop control, and failure,
   secondary failures from cleanup, assertion operand reporting, mutation before a raised
@@ -1651,11 +1667,6 @@ maintainability work rather than reproduced behavioral failures:
   the program got faster rather than slower (0.09 s against 0.17 s) because it allocates
   less. The threshold is 4,096 live objects, doubling to twice the surviving count after
   each collection.
-- Section 8.3 rejects NaN as a key, and the guard is there, but no Emerald program can
-  reach it yet: `0.0 / 0.0` raises rather than producing a NaN, and there is no `nan`
-  literal or operation that makes one. The guard is untested from Emerald for that reason,
-  and should get a conformance case as soon as a NaN can be written. The runtime guard does
-  recurse through tuple positions and struct fields, covered directly by unit tests.
 - Removing an entry from a dictionary or set rebuilds its index table, so removing many
   entries one at a time is quadratic in the size of the collection. Insertion order is
   what makes this the simple choice — the entries are an array, so a removal shifts every

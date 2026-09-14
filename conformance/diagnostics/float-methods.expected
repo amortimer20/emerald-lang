@@ -1,0 +1,28 @@
+diagnostics/float-methods.em:1:5: `round_to` takes 1 argument, but this call passes 0
+  1.0.round_to()
+      ^^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/float-methods.em:2:5: `abs` takes 0 arguments, but this call passes 1
+  1.0.abs(2)
+      ^^^
+Match the number of arguments to what the method needs.
+diagnostics/float-methods.em:3:14: this is Float, but `round_to` needs Int
+  1.0.round_to(2.5)
+               ^^^
+Pass a whole number.
+diagnostics/float-methods.em:4:11: this is String, but `clamp` needs Float
+  1.0.clamp("low", 2)
+            ^^^^^
+Pass a number.
+diagnostics/float-methods.em:5:5: Float has no method `unknown`
+  1.0.unknown()
+      ^^^^^^^
+A Float has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `floor`, `ceil`, `round`, `round_to`, `truncate`, `finite?`, `infinite?`, `nan?`, `to_int`, and `to_string`.
+diagnostics/float-methods.em:6:11: `finite?` is a method, so it needs parentheses
+  print(1.0.finite?)
+            ^^^^^^^
+Call it, as in `.finite?()`. Methods cannot be used as values yet.
+diagnostics/float-methods.em:7:5: Float has no method `is_nan`
+  1.0.is_nan()
+      ^^^^^^
+Emerald calls this `nan?`.

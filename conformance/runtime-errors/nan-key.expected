@@ -1,0 +1,4 @@
+runtime-errors/nan-key.em:3:15: a not-a-number value cannot be a key
+  var values = [Float.nan: "never stored"]
+                ^^^^^^^^^
+`nan?` is never equal to anything, including itself, so nothing stored under it could be found again.

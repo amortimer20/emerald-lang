@@ -1,0 +1,4 @@
+diagnostics/float-constant-call.em:1:7: `Float.nan` is a constant, so it takes no parentheses
+  print(Float.nan())
+        ^^^^^^^^^
+Remove `()` and use the Float value directly.

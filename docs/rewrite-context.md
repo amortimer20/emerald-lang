@@ -1556,6 +1556,20 @@ Positive places address digits after the decimal point, zero produces a whole-nu
 from zero, consistently with `round`. It changes the number and does not preserve display
 zeros; `2.0.round_to(2)` is a numeric `2.0`, not the text `"2.00"`.
 
+`floor()`, `ceil()`, `round()`, and `truncate()` return an `Int`; `round()` resolves a tie
+away from zero, and `truncate()` discards the fraction toward zero. `to_int()` has the same
+numeric result as `truncate()` but names an explicit type conversion, while `truncate()`
+names the mathematical operation. All five reject NaN, infinity, and a result outside the
+`Int` range. `round_to` accepts every `Int` place count: precision beyond binary64's decimal
+range leaves a finite value unchanged on the fractional side and produces signed zero past
+the whole-number side. It propagates NaN and infinity like floating-point arithmetic.
+
+Both signed zeros answer true to `zero?()` and false to the sign predicates. NaN answers
+false to `zero?`, `positive?`, `negative?`, `finite?`, and `infinite?`, and true only to
+`nan?`. Infinity is not finite and answers `infinite?`. Infinite interval bounds are valid.
+A NaN bound in `clamp` or `between?` is an error; a NaN receiver propagates through `clamp`
+and makes `between?` false.
+
 Operations naturally performed by one value are methods, including `square_root()` and
 angle conversion such as `to_radians()`. `Math` holds broader operations and constants,
 including `pi`, `e`, `sin`, `cos`, logarithms, and explicit power helpers. Angles use

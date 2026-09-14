@@ -5523,6 +5523,8 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// Section 14.2's `Shapes.area` used as a value rather than called. It is the
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+    if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
+        std.mem.eql(u8, reference.key, Resolver.float_nan_key)) return .float;
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
     // Section 11.2's `Named.introduction(self)` is a call that runs one trait's
     // default; taking it as a value is not part of that yet.
@@ -5769,7 +5771,8 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
         }
     }
     if ((base.kind == .int and Type.int_methods.has(member.name)) or
-        ((base.kind == .float or base.kind == .bool) and std.mem.eql(u8, member.name, "to_string")))
+        (base.kind == .float and Type.float_methods.has(member.name)) or
+        (base.kind == .bool and std.mem.eql(u8, member.name, "to_string")))
     {
         try self.reportWithHelp(
             member.name_span,
@@ -5859,9 +5862,8 @@ fn typeOfMethodCall(
     if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base);
     if (base.kind == .string) return self.typeOfStringMethod(call, member);
     if (base.kind == .int) return self.typeOfIntMethod(call, member);
-    if ((base.kind == .float or base.kind == .bool) and
-        std.mem.eql(u8, member.name, "to_string"))
-    {
+    if (base.kind == .float) return self.typeOfFloatMethod(call, member);
+    if (base.kind == .bool and std.mem.eql(u8, member.name, "to_string")) {
         _ = try self.requireArity(member, call.arguments, 0, 0);
         return .string;
     }
@@ -6521,6 +6523,43 @@ fn typeOfIntMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expres
     };
 }
 
+/// Section 9.3's floating-point methods. Float operands use the same
+/// `Int`-to-`Float` widening as every other expected Float position.
+fn typeOfFloatMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    const method = Type.float_methods.get(member.name) orelse {
+        try self.reportUnknownMember(.float, member, "method");
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    };
+
+    if (try self.requireArity(member, call.arguments, method.parameters.len, method.parameters.len)) {
+        for (call.arguments, method.parameters) |argument, operand| {
+            const wanted: Type = switch (operand) {
+                .float => .float,
+                .int => .int,
+            };
+            const actual = try self.typeOfExpected(argument, wanted);
+            if (actual.assignableTo(wanted)) continue;
+            try self.report(
+                argument.span,
+                "this is {f}, but `{s}` needs {f}",
+                .{ actual, member.name, wanted },
+                if (wanted.kind == .int)
+                    "Pass a whole number."
+                else
+                    "Pass a number.",
+            );
+        }
+    }
+
+    return switch (method.result) {
+        .bool => .bool,
+        .int => .int,
+        .float => .float,
+        .string => .string,
+    };
+}
+
 /// Reports a call with too few or too many arguments, typing them anyway.
 /// True when the count is right.
 fn requireArity(
@@ -6572,6 +6611,7 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         .string => familiarStringName(member.name),
         .dictionary, .set => familiarMapName(member.name, base.kind == .set),
         .int => familiarIntName(member.name),
+        .float => familiarFloatName(member.name),
         else => null,
     };
     if (suggestion) |name| {
@@ -6593,6 +6633,7 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
             .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
             .string => "A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `substring`, `split`, `lines`, `chars`, `to_int`, and `to_float`, among others.",
             .int => "An Int has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `to_float`, and `to_string`.",
+            .float => "A Float has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `floor`, `ceil`, `round`, `round_to`, `truncate`, `finite?`, `infinite?`, `nan?`, `to_int`, and `to_string`.",
             else => "Check the spelling, or what kind of value this is.",
         },
     );
@@ -6608,6 +6649,22 @@ fn familiarIntName(name: []const u8) ?[]const u8 {
         .{ "is_odd", "odd?" },
         .{ "is_multiple_of", "multiple_of?" },
         .{ "to_f", "to_float" },
+    });
+    return familiar.get(name);
+}
+
+/// Common spellings from other languages for Emerald's Float methods.
+fn familiarFloatName(name: []const u8) ?[]const u8 {
+    const familiar = std.StaticStringMap([]const u8).initComptime(.{
+        .{ "is_zero", "zero?" },
+        .{ "is_positive", "positive?" },
+        .{ "is_negative", "negative?" },
+        .{ "is_finite", "finite?" },
+        .{ "is_infinite", "infinite?" },
+        .{ "is_nan", "nan?" },
+        .{ "isNaN", "nan?" },
+        .{ "trunc", "truncate" },
+        .{ "to_i", "to_int" },
     });
     return familiar.get(name);
 }
@@ -7316,6 +7373,18 @@ fn typeOfCall(
     };
 
     const name = reference.display;
+    if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
+        std.mem.eql(u8, reference.key, Resolver.float_nan_key))
+    {
+        try self.report(
+            call.callee.span,
+            "`{s}` is a constant, so it takes no parentheses",
+            .{name},
+            "Remove `()` and use the Float value directly.",
+        );
+        try self.typeArguments(call.arguments);
+        return .float;
+    }
     if (self.receivers.get(reference.key)) |receiver| {
         if (receiver.user.?.trait) return self.typeOfTraitDefaultCall(expression, call, reference);
     }

@@ -1,0 +1,7 @@
+1.0.round_to()
+1.0.abs(2)
+1.0.round_to(2.5)
+1.0.clamp("low", 2)
+1.0.unknown()
+print(1.0.finite?)
+1.0.is_nan()

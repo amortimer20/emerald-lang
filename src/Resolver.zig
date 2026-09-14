@@ -211,6 +211,12 @@ pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe" };
 /// Its public names are visible bare in every file, under the file's own.
 pub const prelude_namespace = "emerald";
 
+/// Section 15.5's two type-level Float constants. These keys occupy the same
+/// resolved-name channel as user type-level fields without pretending the
+/// built-in `Float` type is a user declaration with setup state.
+pub const float_infinity_key = "Float.infinity";
+pub const float_nan_key = "Float.nan";
+
 /// The key of the prelude declaration `name`.
 pub fn preludeKey(comptime name: []const u8) []const u8 {
     return prelude_namespace ++ "." ++ name;
@@ -1438,6 +1444,30 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             // `super.size = 3` sets a base class's property (10.7).
             if (std.mem.eql(u8, assignment.name, "super")) return;
 
+            // Section 15.5's built-in Float constants have no declaration
+            // binding for the ordinary assignment path to find.
+            if (self.lookup(assignment.name) == null and assignment.steps.len == 1 and
+                std.mem.eql(u8, assignment.name, "Float") and assignment.steps[0] == .field)
+            {
+                const member = assignment.steps[0].field;
+                const span: Source.Span = .{ .start = assignment.name_span.start, .end = member.span.end };
+                if (std.mem.eql(u8, member.name, "infinity") or std.mem.eql(u8, member.name, "nan")) {
+                    return self.report(
+                        span,
+                        "`Float.{s}` is a constant, so it cannot be assigned",
+                        .{member.name},
+                        "Keep the Float you need in a `var` instead.",
+                    );
+                }
+                return self.reportWithHelpFmt(
+                    span,
+                    "`Float` has no type-level member named `{s}`",
+                    .{member.name},
+                    "Its type-level constants are `Float.infinity` and `Float.nan`.",
+                    .{},
+                );
+            }
+
             try self.checkAmbiguous(assignment.name, assignment.name_span);
             const found = self.lookup(assignment.name) orelse {
                 return self.reportUndefined(
@@ -2048,6 +2078,19 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
             return self.qualifyTypeMember(expression.span, found.key, names[0], names[1]);
         }
         return .none;
+    }
+
+    if (length == 2 and std.mem.eql(u8, names[0], "Float")) {
+        if (std.mem.eql(u8, names[1], "infinity")) return .{ .key = float_infinity_key };
+        if (std.mem.eql(u8, names[1], "nan")) return .{ .key = float_nan_key };
+        try self.reportWithHelpFmt(
+            expression.span,
+            "`Float` has no type-level member named `{s}`",
+            .{names[1]},
+            "Its type-level constants are `Float.infinity` and `Float.nan`.",
+            .{},
+        );
+        return .reported;
     }
 
     var path: []const u8 = self.namespaceFor(names[0]);

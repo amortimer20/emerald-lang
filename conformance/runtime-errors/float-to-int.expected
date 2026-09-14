@@ -1,0 +1,4 @@
+runtime-errors/float-to-int.em:3:7: `to_int` cannot produce an Int from a non-finite Float
+  print(Float.infinity.to_int())
+        ^^^^^^^^^^^^^^^^^^^^^^^
+Check `finite?()` first. NaN and infinity cannot be represented by Int.

@@ -1,0 +1,8 @@
+diagnostics/float-type-member.em:1:7: `Float` has no type-level member named `forever`
+  print(Float.forever)
+        ^^^^^^^^^^^^^
+Its type-level constants are `Float.infinity` and `Float.nan`.
+diagnostics/float-type-member.em:2:1: `Float.infinity` is a constant, so it cannot be assigned
+  Float.infinity = 1.0
+  ^^^^^^^^^^^^^^
+Keep the Float you need in a `var` instead.
