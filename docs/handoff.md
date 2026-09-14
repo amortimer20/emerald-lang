@@ -142,6 +142,11 @@ deferred with their remaining callback vocabulary. The shared evaluator also der
 fallback item kind for an already-diagnosed invalid Dictionary or Set call, so diagnostics do
 not turn into a host crash while the compiler continues checking the file.
 
+Part 10 audits the previously implemented List endpoint properties. `first` and `last` have
+returned `Element?` since the optionals slice and are covered by its present and empty-list
+conformance cases. The audit adds a direct correction for `list.first()` and `list.last()`:
+they are read-only properties, like `count`, and must be written without parentheses.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
@@ -1486,10 +1491,10 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 ## Next concrete step
 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
-String, List value-transform, filtering, traversal, predicate-question, and while-portion
-parts are complete. The next standard-library part should add List `first` and `last`;
-`Iterable` stays deferred. The advanced String operations listed below are deliberately
-deferred too, rather than being incomplete work in this slice.
+String, List value-transform, filtering, traversal, predicate-question, while-portion, and
+endpoint-property parts are complete. The next standard-library part should investigate List
+`flat_map`; `Iterable` stays deferred. The advanced String operations listed below are
+deliberately deferred too, rather than being incomplete work in this slice.
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 

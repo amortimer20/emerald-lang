@@ -1,0 +1,8 @@
+diagnostics/list-endpoint-properties.em:2:15: `first` is a property, so it takes no parentheses
+  print(numbers.first())
+                ^^^^^
+Write `.first` without `()`.
+diagnostics/list-endpoint-properties.em:3:15: `last` is a property, so it takes no parentheses
+  print(numbers.last())
+                ^^^^
+Write `.last` without `()`.

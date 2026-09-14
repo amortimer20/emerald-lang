@@ -5868,15 +5868,18 @@ fn typeOfMethodCall(
         return .string;
     }
 
-    if (base.kind == .list and std.mem.eql(u8, member.name, "count")) {
-        try self.report(
+    if (base.kind == .list and
+        (std.mem.eql(u8, member.name, "count") or std.mem.eql(u8, member.name, "first") or std.mem.eql(u8, member.name, "last")))
+    {
+        try self.reportWithHelp(
             member.name_span,
-            "`count` is a property, so it takes no parentheses",
-            .{},
-            "Write `.count` without `()`.",
+            "`{s}` is a property, so it takes no parentheses",
+            .{member.name},
+            "Write `.{s}` without `()`.",
+            .{member.name},
         );
         try self.typeArguments(call.arguments);
-        return .int;
+        return if (std.mem.eql(u8, member.name, "count")) .int else base.element.?.optionalOf();
     }
 
     if (base.kind == .dictionary or base.kind == .set) {
