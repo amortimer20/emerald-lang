@@ -1412,6 +1412,14 @@ the methods a representative Emerald program needs, and cover its behavior and d
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 
+Slice 16 is queued as one test-infrastructure and hardening pass: CI for Debug and
+ReleaseSafe with the pinned Zig version, allocator-failure testing, lexer/parser fuzzing,
+automated full Unicode conformance, Linux/macOS/Windows coverage, focused tests for
+subsystem invariants that end-to-end cases do not localize well, and broader combinations
+of error handling and test discovery across inheritance and project files. New slices still
+add their own behavioral tests as they land; this backlog slice strengthens the suite as a
+whole.
+
 Section 7 remains complete apart from capturing built-in methods, which the user has put
 off. Deferred language features in section 21 remain deferred.
 

@@ -2827,6 +2827,14 @@ The rewrite should advance through small vertical slices:
     `emerald test`.
 14. **Standard-library growth** — add methods only alongside behavioral tests and examples.
 15. **Tooling** — canonical formatter, REPL, LSP, then debugger protocol.
+16. **Test infrastructure and hardening** — automate the existing Debug and ReleaseSafe
+    suites in CI with the pinned Zig version; add allocator-failure testing for ownership
+    paths; fuzz malformed lexer and parser input; bring the full Unicode conformance data
+    into the automated test path; run the portable suite on Linux, macOS, and Windows; add
+    focused subsystem tests where end-to-end failures are difficult to localize; and expand
+    errors and test-runner coverage across nested handlers, inheritance, and multi-file
+    projects. The slice is complete when failures in each layer are caught automatically
+    and every supported host has a repeatable test result.
 
 Each slice ends with a runnable Emerald example and behavioral tests. Do not scaffold every
 future subsystem before the first expression runs.
