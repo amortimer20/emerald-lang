@@ -3551,6 +3551,34 @@ fn reportPrivate(self: *Checker, type_key: []const u8, name: []const u8, span: S
     return true;
 }
 
+/// A type's name written where a value belongs, with the way to get a value
+/// that fits what kind of type it is.
+fn reportTypeAsValue(self: *Checker, span: Source.Span, written: []const u8, binding: Binding) Error!void {
+    const declaration = if (binding.type.user) |user| self.struct_declarations.get(user.name) else null;
+    if (declaration) |declared| {
+        if (declared.trait) return self.reportWithHelp(
+            span,
+            "`{s}` is a trait, not a value",
+            .{written},
+            "A trait is a contract with no values of its own. Use a value of a struct or class that adopts `{s}`.",
+            .{written},
+        );
+        if (declared.enumeration and declared.type_fields.len > 0) return self.reportWithHelp(
+            span,
+            "`{s}` is an enum, not a value",
+            .{written},
+            "Write one of the values it lists, such as `{s}.{s}`.",
+            .{ written, declared.type_fields[0].name },
+        );
+    }
+    try self.report(
+        span,
+        "`{s}` is a type, not a value",
+        .{written},
+        "Construct a value by calling the type with parentheses.",
+    );
+}
+
 /// Section 11.2: a trait's private helper is its own, so a type adopting the
 /// trait, or a trait built on it, finds no member of that name. Reports the
 /// helper as private rather than missing. Returns whether it reported.
@@ -4724,12 +4752,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             const binding = self.find(name) orelse break :blk .invalid;
             // Section 3.4 and 7.5: a bare function name is its callable value.
             if (binding.is_type) {
-                try self.report(
-                    expression.span,
-                    "`{s}` is a type, not a value",
-                    .{name},
-                    "Construct a value by calling the type with parentheses.",
-                );
+                try self.reportTypeAsValue(expression.span, name, binding.*);
                 break :blk .invalid;
             }
             if (binding.is_function) {
@@ -5331,12 +5354,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
     }
     const binding = self.findKey(reference.key) orelse return .invalid;
     if (binding.is_type) {
-        try self.report(
-            expression.span,
-            "`{s}` is a type, not a value",
-            .{reference.display},
-            "Construct a value by calling the type with parentheses.",
-        );
+        try self.reportTypeAsValue(expression.span, reference.display, binding.*);
         return .invalid;
     }
     if (binding.is_function) {

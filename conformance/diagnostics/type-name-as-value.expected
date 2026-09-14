@@ -1,0 +1,16 @@
+diagnostics/type-name-as-value.em:16:7: `Point` is a type, not a value
+  print(Point)
+        ^^^^^
+Construct a value by calling the type with parentheses.
+diagnostics/type-name-as-value.em:17:18: `Named` is a trait, not a value
+  const contract = Named
+                   ^^^^^
+A trait is a contract with no values of its own. Use a value of a struct or class that adopts `Named`.
+diagnostics/type-name-as-value.em:18:14: `Suit` is an enum, not a value
+  const suit = Suit
+               ^^^^
+Write one of the values it lists, such as `Suit.hearts`.
+diagnostics/type-name-as-value.em:19:27: `Addable` is a trait, not a value
+  const operator_contract = Addable
+                            ^^^^^^^
+A trait is a contract with no values of its own. Use a value of a struct or class that adopts `Addable`.
