@@ -48,6 +48,10 @@ sequence.each_with_index { number, index =>
 }
 print(indexed, sequence)
 
+var reverse_seen: [Int] = []
+sequence.reverse_each { number => reverse_seen.append(number) }
+print(reverse_seen, sequence)
+
 # An empty list takes its type from context.
 var names: [Int] = []
 print(names, names == [])

@@ -1,0 +1,8 @@
+diagnostics/reverse-each.em:1:21: this lambda takes 2 values, but it will be given 1
+  [1, 2].reverse_each { number, other => print(number) }
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Match the number of parameters to the number of values passed to it.
+diagnostics/reverse-each.em:2:8: `reverse_each` takes 1 block, but this call passes 0 arguments
+  [1, 2].reverse_each()
+         ^^^^^^^^^^^^
+Write the block after the method, as in `numbers.reverse_each { number => print(number) }`.

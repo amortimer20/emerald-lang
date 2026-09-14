@@ -3728,7 +3728,7 @@ fn callHigherOrder(
         break :blk built.?;
     } else receiver.data.list.items.items;
 
-    const Kind = enum { each, each_with_index, map, filter, reject, find, find_index };
+    const Kind = enum { each, each_with_index, reverse_each, map, filter, reject, find, find_index };
     const kind = std.meta.stringToEnum(Kind, member.name).?;
 
     const collected: ?*Heap.List = switch (kind) {
@@ -3739,7 +3739,10 @@ fn callHigherOrder(
     const result: Value = if (collected) |list| .{ .data = .{ .list = list } } else Value.nothing;
     errdefer self.heap.release(result);
 
-    for (items, 0..) |item, index| {
+    var visited: usize = 0;
+    while (visited < items.len) : (visited += 1) {
+        const index = if (kind == .reverse_each) items.len - visited - 1 else visited;
+        const item = items[index];
         const produced = if (kind == .each_with_index) blk: {
             const arguments = [_]Value{ Heap.retain(item), .initInt(@intCast(index)) };
             break :blk try self.invokeClosure(expression.span, closure, callable, &arguments);
@@ -3759,7 +3762,7 @@ fn callHigherOrder(
             }
             continue;
         }
-        if (kind == .each or kind == .each_with_index) {
+        if (kind == .each or kind == .each_with_index or kind == .reverse_each) {
             self.heap.release(produced);
             continue;
         }
@@ -3795,7 +3798,7 @@ fn callMethod(
     // value that may be absent.
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     // A block, on a list, a dictionary, or a set.
-    if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "map") or
+    if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "reverse_each") or std.mem.eql(u8, member.name, "map") or
         std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or
         std.mem.eql(u8, member.name, "find") or std.mem.eql(u8, member.name, "find_index"))
     {

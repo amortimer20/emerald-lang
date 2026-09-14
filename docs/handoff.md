@@ -121,6 +121,11 @@ deterministic order, returns `Nothing`, and uses the established higher-order ex
 The conformance cases cover all three collection shapes plus the block arity and missing-block
 diagnostics.
 
+Part 7 adds List `reverse_each`. It visits the held input from last to first, once per item,
+returns `Nothing`, and leaves the List unchanged. Its arity and missing-block diagnostics also
+led to a small shared diagnostic improvement: a callback-method help example now names the
+method the reader actually called. Dictionary and Set reverse traversal remains deferred.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
@@ -1465,10 +1470,11 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 ## Next concrete step
 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
-String, List value-transform, filtering, and indexed-traversal parts are complete. The next
+String, List value-transform, filtering, and traversal parts are complete. The next
 standard-library part should consider the remaining callback-based List methods, beginning
-with `reverse_each`; `Iterable` stays deferred. The advanced String operations listed below
-are deliberately deferred too, rather than being incomplete work in this slice.
+with the predicate questions `any?`, `all?`, `none?`, `one?`, and `count_where`; `Iterable`
+stays deferred. The advanced String operations listed below are deliberately deferred too,
+rather than being incomplete work in this slice.
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 

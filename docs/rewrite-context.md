@@ -1415,6 +1415,10 @@ zero-based `Int` position. A Dictionary's first argument remains its destructura
 `(key, value)` entry. Its positions therefore follow List order and the deterministic
 insertion order of Dictionaries and Sets.
 
+`reverse_each` is currently a List traversal. It returns `Nothing`, visits the existing
+items from last to first, and does not change its receiver. Dictionary and Set reverse
+traversal is deferred with their remaining callback vocabulary.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs

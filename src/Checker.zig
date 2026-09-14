@@ -5894,6 +5894,7 @@ fn typeOfMethodCall(
         }
         if (std.mem.eql(u8, member.name, "each")) return self.typeOfEach(call, member, base, false);
         if (std.mem.eql(u8, member.name, "each_with_index")) return self.typeOfEach(call, member, base, true);
+        if (std.mem.eql(u8, member.name, "reverse_each")) return self.typeOfEach(call, member, base, false);
         if (std.mem.eql(u8, member.name, "map")) return self.typeOfMap(call, member, base);
         if (std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject")) {
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
@@ -6433,11 +6434,12 @@ fn requireBlock(
     result: Type,
 ) Error!?*const Ast.Expression {
     if (call.arguments.len != 1) {
-        try self.report(
+        try self.reportWithHelp(
             member.name_span,
             "`{s}` takes 1 block, but this call passes {d} argument{s}",
             .{ member.name, call.arguments.len, if (call.arguments.len == 1) "" else "s" },
-            "Write the block after the method, as in `numbers.each { number => print(number) }`.",
+            "Write the block after the method, as in `numbers.{s} {{ number => print(number) }}`.",
+            .{member.name},
         );
         try self.typeArguments(call.arguments);
         return null;
@@ -6453,11 +6455,12 @@ fn requireBlock(
     const block = call.arguments[0];
     const actual = try self.typeOfExpected(block, expected);
     if (actual.kind != .function and actual.kind != .invalid) {
-        try self.report(
+        try self.reportWithHelp(
             block.span,
             "`{s}` needs a block, but this is {f}",
             .{ member.name, actual },
-            "Write the block after the method, as in `numbers.each { number => print(number) }`.",
+            "Write the block after the method, as in `numbers.{s} {{ number => print(number) }}`.",
+            .{member.name},
         );
         return null;
     }
