@@ -3735,6 +3735,8 @@ fn callHigherOrder(
         map,
         filter,
         reject,
+        take_while,
+        drop_while,
         @"any?",
         @"all?",
         @"none?",
@@ -3745,19 +3747,34 @@ fn callHigherOrder(
     };
     const kind = std.meta.stringToEnum(Kind, member.name).?;
 
+    // The checker exposes these value-producing methods only on Lists for
+    // now. Keeping a runtime kind for the collection item still lets an
+    // already-diagnosed invalid Dictionary or Set call finish without a host
+    // crash while diagnostics are being collected.
+    const element_kind: Value.Kind = switch (receiver.data) {
+        .list => |list| list.element,
+        .map => |map| if (map.is_set) map.key_kind else .tuple,
+        else => unreachable,
+    };
+
     const collected: ?*Heap.List = switch (kind) {
         .map => try self.heap.createList(kindOf(callable.signature.return_type), items.len),
-        .filter, .reject => try self.heap.createList(receiver.data.list.element, items.len),
+        .filter, .reject, .take_while, .drop_while => try self.heap.createList(element_kind, items.len),
         else => null,
     };
     const result: Value = if (collected) |list| .{ .data = .{ .list = list } } else Value.nothing;
     errdefer self.heap.release(result);
 
     var matches: i64 = 0;
+    var dropping = true;
     var visited: usize = 0;
     while (visited < items.len) : (visited += 1) {
         const index = if (kind == .reverse_each) items.len - visited - 1 else visited;
         const item = items[index];
+        if (kind == .drop_while and !dropping) {
+            collected.?.items.appendAssumeCapacity(Heap.retain(item));
+            continue;
+        }
         const produced = if (kind == .each_with_index) blk: {
             const arguments = [_]Value{ Heap.retain(item), .initInt(@intCast(index)) };
             break :blk try self.invokeClosure(expression.span, closure, callable, &arguments);
@@ -3773,6 +3790,14 @@ fn callHigherOrder(
             const accepted = produced.data.bool;
             self.heap.release(produced);
             if ((kind == .filter and accepted) or (kind == .reject and !accepted)) {
+                list.items.appendAssumeCapacity(Heap.retain(item));
+            }
+            if (kind == .take_while) {
+                if (!accepted) break;
+                list.items.appendAssumeCapacity(Heap.retain(item));
+            }
+            if (kind == .drop_while and !accepted) {
+                dropping = false;
                 list.items.appendAssumeCapacity(Heap.retain(item));
             }
             continue;
@@ -3834,7 +3859,7 @@ fn callMethod(
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "reverse_each") or std.mem.eql(u8, member.name, "map") or
-        std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or std.mem.eql(u8, member.name, "any?") or
+        std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while") or std.mem.eql(u8, member.name, "any?") or
         std.mem.eql(u8, member.name, "all?") or std.mem.eql(u8, member.name, "none?") or std.mem.eql(u8, member.name, "one?") or
         std.mem.eql(u8, member.name, "count_where") or
         std.mem.eql(u8, member.name, "find") or std.mem.eql(u8, member.name, "find_index"))

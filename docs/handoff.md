@@ -133,6 +133,15 @@ when their result is decided; `count_where` visits all items. Empty inputs give 
 `true`, `true`, `false`, and `0`, in that order. Conformance covers all collection shapes,
 empty inputs, each short-circuit boundary, predicate types, and missing blocks.
 
+Part 9 adds List `take_while` and `drop_while`. Both test the initial List prefix with a
+`Bool` predicate. `take_while` returns the matching prefix; `drop_while` returns the suffix
+starting at the first failure and never invokes its predicate on that suffix. Both allocate a
+new List and leave the receiver unchanged. Conformance covers prefix and suffix boundaries,
+empty Lists, callback counts, type errors, and missing blocks. Dictionary and Set forms are
+deferred with their remaining callback vocabulary. The shared evaluator also derives a safe
+fallback item kind for an already-diagnosed invalid Dictionary or Set call, so diagnostics do
+not turn into a host crash while the compiler continues checking the file.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
@@ -1477,11 +1486,10 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 ## Next concrete step
 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
-String, List value-transform, filtering, traversal, and predicate-question parts are
-complete. The next standard-library part should consider the remaining callback-based List
-methods, beginning with `take_while` and `drop_while`; `Iterable` stays deferred. The
-advanced String operations listed below are deliberately deferred too, rather than being
-incomplete work in this slice.
+String, List value-transform, filtering, traversal, predicate-question, and while-portion
+parts are complete. The next standard-library part should add List `first` and `last`;
+`Iterable` stays deferred. The advanced String operations listed below are deliberately
+deferred too, rather than being incomplete work in this slice.
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 

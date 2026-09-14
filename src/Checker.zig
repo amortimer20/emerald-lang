@@ -5900,6 +5900,10 @@ fn typeOfMethodCall(
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
         }
+        if (std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while")) {
+            _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+            return Type.listOf(self.arena, base.element.?.*);
+        }
         if (std.mem.eql(u8, member.name, "any?") or std.mem.eql(u8, member.name, "all?") or
             std.mem.eql(u8, member.name, "none?") or std.mem.eql(u8, member.name, "one?") or
             std.mem.eql(u8, member.name, "count_where"))

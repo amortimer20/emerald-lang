@@ -16,7 +16,9 @@ true [1, 2]
 false [1, 2]
 false [1, 2]
 false [1, 2, 2]
+[1, 2, 2] [1, 2, 2, 3] [3, 1] [1, 2, 2, 3] [1, 2, 2, 3, 1]
 true true true 2
+[] []
 false true true false 0
 [] true
 [1.0, 2.5, 3.0] [1.0, 2.5]

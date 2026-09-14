@@ -1426,6 +1426,12 @@ logical item; a Dictionary item remains its `(key, value)` entry. `any?`, `all?`
 stops at its second accepted item. `count_where` visits every item. On an empty collection,
 the answers are `false`, `true`, `true`, `false`, and `0`, respectively.
 
+`take_while` and `drop_while` are currently List operations. Both evaluate a `Bool`
+predicate from the beginning of the List. `take_while` returns the matching prefix and stops
+before the first failing item; `drop_while` omits that prefix, includes the first failing item
+and every later item, and does not call its predicate again. They return new Lists and leave
+their receiver unchanged. An empty List returns an empty List without calling the block.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs

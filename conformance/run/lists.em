@@ -76,6 +76,17 @@ const one_even = sequence.one? { number =>
     return number.even?()
 }
 print(one_even, short_seen)
+var take_seen: [Int] = []
+const prefix = sequence.take_while { number =>
+    take_seen.append(number)
+    return number <= 2
+}
+var drop_seen: [Int] = []
+const suffix = sequence.drop_while { number =>
+    drop_seen.append(number)
+    return number <= 2
+}
+print(prefix, take_seen, suffix, drop_seen, sequence)
 print(
     sequence.all? { number => number > 0 },
     sequence.none? { number => number < 0 },
@@ -83,6 +94,7 @@ print(
     sequence.count_where { number => number.even?() }
 )
 const empty_numbers: [Int] = []
+print(empty_numbers.take_while { number => number > 0 }, empty_numbers.drop_while { number => number > 0 })
 print(
     empty_numbers.any? { number => number > 0 },
     empty_numbers.all? { number => number > 0 },
