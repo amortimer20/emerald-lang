@@ -68,6 +68,13 @@ pub const Checked = struct {
     /// assignment by its value, mapped to the setter's. Unlike `value.name`, which runs whatever
     /// property the object's own class has, these always run this one.
     super_members: MethodCalls,
+    /// Section 4.4's `value is Type`, by expression: the value's static type
+    /// and the type it is tested for. Only an object's class, and a tuple's
+    /// positions holding objects, are not known before the program runs.
+    type_tests: TypeTests,
+    /// Every `value.type_name`, by member expression, mapped to the value's
+    /// static type, which spells everything but the class of an object in it.
+    type_names: LiteralTypes,
 
     pub fn ok(self: Checked) bool {
         return self.diagnostics.len == 0;
@@ -111,6 +118,8 @@ const Binding = struct {
 pub const LiteralTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 pub const Structs = std.StringHashMapUnmanaged(Type);
 pub const MethodCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
+pub const TypeTest = struct { value: Type, target: Type };
+pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
 
 /// Why a binding may or may not change. Each reason gets its own correction,
 /// because the fix for a `const` is not the fix for a parameter.
@@ -154,6 +163,8 @@ changes: std.StringHashMapUnmanaged(bool) = .empty,
 changes_in_progress: Resolver.NameSet = .empty,
 method_calls: MethodCalls = .empty,
 super_members: MethodCalls = .empty,
+type_tests: TypeTests = .empty,
+type_names: LiteralTypes = .empty,
 /// Structs and classes whose fields have been resolved, so a subclass can make
 /// sure its base class's come first (10.7).
 structs_checked: Resolver.NameSet = .empty,
@@ -511,6 +522,8 @@ pub fn check(
         .changing_methods = changing,
         .method_calls = checker.method_calls,
         .super_members = checker.super_members,
+        .type_tests = checker.type_tests,
+        .type_names = checker.type_names,
     };
 }
 
@@ -672,6 +685,15 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
 
     var seen: std.StringHashMapUnmanaged(Member) = .empty;
     for (members) |member| {
+        if (std.mem.eql(u8, member.name, "type_name")) {
+            try self.report(
+                member.span,
+                "`type_name` is already a property of every value",
+                .{},
+                "It gives the name of the value's type, and cannot be declared again. Give this member another name.",
+            );
+            continue;
+        }
         const first = seen.get(member.name) orelse {
             try seen.put(self.arena, member.name, member);
             continue;
@@ -1904,6 +1926,19 @@ fn checkAssignmentTo(self: *Checker, assignment: Ast.Assignment) Error!void {
 /// name holds without replacing the name's own binding, which section 4.3
 /// forbids for a `const` just as it forbids replacing the whole value.
 fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
+    for (assignment.steps) |step| switch (step) {
+        .field => |field| if (std.mem.eql(u8, field.name, "type_name")) {
+            try self.report(
+                field.span,
+                "`type_name` cannot be set",
+                .{},
+                "It always gives the name of the value's type, which no assignment can change.",
+            );
+            _ = try self.typeOf(assignment.value);
+            return;
+        },
+        .index => {},
+    };
     if (std.mem.eql(u8, assignment.name, "super")) return self.checkSuperAssignment(assignment);
     if (try self.checkSelfAssignment(assignment)) return;
     const binding = self.find(assignment.name) orelse {
@@ -3339,6 +3374,7 @@ fn expressionChangesSelf(self: *Checker, expression: *const Ast.Expression, rece
         .index => |index| try self.expressionChangesSelf(index.base, receiver) or
             try self.expressionChangesSelf(index.index, receiver),
         .member => |member| self.expressionChangesSelf(member.base, receiver),
+        .type_test => |test_| self.expressionChangesSelf(test_.value, receiver),
         // `self` cannot appear inside a block (see `Parser.self_allowed`).
         .lambda => false,
     };
@@ -3461,7 +3497,7 @@ fn typeOfStructMethodCall(
                 member.name_span,
                 "{f} has no method named `{s}`",
                 .{ base, member.name },
-                "Check the method name in the type's declaration.",
+                try self.subclassMemberHelp(base, member, "Check the method name in the type's declaration."),
             );
         }
         try self.typeArguments(call.arguments);
@@ -3825,8 +3861,40 @@ fn narrow(self: *Checker, condition: *const Ast.Expression, when_true: bool) voi
             if ((operator == .not_equal) != when_true) return;
             self.narrowName(presenceTest(comparison) orelse return);
         },
+        // Section 4.4: a type test that holds proves the name has that type.
+        // One that fails proves nothing a type can say.
+        .type_test => |test_| {
+            if (!when_true or test_.value.data != .name) return;
+            const tested = self.type_tests.get(condition) orelse return;
+            const name = test_.value.data.name;
+            const binding = self.find(name) orelse return;
+            if (binding.is_function or !narrowsTo(tested.target, binding.type)) return;
+            if (self.unprovable(name) != null) return;
+            binding.type = tested.target;
+        },
         else => {},
     }
+}
+
+/// Whether knowing a value has type `target` says more than `current` does:
+/// the same type without the `?`, or a class that extends the one it has.
+fn narrowsTo(target: Type, current: Type) bool {
+    if (target.optional or target.kind == .invalid or current.kind == .invalid) return false;
+    const present = current.payload();
+    if (target.same(present)) return current.optional;
+    if (target.kind != .struct_value or present.kind != .struct_value) return false;
+    return target.user.?.class and target.user.? != present.user.? and target.user.?.extends(present.user.?);
+}
+
+/// Section 4.4's `value is Type`. It is always a `Bool`, even when the answer
+/// is already known; the warning 4.4 gives such a test waits for diagnostics
+/// with a severity.
+fn typeOfTypeTest(self: *Checker, expression: *const Ast.Expression) Error!Type {
+    const test_ = &expression.data.type_test;
+    const value = try self.typeOf(test_.value);
+    const target = try self.resolveTypeExpression(test_.target);
+    try self.type_tests.put(self.arena, expression, .{ .value = value, .target = target });
+    return .bool;
 }
 
 /// The name in `name == nothing`, written either way round.
@@ -3930,6 +3998,18 @@ fn intersect(self: *Checker, other: Snapshot) void {
     }
 }
 
+/// Puts back what narrowing had proved at `state`, keeping what has been
+/// assigned since, which only a condition's right side can have added.
+fn restoreTypes(self: *Checker, state: Snapshot) void {
+    for (self.scopes.items[0..@min(self.scopes.items.len, state.len)], state) |scope, states| {
+        var index: usize = 0;
+        var entries = scope.valueIterator();
+        while (entries.next()) |binding| : (index += 1) {
+            if (index < states.len) binding.type = states[index].type;
+        }
+    }
+}
+
 fn markAllAssigned(self: *Checker) void {
     for (self.scopes.items) |scope| {
         var values = scope.valueIterator();
@@ -4005,6 +4085,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
         .dictionary_literal => self.typeOfDictionary(expression, null),
+        .type_test => self.typeOfTypeTest(expression),
     };
 }
 
@@ -4561,6 +4642,14 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
 
 /// A property: `count` is the only one so far (8.5).
 fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Type {
+    // Section 4.4's `type_name`, which every value has, `nothing` included,
+    // so it needs no proof that an optional is there. It reads no field, so
+    // it needs none of `self`'s either.
+    if (member.position == null and std.mem.eql(u8, member.name, "type_name")) {
+        const value = if (isSelf(member.base)) (self.find("self") orelse return .invalid).type else try self.typeOf(member.base);
+        try self.type_names.put(self.arena, expression, value);
+        return .string;
+    }
     // `self.x` inside a constructor reads one field, which needs only that
     // field to be set, not all of them.
     if (self.constructing != null and member.base.data == .name and
@@ -4666,7 +4755,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             member.name_span,
             "{f} has no field named `{s}`",
             .{ base, member.name },
-            "Check the field name in the type's declaration.",
+            try self.subclassMemberHelp(base, member, "Check the field name in the type's declaration."),
         );
         return .invalid;
     }
@@ -5722,7 +5811,12 @@ fn arithmetic(
 
 fn typeOfLogical(self: *Checker, logical: Ast.Expression.Logical) Error!Type {
     try self.requireCondition(logical.left);
+    // Section 4.5: the right side runs only when the left one held, for
+    // `and`, or failed, for `or`, so it is checked knowing which.
+    const before = try self.snapshot();
+    self.narrow(logical.left, logical.operator == .conjunction);
     try self.requireCondition(logical.right);
+    self.restoreTypes(before);
     return .bool;
 }
 
@@ -5976,6 +6070,48 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
         else
             "Pass one value for each required field, in declaration order.",
     });
+}
+
+fn isSelf(expression: *const Ast.Expression) bool {
+    return expression.data == .name and std.mem.eql(u8, expression.data.name, "self");
+}
+
+/// The correction for a member a class does not have: when a class extending
+/// it does, how `is` reaches it (4.4), and for a name that cannot be narrowed,
+/// why not.
+fn subclassMemberHelp(self: *Checker, base: Type, member: Ast.Expression.Member, general: []const u8) Error![]const u8 {
+    if (!isClass(base)) return general;
+    // The first declared, so the correction does not depend on hash order.
+    var found: ?*const Type.User = null;
+    var types = self.structs.valueIterator();
+    while (types.next()) |candidate| {
+        const user = candidate.user.?;
+        if (user == base.user.? or !user.extends(base.user.?)) continue;
+        const key = try self.memberOwner(candidate.*, member.name) orelse continue;
+        if (!std.mem.eql(u8, key, user.name)) continue;
+        if (found) |earlier| {
+            const a = .{ self.facts.owner.get(user.name).?, self.type_spans.get(user.name).?.start };
+            const b = .{ self.facts.owner.get(earlier.name).?, self.type_spans.get(earlier.name).?.start };
+            if (a[0] > b[0] or (a[0] == b[0] and a[1] > b[1])) continue;
+        }
+        found = user;
+    }
+    const owner = found orelse return general;
+    const written = if (member.base.data == .name) member.base.data.name else "value";
+    if (member.base.data == .name) {
+        if (self.unprovable(written)) |reason| {
+            return std.fmt.allocPrint(
+                self.arena,
+                "`{s}` belongs to `{s}`, which extends {f}. A test such as `{s} is {s}` cannot prove what `{s}` holds, because {s} assigns it and could change it in between. Copy it into a `const` first, and test that.",
+                .{ member.name, owner.display_name, base, written, owner.display_name, written, reason },
+            );
+        }
+    }
+    return std.fmt.allocPrint(
+        self.arena,
+        "`{s}` belongs to `{s}`, which extends {f}. Inside `if {s} is {s} {{ ... }}`, it can be reached.",
+        .{ member.name, owner.display_name, base, written, owner.display_name },
+    );
 }
 
 /// Whether an expression is section 10.7's `super`.

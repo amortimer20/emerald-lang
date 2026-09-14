@@ -325,6 +325,7 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
         },
         .index => |index| @max(index.base.depth, index.index.depth),
         .member => |member| member.base.depth,
+        .type_test => |test_| test_.value.depth,
         // A block body's statements each carry their own bound, so only an
         // expression body extends this lambda's height.
         .lambda => |lambda| switch (lambda.body) {
@@ -2304,6 +2305,7 @@ fn parseNegation(self: *Parser) Error!*const Ast.Expression {
 /// evaluate `score` once and short-circuit, as section 5.2 requires.
 fn parseComparison(self: *Parser) Error!*const Ast.Expression {
     const first = try self.parseRange();
+    if (self.check(.keyword_is)) return self.finishTypeTest(first);
     if (comparisonOperator(self.peek().kind) == null) return first;
 
     var operands: std.ArrayList(*const Ast.Expression) = .empty;
@@ -2319,10 +2321,46 @@ fn parseComparison(self: *Parser) Error!*const Ast.Expression {
         end = operand.span;
     }
 
+    if (self.check(.keyword_is)) {
+        return self.report(
+            self.peek().span,
+            "`is` cannot follow a comparison",
+            "Put one of them in parentheses, as in `(a == b) and (value is Dog)`.",
+        );
+    }
     return self.node(spanning(first.span, end), .{ .comparison = .{
         .operands = try operands.toOwnedSlice(self.arena),
         .operators = try operators.toOwnedSlice(self.arena),
     } });
+}
+
+/// Section 4.4's `value is Type`. It sits with the comparisons, so `not`,
+/// `and`, and `or` apply to the whole test, and like a range it does not chain.
+fn finishTypeTest(self: *Parser, value: *const Ast.Expression) Error!*const Ast.Expression {
+    const keyword = self.advance();
+    if (self.check(.keyword_not)) {
+        return self.report(
+            spanning(keyword.span, self.peek().span),
+            "`is not` is not how a failed type test is written",
+            "Put `not` in front of the whole test, as in `not (value is Dog)`.",
+        );
+    }
+    const target = try self.parseTypeExpression();
+    if (target.question_span) |question| {
+        try self.note(
+            question,
+            "`is` tests for a type without `?`",
+            "A value that is there has a type without `?`. To ask whether it is there at all, compare it with `nothing`.",
+        );
+    }
+    if (self.check(.keyword_is) or comparisonOperator(self.peek().kind) != null) {
+        return self.report(
+            self.peek().span,
+            "a type test cannot be chained",
+            "Put the test in parentheses, as in `(value is Dog) == expected`.",
+        );
+    }
+    return self.node(spanning(value.span, target.span), .{ .type_test = .{ .value = value, .target = target } });
 }
 
 /// Section 6.4's `start..end` and `start..<end`. Looser than arithmetic, so

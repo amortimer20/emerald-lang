@@ -461,6 +461,17 @@ First-class type values and general reflection are deferred; programs use `is` f
 type-dependent control flow. `type_name` is intended for learning, diagnostics, and
 debugging rather than durable program identifiers.
 
+`is` binds like a comparison and does not chain with one, so `not (value is Dog)` is how a
+failed test is written, and `and` and `or` apply to the whole test. Its type has no `?`: a
+present value never has one, and presence is tested against `nothing`. A test that holds
+narrows a name the way a comparison with `nothing` does, to the tested type when that says
+more: an optional's own type, or a class that extends the one the name has. The right side of
+`and` is checked knowing its left side held, and the right side of `or` knowing its left side
+failed, for both kinds of narrowing. `type_name` is reserved: no type may declare a member
+with that name, and it cannot be assigned. A tuple's `type_name` and `is` look at the class
+of each object it holds, since tuples widen position by position; a collection's use its
+static type, since collections are invariant.
+
 ### 4.5 Optional handling
 
 Optional behavior remains deliberately small:
@@ -2936,6 +2947,9 @@ recorded in their normative sections:
 | Type-level and instance member names (10.3, 10.4) | One name space for both | `Player.count` and `player.count` meaning different things would be legal but misleading, and the diagnostic for reaching a member the wrong way can only name the right way if the name identifies one member. |
 | Inferring a type-level field's type (4.1, 7.2, 10.4) | Optional annotation; inferred from the value on first need, and a cycle through a function whose return type is also inferred needs one of the two annotated | This matches module-level bindings, which the fields otherwise behave like. The cycle rule is 7.2's rule for recursive functions, reached through a field instead of a call. |
 | Class display (10.1, 15.2) | Field by field like a struct, with `Name(...)` for an object already being displayed | Showing the fields is what a beginner needs while learning; an address or bare type name hides exactly what changed. Objects form cycles, which a struct cannot, and the marker ends one without losing the rest of the value. |
+| Where `is` binds (4.4) | With the comparisons, without chaining; `is not` is rejected with a correction | Like Kotlin and Swift, a test reads as one condition that `not`, `and`, and `or` combine. A second spelling for the negated test would be the kind of duplicate 5.2 declines for `!`. |
+| Narrowing inside `and` and `or` (4.4, 4.5) | The right side is checked knowing how the left side went | It runs only then, so the proof holds, and without it `animal is Dog and animal.tricks > 0` and `x != nothing and x > 3` needed a nested `if`. |
+| The always-known type test warning (4.4) | Deferred with diagnostic severities; such a test is simply a `Bool` | Diagnostics have no warnings yet, and reporting it as an error would reject programs 4.4 calls valid. |
 | Reusing a base class's names (10.7) | Not allowed for any member, private ones included, except a public method or property replaced with `@override` | 10.4 already keeps one name space so a name means one thing. Allowing a private name to be reused would give one object two fields of one name, each seen from different braces, which is harder to explain than a rename. |
 | Override results (10.7) | The same type, or a subclass where the replaced method gives a class; parameters must match exactly | A subclass object needs nothing done to it to stand in for its base class, so a covariant result costs nothing and lets `clone()` or a factory give its own class. Parameter variance is the confusing direction and is not needed yet. Numeric widening is excluded because it would need a conversion the calling code does not know to make. |
 | Reaching an override too early (10.2, 10.7) | A runtime error when an object runs a version of a method or property declared by a class whose part of it has not begun | The base-first order and the permission to pass `self` on once a base class's fields are set leave a way for a subclass's override to read an unset field, which a static rule could close only by forbidding that permission too. Checking at dispatch costs one comparison where an override is taken. |

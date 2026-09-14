@@ -1,0 +1,24 @@
+diagnostics/type-tests.em:3:10: `type_name` is already a property of every value
+      func type_name(): String {
+           ^^^^^^^^^
+It gives the name of the value's type, and cannot be declared again. Give this member another name.
+diagnostics/type-tests.em:15:12: Animal has no method named `bark`
+      animal.bark()
+             ^^^^
+`bark` belongs to `Dog`, which extends Animal. Inside `if animal is Dog { ... }`, it can be reached.
+diagnostics/type-tests.em:16:18: `Missing` is not a type
+      if animal is Missing {
+                   ^^^^^^^
+Check the spelling or declare the struct in this project.
+diagnostics/type-tests.em:18:12: `type_name` cannot be set
+      animal.type_name = "Dog"
+             ^^^^^^^^^
+It always gives the name of the value's type, which no assignment can change.
+diagnostics/type-tests.em:19:34: Animal has no method named `bark`
+      if (animal is Dog) or animal.bark() {
+                                   ^^^^
+`bark` belongs to `Dog`, which extends Animal. Inside `if animal is Dog { ... }`, it can be reached.
+diagnostics/type-tests.em:27:12: Animal has no method named `bark`
+      shared.bark()
+             ^^^^
+`bark` belongs to `Dog`, which extends Animal. A test such as `shared is Dog` cannot prove what `shared` holds, because a function assigns it and could change it in between. Copy it into a `const` first, and test that.

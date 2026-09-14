@@ -173,6 +173,10 @@ changing_methods: *const Resolver.NameSet,
 method_calls: *const Checker.MethodCalls,
 /// Every `super.name` that reaches a base class's property (10.7).
 super_members: *const Checker.MethodCalls,
+/// Section 4.4's type tests and `type_name` reads, with the static types they
+/// need.
+type_tests: *const Checker.TypeTests,
+type_names: *const Checker.LiteralTypes,
 /// Every method that overrides another, mapped to the declaration it
 /// ultimately replaces, whose parameter defaults it uses (7.3).
 overrides: std.StringHashMapUnmanaged([]const u8) = .empty,
@@ -201,6 +205,8 @@ pub fn run(
     changing_methods: *const Resolver.NameSet,
     method_calls: *const Checker.MethodCalls,
     super_members: *const Checker.MethodCalls,
+    type_tests: *const Checker.TypeTests,
+    type_names: *const Checker.LiteralTypes,
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
@@ -231,6 +237,8 @@ pub fn run(
         .changing_methods = changing_methods,
         .method_calls = method_calls,
         .super_members = super_members,
+        .type_tests = type_tests,
+        .type_names = type_names,
         .literal_types = literal_types,
         .heap = .init(gpa),
         .stack = stack,
@@ -416,6 +424,7 @@ fn inherit(
     if (info.base) |base| {
         try self.inherit(base, bases, finished);
         const inherited = self.structs.get(base).?;
+        descriptor.base = inherited;
         try properties.appendSlice(self.arena, inherited.properties);
         var entries = inherited.methods.?.iterator();
         while (entries.next()) |entry| try methods.put(self.arena, entry.key_ptr.*, entry.value_ptr.*);
@@ -1510,6 +1519,7 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .list_literal => |elements| self.evaluateList(expression, elements),
         .dictionary_literal => |entries| self.evaluateDictionary(expression, entries),
         .tuple_literal => |positions| self.evaluateTuple(expression, positions),
+        .type_test => self.evaluateTypeTest(expression),
         .index => |index| self.evaluateIndex(expression, index),
         // A namespace-qualified name is a reference, not a property access.
         .member => |member| if (self.facts.qualified.get(expression)) |key|
@@ -1588,6 +1598,65 @@ fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: [
     return .{ .data = .{ .closure = closure } };
 }
 
+/// Section 4.4's `value is Type`. The value is evaluated once, whatever the
+/// checker already knows about the answer.
+fn evaluateTypeTest(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
+    const value = try self.evaluate(expression.data.type_test.value);
+    defer self.heap.release(value);
+    const tested = self.type_tests.get(expression).?;
+    return .initBool(valueIs(value, tested.value, tested.target));
+}
+
+/// Whether a value whose static type is `static` has the type `target`. A
+/// value's static type is exact apart from objects, whose class may extend
+/// the one it has, and tuples holding them, which widen position by position.
+fn valueIs(value: Value, static: Type, target: Type) bool {
+    if (value.data == .nothing) return target.kind == .nothing;
+    const present = static.payload();
+    return switch (target.kind) {
+        .nothing => false,
+        .struct_value => value.data == .struct_value and value.data.struct_value.descriptor.isOrExtends(target.user.?.name),
+        .tuple => blk: {
+            if (value.data != .tuple or present.kind != .tuple) break :blk false;
+            const items = value.data.tuple.items;
+            if (items.len != target.elements.len) break :blk false;
+            for (items, present.elements, target.elements) |item, item_static, item_target| {
+                if (!valueIs(item, item_static, item_target)) break :blk false;
+            }
+            break :blk true;
+        },
+        else => present.same(target),
+    };
+}
+
+/// Section 4.4's `type_name`: the source spelling of the value's own type.
+fn evaluateTypeName(self: *Interpreter, member: Ast.Expression.Member, static: Type) Error!Value {
+    const value = try self.evaluate(member.base);
+    defer self.heap.release(value);
+    var written: std.Io.Writer.Allocating = .init(self.gpa);
+    defer written.deinit();
+    writeTypeName(&written.writer, value, static) catch return error.OutOfMemory;
+    return self.heap.copyText(written.written());
+}
+
+fn writeTypeName(writer: *std.Io.Writer, value: Value, static: Type) std.Io.Writer.Error!void {
+    if (value.data == .nothing) return writer.writeAll("Nothing");
+    const present = static.payload();
+    switch (value.data) {
+        .struct_value => |object| return writer.writeAll(object.descriptor.display_name),
+        .tuple => |tuple| if (present.kind == .tuple) {
+            try writer.writeAll("(");
+            for (tuple.items, present.elements, 0..) |item, item_static, position| {
+                if (position != 0) try writer.writeAll(", ");
+                try writeTypeName(writer, item, item_static);
+            }
+            return writer.writeAll(")");
+        },
+        else => {},
+    }
+    try writer.print("{f}", .{present});
+}
+
 // Every case of `evaluate` that needs locals of its own lives in a function
 // like these. `evaluate` runs once per level of nesting, so every byte of its
 // frame is multiplied by section 7.2's 1,000 calls times the deepest nesting
@@ -1596,6 +1665,7 @@ fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: [
 /// Section 8.5's properties: `count`, and a list's `first` and `last`. The
 /// checker allows nothing else here.
 fn evaluateProperty(self: *Interpreter, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Value {
+    if (self.type_names.get(expression)) |static| return self.evaluateTypeName(member, static);
     if (self.method_calls.get(expression)) |key| return self.evaluateMethodValue(member, key);
     // Section 10.7's `super.area`, which runs the base class's getter.
     if (self.super_members.get(expression)) |getter| {

@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the class inheritance slice (10.7).
+Updated: 2026-09-13. Prepared after the type test slice (4.4's `is` and `type_name`).
 
 ## Current milestone
 
@@ -39,7 +39,9 @@ Structs are complete. Classes have everything structs have, as shared objects: a
 and passing share, `const` stops at the first object, identity equality, blocks that use
 `self`, and cycles the collector reclaims. Classes inherit: `extends`, `super(...)` and
 `super.name`, `@override`, `@abstract` classes and methods, subclass objects usable as their
-base class, and each object running its own class's version of a method or property.
+base class, and each object running its own class's version of a method or property. `is`
+tests an object's class at runtime and narrows a name within the branch it proves, and
+every value has `type_name`.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
@@ -166,6 +168,28 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Type test decisions worth knowing
+
+- **`is` is `Ast.Expression.TypeTest`,** parsed by `Parser.finishTypeTest` after the first
+  operand of a comparison. `Checked.type_tests` records the value's static type and the tested
+  type; `Interpreter.valueIs` needs only the object's class (`Value.StructType.isOrExtends`,
+  through the new `StructType.base`) and, for a tuple, each position's.
+- **Narrowing** is a new arm of `Checker.narrow`, using `narrowsTo`. `typeOfLogical` now
+  narrows before checking the right side and puts the types back with `restoreTypes`, which
+  also gave optionals `x != nothing and x > 3`.
+- **`type_name`** is caught at the top of `typeOfMember`, before optional presence and
+  construction readiness, and recorded in `Checked.type_names`; `writeTypeName` spells the
+  static type, putting each object's class in. A member named `type_name` and an assignment
+  to it are rejected.
+- **A member only a subclass has** gets `subclassMemberHelp`, which names the first-declared
+  subclass with it and says how `is` reaches it, or why a name cannot be narrowed.
+- **The recursion budget is tight.** Passing the `TypeTest` by value to its helper grew
+  `evaluate`'s Debug frame enough to fail the 250-deep, 1,000-call test; its helpers take the
+  expression instead.
+- **Checked.** Five mechanisms were disabled one at a time, each failing a case: walking base
+  classes in a test, narrowing by a test, narrowing in `and`/`or`, an object's class in
+  `type_name`, and the subclass correction.
 
 ### Inheritance decisions worth knowing
 
@@ -1242,9 +1266,9 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 
 ## Next concrete step
 
-Classes are complete apart from 4.4's `is` and `type_name`, which need a runtime check of an
-object's class and would finish the object model's first half. After that, section 20's
-order continues with traits, operators, and enums.
+Classes are complete, with 4.4's `is` and `type_name`. What remains of section 20's slice
+12, the object model, is traits (section 11), with operators through traits, and enums.
+Slice 13, errors and tests, follows.
 
 Section 7 is complete apart from capturing built-in methods, which the user has put off.
 
@@ -1266,7 +1290,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 312 unit tests, 286 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 312 unit tests, 289 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.
@@ -1314,6 +1338,9 @@ easier to design once there are types to raise.
   `addExecutable` and `addTest` take a `root_module` built by `b.createModule`.
 
 ### Deferred
+
+- From section 4.4: the warning for a type test whose answer is known before the program
+  runs, which needs diagnostics with a severity.
 
 - From section 7: capturing a built-in method such as `numbers.append` (7.4 says every
   method is capturable, with an expected type for `numbers.map`; the user plans it for

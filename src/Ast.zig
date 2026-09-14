@@ -374,6 +374,14 @@ pub const Expression = struct {
         /// Section 8.2's `("score", 10)`, which always has at least two
         /// positions; one parenthesized expression is a group.
         tuple_literal: []const *const Expression,
+        /// Section 4.4's `animal is Dog`.
+        type_test: TypeTest,
+    };
+
+    /// `value is Type`, which asks what the value is at runtime.
+    pub const TypeTest = struct {
+        value: *const Expression,
+        target: TypeExpression,
     };
 
     /// Section 7.4. A lambda has no return annotation: its result type comes

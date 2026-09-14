@@ -1,0 +1,16 @@
+diagnostics/type-test-syntax.em:3:9: `is not` is not how a failed type test is written
+  print(x is not Int)
+          ^^^^^^
+Put `not` in front of the whole test, as in `not (value is Dog)`.
+diagnostics/type-test-syntax.em:4:15: `is` tests for a type without `?`
+  print(x is Int?)
+                ^
+A value that is there has a type without `?`. To ask whether it is there at all, compare it with `nothing`.
+diagnostics/type-test-syntax.em:5:16: a type test cannot be chained
+  print(x is Int == true)
+                 ^^
+Put the test in parentheses, as in `(value is Dog) == expected`.
+diagnostics/type-test-syntax.em:6:14: `is` cannot follow a comparison
+  print(x == 1 is Int)
+               ^^
+Put one of them in parentheses, as in `(a == b) and (value is Dog)`.

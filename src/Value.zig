@@ -60,6 +60,18 @@ pub const StructType = struct {
     /// runs on an object of exactly this class: its own, or the nearest base
     /// class's. Null for every other type, whose methods are the ones called.
     methods: ?*const Methods = null,
+    /// Section 10.7's base class, for a class that extends one.
+    base: ?*const StructType = null,
+
+    /// Whether an object of this type is also one of the type named `key`:
+    /// this type or one it extends (4.4).
+    pub fn isOrExtends(self: *const StructType, key: []const u8) bool {
+        var at: ?*const StructType = self;
+        while (at) |current| : (at = current.base) {
+            if (std.mem.eql(u8, current.name, key)) return true;
+        }
+        return false;
+    }
 
     pub const Field = struct {
         name: []const u8,

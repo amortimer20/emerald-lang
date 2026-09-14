@@ -256,6 +256,8 @@ fn analyze(
         &checked.changing_methods,
         &checked.method_calls,
         &checked.super_members,
+        &checked.type_tests,
+        &checked.type_names,
         resolved.facts,
         running.out,
         running.in,
