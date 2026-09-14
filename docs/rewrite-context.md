@@ -1472,6 +1472,23 @@ tail must use a name that promises that broader transformation.
 `lines()` omits newline characters by default: a line ends at `\n`, a `\r` before it
 belongs to the ending, and a final line ending does not begin an empty last line.
 
+`insert_at(index, text)` inserts before the grapheme at `index`; index `0` is the
+start and `count` is a valid index that appends. A negative index or one beyond `count`
+is an error. `remove_prefix(prefix)` and `remove_suffix(suffix)` each return the original
+string unchanged when it does not match. Their match is canonical, as it is for equality,
+and a successful removal preserves the receiver's remaining original bytes.
+
+`collapse_repeats()` replaces each run of adjacent canonically equal graphemes with its
+first grapheme. `partition(separator)` returns a three-part tuple of the text before the
+first match, the matching text, and the text after it. Its separator cannot be empty; when
+there is no match, it returns `(text, "", "")`.
+
+`pad_start(width, fill = " ")`, `pad_end(width, fill = " ")`, and
+`pad_center(width, fill = " ")` measure width in graphemes. `fill` must be exactly one
+grapheme and a negative width is an error. A string at least as wide as the requested width
+is unchanged. When center padding needs an odd number of fill characters, the extra one is
+placed at the end: `"hi".pad_center(5, "-")` is `"-hi--"`.
+
 Searching works in whole characters, as indexing does. `contains?`, `starts_with?`,
 `ends_with?`, `split`, and `replace` match only where both ends of the match fall between
 characters, and they compare canonically, as `==` does. So `"café".contains?("e")` is
@@ -1491,7 +1508,9 @@ and `NaN`, so every displayed `Float` parses back. `to_string()` gives the displ
 `Int`, `Float`, or `Bool`.
 `pad_start` and `pad_end` describe logical placement more clearly than left and right in a
 Unicode language. `words`, `title_case`, and case-insensitive Unicode comparison remain
-deferred until their locale and boundary behavior can be designed correctly.
+deferred until their locale and boundary behavior can be designed correctly. `code_points`,
+`bytes`, `letter?`, `digit?`, and slicing strings with ranges are also deferred: their
+advanced Unicode and range semantics need a dedicated design pass.
 
 String equality uses canonical Unicode normalization, remains case-sensitive, and feeds
 the same normalized equality into dictionary keys and sets. Ordinary string ordering is

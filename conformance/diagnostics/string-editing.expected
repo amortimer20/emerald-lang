@@ -1,0 +1,16 @@
+diagnostics/string-editing.em:2:22: this is String, but `insert_at` needs Int
+  print("hi".insert_at("one", "!"))
+                       ^^^^^
+Pass a value of the type the method needs, or convert it first.
+diagnostics/string-editing.em:3:26: this is Int, but `pad_center` needs String
+  print("hi".pad_center(5, 1))
+                           ^
+Pass a value of the type the method needs, or convert it first.
+diagnostics/string-editing.em:4:12: `partition` takes 1 argument, but this call passes 0
+  print("hi".partition())
+             ^^^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/string-editing.em:5:12: String has no method `code_points`
+  print("hi".code_points())
+             ^^^^^^^^^^^
+A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `insert_at`, `substring`, `remove_prefix`, `remove_suffix`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `split`, `partition`, `lines`, `chars`, `to_int`, and `to_float`.

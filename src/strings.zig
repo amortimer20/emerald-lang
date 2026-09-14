@@ -122,6 +122,74 @@ pub fn endsWith(gpa: Allocator, haystack: []const u8, suffix: []const u8) Alloca
     return n <= h and search.matchesAt(h - n);
 }
 
+/// The byte range of a whole-character match in the original text. Unlike
+/// `Search`, this keeps the source spelling available for operations that
+/// return portions of their receiver.
+pub const Match = struct { start: usize, end: usize };
+
+fn offsetAt(bytes: []const u8, index: usize) ?usize {
+    var clusters: unicode.Graphemes = .init(bytes);
+    var skipped: usize = 0;
+    while (skipped < index) : (skipped += 1) {
+        if (clusters.next() == null) return null;
+    }
+    return clusters.index;
+}
+
+fn endAfter(bytes: []const u8, start: usize, count: usize) ?usize {
+    var clusters: unicode.Graphemes = .init(bytes[start..]);
+    var taken: usize = 0;
+    while (taken < count) : (taken += 1) {
+        if (clusters.next() == null) return null;
+    }
+    return start + clusters.index;
+}
+
+/// The first canonical match, reported as boundaries in the original text.
+/// `needle` must contain at least one character.
+pub fn firstMatch(gpa: Allocator, haystack: []const u8, needle: []const u8) Allocator.Error!?Match {
+    const needle_count = unicode.graphemeCount(needle);
+    std.debug.assert(needle_count > 0);
+
+    var clusters: unicode.Graphemes = .init(haystack);
+    var start: usize = 0;
+    while (true) {
+        const end = endAfter(haystack, start, needle_count) orelse return null;
+        if (try unicode.equal(gpa, haystack[start..end], needle)) return .{ .start = start, .end = end };
+        const character = clusters.next() orelse return null;
+        start += character.len;
+    }
+}
+
+/// Removes a canonical prefix, returning an unchanged slice when it does not
+/// occur. The result retains the receiver's original byte spelling.
+pub fn removePrefix(gpa: Allocator, bytes: []const u8, prefix: []const u8) Allocator.Error![]const u8 {
+    if (prefix.len == 0) return bytes;
+    const end = endAfter(bytes, 0, unicode.graphemeCount(prefix)) orelse return bytes;
+    return if (try unicode.equal(gpa, bytes[0..end], prefix)) bytes[end..] else bytes;
+}
+
+/// Removes a canonical suffix, returning an unchanged slice when it does not
+/// occur. The result retains the receiver's original byte spelling.
+pub fn removeSuffix(gpa: Allocator, bytes: []const u8, suffix: []const u8) Allocator.Error![]const u8 {
+    if (suffix.len == 0) return bytes;
+    const suffix_count = unicode.graphemeCount(suffix);
+    const total = unicode.graphemeCount(bytes);
+    if (suffix_count > total) return bytes;
+    const start = offsetAt(bytes, total - suffix_count) orelse return bytes;
+    return if (try unicode.equal(gpa, bytes[start..], suffix)) bytes[0..start] else bytes;
+}
+
+/// The text before, matching, and after the first occurrence of a nonempty
+/// separator. If there is no occurrence, the first part is the whole string
+/// and the other two are empty.
+pub fn partition(gpa: Allocator, bytes: []const u8, separator: []const u8) Allocator.Error!struct { []const u8, []const u8, []const u8 } {
+    if (try firstMatch(gpa, bytes, separator)) |match| {
+        return .{ bytes[0..match.start], bytes[match.start..match.end], bytes[match.end..] };
+    }
+    return .{ bytes, bytes[0..0], bytes[0..0] };
+}
+
 /// Every occurrence of `old`, left to right and without overlapping, replaced
 /// by `new`. `old` is not empty. The caller owns the result.
 /// Section 9.2's `index_of`: which character the first match starts at, or null
@@ -265,6 +333,20 @@ pub fn reverse(gpa: Allocator, bytes: []const u8) Allocator.Error![]u8 {
     return result;
 }
 
+/// Collapses adjacent canonically equal characters into their first spelling.
+pub fn collapseRepeats(gpa: Allocator, bytes: []const u8) Allocator.Error![]u8 {
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(gpa);
+    var previous: ?[]const u8 = null;
+    var clusters: unicode.Graphemes = .init(bytes);
+    while (clusters.next()) |character| {
+        if (previous) |last| if (try unicode.equal(gpa, last, character)) continue;
+        try result.appendSlice(gpa, character);
+        previous = character;
+    }
+    return result.toOwnedSlice(gpa);
+}
+
 /// Section 9.2's `capitalize()`: Unicode's uppercase mapping applied to the
 /// first character, and the rest exactly as it was. The caller owns it.
 pub fn capitalize(gpa: Allocator, bytes: []const u8) Allocator.Error![]u8 {
@@ -279,6 +361,8 @@ pub fn capitalize(gpa: Allocator, bytes: []const u8) Allocator.Error![]u8 {
 }
 
 pub const SubstringError = error{ NegativeStart, NegativeCount, StartPastEnd, CountPastEnd };
+pub const InsertError = error{ NegativeIndex, IndexPastEnd };
+pub const PadError = error{ NegativeWidth, EmptyFill, MultipleCharacterFill };
 
 /// Section 9.1's `substring(start)` and `substring(start, count)`, in
 /// characters, with bounds that are errors rather than clamped. A start equal
@@ -299,6 +383,54 @@ pub fn substring(bytes: []const u8, start: i64, count: ?i64) SubstringError![]co
         if (clusters.next() == null) return error.CountPastEnd;
     }
     return bytes[from..clusters.index];
+}
+
+/// Inserts text at a character boundary. The caller owns the result.
+pub fn insertAt(gpa: Allocator, bytes: []const u8, index: i64, text: []const u8) (Allocator.Error || InsertError)![]u8 {
+    if (index < 0) return error.NegativeIndex;
+    const at = offsetAt(bytes, @intCast(index)) orelse return error.IndexPastEnd;
+    const size = std.math.add(usize, bytes.len, text.len) catch return error.OutOfMemory;
+    const result = try gpa.alloc(u8, size);
+    @memcpy(result[0..at], bytes[0..at]);
+    @memcpy(result[at..][0..text.len], text);
+    @memcpy(result[at + text.len ..], bytes[at..]);
+    return result;
+}
+
+pub const PadSide = enum { start, end, center };
+
+/// Pads to a character width. `fill` must be exactly one character, and an
+/// odd center padding count puts its extra character at the end.
+pub fn pad(gpa: Allocator, bytes: []const u8, width: i64, fill: []const u8, side: PadSide) (Allocator.Error || PadError)![]u8 {
+    if (width < 0) return error.NegativeWidth;
+    if (fill.len == 0) return error.EmptyFill;
+    if (unicode.graphemeCount(fill) != 1) return error.MultipleCharacterFill;
+
+    const target: usize = @intCast(width);
+    const count = unicode.graphemeCount(bytes);
+    if (target <= count) return gpa.dupe(u8, bytes);
+    const needed = target - count;
+    const before = switch (side) {
+        .start => needed,
+        .end => 0,
+        .center => needed / 2,
+    };
+    const after = needed - before;
+    const padding = std.math.mul(usize, needed, fill.len) catch return error.OutOfMemory;
+    const size = std.math.add(usize, bytes.len, padding) catch return error.OutOfMemory;
+    const result = try gpa.alloc(u8, size);
+    var offset: usize = 0;
+    for (0..before) |_| {
+        @memcpy(result[offset..][0..fill.len], fill);
+        offset += fill.len;
+    }
+    @memcpy(result[offset..][0..bytes.len], bytes);
+    offset += bytes.len;
+    for (0..after) |_| {
+        @memcpy(result[offset..][0..fill.len], fill);
+        offset += fill.len;
+    }
+    return result;
 }
 
 pub fn ParseResult(comptime T: type) type {
@@ -398,6 +530,45 @@ test "substring counts characters and does not clamp" {
     try testing.expectError(error.StartPastEnd, substring("hello", 6, null));
     try testing.expectError(error.CountPastEnd, substring("hello", 3, 3));
     try testing.expectEqualStrings("e\u{301}", try substring("e\u{301}x", 0, 1));
+}
+
+test "string editing and layout keep characters whole" {
+    const inserted = try insertAt(testing.allocator, "caf\u{E9}", 3, "!");
+    defer testing.allocator.free(inserted);
+    try testing.expectEqualStrings("caf!\u{E9}", inserted);
+    try testing.expectError(error.NegativeIndex, insertAt(testing.allocator, "hi", -1, "!"));
+    try testing.expectError(error.IndexPastEnd, insertAt(testing.allocator, "hi", 3, "!"));
+
+    // Matching is canonical, but a removal keeps the receiver's remaining raw
+    // bytes rather than replacing them with a normalized spelling.
+    try testing.expectEqualStrings("caf", try removeSuffix(testing.allocator, "cafe\u{301}", "\u{E9}"));
+    try testing.expectEqualStrings("happy", try removePrefix(testing.allocator, "unhappy", "un"));
+    try testing.expectEqualStrings("happy", try removePrefix(testing.allocator, "happy", "un"));
+    const simple_collapsed = try collapseRepeats(testing.allocator, "baallooon");
+    defer testing.allocator.free(simple_collapsed);
+    try testing.expectEqualStrings("balon", simple_collapsed);
+    const collapsed = try collapseRepeats(testing.allocator, "e\u{301}\u{E9}");
+    defer testing.allocator.free(collapsed);
+    try testing.expectEqualStrings("e\u{301}", collapsed);
+
+    const parts = try partition(testing.allocator, "left::right", "::");
+    try testing.expectEqualStrings("left", parts[0]);
+    try testing.expectEqualStrings("::", parts[1]);
+    try testing.expectEqualStrings("right", parts[2]);
+    const absent = try partition(testing.allocator, "whole", ":");
+    try testing.expectEqualStrings("whole", absent[0]);
+    try testing.expectEqualStrings("", absent[1]);
+    try testing.expectEqualStrings("", absent[2]);
+
+    const start = try pad(testing.allocator, "hi", 5, "-", .start);
+    defer testing.allocator.free(start);
+    try testing.expectEqualStrings("---hi", start);
+    const center = try pad(testing.allocator, "hi", 5, "-", .center);
+    defer testing.allocator.free(center);
+    try testing.expectEqualStrings("-hi--", center);
+    try testing.expectError(error.NegativeWidth, pad(testing.allocator, "hi", -1, "-", .end));
+    try testing.expectError(error.EmptyFill, pad(testing.allocator, "hi", 3, "", .end));
+    try testing.expectError(error.MultipleCharacterFill, pad(testing.allocator, "hi", 3, "--", .end));
 }
 
 test "parsing takes the whole string and reports what went wrong" {

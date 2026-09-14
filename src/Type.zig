@@ -506,7 +506,7 @@ pub const StringMethod = struct {
     maybe: bool = false,
 
     pub const Operand = enum { string, int, float };
-    pub const Result = enum { bool, int, float, string, strings };
+    pub const Result = enum { bool, int, float, string, strings, string_parts };
 };
 
 pub const string_methods = std.StaticStringMap(StringMethod).initComptime(.{
@@ -524,10 +524,18 @@ pub const string_methods = std.StaticStringMap(StringMethod).initComptime(.{
     .{ "reverse", StringMethod{ .parameters = &.{}, .result = .string } },
     .{ "repeat", StringMethod{ .parameters = &.{.int}, .result = .string } },
     .{ "replace", StringMethod{ .parameters = &.{ .string, .string }, .result = .string } },
+    .{ "insert_at", StringMethod{ .parameters = &.{ .int, .string }, .result = .string } },
     .{ "substring", StringMethod{ .parameters = &.{ .int, .int }, .optional = 1, .result = .string } },
+    .{ "remove_prefix", StringMethod{ .parameters = &.{.string}, .result = .string } },
+    .{ "remove_suffix", StringMethod{ .parameters = &.{.string}, .result = .string } },
+    .{ "collapse_repeats", StringMethod{ .parameters = &.{}, .result = .string } },
+    .{ "pad_start", StringMethod{ .parameters = &.{ .int, .string }, .optional = 1, .result = .string } },
+    .{ "pad_end", StringMethod{ .parameters = &.{ .int, .string }, .optional = 1, .result = .string } },
+    .{ "pad_center", StringMethod{ .parameters = &.{ .int, .string }, .optional = 1, .result = .string } },
     .{ "split", StringMethod{ .parameters = &.{.string}, .result = .strings } },
     .{ "lines", StringMethod{ .parameters = &.{}, .result = .strings } },
     .{ "chars", StringMethod{ .parameters = &.{}, .result = .strings } },
+    .{ "partition", StringMethod{ .parameters = &.{.string}, .result = .string_parts } },
     .{ "index_of", StringMethod{ .parameters = &.{.string}, .result = .int, .maybe = true } },
     .{ "to_int", StringMethod{ .parameters = &.{}, .result = .int } },
     .{ "to_int_maybe", StringMethod{ .parameters = &.{}, .result = .int, .maybe = true } },

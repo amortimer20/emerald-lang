@@ -4470,8 +4470,16 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
         reverse,
         repeat,
         replace,
+        insert_at,
         substring,
+        remove_prefix,
+        remove_suffix,
+        collapse_repeats,
+        pad_start,
+        pad_end,
+        pad_center,
         split,
+        partition,
         lines,
         chars,
         index_of,
@@ -4520,11 +4528,37 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
             );
             break :blk self.ownedText(try strings.replace(gpa, bytes, old, arguments[1].data.string.bytes));
         },
+        .insert_at => blk: {
+            const index = arguments[0].data.int;
+            const result = strings.insertAt(gpa, bytes, index, arguments[1].data.string.bytes) catch |err| {
+                if (err == error.NegativeIndex or err == error.IndexPastEnd) return self.raiseInsert(span, bytes, index, @errorCast(err));
+                return error.OutOfMemory;
+            };
+            break :blk self.ownedText(result);
+        },
         .substring => blk: {
             const start = arguments[0].data.int;
             const count: ?i64 = if (arguments.len == 2) arguments[1].data.int else null;
             const slice = strings.substring(bytes, start, count) catch |err| return self.raiseSubstring(span, bytes, start, count, err);
             break :blk self.heap.copyText(slice);
+        },
+        .remove_prefix => self.heap.copyText(try strings.removePrefix(gpa, bytes, arguments[0].data.string.bytes)),
+        .remove_suffix => self.heap.copyText(try strings.removeSuffix(gpa, bytes, arguments[0].data.string.bytes)),
+        .collapse_repeats => self.ownedText(try strings.collapseRepeats(gpa, bytes)),
+        .pad_start, .pad_end, .pad_center => blk: {
+            const width = arguments[0].data.int;
+            const fill = if (arguments.len == 2) arguments[1].data.string.bytes else " ";
+            const side: strings.PadSide = switch (std.meta.stringToEnum(Method, name).?) {
+                .pad_start => .start,
+                .pad_end => .end,
+                .pad_center => .center,
+                else => unreachable,
+            };
+            const result = strings.pad(gpa, bytes, width, fill, side) catch |err| {
+                if (err == error.NegativeWidth or err == error.EmptyFill or err == error.MultipleCharacterFill) return self.raisePadding(span, width, fill, @errorCast(err));
+                return error.OutOfMemory;
+            };
+            break :blk self.ownedText(result);
         },
         .split => blk: {
             const separator = arguments[0].data.string.bytes;
@@ -4534,6 +4568,16 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
                 "Use `chars()` to split a String into its characters.",
             );
             break :blk self.stringList(try strings.split(gpa, bytes, separator));
+        },
+        .partition => blk: {
+            const separator = arguments[0].data.string.bytes;
+            if (separator.len == 0) return self.raise(
+                span,
+                "`partition` needs a separator, but this is an empty String",
+                "Pass the text to find as the separator.",
+            );
+            const parts = try strings.partition(gpa, bytes, separator);
+            break :blk self.stringTuple(parts);
         },
         .lines => self.stringList(try strings.lines(gpa, bytes)),
         .chars => blk: {
@@ -4601,6 +4645,29 @@ fn stringList(self: *Interpreter, pieces: [][]u8) Error!Value {
     return result;
 }
 
+/// A three-part String tuple. The pieces borrow their receiver until copied.
+fn stringTuple(self: *Interpreter, parts: struct { []const u8, []const u8, []const u8 }) Error!Value {
+    const items = try self.gpa.alloc(Value, 3);
+    const kinds = self.gpa.alloc(Value.Kind, 3) catch |err| {
+        self.gpa.free(items);
+        return err;
+    };
+    kinds[0] = .string;
+    kinds[1] = .string;
+    kinds[2] = .string;
+    var built: usize = 0;
+    errdefer {
+        for (items[0..built]) |item| self.heap.release(item);
+        self.gpa.free(items);
+        self.gpa.free(kinds);
+    }
+    inline for (parts) |part| {
+        items[built] = try self.heap.copyText(part);
+        built += 1;
+    }
+    return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
+}
+
 /// Section 9.4's strict parsing, which raises a conversion error. Catching it
 /// arrives with section 13; until then `to_int_or` is the way to recover.
 fn raiseConversion(self: *Interpreter, span: Source.Span, bytes: []const u8, comptime type_name: []const u8, out_of_range: bool) Error {
@@ -4643,6 +4710,27 @@ fn raiseSubstring(self: *Interpreter, span: Source.Span, bytes: []const u8, star
             .{ count.?, if (count.? == 1) "" else "s", start, total },
             "Ask for fewer characters, or leave the count out to take the rest of the String.",
         ),
+    };
+}
+
+fn raiseInsert(self: *Interpreter, span: Source.Span, bytes: []const u8, index: i64, err: strings.InsertError) Error {
+    const total = unicode.graphemeCount(bytes);
+    return switch (err) {
+        error.NegativeIndex => self.raiseFmt(span, "a String insertion cannot use index {d}", .{index}, "Insert at 0 or later."),
+        error.IndexPastEnd => self.raiseFmt(
+            span,
+            "cannot insert at index {d} in a String of {d} character{s}",
+            .{ index, total, if (total == 1) "" else "s" },
+            "Insert at 0 through the String's `count`; inserting at `count` adds to the end.",
+        ),
+    };
+}
+
+fn raisePadding(self: *Interpreter, span: Source.Span, width: i64, fill: []const u8, err: strings.PadError) Error {
+    return switch (err) {
+        error.NegativeWidth => self.raiseFmt(span, "a padded String cannot have width {d}", .{width}, "Choose a width of 0 or more characters."),
+        error.EmptyFill => self.raise(span, "padding needs a fill character, but this is an empty String", "Pass one character, such as `\"-\"` or `\" \"`."),
+        error.MultipleCharacterFill => self.raiseFmt(span, "padding needs one fill character, but \"{s}\" has {d}", .{ fill, unicode.graphemeCount(fill) }, "Pass exactly one character, such as `\"-\"` or `\" \"`."),
     };
 }
 

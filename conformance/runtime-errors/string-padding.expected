@@ -1,0 +1,4 @@
+runtime-errors/string-padding.em:2:7: padding needs a fill character, but this is an empty String
+  print("hi".pad_start(5, ""))
+        ^^^^^^^^^^^^^^^^^^^^^
+Pass one character, such as `"-"` or `" "`.

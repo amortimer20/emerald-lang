@@ -89,6 +89,15 @@ enough to fail the existing test of 1,000 calls whose bodies are nested 250 leve
 `evaluateMember` now isolates qualified constants and ordinary properties from that frame;
 the stress test passes again.
 
+Part 3 adds the focused String editing and layout vocabulary: `insert_at`,
+`remove_prefix`, `remove_suffix`, `collapse_repeats`, `partition`, and the three padding
+methods. Every index and width is in graphemes; matching remains canonical, but removals
+and partition keep the original bytes of receiver portions. `partition` returns
+`(before, match, after)`, or `(text, "", "")` when absent. Padding has an optional
+one-grapheme fill of a space, refuses empty or multi-grapheme fills, and puts an odd center
+fill on the end. Its new conformance coverage includes Unicode, absent matches, defaults,
+diagnostics, and a pedagogical runtime error.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
@@ -1432,9 +1441,10 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 
 ## Next concrete step
 
-Section 20's first 13 vertical slices are complete. Slice 14, standard-library growth, is
-underway: its `Int` and `Float` parts are complete. The next focused part is the remaining
-`String` vocabulary from section 9.2 that is not explicitly deferred.
+Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
+and String parts are complete. The next standard-library part should be chosen from the
+remaining collection vocabulary; `Iterable` stays deferred. The advanced String operations
+listed below are deliberately deferred too, rather than being incomplete work in this slice.
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 
@@ -1542,10 +1552,9 @@ off. Deferred language features in section 21 remain deferred.
 - Section 4.5's optional chaining, `?.`. It exists to shorten chains through objects, and
   there are no object fields or properties to chain through yet; the parser reports it and
   points at narrowing and `.or(...)`.
-- From section 9: `pad_start`, `pad_end`, and `pad_center` (their
-  signatures need default arguments), `insert_at`, `remove_prefix`, `remove_suffix`,
-  `collapse_repeats`, `partition`, `letter?` and `digit?` (general category tables),
-  `code_points` and `bytes`, string slicing with ranges, and `type_name`.
+- From section 9: `letter?` and `digit?` (general category tables), `code_points` and
+  `bytes`, string slicing with ranges, and `type_name`. `words`, `title_case`, and
+  case-insensitive Unicode comparison also need a dedicated locale and boundary design pass.
 
 ### Review findings still open
 
