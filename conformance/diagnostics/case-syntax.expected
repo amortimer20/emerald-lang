@@ -1,0 +1,32 @@
+diagnostics/case-syntax.em:6:12: this arm has a block, but the arms above it use `then`
+      when 2 {
+             ^
+A `case` either runs a block for each arm or produces a value from each with `then`. Write every arm the same way.
+diagnostics/case-syntax.em:14:5: nothing can follow the `else` arm
+      when 1 {
+      ^^^^
+`else` catches everything the arms above it did not, so it comes last. Move this arm above it.
+diagnostics/case-syntax.em:19:14: a `case` without a subject takes one condition per `when`
+      when true, false {
+               ^
+Each `when` here is a `Bool` condition. Join several with `or`.
+diagnostics/case-syntax.em:23:1: the value this `case` produces is never used
+  case 1 {
+  ^^^^^^^^
+Assign it to a name, as in `const label = case ...`, or give each `when` a block in braces in place of `then`.
+diagnostics/case-syntax.em:27:24: a `case` used as a value gives each `when` a value with `then`
+  const block_as_value = case 1 {
+                         ^^^^^^^^
+Write `when ... then value` for each arm, and `else then value`, or use the `case` as a statement on its own line.
+diagnostics/case-syntax.em:33:5: expected `when` or `else` in this `case`, found a name
+      print(1)
+      ^^^^^
+Each arm of a `case` starts with `when` and what it matches, as in `when 1 { ... }`.
+diagnostics/case-syntax.em:36:1: this `case` has no `when` arms
+  case 1 {
+  ^^^^^^^^
+Add an arm for each value to match, as in `when 1 { ... }`.
+diagnostics/case-syntax.em:40:19: expected the end of the arm, found else
+      when 1 then 2 else then 3
+                    ^^^^
+Each `then` arm is one value on its line. Start the next arm on a new line.

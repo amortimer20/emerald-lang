@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the `Self` and operators slice (11.4 and 11.5).
+Updated: 2026-09-13. Prepared after the enums and `case` slice (section 12 and 6.3).
 
 ## Current milestone
 
@@ -45,7 +45,10 @@ every value has `type_name`. Traits work: requirements and defaults, adoption by
 classes with `with`, traits building on traits, conflict and conformance checking, values
 seen through a trait with their own behavior, and `Trait.method(self)`. `Self` works in
 method signatures, and `+`, `-`, `*`, `/`, and ordering work on types that adopt the
-prelude's `Addable`, `Subtractable`, `Multipliable`, `Divisible`, and `Ordered`.
+prelude's `Addable`, `Subtractable`, `Multipliable`, `Divisible`, and `Ordered`. Enums work,
+with methods, properties, type-level members, and traits, and so does `case`/`when` as a
+statement and as a value, with coverage of enum and `Bool` subjects. The object model of
+section 20's slice 12 is complete.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
@@ -172,6 +175,41 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Enum and `case` decisions worth knowing
+
+- **An enum is a struct declaration with `enumeration` set.** `Parser.parseEnumValues` turns
+  each value into a `const` type-level field (`TypeField.enum_value` is its position) whose
+  initializer is an `Ast.Expression.enum_value` node, so `Direction.north`, namespaces,
+  `using`, lazy type setup, and `const` all come from section 10.4's machinery. The resolver
+  hoists enum values before the enum's other members (`enum_values`, `enum_listings` for
+  help text); the checker's `MemberKind.enum_value` words duplicates.
+- **At runtime** an enum value is a fieldless `Heap.StructValue` with `variant` set, built
+  once when its type is set up. `Value.StructType.values` names the variants for display,
+  and equality and hashing include `variant`. Nothing copies one, since it has no fields to
+  change; `uniqueStruct` copies `variant` anyway.
+- **`case` is `Ast.Case`,** held by pointer in `Statement.Data.case_statement` and
+  `Expression.Data.case_expression`. `Parser.parseCase` enforces one arm form and recovers by
+  skipping to the `case`'s `}`. `Checker.checkCase` checks arms as branches with
+  `snapshot`/`restore`/`intersect`, narrowing subjectless conditions like an `if` chain;
+  `caseCoverage` and `knownAlternative` decide completeness and duplicates, and
+  `exhaustive_cases` lets `stmtCompletes` treat a complete statement `case` as running an
+  arm. The completion helpers (`blockCompletes` and friends) became checker methods for
+  that. `typeOfCase` records the result type in `literal_types` so `Interpreter` widens.
+- **Lexer.** A `{` now saves `group_depth` and starts at zero, and its `}` restores it
+  (`brace_depths`), so a `case` or block inside parentheses keeps its newlines.
+- **The recursion budget bit again.** One more call site in `Interpreter.evaluate` broke
+  "a body nested 250 deep still supports 1,000 calls"; `evaluateByNode` now shares one call
+  site for `type_test`, `lambda`, `enum_value`, and `case_expression`. Add new node-only
+  expressions there.
+- **Checked.** Eleven mechanisms were disabled one at a time, each failing a case: variant
+  equality, statement-case completeness, enum coverage, duplicate alternatives, subjectless
+  narrowing, value widening, the lexer's brace reset, the resolver's enum hoisting, parser
+  recovery, and rejecting construction. Hashing the variant is not observable, because
+  equality still separates colliding keys, and lazy evaluation of alternatives is pinned
+  only by `run/case`'s trace output.
+- **Deferred.** The warning for a nonexhaustive enum statement `case` (no severities yet);
+  narrowing a subject by `when nothing`; range, destructuring, and class matching (6.3).
 
 ### `Self` and operator decisions worth knowing
 
@@ -1333,10 +1371,9 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 
 ## Next concrete step
 
-`Self` and operators are in, which finishes section 11. What remains of section 20's slice
-12 is enums (section 12): closed sets of named values, methods and trait conformance on
-them, `Ordered` when a domain needs order, and `case` exhaustiveness. Slice 13, errors and
-tests, follows.
+Enums and `case` are in, which finishes section 20's slice 12, the object model. Slice 13
+is next: typed errors, `raise`, `try`/`catch`/`finally`, `assert`, and `emerald test`
+(section 13).
 
 Section 7 is complete apart from capturing built-in methods, which the user has put off.
 
@@ -1358,7 +1395,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 313 unit tests, 299 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 314 unit tests, 307 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

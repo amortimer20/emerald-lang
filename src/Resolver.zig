@@ -293,6 +293,10 @@ methods_named: std.StringHashMapUnmanaged(std.ArrayList([]const u8)) = .empty,
 /// The method key of every instance field, method, and property, so reaching
 /// one through its type instead of a value can say exactly that.
 instance_members: NameSet = .empty,
+/// The member key of every section 12 enum value.
+enum_values: NameSet = .empty,
+/// For each enum's key, its values as a reader would list them, for help text.
+enum_listings: KeyMap = .empty,
 /// While a type-level field's value is walked, the keys of that field and
 /// every one after it, which section 10.4's declaration order has not set up
 /// yet.
@@ -538,6 +542,23 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
         // Constructing a value sets up the type's fields first.
         try self.facts.calls.getPtr(key).?.put(self.arena, setup, {});
 
+        // An enum's values are hoisted before its other members, so a member
+        // sharing a value's name is the one reported (12).
+        if (declaration.enumeration) {
+            var listing: std.ArrayList(u8) = .empty;
+            for (declaration.type_fields) |field| {
+                if (field.enum_value == null) continue;
+                const member_key = try methodKey(self.arena, key, field.name);
+                if (module.contains(member_key)) continue;
+                try module.put(self.arena, member_key, .{ .mutable = false, .span = field.name_span });
+                try self.facts.owner.put(self.arena, member_key, self.file);
+                try self.facts.type_members.put(self.arena, member_key, key);
+                try self.enum_values.put(self.arena, member_key, {});
+                if (listing.items.len > 0) try listing.appendSlice(self.arena, ", ");
+                try listing.print(self.arena, "`{s}`", .{field.name});
+            }
+            try self.enum_listings.put(self.arena, key, listing.items);
+        }
         for (declaration.fields) |field| {
             try self.instance_members.put(self.arena, try methodKey(self.arena, key, field.name), {});
         }
@@ -1315,6 +1336,24 @@ fn judgeNestedUses(self: *Resolver) Error!void {
     }
 }
 
+/// Section 6.3: the subject, then each arm's alternatives and body in order.
+/// Each block arm is a scope of its own.
+fn walkCase(self: *Resolver, case: *const Ast.Case) Error!void {
+    if (case.subject) |subject| try self.walkExpression(subject);
+    for (case.arms) |arm| {
+        for (arm.alternatives) |alternative| try self.walkExpression(alternative);
+        try self.walkCaseBody(arm.body);
+    }
+    if (case.otherwise) |otherwise| try self.walkCaseBody(otherwise);
+}
+
+fn walkCaseBody(self: *Resolver, body: Ast.Case.Body) Error!void {
+    switch (body) {
+        .block => |block| try self.walkBlock(block),
+        .value => |value| try self.walkExpression(value),
+    }
+}
+
 fn walkBlock(self: *Resolver, block: Ast.Block) Error!void {
     try self.push();
     defer self.pop();
@@ -1440,6 +1479,8 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             try self.walkExpression(loop.condition);
             try self.walkBlock(loop.body);
         },
+
+        .case_statement => |case| try self.walkCase(case),
 
         .for_loop => |loop| try self.walkFor(loop),
 
@@ -1573,7 +1614,15 @@ fn walkTypeFieldAssignment(self: *Resolver, assignment: Ast.Assignment, type_key
             if (assignment.operation != null or assignment.steps.len > 1) {
                 try self.noteRead(.{ .binding = binding, .scope = module_scope, .key = key });
             }
-            if (assignment.steps.len == 1 and !binding.mutable) {
+            if (assignment.steps.len == 1 and self.enum_values.contains(key)) {
+                try self.reportWithHelpFmt(
+                    span,
+                    "`{s}` is one of `{s}`'s values, so it cannot be assigned",
+                    .{ written, assignment.name },
+                    "An enum's values never change. Keep the one you need in a `var` of type `{s}` instead.",
+                    .{assignment.name},
+                );
+            } else if (assignment.steps.len == 1 and !binding.mutable) {
                 try self.reportReadOnly(written, span, .variable);
             }
         },
@@ -1826,6 +1875,16 @@ fn qualifyTypeMember(
         );
         return .reported;
     }
+    if (self.enum_listings.get(type_key)) |listing| {
+        try self.reportWithHelpFmt(
+            span,
+            "`{s}` has no value or type-level member named `{s}`",
+            .{ written, member },
+            "Check the spelling. The values of `{s}` are {s}.",
+            .{ written, listing },
+        );
+        return .reported;
+    }
     try self.reportWithHelpFmt(
         span,
         "`{s}` has no type-level member named `{s}`",
@@ -2044,7 +2103,7 @@ fn checkAmbiguous(self: *Resolver, name: []const u8, span: Source.Span) Error!vo
 
 fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void {
     switch (expression.data) {
-        .int_literal, .float_literal, .bool_literal, .nothing_literal => {},
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .enum_value => {},
 
         .name => |name| {
             // Section 10.7's `super` is the object itself, seen as its base
@@ -2161,6 +2220,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             .expression => |part_expression| try self.walkExpression(part_expression),
         },
         .lambda => |lambda| try self.walkLambda(lambda),
+        .case_expression => |case| try self.walkCase(case),
         .tuple_literal => |positions| for (positions) |position| try self.walkExpression(position),
         .type_test => |test_| try self.walkExpression(test_.value),
         .dictionary_literal => |entries| for (entries) |entry| {

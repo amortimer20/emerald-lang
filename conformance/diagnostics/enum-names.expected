@@ -1,0 +1,8 @@
+diagnostics/enum-names.em:8:1: `Light.red` is one of `Light`'s values, so it cannot be assigned
+  Light.red = Light.green
+  ^^^^^^^^^
+An enum's values never change. Keep the one you need in a `var` of type `Light` instead.
+diagnostics/enum-names.em:9:7: `Light` has no value or type-level member named `blue`
+  print(Light.blue)
+        ^^^^^^^^^^
+Check the spelling. The values of `Light` are `red`, `green`.

@@ -95,6 +95,9 @@ pub const StructValue = struct {
     /// version of a method declared deeper than this would read fields that
     /// are not set yet. Every finished object is past any class's depth.
     built: u32 = std.math.maxInt(u32),
+    /// Section 12: which of its enum's values this is. Zero for every other
+    /// type.
+    variant: u32 = 0,
     marked: bool = false,
     internal: u32 = 0,
     previous: ?*StructValue = null,
@@ -511,6 +514,7 @@ pub fn uniqueStruct(self: *Heap, slot: *Value) std.mem.Allocator.Error!*StructVa
     const fields = try self.gpa.alloc(Value, shared.fields.len);
     for (shared.fields, fields) |field, *copied| copied.* = retain(field);
     const copy = try self.createStruct(shared.descriptor, fields);
+    copy.variant = shared.variant;
 
     shared.references -= 1; // the slot no longer holds it, and someone else does
     slot.* = .{ .data = .{ .struct_value = copy } };

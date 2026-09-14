@@ -1,0 +1,36 @@
+diagnostics/case.em:11:17: this `case` gives no value for `Direction.south`
+  const partial = case heading {
+                  ^^^^
+A `case` that produces a value needs one for every possible subject. Add an arm for each, or `else then ...` after the last arm.
+diagnostics/case.em:15:17: this `case` needs an `else`, since its arms cannot cover every value
+  const numbers = case 5 {
+                  ^^^^
+A `case` that produces a value needs one for every possible subject. Add `else then ...` after the last arm.
+diagnostics/case.em:20:27: an earlier arm already matches this
+      when Direction.north, Direction.north {
+                            ^^^^^^^^^^^^^^^
+Arms are tried from the top and the first match runs, so this one never could. Remove it.
+diagnostics/case.em:23:10: `when` compares this with the subject by `==`, but Direction and String cannot be compared
+      when "south" {
+           ^^^^^^^
+Each alternative is a value of the subject's type, compared with it by `==`.
+diagnostics/case.em:30:15: this arm gives String, but the others give Int
+      else then "elsewhere"
+                ^^^^^^^^^^^
+Every arm of a `case` gives the same type of value.
+diagnostics/case.em:34:10: a condition must be a Bool, but this is Int
+      when 1 {
+           ^
+Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.
+diagnostics/case.em:41:6: not every path in `first_prize` returns a value
+  func first_prize(place: Int): Int {
+       ^^^^^^^^^^^
+Add a `return` on every path, or restructure so every branch returns.
+diagnostics/case.em:51:22: this `case` gives no value for `nothing`
+  const switch_label = case maybe_on {
+                       ^^^^
+A `case` that produces a value needs one for every possible subject. Add an arm for each, or `else then ...` after the last arm.
+diagnostics/case.em:66:10: `when` compares this with the subject by `==`, but Named and Pet cannot be compared
+      when Pet("Rex") {
+           ^^^^^^^^^^
+A struct compares by its fields and an object by identity, and a trait may hold either. Match on a concrete value instead.

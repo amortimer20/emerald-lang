@@ -58,6 +58,8 @@ has_traits: bool = false,
 /// with `extends`, which is what gives `super` a meaning (10.7).
 type_name: []const u8 = "",
 has_base: bool = false,
+/// Whether a section 12 enum's body is being parsed.
+in_enum: bool = false,
 /// Recursion that opens no delimiter: prefix `-` and `not`, the right side of
 /// `**`, and `else if`. Bounded separately so that it cannot eat into the 256
 /// delimiters section 3.4 promises, and so a very long chain of any of them is
@@ -287,7 +289,7 @@ fn node(self: *Parser, span: Source.Span, data: Ast.Expression.Data) Error!*cons
 
 fn deepestChild(data: Ast.Expression.Data) u32 {
     return switch (data) {
-        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name => 0,
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .enum_value => 0,
         .unary => |unary| unary.operand.depth,
         .binary => |binary| @max(binary.left.depth, binary.right.depth),
         .logical => |logical| @max(logical.left.depth, logical.right.depth),
@@ -333,6 +335,17 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
         .type_test => |test_| test_.value.depth,
         // A block body's statements each carry their own bound, so only an
         // expression body extends this lambda's height.
+        .case_expression => |case| blk: {
+            var deepest: u32 = if (case.subject) |subject| subject.depth else 0;
+            for (case.arms) |arm| {
+                for (arm.alternatives) |alternative| deepest = @max(deepest, alternative.depth);
+                if (arm.body == .value) deepest = @max(deepest, arm.body.value.depth);
+            }
+            if (case.otherwise) |otherwise| if (otherwise == .value) {
+                deepest = @max(deepest, otherwise.value.depth);
+            };
+            break :blk deepest;
+        },
         .lambda => |lambda| switch (lambda.body) {
             .expression => |expression| expression.depth,
             .block => 0,
@@ -408,7 +421,7 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             break :blk try self.parseFunctionDeclaration();
         },
         .at => self.parseAnnotatedStatement(),
-        .keyword_struct, .keyword_class, .keyword_trait => blk: {
+        .keyword_struct, .keyword_class, .keyword_trait, .keyword_enum => blk: {
             const nested = !self.at_top_level;
             const keyword = self.peek();
             const statement = try self.parseStructDeclaration();
@@ -435,6 +448,18 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             "Move it out to the top level. `using` applies to the whole file wherever it is written.",
         ),
         .keyword_return => self.parseReturn(),
+        .keyword_case => blk: {
+            const parsed = try self.parseCase();
+            if (parsed.producesValue()) {
+                return self.report(
+                    spanning(parsed.keyword_span, self.tokens[self.index - 1].span),
+                    "the value this `case` produces is never used",
+                    "Assign it to a name, as in `const label = case ...`, or give each `when` a block in braces in place of `then`.",
+                );
+            }
+            try self.expectStatementEnd();
+            break :blk .{ .span = spanning(parsed.keyword_span, self.tokens[self.index - 1].span), .data = .{ .case_statement = parsed } };
+        },
         .keyword_while => self.parseWhile(),
         .keyword_for => self.parseFor(),
         .keyword_break => self.parseLoopExit(.break_statement),
@@ -597,6 +622,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
     const class = keyword.kind == .keyword_class;
     const trait = keyword.kind == .keyword_trait;
+    const enumeration = keyword.kind == .keyword_enum;
     const word = self.text(keyword);
     const name = self.peek();
     if (name.kind != .identifier) {
@@ -617,6 +643,13 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
                 self.peek().span,
                 "a trait builds on other traits with `with`",
                 "Write `with` in place of `extends`, as in `trait Pet with Named`. A trait cannot extend a class.",
+            );
+        }
+        if (enumeration) {
+            return self.report(
+                self.peek().span,
+                "an enum cannot extend another type",
+                "An enum is a closed set of its own values. It can adopt traits with `with`.",
             );
         }
         if (!class) {
@@ -675,6 +708,8 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     const saved_type_name = self.type_name;
     const saved_has_base = self.has_base;
     const saved_has_traits = self.has_traits;
+    const saved_enum = self.in_enum;
+    self.in_enum = enumeration;
     self.in_class = class;
     self.in_trait = trait;
     self.has_traits = traits.items.len > 0;
@@ -686,9 +721,12 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         self.type_name = saved_type_name;
         self.has_base = saved_has_base;
         self.has_traits = saved_has_traits;
+        self.in_enum = saved_enum;
     }
     var members: StructMembers = .{};
     self.skipSeparators();
+    // Section 12: an enum's values come first, one name at a time.
+    if (enumeration) try self.parseEnumValues(name, &members);
     while (!self.check(.right_brace) and !self.check(.eof)) {
         // One member at a time, like the statements of a block: a mistake in
         // one resumes at the next, so the struct's own `}` is not then
@@ -709,11 +747,21 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     }
     const closing = self.advance();
     try self.expectStatementEnd();
+    if (enumeration and members.type_fields.items.len == 0 or
+        enumeration and members.type_fields.items[0].enum_value == null)
+    {
+        try self.note(
+            name.span,
+            "an enum needs at least one value",
+            try std.fmt.allocPrint(self.arena, "List its values first, one name per line, as in `enum {s} {{ first }}`.", .{self.text(name)}),
+        );
+    }
     return .{
         .span = spanning(keyword.span, closing.span),
         .data = .{ .struct_declaration = .{
             .class = class,
             .trait = trait,
+            .enumeration = enumeration,
             .name = try self.identifier(name),
             .name_span = name.span,
             .base = base,
@@ -726,6 +774,39 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             .type_fields = try members.type_fields.toOwnedSlice(self.arena),
         } },
     };
+}
+
+/// Section 12's `north`, `east`: an enum's values, each a name on its own line
+/// or separated by commas, before any other member. Each becomes a `const`
+/// type-level field of the enum holding that value.
+fn parseEnumValues(self: *Parser, type_name: Token, members: *StructMembers) Error!void {
+    while (self.startsEnumValue()) {
+        const value = self.advance();
+        const index: u32 = @intCast(members.type_fields.items.len);
+        const value_name = try self.identifier(value);
+        try members.type_fields.append(self.arena, .{
+            .mutable = false,
+            .name = value_name,
+            .name_span = value.span,
+            .annotation = .{ .name = try self.identifier(type_name), .span = type_name.span, .question_span = null },
+            .initializer = try self.node(value.span, .{ .enum_value = .{ .type_name = try self.identifier(type_name), .index = index } }),
+            .enum_value = index,
+        });
+        if (self.match(.comma) != null) {
+            self.skipSeparators();
+            continue;
+        }
+        if (!self.check(.right_brace)) try self.expectStatementEnd();
+        self.skipSeparators();
+    }
+}
+
+/// Whether the next member is a bare name, which in an enum is one of its
+/// values.
+fn startsEnumValue(self: *Parser) bool {
+    if (!self.check(.identifier)) return false;
+    const after = self.peekAfterNext().kind;
+    return after == .newline or after == .comma or after == .right_brace or after == .eof;
 }
 
 const StructMembers = struct {
@@ -741,6 +822,23 @@ const StructMembers = struct {
 fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!void {
     var annotations = try self.parseAnnotations();
     const marker = self.peek();
+    if (self.in_enum and self.startsEnumValue()) {
+        _ = self.advance();
+        return self.reportFmt(
+            marker.span,
+            "`{s}` has to be listed with the other values, before any member",
+            .{self.text(marker)},
+            "An enum lists all its values first, so they can be read in one place. Move it up.",
+        );
+    }
+    if (self.in_enum and marker.kind == .keyword_constructor) {
+        _ = try self.parseConstructor();
+        return self.note(
+            marker.span,
+            "an enum has no constructor",
+            try std.fmt.allocPrint(self.arena, "Its values are the ones it lists, such as `{s}.{s}`, and nothing else builds one.", .{ self.text(name), if (members.type_fields.items.len > 0) members.type_fields.items[0].name else "first" }),
+        );
+    }
     if (self.in_trait) {
         if (annotations.abstract) |span| try self.note(
             span,
@@ -961,6 +1059,16 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
             .override_span = annotations.override,
         });
         return;
+    }
+    if (self.in_enum) {
+        if (self.match(.equal) != null) _ = try self.parseExpression();
+        try self.expectStatementEnd();
+        return self.reportFmtNote(
+            field_name.span,
+            "an enum stores no fields, so `{s}` cannot be one",
+            .{self.text(field_name)},
+            try std.fmt.allocPrint(self.arena, "Every `{s}` is one of its values and holds nothing else. Compute it in a property instead, as in `const {s}: ... {{ ... }}`.", .{ self.text(name), self.text(field_name) }),
+        );
     }
     var default: ?*const Ast.Expression = null;
     if (self.match(.equal) != null) {
@@ -2071,6 +2179,160 @@ fn parseIf(self: *Parser) Error!Ast.Statement {
             .otherwise = otherwise,
         } },
     };
+}
+
+/// Section 6.3's `case subject { when a, b { ... } else { ... } }`, or with
+/// `then value` in place of each block. The caller decides which form it
+/// allows where it is written.
+fn parseCase(self: *Parser) Error!*const Ast.Case {
+    const keyword = self.advance();
+    const subject: ?*const Ast.Expression = if (self.check(.left_brace)) null else try self.parseHeaderExpression();
+    const opening = self.peek();
+    if (opening.kind != .left_brace) {
+        return self.reportFmt(
+            opening.span,
+            "expected `{{` after the `case` subject, found {s}",
+            .{opening.kind.describe()},
+            "A `case` lists its arms in braces, each starting with `when`.",
+        );
+    }
+    try self.nest(opening.span);
+    defer self.unnest();
+    _ = self.advance();
+
+    // The arms are expressions and blocks inside, whatever surrounds the case.
+    const saved_header = self.in_control_header;
+    self.in_control_header = false;
+    defer self.in_control_header = saved_header;
+
+    var parts: CaseParts = .{};
+    // A mistake in an arm is reported once, and the rest of the `case` is
+    // stepped over, so its closing `}` is not reported as closing nothing.
+    self.parseCaseArms(opening, subject == null, &parts) catch |err| {
+        if (err == error.ParseFailed) self.skipPastBraces();
+        return err;
+    };
+    const closing = self.advance();
+    if (parts.arms.items.len == 0) {
+        return self.report(
+            spanning(keyword.span, closing.span),
+            "this `case` has no `when` arms",
+            "Add an arm for each value to match, as in `when 1 { ... }`.",
+        );
+    }
+    const built = try self.arena.create(Ast.Case);
+    built.* = .{
+        .keyword_span = keyword.span,
+        .subject = subject,
+        .arms = try parts.arms.toOwnedSlice(self.arena),
+        .otherwise = parts.otherwise,
+        .else_span = parts.else_span,
+    };
+    return built;
+}
+
+const CaseParts = struct {
+    arms: std.ArrayList(Ast.Case.Arm) = .empty,
+    otherwise: ?Ast.Case.Body = null,
+    else_span: ?Source.Span = null,
+    produces: ?bool = null,
+};
+
+/// The arms of a `case`, up to but not including its closing `}`.
+fn parseCaseArms(self: *Parser, opening: Token, subjectless: bool, parts: *CaseParts) Error!void {
+    const arms = &parts.arms;
+    const otherwise = &parts.otherwise;
+    const else_span = &parts.else_span;
+    const produces = &parts.produces;
+    while (true) {
+        self.skipSeparators();
+        const token = self.peek();
+        if (token.kind == .right_brace) break;
+        if (token.kind == .eof) {
+            return self.report(opening.span, "this `case` is never closed", "Add the closing `}` after its last arm.");
+        }
+        if (otherwise.* != null) {
+            return self.report(
+                token.span,
+                "nothing can follow the `else` arm",
+                "`else` catches everything the arms above it did not, so it comes last. Move this arm above it.",
+            );
+        }
+        if (token.kind == .keyword_else) {
+            _ = self.advance();
+            else_span.* = token.span;
+            otherwise.* = try self.parseCaseBody(produces);
+            continue;
+        }
+        if (token.kind != .keyword_when) {
+            return self.reportFmt(
+                token.span,
+                "expected `when` or `else` in this `case`, found {s}",
+                .{token.kind.describe()},
+                "Each arm of a `case` starts with `when` and what it matches, as in `when 1 { ... }`.",
+            );
+        }
+        _ = self.advance();
+        var alternatives: std.ArrayList(*const Ast.Expression) = .empty;
+        while (true) {
+            try alternatives.append(self.arena, try self.parseHeaderExpression());
+            const comma = self.match(.comma) orelse break;
+            if (subjectless) {
+                return self.report(
+                    comma.span,
+                    "a `case` without a subject takes one condition per `when`",
+                    "Each `when` here is a `Bool` condition. Join several with `or`.",
+                );
+            }
+        }
+        try arms.append(self.arena, .{
+            .when_span = token.span,
+            .alternatives = try alternatives.toOwnedSlice(self.arena),
+            .body = try self.parseCaseBody(produces),
+        });
+    }
+}
+
+/// A block, or `then` and a value, which has to agree with the arms before it
+/// (`produces`, null before the first).
+fn parseCaseBody(self: *Parser, produces: *?bool) Error!Ast.Case.Body {
+    const body: Ast.Case.Body = if (self.match(.keyword_then) != null)
+        .{ .value = try self.parseExpression() }
+    else if (self.check(.left_brace))
+        .{ .block = try self.parseBlock() }
+    else
+        return self.reportFmt(
+            self.peek().span,
+            "expected a block or `then` after what this arm matches, found {s}",
+            .{self.peek().kind.describe()},
+            "Give the arm a block in braces, or `then` and the value it produces.",
+        );
+    const value = body == .value;
+    if (produces.*) |earlier| {
+        if (earlier != value) {
+            return self.report(
+                switch (body) {
+                    .value => |expression| expression.span,
+                    .block => |block| block.span,
+                },
+                if (earlier) "this arm has a block, but the arms above it use `then`" else "this arm uses `then`, but the arms above it have blocks",
+                "A `case` either runs a block for each arm or produces a value from each with `then`. Write every arm the same way.",
+            );
+        }
+    }
+    produces.* = value;
+    if (value) {
+        const after = self.peek().kind;
+        if (after != .newline and after != .right_brace) {
+            return self.reportFmt(
+                self.peek().span,
+                "expected the end of the arm, found {s}",
+                .{self.peek().kind.describe()},
+                "Each `then` arm is one value on its line. Start the next arm on a new line.",
+            );
+        }
+    }
+    return body;
 }
 
 /// Section 3.4: braces delimit blocks, and a block is only ever part of a
@@ -3273,6 +3535,18 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
     switch (token.kind) {
         .left_bracket => return self.parseListLiteral(),
         .left_brace => return self.parseLambda(),
+        .keyword_case => {
+            const parsed = try self.parseCase();
+            const span = spanning(parsed.keyword_span, self.tokens[self.index - 1].span);
+            if (!parsed.producesValue()) {
+                return self.report(
+                    span,
+                    "a `case` used as a value gives each `when` a value with `then`",
+                    "Write `when ... then value` for each arm, and `else then value`, or use the `case` as a statement on its own line.",
+                );
+            }
+            return self.node(span, .{ .case_expression = parsed });
+        },
         .string_literal, .raw_string_literal, .multiline_string_literal => {
             _ = self.advance();
             return self.node(token.span, .{ .string_literal = try self.cookLiteral(token) });

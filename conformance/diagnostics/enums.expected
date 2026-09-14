@@ -1,0 +1,28 @@
+diagnostics/enums.em:7:5: `red` is already a value of `Light`
+      red
+      ^^^
+Each of an enum's values has a name of its own.
+diagnostics/enums.em:10:10: `amber` is already a value of `Light`
+      func amber(): Int {
+           ^^^^^
+An enum's values share one set of names with its members, so that a name means one thing wherever it is written. Rename one.
+diagnostics/enums.em:15:20: `Light` is an enum, so it cannot be extended
+  class Lamp extends Light {
+                     ^^^^^
+An enum's values are exactly the ones it lists. Give `Lamp` a property holding one instead.
+diagnostics/enums.em:18:20: Light is not a trait, so it cannot follow `with`
+  struct Holder with Light {
+                     ^^^^^
+Only a trait, declared with `trait`, can be adopted with `with`.
+diagnostics/enums.em:21:15: `Light` is an enum, so it cannot be constructed
+  const light = Light()
+                ^^^^^
+Its values are the ones it lists. Write one of them, such as `Light.red`.
+diagnostics/enums.em:22:7: Light and Int cannot be compared
+  print(Light.red == 3)
+        ^^^^^^^^^^^^^^
+`==` and `!=` compare two values of the same type, and Int and Float compare with each other.
+diagnostics/enums.em:23:7: `<` needs Light to adopt `Ordered`
+  print(Light.red < Light.green)
+        ^^^^^^^^^^^^^^^^^^^^^^^
+Add `with Ordered` to `Light`, and give it `@override func compare(other: Light): Int`.

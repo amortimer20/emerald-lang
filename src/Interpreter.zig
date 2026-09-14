@@ -301,7 +301,12 @@ pub fn run(
                 var depth: u32 = 0;
                 var ancestor = checked.user.?.base;
                 while (ancestor) |user| : (ancestor = user.base) depth += 1;
+                var values: std.ArrayList([]const u8) = .empty;
+                for (declaration.type_fields) |field| {
+                    if (field.enum_value != null) try values.append(interpreter.arena, field.name);
+                }
                 descriptor.* = .{
+                    .values = values.items,
                     .name = type_key,
                     .display_name = checked.user.?.display_name,
                     .class = checked.user.?.class,
@@ -760,6 +765,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
         },
 
         .conditional => |conditional| try self.executeConditional(conditional),
+        .case_statement => |case| try self.executeCase(case),
         .while_loop => |loop| try self.executeWhile(loop),
         .for_loop => |loop| try self.executeFor(loop),
         .break_statement => return error.Broke,
@@ -1339,6 +1345,30 @@ fn executeIteration(self: *Interpreter, loop: Ast.For, value: Value) Error!bool 
     return true;
 }
 
+/// Section 6.3: the arm a `case` runs, or null when none matches and it has
+/// no `else`. The subject is evaluated once, and each alternative in order
+/// until one matches.
+fn chooseArm(self: *Interpreter, case: *const Ast.Case) Error!?Ast.Case.Body {
+    const subject: ?Value = if (case.subject) |written| try self.evaluate(written) else null;
+    defer if (subject) |value| self.heap.release(value);
+    for (case.arms) |arm| {
+        for (arm.alternatives) |alternative| {
+            const matched = if (subject) |value| blk: {
+                const candidate = try self.evaluate(alternative);
+                defer self.heap.release(candidate);
+                break :blk try Value.equals(self.gpa, value, candidate);
+            } else try self.condition(alternative);
+            if (matched) return arm.body;
+        }
+    }
+    return case.otherwise;
+}
+
+fn executeCase(self: *Interpreter, case: *const Ast.Case) Error!void {
+    const arm = try self.chooseArm(case) orelse return;
+    try self.executeBlock(arm.block);
+}
+
 fn executeConditional(self: *Interpreter, conditional: Ast.If) Error!void {
     if (try self.condition(conditional.condition)) {
         return self.executeBlock(conditional.then_block);
@@ -1590,7 +1620,6 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .list_literal => |elements| self.evaluateList(expression, elements),
         .dictionary_literal => |entries| self.evaluateDictionary(expression, entries),
         .tuple_literal => |positions| self.evaluateTuple(expression, positions),
-        .type_test => self.evaluateTypeTest(expression),
         .index => |index| self.evaluateIndex(expression, index),
         // A namespace-qualified name is a reference, not a property access.
         .member => |member| if (self.facts.qualified.get(expression)) |key|
@@ -1599,8 +1628,36 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
             self.evaluateProperty(expression, member),
         .string_literal => |bytes| self.evaluateStringLiteral(expression, bytes),
         .interpolation => |parts| self.evaluateInterpolation(parts),
-        .lambda => self.evaluateLambda(expression),
+        .type_test, .lambda, .enum_value, .case_expression => self.evaluateByNode(expression),
     };
+}
+
+/// The expressions whose helpers need only the node, sharing one call site:
+/// each call site in `evaluate` adds to its frame, which every level of a
+/// deeply nested expression pays for (see the test of 1,000 calls at 250
+/// levels).
+fn evaluateByNode(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
+    return switch (expression.data) {
+        .type_test => self.evaluateTypeTest(expression),
+        .lambda => self.evaluateLambda(expression),
+        .enum_value => self.evaluateEnumValue(expression),
+        .case_expression => |case| blk: {
+            const arm = try self.chooseArm(case) orelse unreachable;
+            // An `Int` arm of a `case` that gives `Float` gives a `Float` (4.4).
+            const value = try self.evaluate(arm.value);
+            break :blk widen(value, kindOf(self.literal_types.get(expression).?));
+        },
+        else => unreachable,
+    };
+}
+
+/// Section 12's enum value, built once as its enum's type-level fields are set
+/// up.
+fn evaluateEnumValue(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
+    const value = expression.data.enum_value;
+    const instance = try self.heap.createStruct(self.structs.get(self.keyOf(value.type_name)).?, &.{});
+    instance.variant = value.index;
+    return .{ .data = .{ .struct_value = instance } };
 }
 
 /// Section 7.4: a lambda captures the scopes it can see, not copies of what

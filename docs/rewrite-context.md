@@ -103,7 +103,8 @@ end of input.
 - Newlines terminate ordinary statements. They are ignored while parentheses or brackets
   remain open and after a token that cannot end an expression, including a binary
   operator, comma, or member dot. Expression-position collection literals follow the same
-  rule; statement blocks retain normal newline termination. Continuation is determined
+  rule; statement blocks retain normal newline termination, including a block or `case`
+  written inside parentheses, whose braces restore it until they close. Continuation is determined
   from the preceding tokens rather than indentation, with one exception that looks at the
   next line: a line whose first token is a member dot, `.` or `?.`, continues the line
   before it. Blank lines and ordinary comments between them are skipped. There is no
@@ -789,6 +790,19 @@ A subjectless `case` is also supported; each `when` is a `Bool` condition. Value
 enum cases may omit `else` when all values are covered. Nonexhaustive enum statement cases
 produce a warning unless an explicit `else` acknowledges the remainder. Known duplicate
 alternatives are errors. Each arm has its own lexical scope.
+
+Every arm of one `case` has the same form: a block, or `then` and one value on the arm's
+line. A block `case` in value position, or a `then` case whose value is unused, is an
+error. A subjectless `when` takes exactly one condition, joined with `or` rather than
+commas, and each arm is checked knowing its own condition held and every earlier one
+failed, as an `if` chain is. Alternatives are evaluated in order only until one matches.
+Coverage is known for an enum subject, for `Bool` (`true` and `false`), and for `nothing`
+when the subject may be absent; a `when nothing` arm matches absence. A statement `case`
+that covers every value runs one of its arms, so returns and definite assignment treat it
+as complete. Value arms agree on a type, with `Int` and `Float` giving `Float` and a
+`nothing` arm making the result optional. Known duplicates are literals and enum values.
+The warning for a nonexhaustive enum statement `case` waits for diagnostics with a
+severity.
 
 ### 6.4 Loops
 
@@ -2060,6 +2074,13 @@ methods, computed properties, and trait conformance, but no stored instance fiel
 An enum statement case that omits members and has no `else` produces a warning. An explicit
 empty `else` acknowledges intentional omission. Duplicate known alternatives are errors.
 
+An enum lists its values first, one name per line or separated by commas, and at least
+one; a value written after a member, a stored field, a constructor, or `extends` is an
+error. Each value is a `const` type-level member (10.4), so it is always written with the
+enum's name, `Direction.north`, including inside the enum's own methods, and shares one set
+of names with the enum's other members. An enum is never constructed, extended, or adopted,
+may have type-level functions and fields, and is an eligible dictionary key (8.3).
+
 Associated values, per-case payloads, raw integer backing controls, flags enums, and
 implicit integer conversions are deferred. This keeps `enum` understandable as a closed
 set before considering algebraic data types.
@@ -2989,6 +3010,11 @@ recorded in their normative sections:
 | Class display (10.1, 15.2) | Field by field like a struct, with `Name(...)` for an object already being displayed | Showing the fields is what a beginner needs while learning; an address or bare type name hides exactly what changed. Objects form cycles, which a struct cannot, and the marker ends one without losing the rest of the value. |
 | Changes through a trait's value (4.3, 11.2) | Treated as a value: a change needs a `var`, and a requirement changes when any struct supplying it does | Whether a trait's value is shared is not known statically. Treating it as a value is the rule that is always safe, and it loses nothing for a class, which is changed in place either way. |
 | `@override` for traits (11.2) | Required on a method supplying or replacing a trait's, in structs too; never on a property | 11.2 settles it for methods and properties. A struct adopting a trait is the one case where a struct's method replaces something, so the annotation means the same thing there. |
+| Enum values inside the enum (10.4, 12) | Written `Direction.north` everywhere, including the enum's own methods | Enum values are type-level members, which are always reached through the type. A bare `north` inside the braces would be a second spelling that stops working one line outside them. |
+| Enum value lists (12) | Values come before every member, separated by newlines or commas | The spec's example lists one per line; commas let a short enum such as `small, medium, large` stay on one line, as `when` alternatives do. Requiring values first keeps the whole set readable in one place. |
+| When a `case` is complete (4.1, 6.3) | `else`, or coverage of every value of an enum or `Bool` subject, plus `nothing` when it may be absent; a complete statement `case` counts as running one arm | 6.3 lets a value case over an enum omit `else` when all values are covered. Treating the statement form the same way lets a function return from every arm without an unreachable `return` after the `case`, and needs no rule a reader cannot see: the arms list every value. |
+| `case` value types (6.3) | Arms agree on a type; `Int` with `Float` gives `Float`, and a `nothing` arm makes the result optional | A list literal mixing `nothing` needs an annotation because `[T]?` and `[T?]` differ; one value has only `T?` to mean, so requiring an annotation would add nothing. |
+| Braces inside parentheses (3.1) | A `{` restores newline termination until its `}` | 3.1 suppresses newlines inside parentheses so arguments can wrap, but a `case` or a block passed as an argument has lines of its own, which could not be separated at all before. |
 | What `Self` is on a class (11.4) | The first class along the base chain to adopt the trait | A subclass inherits its base class's methods with their types unchanged, so taking `Self` as the subclass would make every inherited implementation stop conforming. Swift needs `final` or `Self`-returning initializers to square this; fixing `Self` where the trait is adopted keeps it sound with nothing new to learn. |
 | `Self` through a value seen as a trait (11.4) | A `Self` result is the trait; a member taking `Self` cannot be called | The value could be of any adopting type, so nothing can be checked to match its `Self`. Inside the trait's own defaults `self` is an opaque `Self`, which is what makes defaults that combine values of the same type possible without generics. |
 | Operator traits (11.5) | Prelude traits `Addable`, `Subtractable`, `Multipliable`, `Divisible`, and `Ordered`, one per operator, written in Emerald in `src/prelude.em` | The spec names `Ordered.compare` and lowers `a + b` to `a.add(b)`. One trait per operator lets a vector add without multiplying, and names like `Addable` read as what the type can do. Declaring them in Emerald puts them through the same checks as user traits. A program's own declaration of one of these names takes its place, like a prelude function, so adding a prelude trait never breaks a program. |

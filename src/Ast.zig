@@ -65,7 +65,45 @@ pub const Statement = struct {
         /// Section 8.2's `(left, right) = (right, left)`, which assigns to
         /// names that already exist.
         destructuring_assignment: DestructuringAssignment,
+        /// Section 6.3's `case` whose arms are blocks.
+        case_statement: *const Case,
     };
+};
+
+/// Section 6.3's `case`. With a subject, each alternative is compared with it
+/// by `==`; without one, each is a `Bool` condition. Every arm is a block, for
+/// a statement, or `then` and one value, for a `case` that produces one.
+pub const Case = struct {
+    keyword_span: Source.Span,
+    subject: ?*const Expression,
+    arms: []const Arm,
+    /// The `else` arm, when there is one; always last.
+    otherwise: ?Body,
+    else_span: ?Source.Span,
+
+    pub const Arm = struct {
+        when_span: Source.Span,
+        /// At least one, separated by commas. Exactly one without a subject.
+        alternatives: []const *const Expression,
+        body: Body,
+    };
+
+    pub const Body = union(enum) {
+        block: Block,
+        value: *const Expression,
+    };
+
+    /// Whether it produces a value, which is decided by its first arm.
+    pub fn producesValue(self: Case) bool {
+        if (self.arms.len > 0) return self.arms[0].body == .value;
+        return self.otherwise != null and self.otherwise.? == .value;
+    }
+};
+
+pub const EnumValue = struct {
+    /// The enum's name as declared, in the file that declares it.
+    type_name: []const u8,
+    index: u32,
 };
 
 pub const StructDeclaration = struct {
@@ -75,6 +113,10 @@ pub const StructDeclaration = struct {
     /// Section 11.1: a trait declares a contract, whose members are
     /// requirements or defaults, and stores nothing.
     trait: bool = false,
+    /// Section 12: an enum declares a closed set of named values, held in
+    /// `type_fields` as `const` fields marked with their position, and stores
+    /// no instance fields.
+    enumeration: bool = false,
     name: []const u8,
     name_span: Source.Span,
     /// Section 10.7's `extends Animal`: the one base class a class may have.
@@ -101,7 +143,7 @@ pub const StructDeclaration = struct {
 
     /// The keyword it was declared with, for diagnostics.
     pub fn keyword(self: StructDeclaration) []const u8 {
-        return if (self.trait) "trait" else if (self.class) "class" else "struct";
+        return if (self.trait) "trait" else if (self.class) "class" else if (self.enumeration) "enum" else "struct";
     }
 
     /// The declaration's own `name` is the whole `Vector2.origin` as written,
@@ -124,6 +166,9 @@ pub const StructDeclaration = struct {
         /// Required: section 10.4's type-level fields "require initial
         /// values", since nothing else runs to assign one.
         initializer: *const Expression,
+        /// For one of section 12's enum values, its position among them. Its
+        /// initializer is then the `enum_value` expression that builds it.
+        enum_value: ?u32 = null,
     };
 
     pub const Field = struct {
@@ -356,6 +401,12 @@ pub const Expression = struct {
         /// Section 4.2's `nothing`, the single value of the absence-only type.
         nothing_literal: void,
         name: []const u8,
+        /// Section 12's enum value, built once when its enum's type-level
+        /// fields are set up. Never written by a program: `Direction.north`
+        /// reads the field that holds it.
+        enum_value: EnumValue,
+        /// Section 6.3's `case` that produces a value, with `then` arms.
+        case_expression: *const Case,
         unary: Unary,
         binary: Binary,
         logical: Logical,

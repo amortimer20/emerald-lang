@@ -96,6 +96,8 @@ pub const User = struct {
     /// Section 11.1: a trait, whose values are values of the types adopting
     /// it, seen only through its contract.
     trait: bool = false,
+    /// Section 12: an enum, whose only values are the ones it lists.
+    enumeration: bool = false,
     /// Section 10.7's base class, for a class that extends one.
     base: ?*const User = null,
     /// Section 11.2's `with` list: the traits adopted, or that a trait builds

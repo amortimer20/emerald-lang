@@ -31,6 +31,10 @@ index: u32 = 0,
 /// deliberately excluded: statement blocks keep normal newline termination, and
 /// telling an expression-position brace from a block is the parser's job.
 group_depth: u32 = 0,
+/// `group_depth` as it was outside each open `{`. A brace starts afresh, so a
+/// block or a `case` inside parentheses still ends its lines with newlines
+/// (6.3, 7.4), and its `}` puts the outer suppression back.
+brace_depths: std.ArrayList(u32) = .empty,
 /// The last token emitted, for the continuation rule. Starting at `.newline`
 /// makes leading blank lines disappear the same way interior ones do.
 previous: Token.Kind = .newline,
@@ -57,6 +61,7 @@ pub fn init(gpa: std.mem.Allocator, source: *const Source) Lexer {
 pub fn deinit(self: *Lexer) void {
     self.diagnostics.deinit(self.gpa);
     self.interpolations.deinit(self.gpa);
+    self.brace_depths.deinit(self.gpa);
     self.* = undefined;
 }
 
@@ -286,6 +291,8 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
         },
         '{' => blk: {
             if (self.interpolations.items.len > 0) self.interpolations.items[self.interpolations.items.len - 1].braces += 1;
+            try self.brace_depths.append(self.gpa, self.group_depth);
+            self.group_depth = 0;
             break :blk .left_brace;
         },
         '}' => blk: {
@@ -294,6 +301,7 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
                 if (open.braces == 0) return self.scanString(start, open.multiline, true);
                 open.braces -= 1;
             }
+            if (self.brace_depths.pop()) |outer| self.group_depth = outer;
             break :blk .right_brace;
         },
         ',' => .comma,
@@ -542,7 +550,7 @@ fn scanString(self: *Lexer, start: u32, multiline: bool, resuming: bool) std.mem
                 return self.emit(if (multiline) .multiline_string_literal else .string_literal, start, self.index);
             }
             _ = self.interpolations.pop();
-            self.group_depth -= 1;
+            self.group_depth -|= 1;
             return self.emit(.string_end, start, self.index);
         }
         if (c == '#' and self.peekAt(1) == '{') {
@@ -571,7 +579,7 @@ fn scanString(self: *Lexer, start: u32, multiline: bool, resuming: bool) std.mem
         // often the `}` was forgotten and this quote was meant to close the
         // outer string. Say that, and stop tracking the interpolations.
         const open = self.interpolations.items[self.interpolations.items.len - 1];
-        self.group_depth -= @intCast(self.interpolations.items.len);
+        self.group_depth -|= @intCast(self.interpolations.items.len);
         self.interpolations.clearRetainingCapacity();
         try self.report(
             .{ .start = open.opening, .end = open.opening + 2 },
@@ -583,7 +591,7 @@ fn scanString(self: *Lexer, start: u32, multiline: bool, resuming: bool) std.mem
 
     const opening = if (resuming) blk: {
         const open = self.interpolations.pop().?;
-        self.group_depth -= 1;
+        self.group_depth -|= 1;
         break :blk open.start;
     } else start;
     return self.unterminated(opening, if (multiline) "\"\"\"" else "\"");
@@ -781,6 +789,13 @@ test "newlines are suppressed while parentheses or brackets are open" {
     });
     try expectKinds("[\n1,\n2\n]\n", &.{
         .left_bracket, .int_literal, .comma, .int_literal, .right_bracket, .newline, .eof,
+    });
+}
+
+test "a brace inside parentheses ends its lines again until it closes" {
+    try expectKinds("f({\n1\n2\n}\n)\n", &.{
+        .identifier,  .left_paren,  .left_brace,  .int_literal, .newline, .int_literal,
+        .newline,     .right_brace, .right_paren, .newline,     .eof,
     });
 }
 

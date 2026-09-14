@@ -1,0 +1,12 @@
+Direction.north Direction.south Direction.south
+true true true
+[Direction.north, Direction.east, Direction.south, Direction.west]
+Facing Direction.north, of type Direction
+Direction.north Direction.east
+[Direction.east: 2, Direction.north: 1]
+{Direction.west, Direction.south} true
+true false
+true false true
+size 3 true
+nothing
+size 2

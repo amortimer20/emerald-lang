@@ -65,6 +65,9 @@ pub const StructType = struct {
     /// Section 11.2: the key of every trait this type adopts, directly,
     /// through other traits, or through its base classes.
     traits: []const []const u8 = &.{},
+    /// Section 12: an enum's values, in the order it lists them. Empty for
+    /// every other type.
+    values: []const []const u8 = &.{},
 
     /// Whether a value of this type is also one of the type named `key`: this
     /// type, one it extends, or a trait it adopts (4.4).
@@ -248,6 +251,10 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             defer if (instance.descriptor.class) {
                 displaying_count -= 1;
             };
+            // Section 15.1: an enum value shows its qualified name.
+            if (instance.descriptor.values.len > 0) {
+                return writer.print("{s}.{s}", .{ instance.descriptor.display_name, instance.descriptor.values[instance.variant] });
+            }
             try writer.print("{s}(", .{instance.descriptor.display_name});
             for (instance.fields, instance.descriptor.fields, 0..) |value, field, index| {
                 if (index != 0) try writer.writeAll(", ");
@@ -317,6 +324,7 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.
         .tuple => |tuple| for (tuple.items) |item| try hashInto(gpa, item, hasher),
         .struct_value => |instance| {
             hasher.update(instance.descriptor.name);
+            hasher.update(std.mem.asBytes(&instance.variant));
             for (instance.fields) |field| try hashInto(gpa, field, hasher);
         },
         // The checker rejects these as keys (8.3), so this is a safety net.
@@ -414,6 +422,7 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
                 if (a.descriptor != b.descriptor) break :blk false;
                 // Section 10.1: classes compare by identity.
                 if (a.descriptor.class) break :blk a == b;
+                if (a.variant != b.variant) break :blk false;
                 for (a.fields, b.fields) |left_field, right_field| {
                     if (!try equals(gpa, left_field, right_field)) break :blk false;
                 }

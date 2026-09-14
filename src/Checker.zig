@@ -209,6 +209,10 @@ resolving_struct_fields: bool = false,
 /// What `Self` means in the types being resolved: the type whose method's
 /// parameters and result they are (11.4), or null where `Self` means nothing.
 written_self: ?Type = null,
+/// Section 6.3's cases whose arms cover every value their subject can have,
+/// with or without `else`. A statement `case` among them cannot finish without
+/// running an arm, which is what `stmtCompletes` needs to know.
+exhaustive_cases: std.AutoHashMapUnmanaged(*const Ast.Case, void) = .empty,
 /// The loops enclosing the statement being checked, innermost last. Empty at
 /// the start of every function body, since a `break` cannot leave a function.
 loops: std.ArrayList(Loop) = .empty,
@@ -309,7 +313,7 @@ pub fn check(
                 const declaration = statement.data.struct_declaration;
                 const key = checker.keyOf(declaration.name);
                 const user = try arena.create(Type.User);
-                user.* = .{ .name = key, .display_name = declaration.name, .class = declaration.class, .trait = declaration.trait };
+                user.* = .{ .name = key, .display_name = declaration.name, .class = declaration.class, .trait = declaration.trait, .enumeration = declaration.enumeration };
                 const struct_type = Type.structOf(user);
                 try checker.structs.put(arena, key, struct_type);
                 try checker.struct_declarations.put(arena, key, declaration);
@@ -555,6 +559,8 @@ const MemberKind = enum {
     method,
     type_function,
     type_field,
+    /// Section 12's enum value, which is a `const` type-level field.
+    enum_value,
 
     fn noun(kind: MemberKind) []const u8 {
         return switch (kind) {
@@ -563,6 +569,7 @@ const MemberKind = enum {
             .method => "method",
             .type_function => "type-level function",
             .type_field => "type-level field",
+            .enum_value => "value",
         };
     }
 };
@@ -590,7 +597,7 @@ fn membersOf(self: *Checker, declaration: Ast.StructDeclaration) Error![]Member 
     for (declaration.properties) |property| try members.append(self.arena, .{ .name = property.name, .span = property.name_span, .kind = .property, .override_span = property.override_span });
     for (declaration.methods) |method| try members.append(self.arena, .{ .name = method.name, .span = method.name_span, .kind = .method, .override_span = method.override_span });
     for (declaration.type_functions) |function| try members.append(self.arena, .{ .name = function.member, .span = function.member_span, .kind = .type_function });
-    for (declaration.type_fields) |field| try members.append(self.arena, .{ .name = field.name, .span = field.name_span, .kind = .type_field });
+    for (declaration.type_fields) |field| try members.append(self.arena, .{ .name = field.name, .span = field.name_span, .kind = if (field.enum_value != null) .enum_value else .type_field });
     std.mem.sort(Member, members.items, {}, Member.earlier);
     return members.items;
 }
@@ -617,6 +624,16 @@ fn resolveBase(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
             "`{s}` can only extend a class, and {f} is not one",
             .{ declaration.name, base },
             "Name a class declared with `class`, as in `class {s} extends Animal`.",
+            .{declaration.name},
+        );
+        return;
+    }
+    if (base.user.?.enumeration) {
+        try self.reportWithHelp(
+            written.span,
+            "`{s}` is an enum, so it cannot be extended",
+            .{base.user.?.display_name},
+            "An enum's values are exactly the ones it lists. Give `{s}` a property holding one instead.",
             .{declaration.name},
         );
         return;
@@ -837,6 +854,17 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
                 "`{s}` is already a method of `{s}`",
                 .{ member.name, declaration.name },
                 "Emerald has no overloading. Give each method a name of its own.",
+            );
+        } else if (first.kind == .enum_value or member.kind == .enum_value) {
+            try self.reportWithHelp(
+                member.span,
+                "`{s}` is already a {s} of `{s}`",
+                .{ member.name, first.noun(), declaration.name },
+                "{s}",
+                .{if (first.kind == member.kind)
+                    "Each of an enum's values has a name of its own."
+                else
+                    "An enum's values share one set of names with its members, so that a name means one thing wherever it is written. Rename one."},
             );
         } else {
             const type_level = first.kind == .type_function or first.kind == .type_field or
@@ -1711,6 +1739,7 @@ fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
         .return_statement => |return_statement| try self.checkReturn(return_statement),
         .destructuring => |destructuring| try self.checkDestructuring(destructuring),
         .destructuring_assignment => |assignment| try self.checkDestructuringAssignment(assignment),
+        .case_statement => |case| _ = try self.checkCase(case, null),
     }
 }
 
@@ -1951,6 +1980,10 @@ fn forgetNarrowingAssignedIn(self: *Checker, statements: []const Ast.Statement) 
         .return_statement,
         .destructuring,
         => {},
+        .case_statement => |case| {
+            for (case.arms) |arm| self.forgetNarrowingAssignedIn(arm.body.block.statements);
+            if (case.otherwise) |otherwise| self.forgetNarrowingAssignedIn(otherwise.block.statements);
+        },
     };
 }
 
@@ -2778,7 +2811,7 @@ fn checkConditional(self: *Checker, conditional: Ast.If) Error!void {
     self.narrow(conditional.condition, true);
     try self.checkBlock(conditional.then_block);
     const after_then = try self.snapshot();
-    const then_returns = !blockCompletes(conditional.then_block.statements);
+    const then_returns = !self.blockCompletes(conditional.then_block.statements);
 
     const otherwise = conditional.otherwise orelse {
         // No else: the block may not have run at all, so what follows is the
@@ -2801,11 +2834,11 @@ fn checkConditional(self: *Checker, conditional: Ast.If) Error!void {
     const otherwise_returns = switch (otherwise) {
         .block => |block| blk: {
             try self.checkBlock(block);
-            break :blk !blockCompletes(block.statements);
+            break :blk !self.blockCompletes(block.statements);
         },
         .chained => |chained| blk: {
             try self.checkStatement(chained.*);
-            break :blk !stmtCompletes(chained.*);
+            break :blk !self.stmtCompletes(chained.*);
         },
     };
 
@@ -2971,7 +3004,7 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
 
     if (return_annotation) |annotated| {
         signature.return_type = annotated;
-    } else if (!blockHasValueReturn(declaration.body.statements)) {
+    } else if (!self.blockHasValueReturn(declaration.body.statements)) {
         // Nothing to infer: section 7.2's "a function returning no value may
         // omit its return type".
         signature.return_type = .nothing;
@@ -3386,7 +3419,7 @@ fn checkBodyWithSelfIn(
     // before construction completes." A body that cannot fall off its end has
     // had each of its `return`s checked instead.
     if (constructing) |building| {
-        if (blockCompletes(statements)) {
+        if (self.blockCompletes(statements)) {
             if (try self.firstUnsetField()) |field| {
                 try self.reportWithHelp(
                     building.keyword_span,
@@ -3859,12 +3892,32 @@ fn statementChangesSelf(self: *Checker, statement: Ast.Statement, receiver: Type
         .destructuring => |destructuring| self.expressionChangesSelf(destructuring.initializer, receiver),
         .destructuring_assignment => |assignment| self.expressionChangesSelf(assignment.value, receiver),
         .break_statement, .continue_statement, .function_declaration, .struct_declaration => false,
+        .case_statement => |case| self.caseChangesSelf(case, receiver),
+    };
+}
+
+fn caseChangesSelf(self: *Checker, case: *const Ast.Case, receiver: Type) Error!bool {
+    if (case.subject) |subject| if (try self.expressionChangesSelf(subject, receiver)) return true;
+    for (case.arms) |arm| {
+        for (arm.alternatives) |alternative| {
+            if (try self.expressionChangesSelf(alternative, receiver)) return true;
+        }
+        if (try self.caseBodyChangesSelf(arm.body, receiver)) return true;
+    }
+    const otherwise = case.otherwise orelse return false;
+    return self.caseBodyChangesSelf(otherwise, receiver);
+}
+
+fn caseBodyChangesSelf(self: *Checker, body: Ast.Case.Body, receiver: Type) Error!bool {
+    return switch (body) {
+        .block => |block| self.statementsChangeSelf(block.statements, receiver),
+        .value => |value| self.expressionChangesSelf(value, receiver),
     };
 }
 
 fn expressionChangesSelf(self: *Checker, expression: *const Ast.Expression, receiver: Type) Error!bool {
     return switch (expression.data) {
-        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .string_literal => false,
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .string_literal, .enum_value => false,
         .unary => |unary| self.expressionChangesSelf(unary.operand, receiver),
         .binary => |binary| try self.expressionChangesSelf(binary.left, receiver) or
             try self.expressionChangesSelf(binary.right, receiver),
@@ -3922,6 +3975,7 @@ fn expressionChangesSelf(self: *Checker, expression: *const Ast.Expression, rece
         .type_test => |test_| self.expressionChangesSelf(test_.value, receiver),
         // `self` cannot appear inside a block (see `Parser.self_allowed`).
         .lambda => false,
+        .case_expression => |case| self.caseChangesSelf(case, receiver),
     };
 }
 
@@ -4160,7 +4214,7 @@ fn checkAllPathsReturn(self: *Checker, declaration: Ast.FunctionDeclaration, ret
     if (return_type.kind == .nothing or return_type.kind == .invalid) return;
     // A body that cannot fall off its end returns on every path, or loops
     // forever, and either way never produces a missing value.
-    if (!blockCompletes(declaration.body.statements)) return;
+    if (!self.blockCompletes(declaration.body.statements)) return;
     try self.report(
         declaration.name_span,
         "not every path in `{s}` returns a value",
@@ -4603,6 +4657,8 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
         .float_literal => .float,
         .bool_literal => .bool,
         .nothing_literal => .nothing,
+        .case_expression => self.typeOfCase(expression, null),
+        .enum_value => |value| self.structs.get(self.keyOf(value.type_name)) orelse .invalid,
 
         .name => |name| blk: {
             if (std.mem.eql(u8, name, "super")) break :blk try self.typeOfSuper(expression.span);
@@ -4699,6 +4755,7 @@ fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?
     if (expression.data == .lambda) return self.typeOfLambda(expression, expected);
     if (expression.data == .tuple_literal) return self.typeOfTuple(expression, expected);
     if (expression.data == .dictionary_literal) return self.typeOfDictionary(expression, expected);
+    if (expression.data == .case_expression) return self.typeOfCase(expression, expected);
     return self.typeOf(expression);
 }
 
@@ -5092,7 +5149,7 @@ fn checkLambdaBody(
         .block => |body| {
             try self.checkStatements(body.statements);
             if (wanted_result) |result| {
-                if (result.kind != .nothing and blockCompletes(body.statements)) {
+                if (result.kind != .nothing and self.blockCompletes(body.statements)) {
                     try self.report(
                         expression.span,
                         "not every path in this lambda returns a value",
@@ -6506,6 +6563,249 @@ fn typeOfOperatorCall(
     return signature.return_type;
 }
 
+/// Section 6.3's `case` that produces a value. Its type is what its arms
+/// agree on, recorded so the interpreter can widen an `Int` arm to `Float`.
+fn typeOfCase(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
+    const result = try self.checkCase(expression.data.case_expression, expected);
+    try self.literal_types.put(self.arena, expression, result);
+    return result;
+}
+
+/// Section 6.3's `case`, as a statement or a value. Arms are branches, as an
+/// `if` chain's are: a subjectless arm knows its own condition held and every
+/// earlier one failed, and what follows the `case` is the merge of every arm
+/// that can finish, plus skipping them all when no arm has to match.
+/// Returns the arms' common type for a `case` that produces a value.
+fn checkCase(self: *Checker, case: *const Ast.Case, expected: ?Type) Error!Type {
+    const subject: ?Type = if (case.subject) |written| try self.typeOf(written) else null;
+    const produces = case.producesValue();
+
+    var covered: std.StringHashMapUnmanaged(void) = .empty;
+    var results: std.ArrayList(Type) = .empty;
+    var result_spans: std.ArrayList(Source.Span) = .empty;
+    const before = try self.snapshot();
+    var finishing: std.ArrayList(Snapshot) = .empty;
+
+    for (case.arms, 0..) |arm, position| {
+        self.restore(before);
+        if (subject == null) {
+            for (case.arms[0..position]) |earlier| self.narrow(earlier.alternatives[0], false);
+        }
+        for (arm.alternatives) |alternative| {
+            if (subject) |subject_type| {
+                try self.checkAlternative(alternative, subject_type, &covered);
+            } else {
+                try self.requireCondition(alternative);
+                self.narrow(alternative, true);
+            }
+        }
+        if (try self.checkCaseBody(arm.body, expected, &results, &result_spans)) {
+            try finishing.append(self.arena, try self.snapshot());
+        }
+    }
+
+    const coverage = try self.caseCoverage(subject, &covered);
+    const exhaustive = case.otherwise != null or coverage.complete;
+    if (exhaustive) try self.exhaustive_cases.put(self.arena, case, {});
+
+    self.restore(before);
+    if (subject == null) {
+        for (case.arms) |arm| self.narrow(arm.alternatives[0], false);
+    }
+    if (case.otherwise) |otherwise| {
+        if (try self.checkCaseBody(otherwise, expected, &results, &result_spans)) {
+            try finishing.append(self.arena, try self.snapshot());
+        }
+    } else if (!exhaustive) {
+        // No arm has to match, so skipping them all is a path too.
+        try finishing.append(self.arena, try self.snapshot());
+    }
+
+    if (finishing.items.len == 0) {
+        // Every arm returns or leaves the loop, so nothing after is reachable;
+        // see `checkConditional`.
+        self.restore(before);
+        self.markAllAssigned();
+    } else {
+        self.restore(finishing.items[0]);
+        for (finishing.items[1..]) |path| self.intersect(path);
+    }
+
+    if (!produces) return .nothing;
+    if (!exhaustive) {
+        if (coverage.missing.len > 0) {
+            try self.reportWithHelp(
+                case.keyword_span,
+                "this `case` gives no value for {s}",
+                .{coverage.missing},
+                "A `case` that produces a value needs one for every possible subject. Add an arm for each, or `else then ...` after the last arm.",
+                .{},
+            );
+        } else {
+            try self.report(
+                case.keyword_span,
+                "this `case` needs an `else`, since its arms cannot cover every value",
+                .{},
+                "A `case` that produces a value needs one for every possible subject. Add `else then ...` after the last arm.",
+            );
+        }
+    }
+    return self.caseResultType(results.items, result_spans.items);
+}
+
+/// One arm's block or value. Returns whether running it can carry on past the
+/// `case`.
+fn checkCaseBody(
+    self: *Checker,
+    body: Ast.Case.Body,
+    expected: ?Type,
+    results: *std.ArrayList(Type),
+    result_spans: *std.ArrayList(Source.Span),
+) Error!bool {
+    switch (body) {
+        .block => |block| {
+            try self.checkBlock(block);
+            return self.blockCompletes(block.statements);
+        },
+        .value => |value| {
+            try results.append(self.arena, try self.typeOfExpected(value, expected));
+            try result_spans.append(self.arena, value.span);
+            return true;
+        },
+    }
+}
+
+/// What a `case`'s value arms agree on. `nothing` in some arms makes the
+/// others' type optional, and `Int` and `Float` arms give `Float`.
+fn caseResultType(self: *Checker, results: []const Type, spans: []const Source.Span) Error!Type {
+    var target: ?Type = null;
+    var absent = false;
+    for (results) |result| {
+        if (result.kind == .invalid) return .invalid;
+        if (result.kind == .nothing) {
+            absent = true;
+            continue;
+        }
+        const current = target orelse {
+            target = result;
+            continue;
+        };
+        if (result.assignableTo(current)) continue;
+        if (current.assignableTo(result)) target = result;
+    }
+    const agreed = target orelse return .nothing;
+    for (results, spans) |result, span| {
+        if (result.kind == .nothing or result.assignableTo(agreed)) continue;
+        try self.reportWithHelp(
+            span,
+            "this arm gives {f}, but the others give {f}",
+            .{ result, agreed },
+            "Every arm of a `case` gives the same type of value.",
+            .{},
+        );
+        return .invalid;
+    }
+    return if (absent) agreed.optionalOf() else agreed;
+}
+
+/// One alternative of a `case` with a subject: comparable with the subject by
+/// `==`, and not one an earlier arm already matches.
+fn checkAlternative(
+    self: *Checker,
+    alternative: *const Ast.Expression,
+    subject: Type,
+    covered: *std.StringHashMapUnmanaged(void),
+) Error!void {
+    const actual = try self.typeOfExpected(alternative, subject);
+    if (!equatable(subject, actual)) {
+        try self.reportWithHelp(
+            alternative.span,
+            "`when` compares this with the subject by `==`, but {f} and {f} cannot be compared",
+            .{ subject, actual },
+            "{s}",
+            .{if (isTrait(subject) or isTrait(actual))
+                "A struct compares by its fields and an object by identity, and a trait may hold either. Match on a concrete value instead."
+            else
+                "Each alternative is a value of the subject's type, compared with it by `==`."},
+        );
+        return;
+    }
+    const key = try self.knownAlternative(alternative) orelse return;
+    if (covered.contains(key)) {
+        try self.report(
+            alternative.span,
+            "an earlier arm already matches this",
+            .{},
+            "Arms are tried from the top and the first match runs, so this one never could. Remove it.",
+        );
+        return;
+    }
+    try covered.put(self.arena, key, {});
+}
+
+/// A name for an alternative whose value is known before the program runs,
+/// so repeating it can be reported and coverage counted: a literal, `nothing`,
+/// or an enum value.
+fn knownAlternative(self: *Checker, alternative: *const Ast.Expression) Error!?[]const u8 {
+    return switch (alternative.data) {
+        .int_literal => |value| try std.fmt.allocPrint(self.arena, "{d}", .{value}),
+        .bool_literal => |value| if (value) "true" else "false",
+        .nothing_literal => "nothing",
+        .string_literal => |text| try std.fmt.allocPrint(self.arena, "\"{s}\"", .{text}),
+        .name, .member => blk: {
+            const reference = try self.referenceOf(alternative) orelse break :blk null;
+            const field = self.type_fields.get(reference.key) orelse break :blk null;
+            break :blk if (field.field.enum_value != null) reference.key else null;
+        },
+        else => null,
+    };
+}
+
+const Coverage = struct {
+    complete: bool,
+    /// The values no arm matches, as a reader would list them, when the
+    /// subject's values can be listed at all.
+    missing: []const u8 = "",
+};
+
+/// Section 6.3 and 12: whether the alternatives matched cover every value of
+/// an enum or a `Bool` subject, and `nothing` too when it may be absent.
+fn caseCoverage(self: *Checker, subject: ?Type, covered: *const std.StringHashMapUnmanaged(void)) Error!Coverage {
+    const subject_type = subject orelse return .{ .complete = false };
+    var missing: std.ArrayList(u8) = .empty;
+    var names: std.ArrayList([]const u8) = .empty;
+    const payload = subject_type.payload();
+    if (payload.kind == .bool) {
+        for ([_][]const u8{ "true", "false" }) |value| {
+            if (!covered.contains(value)) try names.append(self.arena, value);
+        }
+    } else if (payload.kind == .struct_value and payload.user.?.enumeration and !payload.opaque_self) {
+        for (self.struct_declarations.get(payload.user.?.name).?.type_fields) |field| {
+            if (field.enum_value == null) continue;
+            const key = try Resolver.methodKey(self.arena, payload.user.?.name, field.name);
+            if (!covered.contains(key)) {
+                try names.append(self.arena, try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ payload.user.?.display_name, field.name }));
+            }
+        }
+    } else {
+        return .{ .complete = false };
+    }
+    if (subject_type.optional and !covered.contains("nothing")) try names.append(self.arena, "nothing");
+    for (names.items, 0..) |name, position| {
+        if (position > 0) try missing.appendSlice(self.arena, if (position + 1 == names.items.len) " or " else ", ");
+        try missing.print(self.arena, "`{s}`", .{name});
+    }
+    return .{ .complete = names.items.len == 0, .missing = missing.items };
+}
+
+/// Whether `==` can compare the two, by the rules `typeOfComparison` applies.
+fn equatable(left: Type, right: Type) bool {
+    if (left.kind == .invalid or right.kind == .invalid) return true;
+    if ((isTrait(left) or isTrait(right)) and !(left.opaque_self and left.same(right))) return false;
+    return (left.isNumber() and right.isNumber()) or left.same(right) or
+        comparableOptional(left, right) or relatedClasses(left, right);
+}
+
 fn typeOfLogical(self: *Checker, logical: Ast.Expression.Logical) Error!Type {
     try self.requireCondition(logical.left);
     // Section 4.5: the right side runs only when the left one held, for
@@ -6663,6 +6963,17 @@ fn typeOfCall(
             );
             try self.typeArguments(call.arguments);
             return .invalid;
+        }
+        if (declaration.enumeration) {
+            try self.reportWithHelp(
+                call.callee.span,
+                "`{s}` is an enum, so it cannot be constructed",
+                .{name},
+                "Its values are the ones it lists. Write one of them, such as `{s}.{s}`.",
+                .{ name, declaration.type_fields[0].name },
+            );
+            try self.typeArguments(call.arguments);
+            return binding.type;
         }
         if (declaration.abstract_span != null) {
             try self.reportWithHelp(
@@ -7238,54 +7549,71 @@ fn typeArguments(self: *Checker, arguments: []const *const Ast.Expression) Error
 /// Whether control can reach the end of a block, rather than leaving it
 /// through `return`, `break`, or `continue`, or looping forever. Once one
 /// statement cannot complete, nothing after it runs.
-fn blockCompletes(statements: []const Ast.Statement) bool {
+fn blockCompletes(self: *const Checker, statements: []const Ast.Statement) bool {
     for (statements) |statement| {
-        if (!stmtCompletes(statement)) return false;
+        if (!self.stmtCompletes(statement)) return false;
     }
     return true;
 }
 
-fn stmtCompletes(statement: Ast.Statement) bool {
+fn stmtCompletes(self: *const Checker, statement: Ast.Statement) bool {
     return switch (statement.data) {
         .return_statement, .break_statement, .continue_statement => false,
         .destructuring, .destructuring_assignment => true,
         .conditional => |conditional| blk: {
-            if (blockCompletes(conditional.then_block.statements)) break :blk true;
+            if (self.blockCompletes(conditional.then_block.statements)) break :blk true;
             const otherwise = conditional.otherwise orelse break :blk true;
             break :blk switch (otherwise) {
-                .block => |block| blockCompletes(block.statements),
-                .chained => |chained| stmtCompletes(chained.*),
+                .block => |block| self.blockCompletes(block.statements),
+                .chained => |chained| self.stmtCompletes(chained.*),
             };
         },
         // Only a `break` ends `while true`. Any other loop can end on its own.
-        .while_loop => |loop| !isLiteralTrue(loop.condition) or blockBreaks(loop.body.statements),
+        .while_loop => |loop| !isLiteralTrue(loop.condition) or self.blockBreaks(loop.body.statements),
         .for_loop, .expression, .declaration, .assignment, .function_declaration, .struct_declaration => true,
+        // A `case` that may match nothing carries on past it; one that covers
+        // everything carries on only through an arm that does.
+        .case_statement => |case| blk: {
+            if (!self.exhaustive_cases.contains(case)) break :blk true;
+            for (case.arms) |arm| {
+                if (self.blockCompletes(arm.body.block.statements)) break :blk true;
+            }
+            const otherwise = case.otherwise orelse break :blk false;
+            break :blk self.blockCompletes(otherwise.block.statements);
+        },
     };
 }
 
 /// Whether a block contains a `break` belonging to the loop it is the body of.
 /// A `break` inside a nested loop belongs to that loop instead.
-fn blockBreaks(statements: []const Ast.Statement) bool {
+fn blockBreaks(self: *const Checker, statements: []const Ast.Statement) bool {
     for (statements) |statement| {
-        if (stmtBreaks(statement)) return true;
+        if (self.stmtBreaks(statement)) return true;
     }
     return false;
 }
 
-fn stmtBreaks(statement: Ast.Statement) bool {
+fn stmtBreaks(self: *const Checker, statement: Ast.Statement) bool {
     return switch (statement.data) {
         .break_statement => true,
         .conditional => |conditional| blk: {
-            if (blockBreaks(conditional.then_block.statements)) break :blk true;
+            if (self.blockBreaks(conditional.then_block.statements)) break :blk true;
             const otherwise = conditional.otherwise orelse break :blk false;
             break :blk switch (otherwise) {
-                .block => |block| blockBreaks(block.statements),
-                .chained => |chained| stmtBreaks(chained.*),
+                .block => |block| self.blockBreaks(block.statements),
+                .chained => |chained| self.stmtBreaks(chained.*),
             };
         },
         .while_loop, .for_loop, .return_statement, .continue_statement => false,
         .destructuring, .destructuring_assignment => false,
         .expression, .declaration, .assignment, .function_declaration, .struct_declaration => false,
+        .case_statement => |case| blk: {
+            for (case.arms) |arm| {
+                if (self.blockBreaks(arm.body.block.statements)) break :blk true;
+            }
+            const otherwise = case.otherwise orelse break :blk false;
+            break :blk self.blockBreaks(otherwise.block.statements);
+        },
     };
 }
 
@@ -7297,28 +7625,35 @@ fn isLiteralTrue(expression: *const Ast.Expression) bool {
 
 /// Whether a body contains a `return` carrying a value anywhere, which decides
 /// whether a function without an annotation has anything to infer.
-fn blockHasValueReturn(statements: []const Ast.Statement) bool {
+fn blockHasValueReturn(self: *const Checker, statements: []const Ast.Statement) bool {
     for (statements) |statement| {
-        if (statementHasValueReturn(statement)) return true;
+        if (self.statementHasValueReturn(statement)) return true;
     }
     return false;
 }
 
-fn statementHasValueReturn(statement: Ast.Statement) bool {
+fn statementHasValueReturn(self: *const Checker, statement: Ast.Statement) bool {
     return switch (statement.data) {
         .return_statement => |return_statement| return_statement.value != null,
         .conditional => |conditional| blk: {
-            if (blockHasValueReturn(conditional.then_block.statements)) break :blk true;
+            if (self.blockHasValueReturn(conditional.then_block.statements)) break :blk true;
             const otherwise = conditional.otherwise orelse break :blk false;
             break :blk switch (otherwise) {
-                .block => |block| blockHasValueReturn(block.statements),
-                .chained => |chained| statementHasValueReturn(chained.*),
+                .block => |block| self.blockHasValueReturn(block.statements),
+                .chained => |chained| self.statementHasValueReturn(chained.*),
             };
         },
-        .while_loop => |loop| blockHasValueReturn(loop.body.statements),
-        .for_loop => |loop| blockHasValueReturn(loop.body.statements),
+        .while_loop => |loop| self.blockHasValueReturn(loop.body.statements),
+        .for_loop => |loop| self.blockHasValueReturn(loop.body.statements),
         .destructuring, .destructuring_assignment => false,
         .expression, .declaration, .assignment, .function_declaration, .struct_declaration => false,
         .break_statement, .continue_statement => false,
+        .case_statement => |case| blk: {
+            for (case.arms) |arm| {
+                if (self.blockHasValueReturn(arm.body.block.statements)) break :blk true;
+            }
+            const otherwise = case.otherwise orelse break :blk false;
+            break :blk self.blockHasValueReturn(otherwise.block.statements);
+        },
     };
 }

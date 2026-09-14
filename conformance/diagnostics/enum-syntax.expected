@@ -1,0 +1,24 @@
+diagnostics/enum-syntax.em:7:11: an enum stores no fields, so `brightness` cannot be one
+      const brightness: Int
+            ^^^^^^^^^^
+Every `Light` is one of its values and holds nothing else. Compute it in a property instead, as in `const brightness: ... { ... }`.
+diagnostics/enum-syntax.em:8:9: an enum stores no fields, so `level` cannot be one
+      var level: Int = 3
+          ^^^^^
+Every `Light` is one of its values and holds nothing else. Compute it in a property instead, as in `const level: ... { ... }`.
+diagnostics/enum-syntax.em:10:5: an enum has no constructor
+      constructor() {
+      ^^^^^^^^^^^
+Its values are the ones it lists, such as `Light.red`, and nothing else builds one.
+diagnostics/enum-syntax.em:17:5: `amber` has to be listed with the other values, before any member
+      amber
+      ^^^^^
+An enum lists all its values first, so they can be read in one place. Move it up.
+diagnostics/enum-syntax.em:20:6: an enum needs at least one value
+  enum Empty {
+       ^^^^^
+List its values first, one name per line, as in `enum Empty { first }`.
+diagnostics/enum-syntax.em:23:12: an enum cannot extend another type
+  enum Shade extends Light {
+             ^^^^^^^
+An enum is a closed set of its own values. It can adopt traits with `with`.
