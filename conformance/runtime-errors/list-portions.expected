@@ -1,0 +1,4 @@
+runtime-errors/list-portions.em:3:7: `drop` cannot use count -1
+  print([1, 2].drop(-1))
+        ^^^^^^^^^^^^^^^
+Pass 0 or more items to take or drop.

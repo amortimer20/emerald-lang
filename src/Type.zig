@@ -478,7 +478,7 @@ pub const ListMethod = struct {
     mutates: bool,
 
     pub const Operand = enum { element, index };
-    pub const Result = enum { nothing, bool, element };
+    pub const Result = enum { nothing, bool, element, list };
 };
 
 pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
@@ -492,6 +492,12 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "clear", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
     .{ "contains?", ListMethod{ .parameters = &.{.element}, .result = .bool, .mutates = false } },
     .{ "empty?", ListMethod{ .parameters = &.{}, .result = .bool, .mutates = false } },
+    .{ "take", ListMethod{ .parameters = &.{.index}, .result = .list, .mutates = false } },
+    .{ "drop", ListMethod{ .parameters = &.{.index}, .result = .list, .mutates = false } },
+    .{ "reverse", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
+    .{ "reverse!", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
+    .{ "unique", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
+    .{ "unique!", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
 });
 
 /// What a `String` method takes and gives. Section 9.2's vocabulary, less what

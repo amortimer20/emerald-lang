@@ -3825,13 +3825,72 @@ fn callReadingMethod(
         return self.readMap(call, member, receiver.data.map, arguments);
     }
 
-    const items = receiver.data.list.items.items;
-    if (std.mem.eql(u8, member.name, "empty?")) return .initBool(items.len == 0);
-    // `contains?`
-    for (items) |item| {
-        if (try Value.equals(self.gpa, item, arguments[0])) return .initBool(true);
-    }
-    return .initBool(false);
+    return self.readListMethod(expression.span, receiver.data.list, member.name, arguments);
+}
+
+/// A list method that does not change its receiver. Value-producing methods
+/// retain their items into a fresh list, preserving list value semantics even
+/// when an item is itself a collection or object.
+fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
+    const items = list.items.items;
+    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique };
+    return switch (std.meta.stringToEnum(Method, name).?) {
+        .@"empty?" => .initBool(items.len == 0),
+        .@"contains?" => blk: {
+            for (items) |item| {
+                if (try Value.equals(self.gpa, item, arguments[0])) break :blk .initBool(true);
+            }
+            break :blk .initBool(false);
+        },
+        .take, .drop => blk: {
+            const requested = arguments[0].data.int;
+            if (requested < 0) return self.raiseFmt(
+                span,
+                "`{s}` cannot use count {d}",
+                .{ name, requested },
+                "Pass 0 or more items to take or drop.",
+            );
+            // A count larger than the machine can address still means "all"
+            // here, so this stays independent of the interpreter's word size.
+            const boundary = if (std.math.cast(usize, requested)) |count| @min(count, items.len) else items.len;
+            break :blk if (std.mem.eql(u8, name, "take"))
+                self.copyList(list.element, items[0..boundary])
+            else
+                self.copyList(list.element, items[boundary..]);
+        },
+        .reverse => blk: {
+            const result = try self.heap.createList(list.element, items.len);
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            var index = items.len;
+            while (index > 0) {
+                index -= 1;
+                result.items.appendAssumeCapacity(Heap.retain(items[index]));
+            }
+            break :blk value;
+        },
+        .unique => blk: {
+            const result = try self.heap.createList(list.element, items.len);
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            outer: for (items) |item| {
+                for (result.items.items) |previous| {
+                    if (try Value.equals(self.gpa, item, previous)) continue :outer;
+                }
+                result.items.appendAssumeCapacity(Heap.retain(item));
+            }
+            break :blk value;
+        },
+    };
+}
+
+/// A new list containing one held copy of each value in `items`.
+fn copyList(self: *Interpreter, element: Value.Kind, items: []const Value) Error!Value {
+    const list = try self.heap.createList(element, items.len);
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+    for (items) |item| list.items.appendAssumeCapacity(Heap.retain(item));
+    return result;
 }
 
 /// A method that changes its receiver. Section 4.3 and 7.1 let the checker
@@ -4738,7 +4797,7 @@ fn raisePadding(self: *Interpreter, span: Source.Span, width: i64, fill: []const
 /// taken by the list, and the rest are released here.
 fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = &list.items;
-    const Method = enum { append, insert, remove, remove_all, remove_at, remove_first, remove_last, clear };
+    const Method = enum { append, insert, remove, remove_all, remove_at, remove_first, remove_last, clear, @"reverse!", @"unique!" };
     switch (std.meta.stringToEnum(Method, name).?) {
         .append => try items.append(self.gpa, widen(arguments[0], list.element)),
         .insert => {
@@ -4795,6 +4854,21 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
         .clear => {
             for (items.items) |item| self.heap.release(item);
             items.clearRetainingCapacity();
+        },
+        .@"reverse!" => std.mem.reverse(Value, items.items),
+        .@"unique!" => {
+            var kept: usize = 0;
+            outer: for (items.items) |item| {
+                for (items.items[0..kept]) |previous| {
+                    if (try Value.equals(self.gpa, item, previous)) {
+                        self.heap.release(item);
+                        continue :outer;
+                    }
+                }
+                items.items[kept] = item;
+                kept += 1;
+            }
+            items.shrinkRetainingCapacity(kept);
         },
     }
     return Value.nothing;

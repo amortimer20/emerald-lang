@@ -98,6 +98,15 @@ one-grapheme fill of a space, refuses empty or multi-grapheme fills, and puts an
 fill on the end. Its new conformance coverage includes Unicode, absent matches, defaults,
 diagnostics, and a pedagogical runtime error.
 
+Part 4 starts the rich collection vocabulary with List value transformations:
+`take`, `drop`, `reverse`, and `unique`, plus the in-place `reverse!` and
+`unique!` counterparts. Value forms create a new list, retaining their elements and leaving
+the receiver unchanged; bang forms use the existing copy-on-write mutation path. `take` and
+`drop` accept zero and safely clamp an overlarge count, while a negative count raises a
+clear error. `unique` uses Emerald equality and keeps each value's first occurrence in
+input order. The conformance cases cover values, copy-on-write, type and arity errors, and
+negative counts.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
@@ -1442,9 +1451,10 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 ## Next concrete step
 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
-and String parts are complete. The next standard-library part should be chosen from the
-remaining collection vocabulary; `Iterable` stays deferred. The advanced String operations
-listed below are deliberately deferred too, rather than being incomplete work in this slice.
+String, and List value-transform parts are complete. The next standard-library part should
+add a small group of callback-based List methods, beginning with `filter` and `reject`;
+`Iterable` stays deferred. The advanced String operations listed below are deliberately
+deferred too, rather than being incomplete work in this slice.
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 

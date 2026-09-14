@@ -1,0 +1,12 @@
+diagnostics/list-transformations.em:2:1: `fixed` is a `const`, so its contents cannot change
+  fixed.reverse!()
+  ^^^^^
+Declare `fixed` with `var` if it needs to change.
+diagnostics/list-transformations.em:3:16: this is String, but `take` needs Int
+  print([1].take("two"))
+                 ^^^^^
+Pass a whole number.
+diagnostics/list-transformations.em:4:11: `unique` takes 0 arguments, but this call passes 1
+  print([1].unique(1))
+            ^^^^^^
+Match the number of arguments to what the method needs.

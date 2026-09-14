@@ -21,6 +21,17 @@ print(repeated)
 repeated.clear()
 print(repeated, repeated.empty?())
 
+# Section 8.6's first value-transform methods. The value forms leave their
+# receiver alone; the bang forms change only their own copy.
+const sequence = [1, 2, 2, 3, 1]
+print(sequence.take(3), sequence.take(99), sequence.drop(3), sequence.drop(99), sequence)
+print(sequence.reverse(), sequence.unique(), sequence)
+var changed = sequence
+changed.reverse!()
+print(sequence, changed)
+changed.unique!()
+print(changed)
+
 # An empty list takes its type from context.
 var names: [Int] = []
 print(names, names == [])

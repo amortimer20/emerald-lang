@@ -5934,7 +5934,10 @@ fn typeOfMethodCall(
                 argument.span,
                 "this is {f}, but `{s}` needs {f}",
                 .{ actual, member.name, wanted },
-                "Pass a value of the type the list holds, or convert it first.",
+                if (operand == .index)
+                    "Pass a whole number."
+                else
+                    "Pass a value of the type the list holds, or convert it first.",
             );
         }
     }
@@ -5945,6 +5948,7 @@ fn typeOfMethodCall(
         .nothing => .nothing,
         .bool => .bool,
         .element => element,
+        .list => try Type.listOf(self.arena, element),
     };
 }
 
@@ -6629,7 +6633,7 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
         switch (base.kind) {
-            .list => "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, and `clear`.",
+            .list => "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, `clear`, `take`, `drop`, `reverse`, and `unique`.",
             .dictionary => "A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.",
             .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
             .string => "A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `insert_at`, `substring`, `remove_prefix`, `remove_suffix`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `split`, `partition`, `lines`, `chars`, `to_int`, and `to_float`.",

@@ -1398,6 +1398,12 @@ items is not an error: `take` returns every item and `drop` returns an empty col
 This deliberately differs from the strict bounds of `substring(start, count)` because
 `take` and `drop` describe portions rather than exact indexed spans.
 
+The first value-transform slice applies `take`, `drop`, `reverse`, and `unique` to lists.
+Each returns a new list and leaves its receiver unchanged. `reverse!` and `unique!` are the
+in-place counterparts; `unique` keeps the first occurrence of each equal item and
+preserves the order of those first occurrences. The non-bang forms remain usable on a
+`const`, while the bang forms need a changeable list as every other list mutation does.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs
