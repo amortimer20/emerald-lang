@@ -26,3 +26,12 @@ func reset() {
 if shared is Dog {
     shared.bark()
 }
+
+# Only a name is narrowed, so a test on a field proves nothing about it.
+class Kennel {
+    var resident: Animal = Dog()
+}
+const kennel = Kennel()
+if kennel.resident is Dog {
+    kennel.resident.bark()
+}

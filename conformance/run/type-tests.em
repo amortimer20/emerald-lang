@@ -85,3 +85,23 @@ func loud(): Int {
     return 1
 }
 print(loud() is Int)
+
+# A block keeps a narrowing made outside it for a variable that is never given
+# a new value, and a test inside a block narrows there whatever happens outside.
+var steady: Animal? = Dog("Steady")
+if steady is Dog {
+    const count_tricks = { => steady.tricks }
+    print(count_tricks())
+}
+
+var current: Animal = Dog("Current")
+const report = { =>
+    if current is Dog {
+        print("#{current.name} knows #{current.tricks} trick(s)")
+    } else {
+        print("#{current.name} is not a dog")
+    }
+}
+report()
+current = Cat()
+report()

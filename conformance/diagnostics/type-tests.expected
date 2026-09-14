@@ -22,3 +22,7 @@ diagnostics/type-tests.em:27:12: Animal has no method named `bark`
       shared.bark()
              ^^^^
 `bark` belongs to `Dog`, which extends Animal. A test such as `shared is Dog` cannot prove what `shared` holds, because a function assigns it and could change it in between. Copy it into a `const` first, and test that.
+diagnostics/type-tests.em:36:21: Animal has no method named `bark`
+      kennel.resident.bark()
+                      ^^^^
+`bark` belongs to `Dog`, which extends Animal. Copy this value into a `const` and test that, as in `if found is Dog { ... }`, where it can be reached.

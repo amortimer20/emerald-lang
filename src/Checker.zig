@@ -201,6 +201,9 @@ current_return_type: ?Type = null,
 /// Whether `return` is legal here. Section 14.1's top-level `return`, which
 /// ends the program, is deferred, so it is rejected outside a function.
 in_function: bool = false,
+/// How many scopes enclose the innermost block being checked, so a name found
+/// in one of them is one the block captures. Zero outside any block.
+block_scopes: usize = 0,
 pending_return_types: std.ArrayList(Type) = .empty,
 literal_types: LiteralTypes = .empty,
 /// Field metadata is completed for every struct before recursive key
@@ -4553,6 +4556,24 @@ fn unprovable(self: *Checker, name: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Whether `name` is a variable the current block captures and that some
+/// assignment gives a new value, so a test outside the block says nothing
+/// inside it.
+fn capturedAndReassigned(self: *Checker, name: []const u8) bool {
+    if (!self.facts.reassigned.contains(name)) return false;
+    var index = self.block_scopes;
+    while (index > 0) {
+        index -= 1;
+        if (self.scopes.items[index].getPtr(name)) |binding| {
+            for (self.scopes.items[self.block_scopes..]) |inner| {
+                if (inner.contains(name)) return false;
+            }
+            return binding.mutability == .variable;
+        }
+    }
+    return false;
+}
+
 fn narrowName(self: *Checker, name: []const u8) void {
     const binding = self.find(name) orelse return;
     if (binding.is_function or !binding.type.optional) return;
@@ -5091,6 +5112,23 @@ fn checkLambdaBody(
     wanted_result: ?Type,
 ) Error!Type {
     const before = try self.snapshot();
+
+    // Section 4.5: a block can run long after this point, once a variable it
+    // captures has been given a new value, so a narrowing made out here does not
+    // hold in it for a variable that is ever assigned. `restore` brings the
+    // narrowing back afterwards.
+    for (self.scopes.items) |scope| {
+        var entries = scope.iterator();
+        while (entries.next()) |entry| {
+            const binding = entry.value_ptr;
+            if (binding.mutability != .variable or binding.is_function or binding.is_type) continue;
+            if (self.facts.reassigned.contains(entry.key_ptr.*)) binding.type = binding.declared;
+        }
+    }
+
+    const outer_block_scopes = self.block_scopes;
+    self.block_scopes = self.scopes.items.len;
+    defer self.block_scopes = outer_block_scopes;
 
     try self.pushScope();
     const parameters = self.scopes.items[self.scopes.items.len - 1];
@@ -5654,6 +5692,12 @@ fn requirePresent(
             self.arena,
             "A test cannot prove `{s}` is there, because {s} can set it back to `nothing` at any time. Copy it into a `const` and test that, or give it a fallback with `.or(...)`.",
             .{ at.data.name, self.unprovable(at.data.name).? },
+        )
+    else if (at.data == .name and self.capturedAndReassigned(at.data.name))
+        try std.fmt.allocPrint(
+            self.arena,
+            "A test outside this block cannot prove `{s}` is there, because the block may run after `{s}` is given a new value. Check it inside the block, or copy it into a `const` before the block and use that.",
+            .{ at.data.name, at.data.name },
         )
     else if (at.data == .name)
         try std.fmt.allocPrint(
@@ -7140,6 +7184,20 @@ fn subclassMemberHelp(self: *Checker, base: Type, member: Ast.Expression.Member,
                 .{ member.name, owner.display_name, base, written, owner.display_name, written, reason },
             );
         }
+        if (self.capturedAndReassigned(written)) {
+            return std.fmt.allocPrint(
+                self.arena,
+                "`{s}` belongs to `{s}`, which extends {f}. A test outside this block cannot prove what `{s}` holds, because the block may run after `{s}` is given a new value. Test it inside the block, or copy it into a `const` before the block and use that.",
+                .{ member.name, owner.display_name, base, written, written },
+            );
+        }
+    } else {
+        // Only a name is narrowed, so a member or a call has to be put in one.
+        return std.fmt.allocPrint(
+            self.arena,
+            "`{s}` belongs to `{s}`, which extends {f}. Copy this value into a `const` and test that, as in `if found is {s} {{ ... }}`, where it can be reached.",
+            .{ member.name, owner.display_name, base, owner.display_name },
+        );
     }
     return std.fmt.allocPrint(
         self.arena,

@@ -1,0 +1,8 @@
+diagnostics/narrowing-lost-to-block.em:13:35: Animal has no field named `tricks`
+      const count_tricks = { => pet.tricks }
+                                    ^^^^^^
+`tricks` belongs to `Dog`, which extends Animal. A test outside this block cannot prove what `pet` holds, because the block may run after `pet` is given a new value. Test it inside the block, or copy it into a `const` before the block and use that.
+diagnostics/narrowing-lost-to-block.em:20:26: this is String?, so `count` may not be there to use
+      const measure = { => nickname.count }
+                           ^^^^^^^^
+A test outside this block cannot prove `nickname` is there, because the block may run after `nickname` is given a new value. Check it inside the block, or copy it into a `const` before the block and use that.

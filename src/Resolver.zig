@@ -126,6 +126,10 @@ pub const Facts = struct {
     /// these either: any call between the test and the use could be the one
     /// that sets it back to `nothing`.
     assigned_in_function: NameSet = .empty,
+    /// Every name a whole assignment gives a new value, anywhere, apart from
+    /// its declaration. A block sees one of these at its declared type, since
+    /// the block could run after the assignment undid a narrowing (4.5).
+    reassigned: NameSet = .empty,
     /// For each file, what a bare module-level name means there: its own
     /// declarations, its namespace's, and whatever its `using` declarations
     /// brought in. Indexed by file.
@@ -1447,6 +1451,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             if (self.lambda_depth > 0) {
                 try self.facts.assigned_in_lambda.put(self.arena, assignment.name, {});
             }
+            if (assignment.steps.len == 0) try self.facts.reassigned.put(self.arena, assignment.name, {});
             try self.noteAssignedInFunction(found);
             try self.noteCapture(found, assignment.operation != null or assignment.steps.len > 0);
 
@@ -1565,6 +1570,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 if (self.lambda_depth > 0) {
                     try self.facts.assigned_in_lambda.put(self.arena, name.text, {});
                 }
+                try self.facts.reassigned.put(self.arena, name.text, {});
                 try self.noteAssignedInFunction(found);
                 try self.noteCapture(found, false);
                 if (!found.binding.mutable) try self.reportReadOnly(name.text, name.span, found.binding.kind);
