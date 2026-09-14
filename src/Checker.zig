@@ -1491,8 +1491,12 @@ fn declarationWithDefaults(self: *Checker, key: []const u8) Error!Ast.FunctionDe
         const declaration = self.declarations.get(current).?;
         if (declaration.override_span == null) return declaration;
         const receiver = self.receivers.get(current) orelse return declaration;
-        const base = receiver.user.?.base orelse return declaration;
-        current = try self.memberKey(Type.structOf(base), declaration.name) orelse return declaration;
+        // A base class's version first, then a trait's, as dispatch does (11.2).
+        const found = try self.inheritedMember(receiver.user.?, declaration.name) orelse return declaration;
+        if (found.kind != .method) return declaration;
+        const next = found.key orelse return declaration;
+        if (std.mem.eql(u8, next, current)) return declaration;
+        current = next;
     }
 }
 
@@ -3547,6 +3551,34 @@ fn reportPrivate(self: *Checker, type_key: []const u8, name: []const u8, span: S
     return true;
 }
 
+/// Section 11.2: a trait's private helper is its own, so a type adopting the
+/// trait, or a trait built on it, finds no member of that name. Reports the
+/// helper as private rather than missing. Returns whether it reported.
+fn reportTraitPrivate(self: *Checker, base: Type, name: []const u8, span: Source.Span) Error!bool {
+    if (!Resolver.isPrivate(name) or base.kind != .struct_value) return false;
+    const trait = try self.privateTraitHelper(base.user.?, name, 0) orelse return false;
+    try self.reportWithHelp(
+        span,
+        "`{s}` is private to the trait `{s}`",
+        .{ name, trait.display_name },
+        "A trait's private helper can be reached only from code written inside `{s}`'s braces, not from the types that adopt it or the traits built on it.",
+        .{trait.display_name},
+    );
+    return true;
+}
+
+fn privateTraitHelper(self: *Checker, user: *const Type.User, name: []const u8, depth: usize) Error!?*const Type.User {
+    // A cycle of traits is reported elsewhere; stop going round it.
+    if (depth > 64) return null;
+    for (user.traits) |trait| {
+        const key = try Resolver.methodKey(self.arena, trait.name, name);
+        if (self.receivers.contains(key) or self.properties.contains(key)) return trait;
+        if (try self.privateTraitHelper(trait, name, depth + 1)) |found| return found;
+    }
+    const base = user.base orelse return null;
+    return self.privateTraitHelper(base, name, depth + 1);
+}
+
 /// The same for a type-level member, known by its key. Returns whether it
 /// reported.
 fn reportPrivateTypeMember(self: *Checker, key: []const u8, span: Source.Span) Error!bool {
@@ -4096,6 +4128,8 @@ fn typeOfStructMethodCall(
                 "Read it without parentheses, as in `.{s}`.",
                 .{member.name},
             );
+        } else if (try self.reportTraitPrivate(base, member.name, member.name_span)) {
+            // Reported.
         } else {
             try self.report(
                 member.name_span,
@@ -5274,6 +5308,18 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
+    // Section 11.2's `Named.introduction(self)` is a call that runs one trait's
+    // default; taking it as a value is not part of that yet.
+    if (self.receivers.get(reference.key)) |receiver| if (receiver.user.?.trait) {
+        try self.reportWithHelp(
+            expression.span,
+            "`{s}` runs a trait's own version of a method, so it has to be called",
+            .{reference.display},
+            "Call it with the value first, as in `{s}(value)`, or take the method from a value, as in `value.{s}`, to run that value's own version.",
+            .{ reference.display, reference.display[std.mem.lastIndexOfScalar(u8, reference.display, '.').? + 1 ..] },
+        );
+        return .invalid;
+    };
     if (self.type_fields.get(reference.key)) |field| {
         try self.settleTypeField(reference.key);
         // Section 7.1, for section 10.4's setup: reading the field may be
@@ -5426,6 +5472,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             if (try self.reportAbstractThroughSuper(member, key)) return .invalid;
             return self.typeOfMethodValue(expression, base, member.name);
         }
+        if (try self.reportTraitPrivate(base, member.name, member.name_span)) return .invalid;
         try self.report(
             member.name_span,
             "{f} has no field named `{s}`",

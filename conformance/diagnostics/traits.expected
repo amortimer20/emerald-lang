@@ -86,3 +86,19 @@ diagnostics/traits.em:88:11: `Named.greet` has no default to run
   const c = Named.greet(Forgot())
             ^^^^^^^^^^^
 `greet` is a requirement, with no body in the trait. Call it on a value instead, as in `value.greet()`.
+diagnostics/traits.em:104:21: `_sweep` is private to the trait `Tidy`
+          return self._sweep()
+                      ^^^^^^
+A trait's private helper can be reached only from code written inside `Tidy`'s braces, not from the types that adopt it or the traits built on it.
+diagnostics/traits.em:110:21: `_sweep` is private to the trait `Tidy`
+          return self._sweep()
+                      ^^^^^^
+A trait's private helper can be reached only from code written inside `Tidy`'s braces, not from the types that adopt it or the traits built on it.
+diagnostics/traits.em:114:14: `_sweep` is private to the trait `Tidy`
+  print(Room()._sweep())
+               ^^^^^^
+A trait's private helper can be reached only from code written inside `Tidy`'s braces, not from the types that adopt it or the traits built on it.
+diagnostics/traits.em:117:17: `Tidy.tidy` runs a trait's own version of a method, so it has to be called
+  const sweeper = Tidy.tidy
+                  ^^^^^^^^^
+Call it with the value first, as in `Tidy.tidy(value)`, or take the method from a value, as in `value.tidy`, to run that value's own version.

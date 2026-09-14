@@ -1986,7 +1986,10 @@ replacing a trait's method always does, in a struct as in a class. A conflict be
 is reported where both are first brought together, not again in every subclass or trait
 built on top. A trait's private helper is its own, and never conflicts with a type's private
 member of the same name. `Trait.method(value)` may run a default that changes the value only
-on an object for now. `is` tests for a trait and narrows to it.
+on an object for now, and is only ever called: taking `Trait.method` as a value is deferred,
+while `value.method` takes the value's own version. A requirement's parameter defaults apply
+however the implementation is reached, through its own type included. `is` tests for a trait
+and narrows to it.
 
 ### 11.3 Associated types and generics boundary
 
@@ -3050,6 +3053,7 @@ recorded in their normative sections:
 | A function parameter after defaulted ones (7.3, 7.4) | Allowed when it is the final parameter and has a function type; any other required parameter after a defaulted one is still an error | 7.3's rule exists so a positional call can reach every required parameter. A trailing block reaches the final one, so `func grid(width: Int, height: Int = 2, cell: func(Int, Int))` loses nothing, and without the exception a function taking a block could have no defaults before it at all. |
 | `self` in a constructor's parameter defaults (7.3, 10.2) | Allowed, under construction's readiness rules: a default may read fields that have defaults of their own, since those run first | A method's defaults already read `self`, and the runtime binds `self` before evaluating defaults. The parser had rejected it with a message claiming `self` was only available inside a constructor. |
 | Narrowing into a block (4.4, 4.5, 7.4) | A captured `var` that any assignment gives a new value is seen at its declared type inside a block, whatever was proved outside it | A block created inside `if pet is Dog` and called after `pet = Animal()` read a field the object did not have and crashed; the same held for a proof of presence. Kotlin refuses the same smart cast for a captured variable that is changed. Keyed by name like the other narrowing facts, so it errs toward not narrowing; a `const` copy states the proof. Found in the type test review. |
+| `Trait.method` as a value (11.2) | Rejected; it can only be called | Accepted by the checker, it crashed when called. Supporting it means choosing whether the value's own version or the trait's runs, and whether a changing default copies its receiver; `value.method` already covers the common need. Found in the trait review. |
 | Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 
 ## 23. Consistency rules for future work

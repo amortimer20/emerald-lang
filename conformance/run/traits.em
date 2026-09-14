@@ -212,3 +212,32 @@ timer.reset()
 if timer is Stopwatch {
     print(timer.seconds)
 }
+
+# A requirement's parameter defaults belong to the trait, so an implementation
+# called through its own type uses them too, and so does a subclass's override.
+trait Repeater {
+    func echo(word: String, times: Int = 2): String
+}
+
+struct Parrot with Repeater {
+    @override
+    func echo(word: String, times: Int): String {
+        return word.repeat(times)
+    }
+}
+
+class Canyon with Repeater {
+    @override
+    func echo(word: String, times: Int): String {
+        return word.repeat(times)
+    }
+}
+
+class DeepCanyon extends Canyon {
+    @override
+    func echo(word: String, times: Int): String {
+        return super.echo(word.upper(), times: times)
+    }
+}
+
+print(Parrot().echo("hi"), Canyon().echo("ho"), DeepCanyon().echo("ha"))

@@ -86,3 +86,32 @@ func use(named: Named) {
 }
 
 const c = Named.greet(Forgot())
+
+# A trait's private helper is its own: neither a trait built on it nor a type
+# adopting it can reach it.
+trait Tidy {
+    func _sweep(): String {
+        return "swept"
+    }
+
+    func tidy(): String {
+        return self._sweep()
+    }
+}
+
+trait VeryTidy with Tidy {
+    func polish(): String {
+        return self._sweep()
+    }
+}
+
+struct Room with VeryTidy {
+    func clean(): String {
+        return self._sweep()
+    }
+}
+
+print(Room()._sweep())
+
+# Running one trait's default is a call, not a value to take.
+const sweeper = Tidy.tidy
