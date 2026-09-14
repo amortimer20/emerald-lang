@@ -3735,6 +3735,7 @@ fn callHigherOrder(
         map,
         filter,
         reject,
+        flat_map,
         take_while,
         drop_while,
         @"any?",
@@ -3759,6 +3760,13 @@ fn callHigherOrder(
 
     const collected: ?*Heap.List = switch (kind) {
         .map => try self.heap.createList(kindOf(callable.signature.return_type), items.len),
+        .flat_map => try self.heap.createList(
+            if (callable.signature.return_type.kind == .list)
+                kindOf(callable.signature.return_type.element.?.*)
+            else
+                .nothing,
+            0,
+        ),
         .filter, .reject, .take_while, .drop_while => try self.heap.createList(element_kind, items.len),
         else => null,
     };
@@ -3785,6 +3793,13 @@ fn callHigherOrder(
         if (collected) |list| {
             if (kind == .map) {
                 list.items.appendAssumeCapacity(produced);
+                continue;
+            }
+            if (kind == .flat_map) {
+                if (produced.data == .list) for (produced.data.list.items.items) |nested| {
+                    try list.items.append(self.gpa, Heap.retain(nested));
+                };
+                self.heap.release(produced);
                 continue;
             }
             const accepted = produced.data.bool;
@@ -3859,7 +3874,7 @@ fn callMethod(
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "reverse_each") or std.mem.eql(u8, member.name, "map") or
-        std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while") or std.mem.eql(u8, member.name, "any?") or
+        std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or std.mem.eql(u8, member.name, "flat_map") or std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while") or std.mem.eql(u8, member.name, "any?") or
         std.mem.eql(u8, member.name, "all?") or std.mem.eql(u8, member.name, "none?") or std.mem.eql(u8, member.name, "one?") or
         std.mem.eql(u8, member.name, "count_where") or
         std.mem.eql(u8, member.name, "find") or std.mem.eql(u8, member.name, "find_index"))

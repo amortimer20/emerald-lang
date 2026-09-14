@@ -87,6 +87,12 @@ const suffix = sequence.drop_while { number =>
     return number <= 2
 }
 print(prefix, take_seen, suffix, drop_seen, sequence)
+var flat_calls = 0
+const flattened = sequence.flat_map { number =>
+    flat_calls += 1
+    return [number, number * 10]
+}
+print(flattened, flat_calls, sequence)
 print(
     sequence.all? { number => number > 0 },
     sequence.none? { number => number < 0 },
@@ -95,6 +101,7 @@ print(
 )
 const empty_numbers: [Int] = []
 print(empty_numbers.take_while { number => number > 0 }, empty_numbers.drop_while { number => number > 0 })
+print(empty_numbers.flat_map { number => [number] })
 print(
     empty_numbers.any? { number => number > 0 },
     empty_numbers.all? { number => number > 0 },

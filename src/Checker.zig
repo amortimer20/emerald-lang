@@ -5903,6 +5903,7 @@ fn typeOfMethodCall(
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
         }
+        if (std.mem.eql(u8, member.name, "flat_map")) return self.typeOfFlatMap(call, member, base);
         if (std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while")) {
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
@@ -6113,6 +6114,25 @@ fn typeOfMap(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.M
         return .invalid;
     }
     return Type.listOf(self.arena, result);
+}
+
+/// Section 8.6's `flat_map`: each input item produces a List, whose items are
+/// appended to one new List in input and produced-list order.
+fn typeOfFlatMap(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    const block = try self.requireBlock(call, member, base, .invalid) orelse return .invalid;
+    const produced = self.literal_types.get(block) orelse (try self.typeOf(block));
+    if (produced.kind != .function) return .invalid;
+
+    const result = produced.signature.?.return_type;
+    if (result.kind == .list and !result.optional) return Type.listOf(self.arena, result.element.?.*);
+
+    try self.report(
+        block.span,
+        "this block returns {f}, but `flat_map` needs a List",
+        .{result},
+        "Return a List for each element, as in `numbers.flat_map { number => [number, number] }`.",
+    );
+    return .invalid;
 }
 
 /// The single block argument a higher-order method takes, checked against a

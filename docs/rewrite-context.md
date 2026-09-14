@@ -1432,6 +1432,14 @@ before the first failing item; `drop_while` omits that prefix, includes the firs
 and every later item, and does not call its predicate again. They return new Lists and leave
 their receiver unchanged. An empty List returns an empty List without calling the block.
 
+`flat_map` is currently a List operation. Its block must return a List for each input item;
+the result contains those produced items in input and produced-List order. It flattens one
+level only, so a produced List containing Lists retains those inner Lists as values. Empty
+produced Lists contribute no items. `flat_map` returns a new List and leaves both its receiver
+and every List returned by the block unchanged. An optional List result is not accepted as an
+empty List; `filter_map` has its own explicit presence rule. Dictionary and Set forms are
+deferred.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs
