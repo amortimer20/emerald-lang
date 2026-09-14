@@ -26,6 +26,7 @@ pub const Checker = @import("Checker.zig");
 pub const Value = @import("Value.zig");
 pub const Interpreter = @import("Interpreter.zig");
 pub const Heap = @import("Heap.zig");
+pub const Formatter = @import("Formatter.zig");
 pub const unicode = @import("unicode.zig");
 pub const strings = @import("strings.zig");
 
@@ -106,6 +107,123 @@ pub fn runProject(gpa: std.mem.Allocator, project: *const Project, streams: Stre
 /// Checks a project, skips its entry statements, and runs every `@test` function.
 pub fn testProject(gpa: std.mem.Allocator, project: *const Project, streams: Streams) Error!Report {
     return onLargeStack(gpa, project, streams, true);
+}
+
+/// Everything `emerald format` (18.3) needs to know about one project.
+pub const FormatReport = struct {
+    arena_state: std.heap.ArenaAllocator,
+    /// A file that could not be lexed or parsed safely. Non-empty means
+    /// nothing was formatted: §18.3 refuses to rewrite a file it cannot parse
+    /// safely, and one bad file stops the whole project exactly as it does
+    /// for `check`/`run`, rather than risk formatting some files and not
+    /// others in the same run.
+    diagnostics: []const Diagnostic,
+    /// Parallel to `Project.files`, present only when `diagnostics` is empty.
+    files: []const FormattedFile,
+
+    pub fn ok(self: FormatReport) bool {
+        return self.diagnostics.len == 0;
+    }
+
+    pub fn deinit(self: *FormatReport) void {
+        self.arena_state.deinit();
+        self.* = undefined;
+    }
+};
+
+pub const FormattedFile = struct {
+    text: []const u8,
+    changed: bool,
+};
+
+/// Formats every file of a project (18.3), exactly as `checkProject` and
+/// `runProject` see the same project: a lone file, or every file under a
+/// directory that holds `main.em` (14.1). Formatting is purely syntactic, so
+/// only the lexer and parser run — a file that does not yet check is still
+/// formattable — but the parser's expression trees can nest as deep as
+/// `Parser.max_expression_depth`, which the printer's recursive walk then
+/// matches frame for frame, so this runs on the same large-stack thread as
+/// everything else rather than assume the calling thread's stack is enough.
+pub fn formatProject(gpa: std.mem.Allocator, project: *const Project) Error!FormatReport {
+    const Task = struct {
+        gpa: std.mem.Allocator,
+        project: *const Project,
+        result: Error!FormatReport = undefined,
+
+        fn go(task: *@This(), available: usize) void {
+            _ = available;
+            task.result = formatAnalyze(task.gpa, task.project);
+        }
+    };
+
+    var task: Task = .{ .gpa = gpa, .project = project };
+    const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
+        return error.StackUnavailable;
+    thread.join();
+    return task.result;
+}
+
+/// One stage at a time, over every file, exactly as `analyze` does: every
+/// file is lexed before any is parsed, so a project reports every lexical
+/// problem before any parse problem, matching §17.2's rule against cascades.
+fn formatAnalyze(gpa: std.mem.Allocator, project: *const Project) Error!FormatReport {
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    errdefer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var found: std.ArrayList(Diagnostic) = .empty;
+
+    // Mirrors `analyze`'s own first stage: a lexer that does not itself
+    // validate encoding (identifiers aside) would otherwise wave invalid
+    // UTF-8 sitting inside a string literal straight through as opaque bytes.
+    for (project.files, 0..) |file, index| {
+        const span = Source.findInvalidUtf8(file.source.text) orelse continue;
+        try found.append(arena, .{
+            .message = "this is not valid UTF-8 text",
+            .span = span,
+            .help = "Emerald source files are always UTF-8. Re-save this file as UTF-8.",
+            .file = @intCast(index),
+        });
+    }
+    if (found.items.len != 0) {
+        return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena), .files = &.{} };
+    }
+
+    const tokenized = try gpa.alloc(Lexer.Tokenized, project.files.len);
+    var lexed: usize = 0;
+    defer {
+        for (tokenized[0..lexed]) |*one| one.deinit(gpa);
+        gpa.free(tokenized);
+    }
+    while (lexed < project.files.len) : (lexed += 1) {
+        tokenized[lexed] = try Lexer.tokenize(gpa, &project.files[lexed].source);
+        try appendFrom(arena, &found, tokenized[lexed].diagnostics, @intCast(lexed));
+    }
+    if (found.items.len != 0) {
+        return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena), .files = &.{} };
+    }
+
+    const parsed = try gpa.alloc(Parser.Parsed, project.files.len);
+    var parsed_count: usize = 0;
+    defer {
+        for (parsed[0..parsed_count]) |*one| one.deinit();
+        gpa.free(parsed);
+    }
+    while (parsed_count < project.files.len) : (parsed_count += 1) {
+        parsed[parsed_count] = try Parser.parse(gpa, &project.files[parsed_count].source, tokenized[parsed_count].tokens);
+        try appendFrom(arena, &found, parsed[parsed_count].diagnostics, @intCast(parsed_count));
+    }
+    if (found.items.len != 0) {
+        return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena), .files = &.{} };
+    }
+
+    const files_out = try arena.alloc(FormattedFile, project.files.len);
+    for (project.files, tokenized, parsed, files_out) |file, one_tokenized, one_parsed, *out| {
+        const formatted = try Formatter.print(arena, &file.source, one_tokenized.tokens, one_parsed.program);
+        out.* = .{ .text = formatted, .changed = !std.mem.eql(u8, formatted, file.source.text) };
+    }
+
+    return .{ .arena_state = arena_state, .diagnostics = &.{}, .files = files_out };
 }
 
 /// Reserved rather than committed: the host maps a thread's stack lazily, so

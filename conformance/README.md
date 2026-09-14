@@ -16,6 +16,7 @@ Run them with `zig build test`. The runner is [`src/conformance.zig`](../src/con
 | `diagnostics/` | `check` reports exactly the text in its `.expected` file. |
 | `run/` | The program runs and prints exactly its `.expected` file. |
 | `runtime-errors/` | The program runs, then fails with exactly its `.expected` file. |
+| `format/` | `emerald format` produces exactly its `.expected` file, and formatting that output again changes nothing. |
 
 A case is usually one `.em` file. A directory holding a `main.em` is one case too — a
 whole project, per section 14.1 of the rewrite context — and the files inside it are not
@@ -41,6 +42,16 @@ cd conformance
 ../zig-out/bin/emerald check diagnostics/your-case.em 2> diagnostics/your-case.expected
 ../zig-out/bin/emerald run run/your-case.em > run/your-case.expected
 ../zig-out/bin/emerald run runtime-errors/your-case.em 2> runtime-errors/your-case.expected
+```
+
+A `format/` case's `.em` file is its own input; write it exactly as you want the formatter to
+leave it if it is already canonical, or deliberately un-canonically if you want to see it
+rewritten. Either way, generate its `.expected` the same way:
+
+```bash
+../zig-out/bin/emerald format format/your-case.em
+cp format/your-case.em format/your-case.expected
+git checkout format/your-case.em # if it was meant to start un-canonical
 ```
 
 A project case is a directory with a `main.em` in it, and is generated the same way

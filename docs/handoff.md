@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-14. Prepared after part 2 of the standard-library slice.
+Updated: 2026-09-14. Prepared after slice 15's part 1, the canonical formatter.
 
 ## Current milestone
 
@@ -284,8 +284,115 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
 - `conformance/` holds the suite required by sections 19.6 and 23: cases written in Emerald
   with expected results, run by `src/conformance.zig` under `zig build test`. Cases in
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
-  `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
+  `run/` must print theirs, `runtime-errors/` must fail with theirs, and `format/` must
+  come back exactly, with formatting that output again a no-op. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+- `src/Formatter.zig` is section 18.3's canonical formatter, `emerald.zig`'s
+  `formatProject` the pipeline that reaches it, and `main.zig`'s `format`/`format --check`
+  the CLI. See "Formatter decisions worth knowing" below.
+
+Section 20's slice 15, part 1 (the canonical formatter) is complete. `emerald format
+<path>` and `emerald format --check <path>` format every file of whatever project `path`
+names (14.1), exactly as `check`/`run` see the same project, refusing to write anything if
+any file does not lex or parse safely (18.3). Every file under `examples/` round-trips
+byte for byte; the whole `conformance/` corpus (399 files) formats without crashing and is
+idempotent; every `conformance/run/` program still runs to the same output after being
+formatted; and `zig build test` passes in Debug and ReleaseSafe with `conformance/format/`
+cases, `Formatter.zig`'s own unit tests, and CLI contract tests for the new command
+alongside everything else. Part 2 — structs, classes, traits, enums, `case`, `try`/`catch`,
+tuples, dictionaries and sets, and the remaining expression forms this slice's chosen test
+corpus already exercises correctly, but which deserve their own adversarial review before
+the slice is called done — is the next step; see "Next concrete step".
+
+### Formatter decisions worth knowing
+
+- **The lexer and parser are unchanged.** `Lexer.zig` still discards ordinary `#` and
+  `#[ ... ]#` comments entirely, and `Parser.zig` still discards `.doc_comment` tokens
+  without attaching them to the tree — both stay exactly as every other stage needs them,
+  with no new field or mode added to either for the formatter's sake. Instead,
+  `Formatter.collectTrivia` re-scans the byte gaps between the tokens `Lexer.tokenize`
+  already produced (`.doc_comment` and `.newline` tokens included, i.e. before the
+  parser's own cursor skips anything). Every such gap is provably nothing but spacing,
+  blank lines, and comments — string and interpolation content always lives inside a
+  token's own span, never in a gap — so a small dedicated scanner mirroring
+  `Lexer.lexComment`'s recognition rules recovers them completely, as one flat,
+  source-ordered list of `Trivia` (`blank_line`, `line_comment`, `block_comment`,
+  `doc_comment`).
+- **Blank-run counting has to see across a `.newline` token, not just within one gap.** A
+  statement's own terminating newline is a real token, not part of any gap, so a blank
+  line right after one sits in the *next* gap along; `collectTrivia` carries one `newlines`
+  counter across both, incrementing it for a `.newline` token itself and only deciding
+  whether a blank-line marker is needed once it reaches whatever comes next.
+- **A blank-line marker's position needs `<=`, not `<`, in `flushTrivia`'s cursor check.**
+  It is deliberately placed exactly at the next real token's own start byte, since nothing
+  else is there for it to collide with; a strict `<` therefore left it just out of reach of
+  the very `flushTrivia` call that should have emitted it, and it was picked up one
+  statement later instead. The symptom was exact and specific: every blank line in a file
+  printed one statement later than it appeared in the source. Ordinary comments never hit
+  this, since their span always ends strictly before whatever token follows them.
+- **The printer is one recursive-descent walk of the parsed `Ast.Program`,** sharing a
+  single monotonic `trivia_cursor`. `flushTrivia(before)` consumes and emits every trivia
+  item positioned before a given byte, and is called before printing each statement, type
+  member, or `case` arm, in source order, so a comment or blank line is placed exactly
+  once regardless of how deeply what surrounds it is nested; `printTrailingComment` is the
+  one exception, consuming the *next* trivia item early, out of that order, when it sits
+  on the same source line as what was just printed, so `print(score) # 14` keeps its
+  comment rather than stranding it above the next statement.
+- **A member's position, not its kind, decides where it prints.** `StructDeclaration`
+  groups its members by kind (`fields`, `methods`, `properties`, ...), the same way
+  `Program` keeps `using` apart from `statements` (14.2); both are merged back into one
+  source-ordered sequence before printing, by sorting on each item's own span, exactly the
+  same technique in both places.
+- **Grouping parentheses are re-derived from precedence, never preserved as written.**
+  Parsing erases the difference between `(a + b) * c` and any equivalent grouping once
+  the tree is built, so the only sound approach is for the printer to decide fresh, from
+  section 5.3's precedence and associativity, which parentheses change meaning at each
+  position and add exactly those (`Printer.Level`, `printOperand`). The one narrow
+  exception is `(-9223372036854775808)`: section 5.3 gives the minimum `Int` its own
+  fast path in `Parser.parseUnary`, which returns straight from there without ever handing
+  it to `parsePostfix`, so unlike every other literal it cannot take a `.member`, a call,
+  or an index without parentheses to protect it. Found by running the formatter over
+  `conformance/run/int-methods.em` and noticing `(-9223372036854775808).digits()` had
+  quietly lost its parentheses and its meaning.
+- **A call's argument list has no trailing comma in its grammar; a list, dictionary, or
+  tuple literal's does** (`Parser.finishCall` versus `finishDictionaryLiteral`/
+  `finishTupleLiteral`/`parseListLiteral`). The printer adds one only where the grammar
+  accepts it. Found the same way: `conformance/run/lists.em`, reformatted, stopped
+  parsing at a trailing comma the printer had added after a multi-line call's last
+  argument.
+- **Every number, string, and interpolation literal prints its exact source span,
+  never its cooked `Ast` value.** The checked value has already had every escape resolved
+  and a triple-quoted string's indentation stripped (9.1), so reprinting it would need to
+  re-invent both roundtrips; copying the span instead means a written literal survives
+  untouched and sidesteps the question entirely. The cost, accepted for this slice: code
+  written inside `#{ ... }` is not itself reformatted, since the whole interpolated
+  expression sits inside the span being copied.
+- **Line breaks the author already chose are preserved, not reflowed to a width.** A user
+  decision, made explicit before implementation began: this is a normalizer in the manner
+  of gofmt for its first slice, not a full pretty-printing engine, and no line width is
+  invented, since none is settled anywhere else in the rewrite context. Whether a call's
+  arguments, or a list/dictionary/tuple literal's elements, already contain a newline
+  between two of them is the one primitive this needs (`exprsSpanMultipleLines`), checked
+  only in the gaps between elements so that one multi-line argument (a triple-quoted
+  string, a block-bodied lambda) never forces the list around it onto multiple lines by
+  itself.
+- **A block-bodied lambda prints on one line when its source did.** `total += price` is
+  an assignment, a statement rather than an expression, so `Ast.Expression.Lambda.Body`
+  gives it the `.block` form even when written all on one line right after `=>`
+  (`Parser.parseLambda`'s `brokeLine` check) — printing every `.block` body as multi-line
+  would have reformatted `{ price => total += price }` into three lines on every run.
+- **Checked.** Every fix above was confirmed non-vacuous by reverting it and watching a
+  specific conformance case fail, then restoring it. Beyond `conformance/format/`: every
+  file under `examples/` is a round-trip fixture (formatting it must produce the file
+  unchanged); the whole `conformance/` corpus (`run/`, `runtime-errors/`, `diagnostics/`,
+  `lexical/`, and their own `format/`, 399 files) formats without crashing and is
+  idempotent; and every `conformance/run/` program prints identically before and after
+  being formatted.
+- **Deferred**, matching the user's line-wrapping decision and this slice's chosen scope:
+  a full width-based reflow engine; reformatting code written inside string
+  interpolation; wrapping a parameter list that spans more than one line (every example in
+  the language keeps signatures short enough that this has not come up); the REPL and LSP,
+  queued to follow the formatter per the roadmap.
 
 ### Enum and `case` decisions worth knowing
 
@@ -1507,13 +1614,24 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
 String, List value-transform, filtering, traversal, predicate-question, while-portion,
-endpoint-property, flat-map, and String-representation parts are complete. The next
-standard-library part should
-investigate List `filter_map`, applying the existing optional-result rule carefully; `Iterable`
-stays deferred. The advanced String operations listed below are deliberately deferred too,
-rather than being incomplete work in this slice.
-The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
-follow it because both benefit from a stable formatter and the now-complete core language.
+endpoint-property, flat-map, and String-representation parts are complete; the next
+standard-library part would be List `filter_map`, applying the existing optional-result
+rule carefully, with `Iterable` and the advanced String operations listed below still
+deferred rather than incomplete work in this slice.
+
+The user chose to begin slice 15 instead, and part 1 (the canonical formatter) is
+complete; see "Formatter decisions worth knowing" above. Part 2 is the next step: struct,
+class, trait, and enum declarations and their members, `case`/`when`, `try`/`catch`/
+`finally`, `raise`, `assert`, tuples, destructuring, dictionaries, sets, list literals,
+lambdas, `is`, and qualified names/`using` all already print correctly (part 1's
+`conformance/format/object-model.em` exercises structs, a trait, a class, an enum with a
+`case`-valued property, and a subject `case` statement together, and every file under
+`examples/` — which uses all of the above — round-trips byte for byte), but part 2 is
+where they get the same chunked, adversarial review with small `.em` programs that every
+other slice in this project has had before being called done, since part 1's own review
+so far is breadth (does it crash, is it idempotent, does formatted code still run
+identically) rather than depth on each construct. The REPL and LSP remain queued to follow
+the formatter once it does.
 
 Slice 16 is queued as one test-infrastructure and hardening pass: CI for Debug and
 ReleaseSafe with the pinned Zig version, allocator-failure testing, lexer/parser fuzzing,
@@ -1528,6 +1646,19 @@ off. Deferred language features in section 21 remain deferred.
 
 ## Validation and blockers
 
+- The formatter (slice 15, part 1) was checked in Debug and ReleaseSafe: `zig build test`
+  passes both, including `Formatter.zig`'s own unit tests (blank-line collapsing, a
+  same-line trailing comment, a block comment's verbatim interior, both parenthesization
+  cases below, the call-versus-literal trailing-comma difference, and a self-format
+  no-op), the new `conformance/format/` cases, and CLI contract tests for `format` and
+  `format --check`. Beyond the suite: every file under `examples/` round-trips byte for
+  byte; formatting every file under `conformance/` (399 files total) neither crashes nor
+  needs a second pass to reach a fixed point; and running every `conformance/run/` program
+  before and after formatting it prints identically. Two real bugs were caught only this
+  way, not by any unit test written in advance: `(dx * dx + dy * dy) ** 0.5` losing its
+  parentheses (and its meaning) in `examples/structs.em`, and a trailing comma the printer
+  added after a multi-line call's last argument, which `Parser.finishCall`'s grammar
+  (unlike a list literal's) does not accept, in `conformance/run/lists.em`.
 - Writing this slice found a bug that only a ReleaseSafe run could find. `check` and `run`
   wrap their one file in a `Project`, and the first version built it with `&.{ ... }`,
   which is a pointer to a temporary that dies at the return. Debug passed every test;

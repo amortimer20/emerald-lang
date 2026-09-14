@@ -22,13 +22,15 @@ const usage =
     \\usage: emerald <command> <file.em>
     \\
     \\commands:
-    \\  check   report problems without running the program
-    \\  run     report problems, then run the program
-    \\  test    report problems, then run every @test function
+    \\  check           report problems without running the program
+    \\  run             report problems, then run the program
+    \\  test            report problems, then run every @test function
+    \\  format          rewrite a file, or its project, in the canonical style
+    \\  format --check  report which files would change, without writing them
     \\
 ;
 
-const Command = enum { check, run, @"test" };
+const Command = enum { check, run, @"test", format };
 
 /// The allocator a program's runtime work goes through. Zig's default for a
 /// ReleaseSafe build without libc is its leak-checking debug allocator, which
@@ -43,9 +45,19 @@ pub fn main(init: std.process.Init) !u8 {
     const io = init.io;
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len != 3) return misuse(io);
+    if (args.len < 3) return misuse(io);
 
     const command = std.meta.stringToEnum(Command, args[1]) orelse return misuse(io);
+
+    if (command == .format) {
+        // `emerald format [--check] <path>`: the one command with an
+        // optional flag, so its argument count is checked on its own.
+        if (args.len == 3) return executeFormat(gpa, io, args[2], false);
+        if (args.len == 4 and std.mem.eql(u8, args[2], "--check")) return executeFormat(gpa, io, args[3], true);
+        return misuse(io);
+    }
+
+    if (args.len != 3) return misuse(io);
     return execute(gpa, io, command, args[2]);
 }
 
@@ -82,6 +94,8 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
         .check => emerald.checkProject(gpa, &project),
         .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface }),
         .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface }),
+        // `main` routes `format` to `executeFormat` before this is reached.
+        .format => unreachable,
     };
     var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();
@@ -118,6 +132,51 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     }
 
     if (command == .check) try writeAll(io, .stdout, "No problems found.\n");
+    return @intFromEnum(ExitCode.success);
+}
+
+/// `emerald format` and `emerald format --check` (18.3). Formatting is
+/// project-aware exactly like `check`/`run`: `path` names a lone file, or the
+/// entry of whatever project it sits in, and every file of that project is
+/// formatted. `check_only` reports which files would change, without writing
+/// any of them, exiting `1` (section 18.1's status shared with source
+/// diagnostics) when at least one would.
+fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_only: bool) !u8 {
+    var project = emerald.Project.load(gpa, io, path) catch |err| {
+        var buffer: [512]u8 = undefined;
+        const message = std.fmt.bufPrint(&buffer, "emerald: cannot read '{s}': {t}\n", .{ path, err }) catch
+            "emerald: cannot read the requested file\n";
+        try writeAll(io, .stderr, message);
+        return @intFromEnum(ExitCode.invalid_usage);
+    };
+    defer project.deinit(gpa);
+
+    const sources = try project.sources(gpa);
+    defer gpa.free(sources);
+
+    var report = emerald.formatProject(gpa, &project) catch |err| return internalFailure(io, err);
+    defer report.deinit();
+
+    if (report.diagnostics.len != 0) {
+        try writeDiagnostics(gpa, io, sources, report.diagnostics);
+        return @intFromEnum(ExitCode.source_diagnostics);
+    }
+
+    var changed_any = false;
+    for (project.files, report.files) |file, formatted| {
+        if (!formatted.changed) continue;
+        changed_any = true;
+        if (check_only) continue;
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file.source.path, .data = formatted.text }) catch |err| {
+            var buffer: [512]u8 = undefined;
+            const message = std.fmt.bufPrint(&buffer, "emerald: cannot write '{s}': {t}\n", .{ file.source.path, err }) catch
+                "emerald: cannot write the formatted file\n";
+            try writeAll(io, .stderr, message);
+            return @intFromEnum(ExitCode.internal_failure);
+        };
+    }
+
+    if (check_only and changed_any) return @intFromEnum(ExitCode.source_diagnostics);
     return @intFromEnum(ExitCode.success);
 }
 

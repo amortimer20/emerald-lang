@@ -1,0 +1,13 @@
+# Blank-line runs collapse to one, indentation is renormalized to four
+# spaces, and a block never starts or ends with a blank line.
+
+var a = 1
+
+var b = 2
+
+if a == 1 {
+    print(a)
+}
+else {
+    print(b)
+}

@@ -1,0 +1,11 @@
+# Parentheses that change meaning survive; parentheses that do not are
+# dropped, since grouping itself leaves no trace once parsed and the
+# formatter has to re-derive which ones are load-bearing.
+const a = (1 + 2) * 3
+const b = 1 + 2 * 3
+const c = (1 + 2) ** 2
+const d = 2 ** 3 ** 4
+const e = (2 ** 3) ** 4
+const f = -(1 + 2)
+const g = not (true and false)
+const h = (-9223372036854775808).digits()

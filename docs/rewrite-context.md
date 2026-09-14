@@ -2726,6 +2726,39 @@ The formatter refuses to rewrite a file it cannot parse safely. Block-comment in
 retain deliberate diagrams and formatting. Format-on-save uses the same implementation as
 the CLI.
 
+Settled by the first implementation slice, and binding on any future backend that formats:
+
+- Indentation is four spaces; there are no tabs anywhere in canonical output.
+- A run of blank lines between two statements, type members, or `case` arms is collapsed
+  to exactly one; a block never opens or closes on a blank line.
+- Line breaks the author already chose inside one statement or expression are preserved
+  rather than reflowed to a canonical width: this is a normalizer in the manner of gofmt,
+  not a full pretty-printing engine, and no line width is invented, since none is settled
+  here. Whether a call's arguments, or a list, dictionary, or tuple literal's elements,
+  already span more than one line decides one-line versus one-item-per-line layout: a
+  literal gains a trailing comma in the one-item-per-line form, since its grammar accepts
+  one; a call's argument list does not, since its grammar does not.
+- A comment on the same source line as the statement before it stays on that line rather
+  than becoming the next statement's leading comment. An ordinary `#` or `##` comment is
+  reindented to its new position; a `#[ ... ]#` block comment's interior is reproduced
+  byte for byte, undisturbed, so a deliberate diagram survives.
+- Every number, string, and interpolation literal is copied verbatim from its source span
+  rather than reprinted from its checked, escape-cooked value. A triple-quoted string's
+  written indentation therefore survives untouched, and code written inside `#{ ... }` is
+  not itself reformatted in this slice.
+- Grouping parentheses are never preserved as written, since parsing erases the difference
+  between a parenthesized expression and its unwrapped equivalent; the formatter always
+  re-derives which parentheses are load-bearing from section 5.3's precedence and
+  associativity, adding or dropping them accordingly. `(-9223372036854775808)` is one
+  narrow exception that keeps its parentheses before `.`, `(`, or `[`: section 5.3 reads
+  the minimum `Int`'s magnitude as one token with `parseUnary`, which never hands it to
+  `parsePostfix`, so it cannot take a member, call, or index directly the way every other
+  literal can.
+- `emerald format <path>` is project-aware exactly like `check` and `run` (14.1): it
+  formats every file of whatever project `path` names, not only `path` itself. `--check`
+  reports which files would change, exiting `1` (18.1's status shared with source
+  diagnostics) if any would, without writing any of them.
+
 ### 18.4 REPL
 
 `emerald repl` keeps declarations and values across entries. A bare expression prints its

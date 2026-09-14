@@ -127,6 +127,7 @@ const Kind = enum {
     diagnostics,
     run,
     runtime_errors,
+    format,
 
     fn fromPath(relative_path: []const u8) ?Kind {
         const separator = std.mem.indexOfScalar(u8, relative_path, '/') orelse return null;
@@ -135,6 +136,7 @@ const Kind = enum {
         if (std.mem.eql(u8, directory, "diagnostics")) return .diagnostics;
         if (std.mem.eql(u8, directory, "run")) return .run;
         if (std.mem.eql(u8, directory, "runtime-errors")) return .runtime_errors;
+        if (std.mem.eql(u8, directory, "format")) return .format;
         return null;
     }
 };
@@ -285,6 +287,40 @@ fn produce(
                 return null;
             };
             return try renderDiagnostics(gpa, sources, &.{failure});
+        },
+        .format => {
+            var report = try emerald.formatProject(gpa, project);
+            defer report.deinit();
+
+            if (report.diagnostics.len != 0) {
+                const rendered = try renderDiagnostics(gpa, sources, report.diagnostics);
+                defer gpa.free(rendered);
+                std.debug.print(
+                    "\n{s}: expected to format cleanly, but it did not parse:\n{s}",
+                    .{ entry.path, rendered },
+                );
+                return null;
+            }
+
+            const formatted = report.files[project.entry].text;
+
+            // The formatter's central guarantee, checked on every case for
+            // free: formatting its own output is a no-op.
+            var reformatted_source = try Source.init(gpa, entry.path, formatted);
+            defer reformatted_source.deinit(gpa);
+            var reformatted_files = [_]emerald.Project.File{.{ .source = reformatted_source, .namespace = "", .entry = true }};
+            const reformatted_project: emerald.Project = .{ .files = &reformatted_files, .entry = 0, .bad_directories = &.{} };
+            var second_report = try emerald.formatProject(gpa, &reformatted_project);
+            defer second_report.deinit();
+            if (second_report.diagnostics.len != 0 or !std.mem.eql(u8, second_report.files[0].text, formatted)) {
+                std.debug.print(
+                    "\n{s}: formatting its own output changed it further, which should never happen:\n{s}",
+                    .{ entry.path, formatted },
+                );
+                return null;
+            }
+
+            return try gpa.dupe(u8, formatted);
         },
     }
 }

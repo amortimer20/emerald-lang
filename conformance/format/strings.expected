@@ -1,0 +1,12 @@
+# String and interpolation text is copied verbatim from source, never
+# re-derived from the cooked value, so a triple-quoted string's written
+# indentation and any escapes survive exactly as written. Code inside `#{ }`
+# is not reformatted in this slice; only the code around the string is.
+const word = 'a raw string, no escapes: \n stays literal'
+const name = "Ava"
+print("Hello, #{name.upper()}!")
+print("""
+    two lines,
+    kept exactly as written
+    """)
+print("uneven spacing inside stays: #{1+2}")

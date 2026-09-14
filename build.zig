@@ -123,6 +123,47 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     misused.addCheck(.{ .expect_stderr_match = "usage: emerald" });
     test_step.dependOn(&misused.step);
 
+    // `emerald format` (18.3): a file already in the canonical style needs no
+    // rewrite, `--check` reports one that does without touching it, and a
+    // file that cannot parse safely is refused exactly as `check` refuses one
+    // with a diagnostic, rather than partially rewritten.
+    const canonical = fixtures.add("canonical.em", "var name = \"Ava\"\nprint(name)\n");
+    const format_check_clean = b.addRunArtifact(exe);
+    format_check_clean.addArgs(&.{ "format", "--check" });
+    format_check_clean.addFileArg(canonical);
+    format_check_clean.expectExitCode(0);
+    test_step.dependOn(&format_check_clean.step);
+
+    const messy_checked_only = fixtures.add("messy-checked-only.em", "var   name   =   \"Ava\"\nprint(name)\n");
+    const format_check_messy = b.addRunArtifact(exe);
+    format_check_messy.addArgs(&.{ "format", "--check" });
+    format_check_messy.addFileArg(messy_checked_only);
+    format_check_messy.expectExitCode(1);
+    test_step.dependOn(&format_check_messy.step);
+
+    // A separate fixture from the `--check` case above: both run against the
+    // same `fixtures` step with no ordering between them, and this one is
+    // actually rewritten in place.
+    const messy_to_rewrite = fixtures.add("messy-to-rewrite.em", "var   name   =   \"Ava\"\nprint(name)\n");
+    const format_rewrites = b.addRunArtifact(exe);
+    format_rewrites.addArg("format");
+    format_rewrites.addFileArg(messy_to_rewrite);
+    format_rewrites.expectExitCode(0);
+    test_step.dependOn(&format_rewrites.step);
+
+    const format_rejects = b.addRunArtifact(exe);
+    format_rejects.addArg("format");
+    format_rejects.addFileArg(malformed);
+    format_rejects.expectExitCode(1);
+    format_rejects.addCheck(.{ .expect_stderr_match = "this is not valid UTF-8 text" });
+    test_step.dependOn(&format_rejects.step);
+
+    const format_misused = b.addRunArtifact(exe);
+    format_misused.addArgs(&.{ "format", "a", "b" });
+    format_misused.expectExitCode(64);
+    format_misused.addCheck(.{ .expect_stderr_match = "usage: emerald" });
+    test_step.dependOn(&format_misused.step);
+
     // `run` executes and prints; a runtime error exits 2 rather than 1.
     const runs = b.addRunArtifact(exe);
     runs.addArg("run");
