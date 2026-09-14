@@ -1404,6 +1404,11 @@ in-place counterparts; `unique` keeps the first occurrence of each equal item an
 preserves the order of those first occurrences. The non-bang forms remain usable on a
 `const`, while the bang forms need a changeable list as every other list mutation does.
 
+The first callback slice adds List `filter` and `reject`. Each calls its predicate once,
+left to right, returns a new List in input order, and leaves the receiver unchanged.
+`filter` keeps the items whose predicate is true; `reject` keeps those whose predicate is
+false. Dictionary and Set forms are deferred with their broader transformation vocabulary.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs

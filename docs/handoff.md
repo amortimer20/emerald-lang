@@ -107,6 +107,13 @@ clear error. `unique` uses Emerald equality and keeps each value's first occurre
 input order. The conformance cases cover values, copy-on-write, type and arity errors, and
 negative counts.
 
+Part 5 adds List `filter` and `reject`. Both use an eager `func(Element): Bool` predicate,
+run it once per item in input order, and return a new List without changing the receiver.
+`filter` retains accepted items and `reject` retains rejected ones. The existing higher-order
+call path therefore supplies ordinary closure captures, nested patterns, errors, and stack
+traces without a second callback implementation. Dictionary and Set variants remain
+deferred with their broader transformation work.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
@@ -1451,10 +1458,10 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 ## Next concrete step
 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
-String, and List value-transform parts are complete. The next standard-library part should
-add a small group of callback-based List methods, beginning with `filter` and `reject`;
-`Iterable` stays deferred. The advanced String operations listed below are deliberately
-deferred too, rather than being incomplete work in this slice.
+String, List value-transform, and List filtering parts are complete. The next
+standard-library part should add `each_with_index`, then consider the remaining
+callback-based List methods; `Iterable` stays deferred. The advanced String operations
+listed below are deliberately deferred too, rather than being incomplete work in this slice.
 The alternative is to begin slice 15 with the canonical formatter; the REPL and LSP should
 follow it because both benefit from a stable formatter and the now-complete core language.
 

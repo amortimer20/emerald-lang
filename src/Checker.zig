@@ -5894,6 +5894,10 @@ fn typeOfMethodCall(
         }
         if (std.mem.eql(u8, member.name, "each")) return self.typeOfEach(call, member, base);
         if (std.mem.eql(u8, member.name, "map")) return self.typeOfMap(call, member, base);
+        if (std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject")) {
+            _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+            return Type.listOf(self.arena, base.element.?.*);
+        }
         // Section 8.6's searching pair. `find_index` is what 4.5 names as the
         // companion for a list whose elements may themselves be `nothing`.
         if (std.mem.eql(u8, member.name, "find")) {

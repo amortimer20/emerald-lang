@@ -3728,13 +3728,14 @@ fn callHigherOrder(
         break :blk built.?;
     } else receiver.data.list.items.items;
 
-    const Kind = enum { each, map, find, find_index };
+    const Kind = enum { each, map, filter, reject, find, find_index };
     const kind = std.meta.stringToEnum(Kind, member.name).?;
 
-    const collected: ?*Heap.List = if (kind == .map)
-        try self.heap.createList(kindOf(callable.signature.return_type), items.len)
-    else
-        null;
+    const collected: ?*Heap.List = switch (kind) {
+        .map => try self.heap.createList(kindOf(callable.signature.return_type), items.len),
+        .filter, .reject => try self.heap.createList(receiver.data.list.element, items.len),
+        else => null,
+    };
     const result: Value = if (collected) |list| .{ .data = .{ .list = list } } else Value.nothing;
     errdefer self.heap.release(result);
 
@@ -3742,7 +3743,15 @@ fn callHigherOrder(
         const argument = [_]Value{Heap.retain(item)};
         const produced = try self.invokeClosure(expression.span, closure, callable, &argument);
         if (collected) |list| {
-            list.items.appendAssumeCapacity(produced);
+            if (kind == .map) {
+                list.items.appendAssumeCapacity(produced);
+                continue;
+            }
+            const accepted = produced.data.bool;
+            self.heap.release(produced);
+            if ((kind == .filter and accepted) or (kind == .reject and !accepted)) {
+                list.items.appendAssumeCapacity(Heap.retain(item));
+            }
             continue;
         }
         if (kind == .each) {
@@ -3782,6 +3791,7 @@ fn callMethod(
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "map") or
+        std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or
         std.mem.eql(u8, member.name, "find") or std.mem.eql(u8, member.name, "find_index"))
     {
         return self.callHigherOrder(expression, call, member);

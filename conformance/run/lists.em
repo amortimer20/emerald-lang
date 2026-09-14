@@ -32,6 +32,15 @@ print(sequence, changed)
 changed.unique!()
 print(changed)
 
+# Callback transformations are eager and visit each item once, in order.
+var calls = 0
+const even = sequence.filter { number =>
+    calls += 1
+    return number.even?()
+}
+const odd = sequence.reject { number => number.even?() }
+print(even, odd, calls, sequence)
+
 # An empty list takes its type from context.
 var names: [Int] = []
 print(names, names == [])
