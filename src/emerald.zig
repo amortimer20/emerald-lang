@@ -29,6 +29,9 @@ pub const Heap = @import("Heap.zig");
 pub const unicode = @import("unicode.zig");
 pub const strings = @import("strings.zig");
 
+/// Declarations every program sees, such as section 11.5's `Ordered`.
+const prelude_text = @embedFile("prelude.em");
+
 /// Everything a stage reported, owned by one arena.
 pub const Report = struct {
     arena_state: std.heap.ArenaAllocator,
@@ -151,8 +154,6 @@ fn analyze(
     errdefer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const files = project.files;
-
     // A stage runs over every file before the next one starts, so a project
     // reports every encoding problem, then every lexical one, and so on. That
     // is section 17.2's rule about cascades, applied to a project: one stage's
@@ -161,7 +162,7 @@ fn analyze(
 
     // Encoding. Lexing bytes that are not text would only invent confusion on
     // top of a problem the reader has to fix first.
-    for (files, 0..) |file, index| {
+    for (project.files, 0..) |file, index| {
         const span = Source.findInvalidUtf8(file.source.text) orelse continue;
         try found.append(arena, .{
             .message = "this is not valid UTF-8 text",
@@ -191,6 +192,16 @@ fn analyze(
     if (found.items.len != 0) {
         return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
+
+    // The prelude's declarations are written in Emerald and go through every
+    // stage as one more file. It comes last, so every file of the program
+    // keeps the index its diagnostics are rendered against, and nothing is
+    // ever reported against the prelude itself.
+    var prelude_source = try Source.init(gpa, "prelude.em", prelude_text);
+    defer prelude_source.deinit(gpa);
+    const files = try arena.alloc(Project.File, project.files.len + 1);
+    @memcpy(files[0..project.files.len], project.files);
+    files[project.files.len] = .{ .source = prelude_source, .namespace = Resolver.prelude_namespace, .entry = false };
 
     // Every file's tokens are held at once, because the parser for one file may
     // still be reading them while another is parsed.
@@ -230,6 +241,7 @@ fn analyze(
     // because a name in one file can only be understood against the rest.
     var resolved = try Resolver.resolve(gpa, files, programs, project.enclosing_project);
     defer resolved.deinit();
+    for (resolved.diagnostics) |diagnostic| std.debug.assert(diagnostic.file < project.files.len);
     if (!resolved.ok()) {
         const copies = try dupeDiagnostics(arena, resolved.diagnostics);
         return .{ .arena_state = arena_state, .diagnostics = copies };
@@ -239,6 +251,7 @@ fn analyze(
     // this function returns.
     var checked = try Checker.check(gpa, files, programs, resolved.facts);
     defer checked.deinit();
+    for (checked.diagnostics) |diagnostic| std.debug.assert(diagnostic.file < project.files.len);
     if (!checked.ok()) {
         const copies = try dupeDiagnostics(arena, checked.diagnostics);
         return .{ .arena_state = arena_state, .diagnostics = copies };

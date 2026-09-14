@@ -1,0 +1,40 @@
+diagnostics/self-type.em:7:17: `Self` can only be written in a method's parameter and result types
+      const next: Self
+                  ^^^^
+`Self` stands for the type a method belongs to, so it has a meaning only there. Write the type's name instead.
+diagnostics/self-type.em:11:20: `Self` can only be written in a method's parameter and result types
+      const smaller: Self
+                     ^^^^
+`Self` stands for the type a method belongs to, so it has a meaning only there. Write the type's name instead.
+diagnostics/self-type.em:14:21: `Self` can only be written in a method's parameter and result types
+          const copy: Self = self
+                      ^^^^
+`Self` stands for the type a method belongs to, so it has a meaning only there. Write the type's name instead.
+diagnostics/self-type.em:15:16: this is Int, but the function returns Self
+          return 5
+                 ^
+Return a value of the declared type, or convert it first.
+diagnostics/self-type.em:19:16: `Self` can only be written in a method's parameter and result types
+  func helper(): Self {
+                 ^^^^
+`Self` stands for the type a method belongs to, so it has a meaning only there. Write the type's name instead.
+diagnostics/self-type.em:27:10: `add` takes different parameters from the `add` of `Addable` it overrides
+      func add(other: Int): Wrong {
+           ^^^
+An override takes exactly the parameters it replaces, with the same names and types, since a call through `Addable` passes them: `(other: Wrong)`.
+diagnostics/self-type.em:40:7: the `add` `Circle` has from `Shape` does not match the one the trait `Addable` requires
+  class Circle extends Shape with Addable {
+        ^^^^^^
+A method supplying a trait's takes the same parameters, with the same names and types, and gives the same type.
+diagnostics/self-type.em:46:13: `add` takes `Self`, which a value seen as `Addable` cannot supply
+      print(a.add(b))
+              ^^^
+Every type that adopts `Addable` takes a value of its own type here, and this value could be any of them. Call `add` on a value whose type is known.
+diagnostics/self-type.em:47:22: `add` takes `Self`, which a value seen as `Addable` cannot supply
+      const adding = a.add
+                       ^^^
+Every type that adopts `Addable` takes a value of its own type here, and this value could be any of them. Call `add` on a value whose type is known.
+diagnostics/self-type.em:65:7: `Doubling.doubled` uses `Self`, so it cannot be called this way yet
+  print(Doubling.doubled(Count(1)))
+        ^^^^^^^^^^^^^^^^
+Call it as a method instead, as in `value.doubled()`.

@@ -1,0 +1,7 @@
+runtime-errors/operator-before-built.em:6:11: `Boss`'s version of `compare` ran before this `Boss` was built
+      print(level < level)
+            ^^^^^^^^^^^^^
+A base class's constructor let the object be used before the classes that extend it were built. Finish building the object before passing `self` on or running code that calls its methods.
+in `check`, called at runtime-errors/operator-before-built.em:14:9
+in the constructor of `Level`, called at runtime-errors/operator-before-built.em:27:9
+in the constructor of `Boss`, called at runtime-errors/operator-before-built.em:38:1

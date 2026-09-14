@@ -1,8 +1,24 @@
-diagnostics/capture-through-override.em:23:7: `greet` reads `title`, which is not assigned yet here
+diagnostics/capture-through-override.em:23:7: `greet` reads `offset`, which is not assigned yet here
   print(greeter.greet())
         ^^^^^^^^^^^^^^^
-Move this call below the line that assigns `title`.
-diagnostics/capture-through-override.em:45:7: `title` reads `suffix`, which is not assigned yet here
+Move this call below the line that assigns `offset`.
+diagnostics/capture-through-override.em:45:7: `title` reads `offset`, which is not assigned yet here
   print(titled.title())
         ^^^^^^^^^^^^^^
-Move this call below the line that assigns `suffix`.
+Move this call below the line that assigns `offset`.
+diagnostics/capture-through-override.em:79:7: `total` reads `offset`, which is not assigned yet here
+  print(total())
+        ^^^^^^^
+Move this call below the line that assigns `offset`.
+diagnostics/capture-through-override.em:80:7: `ordered` reads `offset`, which is not assigned yet here
+  print(ordered())
+        ^^^^^^^^^
+Move this call below the line that assigns `offset`.
+diagnostics/capture-through-override.em:81:7: `grow` reads `offset`, which is not assigned yet here
+  print(grow())
+        ^^^^^^
+Move this call below the line that assigns `offset`.
+diagnostics/capture-through-override.em:82:7: `add` reads `offset`, which is not assigned yet here
+  print(Step(1) + Step(2))
+        ^^^^^^^^^^^^^^^^^
+Move this call below the line that assigns `offset`.

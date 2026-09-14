@@ -1,0 +1,5 @@
+runtime-errors/operator-method-error.em:10:47: floor division by zero
+          return Ratio(self.top * other.bottom, self.bottom // other.top)
+                                                ^^^^^^^^^^^^^^^^^^^^^^^^
+Check the divisor before dividing. Division by zero has no result for either numeric type.
+in `divide`, called at runtime-errors/operator-method-error.em:14:7

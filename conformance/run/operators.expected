@@ -1,0 +1,19 @@
+Vector(x: 1.0, y: 2.0)
+Vector(x: 4.0, y: 6.0)
+Vector(x: 3.0, y: 5.0) Vector(x: 8.0, y: 3.0) Vector(x: 0.5, y: 2.0)
+true true
+Vector(x: 7.0, y: 7.0)
+true false true true
+true false
+false true
+249
+Coins compares
+true
+11
+Count(n: 4) 4
+true false
+3.0
+Vector(x: 14.0, y: 16.0)
+a Count
+121.0
+Tag 2.0 m

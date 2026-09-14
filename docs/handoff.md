@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the traits slice (11.1 and 11.2).
+Updated: 2026-09-13. Prepared after the `Self` and operators slice (11.4 and 11.5).
 
 ## Current milestone
 
@@ -43,7 +43,9 @@ base class, and each object running its own class's version of a method or prope
 tests an object's class at runtime and narrows a name within the branch it proves, and
 every value has `type_name`. Traits work: requirements and defaults, adoption by structs and
 classes with `with`, traits building on traits, conflict and conformance checking, values
-seen through a trait with their own behavior, and `Trait.method(self)`.
+seen through a trait with their own behavior, and `Trait.method(self)`. `Self` works in
+method signatures, and `+`, `-`, `*`, `/`, and ordering work on types that adopt the
+prelude's `Addable`, `Subtractable`, `Multipliable`, `Divisible`, and `Ordered`.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
@@ -170,6 +172,43 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### `Self` and operator decisions worth knowing
+
+- **The prelude has Emerald source now.** `src/prelude.em` declares the five operator
+  traits and is embedded by `emerald.zig`, which appends it to the project's files after
+  the encoding checks, so every stage treats it as one more non-entry file and the
+  program's files keep their indices. Its namespace is `Resolver.prelude_namespace`
+  (`emerald`), which no directory can produce; `offerKey` offers its names bare to every
+  file but lets a file's own name replace them, and `collectNamespaces` and `noteElsewhere`
+  skip it. `analyze` asserts no diagnostic points into it.
+- **`Self` is `Type.opaque_self`** on a `struct_value` whose `user` is the trait. Only a
+  `Self` is assignable to `Self`; a `Self` is assignable to its trait and what the trait
+  builds on. `Checker.written_self` gives `Self` its meaning while `signatureFor` resolves a
+  method's or type-level function's parameter and result types (`selfInSignatureOf`), and a
+  trait's method body gets `self` as `Self` (`ownSelf`).
+- **Substitution happens where a member is reached.** `signatureOn(signature, receiver)`
+  replaces `Self` with the receiver's `Self`, the adopting class (`adopterOf`: the first
+  along the base chain to conform), or the trait for a trait-typed receiver; `takesSelf`
+  rejects a `Self` parameter through a trait-typed value. It is used by method calls, method
+  values, operators, `checkOverride`, and `checkTraits`. `Trait.method(value)` rejects a
+  signature mentioning `Self` rather than substituting from the first argument.
+- **Operators.** `Ast.BinaryOperator.contract` and `OperatorContract.ordered` name the trait
+  and method. `Checker.typeOfOperatorCall` runs for a non-optional user-type left operand
+  from `typeOfBinary`, compound assignment (through `arithmetic`), and `typeOfComparison`,
+  checking adoption, `Self`, the right operand, change, construction (`reportOverridable`),
+  and captures. The resolver's `noteMemberCall` records the method for binary, comparison,
+  and compound expressions, for 7.1's capture check. At runtime `Interpreter.callOperator`
+  looks the method up in the left object's method table, which every adopting type has,
+  applying the build-depth guard, and invokes it with the operands retained.
+- **Checked.** Thirteen mechanisms were disabled one at a time, each failing a case:
+  prelude shadowing, `Self` in override checks, `adopterOf`, `takesSelf`, `self` as `Self` in
+  trait bodies, `Self == Self`, the three capture recordings, the change rule, the runtime
+  build guard, the construction rule, and resolving a requirement property's type.
+- **Found while testing.** A trait's requirement property never had its type resolved, so
+  `const smaller: Self` or a misspelled type there went unreported; the final pass now
+  resolves it. `2 * vector` had said one operand "may be absent"; that help now needs an
+  actual optional.
 
 ### Trait decisions worth knowing
 
@@ -1294,9 +1333,10 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 
 ## Next concrete step
 
-Traits are in. What remains of section 20's slice 12 is `Self` (11.4) with operator
-overloading through traits (11.5), then enums (section 12). Slice 13, errors and tests,
-follows.
+`Self` and operators are in, which finishes section 11. What remains of section 20's slice
+12 is enums (section 12): closed sets of named values, methods and trait conformance on
+them, `Ordered` when a domain needs order, and `case` exhaustiveness. Slice 13, errors and
+tests, follows.
 
 Section 7 is complete apart from capturing built-in methods, which the user has put off.
 
@@ -1318,7 +1358,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 312 unit tests, 292 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 313 unit tests, 299 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

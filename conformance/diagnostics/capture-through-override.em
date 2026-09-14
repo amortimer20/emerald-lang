@@ -44,3 +44,40 @@ func shelf(): Titled {
 const titled = shelf()
 print(titled.title())
 suffix = "!"
+
+# The same through an operator, which runs a method of the left operand.
+var offset: Int
+
+struct Step with Addable, Ordered {
+    const n: Int
+
+    @override
+    func add(other: Self): Self {
+        return Step(self.n + other.n + offset)
+    }
+
+    @override
+    func compare(other: Self): Int {
+        return self.n - other.n + offset
+    }
+}
+
+func total(): Step {
+    return Step(1) + Step(2)
+}
+
+func ordered(): Bool {
+    return Step(1) < Step(2)
+}
+
+func grow(): Step {
+    var step = Step(1)
+    step += Step(1)
+    return step
+}
+
+print(total())
+print(ordered())
+print(grow())
+print(Step(1) + Step(2))
+offset = 10

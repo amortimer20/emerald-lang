@@ -201,6 +201,21 @@ pub const Resolved = struct {
 /// declared by any program, so they live in a scope of their own.
 pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe" };
 
+/// The namespace of the declarations written in `prelude.em`, such as section
+/// 11.5's `Ordered`. A directory's namespace always starts with a capital
+/// letter, so no project's names can land in it, and no program can write it.
+/// Its public names are visible bare in every file, under the file's own.
+pub const prelude_namespace = "emerald";
+
+/// The key of the prelude declaration `name`.
+pub fn preludeKey(comptime name: []const u8) []const u8 {
+    return prelude_namespace ++ "." ++ name;
+}
+
+fn isPreludeKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, prelude_namespace ++ ".");
+}
+
 /// `self_value` is section 10.2's `self` inside a constructor: its fields are
 /// set one at a time, but the value itself is never replaced.
 /// `later_parameter` is a parameter seen from a default before it, which section
@@ -427,6 +442,7 @@ fn keyOf(self: *Resolver, file: u32, name: []const u8) Error![]const u8 {
 /// only `graphics/ui/` holds any source.
 fn collectNamespaces(self: *Resolver) Error!void {
     for (self.files) |file| {
+        if (std.mem.eql(u8, file.namespace, prelude_namespace)) continue;
         var at: usize = 0;
         while (at <= file.namespace.len) {
             const boundary = std.mem.indexOfScalarPos(u8, file.namespace, at, '.') orelse file.namespace.len;
@@ -701,7 +717,7 @@ fn nameOf(key: []const u8) []const u8 {
 fn noteElsewhere(self: *Resolver, name: []const u8) Error!void {
     if (isPrivate(name)) return;
     const namespace = self.files[self.file].namespace;
-    if (namespace.len == 0) return;
+    if (namespace.len == 0 or std.mem.eql(u8, namespace, prelude_namespace)) return;
     try self.elsewhere.put(self.arena, name, namespace);
 }
 
@@ -774,14 +790,14 @@ fn importName(self: *Resolver, map: *KeyMap, namespace: []const u8, key: []const
     // A name this file already has of its own wins. Section 14.2 makes
     // same-directory names directly visible, and an import should not be able
     // to take a name out from under the file that declared it.
-    if (map.get(bare)) |existing| {
+    if (map.get(bare)) |existing| if (!isPreludeKey(existing)) {
         if (std.mem.eql(u8, existing, key)) return true;
         const own = try self.keyOf(self.file, bare);
         if (!std.mem.eql(u8, existing, own)) {
             try self.ambiguous[self.file].put(self.arena, bare, namespace);
         }
         return true;
-    }
+    };
 
     try map.put(self.arena, bare, key);
     return true;
@@ -844,6 +860,15 @@ fn offerKey(self: *Resolver, map: *KeyMap, namespace: []const u8, key: []const u
         // Private: visible only in the file whose path names it.
         if (!std.mem.eql(u8, key[0..at], self.files[self.file].source.path)) return;
         return map.put(self.arena, key[at + private_separator.len ..], key);
+    }
+    // Keys are offered in no particular order, so a prelude name only fills a
+    // gap and a file's own name always replaces it.
+    if (isPreludeKey(key)) {
+        const bare = key[prelude_namespace.len + 1 ..];
+        if (std.mem.indexOfScalar(u8, bare, '.') != null) return;
+        const slot = try map.getOrPut(self.arena, bare);
+        if (!slot.found_existing) slot.value_ptr.* = key;
+        return;
     }
     if (namespace.len == 0) {
         if (std.mem.indexOfScalar(u8, key, '.') == null) try map.put(self.arena, key, key);
@@ -1348,6 +1373,10 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         },
 
         .assignment => |assignment| {
+            // `total += price` may run `add` (11.5).
+            if (assignment.operation) |operation| if (operation.contract()) |contract| {
+                try self.noteMemberCall(contract.method);
+            };
             if (try self.typeFieldTarget(assignment)) |target| {
                 return self.walkTypeFieldAssignment(assignment, target);
             }
@@ -2057,6 +2086,8 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
         .binary => |binary| {
             try self.walkExpression(binary.left);
             try self.walkExpression(binary.right);
+            // On a user type, an operator runs a method (11.5).
+            if (binary.operator.contract()) |contract| try self.noteMemberCall(contract.method);
         },
         .logical => |logical| {
             try self.walkExpression(logical.left);
@@ -2064,6 +2095,11 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
         },
         .comparison => |comparison| {
             for (comparison.operands) |operand| try self.walkExpression(operand);
+            for (comparison.operators) |operator| {
+                if (operator.isEquality()) continue;
+                try self.noteMemberCall(Ast.OperatorContract.ordered.method);
+                break;
+            }
         },
         .call => |call| {
             try self.walkExpression(call.callee);

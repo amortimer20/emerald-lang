@@ -59,6 +59,11 @@ user: ?*const User = null,
 /// around as `Int`. Placement is still structural: this flag on a list is
 /// `[String]?`, while the same flag on its element is `[String?]`.
 optional: bool = false,
+/// Section 11.4's `Self` written in a trait: a value of whichever type adopts
+/// `user`, the trait, known only through its contract. Unlike a value seen
+/// through the trait, a second `Self` is known to be of the same type, so a
+/// member that takes `Self` can be given one.
+opaque_self: bool = false,
 
 /// A function's checked shape: each parameter's type, its name for diagnostics
 /// that name a mismatched one, and the return type, whether written or
@@ -147,6 +152,31 @@ pub const invalid: Type = .{ .kind = .invalid };
 
 pub fn structOf(user: *const User) Type {
     return .{ .kind = .struct_value, .user = user };
+}
+
+/// `Self` inside the trait `trait`.
+pub fn selfOf(trait: *const User) Type {
+    return .{ .kind = .struct_value, .user = trait, .opaque_self = true };
+}
+
+/// Whether `Self` appears anywhere in the type.
+pub fn mentionsSelf(self: Type) bool {
+    return switch (self.kind) {
+        .struct_value => self.opaque_self,
+        .list, .set => self.element.?.mentionsSelf(),
+        .dictionary => self.key.?.mentionsSelf() or self.element.?.mentionsSelf(),
+        .tuple => for (self.elements) |element| {
+            if (element.mentionsSelf()) break true;
+        } else false,
+        .function => blk: {
+            const signature = self.signature.?;
+            for (signature.parameters) |parameter| {
+                if (parameter.mentionsSelf()) break :blk true;
+            }
+            break :blk signature.return_type.mentionsSelf();
+        },
+        .nothing, .bool, .int, .float, .string, .invalid => false,
+    };
 }
 
 /// `[element]`, with the element allocated from `allocator`, which must outlive
@@ -285,7 +315,7 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 try writer.print(": {f}", .{signature.return_type});
             }
         },
-        .struct_value => try writer.writeAll(self.user.?.display_name),
+        .struct_value => try writer.writeAll(if (self.opaque_self) "Self" else self.user.?.display_name),
         .invalid => try writer.writeAll("an unknown type"),
     }
 }
@@ -338,7 +368,7 @@ pub fn same(self: Type, other: Type) bool {
     if (self.kind == .invalid or other.kind == .invalid) return true;
     if (self.optional != other.optional) return false;
     if (self.kind != other.kind) return false;
-    if (self.kind == .struct_value) return self.user.? == other.user.?;
+    if (self.kind == .struct_value) return self.user.? == other.user.? and self.opaque_self == other.opaque_self;
     if (self.kind == .list or self.kind == .set) return self.element.?.same(other.element.?.*);
     if (self.kind == .dictionary) {
         return self.key.?.same(other.key.?.*) and self.element.?.same(other.element.?.*);
@@ -391,6 +421,9 @@ pub fn assignableTo(self: Type, target: Type) bool {
     // Section 10.7: an object of a subclass is also one of its base class,
     // and it is shared rather than converted, so nothing changes at runtime.
     if (self.kind == .struct_value and target.kind == .struct_value) {
+        // Section 11.4: nothing but `Self` is known to be `Self`, while `Self`
+        // is a value of its trait and of everything the trait builds on.
+        if (target.opaque_self) return self.opaque_self and self.user.? == target.user.?;
         return self.user.?.conformsTo(target.user.?);
     }
 
@@ -594,4 +627,26 @@ test "an object of a subclass is assignable to its base class but not the revers
     defer arena_state.deinit();
     const dogs = try listOf(arena_state.allocator(), structOf(&dog));
     try testing.expect(!dogs.assignableTo(try listOf(arena_state.allocator(), structOf(&animal))));
+}
+
+test "Self is a value of its trait, but only Self is Self" {
+    const addable: User = .{ .name = "Addable", .display_name = "Addable", .trait = true };
+    const traits = [_]*const User{&addable};
+    const numeric: User = .{ .name = "Numeric", .display_name = "Numeric", .trait = true, .traits = &traits };
+    const vector: User = .{ .name = "Vector", .display_name = "Vector", .traits = &.{&numeric} };
+    const self_type = selfOf(&numeric);
+    try testing.expect(self_type.assignableTo(self_type));
+    try testing.expect(self_type.assignableTo(structOf(&numeric)));
+    try testing.expect(self_type.assignableTo(structOf(&addable).optionalOf()));
+    try testing.expect(!structOf(&numeric).assignableTo(self_type));
+    try testing.expect(!structOf(&vector).assignableTo(self_type));
+    try testing.expect(!self_type.assignableTo(selfOf(&addable)));
+    try testing.expect(!self_type.same(structOf(&numeric)));
+
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const listed = try listOf(arena_state.allocator(), self_type.optionalOf());
+    try testing.expect(listed.mentionsSelf());
+    try testing.expectEqualStrings("[Self?]", try std.fmt.allocPrint(arena_state.allocator(), "{f}", .{listed}));
+    try testing.expect(!structOf(&vector).mentionsSelf());
 }

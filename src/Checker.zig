@@ -206,6 +206,9 @@ literal_types: LiteralTypes = .empty,
 /// Field metadata is completed for every struct before recursive key
 /// eligibility is judged, so declaration order cannot change the answer.
 resolving_struct_fields: bool = false,
+/// What `Self` means in the types being resolved: the type whose method's
+/// parameters and result they are (11.4), or null where `Self` means nothing.
+written_self: ?Type = null,
 /// The loops enclosing the statement being checked, innermost last. Empty at
 /// the start of every function body, since a `break` cannot leave a function.
 loops: std.ArrayList(Loop) = .empty,
@@ -483,8 +486,12 @@ pub fn check(
                         try checker.checkTypeFieldValue(try Resolver.methodKey(arena, type_key, field.name));
                     }
                     for (declaration.properties) |property| {
-                        // A trait's requirement has no body (11.1).
-                        if (property.getter.abstract_span != null) continue;
+                        // A trait's requirement has no body (11.1), but its
+                        // type is written all the same.
+                        if (property.getter.abstract_span != null) {
+                            _ = try checker.signatureFor(try Resolver.methodKey(arena, type_key, property.name));
+                            continue;
+                        }
                         const getter_key = try Resolver.methodKey(arena, type_key, property.name);
                         if (checker.properties.contains(getter_key)) {
                             try checker.ensureBodyChecked(getter_key);
@@ -1134,7 +1141,7 @@ fn checkTraits(self: *Checker, declaration: Ast.StructDeclaration, user: *const 
         if (introduced) {
             for (entries.items[1..]) |entry| {
                 if (entry.trait == first.trait) continue;
-                const agree = entry.kind == first.kind and try self.sameTraitMember(first, entry);
+                const agree = entry.kind == first.kind and try self.sameTraitMember(user, first, entry);
                 if (agree) continue;
                 try self.reportWithHelp(
                     declaration.name_span,
@@ -1175,7 +1182,7 @@ fn checkTraits(self: *Checker, declaration: Ast.StructDeclaration, user: *const 
                 // A base class's method supplies it, which the base class
                 // never promised with `@override`, so the shapes are compared.
                 const mine = try self.signatureFor(supplied.key.?);
-                const theirs = try self.signatureFor(first.key);
+                const theirs = try self.signatureOn(try self.signatureFor(first.key), Type.structOf(user));
                 if (!try self.sameSignature(mine, theirs)) {
                     try self.reportWithHelp(
                         declaration.name_span,
@@ -1216,9 +1223,9 @@ fn checkTraits(self: *Checker, declaration: Ast.StructDeclaration, user: *const 
 /// Whether two traits' members of one name and kind can be supplied by one
 /// member: the same method shape, or properties of the same type, where a
 /// writable one subsumes a read-only one (11.2).
-fn sameTraitMember(self: *Checker, a: TraitEntry, b: TraitEntry) Error!bool {
-    const mine = try self.signatureFor(a.key);
-    const theirs = try self.signatureFor(b.key);
+fn sameTraitMember(self: *Checker, user: *const Type.User, a: TraitEntry, b: TraitEntry) Error!bool {
+    const mine = try self.signatureOn(try self.signatureFor(a.key), ownSelf(user));
+    const theirs = try self.signatureOn(try self.signatureFor(b.key), ownSelf(user));
     if (a.kind == .property) return mine.return_type.same(theirs.return_type);
     return self.sameSignature(mine, theirs);
 }
@@ -1304,7 +1311,8 @@ fn constructionNeedsArguments(self: *Checker, key: []const u8) Error!bool {
 /// and cannot replace it."
 fn checkOverride(self: *Checker, method: Ast.FunctionDeclaration, own_key: []const u8, found: Inherited) Error!void {
     const mine = try self.signatureFor(own_key);
-    const theirs = try self.signatureFor(found.key.?);
+    // A trait's `Self` is this type's (11.4).
+    const theirs = try self.signatureOn(try self.signatureFor(found.key.?), ownSelf(self.receivers.get(own_key).?.user.?));
     const owner = found.owner.display_name;
 
     var matches = mine.parameters.len == theirs.parameters.len;
@@ -2936,6 +2944,12 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
     defer self.file = outer_file;
     if (self.facts.owner.get(key)) |owner| self.file = owner;
 
+    // Only the written parameter and result types see `Self`; a body
+    // inferred below does not.
+    const outer_self = self.written_self;
+    defer self.written_self = outer_self;
+    self.written_self = self.selfInSignatureOf(key);
+
     const parameter_types = try self.arena.alloc(Type, declaration.parameters.len);
     const parameter_names = try self.arena.alloc([]const u8, declaration.parameters.len);
     for (declaration.parameters, 0..) |parameter, index| {
@@ -2949,8 +2963,14 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
         .return_type = .invalid,
     };
 
-    if (declaration.return_annotation) |annotation| {
-        signature.return_type = try self.resolveTypeExpression(annotation);
+    const return_annotation = if (declaration.return_annotation) |annotation|
+        try self.resolveTypeExpression(annotation)
+    else
+        null;
+    self.written_self = outer_self;
+
+    if (return_annotation) |annotated| {
+        signature.return_type = annotated;
     } else if (!blockHasValueReturn(declaration.body.statements)) {
         // Nothing to infer: section 7.2's "a function returning no value may
         // omit its return type".
@@ -2983,6 +3003,123 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
 
     try self.signatures.put(self.arena, key, signature);
     return signature;
+}
+
+/// What `Self` means in the signature of the function `key`: the type, for a
+/// method or a type-level function of a struct or class, and section 11.4's
+/// opaque `Self` for a trait's method. A property's type is written out, so
+/// its accessors have none.
+fn selfInSignatureOf(self: *Checker, key: []const u8) ?Type {
+    if (self.receivers.get(key)) |receiver| {
+        if (self.properties.contains(key) or std.mem.endsWith(u8, key, Resolver.setter_suffix)) return null;
+        return ownSelf(receiver.user.?);
+    }
+    const type_key = self.facts.type_members.get(key) orelse return null;
+    return self.structs.get(type_key);
+}
+
+/// The type `self` has inside a member of `user`.
+fn ownSelf(user: *const Type.User) Type {
+    return if (user.trait) Type.selfOf(user) else Type.structOf(user);
+}
+
+/// Section 11.4: a trait member's signature as seen on a value of `receiver`.
+/// `Self` becomes the receiver's own `Self` inside a trait, the adopting type
+/// on a concrete value, and the trait itself on a value seen through a trait,
+/// where a parameter of type `Self` cannot be given anything (see
+/// `takesSelf`).
+fn signatureOn(self: *Checker, signature: Signature, receiver: Type) Error!Signature {
+    var mentions = signature.return_type.mentionsSelf();
+    for (signature.parameters) |parameter| mentions = mentions or parameter.mentionsSelf();
+    if (!mentions) return signature;
+    const parameters = try self.arena.alloc(Type, signature.parameters.len);
+    for (signature.parameters, parameters) |parameter, *replaced| {
+        replaced.* = try self.replaceSelf(parameter, receiver.payload());
+    }
+    return .{
+        .parameters = parameters,
+        .parameter_names = signature.parameter_names,
+        .return_type = try self.replaceSelf(signature.return_type, receiver.payload()),
+    };
+}
+
+/// Whether a parameter of a member reached through `receiver` is `Self`,
+/// which a value seen through a trait cannot know the type of.
+fn takesSelf(signature: Signature, receiver: Type) bool {
+    if (receiver.kind != .struct_value or receiver.opaque_self or !receiver.user.?.trait) return false;
+    for (signature.parameters) |parameter| {
+        if (parameter.mentionsSelf()) return true;
+    }
+    return false;
+}
+
+fn reportTakesSelf(self: *Checker, span: Source.Span, name: []const u8, receiver: Type) Error!void {
+    try self.reportWithHelp(
+        span,
+        "`{s}` takes `Self`, which a value seen as `{s}` cannot supply",
+        .{ name, receiver.user.?.display_name },
+        "Every type that adopts `{s}` takes a value of its own type here, and this value could be any of them. Call `{s}` on a value whose type is known.",
+        .{ receiver.user.?.display_name, name },
+    );
+}
+
+fn replaceSelf(self: *Checker, t: Type, receiver: Type) Error!Type {
+    if (!t.mentionsSelf()) return t;
+    switch (t.kind) {
+        .struct_value => {
+            var replaced = if (receiver.opaque_self or receiver.user.?.trait)
+                receiver
+            else
+                Type.structOf(adopterOf(receiver.user.?, t.user.?));
+            replaced.optional = t.optional;
+            return replaced;
+        },
+        .list, .set => {
+            const element = try self.arena.create(Type);
+            element.* = try self.replaceSelf(t.element.?.*, receiver);
+            var replaced = t;
+            replaced.element = element;
+            return replaced;
+        },
+        .dictionary => {
+            const key = try self.arena.create(Type);
+            key.* = try self.replaceSelf(t.key.?.*, receiver);
+            const element = try self.arena.create(Type);
+            element.* = try self.replaceSelf(t.element.?.*, receiver);
+            var replaced = t;
+            replaced.key = key;
+            replaced.element = element;
+            return replaced;
+        },
+        .tuple => {
+            const elements = try self.arena.alloc(Type, t.elements.len);
+            for (t.elements, elements) |element, *slot| slot.* = try self.replaceSelf(element, receiver);
+            var replaced = t;
+            replaced.elements = elements;
+            return replaced;
+        },
+        .function => {
+            const signature = try self.arena.create(Signature);
+            signature.* = try self.signatureOn(t.signature.?.*, receiver);
+            var replaced = t;
+            replaced.signature = signature;
+            return replaced;
+        },
+        .nothing, .bool, .int, .float, .string, .invalid => return t,
+    }
+}
+
+/// Section 11.4: `Self` in `trait` on a value of the class `user` is the
+/// class that first adopts `trait` along its chain of base classes, since a
+/// subclass inherits its methods without changing their types. On a struct
+/// it is the struct.
+fn adopterOf(user: *const Type.User, trait: *const Type.User) *const Type.User {
+    var found = user;
+    var at = user.base;
+    while (at) |base| : (at = base.base) {
+        if (base.conformsTo(trait)) found = base;
+    }
+    return found;
 }
 
 fn ensureBodyChecked(self: *Checker, key: []const u8) Error!void {
@@ -3049,7 +3186,7 @@ fn checkKeyedBody(
     }
     const receiver = self.receivers.get(key) orelse
         return self.checkFunctionBody(declaration, parameter_types, expected_return_type);
-    try self.checkBodyWithSelf(declaration.parameters, parameter_types, declaration.body.statements, expected_return_type, null, receiver);
+    try self.checkBodyWithSelf(declaration.parameters, parameter_types, declaration.body.statements, expected_return_type, null, ownSelf(receiver.user.?));
 }
 
 /// A nested function's body, which sees the scopes in force where it is
@@ -3917,7 +4054,13 @@ fn typeOfStructMethodCall(
     }
     try self.method_calls.put(self.arena, call.callee, key);
 
-    const signature = try self.signatureFor(key);
+    const declared = try self.signatureFor(key);
+    if (takesSelf(declared, base)) {
+        try self.reportTakesSelf(member.name_span, member.name, base);
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+    const signature = try self.signatureOn(declared, base);
     try self.checkArguments(call, member.name, try self.parametersOf(
         signature,
         (try self.declarationWithDefaults(key)).parameters,
@@ -4248,6 +4391,16 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
     }
 
     if (Type.fromName(annotation.name)) |builtin| return builtin;
+    if (std.mem.eql(u8, annotation.name, "Self")) {
+        if (self.written_self) |meaning| return meaning;
+        try self.report(
+            annotation.span,
+            "`Self` can only be written in a method's parameter and result types",
+            .{},
+            "`Self` stands for the type a method belongs to, so it has a meaning only there. Write the type's name instead.",
+        );
+        return .invalid;
+    }
     if (self.structs.get(try self.typeKeyOf(annotation.name))) |user_type| return user_type;
     try self.report(
         annotation.span,
@@ -5271,7 +5424,12 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
 fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: Type, name: []const u8) Error!Type {
     const key = (try self.memberKey(owner, name)).?;
     try self.method_calls.put(self.arena, expression, key);
-    const signature = try self.signatureFor(key);
+    const declared = try self.signatureFor(key);
+    if (takesSelf(declared, owner)) {
+        try self.reportTakesSelf(expression.data.member.name_span, name, owner);
+        return .invalid;
+    }
+    const signature = try self.signatureOn(declared, owner);
     return Type.functionOf(self.arena, .{
         .parameters = signature.parameters,
         .parameter_names = signature.parameter_names,
@@ -6184,6 +6342,11 @@ fn typeOfBinary(
 ) Error!Type {
     const left = try self.typeOf(binary.left);
     const right = try self.typeOf(binary.right);
+    if (left.kind == .struct_value and !left.optional) {
+        if (binary.operator.contract()) |contract| {
+            return self.typeOfOperatorCall(expression.span, binary.operator.lexeme(), contract, binary.left, left, right);
+        }
+    }
     return self.arithmetic(expression.span, binary.operator, left, right);
 }
 
@@ -6221,6 +6384,10 @@ fn arithmetic(
         return .invalid;
     }
 
+    if (left.kind == .struct_value and !left.optional) {
+        if (operator.contract()) |contract| return self.typeOfOperatorCall(span, operator.lexeme(), contract, null, left, right);
+    }
+
     // Section 5.3: `/` always produces a Float.
     return Type.arithmeticResult(left, right, operator == .divide) orelse {
         try self.report(
@@ -6229,13 +6396,114 @@ fn arithmetic(
             .{ operator.describe(), left, right },
             // A number that may be absent is the common case here, and it has a
             // different fix from a value that is the wrong kind entirely.
-            if (left.payload().isNumber() or right.payload().isNumber())
+            if ((left.optional and left.payload().isNumber()) or (right.optional and right.payload().isNumber()))
                 "One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first."
+            else if (left.kind == .struct_value and !left.optional)
+                "Only `+`, `-`, `*`, `/`, and ordering can be given a meaning for a user type, through the prelude's traits. Write a method for this instead."
+            else if (right.kind == .struct_value and !right.optional and operator.contract() != null)
+                "An operator on a value of a user type runs that type's method, so the value goes on the left, with one of the same type on the right. For anything else, write a method with a name of its own, such as `scaled_by`."
             else
                 "Arithmetic works on Int and Float.",
         );
         return .invalid;
     };
+}
+
+/// Section 11.5: an operator on a value of a user type runs a method of a
+/// prelude trait the type adopts, with the right operand as its argument, and
+/// gives what the method gives.
+fn typeOfOperatorCall(
+    self: *Checker,
+    span: Source.Span,
+    lexeme: []const u8,
+    contract: Ast.OperatorContract,
+    /// The left operand as written, or null for a compound assignment, whose
+    /// left side is a place.
+    left_node: ?*const Ast.Expression,
+    left: Type,
+    right: Type,
+) Error!Type {
+    const trait_key = try std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{contract.trait});
+    const trait = self.structs.get(trait_key).?.user.?;
+    const user = left.user.?;
+    const result_name = if (std.mem.eql(u8, contract.method, Ast.OperatorContract.ordered.method)) "Int" else user.display_name;
+    if (!user.conformsTo(trait)) {
+        if (left.opaque_self) {
+            try self.reportWithHelp(
+                span,
+                "`{s}` needs a type that adopts `{s}`, but this is {f}",
+                .{ lexeme, contract.trait, left },
+                "`Self` in `{s}` promises only what `{s}` declares. Add `with {s}` to `{s}`.",
+                .{ user.display_name, user.display_name, contract.trait, user.display_name },
+            );
+        } else if (user.trait) {
+            try self.reportWithHelp(
+                span,
+                "`{s}` needs a type that adopts `{s}`, but this is {f}",
+                .{ lexeme, contract.trait, left },
+                "A value seen as `{s}` promises only what `{s}` declares.",
+                .{ user.display_name, user.display_name },
+            );
+        } else if (!std.mem.eql(u8, self.keyOf(contract.trait), trait_key)) {
+            try self.reportWithHelp(
+                span,
+                "`{s}` needs {f} to adopt the prelude's `{s}`",
+                .{ lexeme, left, contract.trait },
+                "This program declares its own `{s}`, which takes the prelude's place wherever the name is written, but operators run only through the prelude's. Rename this program's `{s}`.",
+                .{ contract.trait, contract.trait },
+            );
+        } else {
+            try self.reportWithHelp(
+                span,
+                "`{s}` needs {f} to adopt `{s}`",
+                .{ lexeme, left, contract.trait },
+                "Add `with {s}` to `{s}`, and give it `@override func {s}(other: {s}): {s}`.",
+                .{ contract.trait, user.display_name, contract.method, user.display_name, result_name },
+            );
+        }
+        return .invalid;
+    }
+    const key = try self.memberKey(left, contract.method) orelse return .invalid;
+    // Section 10.2: an operator on `self` calls a method through it, which
+    // construction cannot do for one a subclass could override. Using `self`
+    // before every field is set was already reported where it is written.
+    if (left_node) |node| if (isSelf(node) and try self.reportOverridable(contract.method, span, "call")) return .invalid;
+    const declared = try self.signatureFor(key);
+    // A member of another kind with the method's name is reported with the type.
+    if (self.properties.contains(key) or declared.parameters.len != 1) return .invalid;
+    if (takesSelf(declared, left)) {
+        try self.reportWithHelp(
+            span,
+            "`{s}` cannot be used on values seen as `{s}`",
+            .{ lexeme, user.display_name },
+            "It runs `{s}`, which takes `Self`: both sides have to be the same type, and a value seen through a trait could be any type that adopts it. Use values whose type is known.",
+            .{contract.method},
+        );
+        return .invalid;
+    }
+    const signature = try self.signatureOn(declared, left);
+    const wanted = signature.parameters[0];
+    if (!right.assignableTo(wanted)) {
+        try self.reportWithHelp(
+            span,
+            "`{s}` on {f} needs {f} on the right, but this is {f}",
+            .{ lexeme, left, wanted, right },
+            "`{s}` runs `{s}(other: {f})`, so both sides are the same type. For anything else, write a method with a name of its own, such as `scaled_by`.",
+            .{ lexeme, contract.method, wanted },
+        );
+    }
+    // An operator's operands are left as they are, as they are for numbers.
+    if (!isClass(left) and try self.methodChanges(key)) {
+        try self.reportWithHelp(
+            span,
+            "`{s}` cannot run `{s}`, because `{s}` changes the value it runs on",
+            .{ lexeme, contract.method, contract.method },
+            "An operator leaves its operands as they are. Have `{s}` build and return a new value instead of changing `self`.",
+            .{contract.method},
+        );
+    }
+    if (!self.in_function) try self.checkCaptures(span, key, contract.method);
+    return signature.return_type;
 }
 
 fn typeOfLogical(self: *Checker, logical: Ast.Expression.Logical) Error!Type {
@@ -6283,7 +6551,10 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
         const numeric = left.isNumber() and right.isNumber();
         const unknown = left.kind == .invalid or right.kind == .invalid;
 
-        if (!unknown and (isTrait(left) or isTrait(right))) {
+        if (!unknown and !operator.isEquality() and left.kind == .struct_value and !left.optional) {
+            // Section 11.5: ordering a user type runs its `compare`.
+            _ = try self.typeOfOperatorCall(pair, operator.lexeme(), .ordered, left_node, left, right);
+        } else if (!unknown and (isTrait(left) or isTrait(right)) and !(left.opaque_self and left.same(right))) {
             try self.report(
                 pair,
                 "values seen through a trait cannot be compared yet",
@@ -6581,6 +6852,17 @@ fn typeOfTraitDefaultCall(self: *Checker, expression: *const Ast.Expression, cal
         return .invalid;
     }
     const signature = try self.signatureFor(reference.key);
+    if ((try Type.functionOf(self.arena, signature)).mentionsSelf()) {
+        try self.reportWithHelp(
+            call.callee.span,
+            "`{s}` uses `Self`, so it cannot be called this way yet",
+            .{reference.display},
+            "Call it as a method instead, as in `value.{s}()`.",
+            .{declaration.name},
+        );
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
     const types = try self.arena.alloc(Type, signature.parameters.len + 1);
     const names = try self.arena.alloc([]const u8, signature.parameters.len + 1);
     const defaults = try self.arena.alloc(bool, signature.parameters.len + 1);

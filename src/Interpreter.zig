@@ -2002,7 +2002,11 @@ fn evaluateComparison(
 
         const holds = if (operator.isEquality())
             (try Value.equals(self.gpa, left, right)) == (operator == .equal)
-        else if (left.data == .string and right.data == .string)
+        else if (left.data == .struct_value) ordered: {
+            // Section 11.5: `a < b` is `a.compare(b) < 0`.
+            const result = try self.callOperator(expression.span, Ast.OperatorContract.ordered.method, left, right);
+            break :ordered operator.holds(std.math.order(result.data.int, 0));
+        } else if (left.data == .string and right.data == .string)
             // Section 9.2: by the code points of the normalized forms.
             operator.holds(try unicode.order(self.gpa, left.data.string.bytes, right.data.string.bytes))
         else if (Value.order(left, right)) |ordering|
@@ -2095,6 +2099,9 @@ fn applyBinary(
         const joined = try std.mem.concat(self.gpa, u8, &.{ left.data.string.bytes, right.data.string.bytes });
         return .{ .data = .{ .string = try self.heap.createText(joined) } };
     }
+    if (left.data == .struct_value) {
+        if (operator.contract()) |contract| return self.callOperator(span, contract.method, left, right);
+    }
     if (!left.isNumber() or !right.isNumber()) return self.raiseFmt(
         span,
         "{s} needs numbers, but this is {s} and {s}",
@@ -2113,6 +2120,19 @@ fn applyBinary(
     if (!both_int) return self.evaluateFloatBinary(span, operator, toFloat(left), toFloat(right));
 
     return self.evaluateIntBinary(span, operator, left.data.int, right.data.int);
+}
+
+/// Section 11.5: an operator on a value of a user type runs the method its
+/// trait names, on the left operand and with the right one as the argument.
+/// The checker has made sure the method leaves a struct operand as it is, and
+/// the operands stay the caller's, as they do for numbers.
+fn callOperator(self: *Interpreter, span: Source.Span, name: []const u8, left: Value, right: Value) Error!Value {
+    const object = left.data.struct_value;
+    const method = object.descriptor.methods.?.get(name).?;
+    if (method.depth > object.built) return self.raiseUnbuilt(span, name, method.owner, object.descriptor.display_name);
+    var callable = self.namedCallable(method.key);
+    callable.self_value = Heap.retain(left);
+    return self.invoke(span, callable, &.{Heap.retain(right)});
 }
 
 fn evaluateIntBinary(

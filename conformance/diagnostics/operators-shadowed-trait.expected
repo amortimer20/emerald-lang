@@ -1,0 +1,4 @@
+diagnostics/operators-shadowed-trait.em:17:7: `<` needs Card to adopt the prelude's `Ordered`
+  print(Card(1) < Card(2))
+        ^^^^^^^^^^^^^^^^^
+This program declares its own `Ordered`, which takes the prelude's place wherever the name is written, but operators run only through the prelude's. Rename this program's `Ordered`.

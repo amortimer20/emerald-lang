@@ -1966,8 +1966,7 @@ replacing a trait's method always does, in a struct as in a class. A conflict be
 is reported where both are first brought together, not again in every subclass or trait
 built on top. A trait's private helper is its own, and never conflicts with a type's private
 member of the same name. `Trait.method(value)` may run a default that changes the value only
-on an object for now. `is` tests for a trait and narrows to it, and `Self` (11.4) arrives with
-operators (11.5).
+on an object for now. `is` tests for a trait and narrows to it.
 
 ### 11.3 Associated types and generics boundary
 
@@ -1989,6 +1988,19 @@ trait Addable {
 
 It does not introduce F-bounded polymorphism or an unrestricted metatype system. Uses
 outside trait and type-member contracts require a demonstrated need.
+
+`Self` is written only in the parameter and result types of methods and type-level
+functions, in any shape such as `[Self]` or `Self?`; a field, a property, a local, or a
+top-level function rejects it. In a struct or class it is that type. In a trait it is
+whichever type adopts the trait: an implementation writes that type or `Self`, and inside
+the trait's own defaults `self` is a `Self`, so a default may pass `self` to a member
+taking `Self`, return it, or compare two `Self` values with `==`. On a class, a trait's
+`Self` is the first class along the base chain to adopt the trait, since a subclass
+inherits its methods unchanged; an abstract class adopting a trait therefore has its
+subclasses take the abstract class. Through a value seen as a trait, a `Self` result is the
+trait, and a member taking `Self` cannot be called, because the value could be of any
+adopting type. `Trait.method(value)` cannot yet run a default whose signature mentions
+`Self`.
 
 ### 11.5 Operator overloading
 
@@ -2014,6 +2026,17 @@ named method such as `scaled_by`. This is a consequence of deferring overloading
 is the intended initial limit, not an oversight. Built-in `Int`-to-`Float` widening is
 unaffected because it is language arithmetic rather than a user contract. `Ordered` does not
 redefine equality.
+
+The contracts are prelude traits, one per operator so a type takes only the operators that
+mean something for it: `Addable.add`, `Subtractable.subtract`, `Multipliable.multiply`,
+`Divisible.divide`, and `Ordered.compare`, each taking `other: Self`. Adoption is explicit,
+as for any trait (11.2): a method named `add` alone does not make `+` work. `/` gives what
+`divide` gives, not always a `Float`. `%`, `//`, `**`, and unary `-` are not overloadable.
+The left operand's type decides, and it may not be optional; `2 * vector` is rejected. Every
+ordering comparison in a chain runs `compare`. An operator never changes its operands, so a
+struct's method that changes `self` cannot back one; on an object it follows the object's
+class, like any call. An operator on `self` is a call through `self` under 10.2's
+construction rules, and `a += b` is `a = a + b`.
 
 ## 12. Enums and branching
 
@@ -2282,6 +2305,11 @@ Initial bare functions include:
 ```text
 input, input_maybe, print, write, random, exit
 ```
+
+The prelude also declares section 11.5's operator traits: `Addable`, `Subtractable`,
+`Multipliable`, `Divisible`, and `Ordered`. Like the functions, they are visible bare in
+every file, and a program's own declaration of the same name takes the name's place in the
+files that see it; operators still run through the prelude's traits.
 
 `input(prompt)` writes the optional prompt, reads one line, removes its line ending while
 preserving other whitespace, and returns `String`. Pressing Enter returns `""`; end of
@@ -2824,7 +2852,7 @@ These newer decisions supersede the existing C# implementation and old design do
 | Type declaration bodies | Braced, plus a block-free to-EOF form | Braced only |
 | `Int` width | Unstated | 64-bit signed, checked overflow |
 | String normalization | Unstated | At comparison; construction preserves bytes |
-| `Self` | Deferred | Narrowly supported in trait/type contracts |
+| `Self` | Deferred | Narrowly supported in method signatures of traits and types |
 | User `Iterable` | Implemented | Deferred and retained on the roadmap |
 | `case`/`when` | Deferred | Accepted with a controlled initial matching model |
 | `finally` | Deliberately absent | Accepted |
@@ -2961,6 +2989,10 @@ recorded in their normative sections:
 | Class display (10.1, 15.2) | Field by field like a struct, with `Name(...)` for an object already being displayed | Showing the fields is what a beginner needs while learning; an address or bare type name hides exactly what changed. Objects form cycles, which a struct cannot, and the marker ends one without losing the rest of the value. |
 | Changes through a trait's value (4.3, 11.2) | Treated as a value: a change needs a `var`, and a requirement changes when any struct supplying it does | Whether a trait's value is shared is not known statically. Treating it as a value is the rule that is always safe, and it loses nothing for a class, which is changed in place either way. |
 | `@override` for traits (11.2) | Required on a method supplying or replacing a trait's, in structs too; never on a property | 11.2 settles it for methods and properties. A struct adopting a trait is the one case where a struct's method replaces something, so the annotation means the same thing there. |
+| What `Self` is on a class (11.4) | The first class along the base chain to adopt the trait | A subclass inherits its base class's methods with their types unchanged, so taking `Self` as the subclass would make every inherited implementation stop conforming. Swift needs `final` or `Self`-returning initializers to square this; fixing `Self` where the trait is adopted keeps it sound with nothing new to learn. |
+| `Self` through a value seen as a trait (11.4) | A `Self` result is the trait; a member taking `Self` cannot be called | The value could be of any adopting type, so nothing can be checked to match its `Self`. Inside the trait's own defaults `self` is an opaque `Self`, which is what makes defaults that combine values of the same type possible without generics. |
+| Operator traits (11.5) | Prelude traits `Addable`, `Subtractable`, `Multipliable`, `Divisible`, and `Ordered`, one per operator, written in Emerald in `src/prelude.em` | The spec names `Ordered.compare` and lowers `a + b` to `a.add(b)`. One trait per operator lets a vector add without multiplying, and names like `Addable` read as what the type can do. Declaring them in Emerald puts them through the same checks as user traits. A program's own declaration of one of these names takes its place, like a prelude function, so adding a prelude trait never breaks a program. |
+| Operators and change (4.3, 11.5) | A struct method that changes `self` cannot back an operator | `a + b` reads as a value, and every other operator leaves its operands alone; a change to the left operand's copy would be silently lost. |
 | Where trait conflicts are reported (11.2) | At the declaration that first brings the conflicting traits together | Reporting at every subclass and every trait built on top would repeat one mistake many times, far from where it can be fixed. |
 | Where `is` binds (4.4) | With the comparisons, without chaining; `is not` is rejected with a correction | Like Kotlin and Swift, a test reads as one condition that `not`, `and`, and `or` combine. A second spelling for the negated test would be the kind of duplicate 5.2 declines for `!`. |
 | Narrowing inside `and` and `or` (4.4, 4.5) | The right side is checked knowing how the left side went | It runs only then, so the proof holds, and without it `animal is Dog and animal.tricks > 0` and `x != nothing and x > 3` needed a nested `if`. |
