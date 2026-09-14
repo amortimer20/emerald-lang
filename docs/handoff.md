@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-14. Prepared after the REPL (slice 15).
+Updated: 2026-09-14. Prepared after the LSP's first slice (slice 15).
 
 ## Current milestone
 
@@ -294,6 +294,11 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   entry point. Unlike every other stage, it is not `emerald.zig`'s: it calls the existing,
   unmodified `emerald.run` directly rather than adding anything to the shared pipeline. See
   "REPL decisions worth knowing" below.
+- `src/Lsp.zig` is section 18.5's `emerald lsp` (its first slice — live diagnostics,
+  document symbols, format on save; see "LSP decisions worth knowing" below for what is
+  deliberately not built yet and why), and `main.zig`'s `executeLsp` the CLI entry point.
+  Like `Repl.zig`, it calls `emerald.check`/`Lexer`/`Parser`/`Formatter` directly rather
+  than adding anything to the shared pipeline.
 
 Section 20's slice 15, part 1 (the canonical formatter) is complete, and its adversarial
 review (structs, classes, traits, enums, `case`, `try`/`catch`, tuples, destructuring,
@@ -316,7 +321,75 @@ values across entries, prints a bare expression's value, enforces the ordinary b
 rules (redeclaration and `const` reassignment rejected, `var` reassignment allowed) with
 no REPL-specific logic at all, and clears with `:reset`. See "REPL decisions worth
 knowing" below for how, and for one subtle, genuinely hard-won bug found while building
-it. The LSP remains queued next, per the roadmap.
+it.
+
+`src/Lsp.zig` is section 18.5's `emerald lsp`, its first slice: JSON-RPC over stdio,
+live diagnostics, document symbols, and format on save. Three of the section's seven
+features — hover, go to definition, and find references — need infrastructure that
+does not exist yet (an offset→AST-node lookup, and a general per-expression type map
+where today only a few narrow expression kinds are recorded), safe rename needs
+find-references first, and completion needs the parser to recover from a broken
+construct by keeping a partial node rather than discarding the whole enclosing
+statement, as it does today. All five are deliberately not advertised in this slice's
+`initialize` capabilities rather than answered approximately. See "LSP decisions worth
+knowing" below.
+
+### LSP decisions worth knowing
+
+- **`std.json.Stringify.write`'s reflection serializes a plain Zig struct or slice
+  literal directly, so outgoing messages never need to be built as a `std.json.Value`
+  tree by hand** — `.{ .jsonrpc = "2.0", .id = id, .result = .{ .capabilities = .{ ... } } }`
+  passed straight to a small `writeMessage` helper is the entire response. The one place
+  a `std.json.Value` is still used directly is passing a request's `id` back unchanged:
+  since it may be a JSON number or a JSON string and arrives as a dynamic `Value`,
+  embedding that same value in the outgoing struct literal (`Value` implements its own
+  `jsonStringify`) reproduces whichever it was without the server ever needing to care
+  which.
+- **Incoming messages stay as the dynamic `std.json.Value` tree, read by hand
+  (`.object.get("method").?.string`), rather than a fixed struct per method** — JSON-RPC's
+  shape varies by `.method`, and inspecting fields on demand fits that better than one
+  struct big enough for every possible message.
+- **A malformed JSON body is recoverable; a malformed header is not.** `Content-Length`
+  framing means a body that fails to parse as JSON has still been read in full — the
+  stream is exactly where the next message begins, so `Lsp.run`'s loop treats
+  `error.InvalidJson` as "skip this one message, keep serving." A problem with the
+  headers themselves (no usable `Content-Length` at all) leaves the reader's position no
+  longer trustworthy, so that is treated as fatal instead, ending the session honestly
+  rather than guessing at resynchronization.
+- **LSP positions (zero-based `{line, character}` in UTF-16 code units) needed one new,
+  small, allocation-free conversion** (`lspPosition`): `Source.location` gives a
+  one-based line and a Unicode-*scalar* column, neither of which matches. Walking the
+  target line's text with the same `unicode.decode` the rest of the compiler already
+  uses, and adding 1 per scalar or 2 for anything above `0xFFFF` (a surrogate pair, via
+  the pinned stdlib's own `std.unicode.utf16CodepointSequenceLength`), was enough —
+  verified against a plain ASCII case, an accented BMP scalar, and an actual astral
+  emoji end to end (a real `documentSymbol`/diagnostic response reported the exact
+  expected UTF-16 column in each case, surrogate pair included).
+- **Document symbols reuse the parser's output directly, no resolver or checker
+  involved** — deliberately, since an outline should still work on a file with type
+  errors, and every declaration already carries the spans needed
+  (`name_span`/`Statement.span`). The member walk mirrors `Formatter.Printer`'s member
+  enumeration in spirit (the same six kinds: fields, a constructor, methods, properties,
+  type-functions, type-fields) but in fixed group order rather than re-sorting by source
+  position, since an outline's own conventional grouping does not need to match the
+  formatter's "print exactly as written" requirement.
+- **Checked.** Every handler was exercised end to end by piping hand-framed JSON-RPC
+  messages into `emerald lsp` and inspecting the raw framed responses (the `initialize`
+  handshake; a valid and a broken document's diagnostics; `didChange` correctly
+  re-checking and clearing a diagnostic; `documentSymbol` against a struct with a field,
+  a constructor, and a method, an enum with a value, and a trait's property requirement;
+  `formatting` on both parseable and unparseable text; a string-typed request `id`; an
+  unsupported method correctly answered "method not found"; a query against a URI that
+  was never opened returning an empty result rather than crashing) — the same spirit as
+  this session's own piped-stdin verification of the REPL, since a full editor round-trip
+  is out of scope for this slice. `Lsp.zig`'s own unit tests (wired into `zig build test`
+  as `emerald-lsp`, `Repl.zig`'s `repl_module` pattern) cover the frame round-trip, a
+  clean end-of-input, both UTF-16 conversion cases, and the document-symbol walk.
+- **Deferred**, matching this slice's scope: hover, go to definition, find references,
+  safe rename, and completion (see the milestone paragraph above for what each needs);
+  `$/cancelRequest` and genuinely concurrent request handling (one message is processed
+  at a time, synchronously); incremental (range-based) `didChange` sync, full-document
+  sync only; a real editor/VS Code extension round-trip.
 
 ### REPL decisions worth knowing
 
@@ -1743,8 +1816,17 @@ call statement, side by side; a multi-line `{`/`(`/`[`/block-comment/triple-quot
 entry; a genuine syntax error not affecting later entries; an uncaught runtime error
 followed by the session continuing normally; two sequential `input()` calls across
 separate entries, replaying correctly on a later turn; `:reset`; a clean Ctrl-D exit); see
-"REPL decisions worth knowing" above. The LSP is next, per the roadmap, whenever the user
-chooses to start it; nothing further is queued specifically for the formatter or the REPL.
+"REPL decisions worth knowing" above.
+
+The LSP's first slice is also complete: `emerald lsp` serves live diagnostics, document
+symbols, and format on save over JSON-RPC/stdio, manually verified end to end by piping
+hand-framed messages through it (see "LSP decisions worth knowing" above for the full
+list of what was checked). Hover, go to definition, find references, safe rename, and
+completion remain for a second LSP slice, each needing real new infrastructure this one
+deliberately did not build — see the same section for exactly what each needs. A VS Code
+extension (a separate, thin client talking this same protocol, per the earlier
+discussion on repository conventions) has not been started. Nothing further is queued
+specifically for the formatter or the REPL.
 
 Slice 16 is queued as one test-infrastructure and hardening pass: CI for Debug and
 ReleaseSafe with the pinned Zig version, allocator-failure testing, lexer/parser fuzzing,
@@ -1759,6 +1841,20 @@ off. Deferred language features in section 21 remain deferred.
 
 ## Validation and blockers
 
+- The LSP's first slice (slice 15) was checked in Debug and ReleaseSafe: `zig build test`
+  passes both, including `Lsp.zig`'s own unit tests (wired in as `emerald-lsp`, following
+  `Repl.zig`'s `repl_module` pattern). Every handler was also exercised by piping
+  hand-framed JSON-RPC messages into `emerald lsp` directly and inspecting the raw framed
+  responses: the `initialize` handshake and capabilities; live diagnostics on both a valid
+  and a broken document, and `didChange` correctly re-checking and clearing a diagnostic
+  once the text was fixed; document symbols against a struct (field, constructor,
+  method), an enum (a value), and a trait (a property requirement); formatting on both
+  parseable text and text the parser rejects (an empty edit list, per 18.3's refusal
+  rule); a string-typed request id round-tripping unchanged; an unsupported method
+  correctly answered "method not found" rather than crashing or hanging; a query against
+  a URI that was never opened returning an empty result; and the UTF-16 position
+  conversion against a plain ASCII case, an accented BMP scalar, and an actual astral
+  emoji, each producing the exact expected column, surrogate pair included.
 - The REPL (slice 15) was checked in Debug and ReleaseSafe: `zig build test` passes both,
   including `Repl.zig`'s own unit tests for the completeness heuristic (wired in as
   `repl_module`/`emerald-repl` in `build.zig`, since module-based test discovery does not

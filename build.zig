@@ -70,6 +70,19 @@ pub fn build(b: *std.Build) void {
     });
     const run_repl_tests = b.addRunArtifact(repl_tests);
 
+    // `Lsp.zig` is `main.zig`'s sibling too, for the same reason `Repl.zig` is.
+    const lsp_module = b.createModule(.{
+        .root_source_file = b.path("src/Lsp.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "emerald", .module = emerald_module }},
+    });
+    const lsp_tests = b.addTest(.{
+        .name = "emerald-lsp",
+        .root_module = lsp_module,
+    });
+    const run_lsp_tests = b.addRunArtifact(lsp_tests);
+
     // `zig build unicode-conformance -- <database directory>` checks all of
     // Unicode's NormalizationTest.txt, which is too large to commit. Part of
     // regenerating the Unicode tables; see tools/unicode/generate.zig.
@@ -90,6 +103,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_conformance.step);
     test_step.dependOn(&run_repl_tests.step);
+    test_step.dependOn(&run_lsp_tests.step);
     addCliTests(b, exe, test_step);
 }
 
