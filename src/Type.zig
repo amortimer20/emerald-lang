@@ -512,7 +512,7 @@ pub const StringMethod = struct {
     maybe: bool = false,
 
     pub const Operand = enum { string, int, float };
-    pub const Result = enum { bool, int, float, string, strings, string_parts };
+    pub const Result = enum { bool, int, float, string, strings, ints, string_parts };
 };
 
 pub const string_methods = std.StaticStringMap(StringMethod).initComptime(.{
@@ -541,6 +541,8 @@ pub const string_methods = std.StaticStringMap(StringMethod).initComptime(.{
     .{ "split", StringMethod{ .parameters = &.{.string}, .result = .strings } },
     .{ "lines", StringMethod{ .parameters = &.{}, .result = .strings } },
     .{ "chars", StringMethod{ .parameters = &.{}, .result = .strings } },
+    .{ "code_points", StringMethod{ .parameters = &.{}, .result = .ints } },
+    .{ "bytes", StringMethod{ .parameters = &.{}, .result = .ints } },
     .{ "partition", StringMethod{ .parameters = &.{.string}, .result = .string_parts } },
     .{ "index_of", StringMethod{ .parameters = &.{.string}, .result = .int, .maybe = true } },
     .{ "to_int", StringMethod{ .parameters = &.{}, .result = .int } },

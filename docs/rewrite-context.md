@@ -1549,10 +1549,13 @@ accepts digits with an optional fraction and exponent, and also `Infinity`, `-In
 and `NaN`, so every displayed `Float` parses back. `to_string()` gives the display of an
 `Int`, `Float`, or `Bool`.
 `pad_start` and `pad_end` describe logical placement more clearly than left and right in a
-Unicode language. `words`, `title_case`, and case-insensitive Unicode comparison remain
-deferred until their locale and boundary behavior can be designed correctly. `code_points`,
-`bytes`, `letter?`, `digit?`, and slicing strings with ranges are also deferred: their
-advanced Unicode and range semantics need a dedicated design pass.
+Unicode language. `code_points()` returns the Unicode scalar values of the String's exact
+stored spelling as `[Int]`; a decomposed character therefore has more than one entry.
+`bytes()` returns its exact UTF-8 bytes as `[Int]`, each from 0 through 255. These are
+advanced conversions, while `chars()` remains the grapheme-aware beginner API. `words`,
+`title_case`, and case-insensitive Unicode comparison remain deferred until their locale and
+boundary behavior can be designed correctly. `letter?`, `digit?`, and slicing strings with
+ranges also remain deferred.
 
 String equality uses canonical Unicode normalization, remains case-sensitive, and feeds
 the same normalized equality into dictionary keys and sets. Ordinary string ordering is

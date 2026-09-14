@@ -10,7 +10,7 @@ diagnostics/string-editing.em:4:12: `partition` takes 1 argument, but this call 
   print("hi".partition())
              ^^^^^^^^^
 Match the number of arguments to what the method needs.
-diagnostics/string-editing.em:5:12: String has no method `code_points`
-  print("hi".code_points())
+diagnostics/string-editing.em:5:12: `code_points` takes 0 arguments, but this call passes 1
+  print("hi".code_points(1))
              ^^^^^^^^^^^
-A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `insert_at`, `substring`, `remove_prefix`, `remove_suffix`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `split`, `partition`, `lines`, `chars`, `to_int`, and `to_float`.
+Match the number of arguments to what the method needs.

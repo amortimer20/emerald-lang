@@ -156,6 +156,12 @@ result is rejected rather than treated as empty. Conformance covers order, callb
 empty input, result type, missing blocks, and that optional boundary. Dictionary and Set forms
 remain deferred.
 
+Part 12 adds String `code_points()` and `bytes()`. Both return `[Int]`: the former gives the
+Unicode scalar values of the stored spelling, while the latter gives its exact UTF-8 octets.
+They deliberately expose advanced representation details without introducing a premature
+`Byte` type; `chars()` remains the grapheme-aware operation for ordinary text. Conformance
+covers an accent written with a combining mark and an emoji, plus the two UTF-8 bytes of `é`.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
@@ -1501,7 +1507,8 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
 String, List value-transform, filtering, traversal, predicate-question, while-portion,
-endpoint-property, and flat-map parts are complete. The next standard-library part should
+endpoint-property, flat-map, and String-representation parts are complete. The next
+standard-library part should
 investigate List `filter_map`, applying the existing optional-result rule carefully; `Iterable`
 stays deferred. The advanced String operations listed below are deliberately deferred too,
 rather than being incomplete work in this slice.
@@ -1604,7 +1611,7 @@ off. Deferred language features in section 21 remain deferred.
 - Section 6.2's `if ... then ... else` expression. `unless` is no longer part of the language
   and is not a keyword.
 - From section 8: the rest of section 8.6's rich vocabulary beyond `each`, `map`, `find`,
-  and `find_index`, slicing with ranges, and `type_name`.
+  and `find_index`, and slicing with ranges.
 - Range values: ranges and counts stored in names, `random(1..6)`, and the block forms of
   `up_to`, `down_to`, and `times` are rejected ("a range can only be looped over so far")
   until range values land. Blocks now exist, so only the range value itself is missing. In a
@@ -1612,9 +1619,9 @@ off. Deferred language features in section 21 remain deferred.
 - Section 4.5's optional chaining, `?.`. It exists to shorten chains through objects, and
   there are no object fields or properties to chain through yet; the parser reports it and
   points at narrowing and `.or(...)`.
-- From section 9: `letter?` and `digit?` (general category tables), `code_points` and
-  `bytes`, string slicing with ranges, and `type_name`. `words`, `title_case`, and
-  case-insensitive Unicode comparison also need a dedicated locale and boundary design pass.
+- From section 9: `letter?` and `digit?` (general category tables) and string slicing with
+  ranges. `words`, `title_case`, and case-insensitive Unicode comparison also need a
+  dedicated locale and boundary design pass.
 
 ### Review findings still open
 

@@ -6592,6 +6592,7 @@ fn typeOfStringMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Exp
         .float => .float,
         .string => .string,
         .strings => try Type.listOf(self.arena, .string),
+        .ints => try Type.listOf(self.arena, .int),
         .string_parts => try Type.tupleOf(self.arena, &.{ .string, .string, .string }),
     };
     return if (method.maybe) result.optionalOf() else result;
@@ -6736,7 +6737,7 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
             .list => "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, `clear`, `take`, `drop`, `reverse`, and `unique`.",
             .dictionary => "A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.",
             .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
-            .string => "A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `insert_at`, `substring`, `remove_prefix`, `remove_suffix`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `split`, `partition`, `lines`, `chars`, `to_int`, and `to_float`.",
+            .string => "A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `insert_at`, `substring`, `remove_prefix`, `remove_suffix`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `split`, `partition`, `lines`, `chars`, `code_points`, `bytes`, `to_int`, and `to_float`.",
             .int => "An Int has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `to_float`, and `to_string`.",
             .float => "A Float has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `floor`, `ceil`, `round`, `round_to`, `truncate`, `finite?`, `infinite?`, `nan?`, `to_int`, and `to_string`.",
             else => "Check the spelling, or what kind of value this is.",

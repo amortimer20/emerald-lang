@@ -4636,6 +4636,8 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
         partition,
         lines,
         chars,
+        code_points,
+        bytes,
         index_of,
         to_int,
         to_int_or,
@@ -4743,6 +4745,10 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
             for (pieces) |piece| list.items.appendAssumeCapacity(try self.heap.copyText(piece));
             break :blk result;
         },
+        // These deliberately expose the exact stored representation rather
+        // than graphemes. `chars()` remains the beginner-facing operation.
+        .code_points => self.stringCodePoints(bytes),
+        .bytes => self.stringBytes(bytes),
         // Section 9.2: the answer counts characters, so it indexes directly.
         .index_of => blk: {
             const found = try strings.indexOf(gpa, bytes, arguments[0].data.string.bytes);
@@ -4777,6 +4783,34 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
             break :blk if (parsed == .value) Value.initFloat(parsed.value) else Value.nothing;
         },
     };
+}
+
+/// Section 9.1's advanced conversions. A String is always valid UTF-8, so
+/// each call to `unicode.decode` is safe. Code points retain the original
+/// spelling: a decomposed character therefore gives its separate scalars.
+fn stringCodePoints(self: *Interpreter, bytes: []const u8) Error!Value {
+    const list = try self.heap.createList(.int, bytes.len);
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+
+    var index: usize = 0;
+    while (index < bytes.len) {
+        const point, const length = unicode.decode(bytes, index);
+        list.items.appendAssumeCapacity(.initInt(point));
+        index += length;
+    }
+    return result;
+}
+
+/// UTF-8 bytes are represented as non-negative Ints until Emerald gains a
+/// purpose-built binary-data type. This keeps `bytes()` honest without making
+/// beginners learn an implementation-only `Byte` type.
+fn stringBytes(self: *Interpreter, bytes: []const u8) Error!Value {
+    const list = try self.heap.createList(.int, bytes.len);
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+    for (bytes) |byte| list.items.appendAssumeCapacity(.initInt(byte));
+    return result;
 }
 
 fn ownedText(self: *Interpreter, bytes: []u8) Error!Value {
