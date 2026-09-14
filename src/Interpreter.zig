@@ -177,6 +177,10 @@ super_members: *const Checker.MethodCalls,
 /// need.
 type_tests: *const Checker.TypeTests,
 type_names: *const Checker.LiteralTypes,
+/// Section 11.2's `Trait.method(value)` calls, by expression.
+trait_calls: *const Checker.MethodCalls,
+/// Every trait, by key, with the keys of the traits it builds on.
+trait_infos: std.StringHashMapUnmanaged(TraitInfo) = .empty,
 /// Every method that overrides another, mapped to the declaration it
 /// ultimately replaces, whose parameter defaults it uses (7.3).
 overrides: std.StringHashMapUnmanaged([]const u8) = .empty,
@@ -207,6 +211,7 @@ pub fn run(
     super_members: *const Checker.MethodCalls,
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
+    trait_calls: *const Checker.MethodCalls,
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
@@ -239,6 +244,7 @@ pub fn run(
         .super_members = super_members,
         .type_tests = type_tests,
         .type_names = type_names,
+        .trait_calls = trait_calls,
         .literal_types = literal_types,
         .heap = .init(gpa),
         .stack = stack,
@@ -273,6 +279,23 @@ pub fn run(
                         try interpreter.functions.put(interpreter.arena, setter.?, declared);
                     }
                     runtime.* = .{ .name = property.name, .getter = getter, .setter = setter };
+                }
+                const adopted = try interpreter.arena.alloc([]const u8, checked.user.?.traits.len);
+                for (checked.user.?.traits, adopted) |trait, *trait_key| trait_key.* = trait.name;
+                // Section 11.1: a trait is never built, so it has no
+                // descriptor; its defaults are functions like any method.
+                if (declaration.trait) {
+                    for (declaration.methods) |method| {
+                        const method_key = try Resolver.methodKey(interpreter.arena, type_key, method.name);
+                        const hoisted = try interpreter.functions.getOrPut(interpreter.arena, method_key);
+                        if (!hoisted.found_existing) hoisted.value_ptr.* = method;
+                    }
+                    try interpreter.trait_infos.put(interpreter.arena, type_key, .{
+                        .declaration = declaration,
+                        .traits = adopted,
+                        .display_name = declaration.name,
+                    });
+                    continue;
                 }
                 const descriptor = try interpreter.arena.create(Value.StructType);
                 var depth: u32 = 0;
@@ -335,6 +358,7 @@ pub fn run(
                         .has_default = has_default,
                         .any_default = any_default,
                         .base = if (checked.user.?.base) |base| base.name else null,
+                        .traits = adopted,
                         .offset = checked.user.?.inherited,
                         .defaults_frame = try std.fmt.allocPrint(
                             interpreter.arena,
@@ -416,15 +440,17 @@ fn inherit(
     try finished.put(self.arena, key, {});
     const info = self.struct_infos.get(key).?;
     const descriptor: *Value.StructType = @constCast(self.structs.get(key).?);
-    if (info.base == null and !bases.contains(key)) return;
+    if (info.base == null and !bases.contains(key) and info.traits.len == 0) return;
 
     const methods = try self.arena.create(Value.StructType.Methods);
     methods.* = .empty;
     var properties: std.ArrayList(Value.StructType.Property) = .empty;
+    var traits: std.ArrayList([]const u8) = .empty;
     if (info.base) |base| {
         try self.inherit(base, bases, finished);
         const inherited = self.structs.get(base).?;
         descriptor.base = inherited;
+        try traits.appendSlice(self.arena, inherited.traits);
         try properties.appendSlice(self.arena, inherited.properties);
         var entries = inherited.methods.?.iterator();
         while (entries.next()) |entry| try methods.put(self.arena, entry.key_ptr.*, entry.value_ptr.*);
@@ -437,17 +463,19 @@ fn inherit(
         }
         try properties.append(self.arena, property);
     }
+    const own_traits_start = traits.items.len;
+    for (info.traits) |trait| try self.collectTraitKeys(trait, &traits);
     for (info.declaration.methods) |method| {
         const method_key = try Resolver.methodKey(self.arena, key, method.name);
         if (method.override_span != null) {
-            if (info.base) |base| {
-                if (self.structs.get(base).?.methods.?.get(method.name)) |replaced| {
-                    const original = self.overrides.get(replaced.key) orelse replaced.key;
-                    try self.overrides.put(self.arena, method_key, original);
-                } else if (try self.abstractKey(base, method.name)) |abstract| {
-                    try self.overrides.put(self.arena, method_key, self.overrides.get(abstract) orelse abstract);
+            const replaced: ?[]const u8 = blk: {
+                if (info.base) |base| {
+                    if (self.structs.get(base).?.methods.?.get(method.name)) |found| break :blk found.key;
+                    if (try self.abstractKey(base, method.name)) |abstract| break :blk abstract;
                 }
-            }
+                break :blk try self.traitMethodKey(traits.items, method.name);
+            };
+            if (replaced) |original| try self.overrides.put(self.arena, method_key, self.overrides.get(original) orelse original);
         }
         if (method.abstract_span != null) continue;
         try methods.put(self.arena, method.name, .{
@@ -456,8 +484,51 @@ fn inherit(
             .owner = descriptor.display_name,
         });
     }
+    // Section 11.2: a trait's defaults fill in only what no class method,
+    // inherited or not, and no field or property already supplies.
+    for (traits.items[own_traits_start..]) |trait| {
+        const trait_info = self.trait_infos.get(trait).?;
+        for (trait_info.declaration.methods) |method| {
+            if (method.abstract_span != null or Resolver.isPrivate(method.name) or methods.contains(method.name)) continue;
+            try methods.put(self.arena, method.name, .{
+                .key = try Resolver.methodKey(self.arena, trait, method.name),
+                .depth = descriptor.depth,
+                .owner = trait_info.display_name,
+            });
+        }
+        property: for (trait_info.declaration.properties) |property| {
+            if (property.getter.abstract_span != null or Resolver.isPrivate(property.name)) continue;
+            for (descriptor.fields) |field| if (std.mem.eql(u8, field.name, property.name)) continue :property;
+            for (properties.items) |existing| if (std.mem.eql(u8, existing.name, property.name)) continue :property;
+            try properties.append(self.arena, .{
+                .name = property.name,
+                .getter = try Resolver.methodKey(self.arena, trait, property.name),
+                .setter = if (property.setter != null) try Resolver.setterKey(self.arena, trait, property.name) else null,
+                .depth = descriptor.depth,
+                .owner = trait_info.display_name,
+            });
+        }
+    }
     descriptor.properties = properties.items;
     descriptor.methods = methods;
+    descriptor.traits = traits.items;
+}
+
+fn collectTraitKeys(self: *Interpreter, trait: []const u8, found: *std.ArrayList([]const u8)) RunError!void {
+    for (found.items) |existing| if (std.mem.eql(u8, existing, trait)) return;
+    try found.append(self.arena, trait);
+    for (self.trait_infos.get(trait).?.traits) |next| try self.collectTraitKeys(next, found);
+}
+
+/// The key of the method `name` that one of `traits` declares, with or
+/// without a body.
+fn traitMethodKey(self: *Interpreter, traits: []const []const u8, name: []const u8) RunError!?[]const u8 {
+    for (traits) |trait| {
+        for (self.trait_infos.get(trait).?.declaration.methods) |method| {
+            if (std.mem.eql(u8, method.name, name)) return try Resolver.methodKey(self.arena, trait, name);
+        }
+    }
+    return null;
 }
 
 /// The key of the abstract method `name` that a class or one of its base
@@ -2169,6 +2240,7 @@ fn evaluateCall(
 ) Error!Value {
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
     // resolver decided which, and recorded it.
+    if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
         try self.reach(key, call.callee.span);
         if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
@@ -2272,6 +2344,28 @@ fn constructStruct(
     // A constructor's own result is always `nothing`; what it built is `self`.
     self.heap.release(result);
     return built;
+}
+
+/// Section 11.2's `Trait.method(value, ...)`: the default, run with the first
+/// argument as `self`.
+fn callTraitDefault(self: *Interpreter, call_span: Source.Span, key: []const u8, call: Ast.Expression.Call) Error!Value {
+    var callable = self.namedCallable(key);
+    const names = try self.gpa.alloc([]const u8, callable.written.len + 1);
+    defer self.gpa.free(names);
+    const defaults = try self.gpa.alloc(bool, callable.written.len + 1);
+    defer self.gpa.free(defaults);
+    names[0] = "self";
+    defaults[0] = false;
+    for (callable.written, names[1..], defaults[1..]) |parameter, *name, *defaulted| {
+        name.* = parameter.name;
+        defaulted.* = parameter.default != null;
+    }
+    const bound = try self.evaluateBound(call, names, defaults);
+    defer self.gpa.free(bound.values);
+    defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+    callable.self_value = bound.values[0];
+    if (bound.omitted) |omitted| callable.omitted = omitted[1..];
+    return self.invoke(call_span, callable, bound.values[1..]);
 }
 
 /// Builds the part of an object of a subclass that the class `key` declares,
@@ -2404,6 +2498,8 @@ fn dispatch(self: *Interpreter, span: Source.Span, receiver: Value, key: []const
     const object = receiver.data.struct_value;
     const methods = object.descriptor.methods orelse return key;
     const name = key[std.mem.lastIndexOf(u8, key, Resolver.method_separator).? + Resolver.method_separator.len ..];
+    // A private method is never replaced, and two traits may each have one.
+    if (Resolver.isPrivate(name)) return key;
     const method = methods.get(name) orelse return key;
     if (method.depth > object.built) return self.raiseUnbuilt(span, name, method.owner, object.descriptor.display_name);
     return method.key;
@@ -2626,10 +2722,19 @@ const StructInfo = struct {
     any_default: bool,
     /// Section 10.7's base class, by key.
     base: ?[]const u8 = null,
+    /// Section 11.2's `with` list, by key.
+    traits: []const []const u8 = &.{},
     /// Where the type's own fields start among all of a value's fields.
     offset: usize = 0,
     /// What a stack trace calls the frame field defaults run in.
     defaults_frame: []const u8,
+};
+
+/// A trait (11.1), which has no descriptor of its own.
+const TraitInfo = struct {
+    declaration: Ast.StructDeclaration,
+    traits: []const []const u8,
+    display_name: []const u8,
 };
 
 /// A custom constructor, with what a stack trace calls it worked out once
@@ -3411,6 +3516,16 @@ fn callStructMethod(
     defer self.freeSteps(path.steps);
     const temporary = try self.temporaryRoot(path.root);
     defer if (temporary) |value| self.heap.release(value);
+    // Section 11.2: through a trait, the version the value's own type has.
+    // Only a trait's method can change a value and have another version.
+    if (self.trait_infos.contains(key[0..std.mem.lastIndexOf(u8, key, Resolver.method_separator).?])) {
+        var root = if (temporary) |value| Heap.retain(value) else Heap.retain((try self.placeBinding(self.rootName(path.root), path.root.span)).value.?);
+        defer self.heap.release(root);
+        const receiver = try self.elementValue(path.root.span, &root, path.steps);
+        defer self.heap.release(receiver);
+        const version = try self.dispatch(expression.span, receiver, key);
+        if (version.ptr != key.ptr) callable = self.namedCallable(version);
+    }
     const bound = try self.evaluateBoundParameters(call, callable.written);
     defer self.gpa.free(bound.values);
     defer if (bound.omitted) |omitted| self.gpa.free(omitted);

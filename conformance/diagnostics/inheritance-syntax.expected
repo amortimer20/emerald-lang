@@ -33,7 +33,7 @@ It belongs to its own type and is never inherited. Remove the annotation.
 diagnostics/inheritance-syntax.em:30:5: a struct has nothing to override
       @override
       ^^^^^^^^^
-Structs do not inherit. Remove the annotation, or declare a class.
+Structs do not inherit, and this one adopts no traits. Remove the annotation, or adopt the trait with `with`.
 diagnostics/inheritance-syntax.em:34:9: a struct has no base class, so there is no `super`
           super.g()
           ^^^^^

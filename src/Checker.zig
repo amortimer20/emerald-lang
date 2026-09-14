@@ -75,6 +75,8 @@ pub const Checked = struct {
     /// Every `value.type_name`, by member expression, mapped to the value's
     /// static type, which spells everything but the class of an object in it.
     type_names: LiteralTypes,
+    /// Every `Trait.method(value, ...)` (11.2), mapped to the default it runs.
+    trait_calls: MethodCalls,
 
     pub fn ok(self: Checked) bool {
         return self.diagnostics.len == 0;
@@ -165,6 +167,7 @@ method_calls: MethodCalls = .empty,
 super_members: MethodCalls = .empty,
 type_tests: TypeTests = .empty,
 type_names: LiteralTypes = .empty,
+trait_calls: MethodCalls = .empty,
 /// Structs and classes whose fields have been resolved, so a subclass can make
 /// sure its base class's come first (10.7).
 structs_checked: Resolver.NameSet = .empty,
@@ -303,7 +306,7 @@ pub fn check(
                 const declaration = statement.data.struct_declaration;
                 const key = checker.keyOf(declaration.name);
                 const user = try arena.create(Type.User);
-                user.* = .{ .name = key, .display_name = declaration.name, .class = declaration.class };
+                user.* = .{ .name = key, .display_name = declaration.name, .class = declaration.class, .trait = declaration.trait };
                 const struct_type = Type.structOf(user);
                 try checker.structs.put(arena, key, struct_type);
                 try checker.struct_declarations.put(arena, key, declaration);
@@ -382,6 +385,14 @@ pub fn check(
         for (program.statements) |statement| {
             if (statement.data != .struct_declaration) continue;
             try checker.breakBaseCycle(statement.data.struct_declaration);
+            try checker.resolveTraits(statement.data.struct_declaration);
+        }
+    }
+    for (programs, 0..) |program, index| {
+        checker.file = @intCast(index);
+        for (program.statements) |statement| {
+            if (statement.data != .struct_declaration) continue;
+            try checker.breakTraitCycle(statement.data.struct_declaration);
         }
     }
 
@@ -472,6 +483,8 @@ pub fn check(
                         try checker.checkTypeFieldValue(try Resolver.methodKey(arena, type_key, field.name));
                     }
                     for (declaration.properties) |property| {
+                        // A trait's requirement has no body (11.1).
+                        if (property.getter.abstract_span != null) continue;
                         const getter_key = try Resolver.methodKey(arena, type_key, property.name);
                         if (checker.properties.contains(getter_key)) {
                             try checker.ensureBodyChecked(getter_key);
@@ -524,6 +537,7 @@ pub fn check(
         .super_members = checker.super_members,
         .type_tests = checker.type_tests,
         .type_names = checker.type_names,
+        .trait_calls = checker.trait_calls,
     };
 }
 
@@ -611,6 +625,111 @@ fn resolveBase(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
         return;
     }
     user.base = base.user.?;
+}
+
+/// Section 11.2's `with` list, which has to name traits, each once.
+fn resolveTraits(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
+    if (declaration.traits.len == 0) return;
+    const user = @constCast(self.structs.get(self.keyOf(declaration.name)).?.user.?);
+    var resolved: std.ArrayList(*const Type.User) = .empty;
+    for (declaration.traits) |written| {
+        if (Type.fromName(written.name) == null and !self.structs.contains(try self.typeKeyOf(written.name))) {
+            try self.reportWithHelp(
+                written.span,
+                "`{s}` is not a trait",
+                .{written.name},
+                "Check the spelling, or declare `trait {s}` in this project.",
+                .{written.name},
+            );
+            continue;
+        }
+        const adopted = try self.resolveTypeExpression(written);
+        if (adopted.kind == .invalid) continue;
+        if (adopted.kind != .struct_value or !adopted.user.?.trait) {
+            try self.reportWithHelp(
+                written.span,
+                "{f} is not a trait, so it cannot follow `with`",
+                .{adopted},
+                "{s}",
+                .{if (adopted.kind == .struct_value and adopted.user.?.class)
+                    try std.fmt.allocPrint(self.arena, "A class is extended, with `extends {s}`, and only by a class.", .{written.name})
+                else
+                    "Only a trait, declared with `trait`, can be adopted with `with`."},
+            );
+            continue;
+        }
+        if (std.mem.indexOfScalar(*const Type.User, resolved.items, adopted.user.?) != null) {
+            try self.reportWithHelp(
+                written.span,
+                "`{s}` is already adopted here",
+                .{adopted.user.?.display_name},
+                "Name each trait once.",
+                .{},
+            );
+            continue;
+        }
+        try resolved.append(self.arena, adopted.user.?);
+    }
+    user.traits = resolved.items;
+}
+
+/// A trait that builds on itself, directly or through others, is reported on
+/// the `with` entry that closes the loop, which is then dropped.
+fn breakTraitCycle(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
+    if (!declaration.trait) return;
+    const user = @constCast(self.structs.get(self.keyOf(declaration.name)).?.user.?);
+    for (user.traits, 0..) |adopted, position| {
+        if (!self.traitReaches(adopted, user, 0)) continue;
+        const written = for (declaration.traits) |entry| {
+            if (std.mem.eql(u8, try self.typeKeyOf(entry.name), adopted.name)) break entry;
+        } else declaration.traits[0];
+        if (adopted == user) {
+            try self.reportWithHelp(
+                written.span,
+                "`{s}` cannot build on itself",
+                .{declaration.name},
+                "Name a different trait after `with`, or remove it.",
+                .{},
+            );
+        } else try self.reportWithHelp(
+            written.span,
+            "`{s}` cannot build on `{s}`, because `{s}` already builds on `{s}`",
+            .{ declaration.name, adopted.display_name, adopted.display_name, declaration.name },
+            "A trait's traits can never lead back to it. Remove one of the `with` entries.",
+            .{},
+        );
+        const kept = try self.arena.alloc(*const Type.User, user.traits.len - 1);
+        @memcpy(kept[0..position], user.traits[0..position]);
+        @memcpy(kept[position..], user.traits[position + 1 ..]);
+        user.traits = kept;
+        return self.breakTraitCycle(declaration);
+    }
+}
+
+fn traitReaches(self: *Checker, from: *const Type.User, target: *const Type.User, depth: usize) bool {
+    if (from == target) return true;
+    if (depth > self.structs.count()) return false;
+    for (from.traits) |next| {
+        if (self.traitReaches(next, target, depth + 1)) return true;
+    }
+    return false;
+}
+
+/// Every trait a type adopts, directly, through the traits those build on,
+/// and through its base classes, each once, nearest first.
+fn traitClosure(self: *Checker, user: *const Type.User) Error![]const *const Type.User {
+    var found: std.ArrayList(*const Type.User) = .empty;
+    var at: ?*const Type.User = user;
+    while (at) |current| : (at = current.base) {
+        for (current.traits) |trait| try self.collectTraits(trait, &found);
+    }
+    return found.items;
+}
+
+fn collectTraits(self: *Checker, trait: *const Type.User, found: *std.ArrayList(*const Type.User)) Error!void {
+    if (std.mem.indexOfScalar(*const Type.User, found.items, trait) != null) return;
+    try found.append(self.arena, trait);
+    for (trait.traits) |next| try self.collectTraits(next, found);
 }
 
 /// A class that extends itself, directly or through others, has no base class
@@ -728,13 +847,14 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
         }
     }
 
-    // Section 10.7: a class shares its names with the classes it extends.
-    if (user.base) |base| {
+    // Section 10.7: a class shares its names with the classes it extends,
+    // and section 11.2 with the traits it adopts.
+    if (user.base != null or user.traits.len > 0) {
         for (members) |member| {
             if (seen.get(member.name)) |first| if (first.span.start != member.span.start) continue;
-            try self.checkInheritedName(member, base);
+            try self.checkInheritedName(member, user);
         }
-    } else if (declaration.base == null) {
+    } else if (declaration.base == null and declaration.traits.len == 0) {
         for (members) |member| {
             if (member.override_span == null) continue;
             try self.reportWithHelp(
@@ -751,15 +871,29 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
 /// A member of a class's base classes, the nearest one first.
 const Inherited = struct {
     kind: MemberKind,
-    /// The class that declares it.
+    /// The class or trait that declares it.
     owner: *const Type.User,
     /// Its method key, for a method or a property's getter.
     key: ?[]const u8 = null,
 };
 
-fn inheritedMember(self: *Checker, base: *const Type.User, name: []const u8) Error!?Inherited {
-    var at: ?*const Type.User = base;
-    while (at) |user| : (at = user.base) {
+/// A member `user` has from a class it extends, or else from a trait it or one
+/// of those classes adopts. A trait's private members belong to the trait
+/// alone, so they are never found here (11.2).
+fn inheritedMember(self: *Checker, user: *const Type.User, name: []const u8) Error!?Inherited {
+    if (try self.declaredMember(user.base, name, true)) |found| return found;
+    for (try self.traitClosure(user)) |trait| {
+        if (Resolver.isPrivate(name)) break;
+        if (try self.declaredMember(trait, name, false)) |found| return found;
+    }
+    return null;
+}
+
+/// A member declared by `start` or, when `through_bases`, by a class it
+/// extends.
+fn declaredMember(self: *Checker, start: ?*const Type.User, name: []const u8, through_bases: bool) Error!?Inherited {
+    var at: ?*const Type.User = start;
+    while (at) |user| : (at = if (through_bases) user.base else null) {
         const declaration = self.struct_declarations.get(user.name).?;
         for (declaration.fields) |field| {
             if (std.mem.eql(u8, field.name, name)) return .{ .kind = .field, .owner = user };
@@ -783,20 +917,47 @@ fn inheritedMember(self: *Checker, base: *const Type.User, name: []const u8) Err
 /// One member of a subclass against the names its base classes already use:
 /// replacing one takes `@override`, and only a public method or property can
 /// be replaced, by one of its own kind.
-fn checkInheritedName(self: *Checker, member: Member, base: *const Type.User) Error!void {
-    const found = try self.inheritedMember(base, member.name) orelse {
+fn checkInheritedName(self: *Checker, member: Member, user: *const Type.User) Error!void {
+    const found = try self.inheritedMember(user, member.name) orelse {
         if (member.override_span != null) {
             try self.reportWithHelp(
                 member.span,
                 "`{s}` does not override anything",
                 .{member.name},
-                "`{s}` and the classes it extends have no {s} named `{s}` to replace. Check the name, or remove `@override`.",
-                .{ base.display_name, member.noun(), member.name },
+                "Nothing `{s}` extends or adopts has a {s} named `{s}` to replace. Check the name, or remove `@override`.",
+                .{ user.display_name, member.noun(), member.name },
             );
         }
         return;
     };
     const owner = found.owner.display_name;
+    // Section 11.2: a trait's member is supplied or replaced by a field or a
+    // property without `@override`, and by a method with it.
+    if (found.owner.trait) {
+        if (found.kind == .property and (member.kind == .field or member.kind == .property)) return;
+        if (found.kind == .method and member.kind == .method) {
+            if (member.override_span != null) return;
+            try self.reportWithHelp(
+                member.span,
+                "`{s}` is a method of the trait `{s}`",
+                .{ member.name, owner },
+                "Write `@override` on the line before it to supply `{s}`'s method, or give this one a name of its own.",
+                .{owner},
+            );
+            return;
+        }
+        try self.reportWithHelp(
+            member.span,
+            "`{s}` is a {s} of the trait `{s}`, so this {s} cannot supply it",
+            .{ member.name, found.kind.noun(), owner, member.noun() },
+            "{s}",
+            .{if (found.kind == .method)
+                "A trait's method is supplied by a method. Give this member a name of its own."
+            else
+                "A trait's property is supplied by a field or a property. Give this member a name of its own."},
+        );
+        return;
+    }
     const replaceable = found.kind == .method or found.kind == .property;
     if (member.override_span != null) {
         if (replaceable and found.kind == member.kind and !Resolver.isPrivate(member.name)) return;
@@ -851,7 +1012,7 @@ fn checkInheritance(self: *Checker, key: []const u8) Error!void {
     const user = self.structs.get(key).?.user.?;
     for (declaration.methods) |method| {
         const span = method.abstract_span orelse continue;
-        if (declaration.abstract_span != null) continue;
+        if (declaration.abstract_span != null or declaration.trait) continue;
         try self.reportWithHelp(
             span,
             "`{s}` is abstract, so `{s}` has to be `@abstract` too",
@@ -860,11 +1021,11 @@ fn checkInheritance(self: *Checker, key: []const u8) Error!void {
             .{ declaration.name, method.name },
         );
     }
-    const base = user.base orelse return;
+    if (user.base == null and user.traits.len == 0) return;
 
     for (declaration.methods) |method| {
         if (method.override_span == null or Resolver.isPrivate(method.name)) continue;
-        const found = try self.inheritedMember(base, method.name) orelse continue;
+        const found = try self.inheritedMember(user, method.name) orelse continue;
         if (found.kind != .method) continue;
         const own_key = try Resolver.methodKey(self.arena, key, method.name);
         if (self.declarations.get(own_key)) |declared| if (declared.name_span.start != method.name_span.start) continue;
@@ -872,15 +1033,17 @@ fn checkInheritance(self: *Checker, key: []const u8) Error!void {
     }
     for (declaration.properties) |property| {
         if (property.override_span == null or Resolver.isPrivate(property.name)) continue;
-        const found = try self.inheritedMember(base, property.name) orelse continue;
-        if (found.kind != .property) continue;
+        const found = try self.inheritedMember(user, property.name) orelse continue;
+        if (found.kind != .property or found.owner.trait) continue;
         const own_key = try Resolver.methodKey(self.arena, key, property.name);
         if (self.declarations.get(own_key)) |declared| if (declared.name_span.start != property.name_span.start) continue;
         try self.checkPropertyOverride(property, own_key, found);
     }
 
-    if (declaration.abstract_span == null) try self.checkImplemented(declaration, user);
+    if (declaration.abstract_span == null and !declaration.trait) try self.checkImplemented(declaration, user);
+    try self.checkTraits(declaration, user);
 
+    const base = user.base orelse return;
     if (declaration.constructor == null) {
         for (declaration.fields) |field| {
             if (field.default != null) continue;
@@ -903,6 +1066,219 @@ fn checkInheritance(self: *Checker, key: []const u8) Error!void {
             );
         }
     }
+}
+
+/// One trait's member of a given name (11.2).
+const TraitEntry = struct {
+    trait: *const Type.User,
+    kind: MemberKind,
+    /// Written without a body, so something else has to supply it.
+    requirement: bool,
+    mutable: bool = false,
+    key: []const u8,
+};
+
+/// Section 11.1 and 11.2: a type supplies everything its traits require, and
+/// the traits it combines agree with each other. Checked eagerly, for every
+/// declaration, and reported where the problem is introduced: where a trait
+/// is adopted, not again in every subclass or trait built on top.
+fn checkTraits(self: *Checker, declaration: Ast.StructDeclaration, user: *const Type.User) Error!void {
+    const closure = try self.traitClosure(user);
+    if (closure.len == 0) return;
+    const inherited: []const *const Type.User = if (user.base) |base| try self.traitClosure(base) else &.{};
+    const base_supplies = if (user.base) |base| self.struct_declarations.get(base.name).?.abstract_span == null else false;
+
+    var names: std.StringArrayHashMapUnmanaged(void) = .empty;
+    for (closure) |trait| {
+        const written = self.struct_declarations.get(trait.name).?;
+        for (written.properties) |property| {
+            if (!Resolver.isPrivate(property.name)) try names.put(self.arena, property.name, {});
+        }
+        for (written.methods) |method| {
+            if (!Resolver.isPrivate(method.name)) try names.put(self.arena, method.name, {});
+        }
+    }
+
+    for (names.keys()) |name| {
+        var entries: std.ArrayList(TraitEntry) = .empty;
+        for (closure) |trait| {
+            const written = self.struct_declarations.get(trait.name).?;
+            const key = try Resolver.methodKey(self.arena, trait.name, name);
+            for (written.properties) |property| {
+                if (!std.mem.eql(u8, property.name, name)) continue;
+                try entries.append(self.arena, .{ .trait = trait, .kind = .property, .requirement = property.getter.abstract_span != null, .mutable = property.mutable, .key = key });
+            }
+            for (written.methods) |method| {
+                if (!std.mem.eql(u8, method.name, name)) continue;
+                try entries.append(self.arena, .{ .trait = trait, .kind = .method, .requirement = method.abstract_span != null, .key = key });
+            }
+        }
+        // Already judged where the base class adopted every one of these.
+        const all_inherited = for (entries.items) |entry| {
+            if (std.mem.indexOfScalar(*const Type.User, inherited, entry.trait) == null) break false;
+        } else user.base != null;
+        // Or within one trait this declaration adopts, which judged them.
+        const within_one = for (user.traits) |adopted| {
+            const reach = try self.traitClosure(&.{ .name = "", .display_name = "", .traits = &.{adopted} });
+            const all = for (entries.items) |entry| {
+                if (std.mem.indexOfScalar(*const Type.User, reach, entry.trait) == null) break false;
+            } else true;
+            if (all) break true;
+        } else false;
+        const introduced = !all_inherited and !within_one;
+
+        const own = try self.declaredMember(user, name, true);
+        const first = entries.items[0];
+
+        // The traits have to agree with each other.
+        if (introduced) {
+            for (entries.items[1..]) |entry| {
+                if (entry.trait == first.trait) continue;
+                const agree = entry.kind == first.kind and try self.sameTraitMember(first, entry);
+                if (agree) continue;
+                try self.reportWithHelp(
+                    declaration.name_span,
+                    "`{s}` and `{s}` both have `{s}`, but they do not agree on it",
+                    .{ first.trait.display_name, entry.trait.display_name, name },
+                    "`{s}` can adopt both only if their `{s}` has the same kind and type. Rename it in one of them.",
+                    .{ declaration.name, name },
+                );
+                break;
+            }
+            var default: ?TraitEntry = null;
+            for (entries.items) |entry| {
+                if (entry.requirement) continue;
+                const earlier = default orelse {
+                    default = entry;
+                    continue;
+                };
+                if (earlier.trait == entry.trait or own != null) continue;
+                try self.reportWithHelp(
+                    declaration.name_span,
+                    "`{s}` gets `{s}` from both `{s}` and `{s}`, and trait order does not choose",
+                    .{ declaration.name, name, earlier.trait.display_name, entry.trait.display_name },
+                    "Give `{s}` its own `{s}` marked `@override`. It can run either version, as in `{s}.{s}(self)`.",
+                    .{ declaration.name, name, earlier.trait.display_name, name },
+                );
+                break;
+            }
+        }
+
+        if (declaration.trait) continue;
+        const has_default = for (entries.items) |entry| {
+            if (!entry.requirement) break true;
+        } else false;
+        if (own) |supplied| {
+            if (first.kind == .property) {
+                try self.checkSuppliedProperty(declaration, user, name, supplied, entries.items);
+            } else if (supplied.kind == .method and supplied.owner != user) {
+                // A base class's method supplies it, which the base class
+                // never promised with `@override`, so the shapes are compared.
+                const mine = try self.signatureFor(supplied.key.?);
+                const theirs = try self.signatureFor(first.key);
+                if (!try self.sameSignature(mine, theirs)) {
+                    try self.reportWithHelp(
+                        declaration.name_span,
+                        "the `{s}` `{s}` has from `{s}` does not match the one the trait `{s}` requires",
+                        .{ name, declaration.name, supplied.owner.display_name, first.trait.display_name },
+                        "A method supplying a trait's takes the same parameters, with the same names and types, and gives the same type.",
+                        .{},
+                    );
+                }
+            }
+            continue;
+        }
+        if (has_default or declaration.abstract_span != null) continue;
+        if (all_inherited and base_supplies) continue;
+        if (first.kind == .property) {
+            const any_var = for (entries.items) |entry| {
+                if (entry.mutable) break true;
+            } else false;
+            try self.reportWithHelp(
+                declaration.name_span,
+                "`{s}` does not supply `{s}`, which the trait `{s}` requires",
+                .{ declaration.name, name, first.trait.display_name },
+                "Add `{s} {s}: {f}` to `{s}`, as a field or a property.",
+                .{ if (any_var) "var" else "const", name, (try self.signatureFor(first.key)).return_type, declaration.name },
+            );
+        } else {
+            try self.reportWithHelp(
+                declaration.name_span,
+                "`{s}` does not supply `{s}`, which the trait `{s}` requires",
+                .{ declaration.name, name, first.trait.display_name },
+                "Add `@override func {s}(...)` with a body to `{s}`{s}.",
+                .{ name, declaration.name, if (declaration.class) try std.fmt.allocPrint(self.arena, ", or mark `{s}` `@abstract`", .{declaration.name}) else "" },
+            );
+        }
+    }
+}
+
+/// Whether two traits' members of one name and kind can be supplied by one
+/// member: the same method shape, or properties of the same type, where a
+/// writable one subsumes a read-only one (11.2).
+fn sameTraitMember(self: *Checker, a: TraitEntry, b: TraitEntry) Error!bool {
+    const mine = try self.signatureFor(a.key);
+    const theirs = try self.signatureFor(b.key);
+    if (a.kind == .property) return mine.return_type.same(theirs.return_type);
+    return self.sameSignature(mine, theirs);
+}
+
+fn sameSignature(_: *Checker, mine: Signature, theirs: Signature) Error!bool {
+    if (mine.parameters.len != theirs.parameters.len) return false;
+    for (mine.parameters, theirs.parameters, mine.parameter_names, theirs.parameter_names) |a, b, a_name, b_name| {
+        if (!a.same(b) or !std.mem.eql(u8, a_name, b_name)) return false;
+    }
+    return mine.return_type.same(theirs.return_type);
+}
+
+/// Section 11.1: "A `const` requirement ... may be satisfied by a public
+/// `const` or `var` field or readable computed property. A `var` requirement
+/// ... needs a public writable field or get/set property."
+fn checkSuppliedProperty(
+    self: *Checker,
+    declaration: Ast.StructDeclaration,
+    user: *const Type.User,
+    name: []const u8,
+    supplied: Inherited,
+    entries: []const TraitEntry,
+) Error!void {
+    const required = for (entries) |entry| {
+        if (entry.mutable) break entry;
+    } else entries[0];
+    const wanted = (try self.signatureFor(required.key)).return_type;
+    const actual: Type, const writable: bool = switch (supplied.kind) {
+        .field => for (user.fields) |field| {
+            if (std.mem.eql(u8, field.name, name)) break .{ field.type, field.mutable };
+        } else return,
+        .property => .{ (try self.signatureFor(supplied.key.?)).return_type, self.properties.get(supplied.key.?) orelse false },
+        else => return,
+    };
+    const at = if (supplied.owner == user) self.memberSpan(declaration, name) orelse declaration.name_span else declaration.name_span;
+    if (!actual.same(wanted)) {
+        try self.reportWithHelp(
+            at,
+            "`{s}` holds {f}, but the trait `{s}` requires {f}",
+            .{ name, actual, required.trait.display_name, wanted },
+            "Give `{s}` the type the trait requires: `{f}`.",
+            .{ name, wanted },
+        );
+        return;
+    }
+    if (required.mutable and !writable) {
+        try self.reportWithHelp(
+            at,
+            "`{s}` has to be writable, because the trait `{s}` requires `var {s}`",
+            .{ name, required.trait.display_name, name },
+            "Declare it with `var`, or give the property a `set` block.",
+            .{},
+        );
+    }
+}
+
+fn memberSpan(_: *Checker, declaration: Ast.StructDeclaration, name: []const u8) ?Source.Span {
+    for (declaration.fields) |field| if (std.mem.eql(u8, field.name, name)) return field.name_span;
+    for (declaration.properties) |property| if (std.mem.eql(u8, property.name, name)) return property.name_span;
+    return null;
 }
 
 /// Whether building a type needs arguments: its constructor has a parameter
@@ -1042,6 +1418,13 @@ fn memberKey(self: *Checker, owner: Type, name: []const u8) Error!?[]const u8 {
     var at: ?*const Type.User = owner.user;
     while (at) |user| : (at = user.base) {
         const key = try Resolver.methodKey(self.arena, user.name, name);
+        if (self.receivers.contains(key)) return key;
+    }
+    // Section 11.2: class methods, inherited ones included, outrank a trait's.
+    // A trait's private members are its own.
+    if (Resolver.isPrivate(name)) return null;
+    for (try self.traitClosure(owner.user.?)) |trait| {
+        const key = try Resolver.methodKey(self.arena, trait.name, name);
         if (self.receivers.contains(key)) return key;
     }
     return null;
@@ -3264,6 +3647,31 @@ fn methodChanges(self: *Checker, key: []const u8) Error!bool {
     // changes it for everyone, and nothing about where it is called from
     // has to allow that.
     if (receiver.user.?.class) return false;
+    // Section 11.1: a trait's requirement changes the value whenever a struct
+    // that supplies it does, since through the trait either may be called.
+    if (receiver.user.?.trait and declaration.abstract_span != null) {
+        const setter = std.mem.endsWith(u8, key, Resolver.setter_suffix);
+        const member = key[std.mem.lastIndexOf(u8, key, Resolver.method_separator).? + Resolver.method_separator.len ..];
+        const name = if (setter) member[0 .. member.len - Resolver.setter_suffix.len] else member;
+        var result = false;
+        var types = self.structs.valueIterator();
+        while (types.next()) |candidate| {
+            const user = candidate.user.?;
+            if (user.class or user.trait or !user.conformsTo(receiver.user.?)) continue;
+            if (setter) {
+                result = true;
+                break;
+            }
+            const supplied = try self.memberKey(candidate.*, name) orelse continue;
+            if (std.mem.eql(u8, supplied, key) or self.properties.contains(supplied)) continue;
+            if (try self.methodChanges(supplied)) {
+                result = true;
+                break;
+            }
+        }
+        if (result or self.changes_in_progress.count() == 1) try self.changes.put(self.arena, key, result);
+        return result;
+    }
     const result = try self.statementsChangeSelf(declaration.body.statements, receiver);
     // `true` is final whatever else is in progress. `false` is final only when
     // nothing else is, since it may have leaned on a cycle's provisional answer.
@@ -3515,7 +3923,7 @@ fn typeOfStructMethodCall(
         (try self.declarationWithDefaults(key)).parameters,
         "Match the number of arguments to the method's parameters.",
     ));
-    if (try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
+    if (!isClass(base) and try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
     if (!self.in_function) try self.checkCaptures(expression.span, key, member.name);
     return signature.return_type;
 }
@@ -3665,6 +4073,20 @@ fn capturesOf(self: *Checker, name: []const u8) Error!Resolver.NameSet {
                 if (!self.receivers.contains(override) or visited.contains(override)) continue;
                 try visited.put(self.arena, override, {});
                 try pending.append(self.arena, override);
+            }
+        } else if (receiver.user.?.trait) {
+            // Section 11.2: calling a trait's member may run whatever a type
+            // adopting the trait supplies for it.
+            const member = current[std.mem.lastIndexOf(u8, current, Resolver.method_separator).? + Resolver.method_separator.len ..];
+            if (!std.mem.endsWith(u8, member, Resolver.setter_suffix)) {
+                var types = self.structs.valueIterator();
+                while (types.next()) |candidate| {
+                    if (candidate.user.?.trait or !candidate.user.?.conformsTo(receiver.user.?)) continue;
+                    const supplied = try self.memberKey(candidate.*, member) orelse continue;
+                    if (visited.contains(supplied)) continue;
+                    try visited.put(self.arena, supplied, {});
+                    try pending.append(self.arena, supplied);
+                }
             }
         };
         if (self.facts.module_reads.get(current)) |own| {
@@ -3883,7 +4305,10 @@ fn narrowsTo(target: Type, current: Type) bool {
     const present = current.payload();
     if (target.same(present)) return current.optional;
     if (target.kind != .struct_value or present.kind != .struct_value) return false;
-    return target.user.?.class and target.user.? != present.user.? and target.user.?.extends(present.user.?);
+    if (target.user.? == present.user.?) return false;
+    // A trait says more about a value that does not already conform to it.
+    if (target.user.?.trait) return !present.user.?.conformsTo(target.user.?);
+    return (target.user.?.class or present.user.?.trait) and target.user.?.conformsTo(present.user.?);
 }
 
 /// Section 4.4's `value is Type`. It is always a `Bool`, even when the answer
@@ -5278,6 +5703,10 @@ const Frozen = struct {
     field_type: Type,
 };
 
+fn isTrait(t: Type) bool {
+    return t.kind == .struct_value and t.user.?.trait;
+}
+
 fn isClass(t: Type) bool {
     return t.kind == .struct_value and !t.optional and t.user.?.class;
 }
@@ -5854,7 +6283,14 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
         const numeric = left.isNumber() and right.isNumber();
         const unknown = left.kind == .invalid or right.kind == .invalid;
 
-        if (!unknown and !numeric and !left.same(right) and !comparableOptional(left, right) and !relatedClasses(left, right)) {
+        if (!unknown and (isTrait(left) or isTrait(right))) {
+            try self.report(
+                pair,
+                "values seen through a trait cannot be compared yet",
+                .{},
+                "A struct compares by its fields and an object by identity, and a trait may hold either. Compare the concrete values instead.",
+            );
+        } else if (!unknown and !numeric and !left.same(right) and !comparableOptional(left, right) and !relatedClasses(left, right)) {
             try self.report(
                 pair,
                 "{f} and {f} cannot be compared",
@@ -5927,6 +6363,9 @@ fn typeOfCall(
     };
 
     const name = reference.display;
+    if (self.receivers.get(reference.key)) |receiver| {
+        if (receiver.user.?.trait) return self.typeOfTraitDefaultCall(expression, call, reference);
+    }
     // A bare name is looked up the way a read finds it, so a local — a nested
     // function (7.1), or a variable holding a block — hides a module-level name
     // even when `using` gave that name a key of its own.
@@ -5943,6 +6382,17 @@ fn typeOfCall(
     if (binding.is_type) {
         if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
         const declaration = self.struct_declarations.get(reference.key).?;
+        if (declaration.trait) {
+            try self.reportWithHelp(
+                call.callee.span,
+                "`{s}` is a trait, so it cannot be constructed",
+                .{name},
+                "A trait is a contract. Construct a struct or class that adopts `{s}` instead.",
+                .{binding.type.user.?.display_name},
+            );
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
         if (declaration.abstract_span != null) {
             try self.reportWithHelp(
                 call.callee.span,
@@ -6112,6 +6562,55 @@ fn subclassMemberHelp(self: *Checker, base: Type, member: Ast.Expression.Member,
         "`{s}` belongs to `{s}`, which extends {f}. Inside `if {s} is {s} {{ ... }}`, it can be reached.",
         .{ member.name, owner.display_name, base, written, owner.display_name },
     );
+}
+
+/// Section 11.2's `Named.introduction(self)`, which runs that trait's own
+/// default on a value adopting the trait, passed first.
+fn typeOfTraitDefaultCall(self: *Checker, expression: *const Ast.Expression, call: Ast.Expression.Call, reference: Reference) Error!Type {
+    const receiver = self.receivers.get(reference.key).?;
+    const declaration = self.declarations.get(reference.key).?;
+    if (self.properties.contains(reference.key) or declaration.abstract_span != null) {
+        try self.reportWithHelp(
+            call.callee.span,
+            "`{s}` has no default to run",
+            .{reference.display},
+            "`{s}` is a requirement, with no body in the trait. Call it on a value instead, as in `value.{s}()`.",
+            .{ declaration.name, declaration.name },
+        );
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+    const signature = try self.signatureFor(reference.key);
+    const types = try self.arena.alloc(Type, signature.parameters.len + 1);
+    const names = try self.arena.alloc([]const u8, signature.parameters.len + 1);
+    const defaults = try self.arena.alloc(bool, signature.parameters.len + 1);
+    types[0] = receiver;
+    names[0] = "self";
+    defaults[0] = false;
+    @memcpy(types[1..], signature.parameters);
+    @memcpy(names[1..], signature.parameter_names);
+    for (declaration.parameters, defaults[1..]) |parameter, *has| has.* = parameter.default != null;
+    try self.checkArguments(call, reference.display, .{
+        .types = types,
+        .names = names,
+        .has_default = defaults,
+        .arity_help = "Pass the value to run it on first, then the method's own arguments.",
+    });
+    if (call.arguments.len > 0 and try self.methodChanges(reference.key)) {
+        const first = try self.typeOf(call.arguments[0]);
+        if (!isClass(first)) {
+            try self.reportWithHelp(
+                call.callee.span,
+                "`{s}` changes the value it runs on, so it cannot be called this way yet",
+                .{reference.display},
+                "Call it as a method instead, as in `value.{s}()`.",
+                .{declaration.name},
+            );
+        }
+    }
+    try self.trait_calls.put(self.arena, expression, reference.key);
+    if (!self.in_function) try self.checkCaptures(expression.span, reference.key, reference.display);
+    return signature.return_type;
 }
 
 /// Whether an expression is section 10.7's `super`.

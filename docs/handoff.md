@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-13. Prepared after the type test slice (4.4's `is` and `type_name`).
+Updated: 2026-09-13. Prepared after the traits slice (11.1 and 11.2).
 
 ## Current milestone
 
@@ -41,7 +41,9 @@ and passing share, `const` stops at the first object, identity equality, blocks 
 `super.name`, `@override`, `@abstract` classes and methods, subclass objects usable as their
 base class, and each object running its own class's version of a method or property. `is`
 tests an object's class at runtime and narrows a name within the branch it proves, and
-every value has `type_name`.
+every value has `type_name`. Traits work: requirements and defaults, adoption by structs and
+classes with `with`, traits building on traits, conflict and conformance checking, values
+seen through a trait with their own behavior, and `Trait.method(self)`.
 
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
@@ -168,6 +170,32 @@ Section 24 no longer lists the optional spelling as an open roadmap item.
   `lexical/` must tokenize cleanly, `diagnostics/` must match their `.expected` exactly,
   `run/` must print theirs, and `runtime-errors/` must fail with theirs. See
   [conformance/README.md](../conformance/README.md) for how to add one.
+
+### Trait decisions worth knowing
+
+- **A trait is a struct declaration with `trait` set,** as a class is. The parser's
+  `in_trait` makes a body-less method a requirement (`abstract_span` is its name) and turns
+  `const name: String` into a property whose accessors have no body, so every later pass
+  treats a requirement as an abstract property. `with` lists fill `StructDeclaration.traits`
+  and `Type.User.traits`; `Type.User.conformsTo` is what assignability uses.
+- **Checker.** `resolveTraits` and `breakTraitCycle` run beside the base class passes;
+  `traitClosure` lists every trait a type has. `memberKey` looks through traits after the
+  class chain, never finding a trait's private member. `checkInheritedName` accepts a field
+  or property for a trait property and requires `@override` on a method; `checkTraits`
+  judges supply and conflicts once per name, where introduced. `methodChanges` treats a
+  requirement as changing when a struct supplying it changes, and `capturesOf` follows a
+  trait member to every type's version. `typeOfTraitDefaultCall` checks `Trait.method(value)`,
+  recorded in `Checked.trait_calls`.
+- **Runtime.** A trait has no descriptor, only its functions and `Interpreter.trait_infos`.
+  `inherit` builds a method table for any type adopting a trait, filling in defaults and
+  default properties that nothing else supplies, and `StructType.traits` lists the closure
+  for `is`. `dispatch` never replaces a private method. A changing method called through a
+  trait peeks at its receiver to pick the version before taking it (`callStructMethod`).
+- **Checked.** Six mechanisms were disabled one at a time, each failing a case: the changing
+  path's dispatch, requirement change inference, the private dispatch guard, `is` for traits,
+  missing requirements, and the capture check through traits. Filling defaults into the table
+  is not independently observable, because dispatch falls back to the key the checker chose;
+  it keeps the build-depth guard exact.
 
 ### Type test decisions worth knowing
 
@@ -1266,9 +1294,9 @@ by the reviewer against Emerald's philosophy and modern language design, not put
 
 ## Next concrete step
 
-Classes are complete, with 4.4's `is` and `type_name`. What remains of section 20's slice
-12, the object model, is traits (section 11), with operators through traits, and enums.
-Slice 13, errors and tests, follows.
+Traits are in. What remains of section 20's slice 12 is `Self` (11.4) with operator
+overloading through traits (11.5), then enums (section 12). Slice 13, errors and tests,
+follows.
 
 Section 7 is complete apart from capturing built-in methods, which the user has put off.
 
@@ -1290,7 +1318,7 @@ easier to design once there are types to raise.
   which is a pointer to a temporary that dies at the return. Debug passed every test;
   ReleaseSafe crashed 142 of them. The one-file array is now a local of the caller, which
   outlives the call it is passed to. Run both modes before believing a green suite.
-- `zig build test` passes in Debug and ReleaseSafe: 312 unit tests, 289 conformance cases,
+- `zig build test` passes in Debug and ReleaseSafe: 312 unit tests, 292 conformance cases,
   and 7 command-line contract tests asserting the section 18.1 exit codes against the real
   binary. Every case kind was confirmed to fail when a case is broken, so none of them are
   vacuous.

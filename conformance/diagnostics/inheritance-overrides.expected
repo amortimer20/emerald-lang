@@ -5,7 +5,7 @@ Write `@override` on the line before it to replace `Animal`'s version, or give i
 diagnostics/inheritance-overrides.em:35:10: `bark` does not override anything
       func bark() {
            ^^^^
-`Animal` and the classes it extends have no method named `bark` to replace. Check the name, or remove `@override`.
+Nothing `Dog` extends or adopts has a method named `bark` to replace. Check the name, or remove `@override`.
 diagnostics/inheritance-overrides.em:39:10: `_helper` is private to `Animal`, so it cannot be overridden
       func _helper() {
            ^^^^^^^

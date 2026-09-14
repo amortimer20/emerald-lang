@@ -1957,6 +1957,18 @@ the underlying representation: a struct remains an independently copied value an
 remains a shared reference. Equality through a trait type is deferred because the
 underlying value and reference models differ.
 
+Because a trait's value may be either, the checker treats it as a value for 4.3's rules: a
+change through it needs a `var`, and a requirement changes the value whenever a struct
+supplying it does. A trait has no constructor, no type-level members, and no `@abstract`; a
+stored member written with a value is rejected, since a trait stores nothing. A property
+supplying or replacing a trait's property never takes `@override`; a method supplying or
+replacing a trait's method always does, in a struct as in a class. A conflict between traits
+is reported where both are first brought together, not again in every subclass or trait
+built on top. A trait's private helper is its own, and never conflicts with a type's private
+member of the same name. `Trait.method(value)` may run a default that changes the value only
+on an object for now. `is` tests for a trait and narrows to it, and `Self` (11.4) arrives with
+operators (11.5).
+
 ### 11.3 Associated types and generics boundary
 
 Associated types and general user generics are deferred. Built-in collections may carry
@@ -2947,6 +2959,9 @@ recorded in their normative sections:
 | Type-level and instance member names (10.3, 10.4) | One name space for both | `Player.count` and `player.count` meaning different things would be legal but misleading, and the diagnostic for reaching a member the wrong way can only name the right way if the name identifies one member. |
 | Inferring a type-level field's type (4.1, 7.2, 10.4) | Optional annotation; inferred from the value on first need, and a cycle through a function whose return type is also inferred needs one of the two annotated | This matches module-level bindings, which the fields otherwise behave like. The cycle rule is 7.2's rule for recursive functions, reached through a field instead of a call. |
 | Class display (10.1, 15.2) | Field by field like a struct, with `Name(...)` for an object already being displayed | Showing the fields is what a beginner needs while learning; an address or bare type name hides exactly what changed. Objects form cycles, which a struct cannot, and the marker ends one without losing the rest of the value. |
+| Changes through a trait's value (4.3, 11.2) | Treated as a value: a change needs a `var`, and a requirement changes when any struct supplying it does | Whether a trait's value is shared is not known statically. Treating it as a value is the rule that is always safe, and it loses nothing for a class, which is changed in place either way. |
+| `@override` for traits (11.2) | Required on a method supplying or replacing a trait's, in structs too; never on a property | 11.2 settles it for methods and properties. A struct adopting a trait is the one case where a struct's method replaces something, so the annotation means the same thing there. |
+| Where trait conflicts are reported (11.2) | At the declaration that first brings the conflicting traits together | Reporting at every subclass and every trait built on top would repeat one mistake many times, far from where it can be fixed. |
 | Where `is` binds (4.4) | With the comparisons, without chaining; `is not` is rejected with a correction | Like Kotlin and Swift, a test reads as one condition that `not`, `and`, and `or` combine. A second spelling for the negated test would be the kind of duplicate 5.2 declines for `!`. |
 | Narrowing inside `and` and `or` (4.4, 4.5) | The right side is checked knowing how the left side went | It runs only then, so the proof holds, and without it `animal is Dog and animal.tricks > 0` and `x != nothing and x > 3` needed a nested `if`. |
 | The always-known type test warning (4.4) | Deferred with diagnostic severities; such a test is simply a `Bool` | Diagnostics have no warnings yet, and reporting it as an error would reject programs 4.4 calls valid. |

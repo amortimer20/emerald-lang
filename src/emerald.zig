@@ -258,6 +258,7 @@ fn analyze(
         &checked.super_members,
         &checked.type_tests,
         &checked.type_names,
+        &checked.trait_calls,
         resolved.facts,
         running.out,
         running.in,

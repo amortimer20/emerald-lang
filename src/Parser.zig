@@ -49,6 +49,11 @@ at_top_level: bool = true,
 nesting: u32 = 0,
 /// Whether the members being parsed are a class's rather than a struct's.
 in_class: bool = false,
+/// Whether they are a trait's (11.1).
+in_trait: bool = false,
+/// Whether the type being parsed adopts traits, which a struct's `@override`
+/// needs (11.2).
+has_traits: bool = false,
 /// The type whose members are being parsed, and whether it names a base class
 /// with `extends`, which is what gives `super` a meaning (10.7).
 type_name: []const u8 = "",
@@ -403,7 +408,7 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             break :blk try self.parseFunctionDeclaration();
         },
         .at => self.parseAnnotatedStatement(),
-        .keyword_struct, .keyword_class => blk: {
+        .keyword_struct, .keyword_class, .keyword_trait => blk: {
             const nested = !self.at_top_level;
             const keyword = self.peek();
             const statement = try self.parseStructDeclaration();
@@ -554,7 +559,13 @@ fn parseAnnotatedStatement(self: *Parser) Error!Ast.Statement {
         return statement;
     }
     if (annotations.abstract) |span| {
-        if (next.kind == .keyword_struct) {
+        if (next.kind == .keyword_trait) {
+            try self.note(
+                span,
+                "a trait needs no `@abstract`",
+                "A trait is never constructed, and a member written without a body is already a requirement. Remove `@abstract`.",
+            );
+        } else if (next.kind == .keyword_struct) {
             try self.note(
                 span,
                 "a struct cannot be abstract",
@@ -585,6 +596,7 @@ fn parseAnnotatedStatement(self: *Parser) Error!Ast.Statement {
 fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
     const class = keyword.kind == .keyword_class;
+    const trait = keyword.kind == .keyword_trait;
     const word = self.text(keyword);
     const name = self.peek();
     if (name.kind != .identifier) {
@@ -600,6 +612,13 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     // Section 10.7's single inheritance. Section 11's traits come later.
     var base: ?Ast.TypeExpression = null;
     if (self.check(.keyword_extends)) {
+        if (trait) {
+            return self.report(
+                self.peek().span,
+                "a trait builds on other traits with `with`",
+                "Write `with` in place of `extends`, as in `trait Pet with Named`. A trait cannot extend a class.",
+            );
+        }
         if (!class) {
             return self.report(
                 self.peek().span,
@@ -626,12 +645,21 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             );
         }
     }
-    if (self.check(.keyword_with)) {
-        return self.report(
-            self.peek().span,
-            "traits are not available yet",
-            "Declare the members this type needs directly in it.",
-        );
+    var traits: std.ArrayList(Ast.TypeExpression) = .empty;
+    if (self.match(.keyword_with) != null) {
+        while (true) {
+            const written = try self.parseTypeExpression();
+            if (written.name.len == 0 or written.question_span != null) {
+                try self.note(
+                    written.span,
+                    "only a trait can follow `with`",
+                    "Name the trait, as in `with Named`.",
+                );
+            } else {
+                try traits.append(self.arena, written);
+            }
+            if (self.match(.comma) == null) break;
+        }
     }
 
     if (self.match(.left_brace) == null) {
@@ -643,15 +671,21 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         );
     }
     const saved_class = self.in_class;
+    const saved_trait = self.in_trait;
     const saved_type_name = self.type_name;
     const saved_has_base = self.has_base;
+    const saved_has_traits = self.has_traits;
     self.in_class = class;
+    self.in_trait = trait;
+    self.has_traits = traits.items.len > 0;
     self.type_name = self.text(name);
     self.has_base = base != null;
     defer {
         self.in_class = saved_class;
+        self.in_trait = saved_trait;
         self.type_name = saved_type_name;
         self.has_base = saved_has_base;
+        self.has_traits = saved_has_traits;
     }
     var members: StructMembers = .{};
     self.skipSeparators();
@@ -679,9 +713,11 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         .span = spanning(keyword.span, closing.span),
         .data = .{ .struct_declaration = .{
             .class = class,
+            .trait = trait,
             .name = try self.identifier(name),
             .name_span = name.span,
             .base = base,
+            .traits = try traits.toOwnedSlice(self.arena),
             .fields = try members.fields.toOwnedSlice(self.arena),
             .constructor = members.constructor,
             .methods = try members.methods.toOwnedSlice(self.arena),
@@ -703,8 +739,33 @@ const StructMembers = struct {
 
 /// One member of a struct body, added to `members`. `name` is the struct's.
 fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!void {
-    const annotations = try self.parseAnnotations();
+    var annotations = try self.parseAnnotations();
     const marker = self.peek();
+    if (self.in_trait) {
+        if (annotations.abstract) |span| try self.note(
+            span,
+            "a trait's requirements need no `@abstract`",
+            "Leave out the body instead: a member of a trait written without one is a requirement.",
+        );
+        annotations.abstract = null;
+        if (marker.kind == .keyword_constructor) {
+            _ = try self.parseConstructor();
+            return self.note(
+                marker.span,
+                "a trait has no constructor",
+                "A trait stores nothing to set up. Each type that adopts it builds its own values.",
+            );
+        }
+        if (marker.kind == .keyword_func and self.startsTypeMember()) {
+            _ = try self.parseTypeFunction(name);
+            try self.expectStatementEnd();
+            return self.note(
+                marker.span,
+                "a trait has no type-level members",
+                "Declare the type-level member in each type that adopts the trait.",
+            );
+        }
+    }
     if (annotations.override != null or annotations.abstract != null) {
         if (marker.kind == .keyword_func and self.startsTypeMember()) {
             try self.note(
@@ -718,12 +779,16 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
                 "a constructor cannot be overridden or abstract",
                 "Constructors are not inherited. A subclass declares its own and calls `super(...)` first.",
             );
-        } else if (!self.in_class) {
-            try self.note(
-                (annotations.override orelse annotations.abstract).?,
-                if (annotations.override != null) "a struct has nothing to override" else "a struct's methods cannot be abstract",
-                "Structs do not inherit. Remove the annotation, or declare a class.",
-            );
+        } else if (!self.in_class and !self.in_trait) {
+            if (annotations.abstract) |span| {
+                try self.note(span, "a struct's methods cannot be abstract", "Structs do not inherit. Remove the annotation, or declare a class.");
+            } else if (!self.has_traits) {
+                try self.note(
+                    annotations.override.?,
+                    "a struct has nothing to override",
+                    "Structs do not inherit, and this one adopts no traits. Remove the annotation, or adopt the trait with `with`.",
+                );
+            }
         }
     }
     if (marker.kind == .keyword_func and self.startsTypeMember()) {
@@ -813,6 +878,14 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
     }
     _ = self.advance();
     if (self.check(.dot)) {
+        if (self.in_trait) {
+            _ = try self.parseTypeField(mutable, field_name, name);
+            return self.note(
+                field_name.span,
+                "a trait has no type-level members",
+                "Declare the type-level member in each type that adopts the trait.",
+            );
+        }
         if (self.in_class) if (annotations.override orelse annotations.abstract) |span| try self.note(
             span,
             "a type-level field cannot be overridden or abstract",
@@ -840,6 +913,7 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
     const annotation = try self.parseTypeExpression();
     if (self.check(.left_brace)) {
         var property = try self.parseProperty(mutable, field_name, annotation);
+        if (self.in_trait or self.has_traits) property.override_span = annotations.override;
         if (self.in_class) {
             property.override_span = annotations.override;
             if (annotations.abstract) |span| try self.note(
@@ -849,6 +923,43 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
             );
         }
         try members.properties.append(self.arena, property);
+        return;
+    }
+    // Section 11.1: a trait's `const name: String` is a requirement for
+    // readable access, and `var` one for reading and assignment. Neither
+    // stores anything; each is an accessor with no body, which the type that
+    // adopts the trait supplies with a field or a property.
+    if (self.in_trait) {
+        if (self.check(.equal)) {
+            _ = self.advance();
+            _ = try self.parseExpression();
+            try self.reportFmtNote(
+                field_name.span,
+                "a trait stores nothing, so `{s}` cannot have a value here",
+                .{self.text(field_name)},
+                try std.fmt.allocPrint(self.arena, "Leave out `= ...` so each type that adopts the trait supplies `{s}`, or give it a body that computes it.", .{self.text(field_name)}),
+            );
+        }
+        try self.expectStatementEnd();
+        const member = try self.identifier(field_name);
+        var getter = accessor(member, field_name.span, &.{}, annotation, .{ .span = field_name.span, .statements = &.{} });
+        getter.abstract_span = field_name.span;
+        var setter: ?Ast.FunctionDeclaration = null;
+        if (mutable) {
+            const parameters = try self.arena.alloc(Ast.Parameter, 1);
+            parameters[0] = .{ .name = "value", .name_span = field_name.span, .annotation = annotation };
+            setter = accessor(member, field_name.span, parameters, null, .{ .span = field_name.span, .statements = &.{} });
+            setter.?.abstract_span = field_name.span;
+        }
+        try members.properties.append(self.arena, .{
+            .mutable = mutable,
+            .name = member,
+            .name_span = field_name.span,
+            .annotation = annotation,
+            .getter = getter,
+            .setter = setter,
+            .override_span = annotations.override,
+        });
         return;
     }
     var default: ?*const Ast.Expression = null;
@@ -1328,22 +1439,35 @@ fn finishSimpleStatement(self: *Parser, statement: Ast.Statement) Error!Ast.Stat
 /// A method, which in a class may carry `@override`, or `@abstract` in place
 /// of its body (10.7).
 fn parseMethod(self: *Parser, annotations: Annotations) Error!Ast.FunctionDeclaration {
+    if (self.in_trait) {
+        // Section 11.1: without a body, a requirement; with one, a default.
+        var method = (try self.parseFunctionDeclarationWith(true, .optional)).data.function_declaration;
+        method.override_span = annotations.override;
+        return method;
+    }
     const abstract = self.in_class and annotations.abstract != null;
-    var method = (try self.parseFunctionDeclarationWith(true, abstract)).data.function_declaration;
+    var method = (try self.parseFunctionDeclarationWith(true, if (abstract) .forbidden else .required)).data.function_declaration;
     if (self.in_class) {
         method.override_span = annotations.override;
         method.abstract_span = annotations.abstract;
+    } else if (self.has_traits) {
+        method.override_span = annotations.override;
     }
     return method;
 }
 
 fn parseFunctionDeclaration(self: *Parser) Error!Ast.Statement {
-    return self.parseFunctionDeclarationWith(false, false);
+    return self.parseFunctionDeclarationWith(false, .required);
 }
 
-/// `abstract` allows the body to be left out, which is what an `@abstract`
-/// method does. `method` is whether this is a member of a type.
-fn parseFunctionDeclarationWith(self: *Parser, method: bool, abstract: bool) Error!Ast.Statement {
+/// Whether a function's body may be left out: never, only for an `@abstract`
+/// method, which then may not have one, or for a trait's method, which
+/// becomes a requirement without one.
+const Body = enum { required, forbidden, optional };
+
+/// `method` is whether this is a member of a type.
+fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Error!Ast.Statement {
+    const abstract = body_rule != .required;
     const keyword = self.advance();
 
     const name = self.peek();
@@ -1382,17 +1506,18 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, abstract: bool) Err
                 .parameters = parameters,
                 .return_annotation = return_annotation,
                 .body = .{ .span = end, .statements = &.{} },
+                .abstract_span = name.span,
             } },
         };
     }
-    if (abstract) {
+    if (body_rule == .forbidden) {
         try self.reportFmtNote(
             self.peek().span,
             "`{s}` is abstract, so it has no body",
             .{self.text(name)},
             "Remove the body, and let each subclass supply one with `@override`. Or remove `@abstract` to keep this body.",
         );
-    } else if (method and self.in_class and self.check(.newline)) {
+    } else if (body_rule == .required and method and self.in_class and self.check(.newline)) {
         return self.reportFmt(
             self.peek().span,
             "`{s}` needs a body",
@@ -3221,7 +3346,11 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
                     .{self.type_name},
                     try std.fmt.allocPrint(self.arena, "Give it one with `extends`, as in `class {s} extends Base`, or reach its own members through `self`.", .{self.type_name}),
                 ),
-                .member, .member_lambda, .member_nested => try self.note(
+                .member, .member_lambda, .member_nested => if (self.in_trait) try self.note(
+                    token.span,
+                    "a trait has no base class, so there is no `super`",
+                    "To run the default of a trait this one builds on, write `Trait.name(self)`.",
+                ) else try self.note(
                     token.span,
                     "a struct has no base class, so there is no `super`",
                     "Structs do not inherit. Reach the struct's own members through `self`.",

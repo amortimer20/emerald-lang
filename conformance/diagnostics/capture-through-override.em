@@ -22,3 +22,25 @@ func pick(): Greeter {
 const greeter = pick()
 print(greeter.greet())
 title = "Dr."
+
+# The same through a trait: the call may run what a type adopting it supplies.
+var suffix: String
+
+trait Titled {
+    func title(): String
+}
+
+struct Book with Titled {
+    @override
+    func title(): String {
+        return "Book" + suffix
+    }
+}
+
+func shelf(): Titled {
+    return Book()
+}
+
+const titled = shelf()
+print(titled.title())
+suffix = "!"

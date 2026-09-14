@@ -164,6 +164,10 @@ pub const Facts = struct {
     /// key. Only a name that reaches a type is recorded; the checker reports
     /// the rest.
     bases: KeyMap = .empty,
+    /// Every trait (11.1), and for every type that adopts traits, or trait
+    /// that builds on them, their keys.
+    traits: NameSet = .empty,
+    adopted: std.StringHashMapUnmanaged([]const []const u8) = .empty,
 
     /// The key a bare name has in `file`, or null when the name is not a
     /// module-level declaration visible there.
@@ -503,6 +507,7 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
             .kind = .type,
         });
         try self.facts.owner.put(self.arena, key, self.file);
+        if (declaration.trait) try self.facts.traits.put(self.arena, key, {});
         // Constructing a value runs its constructor, which may read module
         // variables and call functions like any function body, so a call to
         // the type is recorded exactly as a call to a function is.
@@ -565,9 +570,16 @@ fn recordBases(self: *Resolver, statements: []const Ast.Statement) Error!void {
             .struct_declaration => |value| value,
             else => continue,
         };
+        const type_key = try self.keyOf(self.file, declaration.name);
+        if (declaration.traits.len > 0 and !self.facts.adopted.contains(type_key)) {
+            var keys: std.ArrayList([]const u8) = .empty;
+            for (declaration.traits) |trait| {
+                try keys.append(self.arena, try self.typeKeyOf(trait.name) orelse continue);
+            }
+            try self.facts.adopted.put(self.arena, type_key, keys.items);
+        }
         const written = declaration.base orelse continue;
         const key = try self.typeKeyOf(written.name) orelse continue;
-        const type_key = try self.keyOf(self.file, declaration.name);
         // A repeated type name is reported where it is hoisted.
         if (self.facts.bases.contains(type_key)) continue;
         try self.facts.bases.put(self.arena, type_key, key);
@@ -590,15 +602,20 @@ fn typeKeyOf(self: *Resolver, written: []const u8) Error!?[]const u8 {
 /// Whether `name` is an instance member of the type `type_key` or of any class
 /// it extends, and if so the key of the type that declares it.
 fn instanceMemberOwner(self: *Resolver, type_key: []const u8, name: []const u8) Error!?[]const u8 {
-    var at: ?[]const u8 = type_key;
-    var steps: usize = 0;
-    while (at) |current| : (steps += 1) {
-        // A cycle of bases is reported by the checker; stop going round it.
-        if (steps > self.facts.bases.count()) return null;
-        if (self.instance_members.contains(try methodKey(self.arena, current, name))) return current;
-        at = self.facts.bases.get(current);
+    return self.memberOwnerWithin(type_key, name, 0);
+}
+
+fn memberOwnerWithin(self: *Resolver, type_key: []const u8, name: []const u8, depth: usize) Error!?[]const u8 {
+    // A cycle of bases or traits is reported by the checker; stop going round it.
+    if (depth > self.facts.bases.count() + self.facts.traits.count()) return null;
+    if (self.instance_members.contains(try methodKey(self.arena, type_key, name))) return type_key;
+    if (self.facts.adopted.get(type_key)) |traits| {
+        for (traits) |trait| {
+            if (try self.memberOwnerWithin(trait, name, depth + 1)) |owner| return owner;
+        }
     }
-    return null;
+    const base = self.facts.bases.get(type_key) orelse return null;
+    return self.memberOwnerWithin(base, name, depth + 1);
 }
 
 /// A method or property accessor, whose body is walked like a function's.
@@ -1750,6 +1767,11 @@ fn qualifyTypeMember(
         }
         return .{ .key = key };
     }
+    // Section 11.2's `Named.introduction(self)`, which runs a trait's own
+    // default; the checker judges the call.
+    if (self.facts.traits.contains(type_key) and self.instance_members.contains(key) and !isPrivate(member)) {
+        return .{ .key = key };
+    }
     if (try self.instanceMemberOwner(type_key, member) != null) {
         // Section 10.5: from outside the type, that it is private is the
         // mistake, since reaching it through a value would fail too.
@@ -2077,6 +2099,9 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                 .key => |key| {
                     try self.facts.qualified.put(self.arena, expression, key);
                     try self.noteTypeMember(key);
+                    if (self.current_function) |caller| {
+                        if (self.facts.calls.contains(key)) try self.facts.calls.getPtr(caller).?.put(self.arena, key, {});
+                    }
                     if (self.scopes.items[module_scope].get(key)) |binding| {
                         try self.noteRead(.{ .binding = binding, .scope = module_scope, .key = key });
                         if (self.current_function) |caller| {

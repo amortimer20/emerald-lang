@@ -72,10 +72,16 @@ pub const StructDeclaration = struct {
     /// Section 10.1: a class declares a reference type with the same members a
     /// struct has. Everything that differs follows from sharing.
     class: bool = false,
+    /// Section 11.1: a trait declares a contract, whose members are
+    /// requirements or defaults, and stores nothing.
+    trait: bool = false,
     name: []const u8,
     name_span: Source.Span,
     /// Section 10.7's `extends Animal`: the one base class a class may have.
     base: ?TypeExpression = null,
+    /// Section 11.2's `with Swimmer, Flyer`: the traits adopted, or for a
+    /// trait, the ones it builds on.
+    traits: []const TypeExpression = &.{},
     /// Section 10.7's `@abstract`, which keeps the class from being constructed
     /// and lets its methods leave out their bodies.
     abstract_span: ?Source.Span = null,
@@ -95,7 +101,7 @@ pub const StructDeclaration = struct {
 
     /// The keyword it was declared with, for diagnostics.
     pub fn keyword(self: StructDeclaration) []const u8 {
-        return if (self.class) "class" else "struct";
+        return if (self.trait) "trait" else if (self.class) "class" else "struct";
     }
 
     /// The declaration's own `name` is the whole `Vector2.origin` as written,
@@ -230,7 +236,8 @@ pub const FunctionDeclaration = struct {
     /// Section 10.7's `@override`, which replaces a base class's method.
     override_span: ?Source.Span = null,
     /// Section 10.7's `@abstract`, on a method with no body for a subclass to
-    /// supply. Its `body` is empty.
+    /// supply, or for a trait's method written without a body, which is a
+    /// requirement (11.1), its name. Its `body` is empty.
     abstract_span: ?Source.Span = null,
 };
 

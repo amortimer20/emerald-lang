@@ -1,0 +1,88 @@
+diagnostics/traits.em:25:8: `Missing` does not supply `name`, which the trait `Named` requires
+  struct Missing with Named {
+         ^^^^^^^
+Add `const name: String` to `Missing`, as a field or a property.
+diagnostics/traits.em:25:8: `Missing` does not supply `nickname`, which the trait `Named` requires
+  struct Missing with Named {
+         ^^^^^^^
+Add `var nickname: String` to `Missing`, as a field or a property.
+diagnostics/traits.em:25:8: `Missing` does not supply `greet`, which the trait `Named` requires
+  struct Missing with Named {
+         ^^^^^^^
+Add `@override func greet(...)` with a body to `Missing`.
+diagnostics/traits.em:29:11: `name` holds Int, but the trait `Named` requires String
+      const name: Int
+            ^^^^
+Give `name` the type the trait requires: `String`.
+diagnostics/traits.em:30:11: `nickname` has to be writable, because the trait `Named` requires `var nickname`
+      const nickname: String = ""
+            ^^^^^^^^
+Declare it with `var`, or give the property a `set` block.
+diagnostics/traits.em:33:10: `greet` takes different parameters from the `greet` of `Named` it overrides
+      func greet(other: String): Int {
+           ^^^^^
+An override takes exactly the parameters it replaces, with the same names and types, since a call through `Named` passes them: `()`.
+diagnostics/traits.em:33:32: `greet` gives Int, but the `greet` of `Named` it overrides gives String
+      func greet(other: String): Int {
+                                 ^^^
+An override gives what it replaces, or a subclass of that class. Write `: String`.
+diagnostics/traits.em:42:10: `greet` is a method of the trait `Named`
+      func greet(): String {
+           ^^^^^
+Write `@override` on the line before it to supply `Named`'s method, or give this one a name of its own.
+diagnostics/traits.em:51:7: `Named` and `Loud` both have `name`, but they do not agree on it
+  class Both with Named, Loud {
+        ^^^^
+`Both` can adopt both only if their `name` has the same kind and type. Rename it in one of them.
+diagnostics/traits.em:51:7: `Both` gets `introduction` from both `Named` and `Loud`, and trait order does not choose
+  class Both with Named, Loud {
+        ^^^^
+Give `Both` its own `introduction` marked `@override`. It can run either version, as in `Named.introduction(self)`.
+diagnostics/traits.em:68:16: Point is not a trait, so it cannot follow `with`
+  class Pet with Point {
+                 ^^^^^
+Only a trait, declared with `trait`, can be adopted with `with`.
+diagnostics/traits.em:74:8: `Tagged` does not supply `name`, which the trait `Named` requires
+  struct Tagged with Animal, Named, Named {
+         ^^^^^^
+Add `const name: String` to `Tagged`, as a field or a property.
+diagnostics/traits.em:74:8: `Tagged` does not supply `nickname`, which the trait `Named` requires
+  struct Tagged with Animal, Named, Named {
+         ^^^^^^
+Add `var nickname: String` to `Tagged`, as a field or a property.
+diagnostics/traits.em:74:8: `Tagged` does not supply `greet`, which the trait `Named` requires
+  struct Tagged with Animal, Named, Named {
+         ^^^^^^
+Add `@override func greet(...)` with a body to `Tagged`.
+diagnostics/traits.em:74:20: Animal is not a trait, so it cannot follow `with`
+  struct Tagged with Animal, Named, Named {
+                     ^^^^^^
+A class is extended, with `extends Animal`, and only by a class.
+diagnostics/traits.em:74:35: `Named` is already adopted here
+  struct Tagged with Animal, Named, Named {
+                                    ^^^^^
+Name each trait once.
+diagnostics/traits.em:77:17: `Loop` cannot build on itself
+  trait Loop with Loop {
+                  ^^^^
+Name a different trait after `with`, or remove it.
+diagnostics/traits.em:82:19: `Named` is a trait, so it cannot be constructed
+      const other = Named()
+                    ^^^^^
+A trait is a contract. Construct a struct or class that adopts `Named` instead.
+diagnostics/traits.em:83:11: values seen through a trait cannot be compared yet
+      print(named == named)
+            ^^^^^^^^^^^^^^
+A struct compares by its fields and an object by identity, and a trait may hold either. Compare the concrete values instead.
+diagnostics/traits.em:84:17: `_prefix` is private to `Named`
+      print(named._prefix())
+                  ^^^^^^^
+Only code written inside `Named`'s braces can reach a name that starts with `_`.
+diagnostics/traits.em:85:5: `named` is a parameter, so a change to it would be lost when the function returns
+      named.nickname = "z"
+      ^^^^^
+Copy it into a `var`, change the copy, and return it, as in `var changed = named`.
+diagnostics/traits.em:88:11: `Named.greet` has no default to run
+  const c = Named.greet(Forgot())
+            ^^^^^^^^^^^
+`greet` is a requirement, with no body in the trait. Call it on a value instead, as in `value.greet()`.

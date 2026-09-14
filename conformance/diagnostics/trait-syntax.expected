@@ -1,0 +1,32 @@
+diagnostics/trait-syntax.em:2:1: a trait needs no `@abstract`
+  @abstract
+  ^^^^^^^^^
+A trait is never constructed, and a member written without a body is already a requirement. Remove `@abstract`.
+diagnostics/trait-syntax.em:3:13: a trait builds on other traits with `with`
+  trait Shape extends Base {
+              ^^^^^^^
+Write `with` in place of `extends`, as in `trait Pet with Named`. A trait cannot extend a class.
+diagnostics/trait-syntax.em:7:11: a trait stores nothing, so `value` cannot have a value here
+      const value: Int = 3
+            ^^^^^
+Leave out `= ...` so each type that adopts the trait supplies `value`, or give it a body that computes it.
+diagnostics/trait-syntax.em:9:5: a trait has no constructor
+      constructor() {
+      ^^^^^^^^^^^
+A trait stores nothing to set up. Each type that adopts it builds its own values.
+diagnostics/trait-syntax.em:12:5: a trait has no type-level members
+      func Stored.make() {
+      ^^^^
+Declare the type-level member in each type that adopts the trait.
+diagnostics/trait-syntax.em:15:5: a trait's requirements need no `@abstract`
+      @abstract
+      ^^^^^^^^^
+Leave out the body instead: a member of a trait written without one is a requirement.
+diagnostics/trait-syntax.em:19:16: a trait has no base class, so there is no `super`
+          return super.perimeter()
+                 ^^^^^
+To run the default of a trait this one builds on, write `Trait.name(self)`.
+diagnostics/trait-syntax.em:24:5: a struct has nothing to override
+      @override
+      ^^^^^^^^^
+Structs do not inherit, and this one adopts no traits. Remove the annotation, or adopt the trait with `with`.

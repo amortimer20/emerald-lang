@@ -88,8 +88,14 @@ pub const User = struct {
     /// Section 10.1: a class's values are shared references rather than
     /// copied values.
     class: bool = false,
+    /// Section 11.1: a trait, whose values are values of the types adopting
+    /// it, seen only through its contract.
+    trait: bool = false,
     /// Section 10.7's base class, for a class that extends one.
     base: ?*const User = null,
+    /// Section 11.2's `with` list: the traits adopted, or that a trait builds
+    /// on.
+    traits: []const *const User = &.{},
     /// Every stored field, a base class's first, in declaration order.
     fields: []const Field = &.{},
     /// How many of `fields` come from base classes.
@@ -110,6 +116,21 @@ pub const User = struct {
         var at: ?*const User = self;
         while (at) |current| : (at = current.base) {
             if (current == other) return true;
+        }
+        return false;
+    }
+
+    /// Whether a value of this type is also one of `other`: it extends it, or
+    /// `other` is a trait that it, a class it extends, or a trait any of them
+    /// builds on adopts (11.2).
+    pub fn conformsTo(self: *const User, other: *const User) bool {
+        if (self.extends(other)) return true;
+        if (!other.trait) return false;
+        var at: ?*const User = self;
+        while (at) |current| : (at = current.base) {
+            for (current.traits) |adopted| {
+                if (adopted.conformsTo(other)) return true;
+            }
         }
         return false;
     }
@@ -178,8 +199,9 @@ fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize) bool {
         .struct_value => blk: {
             const user = self.user.?;
             // Section 8.3: an object can change while it is a key, so
-            // classes are not initial dictionary keys.
-            if (user.class) break :blk false;
+            // classes are not initial dictionary keys, and a trait's value
+            // may be an object.
+            if (user.class or user.trait) break :blk false;
             for (seen[0..depth]) |earlier| {
                 if (earlier == user) break :blk false;
             }
@@ -369,7 +391,7 @@ pub fn assignableTo(self: Type, target: Type) bool {
     // Section 10.7: an object of a subclass is also one of its base class,
     // and it is shared rather than converted, so nothing changes at runtime.
     if (self.kind == .struct_value and target.kind == .struct_value) {
-        return self.user.?.extends(target.user.?);
+        return self.user.?.conformsTo(target.user.?);
     }
 
     // A tuple widens position by position, unlike a list. Section 8.2 gives no

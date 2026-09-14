@@ -62,13 +62,19 @@ pub const StructType = struct {
     methods: ?*const Methods = null,
     /// Section 10.7's base class, for a class that extends one.
     base: ?*const StructType = null,
+    /// Section 11.2: the key of every trait this type adopts, directly,
+    /// through other traits, or through its base classes.
+    traits: []const []const u8 = &.{},
 
-    /// Whether an object of this type is also one of the type named `key`:
-    /// this type or one it extends (4.4).
+    /// Whether a value of this type is also one of the type named `key`: this
+    /// type, one it extends, or a trait it adopts (4.4).
     pub fn isOrExtends(self: *const StructType, key: []const u8) bool {
         var at: ?*const StructType = self;
         while (at) |current| : (at = current.base) {
             if (std.mem.eql(u8, current.name, key)) return true;
+        }
+        for (self.traits) |trait| {
+            if (std.mem.eql(u8, trait, key)) return true;
         }
         return false;
     }
