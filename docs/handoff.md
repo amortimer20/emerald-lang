@@ -1559,6 +1559,12 @@ maintainability work rather than reproduced behavioral failures:
 
 ### Known rough edges
 
+- Interpreter-detected failures currently use the common `RuntimeError` type. Grow the
+  hierarchy with the feature that produces each failure instead of designing it all at
+  once. The first existing requirements to reconcile are `RecursionError` in section 7.2
+  and `InputError` in sections 2 and 15.2; later conversion, filesystem, regex, and network
+  work should add its specific error types in the same implementation slice.
+
 - **A literal mixing sibling classes needs its type written.** `[Dog(), Cat()]` is reported
   as a list holding `Dog`, since inference never looks for a common base class; `const pets:
   [Animal] = [Dog(), Cat()]` works. A common-base rule would need designing with `if`

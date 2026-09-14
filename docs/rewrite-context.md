@@ -3117,6 +3117,10 @@ for working Emerald programs, implementation measurements, or a dedicated design
 - project templates and the eventual build, distribution, and package commands;
 - generated documentation and its searchable reference interface;
 - serialization, filesystem encoding policy, clocks, dates, time zones, and networking;
+- the runtime error taxonomy, expanded alongside the operations that need it. Existing
+  named requirements include `RecursionError` for the recursion boundary and `InputError`
+  for input failures; conversion, filesystem, regex, networking, and similar errors receive
+  specific types when their producing APIs are implemented or revisited;
 - the first TUI, 2D, GUI, or game-engine library used to exercise Emerald's APIs; and
 - concurrency and async as a dedicated design project after the single-threaded runtime.
 
