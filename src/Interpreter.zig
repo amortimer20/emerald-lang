@@ -3940,7 +3940,7 @@ fn callReadingMethod(
 /// when an item is itself a collection or object.
 fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique, sum, min, max };
+    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique, sum, average, min, max };
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
@@ -3989,6 +3989,7 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
             break :blk value;
         },
         .sum => self.sumList(span, list),
+        .average => averageList(list),
         .min, .max => self.listExtreme(span, list, std.mem.eql(u8, name, "min")),
     };
 }
@@ -4018,6 +4019,25 @@ fn sumList(self: *Interpreter, span: Source.Span, list: *const Heap.List) Error!
         },
         else => unreachable, // The checker permits `sum` only on numeric Lists.
     };
+}
+
+/// Section 8.6's numeric average. Its result is always Float so a fractional
+/// answer from an Int List stays visible; no items have no average. Each item
+/// widens as an ordinary Float operation would, then Float arithmetic supplies
+/// the established Infinity and NaN behavior.
+fn averageList(list: *const Heap.List) Error!Value {
+    if (list.items.items.len == 0) return Value.nothing;
+    var total: f64 = 0.0;
+    switch (list.element) {
+        .int => {
+            for (list.items.items) |item| total += @floatFromInt(item.data.int);
+        },
+        .float => {
+            for (list.items.items) |item| total += item.data.float;
+        },
+        else => unreachable, // The checker permits `average` only on numeric Lists.
+    }
+    return .initFloat(total / @as(f64, @floatFromInt(list.items.items.len)));
 }
 
 /// Section 8.6's extrema. Ties retain the first item, and an empty List has no

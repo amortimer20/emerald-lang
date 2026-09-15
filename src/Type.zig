@@ -478,7 +478,7 @@ pub const ListMethod = struct {
     mutates: bool,
 
     pub const Operand = enum { element, index };
-    pub const Result = enum { nothing, bool, element, list };
+    pub const Result = enum { nothing, bool, element, list, float };
 };
 
 pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
@@ -499,6 +499,7 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "unique", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
     .{ "unique!", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
     .{ "sum", ListMethod{ .parameters = &.{}, .result = .element, .mutates = false } },
+    .{ "average", ListMethod{ .parameters = &.{}, .result = .float, .mutates = false } },
     .{ "min", ListMethod{ .parameters = &.{}, .result = .element, .mutates = false } },
     .{ "max", ListMethod{ .parameters = &.{}, .result = .element, .mutates = false } },
 });

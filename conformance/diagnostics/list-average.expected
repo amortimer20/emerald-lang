@@ -1,0 +1,12 @@
+diagnostics/list-average.em:1:22: `average` needs a List of Ints or Floats, but this is [String]
+  print(["one", "two"].average())
+                       ^^^^^^^
+Use `map` to produce numbers first, or choose an aggregation that fits this List's elements.
+diagnostics/list-average.em:2:11: `average` takes 0 arguments, but this call passes 1
+  print([1].average(1))
+            ^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/list-average.em:3:15: `average` takes 0 arguments, but this call passes 1
+  print(["one"].average(1))
+                ^^^^^^^
+Match the number of arguments to what the method needs.

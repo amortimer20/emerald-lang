@@ -1453,6 +1453,12 @@ type and visits items from left to right. An empty numeric List returns its addi
 Float accumulation follows Emerald's ordinary IEEE-754 arithmetic, including `Infinity` and
 `NaN`. Other List element types receive a correction toward mapping to numbers first.
 
+`average()` is currently a List operation for `[Int]` and `[Float]`. It returns `Float?`:
+`nothing` for an empty List, otherwise the arithmetic mean after each Int has widened as it
+would for an ordinary Float operation. This keeps a fractional Int-list result visible, such
+as `[1, 2].average()` yielding `1.5`. Float accumulation and division follow ordinary
+IEEE-754 arithmetic, including `Infinity` and `NaN`.
+
 `min()` and `max()` are currently List operations for `Int`, `Float`, `String`, and user
 types that adopt `Ordered`. They return `T?`: `nothing` for an empty List, otherwise the first
 item tied for the requested extreme. A List of optional values is rejected so that `nothing`

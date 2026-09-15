@@ -5950,6 +5950,21 @@ fn typeOfMethodCall(
         return .invalid;
     }
 
+    // `average` stays numeric too, but it deliberately returns Float: a
+    // whole-number average such as `[1, 2].average()` must not silently lose
+    // its fractional part. Its one missing answer is the average of no items.
+    if (std.mem.eql(u8, member.name, "average")) {
+        if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
+        if (element.kind == .int or element.kind == .float) return Type.float.optionalOf();
+        try self.report(
+            member.name_span,
+            "`average` needs a List of Ints or Floats, but this is {f}",
+            .{base},
+            "Use `map` to produce numbers first, or choose an aggregation that fits this List's elements.",
+        );
+        return .invalid;
+    }
+
     // `min` and `max` use the language's established ordering, including a
     // user type's `Ordered.compare`. Their empty result is absence, not a
     // made-up sentinel, so optional elements would make that absence unclear.
@@ -6014,6 +6029,7 @@ fn typeOfMethodCall(
         .bool => .bool,
         .element => element,
         .list => try Type.listOf(self.arena, element),
+        .float => .float,
     };
 }
 

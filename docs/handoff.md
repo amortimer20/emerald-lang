@@ -191,6 +191,16 @@ rejected even as the only element, because it has no order. Conformance covers n
 String, empty, and custom `Ordered` Lists, type and arity errors, optional elements, and the
 NaN runtime diagnostic.
 
+Part 16 adds List `average()` for `[Int]` and `[Float]`. It returns `Float?`, because a
+whole-number List can have a fractional mean; an empty List returns `nothing`. Each Int
+widening and all Float arithmetic follow the ordinary Float rules, including `Infinity` and
+`NaN`. Conformance covers both numeric element types, empty Lists, special Floats, static
+misuse, and the no-cascade arity boundary.
+
+The next focused standard-library part is `reduce` with its required initial accumulator.
+That keeps empty input defined and lets the accumulator type differ from the List element
+without adding an implicit identity or a public generic protocol.
+
 A bounded adversarial review of Slice 14 parts 1–12 found no defect. Small programs in Debug
 and ReleaseSafe verified snapshot traversal when callbacks mutate their captured List or
 Dictionary receiver, predicate short-circuit boundaries, one-level `flat_map`, Unicode scalar
