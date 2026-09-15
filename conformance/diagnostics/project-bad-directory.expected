@@ -1,0 +1,4 @@
+diagnostics/project-bad-directory/2bad/helper.em:1:1: the directory `2bad` cannot be a namespace
+  var helper = 2
+  ^
+A directory name becomes a namespace, so it has to read as one: letters, digits and `_`, starting with a letter. Rename it, as in `shapes/`.

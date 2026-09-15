@@ -1,20 +1,21 @@
 # Current handoff
 
-Updated: 2026-09-15. Slice 16 has reached the baseline hardening pass: CI is in place, and the
-front-end now covers allocator-failure propagation and malformed-input recovery across the lexer,
-parser, and project loader without widening into unrelated cleanup.
+Updated: 2026-09-15. Slice 16 is now covered by a project-level conformance case that combines an
+invalid namespace directory with a malformed declaration, and the repo’s CI plus the focused
+hardening suite stay green without broadening the scope into unrelated cleanup.
 
 ## Current milestone
 
-Completed in this pass: the initial CI gate for Emerald remains in place, and the hardening work now
-includes failing-allocator regressions and malformed-input recovery checks across the lexer, parser,
-and project loader. The repository continues to validate the pinned Zig toolchain with GitHub Actions,
-and the current test coverage exercises both ordinary malformed source and the `error.OutOfMemory`
-behavior a failing allocator is expected to surface.
+Completed in this pass: the CI gate for Emerald remains in place, the front-end covers allocator-failure
+propagation and malformed-input recovery across the lexer, parser, and project loader, and the
+repository now includes a project-level conformance case that proves bad namespace directories are
+reported without crashing the project load. The current tests exercise both ordinary malformed source
+and the `error.OutOfMemory` behavior a failing allocator is expected to surface.
 
 The next step is to keep the hardening pattern focused on the remaining failure modes that are still
-likely to crash the host process or silently drop later declarations — particularly nested parser
-recovery and broader project stress checks that combine unspecified paths with malformed declarations.
+likely to crash the host process or silently drop later declarations — particularly broader project
+stress cases with nested invalid directories and malformed declarations when a wider pass is explicitly
+wanted.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
