@@ -399,3 +399,21 @@ test "project loading keeps invalid directories tracked without dropping their f
     try testing.expectEqual(@as(usize, 1), project.bad_directories.len);
     try testing.expectEqualStrings("2bad", project.bad_directories[0].path);
 }
+
+test "project loading keeps nested invalid directories tracked with their full path" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "main.em", .data = "var answer = 42\n" });
+    try tmp.dir.createDirPath(testing.io, "good/2bad");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "good/main.em", .data = "var helper = 1\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "good/2bad/extra.em", .data = "var nested = 2\n" });
+
+    var project = try loadIn(testing.allocator, testing.io, tmp.dir, "main.em");
+    defer project.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 3), project.files.len);
+    try testing.expectEqual(@as(usize, 1), project.bad_directories.len);
+    try testing.expectEqualStrings("good/2bad", project.bad_directories[0].path);
+    try testing.expectEqual(@as(u32, 0), project.bad_directories[0].file);
+}
