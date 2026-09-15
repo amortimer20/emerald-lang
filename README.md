@@ -110,8 +110,11 @@ mise use -g "github:amortimer20/emerald-lang@latest"
 Or for a specific version:
 
 ```bash
-mise use -g "github:amortimer20/emerald-lang@v0.1.0"
+mise use -g "github:amortimer20/emerald-lang@v0.1.1"
 ```
+
+If `@latest` fails to resolve (older Mise versions can mishandle GitHub's release
+metadata), pin an explicit tag as shown above, or run `mise self-update` first.
 
 Build, test, and run:
 

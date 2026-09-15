@@ -1,16 +1,10 @@
 # Installing Emerald via Mise
 
-Emerald is release-based: GitHub Releases are the source of truth for distributable binaries, and a dedicated Mise plugin can install the right asset for each platform.
-
-## Recommended flow
-
-1. Tag a release such as `v0.1.0`.
-2. Publish binary archives from the GitHub Actions release workflow.
-3. Install Emerald through a Mise plugin or a compatible plugin shim.
+Emerald is release-based: GitHub Releases are the source of truth for distributable
+binaries. Mise's `github` backend installs the right asset for the current platform
+directly from those releases, so no dedicated Mise plugin is needed.
 
 ## Standard Mise usage
-
-Once the release assets are published on GitHub, the expected UX is to point Mise at the GitHub repository directly:
 
 ```bash
 mise use -g "github:amortimer20/emerald-lang@latest"
@@ -19,21 +13,28 @@ mise use -g "github:amortimer20/emerald-lang@latest"
 Or for a specific version:
 
 ```bash
-mise use -g "github:amortimer20/emerald-lang@v0.1.0"
+mise use -g "github:amortimer20/emerald-lang@v0.1.1"
 ```
 
-This uses Mise's `github` backend against the repository that holds the release assets. `github:` is the direct install path for a tool whose release artifacts follow the backend's conventions.
+`@latest` resolves through GitHub's release metadata; if it ever misbehaves (for example,
+reporting no matching version), pin an explicit tag instead.
+
+This uses Mise's `github` backend against the repository that holds the release assets:
+it matches the local OS and architecture against the release filenames below, downloads
+the matching archive, and unpacks it into the Mise install directory. No `.mise-plugin/`
+directory or custom plugin is required.
 
 ## Release asset naming
 
-The release workflow publishes archives with consistent names:
+The release workflow publishes archives with consistent names, plus a `SHA256SUMS` file:
 
 - `emerald-linux-x86_64.tar.gz`
 - `emerald-macos-arm64.tar.gz`
 - `emerald-windows-x86_64.zip`
 
-The Mise plugin should match the local OS and architecture against these filenames, then unpack the archive into the Mise bin directory.
-
 ## Why this approach
 
-This keeps Emerald compatible with the existing Zig toolchain workflow in the repository while giving users a first-class install experience through Mise. It also keeps the project simple: the repo owns binary builds and release packaging, while the plugin is the thin user-facing adapter.
+This keeps Emerald compatible with the existing Zig toolchain workflow in the repository
+while giving users a first-class install experience through Mise, without maintaining a
+separate plugin: the repo owns binary builds and release packaging, and Mise's built-in
+GitHub backend does the rest.

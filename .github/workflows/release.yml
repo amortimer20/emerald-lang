@@ -46,7 +46,11 @@ jobs:
 
       - name: Build Emerald
         shell: bash
-        run: zig build -Doptimize=ReleaseSafe
+        # `-Dcpu=baseline` keeps the release binary portable: without it Zig
+        # targets the CPU of the GitHub Actions runner that happens to build
+        # it, which can include instruction sets (AVX-512, etc.) that are
+        # absent on a user's machine and crash with "Illegal instruction".
+        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
 
       - name: Package binary
         shell: bash
