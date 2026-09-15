@@ -92,13 +92,15 @@ existing `for`-header forms are unchanged.
 Part 2 adds the settled `Float` vocabulary: the shared numeric methods, `floor`, `ceil`,
 `round`, `round_to`, `truncate`, the three classification predicates, and `to_int`; the
 existing `to_string` is checked through the same table, and `Float.infinity` and
-`Float.nan` expose the two special values. Rounding-to-Int checks finiteness
-and the exact asymmetric bounds before invoking Zig's conversion. `round_to` accepts
-positive and negative decimal places, ties away from zero, and defines its behavior beyond
-binary64's decimal range. Float method arguments perform Emerald's ordinary `Int` widening
-at runtime as well as in the checker. A conformance case now reaches section 8.3's NaN-key
-guard through strict string conversion, retiring the stale claim that no Emerald program
-could produce NaN.
+`Float.nan` expose the two special values. The next receiver-only additions continue the
+same family with `square_root`, `to_radians`, and `to_degrees`, matching the rewrite
+context's single-value method split before the broader `Math` namespace work. Rounding-to-Int
+checks finiteness and the exact asymmetric bounds before invoking Zig's conversion.
+`round_to` accepts positive and negative decimal places, ties away from zero, and defines
+its behavior beyond binary64's decimal range. Float method arguments perform Emerald's
+ordinary `Int` widening at runtime as well as in the checker. A conformance case now reaches
+section 8.3's NaN-key guard through strict string conversion, retiring the stale claim that
+no Emerald program could produce NaN.
 
 The first implementation evaluated `Float.infinity` and `Float.nan` directly in the
 interpreter's recursive expression switch. In Debug that enlarged the hot stack frame
