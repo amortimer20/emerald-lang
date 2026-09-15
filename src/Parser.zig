@@ -4030,3 +4030,19 @@ fn tooLarge(self: *Parser, token: Token, comptime type_name: []const u8) Error {
             "`Float` holds IEEE-754 binary64 values.",
     );
 }
+
+const testing = std.testing;
+
+test "parser allocation failures are reported as out-of-memory" {
+    var source = try Source.init(testing.allocator, "test.em", "var score = 2 + 3\n");
+    defer source.deinit(testing.allocator);
+
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+
+    var failing_allocator = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    const parsed = parse(failing_allocator.allocator(), &source, tokens.tokens);
+
+    try testing.expectError(error.OutOfMemory, parsed);
+}
+

@@ -1044,6 +1044,16 @@ test "malformed inputs remain diagnosable without breaking the token stream" {
     }
 }
 
+test "allocator failures are surfaced as out-of-memory" {
+    var source = try Source.init(testing.allocator, "test.em", "var name = \"Ava\"\n");
+    defer source.deinit(testing.allocator);
+
+    var failing_allocator = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    const result = tokenize(failing_allocator.allocator(), &source);
+
+    try testing.expectError(error.OutOfMemory, result);
+}
+
 test "every operator and delimiter round-trips through its lexeme" {
     try expectTexts("+ - * ** / // % += -= *= /= //=", &.{
         "+", "-", "*", "**", "/", "//", "%", "+=", "-=", "*=", "/=", "//=",

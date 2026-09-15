@@ -1,19 +1,20 @@
 # Current handoff
 
-Updated: 2026-09-15. Prepared for Slice 16, the CI and test-hardening pass.
+Updated: 2026-09-15. Slice 16 is in the robustness-hardening phase: CI is in place, and the
+next pass adds allocator-failure and malformed-input coverage to keep the frontend resilient
+under adversarial or memory-constrained conditions.
 
 ## Current milestone
 
-Completed in this pass: the initial CI foundation for Emerald. The repository now contains a
-GitHub Actions workflow that validates the pinned Zig toolchain and runs the project test suite
-for Debug builds across Linux, macOS, and Windows, plus ReleaseSafe on Linux. This begins the
-Slice 16 hardening pass outlined in the backlog: CI gating, broadened validation, and
-infrastructure checks before later robustness work such as allocator-failure tests, fuzzing,
-and focused subsystem diagnostics.
+Completed in this pass: the initial CI gate for Emerald is in place, and the lexer hardening pass
+now includes a failing-allocator regression plus malformed-input stress checks. The repository
+continues to validate the pinned Zig toolchain with GitHub Actions, and the lexer test file now
+covers both normal malformed source and the `error.OutOfMemory` behavior a failing allocator is
+expected to surface.
 
-The next step is to use the CI gate to keep the suite green while expanding Slice 16 with
-allocator-failure coverage, parser/lexer fuzzing, and broader cross-project error-discovery
-checks.
+The next step is to extend the same hardening pattern into the parser and broader project-loading
+paths: more malformed-input loops, a small parser stress pass, and additional project-level checks
+that surface allocation failures without crashing the host process.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
