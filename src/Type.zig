@@ -463,6 +463,13 @@ pub const map_methods = std.StaticStringMap(void).initComptime(.{
     .{"map_values"},
     .{"add"},
     .{"remove"},
+    .{"union"},
+    .{"intersection"},
+    .{"difference"},
+    .{"symmetric_difference"},
+    .{"subset?"},
+    .{"superset?"},
+    .{"disjoint?"},
     .{"merge"},
 });
 

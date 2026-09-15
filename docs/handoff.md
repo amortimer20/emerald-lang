@@ -1,18 +1,18 @@
 # Current handoff
 
    Updated: 2026-09-15. The repo is green on the current test suite. The active standard-library slice is the
-   remaining reduction family: `reduce_right` is implemented and conformance-covered, and the next step is the
-   deferred dictionary/set callback follow-through in the same roadmap-aligned pattern.
+   remaining set-operation family: `union`, `intersection`, `difference`, `symmetric_difference`, and the set
+   comparison predicates are implemented and conformance-covered, and the next step is the next deferred collection
+   family or any remaining adjacent standard-library gap in the same roadmap-aligned pattern.
 
 ## Current milestone
 
 The current standard-library plan is:
 
-   1. Finish the remaining reduction-family gap (`reduce_right`) in the rewrite-context contract and golden run
-      coverage.
-   2. Continue the deferred dictionary/set callback follow-through against the same roadmap and conformance
-      expectations.
-   3. Keep the work narrow and roadmap-driven rather than broadening into unrelated runtime or parser cleanup.
+   1. Finish the remaining set-operation family in the rewrite-context contract and golden run coverage.
+   2. Continue the next deferred collection-family batch, keeping the work narrow and roadmap-driven rather than
+      broadening into unrelated runtime or parser cleanup.
+   3. Keep validation aligned with the pinned Zig toolchain and end-to-end conformance cases.
 
    The repo already includes the earlier landings that matter for this plan: the core frontend, object model,
    error handling, list-family helpers, the completed Range value slice, the dictionary/set transform family, and the

@@ -6527,6 +6527,41 @@ fn typeOfMapMethod(
     }
 
     if (set) {
+        if (std.mem.eql(u8, name, "union") or
+            std.mem.eql(u8, name, "intersection") or
+            std.mem.eql(u8, name, "difference") or
+            std.mem.eql(u8, name, "symmetric_difference"))
+        {
+            if (try self.requireArity(member, call.arguments, 1, 1)) {
+                const actual = try self.typeOfExpected(call.arguments[0], base);
+                if (!actual.assignableTo(base)) try self.report(
+                    call.arguments[0].span,
+                    "this is {f}, but `{s}` needs a {f}",
+                    .{ actual, name, base },
+                    "Pass a set with the same element type.",
+                );
+            } else {
+                try self.typeArguments(call.arguments);
+            }
+            return base;
+        }
+        if (std.mem.eql(u8, name, "subset?") or
+            std.mem.eql(u8, name, "superset?") or
+            std.mem.eql(u8, name, "disjoint?"))
+        {
+            if (try self.requireArity(member, call.arguments, 1, 1)) {
+                const actual = try self.typeOfExpected(call.arguments[0], base);
+                if (!actual.assignableTo(base)) try self.report(
+                    call.arguments[0].span,
+                    "this is {f}, but `{s}` needs a {f}",
+                    .{ actual, name, base },
+                    "Pass a set with the same element type.",
+                );
+            } else {
+                try self.typeArguments(call.arguments);
+            }
+            return .bool;
+        }
         if (std.mem.eql(u8, name, "add")) {
             if (try self.requireArity(member, call.arguments, 1, 1)) {
                 try self.requireKey(call.arguments[0], key);

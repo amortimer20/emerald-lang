@@ -3618,6 +3618,104 @@ fn readMap(
 
     if (std.mem.eql(u8, name, "empty?")) return .initBool(map.count() == 0);
 
+    if (map.is_set) {
+        if (std.mem.eql(u8, name, "union") or
+            std.mem.eql(u8, name, "intersection") or
+            std.mem.eql(u8, name, "difference") or
+            std.mem.eql(u8, name, "symmetric_difference"))
+        {
+            const other = arguments[0];
+            if (other.kind() != .map or !other.data.map.is_set) {
+                return self.raiseFmt(
+                    call.arguments[0].span,
+                    "`{s}` needs a Set",
+                    .{name},
+                    "Pass a set with the same element type.",
+                );
+            }
+            const result = try self.heap.createMap(map.key_kind, .nothing, true);
+            const value: Value = .{ .data = .{ .map = result } };
+            errdefer self.heap.release(value);
+            if (std.mem.eql(u8, name, "union")) {
+                for (map.entries.items) |entry| {
+                    const key = Heap.retain(entry.key);
+                    const hash = try self.hashKey(call.arguments[0].span, key);
+                    try self.heap.put(result, hash, key, Value.nothing);
+                }
+                for (other.data.map.entries.items) |entry| {
+                    const key = Heap.retain(entry.key);
+                    const hash = try self.hashKey(call.arguments[0].span, key);
+                    try self.heap.put(result, hash, key, Value.nothing);
+                }
+                return value;
+            }
+            if (std.mem.eql(u8, name, "intersection")) {
+                for (map.entries.items) |entry| {
+                    const key = Heap.retain(entry.key);
+                    const hash = try self.hashKey(call.arguments[0].span, key);
+                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key) == null) continue;
+                    try self.heap.put(result, hash, key, Value.nothing);
+                }
+                return value;
+            }
+            if (std.mem.eql(u8, name, "difference")) {
+                for (map.entries.items) |entry| {
+                    const key = Heap.retain(entry.key);
+                    const hash = try self.hashKey(call.arguments[0].span, key);
+                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key) != null) continue;
+                    try self.heap.put(result, hash, key, Value.nothing);
+                }
+                return value;
+            }
+            for (map.entries.items) |entry| {
+                const key = Heap.retain(entry.key);
+                const hash = try self.hashKey(call.arguments[0].span, key);
+                if (try Heap.lookupIn(self.gpa, other.data.map, hash, key) == null) {
+                    try self.heap.put(result, hash, key, Value.nothing);
+                }
+            }
+            for (other.data.map.entries.items) |entry| {
+                const key = Heap.retain(entry.key);
+                const hash = try self.hashKey(call.arguments[0].span, key);
+                if (try Heap.lookupIn(self.gpa, map, hash, key) == null) {
+                    try self.heap.put(result, hash, key, Value.nothing);
+                }
+            }
+            return value;
+        }
+
+        if (std.mem.eql(u8, name, "subset?") or std.mem.eql(u8, name, "superset?") or std.mem.eql(u8, name, "disjoint?")) {
+            const other = arguments[0];
+            if (other.kind() != .map or !other.data.map.is_set) {
+                return self.raiseFmt(
+                    call.arguments[0].span,
+                    "`{s}` needs a Set",
+                    .{name},
+                    "Pass a set with the same element type.",
+                );
+            }
+            if (std.mem.eql(u8, name, "subset?")) {
+                for (map.entries.items) |entry| {
+                    const hash = try self.hashKey(call.arguments[0].span, entry.key);
+                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key) == null) return .initBool(false);
+                }
+                return .initBool(true);
+            }
+            if (std.mem.eql(u8, name, "superset?")) {
+                for (other.data.map.entries.items) |entry| {
+                    const hash = try self.hashKey(call.arguments[0].span, entry.key);
+                    if (try Heap.lookupIn(self.gpa, map, hash, entry.key) == null) return .initBool(false);
+                }
+                return .initBool(true);
+            }
+            for (map.entries.items) |entry| {
+                const hash = try self.hashKey(call.arguments[0].span, entry.key);
+                if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key) != null) return .initBool(false);
+            }
+            return .initBool(true);
+        }
+    }
+
     if (std.mem.eql(u8, name, "contains_key?") or std.mem.eql(u8, name, "contains?")) {
         const key = widen(Heap.retain(arguments[0]), map.key_kind);
         defer self.heap.release(key);
