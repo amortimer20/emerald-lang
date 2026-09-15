@@ -3914,13 +3914,13 @@ fn callExtremeBy(
     const first_argument = [_]Value{Heap.retain(items[0])};
     var chosen_key = try self.invokeClosure(expression.span, closure, callable, &first_argument);
     errdefer self.heap.release(chosen_key);
-    if (chosen_key.data == .float and std.math.isNan(chosen_key.data.float)) return self.raiseExtremeNaN(expression.span, true);
+    if (chosen_key.data == .float and std.math.isNan(chosen_key.data.float)) return self.raiseExtremeNaN(expression.span, .keyed);
 
     for (items[1..]) |item| {
         const argument = [_]Value{Heap.retain(item)};
         const key = try self.invokeClosure(expression.span, closure, callable, &argument);
         errdefer self.heap.release(key);
-        const ordering = try self.orderListItems(expression.span, chosen_key.data, chosen_key, key, true);
+        const ordering = try self.orderListItems(expression.span, chosen_key.data, chosen_key, key, .keyed);
         const replace = if (minimum) ordering == .gt else ordering == .lt;
         if (!replace) {
             self.heap.release(key);
@@ -3933,6 +3933,14 @@ fn callExtremeBy(
     }
     self.heap.release(chosen_key);
     return chosen;
+}
+
+/// Section 8.6's paired extrema. Both selections make one pass over the List;
+/// an empty List has neither answer, so both tuple positions are `nothing`.
+fn callMinMax(self: *Interpreter, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    return self.listMinMax(expression.span, receiver.data.list);
 }
 
 /// Section 8.5's list methods. The checker has proved the receiver is a list,
@@ -3957,6 +3965,7 @@ fn callMethod(
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     if (std.mem.eql(u8, member.name, "reduce")) return self.callReduce(expression, call, member);
     if (std.mem.eql(u8, member.name, "min_by") or std.mem.eql(u8, member.name, "max_by")) return self.callExtremeBy(expression, call, member);
+    if (std.mem.eql(u8, member.name, "min_max")) return self.callMinMax(expression, member);
     // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "reverse_each") or std.mem.eql(u8, member.name, "map") or
         std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or std.mem.eql(u8, member.name, "flat_map") or std.mem.eql(u8, member.name, "filter_map") or std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while") or std.mem.eql(u8, member.name, "any?") or
@@ -4128,7 +4137,7 @@ fn listExtreme(self: *Interpreter, span: Source.Span, list: *const Heap.List, mi
     var chosen = Heap.retain(items[0]);
     errdefer self.heap.release(chosen);
     for (items[1..]) |item| {
-        const ordering = try self.orderListItems(span, chosen.data, chosen, item, false);
+        const ordering = try self.orderListItems(span, chosen.data, chosen, item, .ordinary);
         const replace = if (minimum) ordering == .gt else ordering == .lt;
         if (!replace) continue;
         self.heap.release(chosen);
@@ -4137,22 +4146,25 @@ fn listExtreme(self: *Interpreter, span: Source.Span, list: *const Heap.List, mi
     return chosen;
 }
 
-fn raiseExtremeNaN(self: *Interpreter, span: Source.Span, keyed: bool) Error {
+const ExtremeKind = enum { ordinary, keyed, pair };
+
+fn raiseExtremeNaN(self: *Interpreter, span: Source.Span, kind: ExtremeKind) Error {
     return self.raise(
         span,
-        if (keyed)
-            "`min_by` and `max_by` cannot order a key of NaN"
-        else
-            "`min` and `max` cannot order a List containing NaN",
+        switch (kind) {
+            .ordinary => "`min` and `max` cannot order a List containing NaN",
+            .keyed => "`min_by` and `max_by` cannot order a key of NaN",
+            .pair => "`min_max` cannot order a List containing NaN",
+        },
         "Check values with `nan?()` before choosing a minimum or maximum.",
     );
 }
 
-fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left: Value, right: Value, keyed: bool) Error!std.math.Order {
+fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left: Value, right: Value, extreme: ExtremeKind) Error!std.math.Order {
     return switch (kind) {
         .int => std.math.order(left.data.int, right.data.int),
         .float => {
-            if (std.math.isNan(left.data.float) or std.math.isNan(right.data.float)) return self.raiseExtremeNaN(span, keyed);
+            if (std.math.isNan(left.data.float) or std.math.isNan(right.data.float)) return self.raiseExtremeNaN(span, extreme);
             return std.math.order(left.data.float, right.data.float);
         },
         .string => unicode.order(self.gpa, left.data.string.bytes, right.data.string.bytes),
@@ -4163,6 +4175,49 @@ fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left:
         },
         else => unreachable, // The checker permits `min` and `max` only on ordered Lists.
     };
+}
+
+fn listMinMax(self: *Interpreter, span: Source.Span, list: *const Heap.List) Error!Value {
+    const items = list.items.items;
+    if (items.len == 0) return self.extremePair(.nothing, .nothing, .nothing);
+    if (list.element == .float and std.math.isNan(items[0].data.float)) return self.raiseExtremeNaN(span, .pair);
+
+    var minimum = Heap.retain(items[0]);
+    errdefer self.heap.release(minimum);
+    var maximum = Heap.retain(items[0]);
+    errdefer self.heap.release(maximum);
+    for (items[1..]) |item| {
+        if ((try self.orderListItems(span, minimum.data, minimum, item, .pair)) == .gt) {
+            self.heap.release(minimum);
+            minimum = Heap.retain(item);
+        }
+        if ((try self.orderListItems(span, maximum.data, maximum, item, .pair)) == .lt) {
+            self.heap.release(maximum);
+            maximum = Heap.retain(item);
+        }
+    }
+    return self.extremePair(list.element, minimum, maximum);
+}
+
+/// Builds the immutable `(minimum, maximum)` result, taking ownership of both
+/// values. Their stored kinds are the List's element kind even when both are
+/// `nothing`, because the checker recorded their optional element type.
+fn extremePair(self: *Interpreter, kind: Value.Kind, minimum: Value, maximum: Value) Error!Value {
+    const items = try self.gpa.alloc(Value, 2);
+    const kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
+        self.gpa.free(items);
+        return err;
+    };
+    items[0] = minimum;
+    items[1] = maximum;
+    kinds[0] = kind;
+    kinds[1] = kind;
+    const tuple = self.heap.createTuple(items, kinds) catch |err| {
+        self.heap.release(minimum);
+        self.heap.release(maximum);
+        return err;
+    };
+    return .{ .data = .{ .tuple = tuple } };
 }
 
 /// A new list containing one held copy of each value in `items`.

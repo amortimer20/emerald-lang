@@ -5907,6 +5907,7 @@ fn typeOfMethodCall(
         if (std.mem.eql(u8, member.name, "filter_map")) return self.typeOfFilterMap(call, member, base);
         if (std.mem.eql(u8, member.name, "reduce")) return self.typeOfReduce(call, member, base);
         if (std.mem.eql(u8, member.name, "min_by") or std.mem.eql(u8, member.name, "max_by")) return self.typeOfExtremeBy(call, member, base);
+        if (std.mem.eql(u8, member.name, "min_max")) return self.typeOfMinMax(call, member, base);
         if (std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while")) {
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
@@ -6308,6 +6309,35 @@ fn typeOfExtremeBy(self: *Checker, call: Ast.Expression.Call, member: Ast.Expres
         "this block returns {f}, but `{s}` needs an ordered key",
         .{ key, member.name },
         "Return an Int, Float, String, or a type that adopts `Ordered`.",
+    );
+    return .invalid;
+}
+
+/// Section 8.6's paired extrema use the same orderability and absence rules
+/// as `min` and `max`, but one immutable tuple carries both answers.
+fn typeOfMinMax(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
+    const element = base.element.?.*;
+    if (element.optional) {
+        try self.report(
+            member.name_span,
+            "`min_max` cannot choose from {f}, whose elements may be absent",
+            .{base},
+            "Use `filter_map` to remove absent values first, so `nothing` can remain the empty-List result.",
+        );
+        return .invalid;
+    }
+    const pair = try Type.tupleOf(self.arena, &.{ element.optionalOf(), element.optionalOf() });
+    if (element.kind == .int or element.kind == .float or element.kind == .string) return pair;
+    if (element.kind == .struct_value) {
+        const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, element, element);
+        return if (ordered.kind == .invalid) .invalid else pair;
+    }
+    try self.report(
+        member.name_span,
+        "`min_max` needs a List of ordered values, but this is {f}",
+        .{base},
+        "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
     );
     return .invalid;
 }

@@ -1482,6 +1482,12 @@ ordered, present key per item. Keys may be `Int`, `Float`, `String`, or a type a
 `Ordered`. A `NaN` key reports an error, as it has no order. Optional List elements and
 optional keys are rejected to keep absence unambiguous; use `filter_map` or `.or(...)` first.
 
+`min_max()` is currently a List operation for the same ordered element types as `min()` and
+`max()`. It returns `(T?, T?)` after one left-to-right traversal: the first position is the
+first tied minimum, the second the first tied maximum, and an empty List returns
+`(nothing, nothing)`. Optional elements and `NaN` follow the same rejection rules as the
+individual extrema.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs

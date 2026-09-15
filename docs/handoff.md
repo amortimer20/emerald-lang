@@ -210,8 +210,13 @@ present List elements and keys, and reject a `NaN` key with the same pedagogical
 as ordinary extrema. Conformance covers Int, Float, String, custom `Ordered`, empty, ties,
 static misuse, optional boundaries, and the NaN runtime diagnostic.
 
-The next focused standard-library part should consider `min_max`, returning both extrema
-together while retaining the same optional and ordering rules.
+Part 19 adds List `min_max()`. It returns `(T?, T?)` after one left-to-right traversal: the
+first tied minimum and maximum, or `(nothing, nothing)` for an empty List. It accepts the same
+ordered element types as `min` and `max`, and preserves their optional-element and `NaN`
+boundaries. Conformance covers numeric, String, custom `Ordered`, empty, type and arity
+errors, optional elements, and the NaN runtime diagnostic.
+
+The next focused standard-library part should consider sequence shape methods such as `zip`.
 
 A bounded adversarial review of Slice 14 parts 1–12 found no defect. Small programs in Debug
 and ReleaseSafe verified snapshot traversal when callbacks mutate their captured List or

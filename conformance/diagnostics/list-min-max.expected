@@ -1,0 +1,12 @@
+diagnostics/list-min-max.em:1:21: `min_max` needs a List of ordered values, but this is [Bool]
+  print([true, false].min_max())
+                      ^^^^^^^
+Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.
+diagnostics/list-min-max.em:3:21: `min_max` cannot choose from [Int?], whose elements may be absent
+  print(maybe_numbers.min_max())
+                      ^^^^^^^
+Use `filter_map` to remove absent values first, so `nothing` can remain the empty-List result.
+diagnostics/list-min-max.em:4:11: `min_max` takes 0 arguments, but this call passes 1
+  print([1].min_max(1))
+            ^^^^^^^
+Match the number of arguments to what the method needs.
