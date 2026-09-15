@@ -4073,3 +4073,31 @@ test "parser resumes after a malformed declaration inside a block" {
     try testing.expectEqual(@as(usize, 2), parsed.program.statements.len);
 }
 
+test "parser resumes after a malformed declaration before a valid sibling block" {
+    var source = try Source.init(testing.allocator, "test.em", "if true {\nfunc bad(1,\nprint(1)\n}\nif false { print(2) }\nvar ok = 2\n");
+    defer source.deinit(testing.allocator);
+
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+
+    var parsed = try parse(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.diagnostics.len > 0);
+    try testing.expectEqual(@as(usize, 3), parsed.program.statements.len);
+}
+
+test "parser resumes after a malformed declaration before a valid function" {
+    var source = try Source.init(testing.allocator, "test.em", "if true {\nfunc bad(1,\nprint(1)\n}\nfunc good() {\nprint(3)\n}\nvar ok = 2\n");
+    defer source.deinit(testing.allocator);
+
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+
+    var parsed = try parse(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.diagnostics.len > 0);
+    try testing.expectEqual(@as(usize, 3), parsed.program.statements.len);
+}
+
