@@ -6418,6 +6418,42 @@ fn typeOfMapMethod(
     if (std.mem.eql(u8, name, "each")) return self.typeOfEach(call, member, base, false);
     if (std.mem.eql(u8, name, "each_with_index")) return self.typeOfEach(call, member, base, true);
     if (std.mem.eql(u8, name, "map")) return self.typeOfMap(call, member, base);
+    if (std.mem.eql(u8, name, "filter") or std.mem.eql(u8, name, "reject")) {
+        _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+        return base;
+    }
+    if (std.mem.eql(u8, name, "map_keys") or std.mem.eql(u8, name, "map_values")) {
+        if (set) {
+            try self.reportUnknownMember(base, member, "method");
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
+        const block = if (std.mem.eql(u8, name, "map_keys"))
+            try self.requireMapTransformBlock(call, member, base, .key)
+        else
+            try self.requireMapTransformBlock(call, member, base, .value);
+        const produced = self.literal_types.get(block orelse return .invalid) orelse (try self.typeOf(block.?));
+        if (produced.kind != .function) return .invalid;
+
+        const result = produced.signature.?.return_type;
+        if (result.kind == .nothing) {
+            try self.report(
+                block.?.span,
+                "this block produces nothing, so there is nothing for `{s}` to collect",
+                .{name},
+                "Produce a value for each entry, or use `each` to run the block for its effect.",
+            );
+            return .invalid;
+        }
+
+        if (std.mem.eql(u8, name, "map_keys")) {
+            if (result.kind == .invalid) return .invalid;
+            try self.requireEligibleKey(result, member.name_span);
+            return Type.dictionaryOf(self.arena, result, value);
+        }
+
+        return Type.dictionaryOf(self.arena, key, result);
+    }
     if (std.mem.eql(u8, name, "any?") or std.mem.eql(u8, name, "all?") or
         std.mem.eql(u8, name, "none?") or std.mem.eql(u8, name, "one?") or
         std.mem.eql(u8, name, "count_where"))
@@ -6762,6 +6798,50 @@ fn requireBlock(
             "`{s}` needs a block, but this is {f}",
             .{ member.name, actual },
             "Write the block after the method, as in `numbers.{s} {{ number => print(number) }}`.",
+            .{member.name},
+        );
+        return null;
+    }
+    return block;
+}
+
+fn requireMapTransformBlock(
+    self: *Checker,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    base: Type,
+    which: enum { key, value },
+) Error!?*const Ast.Expression {
+    if (call.arguments.len != 1) {
+        try self.reportWithHelp(
+            member.name_span,
+            "`{s}` takes 1 block, but this call passes {d} argument{s}",
+            .{ member.name, call.arguments.len, if (call.arguments.len == 1) "" else "s" },
+            "Write the block after the method, as in `ages.{s} {{ name => name.upper() }}`.",
+            .{member.name},
+        );
+        try self.typeArguments(call.arguments);
+        return null;
+    }
+
+    const parameter = try self.arena.create(Type);
+    parameter.* = switch (which) {
+        .key => base.key.?.*,
+        .value => base.element.?.*,
+    };
+    const expected = try Type.functionOf(self.arena, .{
+        .parameters = parameter[0..1],
+        .return_type = .invalid,
+    });
+
+    const block = call.arguments[0];
+    const actual = try self.typeOfExpected(block, expected);
+    if (actual.kind != .function and actual.kind != .invalid) {
+        try self.reportWithHelp(
+            block.span,
+            "`{s}` needs a block, but this is {f}",
+            .{ member.name, actual },
+            "Write the block after the method, as in `ages.{s} {{ name => name.upper() }}`.",
             .{member.name},
         );
         return null;

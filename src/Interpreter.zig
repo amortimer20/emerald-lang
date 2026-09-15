@@ -3756,6 +3756,32 @@ fn callHigherOrder(
     };
     const kind = std.meta.stringToEnum(Kind, member.name).?;
 
+    if (receiver.data == .map and (kind == .filter or kind == .reject)) {
+        const map = receiver.data.map;
+        const result = try self.heap.createMap(map.key_kind, map.value_kind, map.is_set);
+        const value: Value = .{ .data = .{ .map = result } };
+        errdefer self.heap.release(value);
+        for (items) |item| {
+            const argument = [_]Value{Heap.retain(item)};
+            const produced = try self.invokeClosure(expression.span, closure, callable, &argument);
+            defer self.heap.release(produced);
+            const accepted = produced.data.bool;
+            if ((kind == .filter and accepted) or (kind == .reject and !accepted)) {
+                if (map.is_set) {
+                    const hash = try self.hashKey(expression.span, item);
+                    try self.heap.put(result, hash, Heap.retain(item), Value.nothing);
+                } else {
+                    const tuple = item.data.tuple;
+                    const key = tuple.items[0];
+                    const value_for_key = tuple.items[1];
+                    const hash = try self.hashKey(expression.span, key);
+                    try self.heap.put(result, hash, Heap.retain(key), Heap.retain(value_for_key));
+                }
+            }
+        }
+        return value;
+    }
+
     // The checker exposes these value-producing methods only on Lists for
     // now. Keeping a runtime kind for the collection item still lets an
     // already-diagnosed invalid Dictionary or Set call finish without a host
@@ -4093,6 +4119,7 @@ fn callMethod(
     }
     if (std.mem.eql(u8, member.name, "min_by") or std.mem.eql(u8, member.name, "max_by")) return self.callExtremeBy(expression, call, member);
     if (std.mem.eql(u8, member.name, "min_max")) return self.callMinMax(expression, member);
+    if (std.mem.eql(u8, member.name, "map_keys") or std.mem.eql(u8, member.name, "map_values")) return self.callMapTransform(expression, call, member);
     // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "reverse_each") or std.mem.eql(u8, member.name, "map") or
         std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or std.mem.eql(u8, member.name, "flat_map") or std.mem.eql(u8, member.name, "filter_map") or std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while") or std.mem.eql(u8, member.name, "any?") or
@@ -4159,6 +4186,46 @@ fn callReadingMethod(
     }
 
     return self.readListMethod(expression.span, receiver.data.list, member.name, arguments);
+}
+
+fn callMapTransform(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    if (receiver.data != .map or receiver.data.map.is_set) {
+        return self.raiseFmt(
+            expression.span,
+            "`{s}` needs a Dictionary",
+            .{member.name},
+            "Map each key or value on a dictionary, as in `ages.map_values { age => age + 1 }`.",
+        );
+    }
+
+    const block = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(block);
+    const closure = block.data.closure;
+    const callable = self.closureCallable(closure);
+    const map = receiver.data.map;
+    const changing = std.mem.eql(u8, member.name, "map_keys");
+    const key_kind = if (changing) kindOf(callable.signature.return_type) else map.key_kind;
+    const value_kind = if (changing) map.value_kind else kindOf(callable.signature.return_type);
+    const result = try self.heap.createMap(key_kind, value_kind, false);
+    errdefer self.heap.release(.{ .data = .{ .map = result } });
+
+    for (map.entries.items) |entry| {
+        const argument = [_]Value{Heap.retain(if (changing) entry.key else entry.value)};
+        const produced = try self.invokeClosure(expression.span, closure, callable, &argument);
+        errdefer self.heap.release(produced);
+        const key = if (changing) widen(produced, key_kind) else widen(Heap.retain(entry.key), key_kind);
+        const value = if (changing) widen(Heap.retain(entry.value), value_kind) else widen(produced, value_kind);
+        const hash = try self.hashKey(member.name_span, key);
+        try self.heap.put(result, hash, key, value);
+    }
+    return .{ .data = .{ .map = result } };
 }
 
 /// A list method that does not change its receiver. Value-producing methods

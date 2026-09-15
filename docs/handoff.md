@@ -1,25 +1,24 @@
 # Current handoff
 
-Updated: 2026-09-15. The repo is green on the current test suite, and the first deferred collection-shape
-method, `List.zip`, is now implemented and conformance-covered. Range part 1 is already landed, so the
-near-term work is the remaining collection-shape family, keeping the same narrow roadmap-focused style as the
-earlier list-family slices and continuing to narrow any gaps against the rewrite context.
+   Updated: 2026-09-15. The repo is green on the current test suite. The active standard-library slice is the
+   dictionary/set transform family: `map_keys`, `map_values`, and dictionary `filter`/`reject` are implemented and
+   conformance-covered, and the next step is the remaining collection-shape methods in the same roadmap-aligned
+   pattern.
 
 ## Current milestone
 
 The current standard-library plan is:
 
-1. Finish the remaining `Int`/`Float`/String behavior in Slice 14 against the rewrite-context contract and
-   the conformance suite.
-2. Fix any edge-case gaps surfaced by the existing golden tests, especially boundary and domain checks for
-   numeric methods and string-editing behavior.
-3. Move on to the deferred rich `Range` and collection transforms once the current slice is stable.
-4. Keep the work narrow and roadmap-driven rather than broadening into unrelated runtime or parser cleanup.
+   1. Finish the remaining dictionary/set callback vocabulary that preserves collection kind and dedicated key/value
+      transform semantics.
+   2. Continue the deferred collection-shape family (`zip` and the remaining sequence-shape methods) against the
+      rewrite-context contract and golden run coverage.
+   3. Keep the work narrow and roadmap-driven rather than broadening into unrelated runtime or parser cleanup.
 
-The repo already includes the earlier landings that matter for this plan: the core frontend, object model,
-error handling, list-family helpers, and the completed Range value slice. The current active work is the
-next standard-library layer rather than a rebuild of the language core. Validation is currently green with
-`zig build test`.
+   The repo already includes the earlier landings that matter for this plan: the core frontend, object model,
+   error handling, list-family helpers, the completed Range value slice, and the earlier collection-family methods
+   (`List.zip`, grouping helpers, Float receiver methods). The active work remains the next standard-library layer
+   rather than a rebuild of the language core. Validation is currently green with `zig build test`.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an

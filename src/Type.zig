@@ -459,6 +459,8 @@ pub const map_methods = std.StaticStringMap(void).initComptime(.{
     .{"keys"},
     .{"values"},
     .{"entries"},
+    .{"map_keys"},
+    .{"map_values"},
     .{"add"},
     .{"remove"},
     .{"merge"},
