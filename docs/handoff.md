@@ -1,18 +1,20 @@
 # Current handoff
 
-Updated: 2026-09-15. Slice 16 now includes a project-level conformance case for an invalid
-namespace directory, a nested project-loader regression for invalid directories under valid parents,
-and a batch of parser recovery regressions that confirm malformed declarations do not prevent later
-valid statements from being parsed in the same block or project flow.
+Updated: 2026-09-15. Slice 16 now includes the combined project-level hardening fix: invalid
+namespace directories and malformed declarations are both reported in the same project run, while the
+parser and project loader keep the later diagnostics intact instead of stopping at the first bad
+namespace. The repo’s CI and focused hardening suite remain green without broadening the scope into
+unrelated cleanup.
 
 ## Current milestone
 
 Completed in this pass: the CI gate for Emerald remains in place, the front-end covers allocator-failure
 propagation and malformed-input recovery across the lexer, parser, and project loader, and the
 repository now includes both a project-level conformance case and a nested loader regression proving bad
-namespace directories are reported without crashing the project load. The parser batch also confirms the
-existing recovery path keeps following valid statements in sibling blocks and functions after a malformed
-signature. The current tests exercise both ordinary malformed source and the `error.OutOfMemory`
+namespace directories are reported without crashing the project load. The analyzer fix also ensures a
+bad namespace directory does not suppress a malformed declaration in the entry project, while the
+parser batch confirms the recovery path keeps following valid statements in sibling blocks and
+functions. The current tests exercise both ordinary malformed source and the `error.OutOfMemory`
 behavior a failing allocator is expected to surface.
 
 The next step is to keep the hardening pattern focused on the remaining failure modes that are still

@@ -1,8 +1,8 @@
-diagnostics/project-bad-directory/2bad/helper.em:1:1: the directory `2bad` cannot be a namespace
+diagnostics/project-bad-directory-and-malformed/2bad/helper.em:1:1: the directory `2bad` cannot be a namespace
   var helper = 2
   ^
 A directory name becomes a namespace, so it has to read as one: letters, digits and `_`, starting with a letter. Rename it, as in `shapes/`.
-diagnostics/project-bad-directory/main.em:2:10: expected a parameter name, found a whole number
+diagnostics/project-bad-directory-and-malformed/main.em:1:10: expected a parameter name, found a whole number
   func bad(1,
            ^
 A parameter is a name and a type, as in `count: Int`.

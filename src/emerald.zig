@@ -303,8 +303,11 @@ fn analyze(
         return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
 
-    // A directory whose name cannot become a namespace, reported against a file
-    // inside it so there is a line to point at.
+    const bad_directory_count = project.bad_directories.len;
+
+    // A directory whose name cannot become a namespace is reported against a
+    // file inside it, but it is not fatal to the rest of the project: valid
+    // files and malformed declarations still need their own diagnostics.
     for (project.bad_directories) |bad| {
         try found.append(arena, .{
             .message = try std.fmt.allocPrint(
@@ -316,9 +319,6 @@ fn analyze(
             .help = "A directory name becomes a namespace, so it has to read as one: letters, digits and `_`, starting with a letter. Rename it, as in `shapes/`.",
             .file = bad.file,
         });
-    }
-    if (found.items.len != 0) {
-        return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
 
     // The prelude's declarations are written in Emerald and go through every
@@ -343,7 +343,7 @@ fn analyze(
         tokenized[lexed] = try Lexer.tokenize(gpa, &files[lexed].source);
         try appendFrom(arena, &found, tokenized[lexed].diagnostics, @intCast(lexed));
     }
-    if (found.items.len != 0) {
+    if (found.items.len > bad_directory_count) {
         return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
 
@@ -357,7 +357,7 @@ fn analyze(
         parsed[parsed_count] = try Parser.parse(gpa, &files[parsed_count].source, tokenized[parsed_count].tokens);
         try appendFrom(arena, &found, parsed[parsed_count].diagnostics, @intCast(parsed_count));
     }
-    if (found.items.len != 0) {
+    if (found.items.len > bad_directory_count) {
         return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
 
@@ -965,6 +965,23 @@ test "section 14.1 initializes a module file once, on first use" {
             ,
         },
     }, "start\n  building\nready\nready\nREADY\n");
+}
+
+test "project diagnostics keep bad directories and malformed source together" {
+    var project = try buildProject(testing.allocator, &.{
+        .{ .path = "main.em", .text = "func bad(1,\nvar ok = 2\n" },
+        .{ .path = "2bad/helper.em", .namespace = "", .text = "var helper = 2\n" },
+    });
+    defer project.deinit(testing.allocator);
+    const bad_path = try testing.allocator.dupe(u8, "2bad");
+    project.bad_directories = try testing.allocator.dupe(Project.BadDirectory, &.{.{ .path = bad_path, .file = 1 }});
+
+    var report = try checkProject(testing.allocator, &project);
+    defer report.deinit();
+
+    try testing.expectEqual(@as(usize, 2), report.diagnostics.len);
+    try testing.expectEqualStrings("the directory `2bad` cannot be a namespace", report.diagnostics[0].message);
+    try testing.expectEqualStrings("main.em", project.files[report.diagnostics[1].file].source.path);
 }
 
 test "section 14.1 reports a cycle that reaches an unfinished binding" {
