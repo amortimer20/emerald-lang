@@ -32,6 +32,7 @@ const Checker = @import("Checker.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Heap = @import("Heap.zig");
 const Project = @import("Project.zig");
+const Range = @import("Range.zig").Range;
 const Resolver = @import("Resolver.zig");
 const Source = @import("Source.zig");
 const Type = @import("Type.zig");
@@ -609,8 +610,7 @@ fn abstractKey(self: *Interpreter, key: []const u8, name: []const u8) RunError!?
 /// Called on every statement and expression, which between them are every
 /// point where the evaluator recurses.
 fn guardStack(self: *Interpreter, span: Source.Span) Error!void {
-    var here: u8 = 0;
-    const address = @intFromPtr(&here);
+    const address = @frameAddress();
     const base = self.stack.base;
     const used = if (base > address) base - address else address - base;
     if (used <= self.stack.budget) return;
@@ -1686,6 +1686,7 @@ fn kindOf(checked: Type) Value.Kind {
         .int => .int,
         .float => .float,
         .string => .string,
+        .range => .range,
         .list => .list,
         .tuple => .tuple,
         .dictionary, .set => .map,
@@ -1980,9 +1981,11 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .logical => |logical| self.evaluateLogical(logical),
         .comparison => |comparison| self.evaluateComparison(expression, comparison),
         .call => |call| self.evaluateCall(expression, call),
-        // The checker allows a range only as what a `for` loop visits, which
-        // `executeFor` reads directly.
-        .range => unreachable,
+        .range => |range| blk: {
+            const start = (try self.evaluate(range.start)).data.int;
+            const end = (try self.evaluate(range.end)).data.int;
+            break :blk .{ .data = .{ .range = Range.fromBounds(start, end, range.inclusive) } };
+        },
         .list_literal => |elements| self.evaluateList(expression, elements),
         .dictionary_literal => |entries| self.evaluateDictionary(expression, entries),
         .tuple_literal => |positions| self.evaluateTuple(expression, positions),
@@ -2198,6 +2201,10 @@ fn evaluateProperty(self: *Interpreter, expression: *const Ast.Expression, membe
 
     // Section 8.5: `count` is the only property a dictionary or set has.
     if (base.data == .map) return .initInt(@intCast(base.data.map.count()));
+    if (base.data == .range) {
+        if (std.mem.eql(u8, member.name, "count")) return .initInt(base.data.range.count());
+        if (std.mem.eql(u8, member.name, "empty?")) return .initBool(base.data.range.empty());
+    }
 
     const items = base.data.list.items.items;
     if (std.mem.eql(u8, member.name, "count")) return .initInt(@intCast(items.len));
@@ -2483,7 +2490,7 @@ fn evaluateUnary(
                 return .initInt(result[0]);
             },
             .float => |value| return .initFloat(-value),
-            .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => return self.raiseFmt(
+            .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => return self.raiseFmt(
                 expression.span,
                 "`-` needs a number, but this is {s}",
                 .{operand.typeName()},
@@ -4557,6 +4564,7 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
         self.gpa.free(arguments);
     }
 
+    if (receiver.data == .range) return self.rangeMethod(span, receiver.data.range, member.name, arguments);
     if (receiver.data == .string) return self.stringMethod(span, receiver.data.string.bytes, member.name, arguments);
     if (receiver.data == .int and !std.mem.eql(u8, member.name, "to_string")) {
         return self.intMethod(span, receiver.data.int, member.name, arguments);
@@ -4570,6 +4578,38 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
     defer built.deinit();
     try receiver.display(&built.writer);
     return .{ .data = .{ .string = try self.heap.createText(try built.toOwnedSlice()) } };
+}
+
+fn rangeMethod(self: *Interpreter, span: Source.Span, range: Range, name: []const u8, arguments: []const Value) Error!Value {
+    const Method = enum {
+        @"empty?",
+        step,
+        reverse,
+        to_list,
+    };
+
+    return switch (std.meta.stringToEnum(Method, name).?) {
+        .@"empty?" => .initBool(range.empty()),
+        .step => blk: {
+            const distance = arguments[0].data.int;
+            if (distance < 1) return self.raiseFmt(
+                span,
+                "a step must be at least 1, but this is {d}",
+                .{distance},
+                "The range says which way to count; the step says only how far, as in `10.down_to(0).step(2)`.",
+            );
+            break :blk .{ .data = .{ .range = range.step(distance) } };
+        },
+        .reverse => .{ .data = .{ .range = range.reverse() } },
+        .to_list => blk: {
+            const items = try range.toList(self.gpa);
+            const list = try self.heap.createList(.int, items.len);
+            const result: Value = .{ .data = .{ .list = list } };
+            errdefer self.heap.release(result);
+            for (items) |item| list.items.appendAssumeCapacity(.initInt(item));
+            break :blk result;
+        },
+    };
 }
 
 /// Section 9.3's integer vocabulary. The checker has proved each argument is
@@ -5347,6 +5387,7 @@ fn toFloat(value: Value) f64 {
     return switch (value.data) {
         .int => |number| @floatFromInt(number),
         .float => |number| number,
+        .range => unreachable,
         .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => unreachable,
     };
 }

@@ -11,11 +11,12 @@
 
 const std = @import("std");
 const Heap = @import("Heap.zig");
+const Range = @import("Range.zig").Range;
 const unicode = @import("unicode.zig");
 
 const Value = @This();
 
-pub const Kind = enum { nothing, bool, int, float, string, list, tuple, map, closure, struct_value };
+pub const Kind = enum { nothing, bool, int, float, string, range, list, tuple, map, closure, struct_value };
 
 data: Data,
 
@@ -26,6 +27,8 @@ pub const Data = union(Kind) {
     int: i64,
     float: f64,
     string: *Heap.Text,
+    /// Section 6.4's immutable integer range value.
+    range: Range,
     list: *Heap.List,
     /// Section 8.2's `("score", 10)`, which never changes once built.
     tuple: *Heap.Tuple,
@@ -149,6 +152,7 @@ pub fn typeName(self: Value) []const u8 {
         .int => "Int",
         .float => "Float",
         .string => "String",
+        .range => "Range",
         .list => "a list",
         .tuple => "a tuple",
         .map => |map| if (map.is_set) "a set" else "a dictionary",
@@ -160,7 +164,7 @@ pub fn typeName(self: Value) []const u8 {
 /// Whether two values are numbers, which is what arithmetic and ordering need.
 pub fn isNumber(self: Value) bool {
     return switch (self.data) {
-        .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => false,
+        .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => false,
         .int, .float => true,
     };
 }
@@ -187,6 +191,25 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
         .int => |value| try writer.print("{d}", .{value}),
         .float => |value| try displayFloat(value, writer),
         .string => |text| if (quoted) try writeQuoted(text.bytes, writer) else try writer.writeAll(text.bytes),
+        .range => |range| {
+            if (range.is_empty) {
+                try writer.writeAll("[]");
+                return;
+            }
+            if (range.descending) {
+                if (range.step_size == 1) {
+                    try writer.print("{d}.down_to({d})", .{ range.first, range.last });
+                } else {
+                    try writer.print("{d}.down_to({d}).step({d})", .{ range.first, range.last, range.step_size });
+                }
+                return;
+            }
+            if (range.step_size == 1) {
+                try writer.print("{d}..{d}", .{ range.first, range.last });
+            } else {
+                try writer.print("{d}..{d}.step({d})", .{ range.first, range.last, range.step_size });
+            }
+        },
         .list => |list| {
             try writer.writeAll("[");
             for (list.items.items, 0..) |item, position| {
@@ -285,7 +308,7 @@ pub fn hash(gpa: std.mem.Allocator, value: Value) std.mem.Allocator.Error!u64 {
 /// A tag per kind, mixed in so that a tuple of two values cannot collide with
 /// something else built from the same parts. `Int` and `Float` share one,
 /// because `1 == 1.0` and equal values must hash alike.
-const HashTag = enum(u8) { nothing, bool, number, string, tuple, struct_value, unhashable };
+const HashTag = enum(u8) { nothing, bool, number, string, range, tuple, struct_value, unhashable };
 
 fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.mem.Allocator.Error!void {
     const tag: HashTag = switch (value.data) {
@@ -293,6 +316,7 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.
         .bool => .bool,
         .int, .float => .number,
         .string => .string,
+        .range => .range,
         .tuple => .tuple,
         .struct_value => .struct_value,
         .list, .map, .closure => .unhashable,
@@ -320,6 +344,13 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.
                 defer gpa.free(normalized);
                 hasher.update(normalized);
             }
+        },
+        .range => |range| {
+            hasher.update(std.mem.asBytes(&range.first));
+            hasher.update(std.mem.asBytes(&range.last));
+            hasher.update(std.mem.asBytes(&range.step_size));
+            hasher.update(&.{@intFromBool(range.descending)});
+            hasher.update(&.{@intFromBool(range.is_empty)});
         },
         .tuple => |tuple| for (tuple.items) |item| try hashInto(gpa, item, hasher),
         .struct_value => |instance| {
@@ -375,6 +406,10 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
         .int, .float => order(left, right) == .eq,
         .string => |a| switch (right.data) {
             .string => |b| unicode.equal(gpa, a.bytes, b.bytes),
+            else => false,
+        },
+        .range => |a| switch (right.data) {
+            .range => |b| a.first == b.first and a.last == b.last and a.step_size == b.step_size and a.descending == b.descending and a.is_empty == b.is_empty,
             else => false,
         },
         .closure => |a| switch (right.data) {
@@ -461,7 +496,7 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
         .int => |a| switch (right.data) {
             .int => |b| std.math.order(a, b),
             .float => |b| orderIntFloat(a, b),
-            .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => null,
+            .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => null,
         },
         .float => |a| switch (right.data) {
             .int => |b| if (orderIntFloat(b, a)) |result| result.invert() else null,
@@ -469,9 +504,9 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
                 null
             else
                 std.math.order(a, b),
-            .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => null,
+            .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => null,
         },
-        .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => null,
+        .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => null,
     };
 }
 

@@ -229,10 +229,10 @@ fn formatAnalyze(gpa: std.mem.Allocator, project: *const Project) Error!FormatRe
 /// Reserved rather than committed: the host maps a thread's stack lazily, so
 /// the unused part costs address space and nothing else.
 ///
-/// In a Debug build, a function body nested 250 operations deep reached only
-/// about 800 calls in 256 MiB, so this is twice that. Release builds reach the
-/// full 1,000 in half the space.
-const stack_size: usize = if (@sizeOf(usize) >= 8) 512 * 1024 * 1024 else 32 * 1024 * 1024;
+/// The evaluator's recursion guard is designed around a large thread stack, and
+/// the debug stress case of 1,000 calls whose bodies nest 250 levels deep still
+/// needs enough room for the recursive frames plus the expression tree itself.
+const stack_size: usize = if (@sizeOf(usize) >= 8) 1024 * 1024 * 1024 else 32 * 1024 * 1024;
 
 comptime {
     if (builtin.single_threaded) @compileError(
@@ -1673,7 +1673,7 @@ test "a loop variable is read-only and does not outlive its loop" {
 test "only an Int range can be looped over so far" {
     try expectFailure("for i in 1..2.5 {\n    print(i)\n}\n", "counting works with whole numbers, but this is Float");
     try expectFailure("for i in 5 {\n    print(i)\n}\n", "a `for` loop cannot visit Int");
-    try expectFailure("var r = 1..3\n", "a range can only be looped over so far");
+    try expectOutput("var r = 1..3\nprint(r.count)\n", "3\n");
     try expectFailure("for i in 1..2..3 {\n    print(i)\n}\n", "a range has one start and one end");
 }
 

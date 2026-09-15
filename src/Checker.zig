@@ -2122,6 +2122,7 @@ fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
     const actual = try self.typeOf(iterable);
     if (actual.kind == .invalid) return .invalid;
     if (!try self.requirePresent(actual, iterable, null)) return .invalid;
+    if (actual.kind == .range) return .int;
     // Section 8.4: a loop visits the collection as it was when the loop began,
     // and a dictionary or set in the order things were put into it.
     if (actual.kind == .list or actual.kind == .set or actual.kind == .dictionary) {
@@ -3277,7 +3278,7 @@ fn replaceSelf(self: *Checker, t: Type, receiver: Type) Error!Type {
             replaced.signature = signature;
             return replaced;
         },
-        .nothing, .bool, .int, .float, .string, .invalid => return t,
+        .nothing, .bool, .int, .float, .string, .range, .invalid => return t,
     }
 }
 
@@ -4980,7 +4981,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             self.typeOfQualified(expression, reference)
         else
             self.typeOfMember(expression, member),
-        .range => self.rejectCountingValue(expression),
+        .range => .range,
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
         .dictionary_literal => self.typeOfDictionary(expression, null),
@@ -5741,6 +5742,12 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
     }
 
     // Section 8.5: size is a read-only property on every collection.
+    if (base.kind == .range) {
+        if (std.mem.eql(u8, member.name, "count")) return .int;
+        try self.reportUnknownMember(base, member, "property");
+        return .invalid;
+    }
+
     if (base.kind == .dictionary or base.kind == .set) {
         if (std.mem.eql(u8, member.name, "count")) return .int;
         try self.reportUnknownMember(base, member, "property");
@@ -5860,6 +5867,7 @@ fn typeOfMethodCall(
     }
 
     if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base);
+    if (base.kind == .range) return self.typeOfRangeMethod(call, member);
     if (base.kind == .string) return self.typeOfStringMethod(call, member);
     if (base.kind == .int) return self.typeOfIntMethod(call, member);
     if (base.kind == .float) return self.typeOfFloatMethod(call, member);
@@ -6754,6 +6762,50 @@ fn requireIndexedBlock(
         return null;
     }
     return block;
+}
+
+/// Section 6.4's Range methods.
+fn typeOfRangeMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    if (std.mem.eql(u8, member.name, "count")) {
+        try self.report(
+            member.name_span,
+            "`count` is a property, so it takes no parentheses",
+            .{},
+            "Write `.count` without `()`.",
+        );
+        try self.typeArguments(call.arguments);
+        return .int;
+    }
+    if (std.mem.eql(u8, member.name, "empty?")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return .bool;
+    }
+    if (std.mem.eql(u8, member.name, "step")) {
+        _ = try self.requireArity(member, call.arguments, 1, 1);
+        const actual = try self.typeOf(call.arguments[0]);
+        if (actual.kind == .invalid) return .invalid;
+        if (!actual.assignableTo(.int)) {
+            try self.report(
+                call.arguments[0].span,
+                "this is {f}, but `step` needs Int",
+                .{actual},
+                "Pass a whole number, as in `.step(2)`.",
+            );
+            return .invalid;
+        }
+        return .range;
+    }
+    if (std.mem.eql(u8, member.name, "reverse")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return .range;
+    }
+    if (std.mem.eql(u8, member.name, "to_list")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return Type.listOf(self.arena, .int);
+    }
+    try self.reportUnknownMember(.range, member, "method");
+    try self.typeArguments(call.arguments);
+    return .invalid;
 }
 
 /// Section 9.2's string methods. None changes the string, which is immutable.

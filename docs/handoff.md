@@ -1,25 +1,22 @@
 # Current handoff
 
-Updated: 2026-09-15. Slice 16 now includes the combined project-level hardening fix: invalid
-namespace directories and malformed declarations are both reported in the same project run, while the
-parser and project loader keep the later diagnostics intact instead of stopping at the first bad
-namespace. The repo’s CI and focused hardening suite remain green without broadening the scope into
-unrelated cleanup.
+Updated: 2026-09-15. Range part 1 is complete: integer ranges are first-class immutable values, the
+shared runtime Range model feeds `for` loops without breaking loop semantics, and the recursion stress
+case remains green with a larger reserved stack for the deep host-guarded interpreter runs.
 
 ## Current milestone
 
-Completed in this pass: the CI gate for Emerald remains in place, the front-end covers allocator-failure
-propagation and malformed-input recovery across the lexer, parser, and project loader, and the
-repository now includes both a project-level conformance case and a nested loader regression proving bad
-namespace directories are reported without crashing the project load. The analyzer fix also ensures a
-bad namespace directory does not suppress a malformed declaration in the entry project, while the
-parser batch confirms the recovery path keeps following valid statements in sibling blocks and
-functions. The current tests exercise both ordinary malformed source and the `error.OutOfMemory`
-behavior a failing allocator is expected to surface.
+Completed in this pass: the Range/value implementation now accepts literal and method forms such as
+`1..5`, `1..<5`, `start.up_to(end)`, and `start.down_to(end)` as immutable `Range` values, with the
+checked Range surface (`count`, `empty?()`, `step(distance)`, `reverse()`, and `to_list()`) aligned to
+Emerald's rewrite-context rules. The shared Range representation is consumed by `for` loops while
+preserving the existing upward-counting semantics and overflow-safe iteration. The recursion stress test
+for a 250-level nested body and 1,000 calls is also kept green by reserving a sufficiently large stack
+for the interpreter thread.
 
-The next step is to keep the hardening pattern focused on the remaining failure modes that are still
-likely to crash the host process or silently drop later declarations — particularly broader fuzzing or
-stress checks when a wider pass is explicitly wanted.
+The next step is to keep the Range slice narrow and move on to the remaining deferred rich collection
+methods, without broadening into the collection vocabulary that the rewrite context intentionally leaves
+for later slices.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an

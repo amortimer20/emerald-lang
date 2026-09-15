@@ -885,7 +885,7 @@ const Object = union(enum) {
             .string => |text| .{ .text = text },
             .closure => |closure| .{ .closure = closure },
             .struct_value => |instance| .{ .struct_value = instance },
-            .nothing, .bool, .int, .float => null,
+            .nothing, .bool, .int, .float, .range => null,
         };
     }
 };
