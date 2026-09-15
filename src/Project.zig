@@ -383,3 +383,19 @@ test "namespace creation surfaces allocator failures" {
     var failing_allocator = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
     try testing.expectError(error.OutOfMemory, namespaceSegment(failing_allocator.allocator(), "project_name"));
 }
+
+test "project loading keeps invalid directories tracked without dropping their files" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "main.em", .data = "var answer = 42\n" });
+    try tmp.dir.createDirPath(testing.io, "2bad");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "2bad/helper.em", .data = "var helper = 1\n" });
+
+    var project = try loadIn(testing.allocator, testing.io, tmp.dir, "main.em");
+    defer project.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 2), project.files.len);
+    try testing.expectEqual(@as(usize, 1), project.bad_directories.len);
+    try testing.expectEqualStrings("2bad", project.bad_directories[0].path);
+}
