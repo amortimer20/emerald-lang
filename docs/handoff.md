@@ -162,6 +162,14 @@ They deliberately expose advanced representation details without introducing a p
 `Byte` type; `chars()` remains the grapheme-aware operation for ordinary text. Conformance
 covers an accent written with a combining mark and an emoji, plus the two UTF-8 bytes of `é`.
 
+A bounded adversarial review of Slice 14 parts 1–12 found no defect. Small programs in Debug
+and ReleaseSafe verified snapshot traversal when callbacks mutate their captured List or
+Dictionary receiver, predicate short-circuit boundaries, one-level `flat_map`, Unicode scalar
+and UTF-8 byte output, numeric limits, copy-on-write through filtered and flattened nested
+Lists, and canonical String equality in `unique`. The review also confirmed that a `const`
+collection refusing a mutation is the deliberate section 4.3 value-freezing rule, rather than
+a List-method bug. Both complete test suites pass in Debug and ReleaseSafe.
+
 Functions work: declarations, calls, returns, recursion, hoisting, return-type inference,
 nested functions, and stack traces on runtime errors. Section 7 is complete apart from
 capturing built-in methods (7.4). Loops work: `while`, `for` over an `Int` range, `break`,
