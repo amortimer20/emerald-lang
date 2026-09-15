@@ -183,6 +183,14 @@ checks every addition for overflow; Float accumulation retains the ordinary `Inf
 Conformance covers both element types, empty Lists, special Floats, static misuse, the
 no-cascade arity boundary, and an Int overflow diagnostic.
 
+Part 15 adds List `min()` and `max()`. They return `T?`: `nothing` for an empty List, or the
+first tied item with the requested extreme. Ints, Floats, Strings, and user types adopting
+`Ordered` use their ordinary comparison contracts. Optional elements are rejected so that
+`nothing` stays the unambiguous empty-List result; `filter_map` is the correction. NaN is
+rejected even as the only element, because it has no order. Conformance covers numeric,
+String, empty, and custom `Ordered` Lists, type and arity errors, optional elements, and the
+NaN runtime diagnostic.
+
 A bounded adversarial review of Slice 14 parts 1–12 found no defect. Small programs in Debug
 and ReleaseSafe verified snapshot traversal when callbacks mutate their captured List or
 Dictionary receiver, predicate short-circuit boundaries, one-level `flat_map`, Unicode scalar
@@ -1841,9 +1849,9 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
 String, List value-transform, filtering, traversal, predicate-question, while-portion,
 endpoint-property, flat-map, filter-map, sum, and String-representation parts are complete.
-The next standard-library part should consider List `min` and `max`, applying the established
-optional empty-List result rule carefully; `Iterable` and the advanced String operations
-listed below remain deferred rather than incomplete work in this slice.
+The next standard-library part should consider numeric List `average`, applying the same
+optional empty-List result rule; `Iterable` and the advanced String operations listed below
+remain deferred rather than incomplete work in this slice.
 
 The user chose to begin slice 15 instead. The formatter is complete through its
 adversarial review: struct, class, trait, and enum declarations and their members,

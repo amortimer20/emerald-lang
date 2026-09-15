@@ -1,0 +1,4 @@
+runtime-errors/list-extrema-nan.em:1:7: `min` and `max` cannot order a List containing NaN
+  print([Float.nan].min())
+        ^^^^^^^^^^^^^^^^^
+Check values with `nan?()` before choosing a minimum or maximum.

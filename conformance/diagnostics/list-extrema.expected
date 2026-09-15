@@ -1,0 +1,12 @@
+diagnostics/list-extrema.em:1:21: `min` needs a List of ordered values, but this is [Bool]
+  print([true, false].min())
+                      ^^^
+Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.
+diagnostics/list-extrema.em:3:21: `max` cannot choose from [Int?], whose elements may be absent
+  print(maybe_numbers.max())
+                      ^^^
+Use `filter_map` to remove absent values first, so `nothing` can remain the empty-List result.
+diagnostics/list-extrema.em:4:11: `min` takes 0 arguments, but this call passes 1
+  print([1].min(1))
+            ^^^
+Match the number of arguments to what the method needs.

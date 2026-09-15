@@ -3940,7 +3940,7 @@ fn callReadingMethod(
 /// when an item is itself a collection or object.
 fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique, sum };
+    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique, sum, min, max };
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
@@ -3989,6 +3989,7 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
             break :blk value;
         },
         .sum => self.sumList(span, list),
+        .min, .max => self.listExtreme(span, list, std.mem.eql(u8, name, "min")),
     };
 }
 
@@ -4016,6 +4017,51 @@ fn sumList(self: *Interpreter, span: Source.Span, list: *const Heap.List) Error!
             break :blk .initFloat(total);
         },
         else => unreachable, // The checker permits `sum` only on numeric Lists.
+    };
+}
+
+/// Section 8.6's extrema. Ties retain the first item, and an empty List has no
+/// result. The checker has already limited this to the same orderable types as
+/// ordinary comparisons; NaN is the one numeric value with no order at all.
+fn listExtreme(self: *Interpreter, span: Source.Span, list: *const Heap.List, minimum: bool) Error!Value {
+    const items = list.items.items;
+    if (items.len == 0) return Value.nothing;
+    if (list.element == .float and std.math.isNan(items[0].data.float)) return self.raise(
+        span,
+        "`min` and `max` cannot order a List containing NaN",
+        "Check values with `nan?()` before choosing a minimum or maximum.",
+    );
+
+    var chosen = Heap.retain(items[0]);
+    errdefer self.heap.release(chosen);
+    for (items[1..]) |item| {
+        const ordering = try self.orderListItems(span, list.element, chosen, item);
+        const replace = if (minimum) ordering == .gt else ordering == .lt;
+        if (!replace) continue;
+        self.heap.release(chosen);
+        chosen = Heap.retain(item);
+    }
+    return chosen;
+}
+
+fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left: Value, right: Value) Error!std.math.Order {
+    return switch (kind) {
+        .int => std.math.order(left.data.int, right.data.int),
+        .float => {
+            if (std.math.isNan(left.data.float) or std.math.isNan(right.data.float)) return self.raise(
+                span,
+                "`min` and `max` cannot order a List containing NaN",
+                "Check values with `nan?()` before choosing a minimum or maximum.",
+            );
+            return std.math.order(left.data.float, right.data.float);
+        },
+        .string => unicode.order(self.gpa, left.data.string.bytes, right.data.string.bytes),
+        .struct_value => blk: {
+            const compared = try self.callOperator(span, Ast.OperatorContract.ordered.method, left, right);
+            defer self.heap.release(compared);
+            break :blk std.math.order(compared.data.int, 0);
+        },
+        else => unreachable, // The checker permits `min` and `max` only on ordered Lists.
     };
 }
 

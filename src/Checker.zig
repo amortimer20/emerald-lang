@@ -5950,6 +5950,34 @@ fn typeOfMethodCall(
         return .invalid;
     }
 
+    // `min` and `max` use the language's established ordering, including a
+    // user type's `Ordered.compare`. Their empty result is absence, not a
+    // made-up sentinel, so optional elements would make that absence unclear.
+    if (std.mem.eql(u8, member.name, "min") or std.mem.eql(u8, member.name, "max")) {
+        if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
+        if (element.optional) {
+            try self.report(
+                member.name_span,
+                "`{s}` cannot choose from {f}, whose elements may be absent",
+                .{ member.name, base },
+                "Use `filter_map` to remove absent values first, so `nothing` can remain the empty-List result.",
+            );
+            return .invalid;
+        }
+        if (element.kind == .int or element.kind == .float or element.kind == .string) return element.optionalOf();
+        if (element.kind == .struct_value) {
+            const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, element, element);
+            return if (ordered.kind == .invalid) .invalid else element.optionalOf();
+        }
+        try self.report(
+            member.name_span,
+            "`{s}` needs a List of ordered values, but this is {f}",
+            .{ member.name, base },
+            "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
+        );
+        return .invalid;
+    }
+
     if (call.arguments.len != method.parameters.len) {
         const expected = method.parameters.len;
         try self.report(

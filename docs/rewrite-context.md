@@ -1453,6 +1453,14 @@ type and visits items from left to right. An empty numeric List returns its addi
 Float accumulation follows Emerald's ordinary IEEE-754 arithmetic, including `Infinity` and
 `NaN`. Other List element types receive a correction toward mapping to numbers first.
 
+`min()` and `max()` are currently List operations for `Int`, `Float`, `String`, and user
+types that adopt `Ordered`. They return `T?`: `nothing` for an empty List, otherwise the first
+item tied for the requested extreme. A List of optional values is rejected so that `nothing`
+unambiguously means the List had no items; `filter_map` removes absent values first. `NaN` has
+no order, so either operation reports an error when it encounters one. `empty?()` is the
+companion when a program needs to distinguish an empty List from a List whose element type can
+otherwise represent absence.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs
