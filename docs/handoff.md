@@ -1,20 +1,20 @@
 # Current handoff
 
-Updated: 2026-09-15. Slice 16 is in the robustness-hardening phase: CI is in place, and the
-front-end now covers allocator-failure and malformed-input paths across the lexer and project
-loader without widening into unrelated cleanup.
+Updated: 2026-09-15. Slice 16 has reached the baseline hardening pass: CI is in place, and the
+front-end now covers allocator-failure propagation and malformed-input recovery across the lexer,
+parser, and project loader without widening into unrelated cleanup.
 
 ## Current milestone
 
-Completed in this pass: the initial CI gate for Emerald is in place, and the hardening work now
-includes failing-allocator regressions plus malformed-input stress checks across the lexer and the
-project loader. The repository continues to validate the pinned Zig toolchain with GitHub Actions,
+Completed in this pass: the initial CI gate for Emerald remains in place, and the hardening work now
+includes failing-allocator regressions and malformed-input recovery checks across the lexer, parser,
+and project loader. The repository continues to validate the pinned Zig toolchain with GitHub Actions,
 and the current test coverage exercises both ordinary malformed source and the `error.OutOfMemory`
 behavior a failing allocator is expected to surface.
 
-The next step is to continue the same hardening pattern into parser recovery and project-level
-stress checks for nested invalid paths, so malformed directories or broken declarations continue to
-be reported rather than crashing the host process or silently dropping later files.
+The next step is to keep the hardening pattern focused on the remaining failure modes that are still
+likely to crash the host process or silently drop later declarations — particularly nested parser
+recovery and broader project stress checks that combine unspecified paths with malformed declarations.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
