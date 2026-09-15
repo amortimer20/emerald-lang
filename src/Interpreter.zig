@@ -3890,6 +3890,51 @@ fn callReduce(
     return accumulator;
 }
 
+/// Section 8.6's keyed extrema. A block result is only a comparison key: the
+/// List item remains the answer. Keys are called once per item, left to right,
+/// and the first equal key wins.
+fn callExtremeBy(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const items = receiver.data.list.items.items;
+    if (items.len == 0) return Value.nothing;
+    const block = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(block);
+    const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
+    const minimum = std.mem.eql(u8, member.name, "min_by");
+
+    var chosen = Heap.retain(items[0]);
+    errdefer self.heap.release(chosen);
+    const first_argument = [_]Value{Heap.retain(items[0])};
+    var chosen_key = try self.invokeClosure(expression.span, closure, callable, &first_argument);
+    errdefer self.heap.release(chosen_key);
+    if (chosen_key.data == .float and std.math.isNan(chosen_key.data.float)) return self.raiseExtremeNaN(expression.span, true);
+
+    for (items[1..]) |item| {
+        const argument = [_]Value{Heap.retain(item)};
+        const key = try self.invokeClosure(expression.span, closure, callable, &argument);
+        errdefer self.heap.release(key);
+        const ordering = try self.orderListItems(expression.span, chosen_key.data, chosen_key, key, true);
+        const replace = if (minimum) ordering == .gt else ordering == .lt;
+        if (!replace) {
+            self.heap.release(key);
+            continue;
+        }
+        self.heap.release(chosen);
+        self.heap.release(chosen_key);
+        chosen = Heap.retain(item);
+        chosen_key = key;
+    }
+    self.heap.release(chosen_key);
+    return chosen;
+}
+
 /// Section 8.5's list methods. The checker has proved the receiver is a list,
 /// the method exists, and the arguments fit it.
 ///
@@ -3911,6 +3956,7 @@ fn callMethod(
     // value that may be absent.
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     if (std.mem.eql(u8, member.name, "reduce")) return self.callReduce(expression, call, member);
+    if (std.mem.eql(u8, member.name, "min_by") or std.mem.eql(u8, member.name, "max_by")) return self.callExtremeBy(expression, call, member);
     // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "reverse_each") or std.mem.eql(u8, member.name, "map") or
         std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or std.mem.eql(u8, member.name, "flat_map") or std.mem.eql(u8, member.name, "filter_map") or std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while") or std.mem.eql(u8, member.name, "any?") or
@@ -4082,7 +4128,7 @@ fn listExtreme(self: *Interpreter, span: Source.Span, list: *const Heap.List, mi
     var chosen = Heap.retain(items[0]);
     errdefer self.heap.release(chosen);
     for (items[1..]) |item| {
-        const ordering = try self.orderListItems(span, list.element, chosen, item);
+        const ordering = try self.orderListItems(span, chosen.data, chosen, item, false);
         const replace = if (minimum) ordering == .gt else ordering == .lt;
         if (!replace) continue;
         self.heap.release(chosen);
@@ -4091,15 +4137,22 @@ fn listExtreme(self: *Interpreter, span: Source.Span, list: *const Heap.List, mi
     return chosen;
 }
 
-fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left: Value, right: Value) Error!std.math.Order {
+fn raiseExtremeNaN(self: *Interpreter, span: Source.Span, keyed: bool) Error {
+    return self.raise(
+        span,
+        if (keyed)
+            "`min_by` and `max_by` cannot order a key of NaN"
+        else
+            "`min` and `max` cannot order a List containing NaN",
+        "Check values with `nan?()` before choosing a minimum or maximum.",
+    );
+}
+
+fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left: Value, right: Value, keyed: bool) Error!std.math.Order {
     return switch (kind) {
         .int => std.math.order(left.data.int, right.data.int),
         .float => {
-            if (std.math.isNan(left.data.float) or std.math.isNan(right.data.float)) return self.raise(
-                span,
-                "`min` and `max` cannot order a List containing NaN",
-                "Check values with `nan?()` before choosing a minimum or maximum.",
-            );
+            if (std.math.isNan(left.data.float) or std.math.isNan(right.data.float)) return self.raiseExtremeNaN(span, keyed);
             return std.math.order(left.data.float, right.data.float);
         },
         .string => unicode.order(self.gpa, left.data.string.bytes, right.data.string.bytes),

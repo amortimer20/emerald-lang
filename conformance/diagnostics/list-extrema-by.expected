@@ -1,0 +1,20 @@
+diagnostics/list-extrema-by.em:1:21: this block returns Bool, but `min_by` needs an ordered key
+  print([1, 2].min_by { number => number.even?() })
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Return an Int, Float, String, or a type that adopts `Ordered`.
+diagnostics/list-extrema-by.em:3:21: `max_by` cannot choose from [Int?], whose elements may be absent
+  print(maybe_numbers.max_by { number => number.or(0) })
+                      ^^^^^^
+Use `filter_map` to remove absent values first, so `nothing` can remain the empty-List result.
+diagnostics/list-extrema-by.em:4:18: this block returns Nothing, but `min_by` needs an ordered key
+  print([1].min_by { number => nothing })
+                   ^^^^^^^^^^^^^^^^^^^^^
+Return an Int, Float, String, or a type that adopts `Ordered`.
+diagnostics/list-extrema-by.em:5:11: `max_by` takes 1 block, but this call passes 0 arguments
+  print([1].max_by())
+            ^^^^^^
+Write the block after the method, as in `numbers.max_by { number => print(number) }`.
+diagnostics/list-extrema-by.em:12:18: this block returns Int?, but `max_by` cannot order an absent key
+  print([1].max_by { number => maybe_key(number) })
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Return a present ordered value, or give an optional key a fallback with `.or(...)`.

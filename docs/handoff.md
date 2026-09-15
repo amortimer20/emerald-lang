@@ -204,8 +204,14 @@ value establishes the accumulator and result type, which can differ from the Lis
 The receiver's items stay fixed for the reduction even when the block changes a captured List
 binding. `reduce_right` and Dictionary and Set forms remain deferred.
 
-The next focused standard-library part should consider `min_by` and `max_by`, reusing the
-existing ordered comparison contract while keeping their block and optional-result rules clear.
+Part 18 adds List `min_by` and `max_by`. A block provides one ordered key per List item while
+the selected item remains the result. They return `T?`, keep the first tied item, require
+present List elements and keys, and reject a `NaN` key with the same pedagogical ordering rule
+as ordinary extrema. Conformance covers Int, Float, String, custom `Ordered`, empty, ties,
+static misuse, optional boundaries, and the NaN runtime diagnostic.
+
+The next focused standard-library part should consider `min_max`, returning both extrema
+together while retaining the same optional and ordering rules.
 
 A bounded adversarial review of Slice 14 parts 1–12 found no defect. Small programs in Debug
 and ReleaseSafe verified snapshot traversal when callbacks mutate their captured List or

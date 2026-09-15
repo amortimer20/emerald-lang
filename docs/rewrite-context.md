@@ -1476,6 +1476,12 @@ no order, so either operation reports an error when it encounters one. `empty?()
 companion when a program needs to distinguish an empty List from a List whose element type can
 otherwise represent absence.
 
+`min_by { item => key }` and `max_by { item => key }` are currently List operations. They
+return the first tied List item as `T?`, or `nothing` for an empty List; the block supplies one
+ordered, present key per item. Keys may be `Int`, `Float`, `String`, or a type adopting
+`Ordered`. A `NaN` key reports an error, as it has no order. Optional List elements and
+optional keys are rejected to keep absence unambiguous; use `filter_map` or `.or(...)` first.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs

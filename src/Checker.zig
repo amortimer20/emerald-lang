@@ -5906,6 +5906,7 @@ fn typeOfMethodCall(
         if (std.mem.eql(u8, member.name, "flat_map")) return self.typeOfFlatMap(call, member, base);
         if (std.mem.eql(u8, member.name, "filter_map")) return self.typeOfFilterMap(call, member, base);
         if (std.mem.eql(u8, member.name, "reduce")) return self.typeOfReduce(call, member, base);
+        if (std.mem.eql(u8, member.name, "min_by") or std.mem.eql(u8, member.name, "max_by")) return self.typeOfExtremeBy(call, member, base);
         if (std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while")) {
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
@@ -6265,6 +6266,50 @@ fn typeOfReduce(self: *Checker, call: Ast.Expression.Call, member: Ast.Expressio
         return .invalid;
     }
     return accumulator;
+}
+
+/// Section 8.6's `min_by` and `max_by`. The List element is the answer, while
+/// the block provides its ordered comparison key. Keeping absence out of both
+/// sides makes `nothing` remain the unambiguous empty-List result.
+fn typeOfExtremeBy(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    const element = base.element.?.*;
+    if (element.optional) {
+        if (!try self.requireArity(member, call.arguments, 1, 1)) return .invalid;
+        try self.report(
+            member.name_span,
+            "`{s}` cannot choose from {f}, whose elements may be absent",
+            .{ member.name, base },
+            "Use `filter_map` to remove absent values first, so `nothing` can remain the empty-List result.",
+        );
+        return .invalid;
+    }
+
+    const block = try self.requireBlock(call, member, base, .invalid) orelse return .invalid;
+    const produced = self.literal_types.get(block) orelse (try self.typeOf(block));
+    if (produced.kind != .function) return .invalid;
+    const key = produced.signature.?.return_type;
+    if (key.kind == .invalid) return .invalid;
+    if (key.optional) {
+        try self.report(
+            block.span,
+            "this block returns {f}, but `{s}` cannot order an absent key",
+            .{ key, member.name },
+            "Return a present ordered value, or give an optional key a fallback with `.or(...)`.",
+        );
+        return .invalid;
+    }
+    if (key.kind == .int or key.kind == .float or key.kind == .string) return element.optionalOf();
+    if (key.kind == .struct_value) {
+        const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, key, key);
+        return if (ordered.kind == .invalid) .invalid else element.optionalOf();
+    }
+    try self.report(
+        block.span,
+        "this block returns {f}, but `{s}` needs an ordered key",
+        .{ key, member.name },
+        "Return an Int, Float, String, or a type that adopts `Ordered`.",
+    );
+    return .invalid;
 }
 
 /// The single block argument a higher-order method takes, checked against a

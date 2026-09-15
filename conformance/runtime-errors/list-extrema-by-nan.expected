@@ -1,0 +1,4 @@
+runtime-errors/list-extrema-by-nan.em:1:7: `min_by` and `max_by` cannot order a key of NaN
+  print([1.0].min_by { number => Float.nan })
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Check values with `nan?()` before choosing a minimum or maximum.
