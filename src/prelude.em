@@ -15,6 +15,16 @@ class AssertionError extends Error {
     }
 }
 
+# Section 9.3's repeatable randomness source. Its state is private and the
+# interpreter supplies the generic collection operations.
+class Random {
+    var _state: Int
+
+    constructor(seed: Int) {
+        self._state = seed
+    }
+}
+
 # Section 11.5's operator contracts. Every program sees these names, and a
 # program's own declaration of the same name takes its place.
 #

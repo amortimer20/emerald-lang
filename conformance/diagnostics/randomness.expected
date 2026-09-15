@@ -1,0 +1,24 @@
+diagnostics/randomness.em:1:14: `random` needs a Range, but this is Int
+  print(random(1))
+               ^
+Pass a range such as `1..6` or `0..<count`.
+diagnostics/randomness.em:2:11: `shuffle` takes 0 arguments, but this call passes 1
+  print([1].shuffle(2))
+            ^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/randomness.em:4:1: `frozen` is a `const`, so its contents cannot change
+  frozen.shuffle!()
+  ^^^^^^
+Declare `frozen` with `var` if it needs to change.
+diagnostics/randomness.em:6:19: `next` needs a Range, but this is Int
+  print(source.next(1))
+                    ^
+Pass a Range such as `1..6`.
+diagnostics/randomness.em:7:21: `choose` needs a List, but this is String
+  print(source.choose("text"))
+                      ^^^^^^
+Pass a List to choose one of its elements.
+diagnostics/randomness.em:8:17: `frozen` is a `const`, so its contents cannot change
+  source.shuffle!(frozen)
+                  ^^^^^^
+Declare `frozen` with `var` if it needs to change.

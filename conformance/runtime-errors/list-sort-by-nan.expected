@@ -1,0 +1,4 @@
+runtime-errors/list-sort-by-nan.em:8:7: `sort_by` cannot order a key of NaN
+  print([1, 2].sort_by { number => key_with_nan(number) })
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Return a key that is not NaN, checking it with `nan?()` when needed.

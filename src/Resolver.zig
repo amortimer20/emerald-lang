@@ -203,7 +203,7 @@ pub const Resolved = struct {
 
 /// Section 15.2's prelude. These are callable without qualification and are not
 /// declared by any program, so they live in a scope of their own.
-pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe" };
+pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe", "random" };
 
 /// The namespace of the declarations written in `prelude.em`, such as section
 /// 11.5's `Ordered`. A directory's namespace always starts with a capital

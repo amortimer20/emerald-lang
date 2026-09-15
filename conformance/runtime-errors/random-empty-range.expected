@@ -1,0 +1,4 @@
+runtime-errors/random-empty-range.em:1:7: `random` cannot choose from an empty Range
+  print(random(0..<0))
+        ^^^^^^^^^^^^^
+Pass a Range that contains at least one value.

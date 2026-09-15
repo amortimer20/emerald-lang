@@ -1,0 +1,4 @@
+runtime-errors/seeded-random-empty-range.em:2:7: `next` cannot choose from an empty Range
+  print(source.next(0..<0))
+        ^^^^^^^^^^^^^^^^^^
+Pass a Range that contains at least one value.

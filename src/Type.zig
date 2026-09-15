@@ -520,6 +520,16 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "average", ListMethod{ .parameters = &.{}, .result = .float, .mutates = false } },
     .{ "min", ListMethod{ .parameters = &.{}, .result = .element, .mutates = false } },
     .{ "max", ListMethod{ .parameters = &.{}, .result = .element, .mutates = false } },
+    // `sort` and `sort!` need the same `Ordered` eligibility check as `min`
+    // and `max`, which the checker gives them explicitly before this table's
+    // generic parameter check runs; the entries here exist only so the
+    // interpreter's method-name lookup routes each to a reading or a
+    // changing call, exactly as it already does for `min` and `max`.
+    .{ "sort", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
+    .{ "sort!", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
+    .{ "shuffle", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
+    .{ "shuffle!", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
+    .{ "random", ListMethod{ .parameters = &.{}, .result = .element, .mutates = false } },
 });
 
 /// What a `String` method takes and gives. Section 9.2's vocabulary, less what

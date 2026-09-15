@@ -1,0 +1,4 @@
+runtime-errors/list-sort-nan.em:1:7: `sort` cannot order a List containing NaN
+  print([Float.nan].sort())
+        ^^^^^^^^^^^^^^^^^^
+Check values with `nan?()` before sorting the List.

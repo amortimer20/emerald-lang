@@ -5866,6 +5866,37 @@ fn typeOfMethodCall(
         return .invalid;
     }
 
+    if (base.kind == .struct_value and std.mem.eql(u8, base.user.?.name, Resolver.preludeKey("Random"))) {
+        if (std.mem.eql(u8, member.name, "next")) {
+            if (!try self.requireArity(member, call.arguments, 1, 1)) return .invalid;
+            const argument = try self.typeOf(call.arguments[0]);
+            if (argument.kind == .range) return .int;
+            try self.report(call.arguments[0].span, "`next` needs a Range, but this is {f}", .{argument}, "Pass a Range such as `1..6`.");
+            return .invalid;
+        }
+        if (std.mem.eql(u8, member.name, "choose")) {
+            if (!try self.requireArity(member, call.arguments, 1, 1)) return .invalid;
+            const argument = try self.typeOf(call.arguments[0]);
+            if (argument.kind == .list) return argument.element.?.optionalOf();
+            try self.report(call.arguments[0].span, "`choose` needs a List, but this is {f}", .{argument}, "Pass a List to choose one of its elements.");
+            return .invalid;
+        }
+        if (std.mem.eql(u8, member.name, "shuffle!")) {
+            if (!try self.requireArity(member, call.arguments, 1, 1)) return .invalid;
+            const argument = try self.typeOf(call.arguments[0]);
+            if (argument.kind != .list) {
+                try self.report(call.arguments[0].span, "`shuffle!` needs a List, but this is {f}", .{argument}, "Pass a `var` List whose order may change.");
+                return .invalid;
+            }
+            if (try self.requireChangeablePath(call.arguments[0]) != null) {
+                try self.report(call.arguments[0].span, "`shuffle!` needs a changeable List", .{}, "Put the List in a `var` first, then pass that name.");
+            }
+            return .nothing;
+        }
+        try self.reportUnknownMember(base, member, "method");
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
     if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base);
     if (base.kind == .range) return self.typeOfRangeMethod(call, member);
     if (base.kind == .string) return self.typeOfStringMethod(call, member);
@@ -5962,6 +5993,11 @@ fn typeOfMethodCall(
         if (std.mem.eql(u8, member.name, "reduce") or std.mem.eql(u8, member.name, "reduce_right")) return self.typeOfReduce(call, member, base, std.mem.eql(u8, member.name, "reduce_right"));
         if (std.mem.eql(u8, member.name, "min_by") or std.mem.eql(u8, member.name, "max_by")) return self.typeOfExtremeBy(call, member, base);
         if (std.mem.eql(u8, member.name, "min_max")) return self.typeOfMinMax(call, member, base);
+        if (std.mem.eql(u8, member.name, "sort_by")) return self.typeOfSortBy(call, member, base);
+        if (std.mem.eql(u8, member.name, "unique_by")) return self.typeOfUniqueBy(call, member, base);
+        if (std.mem.eql(u8, member.name, "associate")) return self.typeOfAssociate(call, member, base, false);
+        if (std.mem.eql(u8, member.name, "associate_by")) return self.typeOfAssociate(call, member, base, true);
+        if (std.mem.eql(u8, member.name, "to_dictionary")) return self.typeOfToDictionary(expression, call, member, base);
         if (std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while")) {
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
@@ -6048,6 +6084,57 @@ fn typeOfMethodCall(
             "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
         );
         return .invalid;
+    }
+
+    // `sort` and `sort!` share `min` and `max`'s ordering and absence rules,
+    // but reorder every element instead of choosing one; `sort!` is the
+    // in-place counterpart the `!` convention (8.6) gives a copying method.
+    if (std.mem.eql(u8, member.name, "sort") or std.mem.eql(u8, member.name, "sort!")) {
+        if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
+        if (element.optional) {
+            try self.report(
+                member.name_span,
+                "`{s}` cannot order {f}, whose elements may be absent",
+                .{ member.name, base },
+                "Use `filter_map` to remove absent values first, or give each element a fallback with `.or(...)`.",
+            );
+            return .invalid;
+        }
+        const eligible = eligible: {
+            if (element.kind == .int or element.kind == .float or element.kind == .string) break :eligible true;
+            if (element.kind == .struct_value) {
+                const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, element, element);
+                break :eligible ordered.kind != .invalid;
+            }
+            break :eligible false;
+        };
+        if (!eligible) {
+            try self.report(
+                member.name_span,
+                "`{s}` needs a List of ordered values, but this is {f}",
+                .{ member.name, base },
+                "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
+            );
+            return .invalid;
+        }
+        if (std.mem.eql(u8, member.name, "sort!")) {
+            try self.requireChangeable(member);
+            return .nothing;
+        }
+        return Type.listOf(self.arena, element);
+    }
+
+    if (std.mem.eql(u8, member.name, "shuffle") or std.mem.eql(u8, member.name, "shuffle!")) {
+        if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
+        if (std.mem.eql(u8, member.name, "shuffle!")) {
+            try self.requireChangeable(member);
+            return .nothing;
+        }
+        return Type.listOf(self.arena, element);
+    }
+    if (std.mem.eql(u8, member.name, "random")) {
+        if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
+        return element.optionalOf();
     }
 
     if (call.arguments.len != method.parameters.len) {
@@ -6419,6 +6506,133 @@ fn typeOfMinMax(self: *Checker, call: Ast.Expression.Call, member: Ast.Expressio
         "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
     );
     return .invalid;
+}
+
+/// Section 8.6's `sort_by`: the block supplies a comparison key per item, in
+/// the same ordered types `sort`, `min`, and `max` accept, while the List's
+/// own elements — not the keys — are what the result holds, reordered.
+fn typeOfSortBy(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    const element = base.element.?.*;
+    const block = try self.requireBlock(call, member, base, .invalid) orelse return .invalid;
+    const produced = self.literal_types.get(block) orelse (try self.typeOf(block));
+    if (produced.kind != .function) return .invalid;
+    const key = produced.signature.?.return_type;
+    if (key.kind == .invalid) return .invalid;
+    if (key.optional) {
+        try self.report(
+            block.span,
+            "this block returns {f}, but `sort_by` cannot order an absent key",
+            .{key},
+            "Return a present ordered value, or give an optional key a fallback with `.or(...)`.",
+        );
+        return .invalid;
+    }
+    if (key.kind == .int or key.kind == .float or key.kind == .string) return Type.listOf(self.arena, element);
+    if (key.kind == .struct_value) {
+        const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, key, key);
+        return if (ordered.kind == .invalid) .invalid else Type.listOf(self.arena, element);
+    }
+    try self.report(
+        block.span,
+        "this block returns {f}, but `sort_by` needs an ordered key",
+        .{key},
+        "Return an Int, Float, String, or a type that adopts `Ordered`.",
+    );
+    return .invalid;
+}
+
+/// Section 8.6's `unique_by`: the block supplies a dictionary-eligible key
+/// per item, and the first item seen for each key is kept, in the List's own
+/// order — the same rule plain `unique` applies to whole elements.
+fn typeOfUniqueBy(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    const element = base.element.?.*;
+    const block = try self.requireBlock(call, member, base, .invalid) orelse return .invalid;
+    const produced = self.literal_types.get(block) orelse (try self.typeOf(block));
+    if (produced.kind != .function) return .invalid;
+    const key = produced.signature.?.return_type;
+    if (key.kind == .invalid) return .invalid;
+    if (key.kind == .nothing) {
+        try self.report(
+            block.span,
+            "this block returns nothing, but `unique_by` needs a usable dictionary key",
+            .{},
+            "Return a number, Bool, String, enum value, or a tuple or struct made only from valid keys.",
+        );
+        return .invalid;
+    }
+    try self.requireEligibleKey(key, member.name_span);
+    return Type.listOf(self.arena, element);
+}
+
+/// Section 8.6's sequence-to-dictionary construction. `associate`'s block
+/// returns the whole `(key, value)` entry; `associate_by`'s returns only the
+/// key, and the List item itself becomes the value, the same way `group_by`
+/// keeps the item rather than something the block produced.
+fn typeOfAssociate(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type, by_key_only: bool) Error!Type {
+    const element = base.element.?.*;
+    const block = try self.requireBlock(call, member, base, .invalid) orelse return .invalid;
+    const produced = self.literal_types.get(block) orelse (try self.typeOf(block));
+    if (produced.kind != .function) return .invalid;
+    const result = produced.signature.?.return_type;
+    if (result.kind == .invalid) return .invalid;
+
+    if (by_key_only) {
+        if (result.kind == .nothing) {
+            try self.report(
+                block.span,
+                "this block returns nothing, but `associate_by` needs a usable dictionary key",
+                .{},
+                "Return a number, Bool, String, enum value, or a tuple or struct made only from valid keys.",
+            );
+            return .invalid;
+        }
+        try self.requireEligibleKey(result, member.name_span);
+        return Type.dictionaryOf(self.arena, result, element);
+    }
+
+    if (result.kind != .tuple or result.elements.len != 2) {
+        try self.report(
+            block.span,
+            "this block returns {f}, but `associate` needs a `(key, value)` tuple",
+            .{result},
+            "Return a two-element tuple, as in `items.associate { item => (item.name, item.count) }`.",
+        );
+        return .invalid;
+    }
+    const key = result.elements[0];
+    const value = result.elements[1];
+    try self.requireEligibleKey(key, member.name_span);
+    return Type.dictionaryOf(self.arena, key, value);
+}
+
+/// Section 8.6's `to_dictionary`: a List already holding `(key, value)`
+/// tuples becomes a Dictionary directly, with no block to say how. The result
+/// type is recorded for the interpreter, which cannot otherwise recover a
+/// tuple's position kinds from an empty List's element kind alone.
+fn typeOfToDictionary(
+    self: *Checker,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    base: Type,
+) Error!Type {
+    _ = try self.requireArity(member, call.arguments, 0, 0);
+    const element = base.element.?.*;
+    if (element.kind != .tuple or element.elements.len != 2) {
+        try self.report(
+            member.name_span,
+            "`to_dictionary` needs a List of two-element tuples, but this is {f}",
+            .{base},
+            "Use `associate` or `associate_by` to build the key and value from each element instead.",
+        );
+        return .invalid;
+    }
+    const key = element.elements[0];
+    const value = element.elements[1];
+    try self.requireEligibleKey(key, member.name_span);
+    const built = try Type.dictionaryOf(self.arena, key, value);
+    try self.literal_types.put(self.arena, expression, built);
+    return built;
 }
 
 /// The single block argument a higher-order method takes, checked against a
@@ -8021,6 +8235,13 @@ fn typeOfCall(
         }
         if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
             return self.typeOfInput(call, name);
+        }
+        if (std.mem.eql(u8, name, "random")) {
+            if (!try self.requireArity(.{ .name = name, .name_span = call.callee.span, .base = call.callee }, call.arguments, 1, 1)) return .invalid;
+            const argument = try self.typeOf(call.arguments[0]);
+            if (argument.kind == .range) return .int;
+            try self.report(call.arguments[0].span, "`random` needs a Range, but this is {f}", .{argument}, "Pass a range such as `1..6` or `0..<count`.");
+            return .invalid;
         }
         try self.typeArguments(call.arguments);
         return .nothing;

@@ -148,6 +148,7 @@ caught_failure: ?Diagnostic = null,
 /// and shared by every run after it, so a loop that prints a literal does not
 /// allocate.
 literal_texts: std.AutoHashMapUnmanaged(*const Ast.Expression, *Heap.Text) = .empty,
+random_engine: ?std.Random.DefaultPrng = null,
 
 /// Top-level bindings, from `arena`. A function sees these, and it sees them
 /// as they are when it runs; the checker has already proved that everything a
@@ -2726,7 +2727,19 @@ fn evaluateCall(
     if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
         return self.evaluateInput(expression.span, call, std.mem.eql(u8, name, "input_maybe"));
     }
+    if (std.mem.eql(u8, name, "random")) {
+        const range = (try self.evaluate(call.arguments[0])).data.range;
+        if (range.empty()) return self.raise(expression.span, "`random` cannot choose from an empty Range", "Pass a Range that contains at least one value.");
+        const position = self.random().uintLessThan(u64, @intCast(range.count()));
+        const distance = @as(i128, position) * range.step_size;
+        return .initInt(@intCast(if (range.descending) @as(i128, range.first) - distance else @as(i128, range.first) + distance));
+    }
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
+}
+
+fn random(self: *Interpreter) std.Random {
+    if (self.random_engine == null) self.random_engine = std.Random.DefaultPrng.init(@intFromPtr(self) ^ 0xa0761d6478bd642f);
+    return self.random_engine.?.random();
 }
 
 fn constructStruct(
@@ -4207,6 +4220,166 @@ fn callMinMax(self: *Interpreter, expression: *const Ast.Expression, member: Ast
     return self.listMinMax(expression.span, receiver.data.list);
 }
 
+/// Section 8.6's `sort_by`: each item's key is computed once, left to right,
+/// then a stable sort by that key reorders the items themselves — `sort`'s
+/// items are their own keys, and this is what lets `sort` on a List of
+/// `Ordered` structs share the same underlying pass.
+fn callSortBy(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const list = receiver.data.list;
+    const items = list.items.items;
+    const result = try self.heap.createList(list.element, items.len);
+    const value: Value = .{ .data = .{ .list = result } };
+    errdefer self.heap.release(value);
+    if (items.len == 0) return value;
+
+    const block = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(block);
+    const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
+    const key_kind = kindOf(callable.signature.return_type);
+
+    const keys = try self.gpa.alloc(Value, items.len);
+    var built: usize = 0;
+    defer {
+        for (keys[0..built]) |key| self.heap.release(key);
+        self.gpa.free(keys);
+    }
+    for (items) |item| {
+        const argument = [_]Value{Heap.retain(item)};
+        keys[built] = try self.invokeClosure(expression.span, closure, callable, &argument);
+        built += 1;
+    }
+    if (key_kind == .float and std.math.isNan(keys[0].data.float)) return self.raiseExtremeNaN(expression.span, .sort_by);
+
+    for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
+    try self.sortItemsByKeys(expression.span, key_kind, result.items.items, keys, .sort_by);
+    return value;
+}
+
+/// Section 8.6's `unique_by`: a block computes a dictionary-eligible key per
+/// item, once, left to right; the first item seen for each key is kept, in
+/// the List's own order, mirroring what `unique` does by whole-element
+/// equality. A private Set of seen keys, released before returning, decides
+/// which items pass.
+fn callUniqueBy(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const list = receiver.data.list;
+    const items = list.items.items;
+
+    const block = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(block);
+    const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
+    const key_kind = kindOf(callable.signature.return_type);
+
+    const seen = try self.heap.createMap(key_kind, .nothing, true);
+    defer self.heap.release(.{ .data = .{ .map = seen } });
+
+    const result = try self.heap.createList(list.element, items.len);
+    const value: Value = .{ .data = .{ .list = result } };
+    errdefer self.heap.release(value);
+    for (items) |item| {
+        const argument = [_]Value{Heap.retain(item)};
+        const key = try self.invokeClosure(expression.span, closure, callable, &argument);
+        const hash = try self.hashKey(expression.span, key);
+        switch (try self.heap.locate(seen, hash, key)) {
+            .entry => self.heap.release(key),
+            .vacancy => {
+                try self.heap.put(seen, hash, key, Value.nothing);
+                result.items.appendAssumeCapacity(Heap.retain(item));
+            },
+        }
+    }
+    return value;
+}
+
+/// Section 8.6's sequence-to-dictionary construction. `associate`'s block
+/// returns the whole `(key, value)` entry, once per item, left to right;
+/// `associate_by`'s returns only the key, and the item itself becomes the
+/// value. A later item's key replaces an earlier one's value in place,
+/// exactly as an ordinary dictionary assignment does (8.4).
+fn callAssociate(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const by_key_only = std.mem.eql(u8, member.name, "associate_by");
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const list = receiver.data.list;
+    const items = list.items.items;
+
+    const block = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(block);
+    const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
+    const produced = callable.signature.return_type;
+    const key_kind = if (by_key_only) kindOf(produced) else kindOf(produced.elements[0]);
+    const value_kind = if (by_key_only) list.element else kindOf(produced.elements[1]);
+
+    const map = try self.heap.createMap(key_kind, value_kind, false);
+    const result: Value = .{ .data = .{ .map = map } };
+    errdefer self.heap.release(result);
+
+    for (items) |item| {
+        const argument = [_]Value{Heap.retain(item)};
+        const produced_value = try self.invokeClosure(expression.span, closure, callable, &argument);
+        if (by_key_only) {
+            const key = widen(produced_value, key_kind);
+            const hash = try self.hashKey(expression.span, key);
+            try self.heap.put(map, hash, key, Heap.retain(item));
+        } else {
+            defer self.heap.release(produced_value);
+            const tuple = produced_value.data.tuple;
+            const key = widen(Heap.retain(tuple.items[0]), key_kind);
+            const value = widen(Heap.retain(tuple.items[1]), value_kind);
+            const hash = try self.hashKey(expression.span, key);
+            try self.heap.put(map, hash, key, value);
+        }
+    }
+    return result;
+}
+
+/// Section 8.6's `to_dictionary`: a List already holding `(key, value)`
+/// tuples becomes a Dictionary directly, with no block to say how. The
+/// checker recorded the built Dictionary type on this call expression, since
+/// an empty List's element kind alone cannot say what a tuple's own two
+/// positions held.
+fn callToDictionary(self: *Interpreter, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const list = receiver.data.list;
+    const built = self.literal_types.get(expression).?;
+    const key_kind = kindOf(built.key.?.*);
+    const value_kind = kindOf(built.element.?.*);
+
+    const map = try self.heap.createMap(key_kind, value_kind, false);
+    const result: Value = .{ .data = .{ .map = map } };
+    errdefer self.heap.release(result);
+    for (list.items.items) |item| {
+        const tuple = item.data.tuple;
+        const key = widen(Heap.retain(tuple.items[0]), key_kind);
+        const value = widen(Heap.retain(tuple.items[1]), value_kind);
+        const hash = try self.hashKey(expression.span, key);
+        try self.heap.put(map, hash, key, value);
+    }
+    return result;
+}
+
 /// Section 8.5's list methods. The checker has proved the receiver is a list,
 /// the method exists, and the arguments fit it.
 ///
@@ -4221,6 +4394,11 @@ fn callMethod(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
+    if (std.mem.eql(u8, member.name, "next") or std.mem.eql(u8, member.name, "choose") or
+        (std.mem.eql(u8, member.name, "shuffle!") and call.arguments.len == 1))
+    {
+        return self.callRandomMethod(expression, call, member);
+    }
     // Decided by the checker from the receiver's type, so a struct's own
     // `append` or `each` is never mistaken for a collection's.
     if (self.method_calls.get(call.callee)) |key| return self.callStructMethod(expression, call, member, key);
@@ -4246,6 +4424,10 @@ fn callMethod(
     }
     if (std.mem.eql(u8, member.name, "min_by") or std.mem.eql(u8, member.name, "max_by")) return self.callExtremeBy(expression, call, member);
     if (std.mem.eql(u8, member.name, "min_max")) return self.callMinMax(expression, member);
+    if (std.mem.eql(u8, member.name, "sort_by")) return self.callSortBy(expression, call, member);
+    if (std.mem.eql(u8, member.name, "unique_by")) return self.callUniqueBy(expression, call, member);
+    if (std.mem.eql(u8, member.name, "associate") or std.mem.eql(u8, member.name, "associate_by")) return self.callAssociate(expression, call, member);
+    if (std.mem.eql(u8, member.name, "to_dictionary")) return self.callToDictionary(expression, member);
     if (std.mem.eql(u8, member.name, "map_keys") or std.mem.eql(u8, member.name, "map_values")) return self.callMapTransform(expression, call, member);
     // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "reverse_each") or std.mem.eql(u8, member.name, "map") or
@@ -4286,6 +4468,63 @@ fn callMethod(
     const mutates = (list_method != null and list_method.?.mutates) or Type.map_mutators.has(member.name);
     if (!mutates) return self.callReadingMethod(expression, call, member);
     return self.callChangingMethod(expression, call, member);
+}
+
+fn callRandomMethod(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const instance = receiver.data.struct_value;
+    if (std.mem.eql(u8, member.name, "next")) {
+        const range = (try self.evaluate(call.arguments[0])).data.range;
+        if (range.empty()) return self.raise(expression.span, "`next` cannot choose from an empty Range", "Pass a Range that contains at least one value.");
+        return .initInt(self.seededRange(instance, range));
+    }
+    if (std.mem.eql(u8, member.name, "choose")) {
+        const list_value = try self.evaluate(call.arguments[0]);
+        defer self.heap.release(list_value);
+        const items = list_value.data.list.items.items;
+        if (items.len == 0) return Value.nothing;
+        return Heap.retain(items[self.seededIndex(instance, items.len)]);
+    }
+
+    const path = try self.evaluateReceiverPath(call.arguments[0]);
+    defer self.freeSteps(path.steps);
+    var temporary = try self.temporaryRoot(path.root);
+    defer if (temporary) |value| self.heap.release(value);
+    const binding: ?*Binding = if (temporary != null) null else try self.placeBinding(self.rootName(path.root), path.root.span);
+    var object: Value = Value.nothing;
+    defer self.heap.release(object);
+    var slot = if (binding) |found| &found.value.? else &temporary.?;
+    if (objectOnPath(slot.*, path.steps)) |in_object| {
+        object = Heap.retain(in_object.object);
+        slot = try self.containerSlot(expression.span, &object, in_object.rest);
+    } else if (path.steps.len > 0) slot = try self.containerSlot(expression.span, slot, path.steps);
+    const list = try self.heap.unique(slot);
+    self.seededShuffle(instance, list.items.items);
+    return Value.nothing;
+}
+
+fn seededIndex(self: *Interpreter, instance: *Heap.StructValue, length: usize) usize {
+    var engine = std.Random.DefaultPrng.init(@bitCast(instance.fields[0].data.int));
+    const source = engine.random();
+    const result = source.uintLessThan(usize, length);
+    instance.fields[0] = .initInt(@bitCast(source.int(u64)));
+    _ = self;
+    return result;
+}
+
+fn seededRange(self: *Interpreter, instance: *Heap.StructValue, range: Range) i64 {
+    const position = self.seededIndex(instance, @intCast(range.count()));
+    const distance = @as(i128, position) * range.step_size;
+    return @intCast(if (range.descending) @as(i128, range.first) - distance else @as(i128, range.first) + distance);
+}
+
+fn seededShuffle(self: *Interpreter, instance: *Heap.StructValue, items: []Value) void {
+    var engine = std.Random.DefaultPrng.init(@bitCast(instance.fields[0].data.int));
+    const source = engine.random();
+    source.shuffle(Value, items);
+    instance.fields[0] = .initInt(@bitCast(source.int(u64)));
+    _ = self;
 }
 
 /// A method that only looks at its receiver, which may therefore be any
@@ -4360,7 +4599,7 @@ fn callMapTransform(
 /// when an item is itself a collection or object.
 fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", chain, chunks, windows, pairs, take, drop, reverse, unique, zip, sum, average, min, max };
+    const Method = enum { @"empty?", @"contains?", chain, chunks, windows, pairs, take, drop, reverse, unique, zip, sum, average, min, max, sort, shuffle, random };
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
@@ -4426,7 +4665,7 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
             const result = try self.heap.createList(.tuple, @max(items.len - 1, 0));
             const value: Value = .{ .data = .{ .list = result } };
             errdefer self.heap.release(value);
-            for (items[0 .. @max(items.len - 1, 0)], items[1..]) |left, right| {
+            for (items[0..@max(items.len - 1, 0)], items[1..]) |left, right| {
                 const tuple_items = try self.gpa.alloc(Value, 2);
                 const tuple_kinds = try self.gpa.alloc(Value.Kind, 2);
                 tuple_items[0] = Heap.retain(left);
@@ -4502,6 +4741,24 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
         .sum => self.sumList(span, list),
         .average => averageList(list),
         .min, .max => self.listExtreme(span, list, std.mem.eql(u8, name, "min")),
+        .sort => blk: {
+            if (list.element == .float and items.len > 0 and std.math.isNan(items[0].data.float)) return self.raiseExtremeNaN(span, .sort);
+            const result = try self.heap.createList(list.element, items.len);
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
+            try self.sortItemsByKeys(span, list.element, result.items.items, null, .sort);
+            break :blk value;
+        },
+        .shuffle => blk: {
+            const result = try self.heap.createList(list.element, items.len);
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
+            self.random().shuffle(Value, result.items.items);
+            break :blk value;
+        },
+        .random => if (items.len == 0) Value.nothing else Heap.retain(items[self.random().uintLessThan(usize, items.len)]),
     };
 }
 
@@ -4575,7 +4832,7 @@ fn listExtreme(self: *Interpreter, span: Source.Span, list: *const Heap.List, mi
     return chosen;
 }
 
-const ExtremeKind = enum { ordinary, keyed, pair };
+const ExtremeKind = enum { ordinary, keyed, pair, sort, sort_by };
 
 fn raiseExtremeNaN(self: *Interpreter, span: Source.Span, kind: ExtremeKind) Error {
     return self.raise(
@@ -4584,8 +4841,14 @@ fn raiseExtremeNaN(self: *Interpreter, span: Source.Span, kind: ExtremeKind) Err
             .ordinary => "`min` and `max` cannot order a List containing NaN",
             .keyed => "`min_by` and `max_by` cannot order a key of NaN",
             .pair => "`min_max` cannot order a List containing NaN",
+            .sort => "`sort` cannot order a List containing NaN",
+            .sort_by => "`sort_by` cannot order a key of NaN",
         },
-        "Check values with `nan?()` before choosing a minimum or maximum.",
+        switch (kind) {
+            .ordinary, .keyed, .pair => "Check values with `nan?()` before choosing a minimum or maximum.",
+            .sort => "Check values with `nan?()` before sorting the List.",
+            .sort_by => "Return a key that is not NaN, checking it with `nan?()` when needed.",
+        },
     );
 }
 
@@ -4602,8 +4865,37 @@ fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left:
             defer self.heap.release(compared);
             break :blk std.math.order(compared.data.int, 0);
         },
-        else => unreachable, // The checker permits `min` and `max` only on ordered Lists.
+        else => unreachable, // The checker permits ordering only Ints, Floats, Strings, and `Ordered` structs.
     };
+}
+
+/// A stable insertion sort for `sort`, `sort!`, and `sort_by`, whose
+/// comparisons may themselves fail — a `NaN` float, or a user
+/// `Ordered.compare` that raises. `keys`, when given, is reordered in lock
+/// step with `items`, so `sort_by`'s already-computed keys stay lined up with
+/// the items they came from; without one, `items` is compared directly.
+/// Insertion sort is stable, so items whose keys tie keep their input order,
+/// matching every other List traversal (8.6).
+fn sortItemsByKeys(
+    self: *Interpreter,
+    span: Source.Span,
+    kind: Value.Kind,
+    items: []Value,
+    keys: ?[]Value,
+    extreme: ExtremeKind,
+) Error!void {
+    var i: usize = 1;
+    while (i < items.len) : (i += 1) {
+        var j = i;
+        while (j > 0) {
+            const left = if (keys) |k| k[j - 1] else items[j - 1];
+            const right = if (keys) |k| k[j] else items[j];
+            if (try self.orderListItems(span, kind, left, right, extreme) != .gt) break;
+            std.mem.swap(Value, &items[j - 1], &items[j]);
+            if (keys) |k| std.mem.swap(Value, &k[j - 1], &k[j]);
+            j -= 1;
+        }
+    }
 }
 
 fn listMinMax(self: *Interpreter, span: Source.Span, list: *const Heap.List) Error!Value {
@@ -5635,7 +5927,7 @@ fn raisePadding(self: *Interpreter, span: Source.Span, width: i64, fill: []const
 /// taken by the list, and the rest are released here.
 fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = &list.items;
-    const Method = enum { append, insert, remove, remove_all, remove_at, remove_first, remove_last, clear, @"reverse!", @"unique!" };
+    const Method = enum { append, insert, remove, remove_all, remove_at, remove_first, remove_last, clear, @"reverse!", @"unique!", @"sort!", @"shuffle!" };
     switch (std.meta.stringToEnum(Method, name).?) {
         .append => try items.append(self.gpa, widen(arguments[0], list.element)),
         .insert => {
@@ -5708,6 +6000,11 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
             }
             items.shrinkRetainingCapacity(kept);
         },
+        .@"sort!" => {
+            if (list.element == .float and items.items.len > 0 and std.math.isNan(items.items[0].data.float)) return self.raiseExtremeNaN(span, .sort);
+            try self.sortItemsByKeys(span, list.element, items.items, null, .sort);
+        },
+        .@"shuffle!" => self.random().shuffle(Value, items.items),
     }
     return Value.nothing;
 }

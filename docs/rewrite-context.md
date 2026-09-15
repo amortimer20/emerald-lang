@@ -1488,6 +1488,21 @@ first tied minimum, the second the first tied maximum, and an empty List returns
 `(nothing, nothing)`. Optional elements and `NaN` follow the same rejection rules as the
 individual extrema.
 
+`sort()` and `sort!()` order a List using the same Int, Float, String, and `Ordered`
+contracts as `min()` and `max()`. `sort()` returns a new List and leaves its receiver
+unchanged; `sort!()` changes the receiver and returns `Nothing`. Sorting is stable, so equal
+items keep their input order. Optional elements are rejected, and encountering `NaN` raises
+because it has no order. `sort_by { item => key }` computes one present ordered key per item,
+left to right, and returns a new stable ordering of the original items; a `NaN` key raises.
+
+`unique_by { item => key }` computes one dictionary-eligible key per List item and keeps the
+first item for each key in input order. `associate { item => (key, value) }` builds a
+Dictionary from produced entries, while `associate_by { item => key }` uses each original
+item as its value. `to_dictionary()` converts a List that already contains two-element
+tuples. All three dictionary builders preserve the first insertion position for a repeated
+key and replace its value with the last produced value, matching ordinary Dictionary
+assignment.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs
@@ -1703,6 +1718,14 @@ Repeatable work uses `Random(seed: 42)` with `next(range)`, `choose(collection)`
 `shuffle!(collection)`. The global form delegates to a runtime-managed generator. Range
 bounds retain the ordinary inclusive or exclusive meaning of their syntax, and choosing
 from an empty range is an error.
+
+`List.random()` returns an optional element and gives `nothing` for an empty List.
+`shuffle()` returns a newly shuffled List without changing its receiver, while `shuffle!()`
+changes a `var` List and returns `Nothing`. Both preserve every element and its multiplicity.
+A seeded generator's `choose` has the same empty-List result, and its `shuffle!` requires a
+changeable List place. Two generators created with the same seed and given the same sequence
+of operations produce the same results; the precise sequence is an implementation detail and
+must not be persisted as a portable format.
 
 ### 9.4 Standard-library recovery audit
 
