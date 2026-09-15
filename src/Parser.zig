@@ -4059,3 +4059,17 @@ test "parser reports malformed declarations without crashing" {
     try testing.expect(parsed.diagnostics.len > 0);
 }
 
+test "parser resumes after a malformed declaration inside a block" {
+    var source = try Source.init(testing.allocator, "test.em", "if true {\nfunc bad(1,\nprint(1)\n}\nvar ok = 2\n");
+    defer source.deinit(testing.allocator);
+
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+
+    var parsed = try parse(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.diagnostics.len > 0);
+    try testing.expectEqual(@as(usize, 2), parsed.program.statements.len);
+}
+
