@@ -88,6 +88,28 @@ the exact version and compile and run the toolchain probe with:
 bash tools/check-toolchain.sh
 ```
 
+## Installing Emerald with Mise
+
+Emerald is set up for release-based installation. GitHub Releases are the source of truth for
+platform binaries, and a Mise plugin can then install the correct asset for the user’s OS and
+architecture.
+
+The expected release layout is:
+
+- `emerald-linux-x86_64.tar.gz`
+- `emerald-macos-arm64.tar.gz`
+- `emerald-windows-x86_64.zip`
+
+and each release also includes a `SHA256SUMS` file for verification.
+
+Once a plugin is published, the intended user flow is:
+
+```bash
+mise plugin install emerald https://github.com/emerald-lang/mise-emerald
+mise install emerald@latest
+mise use -g emerald@latest
+```
+
 Build, test, and run:
 
 ```bash

@@ -4,6 +4,12 @@ Updated: 2026-09-14. Prepared after the LSP's first slice (slice 15).
 
 ## Current milestone
 
+Completed in this pass: release-based installation plumbing for Emerald. The repository now
+contains a GitHub Actions workflow that builds and uploads release artifacts for Linux, macOS,
+and Windows, along with release notes for a Mise install flow and SHA256 checksums to validate
+release assets. The next step is to tag a first release, confirm the workflow publishes the
+artifacts, and then publish the corresponding Mise plugin.
+
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
 optionals slice the user chose to do before the project slice, a tuple slice split out

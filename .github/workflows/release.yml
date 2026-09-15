@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+            archive: tar
+            asset: emerald-linux-x86_64.tar.gz
+            binary: zig-out/bin/emerald
+          - os: macos-latest
+            name: macos-arm64
+            archive: tar
+            asset: emerald-macos-arm64.tar.gz
+            binary: zig-out/bin/emerald
+          - os: windows-latest
+            name: windows-x86_64
+            archive: zip
+            asset: emerald-windows-x86_64.zip
+            binary: zig-out/bin/emerald.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain with Mise
+        uses: jdx/mise-action@v2
+
+      - name: Validate toolchain
+        shell: bash
+        run: bash tools/check-toolchain.sh
+
+      - name: Build Emerald
+        shell: bash
+        run: zig build -Doptimize=ReleaseSafe
+
+      - name: Package binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ matrix.archive }}" = "tar" ]; then
+            tar -czf "dist/${{ matrix.asset }}" -C "$(dirname "${{ matrix.binary }}")" "$(basename "${{ matrix.binary }}")"
+          else
+            powershell -NoProfile -Command "Compress-Archive -Path '${{ matrix.binary }}' -DestinationPath 'dist/${{ matrix.asset }}' -Force"
+          fi
+          sha256sum "dist/${{ matrix.asset }}" >> dist/SHA256SUMS
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ matrix.asset }}
+            dist/SHA256SUMS
+
