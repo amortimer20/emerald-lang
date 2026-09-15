@@ -1,25 +1,24 @@
 # Current handoff
 
    Updated: 2026-09-15. The repo is green on the current test suite. The active standard-library slice is the
-   remaining collection-shape family: `chain`, `chunks`, `windows`, and `pairs` are implemented and
-   conformance-covered, and the next step is the remaining conversion and collection-shape follow-through in the same
-   roadmap-aligned pattern.
+   remaining reduction family: `reduce_right` is implemented and conformance-covered, and the next step is the
+   deferred dictionary/set callback follow-through in the same roadmap-aligned pattern.
 
 ## Current milestone
 
 The current standard-library plan is:
 
-   1. Finish the remaining collection-shape methods (`chain`, `chunks`, `windows`, `pairs`) in the rewrite-context
-      contract and golden run coverage.
-   2. Continue the deferred conversion and dictionary/set shape follow-through against the same roadmap and
-      conformance expectations.
+   1. Finish the remaining reduction-family gap (`reduce_right`) in the rewrite-context contract and golden run
+      coverage.
+   2. Continue the deferred dictionary/set callback follow-through against the same roadmap and conformance
+      expectations.
    3. Keep the work narrow and roadmap-driven rather than broadening into unrelated runtime or parser cleanup.
 
    The repo already includes the earlier landings that matter for this plan: the core frontend, object model,
    error handling, list-family helpers, the completed Range value slice, the dictionary/set transform family, and the
-   earlier collection-family methods (`List.zip`, grouping helpers, Float receiver methods). The active work remains
-   the next standard-library layer rather than a rebuild of the language core. Validation is currently green with
-   `zig build test`, and the targeted `zig build run -- run conformance/run/list-shape.em` case passes.
+   earlier collection-family methods (`List.zip`, grouping helpers, Float receiver methods, and list shape helpers).
+   The active work remains the next standard-library layer rather than a rebuild of the language core. Validation is
+   currently green with `zig build test`, and the targeted reduction and list-shape conformance cases pass.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an

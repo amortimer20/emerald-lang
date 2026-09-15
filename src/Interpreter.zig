@@ -3923,6 +3923,34 @@ fn callReduce(
     return accumulator;
 }
 
+/// Section 8.6's right-to-left List reduction. It behaves like `reduce`, but it
+/// visits the List from its end toward its start, so the block sees the last
+/// item first and the first item last.
+fn callReduceRight(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    var accumulator = try self.evaluate(call.arguments[0]);
+    errdefer self.heap.release(accumulator);
+    const block = try self.evaluate(call.arguments[1]);
+    defer self.heap.release(block);
+
+    const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
+    var index = receiver.data.list.items.items.len;
+    while (index > 0) {
+        index -= 1;
+        const item = receiver.data.list.items.items[index];
+        const arguments = [_]Value{ accumulator, Heap.retain(item) };
+        accumulator = try self.invokeClosure(expression.span, closure, callable, &arguments);
+    }
+    return accumulator;
+}
+
 fn callPartition(
     self: *Interpreter,
     expression: *const Ast.Expression,
@@ -4102,6 +4130,7 @@ fn callMethod(
     // value that may be absent.
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     if (std.mem.eql(u8, member.name, "reduce")) return self.callReduce(expression, call, member);
+    if (std.mem.eql(u8, member.name, "reduce_right")) return self.callReduceRight(expression, call, member);
     if (std.mem.eql(u8, member.name, "partition")) {
         const receiver = try self.evaluate(member.base);
         defer self.heap.release(receiver);
