@@ -6442,11 +6442,14 @@ fn typeOfMapMethod(
     // Shared by both, and by lists.
     if (std.mem.eql(u8, name, "each")) return self.typeOfEach(call, member, base, false);
     if (std.mem.eql(u8, name, "each_with_index")) return self.typeOfEach(call, member, base, true);
+    if (std.mem.eql(u8, name, "reverse_each")) return self.typeOfEach(call, member, base, false);
     if (std.mem.eql(u8, name, "map")) return self.typeOfMap(call, member, base);
     if (std.mem.eql(u8, name, "filter") or std.mem.eql(u8, name, "reject")) {
         _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
         return base;
     }
+    if (std.mem.eql(u8, name, "flat_map")) return self.typeOfFlatMap(call, member, base);
+    if (std.mem.eql(u8, name, "filter_map")) return self.typeOfFilterMap(call, member, base);
     if (std.mem.eql(u8, name, "map_keys") or std.mem.eql(u8, name, "map_values")) {
         if (set) {
             try self.reportUnknownMember(base, member, "method");

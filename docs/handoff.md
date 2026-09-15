@@ -1,9 +1,12 @@
 # Current handoff
 
    Updated: 2026-09-15. The repo is green on the current targeted validation, and the active standard-library
-   slice is the remaining dictionary/set callback follow-through around `find` and `find_index` semantics. The
-   current fix is in place and validated with the focused dictionary conformance case; the next step is any adjacent
-   collection-family gap that remains in the same roadmap-aligned pattern.
+   slice is the dictionary/set callback follow-through that is in-scope for the rewrite-context contract. The
+   completed fix adds the supported collection forms that still fit the design (`reverse_each` and `filter_map`
+   on dictionaries/sets) and keeps the remaining `take_while` / `drop_while` forms deferred, matching the
+   current conformance contract and the checked method surface. The next step is the next roadmap-aligned
+   collection batch that follows the same narrow pattern, rather than broadening into unrelated parser/runtime
+   cleanup.
 
 ## Current milestone
 

@@ -29,6 +29,14 @@ ages.each_with_index { (name, age), index =>
 print(ages.any? { (name, age) => name == "Mia" }, ages.count_where { (_, age) => age >= 20 })
 print(ages.find { (name, age) => age >= 1 })
 print(ages.find_index { (name, age) => age >= 1 })
+print(ages.reverse_each { (name, age) => print(name, age) })
+func label_if_young(name: String, age: Int): String? {
+    if age < 20 {
+        return "#{name}=#{age}"
+    }
+    return nothing
+}
+print(ages.filter_map { (name, age) => label_if_young(name, age) })
 const seen: {Int} = [1, 2, 3]
 print(seen.find { value => value > 2 })
 
