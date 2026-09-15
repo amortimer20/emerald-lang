@@ -4233,7 +4233,7 @@ fn callMapTransform(
 /// when an item is itself a collection or object.
 fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique, zip, sum, average, min, max };
+    const Method = enum { @"empty?", @"contains?", chain, chunks, windows, pairs, take, drop, reverse, unique, zip, sum, average, min, max };
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
@@ -4241,6 +4241,74 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
                 if (try Value.equals(self.gpa, item, arguments[0])) break :blk .initBool(true);
             }
             break :blk .initBool(false);
+        },
+        .chain => blk: {
+            const other = arguments[0];
+            if (other.kind() != .list) return self.raise(
+                span,
+                "`chain` needs a List, but this is not a List",
+                "Pass another List to keep the same element type and append it on the end.",
+            );
+            const right = other.data.list;
+            const result = try self.heap.createList(list.element, items.len + right.items.items.len);
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
+            for (right.items.items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
+            break :blk value;
+        },
+        .chunks => blk: {
+            const width = arguments[0].data.int;
+            if (width < 1) return self.raiseFmt(
+                span,
+                "`chunks` cannot use size {d}",
+                .{width},
+                "Pass a whole number greater than 0, as in `items.chunks(3)`.",
+            );
+            const result = try self.heap.createList(.list, if (items.len == 0) 0 else (items.len + @as(usize, @intCast(width)) - 1) / @as(usize, @intCast(width)));
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            var start: usize = 0;
+            while (start < items.len) : (start += @as(usize, @intCast(width))) {
+                const end = @min(start + @as(usize, @intCast(width)), items.len);
+                const chunk = try self.copyList(list.element, items[start..end]);
+                result.items.appendAssumeCapacity(chunk);
+            }
+            break :blk value;
+        },
+        .windows => blk: {
+            const width = arguments[0].data.int;
+            if (width < 1) return self.raiseFmt(
+                span,
+                "`windows` cannot use size {d}",
+                .{width},
+                "Pass a whole number greater than 0, as in `items.windows(2)`.",
+            );
+            const count: usize = if (width > items.len) 0 else items.len - @as(usize, @intCast(width)) + 1;
+            const result = try self.heap.createList(.list, count);
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            var start: usize = 0;
+            while (start + @as(usize, @intCast(width)) <= items.len) : (start += 1) {
+                const chunk = try self.copyList(list.element, items[start .. start + @as(usize, @intCast(width))]);
+                result.items.appendAssumeCapacity(chunk);
+            }
+            break :blk value;
+        },
+        .pairs => blk: {
+            const result = try self.heap.createList(.tuple, @max(items.len - 1, 0));
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            for (items[0 .. @max(items.len - 1, 0)], items[1..]) |left, right| {
+                const tuple_items = try self.gpa.alloc(Value, 2);
+                const tuple_kinds = try self.gpa.alloc(Value.Kind, 2);
+                tuple_items[0] = Heap.retain(left);
+                tuple_items[1] = Heap.retain(right);
+                tuple_kinds[0] = list.element;
+                tuple_kinds[1] = list.element;
+                result.items.appendAssumeCapacity(.{ .data = .{ .tuple = try self.heap.createTuple(tuple_items, tuple_kinds) } });
+            }
+            break :blk value;
         },
         .take, .drop => blk: {
             const requested = arguments[0].data.int;

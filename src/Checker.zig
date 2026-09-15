@@ -6064,6 +6064,7 @@ fn typeOfMethodCall(
             const wanted: Type = switch (operand) {
                 .element => element,
                 .index => .int,
+                .list => try Type.listOf(self.arena, element),
             };
             const actual = try self.typeOfExpected(argument, wanted);
             if (actual.assignableTo(wanted)) continue;
@@ -6073,6 +6074,8 @@ fn typeOfMethodCall(
                 .{ actual, member.name, wanted },
                 if (operand == .index)
                     "Pass a whole number."
+                else if (operand == .list)
+                    "Pass a List of the same element type."
                 else
                     "Pass a value of the type the list holds, or convert it first.",
             );
