@@ -1,9 +1,9 @@
 # Current handoff
 
-Updated: 2026-09-15. The repo is green on the current test suite, and the active standard-library
-alignment is now the remaining part of Slice 14: `Int`, `Float`, and String method families. Range part 1
-has already landed, so the near-term work is not redoing that feature but continuing the next slice in the
-roadmap and narrowing any gaps against the rewrite context.
+Updated: 2026-09-15. The repo is green on the current test suite, and the first deferred collection-shape
+method, `List.zip`, is now implemented and conformance-covered. Range part 1 is already landed, so the
+near-term work is the remaining collection-shape family, keeping the same narrow roadmap-focused style as the
+earlier list-family slices and continuing to narrow any gaps against the rewrite context.
 
 ## Current milestone
 

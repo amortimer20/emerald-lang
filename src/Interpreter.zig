@@ -4103,6 +4103,23 @@ fn callMethod(
         return self.callHigherOrder(expression, call, member);
     }
     if (std.mem.eql(u8, member.name, "to_set")) return self.callToSet(member);
+    if (std.mem.eql(u8, member.name, "zip")) {
+        const receiver = try self.evaluate(member.base);
+        defer self.heap.release(receiver);
+        const arguments = try self.evaluateArguments(call.arguments);
+        defer {
+            for (arguments) |argument| self.heap.release(argument);
+            self.gpa.free(arguments);
+        }
+        if (arguments.len != 1 or arguments[0].kind() != .list) {
+            return self.raise(
+                expression.span,
+                "`zip` needs one List argument",
+                "Pass another List to pair the items up.",
+            );
+        }
+        return self.readListMethod(expression.span, receiver.data.list, member.name, arguments);
+    }
 
     const list_method = Type.list_methods.get(member.name);
     const map_method = Type.map_methods.has(member.name);
@@ -4149,7 +4166,7 @@ fn callReadingMethod(
 /// when an item is itself a collection or object.
 fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique, sum, average, min, max };
+    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique, zip, sum, average, min, max };
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
@@ -4194,6 +4211,29 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
                     if (try Value.equals(self.gpa, item, previous)) continue :outer;
                 }
                 result.items.appendAssumeCapacity(Heap.retain(item));
+            }
+            break :blk value;
+        },
+        .zip => blk: {
+            const other = arguments[0];
+            if (other.kind() != .list) return self.raise(
+                span,
+                "`zip` needs a List, but this is not a List",
+                "Pass another List to pair the items up.",
+            );
+            const right = other.data.list;
+            const limit = @min(items.len, right.items.items.len);
+            const result = try self.heap.createList(.tuple, limit);
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            for (items[0..limit], right.items.items[0..limit]) |left, right_item| {
+                const tuple_items = try self.gpa.alloc(Value, 2);
+                const tuple_kinds = try self.gpa.alloc(Value.Kind, 2);
+                tuple_items[0] = Heap.retain(left);
+                tuple_items[1] = Heap.retain(right_item);
+                tuple_kinds[0] = list.element;
+                tuple_kinds[1] = right.element;
+                result.items.appendAssumeCapacity(.{ .data = .{ .tuple = try self.heap.createTuple(tuple_items, tuple_kinds) } });
             }
             break :blk value;
         },

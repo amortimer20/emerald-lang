@@ -5942,6 +5942,21 @@ fn typeOfMethodCall(
             try self.requireEligibleKey(element, member.name_span);
             return Type.dictionaryOf(self.arena, element, .int);
         }
+        if (std.mem.eql(u8, member.name, "zip")) {
+            if (!try self.requireArity(member, call.arguments, 1, 1)) return .invalid;
+            const other = try self.typeOf(call.arguments[0]);
+            if (other.kind != .list) {
+                try self.report(
+                    call.arguments[0].span,
+                    "`zip` needs a List, but this is not a List",
+                    .{},
+                    "Pass another List to pair the items up.",
+                );
+                return .invalid;
+            }
+            const item = try Type.tupleOf(self.arena, &.{ base.element.?.*, other.element.?.* });
+            return try Type.listOf(self.arena, item);
+        }
         if (std.mem.eql(u8, member.name, "flat_map")) return self.typeOfFlatMap(call, member, base);
         if (std.mem.eql(u8, member.name, "filter_map")) return self.typeOfFilterMap(call, member, base);
         if (std.mem.eql(u8, member.name, "reduce")) return self.typeOfReduce(call, member, base);
