@@ -4046,3 +4046,16 @@ test "parser allocation failures are reported as out-of-memory" {
     try testing.expectError(error.OutOfMemory, parsed);
 }
 
+test "parser reports malformed declarations without crashing" {
+    var source = try Source.init(testing.allocator, "test.em", "func bad(1,\n");
+    defer source.deinit(testing.allocator);
+
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+
+    var parsed = try parse(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.diagnostics.len > 0);
+}
+
