@@ -10,20 +10,19 @@ Emerald is release-based: GitHub Releases are the source of truth for distributa
 
 ## Standard Mise usage
 
-Once the plugin is published, the expected UX is:
+Once the release assets are published on GitHub, the expected UX is to point Mise at the GitHub repository directly:
 
 ```bash
-mise plugin install emerald https://github.com/emerald-lang/mise-emerald
-mise install emerald@latest
-mise use -g emerald@latest
+mise use -g "github:amortimer20/emerald-lang@latest"
 ```
 
 Or for a specific version:
 
 ```bash
-mise install emerald@v0.1.0
-mise use -g emerald@v0.1.0
+mise use -g "github:amortimer20/emerald-lang@v0.1.0"
 ```
+
+This uses Mise's `github` backend against the repository that holds the release assets. `github:` is the direct install path for a tool whose release artifacts follow the backend's conventions.
 
 ## Release asset naming
 
