@@ -1009,6 +1009,41 @@ test "a stray character is reported once, not once per byte" {
     try testing.expectEqualStrings("this character does not belong here", result.diagnostics[0].message);
 }
 
+test "malformed inputs remain diagnosable without breaking the token stream" {
+    const samples = [_][]const u8{
+        "var name = \"Ava\n",
+        "var age = 1 +\n",
+        "if (\n",
+        "func bad(1,\n",
+        "a?.\n",
+        "\"\\u{110000}\"\n",
+        "\"\\u{1F600\n",
+        "[\n",
+        "{\n",
+        "#[ nested\n",
+        "1__0\n",
+        "..\n",
+        "user?.\n",
+        "var x = $\n",
+    };
+
+    for (samples) |text| {
+        var source = try Source.init(testing.allocator, "test.em", text);
+        defer source.deinit(testing.allocator);
+
+        var result = try tokenize(testing.allocator, &source);
+        defer result.deinit(testing.allocator);
+
+        try testing.expect(result.tokens.len > 0);
+        try testing.expectEqual(@as(Token.Kind, .eof), result.tokens[result.tokens.len - 1].kind);
+        if (result.diagnostics.len == 0) {
+            for (result.tokens) |token| {
+                try testing.expect(token.kind != .invalid);
+            }
+        }
+    }
+}
+
 test "every operator and delimiter round-trips through its lexeme" {
     try expectTexts("+ - * ** / // % += -= *= /= //=", &.{
         "+", "-", "*", "**", "/", "//", "%", "+=", "-=", "*=", "/=", "//=",

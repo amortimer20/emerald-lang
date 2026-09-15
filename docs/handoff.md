@@ -1,14 +1,19 @@
 # Current handoff
 
-Updated: 2026-09-14. Prepared after the LSP's first slice (slice 15).
+Updated: 2026-09-15. Prepared for Slice 16, the CI and test-hardening pass.
 
 ## Current milestone
 
-Completed in this pass: release-based installation plumbing for Emerald. The repository now
-contains a GitHub Actions workflow that builds and uploads release artifacts for Linux, macOS,
-and Windows, along with release notes for a Mise install flow and SHA256 checksums to validate
-release assets. The next step is to tag a first release, confirm the workflow publishes the
-artifacts, and then publish the corresponding Mise plugin.
+Completed in this pass: the initial CI foundation for Emerald. The repository now contains a
+GitHub Actions workflow that validates the pinned Zig toolchain and runs the project test suite
+for Debug builds across Linux, macOS, and Windows, plus ReleaseSafe on Linux. This begins the
+Slice 16 hardening pass outlined in the backlog: CI gating, broadened validation, and
+infrastructure checks before later robustness work such as allocator-failure tests, fuzzing,
+and focused subsystem diagnostics.
+
+The next step is to use the CI gate to keep the suite green while expanding Slice 16 with
+allocator-failure coverage, parser/lexer fuzzing, and broader cross-project error-discovery
+checks.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
