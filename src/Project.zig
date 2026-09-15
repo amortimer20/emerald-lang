@@ -378,3 +378,8 @@ test "a directory name becomes a namespace segment" {
         }
     }
 }
+
+test "namespace creation surfaces allocator failures" {
+    var failing_allocator = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    try testing.expectError(error.OutOfMemory, namespaceSegment(failing_allocator.allocator(), "project_name"));
+}
