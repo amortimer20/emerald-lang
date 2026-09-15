@@ -3897,6 +3897,111 @@ fn callReduce(
     return accumulator;
 }
 
+fn callPartition(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    receiver: Value,
+) Error!Value {
+    _ = member;
+    const block = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(block);
+
+    const list = receiver.data.list;
+    const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
+    const kept = try self.heap.createList(list.element, list.items.items.len);
+    const dropped = try self.heap.createList(list.element, list.items.items.len);
+    const items = try self.gpa.alloc(Value, 2);
+    const kinds = try self.gpa.alloc(Value.Kind, 2);
+    items[0] = .{ .data = .{ .list = kept } };
+    items[1] = .{ .data = .{ .list = dropped } };
+    kinds[0] = .list;
+    kinds[1] = .list;
+    const result: Value = .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
+    errdefer self.heap.release(result);
+
+    for (list.items.items) |item| {
+        const argument = [_]Value{Heap.retain(item)};
+        const produced = try self.invokeClosure(expression.span, closure, callable, &argument);
+        defer self.heap.release(produced);
+        if (produced.data.bool) {
+            kept.items.appendAssumeCapacity(Heap.retain(item));
+        } else {
+            dropped.items.appendAssumeCapacity(Heap.retain(item));
+        }
+    }
+    return result;
+}
+
+fn callGroupBy(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    receiver: Value,
+) Error!Value {
+    _ = member;
+    const block = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(block);
+
+    const list = receiver.data.list;
+    const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
+    const groups = try self.heap.createMap(kindOf(callable.signature.return_type), .list, false);
+    const result: Value = .{ .data = .{ .map = groups } };
+    errdefer self.heap.release(result);
+
+    for (list.items.items) |item| {
+        const argument = [_]Value{Heap.retain(item)};
+        const key = try self.invokeClosure(expression.span, closure, callable, &argument);
+        const hash = try self.hashKey(expression.span, key);
+        switch (try self.heap.locate(groups, hash, key)) {
+            .entry => |index| {
+                const group = groups.entries.items[index].value.data.list;
+                group.items.appendAssumeCapacity(Heap.retain(item));
+                self.heap.release(key);
+            },
+            .vacancy => {
+                const group = try self.heap.createList(list.element, 1);
+                try self.heap.put(groups, hash, key, .{ .data = .{ .list = group } });
+                group.items.appendAssumeCapacity(Heap.retain(item));
+            },
+        }
+    }
+    return result;
+}
+
+fn callFrequencies(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    receiver: Value,
+) Error!Value {
+    _ = call;
+    _ = member;
+    const list = receiver.data.list;
+    const counts = try self.heap.createMap(list.element, .int, false);
+    const result: Value = .{ .data = .{ .map = counts } };
+    errdefer self.heap.release(result);
+
+    for (list.items.items) |item| {
+        const hash = try self.hashKey(expression.span, item);
+        switch (try self.heap.locate(counts, hash, item)) {
+            .entry => |index| {
+                const current = counts.entries.items[index].value.data.int;
+                counts.entries.items[index].value = .initInt(current + 1);
+            },
+            .vacancy => {
+                try self.heap.put(counts, hash, Heap.retain(item), .initInt(1));
+            },
+        }
+    }
+    return result;
+}
+
 /// Section 8.6's keyed extrema. A block result is only a comparison key: the
 /// List item remains the answer. Keys are called once per item, left to right,
 /// and the first equal key wins.
@@ -3971,6 +4076,21 @@ fn callMethod(
     // value that may be absent.
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
     if (std.mem.eql(u8, member.name, "reduce")) return self.callReduce(expression, call, member);
+    if (std.mem.eql(u8, member.name, "partition")) {
+        const receiver = try self.evaluate(member.base);
+        defer self.heap.release(receiver);
+        if (receiver.data == .list) return self.callPartition(expression, call, member, receiver);
+    }
+    if (std.mem.eql(u8, member.name, "group_by")) {
+        const receiver = try self.evaluate(member.base);
+        defer self.heap.release(receiver);
+        if (receiver.data == .list) return self.callGroupBy(expression, call, member, receiver);
+    }
+    if (std.mem.eql(u8, member.name, "frequencies")) {
+        const receiver = try self.evaluate(member.base);
+        defer self.heap.release(receiver);
+        if (receiver.data == .list) return self.callFrequencies(expression, call, member, receiver);
+    }
     if (std.mem.eql(u8, member.name, "min_by") or std.mem.eql(u8, member.name, "max_by")) return self.callExtremeBy(expression, call, member);
     if (std.mem.eql(u8, member.name, "min_max")) return self.callMinMax(expression, member);
     // A block, on a list, a dictionary, or a set.

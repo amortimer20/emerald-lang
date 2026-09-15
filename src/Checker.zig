@@ -5911,6 +5911,37 @@ fn typeOfMethodCall(
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
         }
+        if (std.mem.eql(u8, member.name, "partition")) {
+            _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+            const element = base.element.?.*;
+            const left = try Type.listOf(self.arena, element);
+            const right = try Type.listOf(self.arena, element);
+            return Type.tupleOf(self.arena, &.{ left, right });
+        }
+        if (std.mem.eql(u8, member.name, "group_by")) {
+            const block = try self.requireBlock(call, member, base, .invalid) orelse return .invalid;
+            const produced = self.literal_types.get(block) orelse (try self.typeOf(block));
+            if (produced.kind != .function) return .invalid;
+            const key = produced.signature.?.return_type;
+            if (key.kind == .invalid or key.kind == .nothing) {
+                try self.report(
+                    block.span,
+                    "this block returns {f}, but `group_by` needs a usable dictionary key",
+                    .{key},
+                    "Return a number, Bool, String, enum value, or a tuple or struct made only from valid keys.",
+                );
+                return .invalid;
+            }
+            try self.requireEligibleKey(key, member.name_span);
+            const values = try Type.listOf(self.arena, base.element.?.*);
+            return Type.dictionaryOf(self.arena, key, values);
+        }
+        if (std.mem.eql(u8, member.name, "frequencies")) {
+            _ = try self.requireArity(member, call.arguments, 0, 0);
+            const element = base.element.?.*;
+            try self.requireEligibleKey(element, member.name_span);
+            return Type.dictionaryOf(self.arena, element, .int);
+        }
         if (std.mem.eql(u8, member.name, "flat_map")) return self.typeOfFlatMap(call, member, base);
         if (std.mem.eql(u8, member.name, "filter_map")) return self.typeOfFilterMap(call, member, base);
         if (std.mem.eql(u8, member.name, "reduce")) return self.typeOfReduce(call, member, base);
