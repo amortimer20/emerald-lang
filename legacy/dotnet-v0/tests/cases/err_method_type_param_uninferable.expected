@@ -1,8 +1,0 @@
-
-err_method_type_param_uninferable.em:29  weird's own R cannot be worked out from this call.
-
-   29 | print(b.weird([3, 4]).or(0))
-
-  Two shapes say what R is: a trailing block whose own answer decides it, the way map's does, or an argument written as R itself, the way reduce(0) says Int. weird is neither — a R nested inside another type would have to be matched against the shape of what arrived, which is guessing rather than reading.
-
-  1 further error(s) suppressed — likely caused by this one.

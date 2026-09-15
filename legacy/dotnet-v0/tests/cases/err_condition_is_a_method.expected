@@ -1,6 +1,0 @@
-
-err_condition_is_a_method.em:5  an if condition needs Bool, but this is func(): Bool.
-
-    5 | if n.even? {
-
-  That is the method itself, not its answer. Add parentheses to call it:  n.even?()

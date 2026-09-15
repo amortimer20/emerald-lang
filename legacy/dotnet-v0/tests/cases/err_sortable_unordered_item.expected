@@ -1,6 +1,0 @@
-
-err_sortable_unordered_item.em:11  Deck says Item is Card, which does not implement Ordered.
-
-   11 | class Deck with Sortable {
-
-  A trait Deck mixes in requires it. Give Card `with Ordered`, or bind Item to a type that already has one.

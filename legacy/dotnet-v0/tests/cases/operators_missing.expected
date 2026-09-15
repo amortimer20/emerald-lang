@@ -1,8 +1,0 @@
-
-operators_missing.em:7  Point does not define +.
-
-    7 | print("#{a + a}")
-
-  Operators are methods here. Mix in Addable and define add:  class Point with Addable
-
-  emerald explain

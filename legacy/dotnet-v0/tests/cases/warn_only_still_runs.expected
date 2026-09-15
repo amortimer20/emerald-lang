@@ -1,7 +1,0 @@
-
-warn_only_still_runs.em:2  warning: A variable is written in snake_case, so badName reads as a type.
-
-    2 | var badName = 1
-
-  Rename it to bad_name. Capitalized names mean types in Emerald.
-ran anyway: 1

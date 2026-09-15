@@ -1,4 +1,0 @@
-
-err_type_mismatch.em:1  n is declared Int but is given String.
-
-    1 | var n: Int = "hello"

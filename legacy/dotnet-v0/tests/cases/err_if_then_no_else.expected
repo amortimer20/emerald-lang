@@ -1,6 +1,0 @@
-
-err_if_then_no_else.em:2  An if/then expression needs an else.
-
-    2 | if score > 90 then print("high")
-
-  Every branch must produce a value. For a conditional statement, use the block form: if cond { ... }

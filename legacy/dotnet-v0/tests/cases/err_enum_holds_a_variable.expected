@@ -1,8 +1,0 @@
-
-err_enum_holds_a_variable.em:5  Bad cannot have a variable.
-
-    5 |     var count: Int = 0
-
-  An enum is a closed set of names and carries nothing else. A value that varies belongs on a class.
-
-  1 further error(s) suppressed — likely caused by this one.

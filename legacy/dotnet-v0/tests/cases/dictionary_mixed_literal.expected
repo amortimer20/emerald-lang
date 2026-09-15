@@ -1,6 +1,0 @@
-
-dictionary_mixed_literal.em:2  Expected ',' — this literal started as a list.
-
-    2 | var odd = [1, 2, "c": 3]
-
-  A literal is a list or a dictionary, not both. Write every item as key: value, or none of them.

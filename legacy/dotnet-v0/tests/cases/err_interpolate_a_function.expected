@@ -1,6 +1,0 @@
-
-err_interpolate_a_function.em:6  This shows Dog().speak itself, not what it answers.
-
-    6 | print("the dog says #{Dog().speak}")
-
-  It is func(): String. Add parentheses to call it:  Dog().speak()

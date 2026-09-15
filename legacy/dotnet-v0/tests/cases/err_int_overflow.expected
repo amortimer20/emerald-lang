@@ -1,7 +1,0 @@
-
-err_int_overflow.em:5  9223372036854775807 + 1 is too large to hold in an Int.
-
-    5 | print(big + 1)
-
-  An Int holds whole numbers from -9223372036854775808 to 9223372036854775807.
-  For arithmetic beyond that, work in Floats:  9223372036854775807.to_float() + 1

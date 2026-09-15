@@ -1,6 +1,0 @@
-
-attribute_typo.em:1  There is no attribute named @mirror.
-
-    1 | @mirror
-
-  Did you mean @mirrors?

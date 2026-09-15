@@ -26,8 +26,8 @@ than assumed conversational memory. The user's current instructions take precede
   future subsystems before the current milestone works.
 - Make routine implementation choices autonomously within the user's scope. Ask only
   when an unresolved choice materially changes language behavior or the requested scope.
-- `legacy/dotnet-v0/` is historical evidence. Its source, tests, and documentation do not
-  define current Emerald. Port useful tests selectively against the rewrite baseline.
+- The Zig rewrite is authoritative. Do not introduce dependencies on removed historical
+  implementations or prototype-specific behavior.
 
 ## Zig and validation
 

@@ -299,7 +299,8 @@ statically travel as typed Emerald errors and may be handled by the program.
 
 ## Completed foundation
 
-- The .NET prototype is archived under `legacy/dotnet-v0/`, tagged `dotnet-v0-final`.
+- The Zig rewrite is the sole maintained implementation; historical prototype material is
+  not part of the repository.
 - [rewrite-context.md](rewrite-context.md) is the canonical language and architecture
   baseline. The implementation host is Zig.
 - Zig `0.16.0` is pinned through [mise.toml](../mise.toml) and

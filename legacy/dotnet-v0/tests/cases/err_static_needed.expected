@@ -1,6 +1,0 @@
-
-err_static_needed.em:9  No variable named PI.
-
-    9 |     func area(): Float { return PI * self.radius * self.radius }
-
-  PI belongs to Circle itself, so it is reached through the type:  Circle.PI

@@ -1,6 +1,0 @@
-
-attribute_missing_argument.em:1  @name needs an argument.
-
-    1 | @name
-
-  It overrides the name this is emitted under:  @name("Any")

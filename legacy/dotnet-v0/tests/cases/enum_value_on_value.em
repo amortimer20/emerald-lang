@@ -1,2 +1,0 @@
-enum Color { RED }
-print(Color.RED.RED)

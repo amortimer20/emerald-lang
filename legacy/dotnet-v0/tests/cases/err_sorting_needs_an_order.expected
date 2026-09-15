@@ -1,6 +1,0 @@
-
-err_sorting_needs_an_order.em:15  Plain cannot be ordered.
-
-   15 | print([Plain(1), Plain(2)].sort())
-
-  Mix in Ordered and define compare.

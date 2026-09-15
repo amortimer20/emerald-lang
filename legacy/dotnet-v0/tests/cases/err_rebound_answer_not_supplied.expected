@@ -1,8 +1,0 @@
-
-err_rebound_answer_not_supplied.em:11  Odd says Filtered is Set<Int>, but it takes Iterable's own filter, which can only build List<Int>.
-
-   11 | class Odd with Iterable {
-
-  A trait cannot build one of your types. Write filter here, or drop the `type Filtered =` line and take Iterable's answer.
-
-  3 further error(s) suppressed — likely caused by this one.

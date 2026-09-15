@@ -2,7 +2,7 @@
 
 Emerald is an experimental, statically typed language implemented from scratch in Zig.
 Its language-design authority is `docs/rewrite-context.md`; do not infer rewrite behavior
-from `legacy/dotnet-v0/`, which is historical evidence only. Start a session by reading
+from the Zig rewrite and its current design documents. Start a session by reading
 `AGENTS.md`, `docs/handoff.md`, and the relevant sections of the rewrite context. The
 handoff records the active milestone, while the working tree and Git history are
 authoritative if it has become stale.

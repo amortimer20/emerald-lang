@@ -1,9 +1,0 @@
-
-field_subclass_adds.em:8  Child has no constructor, so b would never be given a value.
-
-    8 | class Child extends Base {
-
-  Add one:  constructor(b: ...) { self.b = b }
-  Or give the field a value where it is declared, or declare it nullable with ? if it may genuinely be missing.
-
-  emerald explain

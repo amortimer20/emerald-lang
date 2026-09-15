@@ -1,6 +1,0 @@
-
-attribute_unwanted_argument.em:1  @export takes no argument.
-
-    1 | @export("speed")
-
-  It makes a field visible to the editor in a Unity-style host, and needs nothing else to say so.

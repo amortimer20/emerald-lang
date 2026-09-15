@@ -1,4 +1,0 @@
-
-err_class_base.em:1  No class named Cat.
-
-    1 | class Dog extends Cat {

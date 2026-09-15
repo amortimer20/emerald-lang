@@ -1,8 +1,0 @@
-
-operators_not_ordered.em:6  Point does not define <.
-
-    6 | print("#{Point(1) < Point(2)}")
-
-  Operators are methods here. Mix in Ordered and define compare:  class Point with Ordered
-
-  emerald explain

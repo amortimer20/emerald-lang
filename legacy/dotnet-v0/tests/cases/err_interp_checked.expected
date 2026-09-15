@@ -1,6 +1,0 @@
-
-err_interp_checked.em:1  No variable named undefined_thing.
-
-    1 | print("value: #{undefined_thing}")
-
-  Declare it first: var undefined_thing = ...

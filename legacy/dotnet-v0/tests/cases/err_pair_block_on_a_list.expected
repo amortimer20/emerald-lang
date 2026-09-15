@@ -1,6 +1,0 @@
-
-err_pair_block_on_a_list.em:8  (first, second) takes a pair apart, but this block is handed Int.
-
-    8 | numbers.each { (first, second) =>
-
-  Only a dictionary hands over pairs. For anything else, name the one thing it gives:  { first => ... }

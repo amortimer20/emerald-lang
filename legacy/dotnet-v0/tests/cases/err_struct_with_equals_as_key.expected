@@ -1,6 +1,0 @@
-
-err_struct_with_equals_as_key.em:11  A dictionary cannot be keyed by Tag.
-
-   11 | var d: Dictionary<Tag, Int> = [:]
-
-  Tag defines its own equals?, and the value would have to be hashed on its fields instead — which is only right if the two always agree, and nothing can check that. A struct without equals? compares by its fields and can be held.

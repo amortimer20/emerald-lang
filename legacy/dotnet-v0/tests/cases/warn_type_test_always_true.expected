@@ -1,7 +1,0 @@
-
-warn_type_test_always_true.em:8  warning: This is always true: every Dog is a Dog.
-
-    8 | if d is Dog {
-
-  The check can go, and so can the branch it guards.
-Woof

@@ -1,6 +1,0 @@
-
-err_useless_statement.em:2  This does nothing — total is looked up and thrown away.
-
-    2 | total
-
-  Did you mean to call it, or to use the value?  var result = total

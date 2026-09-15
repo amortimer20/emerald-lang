@@ -1,7 +1,0 @@
-
-err_unknown_does_not_launder.em:13  text is declared String, but what it is given does not say what type it is.
-
-   13 | var text: String = g.give(1)
-
-  An unannotated function or an abstract contract asks for nothing in particular, so there is nothing here to check against.
-  Give it a return type, or leave this declaration's type off and let it be inferred.

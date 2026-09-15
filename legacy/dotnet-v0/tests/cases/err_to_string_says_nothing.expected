@@ -1,6 +1,0 @@
-
-err_to_string_says_nothing.em:5  to_string has to say that it gives back String.
-
-    5 |     func to_string() {
-
-  It is the one method the language calls for you, so it says so out loud:  func to_string(): String

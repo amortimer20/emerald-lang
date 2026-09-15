@@ -1,6 +1,0 @@
-
-err_replace_nothing.em:3  replace needs something to look for, and this is an empty string.
-
-    3 | print("abc".replace("", "x"))
-
-  An empty string sits between every character, so there is no one place to put the replacement.

@@ -1,4 +1,0 @@
-
-default_params_too_many.em:2  pair takes between 1 and 2 arguments, but got 3.
-
-    2 | print(pair(1, 2, 3))

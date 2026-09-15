@@ -1,6 +1,0 @@
-
-err_overload_trait_and_class.em:6  f already has an overload matching this one, on line 5.
-
-    6 | func f(d: Dog): String { return "took Dog" }
-
-  Two of one name have to be told apart by what they take. No argument could choose between these.

@@ -1,6 +1,0 @@
-
-overload_widening.em:3  show already has an overload matching this one, on line 2.
-
-    3 | func show(n: Int): String { return "int" }
-
-  Two of one name have to be told apart by what they take. No argument could choose between these.

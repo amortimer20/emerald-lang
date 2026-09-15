@@ -1,8 +1,0 @@
-
-err_unless_else.em:5  unless cannot have an else.
-
-    5 | else {
-
-  "unless x ... else ..." reads as a double negative. Use if with the condition the other way round.
-
-  1 further error(s) suppressed — likely caused by this one.

@@ -1,6 +1,0 @@
-
-indexable_read_only.em:9  Lookup can be read by position, but not written to.
-
-    9 | l[0] = "z"
-
-  Define set_at(index, value) to allow Lookup[i] = value.

@@ -1,4 +1,0 @@
-
-dictionary_method_arguments.em:4  has_key? on Dictionary<String, Int> takes String, but this is Int.
-
-    4 | print(ages.has_key?(7))

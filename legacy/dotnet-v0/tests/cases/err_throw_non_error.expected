@@ -1,6 +1,0 @@
-
-err_throw_non_error.em:1  Cannot throw Int.
-
-    1 | throw 42
-
-  Throw a String, or a type that extends Error:  throw Error("...")

@@ -1,8 +1,0 @@
-
-set_bare_annotation.em:1  Set needs to say what it holds.
-
-    1 | var s: Set = [].to_set()
-
-  Write the member type in angle brackets:  Set<String>
-
-  emerald explain

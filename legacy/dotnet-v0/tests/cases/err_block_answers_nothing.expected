@@ -1,6 +1,0 @@
-
-err_block_answers_nothing.em:6  This block gives nothing back, but map needs an answer from it.
-
-    6 | var doubled = numbers.map { n =>
-
-  A block of one expression answers with it. A longer one says which value it gives:  return ...

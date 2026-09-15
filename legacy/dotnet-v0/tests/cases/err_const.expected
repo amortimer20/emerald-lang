@@ -1,6 +1,0 @@
-
-err_const.em:2  MAX is a const and cannot be reassigned.
-
-    2 | MAX = 20
-
-  Declare it with var instead of const if it needs to change.

@@ -1,4 +1,0 @@
-
-builtin_wrong_argument.em:1  String.contains? expects String as its first argument, but this is Int.
-
-    1 | print("hello".contains?(5))

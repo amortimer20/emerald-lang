@@ -1,7 +1,0 @@
-
-err_super_not_first.em:12  super(...) has to be the first statement in a constructor.
-
-   12 |         super(name)
-
-  Until the base part is built, an inherited field holds nothing — so nothing can run before it.
-  If an argument needs working out first, the work can go inside the parentheses:  super(name.trim())

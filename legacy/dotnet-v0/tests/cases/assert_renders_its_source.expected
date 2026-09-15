@@ -1,8 +1,0 @@
-
-assert_renders_its_source.em:4  Assertion failed:  scores["ada"].or(0) == 2
-    left  was 1
-    right was 2
-
-    4 | assert scores["ada"].or(0) == 2
-
-  An assertion states what the program guarantees. One that does not hold means the program is wrong, not that it needs catching.

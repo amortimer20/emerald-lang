@@ -1,6 +1,0 @@
-
-err_visibility.em:11  _squared belongs to Circle — that is what the _ says.
-
-   11 | print(Circle(2.0)._squared())
-
-  A name starting with _ can be used inside Circle, and inside any class that extends it. Drop the _ to let the rest of the program use it.

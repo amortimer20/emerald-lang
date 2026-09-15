@@ -1,6 +1,0 @@
-
-err_static_suggestion.em:4  No class member named conut on Dog.
-
-    4 | print(Dog.conut)
-
-  Did you mean count?

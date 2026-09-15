@@ -1,6 +1,0 @@
-
-overload_methods_no_match.em:6  No version of Greeter.hi takes (Bool).
-
-    6 | print(Greeter().hi(true))
-
-  It has (String), and (Int).

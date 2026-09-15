@@ -1,6 +1,0 @@
-
-err_unless_not.em:2  unless with not is a double negative.
-
-    2 | unless not done {
-
-  Drop the not, or use if instead.

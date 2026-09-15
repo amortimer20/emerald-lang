@@ -1,4 +1,0 @@
-
-set_wrong_member.em:2  add on Set<Int> takes Int, but this is String.
-
-    2 | s.add("three")

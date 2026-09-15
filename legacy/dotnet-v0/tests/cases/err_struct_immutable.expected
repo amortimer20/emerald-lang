@@ -1,8 +1,0 @@
-
-err_struct_immutable.em:8  Point is a struct, so x cannot be changed.
-
-    8 | p.x = 5
-
-  Structs are immutable. Build a new one instead of modifying this.
-
-  emerald explain

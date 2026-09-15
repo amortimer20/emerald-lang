@@ -1,6 +1,0 @@
-
-dictionary_bad_key_type.em:4  A dictionary cannot be keyed by List<Int>.
-
-    4 | var seen: Dictionary<List<Int>, String> = [:]
-
-  A List<Int> can be changed after it is stored, so what it holds cannot be part of how something is found again. Int, Float, String, Bool, an enum, an object, or a struct of those.

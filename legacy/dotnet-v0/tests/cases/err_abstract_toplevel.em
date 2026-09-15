@@ -1,1 +1,0 @@
-abstract func orphan(): Int

@@ -1,6 +1,0 @@
-
-err_param_needs_type.em:1  Parameter n needs a type.
-
-    1 | func f(n): Int {
-
-  Types are inferred inside a function but written at its edges: func f(n: Int) ...

@@ -1,6 +1,0 @@
-
-err_to_string_has_no_end.em:8  Loop.to_string() has no end.
-
-    8 |         return "I am #{self}"
-
-  A to_string that prints the value it was asked about calls itself forever. Build the text out of the fields instead.

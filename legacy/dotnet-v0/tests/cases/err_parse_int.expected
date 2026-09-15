@@ -1,6 +1,0 @@
-
-err_parse_int.em:2  "banana" is not a number.
-
-    2 | var n = name.to_int()
-
-  Use .to_int_or(0) for a fallback, or .to_int_maybe() to get nothing.

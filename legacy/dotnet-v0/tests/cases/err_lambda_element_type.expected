@@ -1,4 +1,0 @@
-
-err_lambda_element_type.em:2  No method named upper on Int.
-
-    2 | var bad = ns.map { x => x.upper }

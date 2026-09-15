@@ -1,4 +1,0 @@
-
-default_params_wrong_type.em:1  times is declared Int but its default is String.
-
-    1 | func repeat(text: String, times: Int = "three"): String {

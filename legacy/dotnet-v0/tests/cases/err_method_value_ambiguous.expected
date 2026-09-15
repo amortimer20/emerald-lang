@@ -1,9 +1,0 @@
-
-err_method_value_ambiguous.em:11  Greeter.hi has 2 versions, so it is not clear which one this names.
-
-   11 | var pick = g.hi
-
-  It has (), and (String).
-  Say which by writing the type it should have:  var f: func(): String = g.hi
-
-  1 further error(s) suppressed — likely caused by this one.

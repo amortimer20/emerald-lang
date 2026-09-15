@@ -168,11 +168,7 @@ Codex and Claude share [AGENTS.md](AGENTS.md) for working rules and
 [CLAUDE.md](CLAUDE.md) directs Claude to the same shared context. The rewrite context
 remains the authoritative language design.
 
-## Historical .NET prototype
+## Implementation
 
-The original C#/.NET implementation is preserved in
-[`legacy/dotnet-v0/`](legacy/dotnet-v0/). It remains useful as design history and as a
-source of examples, diagnostics, and tests worth reconsidering. It is not the specification
-for the rewrite and is no longer maintained.
-
-The last committed state before the reorganization is tagged `dotnet-v0-final`.
+The Zig rewrite is the sole maintained implementation. Historical design decisions are
+captured in [`docs/rewrite-context.md`](docs/rewrite-context.md).

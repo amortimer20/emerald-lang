@@ -1,6 +1,0 @@
-
-err_useless_expression.em:3  This does nothing.
-
-    3 | a + b
-
-  Its result is computed and then thrown away.

@@ -1,6 +1,0 @@
-
-err_override_nothing.em:8  spek overrides nothing.
-
-    8 |     override func spek(): String { return "Woof" }
-
-  Did you mean speak?

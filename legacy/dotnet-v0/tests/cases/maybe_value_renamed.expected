@@ -1,7 +1,0 @@
-
-maybe_value_renamed.em:4  There is no .value on Int? — the name is .must.
-
-    4 | print(n.value())
-
-  must says the value is there and fails loudly when it is not:  count.must()
-  For a fallback instead, use .or(0)

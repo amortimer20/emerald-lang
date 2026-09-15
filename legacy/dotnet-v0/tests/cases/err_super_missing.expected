@@ -1,7 +1,0 @@
-
-err_super_missing.em:11  Animal's constructor needs 1 argument, so Dog has to say what to pass it.
-
-   11 |     constructor(breed: String) { self.breed = breed }
-
-  Call it first:  super(...)
-  Animal's constructor takes (String).

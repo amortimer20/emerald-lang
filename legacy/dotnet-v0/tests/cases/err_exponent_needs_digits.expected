@@ -1,4 +1,0 @@
-
-err_exponent_needs_digits.em:7  An exponent needs digits after the e, as in 1e6 or 1.5e-3.
-
-    7 | var x = 1e

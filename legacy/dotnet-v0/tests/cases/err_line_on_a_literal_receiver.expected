@@ -1,6 +1,0 @@
-
-err_line_on_a_literal_receiver.em:6  "banana" is not a number.
-
-    6 | print("banana".to_int())
-
-  Use .to_int_or(0) for a fallback, or .to_int_maybe() to get nothing.

@@ -1,6 +1,0 @@
-
-err_call_a_property.em:9  Circle.area is Float, not a method.
-
-    9 | print(Circle(2.0).area())
-
-  It is read without parentheses:  Circle(2.0).area

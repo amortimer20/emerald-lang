@@ -1,6 +1,0 @@
-
-err_super_nothing_above.em:5  No variable named super.
-
-    5 |     func speak(): String { return super.speak() }
-
-  Lonely extends nothing and mixes in no traits, so there is nothing above it for super to reach.

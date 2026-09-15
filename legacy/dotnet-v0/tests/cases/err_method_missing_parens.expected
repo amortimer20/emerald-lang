@@ -1,6 +1,0 @@
-
-err_method_missing_parens.em:8  This names rex.speak without calling it.
-
-    8 | rex.speak
-
-  It is func(): String. Add parentheses to run it:  rex.speak()

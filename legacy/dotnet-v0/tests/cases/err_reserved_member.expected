@@ -1,6 +1,0 @@
-
-err_reserved_member.em:8  A method cannot be named must — that name belongs to optionals.
-
-    8 |     func must(): String { return self.contents }
-
-  Every value answers .must: on Box? it stands in for the missing case, and on Box it gives the Box back. A member of that name could never be reached.

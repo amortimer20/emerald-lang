@@ -1,8 +1,0 @@
-
-dictionary_loop_over.em:4  Cannot loop over Dictionary<String, Int>.
-
-    4 | for k in ages { print(k) }
-
-  A dictionary walks in pairs:  for (key, value) in scores { ... }
-
-  emerald explain

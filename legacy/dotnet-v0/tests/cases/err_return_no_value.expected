@@ -1,4 +1,0 @@
-
-err_return_no_value.em:2  size returns Int, but this return has no value.
-
-    2 |     return if word.empty?()

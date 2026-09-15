@@ -1,9 +1,0 @@
-
-err_return_type_missing.em:7  answer gives back a value, so it has to say what kind.
-
-    7 | func answer() {
-
-  Write the type after the parentheses:  func answer(...): Int
-  Without it, a caller assigning the answer to a declared type has nothing to check against, and a wrong one is found somewhere else entirely.
-
-  1 further error(s) suppressed — likely caused by this one.

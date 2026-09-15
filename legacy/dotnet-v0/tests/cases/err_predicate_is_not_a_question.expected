@@ -1,6 +1,0 @@
-
-err_predicate_is_not_a_question.em:5  any? needs a yes or no from its block, and this gives back Int.
-
-    5 | print(numbers.any? { x => x + 1 })
-
-  A predicate answers yes or no, so the block has to end in something that is true or false.

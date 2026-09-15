@@ -1,6 +1,0 @@
-
-err_assoc_type_no_such_name.em:4  Thing has no associated type named Value to give a value to.
-
-    4 |     type Value = Int
-
-  Mix in a trait that declares one:  trait Iterable { type Item ... }

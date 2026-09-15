@@ -1,6 +1,0 @@
-
-overload_ambiguous.em:4  area already has an overload matching this one, on line 3.
-
-    4 | func area(w: Int, h: Int = 1): Int { return w * h }
-
-  Two of one name have to be told apart by what they take. No argument could choose between these.

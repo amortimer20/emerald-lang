@@ -1,6 +1,0 @@
-
-set_indexed.em:2  Cannot index Set<Int>.
-
-    2 | print(s[0])
-
-  A set has no order to index into. Ask whether it holds something with .contains?(), or take .to_list() first.

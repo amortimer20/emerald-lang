@@ -1,6 +1,0 @@
-
-attribute_unknown.em:1  There is no attribute named @memoize.
-
-    1 | @memoize
-
-  Emerald knows @export, @test, @mirrors, and @name. The set is fixed — a program cannot add to it.

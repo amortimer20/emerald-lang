@@ -1,6 +1,0 @@
-
-err_trait_instantiate.em:4  Swimmer is a trait, so it cannot be created directly.
-
-    4 | var s = Swimmer()
-
-  Traits are mixed into a class:  class Dog with Swimmer

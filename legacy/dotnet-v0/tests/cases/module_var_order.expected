@@ -1,5 +1,0 @@
-1. before the var
-2. the var's own initializer
-3. after the var, and it can see it: 2. THE VAR'S OWN INITIALIZER
-4. a later var
-5. last

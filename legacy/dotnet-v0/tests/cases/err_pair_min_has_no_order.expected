@@ -1,6 +1,0 @@
-
-err_pair_min_has_no_order.em:5  max is not available on Dictionary<String, Int>.
-
-    5 | print(scores.max())
-
-  A pair has no order of its own. Use one half:  scores.values().max(), or min_by / max_by with a block

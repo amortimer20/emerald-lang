@@ -1,6 +1,0 @@
-
-enum_wrong_type.em:6  describe expects Alignment as its first argument, but this is Color.
-
-    6 | print(describe(Color.RED))
-
-  emerald explain

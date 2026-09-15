@@ -1,6 +1,0 @@
-
-err_list_still_checked.em:3  This list holds String but item 2 is Int.
-
-    3 | var mixed = ["ada", 42]
-
-  Every item in a list has to share a type.

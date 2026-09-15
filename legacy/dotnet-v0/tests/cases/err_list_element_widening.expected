@@ -1,6 +1,0 @@
-
-err_list_element_widening.em:7  b is declared List<Float> but is given List<Int>.
-
-    7 | var b: List<Float> = [1, 2]
-
-  The items are Int. Write them as Float, like 0.0, or declare this List<Int>.

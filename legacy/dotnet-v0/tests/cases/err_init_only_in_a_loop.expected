@@ -1,9 +1,0 @@
-
-err_init_only_in_a_loop.em:6  This constructor leaves n without a value.
-
-    6 |     constructor() {
-
-  Assign it here:  self.n = ...
-  Only assignments written directly in the constructor count — a helper method cannot be seen to have done it.
-
-  emerald explain

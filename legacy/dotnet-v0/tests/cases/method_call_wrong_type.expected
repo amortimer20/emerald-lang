@@ -1,6 +1,0 @@
-
-method_call_wrong_type.em:7  Dog.rename expects String as its first argument, but this is Int.
-
-    7 | Dog("rex").rename(42)
-
-  emerald explain

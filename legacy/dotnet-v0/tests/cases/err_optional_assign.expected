@@ -1,6 +1,0 @@
-
-err_optional_assign.em:8  ?. reads a value, so it cannot be assigned through.
-
-    8 | b?.n = 5
-
-  Say when the write happens:  if b != nothing { b.n = ... }

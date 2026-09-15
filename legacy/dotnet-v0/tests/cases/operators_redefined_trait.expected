@@ -1,6 +1,0 @@
-
-operators_redefined_trait.em:2  Addable is one of the built-in operator traits.
-
-    2 | trait Addable {
-
-  It is what gives a type its operator. Pick another name for this one.

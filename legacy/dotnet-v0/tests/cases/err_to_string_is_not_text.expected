@@ -1,6 +1,0 @@
-
-err_to_string_is_not_text.em:2  to_string gives back Int, not String.
-
-    2 |     func to_string(): Int {
-
-  It says how a value reads as text, so text is the only thing it can give back:  func to_string(): String

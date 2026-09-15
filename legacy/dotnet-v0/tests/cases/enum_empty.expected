@@ -1,6 +1,0 @@
-
-enum_empty.em:1  Verdict has no values.
-
-    1 | enum Verdict { }
-
-  An enum is a closed set of names, and an empty one names nothing:  enum Verdict { FIRST, SECOND }

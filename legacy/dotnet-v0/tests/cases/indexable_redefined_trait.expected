@@ -1,6 +1,0 @@
-
-indexable_redefined_trait.em:1  Indexable is one of the built-in operator traits.
-
-    1 | trait Indexable {
-
-  It is what gives a type its operator. Pick another name for this one.

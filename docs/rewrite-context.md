@@ -5,8 +5,7 @@ Status: single working design baseline for the Zig rewrite.
 This is the only rewrite context document. It exists so Emerald does not depend on
 conversational memory. It consolidates the complete exported rewrite discussion, its
 decision ledger and sanity-check audit, and deliberate changes from the .NET prototype.
-The old C# code and `design.html` remain valuable experiments, tests, and historical
-reasoning. They do not override this document.
+Historical prototype experiments and design notes do not override this document.
 
 The labels used here are:
 

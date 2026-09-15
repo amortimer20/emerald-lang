@@ -1,6 +1,0 @@
-
-err_set_subclass_with_equals.em:13  A set cannot hold Animal.
-
-   13 | var pen: Set<Animal> = [].to_set()
-
-  Dog is a kind of Animal and defines its own equals?, so a value here would be found by which object it is while == asked Dog. Hold the ones compared by fields in a struct.

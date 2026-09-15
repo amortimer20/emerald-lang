@@ -1,6 +1,0 @@
-
-err_super_wrong_argument.em:10  Animal's constructor expects String as its first argument, but this is Int.
-
-   10 |         super(42)
-
-  emerald explain
