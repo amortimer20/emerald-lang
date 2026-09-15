@@ -1447,6 +1447,15 @@ flatten a present List result: a block returning `[Int]?` produces `[[Int]]`. A 
 a non-optional value is rejected with a correction toward `map`, rather than silently treating
 every result as present. Dictionary and Set forms are deferred.
 
+`reduce(initial) { accumulator, item => ... }` is currently a List operation. It evaluates
+the initial value once, then visits items from left to right; each block result becomes the
+next accumulator and the final accumulator is returned. The initial value also determines the
+result and accumulator type, which may differ from the List's element type. The block must
+take that accumulator followed by one List item and return the accumulator type. Because the
+initial value is required, an empty List simply returns it. `reduce_right` and Dictionary and
+Set forms are deferred. As with every List traversal, changing a captured binding during the
+block changes that binding's copy and does not add or remove items from this reduction.
+
 `sum()` is currently a List operation for `[Int]` and `[Float]`. It returns that same numeric
 type and visits items from left to right. An empty numeric List returns its additive identity:
 `0` for `[Int]`, or `0.0` for `[Float]`. Int accumulation checks overflow at every addition;

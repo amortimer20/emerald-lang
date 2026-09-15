@@ -197,9 +197,15 @@ widening and all Float arithmetic follow the ordinary Float rules, including `In
 `NaN`. Conformance covers both numeric element types, empty Lists, special Floats, static
 misuse, and the no-cascade arity boundary.
 
-The next focused standard-library part is `reduce` with its required initial accumulator.
-That keeps empty input defined and lets the accumulator type differ from the List element
-without adding an implicit identity or a public generic protocol.
+Part 17 adds List `reduce(initial) { accumulator, item => ... }`. It evaluates its initial
+value once, returns it unchanged for an empty List, and otherwise calls the block once per
+item from left to right, carrying each result forward as the next accumulator. The initial
+value establishes the accumulator and result type, which can differ from the List element.
+The receiver's items stay fixed for the reduction even when the block changes a captured List
+binding. `reduce_right` and Dictionary and Set forms remain deferred.
+
+The next focused standard-library part should consider `min_by` and `max_by`, reusing the
+existing ordered comparison contract while keeping their block and optional-result rules clear.
 
 A bounded adversarial review of Slice 14 parts 1–12 found no defect. Small programs in Debug
 and ReleaseSafe verified snapshot traversal when callbacks mutate their captured List or

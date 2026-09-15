@@ -5905,6 +5905,7 @@ fn typeOfMethodCall(
         }
         if (std.mem.eql(u8, member.name, "flat_map")) return self.typeOfFlatMap(call, member, base);
         if (std.mem.eql(u8, member.name, "filter_map")) return self.typeOfFilterMap(call, member, base);
+        if (std.mem.eql(u8, member.name, "reduce")) return self.typeOfReduce(call, member, base);
         if (std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while")) {
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
@@ -6214,6 +6215,56 @@ fn typeOfFilterMap(self: *Checker, call: Ast.Expression.Call, member: Ast.Expres
         "Return an optional value, as in `texts.filter_map { text => text.to_int_maybe() }`, or use `map` when every element has a result.",
     );
     return .invalid;
+}
+
+/// Section 8.6's `reduce(initial) { accumulator, item => ... }`. The initial
+/// value settles the accumulator type before the block is checked, so this
+/// needs no public type parameter or special empty-List identity. The block
+/// returns that same accumulator type after every item.
+fn typeOfReduce(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    if (call.arguments.len != 2) {
+        try self.reportWithHelp(
+            member.name_span,
+            "`reduce` takes an initial value and 1 block, but this call passes {d} argument{s}",
+            .{ call.arguments.len, if (call.arguments.len == 1) "" else "s" },
+            "Write an initial value and a block, as in `numbers.reduce(0) {{ total, number => total + number }}`.",
+            .{},
+        );
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+
+    const accumulator = try self.typeOf(call.arguments[0]);
+    const parameters = try self.arena.alloc(Type, 2);
+    parameters[0] = accumulator;
+    parameters[1] = try self.itemType(base);
+    const expected = try Type.functionOf(self.arena, .{
+        .parameters = parameters,
+        .return_type = accumulator,
+    });
+
+    const block = call.arguments[1];
+    const actual = try self.typeOfExpected(block, expected);
+    if (actual.kind != .function and actual.kind != .invalid) {
+        try self.reportWithHelp(
+            block.span,
+            "`reduce` needs a block, but this is {f}",
+            .{actual},
+            "Write the block after the initial value, as in `numbers.reduce(0) {{ total, number => total + number }}`.",
+            .{},
+        );
+        return .invalid;
+    }
+    if (actual.kind == .function and !actual.assignableTo(expected)) {
+        try self.report(
+            block.span,
+            "this block is {f}, but `reduce` needs {f}",
+            .{ actual, expected },
+            "Take an accumulator and a List item, then return the accumulator's type.",
+        );
+        return .invalid;
+    }
+    return accumulator;
 }
 
 /// The single block argument a higher-order method takes, checked against a

@@ -3864,6 +3864,32 @@ fn callHigherOrder(
     };
 }
 
+/// Section 8.6's left-to-right List reduction. The first explicit value is
+/// returned unchanged for an empty List; otherwise each block result becomes
+/// the next accumulator. The checker establishes the two block parameters and
+/// matching result type before execution.
+fn callReduce(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    var accumulator = try self.evaluate(call.arguments[0]);
+    errdefer self.heap.release(accumulator);
+    const block = try self.evaluate(call.arguments[1]);
+    defer self.heap.release(block);
+
+    const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
+    for (receiver.data.list.items.items) |item| {
+        const arguments = [_]Value{ accumulator, Heap.retain(item) };
+        accumulator = try self.invokeClosure(expression.span, closure, callable, &arguments);
+    }
+    return accumulator;
+}
+
 /// Section 8.5's list methods. The checker has proved the receiver is a list,
 /// the method exists, and the arguments fit it.
 ///
@@ -3884,6 +3910,7 @@ fn callMethod(
     // Section 4.5's way out of an optional, and the one method allowed on a
     // value that may be absent.
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
+    if (std.mem.eql(u8, member.name, "reduce")) return self.callReduce(expression, call, member);
     // A block, on a list, a dictionary, or a set.
     if (std.mem.eql(u8, member.name, "each") or std.mem.eql(u8, member.name, "each_with_index") or std.mem.eql(u8, member.name, "reverse_each") or std.mem.eql(u8, member.name, "map") or
         std.mem.eql(u8, member.name, "filter") or std.mem.eql(u8, member.name, "reject") or std.mem.eql(u8, member.name, "flat_map") or std.mem.eql(u8, member.name, "filter_map") or std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while") or std.mem.eql(u8, member.name, "any?") or

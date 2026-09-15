@@ -1,0 +1,12 @@
+diagnostics/list-reduce.em:1:14: `reduce` takes an initial value and 1 block, but this call passes 1 argument
+  print([1, 2].reduce(0))
+               ^^^^^^
+Write an initial value and a block, as in `numbers.reduce(0) { total, number => total + number }`.
+diagnostics/list-reduce.em:2:24: this lambda takes 1 value, but it will be given 2
+  print([1, 2].reduce(0) { total => total })
+                         ^^^^^^^^^^^^^^^^^^
+Match the number of parameters to the number of values passed to it.
+diagnostics/list-reduce.em:3:43: this lambda produces String, but Int is expected here
+  print([1, 2].reduce(0) { total, number => "#{number}" })
+                                            ^^^^^^^^^^^
+Produce a value of the expected type, or convert it first.
