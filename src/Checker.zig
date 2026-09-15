@@ -6486,6 +6486,16 @@ fn typeOfMapMethod(
         _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
         return if (std.mem.eql(u8, name, "count_where")) .int else .bool;
     }
+    if (std.mem.eql(u8, name, "find")) {
+        _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+        if (set) return key.optionalOf();
+        const item = try Type.tupleOf(self.arena, &.{ key, value });
+        return item.optionalOf();
+    }
+    if (std.mem.eql(u8, name, "find_index")) {
+        _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+        return Type.int.optionalOf();
+    }
     if (std.mem.eql(u8, name, "empty?")) {
         _ = try self.requireArity(member, call.arguments, 0, 0);
         return .bool;

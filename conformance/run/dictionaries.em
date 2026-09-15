@@ -27,6 +27,10 @@ ages.each_with_index { (name, age), index =>
     print(index, name, age)
 }
 print(ages.any? { (name, age) => name == "Mia" }, ages.count_where { (_, age) => age >= 20 })
+print(ages.find { (name, age) => age >= 1 })
+print(ages.find_index { (name, age) => age >= 1 })
+const seen: {Int} = [1, 2, 3]
+print(seen.find { value => value > 2 })
 
 ## Section 8.4: contents decide equality, not insertion order.
 print(["a": 1, "b": 2] == ["b": 2, "a": 1])
