@@ -5904,6 +5904,7 @@ fn typeOfMethodCall(
             return Type.listOf(self.arena, base.element.?.*);
         }
         if (std.mem.eql(u8, member.name, "flat_map")) return self.typeOfFlatMap(call, member, base);
+        if (std.mem.eql(u8, member.name, "filter_map")) return self.typeOfFilterMap(call, member, base);
         if (std.mem.eql(u8, member.name, "take_while") or std.mem.eql(u8, member.name, "drop_while")) {
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
@@ -6131,6 +6132,27 @@ fn typeOfFlatMap(self: *Checker, call: Ast.Expression.Call, member: Ast.Expressi
         "this block returns {f}, but `flat_map` needs a List",
         .{result},
         "Return a List for each element, as in `numbers.flat_map { number => [number, number] }`.",
+    );
+    return .invalid;
+}
+
+/// Section 8.6's `filter_map`: each input item produces either one result or
+/// `nothing`. It is intentionally distinct from `flat_map`: a List returned
+/// here is one retained value, rather than a shape to flatten.
+fn typeOfFilterMap(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    const block = try self.requireBlock(call, member, base, .invalid) orelse return .invalid;
+    const produced = self.literal_types.get(block) orelse (try self.typeOf(block));
+    if (produced.kind != .function) return .invalid;
+
+    const result = produced.signature.?.return_type;
+    if (result.optional) return Type.listOf(self.arena, result.payload());
+    if (result.kind == .invalid) return .invalid;
+
+    try self.report(
+        block.span,
+        "this block returns {f}, but `filter_map` needs a value that may be absent",
+        .{result},
+        "Return an optional value, as in `texts.filter_map { text => text.to_int_maybe() }`, or use `map` when every element has a result.",
     );
     return .invalid;
 }

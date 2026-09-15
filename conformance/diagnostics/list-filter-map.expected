@@ -1,0 +1,8 @@
+diagnostics/list-filter-map.em:1:25: this block returns Int, but `filter_map` needs a value that may be absent
+  print([1, 2].filter_map { number => number })
+                          ^^^^^^^^^^^^^^^^^^^^
+Return an optional value, as in `texts.filter_map { text => text.to_int_maybe() }`, or use `map` when every element has a result.
+diagnostics/list-filter-map.em:2:14: `filter_map` takes 1 block, but this call passes 0 arguments
+  print([1, 2].filter_map())
+               ^^^^^^^^^^
+Write the block after the method, as in `numbers.filter_map { number => print(number) }`.

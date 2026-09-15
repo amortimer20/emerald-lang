@@ -162,6 +162,14 @@ They deliberately expose advanced representation details without introducing a p
 `Byte` type; `chars()` remains the grapheme-aware operation for ordinary text. Conformance
 covers an accent written with a combining mark and an emoji, plus the two UTF-8 bytes of `é`.
 
+Part 13 adds List `filter_map`. Its block returns one optional value for each input item;
+present values enter a new List in input order and `nothing` is omitted. It does not flatten:
+a block returning `[Int]?` produces `[[Int]]`. The checker requires an optional result and
+directs an always-present block toward `map`; the evaluator retains a present result directly
+and releases `nothing`. Conformance covers callback count, unchanged input, empty input,
+nested List results, a non-optional block, and a missing block. Dictionary and Set forms stay
+deferred.
+
 A bounded adversarial review of Slice 14 parts 1–12 found no defect. Small programs in Debug
 and ReleaseSafe verified snapshot traversal when callbacks mutate their captured List or
 Dictionary receiver, predicate short-circuit boundaries, one-level `flat_map`, Unicode scalar
@@ -1819,10 +1827,10 @@ and the spec updated wherever the fix was a design decision rather than a plain 
 
 Section 20's first 13 vertical slices are complete. Slice 14's focused `Int`, `Float`,
 String, List value-transform, filtering, traversal, predicate-question, while-portion,
-endpoint-property, flat-map, and String-representation parts are complete; the next
-standard-library part would be List `filter_map`, applying the existing optional-result
-rule carefully, with `Iterable` and the advanced String operations listed below still
-deferred rather than incomplete work in this slice.
+endpoint-property, flat-map, filter-map, and String-representation parts are complete. The
+next standard-library part should return to a non-optional operation, beginning with List
+`sum`; `Iterable` and the advanced String operations listed below remain deferred rather
+than incomplete work in this slice.
 
 The user chose to begin slice 15 instead. The formatter is complete through its
 adversarial review: struct, class, trait, and enum declarations and their members,

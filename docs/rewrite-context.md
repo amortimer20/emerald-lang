@@ -1440,6 +1440,13 @@ and every List returned by the block unchanged. An optional List result is not a
 empty List; `filter_map` has its own explicit presence rule. Dictionary and Set forms are
 deferred.
 
+`filter_map` is currently a List operation. Its block returns `T?` for each input item;
+present results become items in a new `[T]`, while `nothing` contributes no item. It visits
+every input item once, from left to right, and leaves the receiver unchanged. This does not
+flatten a present List result: a block returning `[Int]?` produces `[[Int]]`. A block returning
+a non-optional value is rejected with a correction toward `map`, rather than silently treating
+every result as present. Dictionary and Set forms are deferred.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs
