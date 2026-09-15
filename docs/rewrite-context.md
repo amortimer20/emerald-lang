@@ -2533,8 +2533,9 @@ needed, so `["a, b"]` and `["a", "b"]` cannot be mistaken for each other.
 `print` appends a newline; `write` does not. Separator customization is deferred, and
 interpolation remains the primary way to construct deliberate prose.
 
-`exit()` ends the program successfully; `exit(code)` uses a process status. Invalid codes
-should be diagnosed. `exit` unwinds pending `finally` blocks but is not caught as an error.
+`exit()` ends the program successfully; `exit(code)` uses a process status from `0` through
+`255`. Other status values are diagnosed. `exit` unwinds pending `finally` blocks but is not
+caught as an error.
 Reaching the end of the entry file exits successfully; an uncaught error uses a nonzero
 status.
 

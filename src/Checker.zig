@@ -8243,6 +8243,21 @@ fn typeOfCall(
             try self.report(call.arguments[0].span, "`random` needs a Range, but this is {f}", .{argument}, "Pass a range such as `1..6` or `0..<count`.");
             return .invalid;
         }
+        if (std.mem.eql(u8, name, "exit")) {
+            if (call.arguments.len > 1) {
+                try self.report(call.callee.span, "`exit` takes at most 1 argument, but this call passes {d}", .{call.arguments.len}, "Call `exit()` to succeed, or pass one whole-number status.");
+                try self.typeArguments(call.arguments);
+                return .invalid;
+            }
+            if (call.arguments.len == 1) {
+                const actual = try self.typeOf(call.arguments[0]);
+                if (actual.kind != .int) {
+                    try self.report(call.arguments[0].span, "this is {f}, but `exit` needs an Int status", .{actual}, "Pass a whole number from 0 through 255.");
+                    return .invalid;
+                }
+            }
+            return .nothing;
+        }
         try self.typeArguments(call.arguments);
         return .nothing;
     }

@@ -1,0 +1,8 @@
+diagnostics/exit.em:1:6: this is String, but `exit` needs an Int status
+  exit("no")
+       ^^^^
+Pass a whole number from 0 through 255.
+diagnostics/exit.em:2:1: `exit` takes at most 1 argument, but this call passes 2
+  exit(1, 2)
+  ^^^^
+Call `exit()` to succeed, or pass one whole-number status.

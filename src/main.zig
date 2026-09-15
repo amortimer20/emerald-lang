@@ -136,6 +136,8 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
         return @intFromEnum(ExitCode.runtime_error);
     }
 
+    if (report.exit_code) |code| return code;
+
     if (command == .@"test") {
         if (report.test_failures.len != 0) {
             try writeDiagnostics(gpa, io, sources, report.test_failures);

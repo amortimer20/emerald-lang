@@ -50,6 +50,8 @@ pub const Outcome = struct {
     failure: ?Diagnostic,
     test_failures: []const Diagnostic = &.{},
     test_count: usize = 0,
+    /// A requested process status. Unlike an error, it is not diagnostic.
+    exit_code: ?u8 = null,
 
     pub fn ok(self: Outcome) bool {
         return self.failure == null and self.test_failures.len == 0;
@@ -110,7 +112,7 @@ const TypeSetup = struct {
 /// `Returned`, `Broke`, and `Continued` are control flow rather than failures:
 /// each unwinds through `execute` to the construct that handles it, the way
 /// `Raised` unwinds to the top. The checker guarantees every one has a handler.
-const Error = error{ Raised, Returned, Broke, Continued } || RunError;
+const Error = error{ Raised, Returned, Broke, Continued, Exited } || RunError;
 
 /// Lives as long as the run: hoisted functions, module bindings, and the
 /// failure that ends the program.
@@ -144,6 +146,7 @@ raised_value: ?Value = null,
 /// The error currently handled by the innermost catch, for bare `raise`.
 caught_value: ?Value = null,
 caught_failure: ?Diagnostic = null,
+exit_code: ?u8 = null,
 /// One string for each string literal, made the first time the literal runs
 /// and shared by every run after it, so a loop that prints a literal does not
 /// allocate.
@@ -469,6 +472,7 @@ pub fn run(
                         interpreter.failure = null;
                         continue;
                     },
+                    error.Exited => return .{ .arena_state = arena_state, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.exit_code },
                     error.Returned, error.Broke, error.Continued => unreachable,
                     else => |other| return other,
                 };
@@ -483,12 +487,13 @@ pub fn run(
         // The checker rejects `return` outside a function, and section 14.1's
         // top-level `return` is deferred. It rejects `break` and `continue`
         // outside a loop.
+        error.Exited => {},
         error.Returned, error.Broke, error.Continued => unreachable,
         else => |other| return other,
     };
 
     const failure = interpreter.failure;
-    return .{ .arena_state = arena_state, .failure = failure };
+    return .{ .arena_state = arena_state, .failure = failure, .exit_code = interpreter.exit_code };
 }
 
 /// Completes a class's descriptor with what it inherits, its base classes'
@@ -2733,6 +2738,12 @@ fn evaluateCall(
         const position = self.random().uintLessThan(u64, @intCast(range.count()));
         const distance = @as(i128, position) * range.step_size;
         return .initInt(@intCast(if (range.descending) @as(i128, range.first) - distance else @as(i128, range.first) + distance));
+    }
+    if (std.mem.eql(u8, name, "exit")) {
+        const code: i64 = if (call.arguments.len == 0) 0 else (try self.evaluate(call.arguments[0])).data.int;
+        if (code < 0 or code > 255) return self.raiseFmt(expression.span, "`exit` cannot use status {d}", .{code}, "Pass a whole number from 0 through 255.");
+        self.exit_code = @intCast(code);
+        return error.Exited;
     }
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
 }

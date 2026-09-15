@@ -1,6 +1,6 @@
 # Current handoff
 
-   Updated: 2026-09-15. The completed standard-library slice is the remaining List vocabulary
+   Updated: 2026-09-15. The completed standard-library slices cover the remaining List vocabulary
    together with its required randomness subsystem. The working tree implements `sort`,
    `sort!`, `sort_by`, `unique_by`, `associate`, `associate_by`, and `to_dictionary`, with
    static eligibility checks, stable ordering, duplicate-key replacement, and NaN runtime
@@ -13,6 +13,10 @@
    choice, copying/in-place shuffle, deterministic equal-seed behavior, and empty-range
    errors now have conformance coverage. The complete `zig build test` suite passes in Debug
    and ReleaseSafe with pinned Zig 0.16.0; Zig formatting and `git diff --check` pass too.
+   The next small prelude slice adds `exit()` and `exit(code)`: it uses statuses `0` through
+   `255`, bypasses catches, unwinds `finally`, and carries its requested status through the
+   API report and CLI. Debug coverage is complete; rerun ReleaseSafe and the full final checks
+   before committing this pending slice.
 
 ## Current milestone
 
@@ -249,6 +253,12 @@ keys, static misuse, const mutation, and NaN failures.
 The next focused standard-library part should be selected from the remaining section 8.6
 vocabulary. List ordering, keyed uniqueness, sequence-to-dictionary construction, and the
 randomness-dependent shuffle family are complete in this slice.
+
+Part 21 adds the `exit` prelude function. `exit()` requests status `0`, while `exit(code)`
+accepts an `Int` from `0` through `255`. It is control flow rather than a typed error: it is
+not catchable, but every pending `finally` executes before it reaches the program boundary.
+Conformance covers the cleanup order, static misuse, an invalid runtime status, and the API's
+requested-status report.
 
 A bounded adversarial review of Slice 14 parts 1–12 found no defect. Small programs in Debug
 and ReleaseSafe verified snapshot traversal when callbacks mutate their captured List or

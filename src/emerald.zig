@@ -43,6 +43,8 @@ pub const Report = struct {
     /// Failures collected by `emerald test`, which does not stop at the first.
     test_failures: []const Diagnostic = &.{},
     test_count: usize = 0,
+    /// A process status requested by the running Emerald program.
+    exit_code: ?u8 = null,
 
     pub fn ok(self: Report) bool {
         return self.diagnostics.len == 0 and self.failure == null and self.test_failures.len == 0;
@@ -414,7 +416,7 @@ fn analyze(
         null;
 
     const test_failures = try dupeDiagnostics(arena, outcome.test_failures);
-    return .{ .arena_state = arena_state, .diagnostics = &.{}, .failure = failure, .test_failures = test_failures, .test_count = outcome.test_count };
+    return .{ .arena_state = arena_state, .diagnostics = &.{}, .failure = failure, .test_failures = test_failures, .test_count = outcome.test_count, .exit_code = outcome.exit_code };
 }
 
 /// Copies one file's diagnostics into the report's arena, stamping the file
@@ -528,6 +530,19 @@ fn expectFailure(text: []const u8, expected_message: []const u8) !void {
     const problem = report.failure orelse
         if (report.diagnostics.len != 0) report.diagnostics[0] else return error.ExpectedAFailure;
     try testing.expectEqualStrings(expected_message, problem.message);
+}
+
+test "section 15.2 exit reports its requested status after finally" {
+    var source = try Source.init(testing.allocator, "test.em", "try {\n    exit(42)\n}\nfinally {\n    print(\"cleanup\")\n}\n");
+    defer source.deinit(testing.allocator);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var no_input: std.Io.Reader = .fixed("");
+    var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input });
+    defer report.deinit();
+    try testing.expect(report.ok());
+    try testing.expectEqual(@as(?u8, 42), report.exit_code);
+    try testing.expectEqualStrings("cleanup\n", out.written());
 }
 
 test "section 8.2's dictionary literal, lookup, and assignment" {
