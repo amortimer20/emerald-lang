@@ -3940,7 +3940,7 @@ fn callReadingMethod(
 /// when an item is itself a collection or object.
 fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique };
+    const Method = enum { @"empty?", @"contains?", take, drop, reverse, unique, sum };
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
@@ -3988,6 +3988,34 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
             }
             break :blk value;
         },
+        .sum => self.sumList(span, list),
+    };
+}
+
+/// Section 8.6's first aggregation. Empty numeric Lists have the additive
+/// identity, and Int accumulation uses the same checked arithmetic as `+`.
+fn sumList(self: *Interpreter, span: Source.Span, list: *const Heap.List) Error!Value {
+    return switch (list.element) {
+        .int => blk: {
+            var total: i64 = 0;
+            for (list.items.items) |item| {
+                const added = @addWithOverflow(total, item.data.int);
+                if (added[1] != 0) return self.raiseFmt(
+                    span,
+                    "`sum` overflows Int while adding {d} and {d}",
+                    .{ total, item.data.int },
+                    integer_range_help,
+                );
+                total = added[0];
+            }
+            break :blk .initInt(total);
+        },
+        .float => blk: {
+            var total: f64 = 0.0;
+            for (list.items.items) |item| total += item.data.float;
+            break :blk .initFloat(total);
+        },
+        else => unreachable, // The checker permits `sum` only on numeric Lists.
     };
 }
 

@@ -5935,6 +5935,21 @@ fn typeOfMethodCall(
     };
     const element = base.element.?.*;
 
+    // `sum` is deliberately the first narrow aggregation method: keeping it
+    // numeric avoids an implicit `Addable` protocol or a generic identity
+    // element before either belongs in Emerald's public surface.
+    if (std.mem.eql(u8, member.name, "sum")) {
+        if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
+        if (element.kind == .int or element.kind == .float) return element;
+        try self.report(
+            member.name_span,
+            "`sum` needs a List of Ints or Floats, but this is {f}",
+            .{base},
+            "Use `map` to produce numbers first, or choose an aggregation that fits this List's elements.",
+        );
+        return .invalid;
+    }
+
     if (call.arguments.len != method.parameters.len) {
         const expected = method.parameters.len;
         try self.report(

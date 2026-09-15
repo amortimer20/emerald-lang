@@ -1447,6 +1447,12 @@ flatten a present List result: a block returning `[Int]?` produces `[[Int]]`. A 
 a non-optional value is rejected with a correction toward `map`, rather than silently treating
 every result as present. Dictionary and Set forms are deferred.
 
+`sum()` is currently a List operation for `[Int]` and `[Float]`. It returns that same numeric
+type and visits items from left to right. An empty numeric List returns its additive identity:
+`0` for `[Int]`, or `0.0` for `[Float]`. Int accumulation checks overflow at every addition;
+Float accumulation follows Emerald's ordinary IEEE-754 arithmetic, including `Infinity` and
+`NaN`. Other List element types receive a correction toward mapping to numbers first.
+
 The `!` convention has a narrow meaning: it marks an in-place counterpart to a plain
 method that returns a new value. Thus `sort()`/`sort!()`, `reverse()`/`reverse!()`,
 `unique()`/`unique!()`, and `shuffle()`/`shuffle!()` form pairs. Inherently mutating verbs

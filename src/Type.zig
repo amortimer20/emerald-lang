@@ -498,6 +498,7 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "reverse!", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
     .{ "unique", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
     .{ "unique!", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
+    .{ "sum", ListMethod{ .parameters = &.{}, .result = .element, .mutates = false } },
 });
 
 /// What a `String` method takes and gives. Section 9.2's vocabulary, less what
