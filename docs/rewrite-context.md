@@ -689,7 +689,11 @@ numbers.map { number => number * 2 }
 Square brackets perform zero-based indexing on indexable values. Out-of-range access is an
 error with the requested index and valid range in the diagnostic.
 
-Lists and strings also slice with range syntax, producing independent values:
+Lists and strings are meant to also slice with range syntax, producing independent values,
+but none of this is implemented yet: indexing requires an `Int` today, and a `Range` value
+(8.6) is rejected there with "an index must be an Int, but this is Range"; the
+omitted-endpoint forms below do not even parse ("expected an expression, found `]`"). The
+settled design to build toward:
 
 ```emerald
 text[1..<4]       # exclusive end
@@ -1433,9 +1437,9 @@ zero-based `Int` position. A Dictionary's first argument remains its destructura
 `(key, value)` entry. Its positions therefore follow List order and the deterministic
 insertion order of Dictionaries and Sets.
 
-`reverse_each` is currently a List traversal. It returns `Nothing`, visits the existing
-items from last to first, and does not change its receiver. Dictionary and Set reverse
-traversal is deferred with their remaining callback vocabulary.
+`reverse_each` is available on Lists, Dictionaries, and Sets. It returns `Nothing`, visits
+the existing items from last to first (a Dictionary or Set following its deterministic
+insertion order), and does not change its receiver.
 
 The predicate questions `any?`, `all?`, `none?`, and `one?`, plus `count_where`, are
 available on Lists, Dictionaries, and Sets. Each takes a `Bool`-producing block over one
@@ -1450,20 +1454,20 @@ before the first failing item; `drop_while` omits that prefix, includes the firs
 and every later item, and does not call its predicate again. They return new Lists and leave
 their receiver unchanged. An empty List returns an empty List without calling the block.
 
-`flat_map` is currently a List operation. Its block must return a List for each input item;
-the result contains those produced items in input and produced-List order. It flattens one
-level only, so a produced List containing Lists retains those inner Lists as values. Empty
-produced Lists contribute no items. `flat_map` returns a new List and leaves both its receiver
-and every List returned by the block unchanged. An optional List result is not accepted as an
-empty List; `filter_map` has its own explicit presence rule. Dictionary and Set forms are
-deferred.
+`flat_map` is available on Lists, Dictionaries, and Sets. Its block must return a List for
+each input item; the result contains those produced items in input and produced-List order,
+always as a new `List` regardless of receiver kind. It flattens one level only, so a
+produced List containing Lists retains those inner Lists as values. Empty produced Lists
+contribute no items. `flat_map` returns a new List and leaves both its receiver and every
+List returned by the block unchanged. An optional List result is not accepted as an empty
+List; `filter_map` has its own explicit presence rule.
 
-`filter_map` is currently a List operation. Its block returns `T?` for each input item;
-present results become items in a new `List[T]`, while `nothing` contributes no item. It visits
-every input item once, from left to right, and leaves the receiver unchanged. This does not
-flatten a present List result: a block returning `List[Int]?` produces `List[List[Int]]`. A block returning
-a non-optional value is rejected with a correction toward `map`, rather than silently treating
-every result as present. Dictionary and Set forms are deferred.
+`filter_map` is available on Lists, Dictionaries, and Sets. Its block returns `T?` for each
+input item; present results become items in a new `List[T]`, while `nothing` contributes no
+item. It visits every input item once, in the receiver's order, and leaves the receiver
+unchanged. This does not flatten a present List result: a block returning `List[Int]?`
+produces `List[List[Int]]`. A block returning a non-optional value is rejected with a
+correction toward `map`, rather than silently treating every result as present.
 
 `reduce(initial) { accumulator, item => ... }` is currently a List operation. It evaluates
 the initial value once, then visits items from left to right; each block result becomes the
@@ -1584,7 +1588,6 @@ The accepted vocabulary should be normalized to full descriptive names:
 - layout: `pad_start`, `pad_end`, `pad_center`;
 - decomposition: `split`, `lines`;
 - structural helpers: `partition`;
-- classification: `letter?`, `digit?`;
 - parsing families: `to_int`, `to_int_or`, `to_int_maybe`, and corresponding float
   forms.
 
@@ -1961,26 +1964,32 @@ var origin = Vector2.origin()
 print(Player.count)
 ```
 
-An explicit type receiver in the declaration marks a type-level member:
+An explicit type receiver in the declaration marks a type-level member, declared inside the
+braces of its own type, and the type named in front of it must be that type:
 
 ```emerald
-func Vector2.origin(): Vector2 {
-    return Vector2(0, 0)
+struct Vector2 {
+    var x: Int
+    var y: Int
+
+    func Vector2.origin(): Vector2 {
+        return Vector2(0, 0)
+    }
 }
 
-var Player.count = 0
+class Player {
+    var Player.count = 0
+}
 ```
 
 This adds no keyword, is locally visible, and cannot change meaning when a method body is
 edited. Type-level fields may be `var` or `const`, require initial values, and use a leading
 underscore for privacy.
 
-A type-level member is declared inside the braces of its own type, and the type named in
-front of it must be that type. It is always reached through the type, including from the
-type's own methods, and never through a value; an instance member is never reached through
-the type. A type-level function has no `self`. Type-level members share the one name space
-of 10.3 with the type's fields, properties, and methods, so a name means one thing wherever
-it is written.
+It is always reached through the type, including from the type's own methods, and never
+through a value; an instance member is never reached through the type. A type-level
+function has no `self`. Type-level members share the one name space of 10.3 with the
+type's fields, properties, and methods, so a name means one thing wherever it is written.
 
 A type-level field's annotation is optional: without one, the field holds the type of its
 value, as a module-level binding does. Its value may read only the type-level fields
@@ -2280,8 +2289,10 @@ display includes the type, such as `Direction.north`. Declaration order does not
 ordering; an enum must explicitly adopt `Ordered` when its domain needs it. Enums may have
 methods, computed properties, and trait conformance, but no stored instance fields.
 
-An enum statement case that omits members and has no `else` produces a warning. An explicit
-empty `else` acknowledges intentional omission. Duplicate known alternatives are errors.
+An enum statement case that omits members and has no `else` is meant to produce a warning,
+but (6.3) this waits for diagnostics with a severity: today it is silently accepted, with
+no diagnostic at all. An explicit empty `else` acknowledges intentional omission. Duplicate
+known alternatives are errors.
 
 An enum lists its values first, one name per line or separated by commas, and at least
 one; a value written after a member, a stored field, a constructor, or `extends` is an
@@ -2350,7 +2361,8 @@ diagnostics.
 ### 13.3 Resources
 
 Garbage collection manages memory, not timely release of files, sockets, locks, or similar
-resources. A developer may close a resource explicitly:
+resources. `File` itself is not implemented yet (15.3); the pattern below is the settled
+design for whatever type eventually needs it. A developer may close a resource explicitly:
 
 ```emerald
 var file = File.open("scores.txt")
@@ -2531,10 +2543,13 @@ New convenience methods should meet at least one of these tests:
 conveniences. Ruby is a source of inspiration, while clearer names from Kotlin, Python,
 C#, Swift, or common practice win when Ruby abbreviates or overloads a word.
 
-A simple `Textual` trait with `to_string(): String` controls deliberate user-facing
-display in printing and interpolation. Structs without it retain a useful field-based
-debug representation. Enums default to their qualified names. Display customization does
-not alter equality or identity.
+A simple `Textual` trait with `to_string(): String` is meant to control deliberate
+user-facing display in printing and interpolation, with structs and classes that omit it
+retaining a useful field-based debug representation. This trait is not yet implemented:
+today every struct and class always prints and interpolates through its field-based debug
+representation, and a type's own `to_string()` method (used explicitly, as in
+`255.to_string()`) has no effect on `print`/`write`/interpolation. Enums default to their
+qualified names. Display customization must not alter equality or identity once built.
 
 ### 15.2 Prelude
 
@@ -2569,7 +2584,9 @@ status.
 
 ### 15.3 Files, directories, and paths
 
-These names are settled:
+Like regular expressions (15.4), this is a standard-library roadmap facility, not part of
+the current interpreter: no `File`, `Directory`, or `Path` type exists yet in `src/prelude.em`
+or `docs/library/`. These names are the settled design to build toward:
 
 ```emerald
 File.read(path)
@@ -2637,7 +2654,10 @@ String interpolation handles ordinary formatting. A simple explicit formatting f
 may cover reusable templates and numeric presentation, but it should not become a second
 mini-language prematurely.
 
-Numbers use readable named arguments rather than compact format codes:
+Numbers use readable named arguments rather than compact format codes. None of this exists
+yet — `to_string()` on `Int`/`Float` today takes no arguments (see
+[docs/library/int.md](library/int.md) and [docs/library/float.md](library/float.md)) and
+there is no `format()` method at all. The settled design to build toward:
 
 ```emerald
 12.5.format(decimal_places: 2)       # "12.50"
@@ -2766,7 +2786,8 @@ instructional.
 
 ### 18.1 Initial CLI
 
-One `emerald` executable provides full-word commands:
+One `emerald` executable provides full-word commands. Implemented today (`src/main.zig`'s
+`Command` enum):
 
 ```text
 emerald run
@@ -2774,21 +2795,25 @@ emerald check
 emerald test
 emerald format
 emerald repl
-emerald new project_name
-emerald explain
-emerald help
+emerald lsp
 ```
+
+`emerald new`, `emerald explain`, and `emerald help` are not implemented; running any of
+them prints the usage banner and exits `64` like any invalid usage. They belong with
+`build`, `debug`, and package `add` (18.1.1) as later tooling, not the settled command set.
 
 There is no `fmt` alias. `run` checks the complete project before executing; `check`
 performs the same analysis without initializing modules or executing user code. This is
 useful when a program would prompt, open a window, modify files, or run indefinitely.
 
-All diagnostic-producing commands accept `--diagnostic-format=json`. The initial
-versioned JSON object contains a schema version and a diagnostics list; each diagnostic
-includes its stable code, severity, message, source path, byte span, one-based display
-line and Unicode-scalar column, related notes, and machine-applicable fixes when available.
-Machine mode writes only that object to standard output. The LSP adapter converts canonical
-source spans to the position encoding negotiated with the editor.
+A machine-readable `--diagnostic-format=json` flag is a later-tooling design, not yet
+implemented (no diagnostic-producing command accepts it today). The design to build
+toward: an initial versioned JSON object containing a schema version and a diagnostics
+list; each diagnostic includes its stable code, severity, message, source path, byte span,
+one-based display line and Unicode-scalar column, related notes, and machine-applicable
+fixes when available. Machine mode writes only that object to standard output. The LSP
+adapter converts canonical source spans to the position encoding negotiated with the
+editor.
 
 Process statuses are stable: `0` means success, `1` means source or formatting diagnostics,
 `2` means an uncaught runtime error, `3` means tests completed with failures, `64` means
@@ -2819,6 +2844,8 @@ Commands use stable nonzero exit codes for source errors, runtime errors, test f
 tool misuse, and internal compiler failures. The exact table belongs in the CLI contract.
 
 ### 18.2 New projects and manifests
+
+`emerald new` is not implemented yet (18.1). The settled design:
 
 ```text
 emerald new guessing_game
@@ -2887,15 +2914,25 @@ An invalid entry does not partially mutate the session.
 The LSP server reuses the compiler's lexer, parser, resolver, and type checker. It does not
 maintain a second parser or approximate type system.
 
-The first useful feature set is:
+The first slice (`src/Lsp.zig`) implements what already reuses the compiler almost
+unchanged:
 
 - live diagnostics;
+- document symbols;
+- format on save.
+
+It deliberately does not yet advertise hover, go to definition, find references, rename, or
+completion — each needs real new infrastructure this slice does not build (an
+offset-to-AST-node lookup that exists nowhere yet, a general per-expression type map where
+today only a few narrow expression kinds are recorded, and, for completion specifically, a
+materially different parser recovery strategy, since a broken construct like `foo.` today
+discards its whole enclosing statement rather than leaving a partial node to offer
+completions against). The eventual full feature set adds:
+
 - inferred-type hover information;
 - go to definition and find references;
 - context-aware completion;
-- safe rename;
-- document symbols;
-- format on save.
+- safe rename.
 
 Quick fixes correspond to known diagnostics and deterministic edits. The official VS Code
 extension comes first, while the server remains editor-independent.
@@ -3057,9 +3094,10 @@ The rewrite should advance through small vertical slices:
 8. **Collection slice** — list literal, indexing, mutation, and one higher-order method.
 9. **Callable slice** — lambdas, closures over captured scopes, function values, and the
    trailing-block call form.
-10. **Managed heap slice** — the simple collector, with the explicit root API of 19.5.
-    Reference counting reclaims everything the earlier slices can build; a closure and the
-    scope it captured can point at each other, and that cycle is what needs collecting.
+10. **Managed heap slice** — the simple collector, with roots derived from reference counts
+    per 19.5 rather than a registration API. Reference counting reclaims everything the
+    earlier slices can build; a closure and the scope it captured can point at each other,
+    and that cycle is what needs collecting.
 11. **Project slice** — `main.em`, multiple files, namespaces, and `using`.
 12. **Object model** — structs, classes, construction, properties, inheritance, traits,
     operators, and enums in dependency order.
@@ -3333,14 +3371,15 @@ recorded in their normative sections:
 
 Before adding or changing a feature:
 
-1. Check this document.
-2. Identify whether the old prototype agrees or conflicts.
-3. Write a canonical source example and its expected type or behavior.
-4. Record interactions with optionals, mutation, equality, errors, and source diagnostics.
-5. Prefer ordinary library code over syntax when both are equally clear.
-6. Do not introduce a generic abstraction solely to implement several built-ins.
-7. Add the decision and rationale in the same change as its implementation.
-8. Add an end-to-end behavioral test for semantics that a future backend could inherit
+1. Check this document, including section 22's table of confirmed departures from the
+   historical prototype (no prototype artifacts remain in this repository to consult
+   directly).
+2. Write a canonical source example and its expected type or behavior.
+3. Record interactions with optionals, mutation, equality, errors, and source diagnostics.
+4. Prefer ordinary library code over syntax when both are equally clear.
+5. Do not introduce a generic abstraction solely to implement several built-ins.
+6. Add the decision and rationale in the same change as its implementation.
+7. Add an end-to-end behavioral test for semantics that a future backend could inherit
    incorrectly from its host.
 
 The language grammar must eventually be generated or checked against these examples. The

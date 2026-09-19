@@ -50,36 +50,72 @@ That documentation pass found and fixed several real issues, most recently first
   changing method call through `?.` is rejected," without saying when or for which receiver
   kind; corrected to match the fix above (check time, struct-only).
 - String/List range-slicing (`text[1..<4]`, `list[1..<3]`) and its omitted-endpoint forms
-  are described in detail in 5.4 but do not parse or type-check at all; this matches the
-  existing "slicing with ranges" deferred note elsewhere in the rewrite context (so it isn't
-  a new gap), but 5.4 itself still reads as settled and doesn't cross-reference that note —
-  left as-is this pass, since fixing the framing well needs deciding how to mark a detailed,
-  legitimate future design as "not yet built" without deleting the spec, which is exactly
-  the kind of judgment call the dedicated pass below should make deliberately.
+  are described in detail in 5.4 but do not parse or type-check at all (confirmed during
+  the full audit below); 5.4 now carries the same "not yet implemented" framing as the
+  library's other unbuilt roadmap facilities.
 
 ## Next step
 
 Nothing is queued. Candidates, in no particular order: Slice 16 (test-infrastructure and
 hardening — CI, allocator-failure testing, lexer/parser fuzzing, full Unicode conformance,
 multi-platform coverage); the LSP's second slice (hover, go to definition, find references,
-safe rename, completion — see the journal for what each needs); a `docs/rewrite-context.md`
-accuracy pass (see "Documentation and rewrite-context hygiene" below); or whatever the user
+safe rename, completion — see the journal for what each needs); or whatever the user
 directs. `Section` numbers below refer to `docs/rewrite-context.md`.
 
 ## Documentation and rewrite-context hygiene
 
-`docs/handoff.md` and `docs/journal.md` were split apart in this pass (previously one file,
-~2,500 lines, that had accumulated into a session diary rather than the rolling status
+`docs/handoff.md` and `docs/journal.md` were split apart in an earlier pass (previously one
+file, ~2,500 lines, that had accumulated into a session diary rather than the rolling status
 `AGENTS.md` asks for) — see the journal's own intro for the convention going forward.
-`docs/rewrite-context.md` itself was **not** systematically audited in the same pass — that's
-a separate, larger task, since it's the language-design baseline every agent treats as
-authoritative. This session found it wrong twice (`reduce_right`, and the `?.` framing) purely
-by spot-checking specific claims against the binary while writing unrelated documentation, not
-through any systematic review, and fixed both narrowly rather than auditing around them; the
-5.4 slicing section has a related but distinct framing issue, deliberately left as-is (see
-above). A dedicated pass — reading every "settled"/"deferred" claim against what
-`zig build test` and a scratch `.em` file actually show — is worth doing
-deliberately rather than only stumbling into corrections one at a time.
+
+`docs/rewrite-context.md` has since had a full accuracy audit: every claim in sections 1
+through 25 was checked against `src/*.zig`, `src/prelude.em`, the conformance suite, and the
+built binary (four parallel passes, one per section range, each writing scratch `.em` files
+and running `zig-out/bin/emerald` directly rather than trusting the prose). Section 21
+("Deferred features") came back fully accurate — every item grepped and re-tested is still
+genuinely unimplemented. Elsewhere, the audit found and fixed:
+
+- Three collection methods (`reverse_each`, `flat_map`, `filter_map`) were documented as
+  List-only with Dictionary/Set support "deferred," but `Checker.zig`'s `typeOfMapMethod`
+  already implements all three for Dictionary and Set too (verified at runtime); corrected.
+- `letter?`/`digit?` were listed as accepted String vocabulary in one paragraph (9.2) and
+  called deferred two paragraphs later — a direct self-contradiction. Neither is
+  implemented; removed from the accepted-vocabulary list, leaving the deferred note as the
+  single source of truth.
+- The 10.4 type-level-member example declared `func Vector2.origin()` and `var
+  Player.count = 0` at top level, outside any type's braces — which the parser rejects
+  outright, contradicting the prose two paragraphs later ("declared inside the braces of
+  its own type"). Fixed the example to declare both inside their type.
+- Section 12 said a nonexhaustive enum `case` statement "produces a warning," while section
+  6.3 already correctly said this waits for diagnostic severities and isn't built. Section
+  12 now matches 6.3: silently accepted today, no diagnostic at all.
+- A `Textual` trait (15.1), the `File`/`Directory`/`Path` API (15.3, plus the 13.3 resource
+  example that used it), and the numeric `.format()`/`.to_string(base:)` API (15.5) were
+  all presented as settled/current with no caveat, but none of the three exist anywhere in
+  `src/`. Each now carries the same explicit "roadmap, not yet implemented" framing that
+  15.4 (Regex) already used.
+- The CLI command list (18.1) included `emerald new`, `emerald explain`, and `emerald help`,
+  none of which exist in `src/main.zig`'s `Command` enum (only `check run test format repl
+  lsp` do; `lsp` itself was missing from the doc's list). The `--diagnostic-format=json` flag
+  described there is likewise unimplemented. All now marked as later-tooling design, not
+  current behavior.
+- The LSP feature list (18.5) claimed hover, go-to-definition, find-references, rename, and
+  completion as part of "the first useful feature set," but `src/Lsp.zig`'s own header
+  comment says the first slice deliberately covers only diagnostics, document symbols, and
+  format-on-save, and explains why the rest need infrastructure this slice doesn't build.
+  Corrected to match.
+- Section 20's implementation-sequence item 10 said the GC slice ships "the explicit root
+  API of 19.5," but 19.5 and section 22's own decision table both say roots are derived from
+  reference counts specifically *instead of* a registration API — the opposite claim.
+  Corrected.
+- Section 23's process checklist had "identify whether the old prototype agrees or
+  conflicts" as a mandatory step, but no prototype artifacts exist anywhere in this
+  repository to consult; repointed at section 22's existing departure table instead.
+- 5.4's String/List range-slicing syntax (`text[1..<4]`, `items[2..<]`) was presented as
+  settled; none of it works — indexing requires an `Int` and rejects a `Range` outright,
+  and the omitted-endpoint forms don't even parse. Given the roadmap framing now used
+  consistently elsewhere in this same pass (15.1, 15.3, 15.5), it gets the same treatment
+  here rather than being left as a standing exception.
 
 ## Completed foundation
 
