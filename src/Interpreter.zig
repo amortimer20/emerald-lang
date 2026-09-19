@@ -2188,6 +2188,10 @@ fn evaluateProperty(self: *Interpreter, expression: *const Ast.Expression, membe
     const base = try self.evaluate(member.base);
     defer self.heap.release(base);
 
+    // Slice 2's optional field/property read: the receiver is evaluated once,
+    // and nothing reaches no member at all.
+    if (member.optional and base.data == .nothing) return Value.nothing;
+
     // Section 8.2's `entry.0`. The checker has proved the position exists, so
     // there is nothing to fail here.
     if (member.position) |position| {
@@ -4421,7 +4425,18 @@ fn callMethod(
     }
     // Decided by the checker from the receiver's type, so a struct's own
     // `append` or `each` is never mistaken for a collection's.
-    if (self.method_calls.get(call.callee)) |key| return self.callStructMethod(expression, call, member, key);
+    if (self.method_calls.get(call.callee)) |key| {
+        if (member.optional) {
+            const receiver = try self.evaluate(member.base);
+            if (receiver.data == .nothing) return Value.nothing;
+            if (self.changing_methods.contains(key)) {
+                self.heap.release(receiver);
+                return self.raise(member.name_span, "an optional chain cannot call a changing method", "Check the receiver against `nothing` first, then call the changing method with `.`.");
+            }
+            return self.callStructMethod(expression, call, member, key, receiver);
+        }
+        return self.callStructMethod(expression, call, member, key, null);
+    }
     // Section 4.5's way out of an optional, and the one method allowed on a
     // value that may be absent.
     if (std.mem.eql(u8, member.name, "or")) return self.callOr(expression, call, member);
@@ -5126,10 +5141,11 @@ fn callStructMethod(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
     key: []const u8,
+    optional_receiver: ?Value,
 ) Error!Value {
     var callable = self.namedCallable(key);
     if (!self.changing_methods.contains(key)) {
-        const receiver = try self.evaluate(member.base);
+        const receiver = optional_receiver orelse try self.evaluate(member.base);
         // Section 10.7: an object runs its own class's version, unless
         // `super` asked for the base class's. The parameters, and so their
         // defaults, are the ones the call was checked against.

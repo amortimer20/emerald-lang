@@ -5579,6 +5579,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
 
 /// A property: `count` is the only one so far (8.5).
 fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Type {
+    if (member.optional) return self.typeOfOptionalObjectMember(member);
     // Section 4.4's `type_name`, which every value has, `nothing` included,
     // so it needs no proof that an optional is there. It reads no field, so
     // it needs none of `self`'s either.
@@ -5796,6 +5797,31 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
     return .invalid;
 }
 
+/// Slice 2 of optional chaining: fields and computed properties on an optional
+/// object. Method calls are deliberately handled by the following slice.
+fn typeOfOptionalObjectMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
+    const base = try self.typeOf(member.base);
+    if (base.kind == .invalid) return .invalid;
+    if (!base.optional) {
+        try self.report(member.name_span, "`?.` needs an optional receiver, but this is {f}", .{base}, "Use `.` for a value that is already present.");
+        return .invalid;
+    }
+    const present = base.payload();
+    if (present.kind != .struct_value or member.position != null) {
+        try self.report(member.name_span, "`?.` currently reaches object fields and properties, not {f}", .{present}, "Use `.` after proving the value is present.");
+        return .invalid;
+    }
+    if (try self.memberOwner(present, member.name)) |owner| if (try self.reportPrivate(owner, member.name, member.name_span)) return .invalid;
+    for (present.user.?.fields) |field| if (std.mem.eql(u8, field.name, member.name)) return field.type.optionalOf();
+    if (try self.propertyOf(present, member.name)) |property| return (try self.typeOfPropertyRead(member, property)).optionalOf();
+    if (try self.memberKey(present, member.name) != null) {
+        try self.reportWithHelp(member.name_span, "`{s}` is a method, so it needs parentheses", .{member.name}, "Method calls through `?.` arrive in the next optional-chaining slice.", .{});
+        return .invalid;
+    }
+    try self.reportUnknownMember(present, member, "field or property");
+    return .invalid;
+}
+
 /// Section 7.5's `counter.increment` without parentheses: a function that
 /// calls the method on its own copy of the receiver, which a changing method
 /// keeps changing from one call to the next. Nothing about the receiver's
@@ -5823,6 +5849,7 @@ fn typeOfMethodCall(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Type {
+    if (member.optional) return self.typeOfOptionalObjectMethodCall(expression, call, member);
     // Section 10.2: "Before all fields are ready ... instance methods may not
     // be called."
     if (self.constructing != null and member.base.data == .name and
@@ -6180,6 +6207,18 @@ fn typeOfMethodCall(
         .list => try Type.listOf(self.arena, element),
         .float => .float,
     };
+}
+
+fn typeOfOptionalObjectMethodCall(self: *Checker, expression: *const Ast.Expression, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    const base = try self.typeOf(member.base);
+    if (base.kind == .invalid) return .invalid;
+    if (!base.optional or base.payload().kind != .struct_value) {
+        try self.report(member.name_span, "`?.` needs an optional object receiver", .{}, "Use `.` after proving the receiver is present.");
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+    const present = base.payload();
+    return (try self.typeOfStructMethodCall(expression, call, member, present)).optionalOf();
 }
 
 /// Section 4.5: everything but `or` needs the value to be there first.

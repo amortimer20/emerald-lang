@@ -41,8 +41,11 @@ produce ordinary IEEE `NaN` or infinity rather than a special exception. A proje
 
 Optional chaining is being delivered in small slices. Slice 1 is complete: the parser retains
 `?.` as an optional member access and the rewrite context settles its short-circuit, explicit
-link, and read-only rules. Later slices add checker and runtime behavior for object fields,
-properties, and reading method calls.
+link, and read-only rules. Slice 2 adds object field and computed-property reads: an absent
+receiver returns `nothing`, a present result becomes optional, and the receiver is evaluated
+once. Reading methods also short-circuit: arguments are not evaluated for an absent receiver,
+their result is optional, and a changing method through `?.` raises with a correction toward
+an explicit presence check.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
