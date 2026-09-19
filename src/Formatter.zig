@@ -202,6 +202,10 @@ const Printer = struct {
     /// Whether the source text spanning `[start, end)` already contains a
     /// newline.
     fn spansMultipleLines(self: *Printer, start: u32, end: u32) bool {
+        // Parser recovery may retain an earlier trivia item beside a later
+        // recovered statement. That is not a source gap, and formatting it as
+        // one must not form a reversed slice.
+        if (end <= start) return false;
         return std.mem.indexOfScalar(u8, self.source.text[start..end], '\n') != null;
     }
 
@@ -1256,6 +1260,15 @@ test "formatting releases every allocation failure" {
     };
 
     try testing.checkAllAllocationFailures(testing.allocator, Work.run, .{ &source, tokenized.tokens, parsed.program });
+}
+
+test "recovered source spans never form a reversed formatter slice" {
+    var source = try Source.init(testing.allocator, "test.em", "# note\n");
+    defer source.deinit(testing.allocator);
+    var printer: Printer = .{ .gpa = testing.allocator, .source = &source, .trivia = &.{} };
+    defer printer.out.deinit(testing.allocator);
+
+    try testing.expect(!printer.spansMultipleLines(6, 0));
 }
 
 test "blank-line runs collapse to exactly one, and a block never starts or ends with one" {

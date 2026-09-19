@@ -27,8 +27,11 @@ ownership transfers. The third part adds `zig build fuzz -- [seed] [cases]`: a d
 bounded valid-UTF-8 frontend campaign that checks lexer/parser recovery, diagnostic bounds, and
 formatter parseability and idempotence for accepted inputs. CI runs a fixed 1,000-case
 ReleaseSafe campaign on Linux; failure output includes both campaign and case seed for replay.
-Keep a longer scheduled campaign as later work, alongside validation with the pinned Zig
-toolchain and end-to-end conformance cases.
+An independent nightly workflow runs four fixed ReleaseSafe campaigns of 10,000 cases each;
+the checked-in seed matrix keeps a GitHub failure reproducible locally. Keep validation aligned
+with the pinned Zig toolchain and end-to-end conformance cases. Its first extended seed found
+and fixed a formatter recovery path that treated a reversed recovered span as a source slice;
+a focused Formatter test now preserves that guard.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float

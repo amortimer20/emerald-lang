@@ -1,0 +1,38 @@
+name: Extended fuzzing
+
+on:
+  schedule:
+    # A quiet UTC hour, offset from common repository-wide maintenance jobs.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    name: seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Fixed, distinct campaigns make every failure replayable while the
+        # nightly suite explores much more input than the PR check does.
+        seed: [12648430, 764089157, 2892177341, 9182736451]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain with Mise
+        uses: jdx/mise-action@v2
+
+      - name: Validate toolchain
+        shell: bash
+        run: bash tools/check-toolchain.sh
+
+      - name: Run extended fuzz campaign
+        shell: bash
+        run: zig build fuzz -Doptimize=ReleaseSafe -- ${{ matrix.seed }} 10000
+
+      - name: Show replay command
+        shell: bash
+        run: |
+          echo "Replay this campaign with: zig build fuzz -Doptimize=ReleaseSafe -- ${{ matrix.seed }} 10000"
