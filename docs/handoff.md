@@ -222,9 +222,19 @@ earlier draft of this message leaked one directly before that comparison caught 
 repeat, plus the still-silent computed-key case in the same file. `docs/library/dict.md`
 documents the rule. `zig build test` passes in both Debug and ReleaseSafe.
 
-Remaining language guides `docs/language/README.md` lists as "Planned": Collections and
-ranges; Objects and traits; Errors, tests, and projects. Do not invent unsettled behavior or
-start the separate Astro site without explicit authorization.
+`docs/language/collections-and-ranges.md` is complete: which bracket means which collection,
+value semantics (copy-on-write, the `for`-visits-a-snapshot rule), indexing and misses,
+equality/order, and iteration, cross-linking each type's full method reference rather than
+repeating it. Written after, and made accurate by, the two bugs and one missing feature fixed
+above in this same research pass — in particular it correctly states the duplicate-key rule
+as enforced now that it actually is. `docs/language/README.md` marks it "Drafted." Every code
+snippet was run against the built binary while writing it, including the `Set`-from-`List`
+rejection and its `.to_set()` correction. `zig build test` passes in both Debug and
+ReleaseSafe.
+
+Remaining language guides `docs/language/README.md` lists as "Planned": Objects and traits;
+Errors, tests, and projects. Do not invent unsettled behavior or start the separate Astro
+site without explicit authorization.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
