@@ -85,8 +85,14 @@ ahead of time; calling `step` twice on the same Range is likewise a checking-tim
 a runtime one. `count` and `to_list()` share one whole-`Int`-domain overflow condition with
 two distinct messages, both confirmed directly against the built binary.
 
+`docs/library/tuples.md` is also complete: literals, zero-based positions (including the
+`entry.0.1` lexical split, a position of a position), the missing `count`, position-by-
+position widening (unlike `List`'s invariance), equality, and destructuring in every position
+8.2 lists, cross-checked against `conformance/diagnostics/tuple-*.em` for each checking-time
+error's exact text.
+
 The next documentation slice continues `docs/library/inventory.md` family by family:
-`List[T]`, `Dict[K, V]`, `Set[T]`, and Tuples remain unlinked rows. `List[T]` is the
+`List[T]`, `Dict[K, V]`, and `Set[T]` remain unlinked rows. `List[T]` is the
 largest remaining surface (8.6's rich vocabulary, built up over roughly twenty implementation
 parts) and needs the same source-and-binary verification as everything above rather than
 trusting the rewrite context's prose alone — many of its methods (`filter`, `map`, `reduce`,

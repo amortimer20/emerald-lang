@@ -24,7 +24,7 @@
 | `List[T]` | Properties, reading, changing, higher-order, and shape methods | `examples/lists.em` |
 | `Dict[K, V]` | Lookup, entries, keys/values, set-like operations, callbacks | `examples/dictionaries.em` |
 | `Set[T]` | Membership, set algebra, callbacks | `conformance/run/set-operations.em` |
-| Tuples | Positions, unpacking, equality | `examples/tuples.em` |
+| [Tuples](tuples.md) | Positions, unpacking, equality | `examples/tuples.em` |
 | [`Range`](range.md) | Iteration, `count`, `empty?()`, `step`, `reverse`, `to_list` | `conformance/run/range-values.em` |
 | [`Random`](random.md) | Seeded range selection, choosing, and shuffling | `conformance/run/randomness.em` |
 
