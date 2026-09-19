@@ -892,6 +892,13 @@ walks any list backwards safely, including an empty one. `up_to` is the method s
 `..`, kept as `down_to`'s companion. Both are loopable directly; the block form
 `5.down_to(1) { number => print(number) }` is the same count with a lambda.
 
+A range is also an immutable `Range` value: it can be stored, passed to a function, used
+where a range is expected, and iterated later. Its `count` property is an `Int`, `empty?()`
+answers whether it visits anything, and `to_list()` eagerly materializes its values as a
+`List[Int]`. `step` and `reverse` return new Ranges. The count of the complete `Int` domain
+does not fit in an `Int`; asking that Range for `count`, or trying to materialize it, raises
+an ordinary runtime error with a correction toward narrowing it or using a larger step.
+
 `step(distance)` takes a distance of at least 1; the range or method supplies the
 direction, never the sign of the step. A count takes at most one `step`. `reverse()` visits
 the same values in the opposite order. The two apply in the order written, so
@@ -906,12 +913,15 @@ reported, since an empty `0..count - 1` is the point of the rule.
 
 Equal inclusive endpoints visit once, in every form. An equal half-open range is empty.
 
-Ruby-style block forms are welcome alongside these, once lambdas exist:
+The Int block forms run the same Range semantics immediately and return `Nothing`:
 
 ```emerald
 5.times { index => print(index) }
 1.up_to(5) { number => print(number) }
 ```
+
+`times` visits `0` through one less than its receiver and rejects a negative count. The
+same `up_to` and `down_to` wrong-side rule applies to their block forms.
 
 User-defined integration with `for` through an `Iterable` trait is deferred. Initial
 `for` supports the built-in iterable types.
@@ -1678,9 +1688,9 @@ but a zero divisor is an error. Factorial accepts zero and positive integers, wi
 `0.factorial()` equal to `1`. An absolute value, GCD, LCM, or factorial that cannot fit in
 the signed 64-bit `Int` range raises a runtime error rather than wrapping.
 
-`times`, `up_to`, and `down_to` remain the counting forms described in 6.4. They work in
-`for` headers now; their block forms arrive with range values rather than being a second,
-special kind of integer method call.
+`times`, `up_to`, and `down_to` are the counting forms described in 6.4. `up_to` and
+`down_to` produce ordinary `Range` values without a block and run that Range immediately
+with a trailing block; `times` is the corresponding immediate block form.
 
 `round_to(places)` rounds to a requested number of decimal places and returns a `Float`.
 Positive places address digits after the decimal point, zero produces a whole-number-valued

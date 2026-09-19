@@ -1,6 +1,6 @@
 # Current handoff
 
-   Updated: 2026-09-18. Emerald v0.2.0 shipped the named built-in collection type spellings:
+   Updated: 2026-09-19. Emerald v0.2.0 shipped the named built-in collection type spellings:
    `List[T]`, `Dict[K, V]`, and `Set[T]`; tuples remain structural. List and dictionary
    literals are unchanged, while a bracketed set literal needs an expected `Set[T]` type.
    The retired `[T]`, `[K: V]`, and `{T}` spellings are rejected throughout the parser,
@@ -15,23 +15,18 @@
 
 ## Current milestone
 
-Collection-method expansion is deliberately paused after the existing shape family
-(`zip`, `chain`, `chunks`, `windows`, and `pairs`) and Dictionary/Set `filter` and `reject`.
-The active non-collection milestone is release hardening. Its first part makes CI run Debug
-and ReleaseSafe across Linux, macOS arm64, and Windows; release jobs assert their native
-architecture, smoke-test the extracted artifact, and aggregate one checksum manifest before
-publishing. The second part exhaustively injects allocation failure into project loading,
-lexing, parsing, formatting, and a small end-to-end checker run with Zig's
-`checkAllAllocationFailures`; it fixed formatter output cleanup and two project-loader
-ownership transfers. The third part adds `zig build fuzz -- [seed] [cases]`: a deterministic,
-bounded valid-UTF-8 frontend campaign that checks lexer/parser recovery, diagnostic bounds, and
-formatter parseability and idempotence for accepted inputs. CI runs a fixed 1,000-case
-ReleaseSafe campaign on Linux; failure output includes both campaign and case seed for replay.
-An independent nightly workflow runs four fixed ReleaseSafe campaigns of 10,000 cases each;
-the checked-in seed matrix keeps a GitHub failure reproducible locally. Keep validation aligned
-with the pinned Zig toolchain and end-to-end conformance cases. Its first extended seed found
-and fixed a formatter recovery path that treated a reversed recovered span as a source slice;
-a focused Formatter test now preserves that guard.
+Range values complete the remaining range-values part of slice 14. `..`, `..<`, `up_to`,
+and `down_to` now make immutable `Range` values that can be stored, passed, inspected with
+`count` and `empty?()`, materialized with `to_list()`, supplied to random selection, and
+iterated directly or from a variable. `step` and `reverse` preserve their established
+overflow-safe endpoint semantics. The all-Int-domain edge is handled deliberately: its
+length is tracked internally without truncation, while `count` and `to_list()` explain when
+the result cannot fit in Emerald's `Int`. `times`, `up_to`, and `down_to` now also have
+their trailing-lambda forms, implemented by the same Range traversal rather than a second
+counting engine. Unit coverage and `conformance/run/range-values.em` cover storage, parameters,
+properties, list materialization, ordinary iteration, every block form, and the full-domain
+count diagnostic. `zig build test` passes in Debug and ReleaseSafe with pinned Zig 0.16.0,
+and `git diff --check` passes. There are no pending changes outside this milestone.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float

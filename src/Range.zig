@@ -35,11 +35,23 @@ pub const Range = struct {
         return self.is_empty;
     }
 
-    pub fn count(self: Range) i64 {
+    /// The exact number of values. The full Int domain has 2^64 values, one
+    /// more than a `u64`, so internal consumers must not narrow this early.
+    pub fn length(self: Range) u128 {
         if (self.is_empty) return 0;
-        const distance = if (self.descending) self.first - self.last else self.last - self.first;
-        if (distance < 0) return 0;
-        return @divTrunc(distance, self.step_size) + 1;
+        const distance: i128 = if (self.descending)
+            @as(i128, self.first) - self.last
+        else
+            @as(i128, self.last) - self.first;
+        const steps = @divTrunc(distance, @as(i128, self.step_size));
+        return @intCast(steps + 1);
+    }
+
+    /// `Range.count` is an Int property in Emerald. An all-Int range has one
+    /// value too many for that result type, so the interpreter explains that
+    /// case rather than silently truncating or saturating it.
+    pub fn count(self: Range) ?i64 {
+        return std.math.cast(i64, self.length());
     }
 
     pub fn reaching(first: i64, bound: i64, step_distance: i64, descending: bool) Range {
@@ -64,10 +76,11 @@ pub const Range = struct {
         return .{ .first = self.last, .last = self.first, .step_size = self.step_size, .descending = !self.descending };
     }
 
-    pub fn toList(self: Range, allocator: std.mem.Allocator) std.mem.Allocator.Error![]const i64 {
+    pub fn toList(self: Range, allocator: std.mem.Allocator) (std.mem.Allocator.Error || error{RangeTooLarge})![]const i64 {
         if (self.is_empty) return &.{};
-        const length = self.count();
-        const items = try allocator.alloc(i64, @intCast(length));
+        const count_value = self.count() orelse return error.RangeTooLarge;
+        const size = std.math.cast(usize, count_value) orelse return error.RangeTooLarge;
+        const items = try allocator.alloc(i64, size);
         errdefer allocator.free(items);
         var current = self.first;
         for (items) |*slot| {

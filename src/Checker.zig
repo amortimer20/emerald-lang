@@ -2139,10 +2139,8 @@ fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
     return .invalid;
 }
 
-/// Section 6.4's ways of counting: `a..b`, `a..<b`, `a.up_to(b)`, and
-/// `a.down_to(b)`, optionally followed by `.step(n)` and `.reverse()`. Decided
-/// from the shape of the expression, since none of them is a value a program
-/// can hold yet; a `for` loop is the only place they are accepted.
+/// Section 6.4's ways of making a Range: `a..b`, `a..<b`, `a.up_to(b)`, and
+/// `a.down_to(b)`, optionally followed by `.step(n)` and `.reverse()`.
 pub fn isCounting(expression: *const Ast.Expression) bool {
     return switch (expression.data) {
         .range => true,
@@ -2153,6 +2151,15 @@ pub fn isCounting(expression: *const Ast.Expression) bool {
         },
         else => false,
     };
+}
+
+/// The three counting block forms are calls that perform their iteration
+/// immediately. They are deliberately separate from Range-producing calls:
+/// `1.up_to(3)` is a Range, while `1.up_to(3) { ... }` returns Nothing.
+pub fn isCountingBlock(call: Ast.Expression.Call) bool {
+    if (!call.trailing or call.callee.data != .member) return false;
+    const name = call.callee.data.member.name;
+    return std.mem.eql(u8, name, "times") or countingStart(name);
 }
 
 fn countingStart(name: []const u8) bool {
@@ -4981,7 +4988,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             self.typeOfQualified(expression, reference)
         else
             self.typeOfMember(expression, member),
-        .range => .range,
+        .range => self.typeOfCountingValue(expression),
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
         .dictionary_literal => self.typeOfDictionary(expression, null),
@@ -7587,18 +7594,53 @@ fn familiarListName(name: []const u8) ?[]const u8 {
     return familiar.get(name);
 }
 
-/// Ranges and the other ways of counting have no type of their own yet: they
-/// are values in section 6.4, but everything a program could do with one
-/// besides looping arrives with the collection vocabulary.
-fn rejectCountingValue(self: *Checker, expression: *const Ast.Expression) Error!Type {
+/// The counting syntax produces an ordinary immutable Range value.
+fn typeOfCountingValue(self: *Checker, expression: *const Ast.Expression) Error!Type {
     try self.checkCounting(expression);
-    try self.report(
-        expression.span,
-        "a range can only be looped over so far",
-        .{},
-        "Use it in a `for` loop, as in `for i in 10.down_to(1)`.",
-    );
-    return .invalid;
+    return .range;
+}
+
+fn typeOfCountingBlock(self: *Checker, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Type {
+    const member = call.callee.data.member;
+    const times = std.mem.eql(u8, member.name, "times");
+    const wanted: usize = if (times) 1 else 2;
+    if (call.arguments.len != wanted) {
+        try self.reportWithHelp(
+            member.name_span,
+            "`{s}` takes {d} argument{s}, but this call passes {d}",
+            .{ member.name, wanted, if (wanted == 1) "" else "s", call.arguments.len },
+            "Write it as `{s}`.",
+            .{if (times) "5.times { index => print(index) }" else "1.up_to(5) { number => print(number) }"},
+        );
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+
+    try self.requireCountingInt(member.base);
+    if (!times) {
+        try self.requireCountingInt(call.arguments[0]);
+        try self.rejectContradictingLiteralCount(expression, member, call.arguments[0]);
+    }
+
+    const parameter = try self.arena.create(Type);
+    parameter.* = .int;
+    const expected = try Type.functionOf(self.arena, .{
+        .parameters = parameter[0..1],
+        .return_type = .invalid,
+    });
+    const block = call.arguments[wanted - 1];
+    const actual = try self.typeOfExpected(block, expected);
+    if (actual.kind != .function and actual.kind != .invalid) {
+        try self.reportWithHelp(
+            block.span,
+            "`{s}` needs a block, but this is {f}",
+            .{ member.name, actual },
+            "Write the block after the method, as in `{s}`.",
+            .{if (times) "5.times { index => print(index) }" else "1.up_to(5) { number => print(number) }"},
+        );
+        return .invalid;
+    }
+    return .nothing;
 }
 
 fn typeOfUnary(
@@ -8174,7 +8216,8 @@ fn typeOfCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Type {
-    if (isCounting(expression)) return self.rejectCountingValue(expression);
+    if (isCountingBlock(call)) return self.typeOfCountingBlock(expression, call);
+    if (isCounting(expression)) return self.typeOfCountingValue(expression);
     if (isSuper(call.callee)) return self.typeOfSuperCall(expression, call);
 
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The

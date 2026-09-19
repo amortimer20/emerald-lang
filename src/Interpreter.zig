@@ -1435,88 +1435,20 @@ fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
 ///
 /// The loop stops by comparing with the last value it will visit rather than
 /// by stepping past it, because stepping past either end of the `Int` range
-/// would overflow. `Counting` keeps that last value exact.
+/// would overflow.
 fn executeFor(self: *Interpreter, loop: Ast.For) Error!void {
     if (!Checker.isCounting(loop.iterable)) return self.executeForList(loop);
-
-    const counting = try self.evaluateCounting(loop.iterable) orelse return;
-    var current = counting.first;
-    while (try self.executeIteration(loop, .initInt(current))) {
-        if (current == counting.last) return;
-        // Cannot overflow: `last` is reachable from `current` in whole steps.
-        current = if (counting.descending) current - counting.step else current + counting.step;
-    }
+    const range = (try self.evaluate(loop.iterable)).data.range;
+    return self.executeForRange(loop, range);
 }
 
-/// A nonempty run of whole numbers: from `first` to `last`, both visited, `step`
-/// apart, counting down when `descending`. `last` is always a value the count
-/// actually reaches, which is what lets `reverse` swap the ends exactly.
-const Counting = struct {
-    first: i64,
-    last: i64,
-    step: i64 = 1,
-    descending: bool,
-
-    /// The last value reached from `first` in whole steps without passing
-    /// `bound`, which the caller guarantees lies in the counting direction.
-    fn reaching(first: i64, bound: i64, step: i64, descending: bool) Counting {
-        const difference = @as(i128, bound) - first;
-        const distance: i128 = if (difference < 0) -difference else difference;
-        const whole = distance - @rem(distance, step);
-        const last: i64 = @intCast(if (descending) @as(i128, first) - whole else @as(i128, first) + whole);
-        return .{ .first = first, .last = last, .step = step, .descending = descending };
+fn executeForRange(self: *Interpreter, loop: Ast.For, range: Range) Error!void {
+    if (range.empty()) return;
+    var current = range.first;
+    while (try self.executeIteration(loop, .initInt(current))) {
+        if (current == range.last) return;
+        current = if (range.descending) current - range.step_size else current + range.step_size;
     }
-};
-
-/// Null for a count that visits nothing.
-fn evaluateCounting(self: *Interpreter, expression: *const Ast.Expression) Error!?Counting {
-    if (expression.data == .range) {
-        const range = expression.data.range;
-        const start = (try self.evaluate(range.start)).data.int;
-        const end = (try self.evaluate(range.end)).data.int;
-        if (range.inclusive) {
-            return if (start > end) null else .{ .first = start, .last = end, .descending = false };
-        }
-        return if (start >= end) null else .{ .first = start, .last = end - 1, .descending = false };
-    }
-
-    const call = expression.data.call;
-    const member = call.callee.data.member;
-    const name = member.name;
-
-    if (std.mem.eql(u8, name, "up_to") or std.mem.eql(u8, name, "down_to")) {
-        const start = (try self.evaluate(member.base)).data.int;
-        const end = (try self.evaluate(call.arguments[0])).data.int;
-        // A target on the wrong side counts nothing, as `0..count - 1` does
-        // for an empty list.
-        const descending = std.mem.eql(u8, name, "down_to");
-        if (if (descending) start < end else start > end) return null;
-        return .{ .first = start, .last = end, .descending = descending };
-    }
-
-    const base = try self.evaluateCounting(member.base);
-
-    if (std.mem.eql(u8, name, "reverse")) {
-        const counting = base orelse return null;
-        return .{
-            .first = counting.last,
-            .last = counting.first,
-            .step = counting.step,
-            .descending = !counting.descending,
-        };
-    }
-
-    // `step`, evaluated even when the count is empty, so a bad step is always
-    // reported.
-    const distance = (try self.evaluate(call.arguments[0])).data.int;
-    if (distance < 1) return self.raiseFmt(
-        call.arguments[0].span,
-        "a step must be at least 1, but this is {d}",
-        .{distance},
-        "The range says which way to count; the step says only how far, as in `10.down_to(0).step(2)`.",
-    );
-    const counting = base orelse return null;
-    return Counting.reaching(counting.first, counting.last, distance, counting.descending);
 }
 
 /// Section 8.4: the loop visits the list as it was when the loop began. Holding
@@ -1525,6 +1457,8 @@ fn evaluateCounting(self: *Interpreter, expression: *const Ast.Expression) Error
 fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
     const iterable = try self.evaluate(loop.iterable);
     defer self.heap.release(iterable);
+
+    if (iterable.data == .range) return self.executeForRange(loop, iterable.data.range);
 
     // Section 9.1: a string yields its characters, each a string of its own.
     if (iterable.data == .string) {
@@ -2214,7 +2148,14 @@ fn evaluateProperty(self: *Interpreter, expression: *const Ast.Expression, membe
     // Section 8.5: `count` is the only property a dictionary or set has.
     if (base.data == .map) return .initInt(@intCast(base.data.map.count()));
     if (base.data == .range) {
-        if (std.mem.eql(u8, member.name, "count")) return .initInt(base.data.range.count());
+        if (std.mem.eql(u8, member.name, "count")) {
+            const count = base.data.range.count() orelse return self.raise(
+                member.name_span,
+                "this Range has too many values for `count`",
+                "Use a narrower Range or a larger `step`; an Int count cannot represent every Int value.",
+            );
+            return .initInt(count);
+        }
         if (std.mem.eql(u8, member.name, "empty?")) return .initBool(base.data.range.empty());
     }
 
@@ -2708,6 +2649,8 @@ fn evaluateCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Value {
+    if (Checker.isCountingBlock(call)) return self.evaluateCountingBlock(expression, call);
+    if (Checker.isCounting(expression)) return self.evaluateRangeCall(expression, call);
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
     // resolver decided which, and recorded it.
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
@@ -2742,7 +2685,7 @@ fn evaluateCall(
     if (std.mem.eql(u8, name, "random")) {
         const range = (try self.evaluate(call.arguments[0])).data.range;
         if (range.empty()) return self.raise(expression.span, "`random` cannot choose from an empty Range", "Pass a Range that contains at least one value.");
-        const position = self.random().uintLessThan(u64, @intCast(range.count()));
+        const position = randomRangePosition(self.random(), range);
         const distance = @as(i128, position) * range.step_size;
         return .initInt(@intCast(if (range.descending) @as(i128, range.first) - distance else @as(i128, range.first) + distance));
     }
@@ -2753,6 +2696,56 @@ fn evaluateCall(
         return error.Exited;
     }
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
+}
+
+fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {
+    const member = call.callee.data.member;
+    if (std.mem.eql(u8, member.name, "up_to") or std.mem.eql(u8, member.name, "down_to")) {
+        const start = (try self.evaluate(member.base)).data.int;
+        const end = (try self.evaluate(call.arguments[0])).data.int;
+        return .{ .data = .{ .range = Range.fromTarget(start, end, std.mem.eql(u8, member.name, "down_to")) } };
+    }
+    const base = (try self.evaluate(member.base)).data.range;
+    if (std.mem.eql(u8, member.name, "reverse")) return .{ .data = .{ .range = base.reverse() } };
+    const distance = (try self.evaluate(call.arguments[0])).data.int;
+    return self.rangeMethod(expression.span, base, "step", &.{.initInt(distance)});
+}
+
+/// The block spelling is a convenience on Int, not a second Range iteration
+/// implementation: it builds the same Range and invokes its lambda once per
+/// value. The Range's exact last value keeps endpoint arithmetic safe.
+fn evaluateCountingBlock(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {
+    const member = call.callee.data.member;
+    const times = std.mem.eql(u8, member.name, "times");
+    const range = if (times) blk: {
+        const count = (try self.evaluate(member.base)).data.int;
+        if (count < 0) return self.raiseFmt(
+            member.base.span,
+            "`times` cannot repeat a negative count ({d})",
+            .{count},
+            "Pass 0 or a positive Int.",
+        );
+        break :blk Range.fromBounds(0, count, false);
+    } else blk: {
+        const start = (try self.evaluate(member.base)).data.int;
+        const target = (try self.evaluate(call.arguments[0])).data.int;
+        break :blk Range.fromTarget(start, target, std.mem.eql(u8, member.name, "down_to"));
+    };
+
+    const block = try self.evaluate(call.arguments[call.arguments.len - 1]);
+    defer self.heap.release(block);
+    const closure = block.data.closure;
+    const callable = self.closureCallable(closure);
+    if (range.empty()) return Value.nothing;
+
+    var current = range.first;
+    while (true) {
+        const argument = [_]Value{.initInt(current)};
+        const result = try self.invokeClosure(expression.span, closure, callable, &argument);
+        self.heap.release(result);
+        if (current == range.last) return Value.nothing;
+        current = if (range.descending) current - range.step_size else current + range.step_size;
+    }
 }
 
 fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Error!Value {
@@ -4549,9 +4542,19 @@ fn seededIndex(self: *Interpreter, instance: *Heap.StructValue, length: usize) u
 }
 
 fn seededRange(self: *Interpreter, instance: *Heap.StructValue, range: Range) i64 {
-    const position = self.seededIndex(instance, @intCast(range.count()));
+    var engine = std.Random.DefaultPrng.init(@bitCast(instance.fields[0].data.int));
+    const source = engine.random();
+    const position = randomRangePosition(source, range);
+    instance.fields[0] = .initInt(@bitCast(source.int(u64)));
+    _ = self;
     const distance = @as(i128, position) * range.step_size;
     return @intCast(if (range.descending) @as(i128, range.first) - distance else @as(i128, range.first) + distance);
+}
+
+fn randomRangePosition(source: std.Random, range: Range) u64 {
+    const length = range.length();
+    const full_int_domain = @as(u128, 1) << 64;
+    return if (length == full_int_domain) source.int(u64) else source.uintLessThan(u64, @intCast(length));
 }
 
 fn seededShuffle(self: *Interpreter, instance: *Heap.StructValue, items: []Value) void {
@@ -4581,6 +4584,9 @@ fn callReadingMethod(
     // `empty?` and `contains?` belong to strings, lists, and sets alike.
     if (receiver.data == .string) {
         return self.stringMethod(expression.span, receiver.data.string.bytes, member.name, arguments);
+    }
+    if (receiver.data == .range) {
+        return self.rangeMethod(expression.span, receiver.data.range, member.name, arguments);
     }
     if (receiver.data == .map) {
         return self.readMap(call, member, receiver.data.map, arguments);
@@ -5352,7 +5358,15 @@ fn rangeMethod(self: *Interpreter, span: Source.Span, range: Range, name: []cons
         },
         .reverse => .{ .data = .{ .range = range.reverse() } },
         .to_list => blk: {
-            const items = try range.toList(self.gpa);
+            const items = range.toList(self.gpa) catch |err| switch (err) {
+                error.RangeTooLarge => return self.raise(
+                    span,
+                    "this Range is too large to turn into a List",
+                    "Use a narrower Range or a larger `step` before calling `to_list()`.",
+                ),
+                error.OutOfMemory => return error.OutOfMemory,
+            };
+            defer if (items.len > 0) self.gpa.free(items);
             const list = try self.heap.createList(.int, items.len);
             const result: Value = .{ .data = .{ .list = list } };
             errdefer self.heap.release(result);

@@ -1573,7 +1573,45 @@ test "a step is at least 1 and given once" {
     try expectFailure("for i in (1..5).step(0) {\n    print(i)\n}\n", "a step must be at least 1");
     try expectFailure("var n = -2\nfor i in (1..5).step(n) {\n    print(i)\n}\n", "a step must be at least 1, but this is -2");
     try expectFailure("for i in (1..9).step(2).reverse().step(2) {\n    print(i)\n}\n", "this already has a step");
-    try expectFailure("var countdown = 10.down_to(1)\n", "a range can only be looped over so far");
+    try expectOutput("var countdown = 10.down_to(1)\nprint(countdown.count)\n", "10\n");
+}
+
+test "ranges are immutable values that can be stored, passed, and iterated" {
+    const program =
+        \\func total(values: Range): Int {
+        \\    var result = 0
+        \\    for value in values {
+        \\        result += value
+        \\    }
+        \\    return result
+        \\}
+        \\var odds = (1..10).step(2)
+        \\print(odds.count, odds.empty?(), odds.to_list())
+        \\print(total(odds))
+        \\print((0..<0).count, (0..<0).empty?(), (0..<0).to_list())
+        \\
+    ;
+    try expectOutput(program, "5 false [1, 3, 5, 7, 9]\n25\n0 true []\n");
+}
+
+test "integer counting block forms use the same Range semantics" {
+    const program =
+        \\var values: List[Int] = []
+        \\4.times { index => values.append(index) }
+        \\2.up_to(4) { number => values.append(number) }
+        \\4.down_to(2) { number => values.append(number) }
+        \\print(values)
+        \\
+    ;
+    try expectOutput(program, "[0, 1, 2, 3, 2, 3, 4, 4, 3, 2]\n");
+    try expectFailure("(-1).times { index => print(index) }\n", "`times` cannot repeat a negative count (-1)");
+}
+
+test "a full-domain Range never truncates its count" {
+    try expectFailure(
+        "var all = (-9223372036854775807 - 1)..9223372036854775807\nprint(all.count)\n",
+        "this Range has too many values for `count`",
+    );
 }
 
 test "a range may end at the largest Int without overflowing" {
