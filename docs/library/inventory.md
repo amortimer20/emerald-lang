@@ -1,8 +1,8 @@
 # Standard-library inventory
 
-> Status: in progress. Each row becomes a family page with signatures, semantics, a runnable
-> example, and links to conformance cases; a linked family name below has one, an unlinked
-> one is still a checklist row.
+> Status: every row below has its family page. Each links signatures, semantics, a runnable
+> example, and conformance cases. The next documentation work is `docs/README.md`'s step 4:
+> an automated check that every example a page links to stays executable.
 
 ## Prelude functions
 
@@ -11,7 +11,7 @@
 | `print`, `write` | [Prelude](prelude.md) | `examples/greeter.em` |
 | `input`, `input_maybe` | [Prelude](prelude.md) | `conformance/runtime-errors/input-ended.em` |
 | `random`, `exit` | [Prelude](prelude.md) | `conformance/runtime-errors/random-empty-range.em` |
-| `assert` | Errors and tests | `conformance/runtime-errors/assertion.em` |
+| `assert` | [Errors and tests](errors.md) | `conformance/runtime-errors/assertion.em` |
 
 ## Built-in types and namespaces
 
@@ -27,6 +27,17 @@
 | [Tuples](tuples.md) | Positions, unpacking, equality | `examples/tuples.em` |
 | [`Range`](range.md) | Iteration, `count`, `empty?()`, `step`, `reverse`, `to_list` | `conformance/run/range-values.em` |
 | [`Random`](random.md) | Seeded range selection, choosing, and shuffling | `conformance/run/randomness.em` |
+
+## Errors and tests
+
+Not free functions or built-in generic types, but a statement-level surface documented
+together for the same reason `assert` above points here: `Error`/`RuntimeError`/
+`AssertionError`, `raise`/`catch`/`finally`, and `@test`/`emerald test`.
+
+| API | Family page | Example/test source |
+| --- | --- | --- |
+| `Error`, `raise`, `catch`, `finally` | [Errors and tests](errors.md) | `conformance/run/errors.em` |
+| `@test`, `emerald test` | [Errors and tests](errors.md) | `conformance/diagnostics/error-checking.em` |
 
 ## Shared semantic labels
 

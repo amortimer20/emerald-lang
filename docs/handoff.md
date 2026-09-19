@@ -125,15 +125,33 @@ explicit code decides the real, optional-returning types); there is no `+`/`+=` 
 no `to_string()`, matching `String`. `docs/library/inventory.md` links all three new pages,
 completing every row in that table.
 
-The next documentation slice is open: the "Built-in types and namespaces" table is now fully
-linked, so remaining documentation work is either the "Errors and tests" page (for `assert`,
-`raise`/`catch`/`finally`, and the `Error` hierarchy — currently only referenced, not written)
-or the language guides beyond "Core language" that `docs/language/README.md` still lists as
-"Planned" (Types and optionals; Collections and ranges; Objects and traits; Errors, tests, and
-projects). Do not invent unsettled behavior, start the separate Astro site, or build a
-documentation runner yet. `git diff --check` passes, and `zig build test` passes in both
-Debug and ReleaseSafe (the `pairs()` fix above is the one Zig implementation change in this
-run of otherwise documentation-only slices).
+`docs/library/errors.md` ("Errors and tests") is also complete: the `Error`/`RuntimeError`/
+`AssertionError` hierarchy, `raise`/`catch`/`finally` (catch ordering, bare re-raise, the
+`finally`-return/break/continue restriction, and the try-vs-finally definite-assignment
+distinction — an assignment made only inside a `try` body isn't guaranteed to have run
+afterward, even with no `catch`, but the same assignment inside `finally` is, since `finally`
+always completes), `assert`, and `@test`/`emerald test`. Reading `Interpreter.zig::executeAssert`
+directly (rather than trusting 16.2's prose or the diagnostic text alone) surfaced a real,
+easy-to-get-wrong distinction: `error.message` on a caught `AssertionError` is only the custom
+message if one was given, or else `` assertion failed: `{condition}` `` — the extra "Left was
+...; right was ..." detail for a failed equality (and "The condition was false." with neither
+a message nor an equality) is generated fresh for the *uncaught* diagnostic's own explanation
+line and is never stored in `error.message`, confirmed by comparing a caught and an uncaught
+run of the same failing assert side by side. `emerald test`'s exit code (`3` for a test
+failure, distinct from `2` for an ordinary uncaught error) and its skip-entry-statements/
+lazy-binding test-mode behavior were also confirmed by actually running `emerald test`
+against a scratch project rather than assumed from 16.3. `docs/library/inventory.md` gained a
+new "Errors and tests" section (this content isn't a free function or a generic built-in
+type, so it didn't fit either existing table) and now has every row linked.
+
+This closes out `docs/README.md`'s work order steps 1–3 (core-language guide; complete the
+inventory; a reference page per family). Step 4 — an automated check that every example a
+documentation page links to stays executable, so a page can't silently drift from the
+implementation the way the `String`/`List` slicing gap or the `reduce_right` staleness did —
+is the next natural documentation task and does not yet exist in any form; the checking done
+so far has been this session manually re-running each linked file against the built binary
+per slice. Do not invent unsettled behavior or start the separate Astro site. `git diff
+--check` passes, and `zig build test` passes in both Debug and ReleaseSafe.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
