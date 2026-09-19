@@ -42,11 +42,21 @@ behavioral source. Every linked example was run with the built `emerald` binary 
 slice to confirm its output still matches what the guide says. `docs/language/README.md`'s
 status table now marks the core guide "Drafted" rather than "Scaffolded."
 
-The next documentation slice is to expand `docs/library/inventory.md` family by family,
-beginning with the prelude functions and numeric types (`Int`, `Float`), per that inventory's
-own checklist. Do not invent unsettled behavior, start the separate Astro site, or build a
-documentation runner yet. `git diff --check` passes; no Zig implementation changed in this
-documentation-only commit.
+The prelude, `Int`, and `Float` family pages are complete: `docs/library/prelude.md` covers
+`print`, `write`, `input`, `input_maybe`, `random`, and `exit` (`assert` stays with errors and
+tests; the operator traits stay with traits in the language guide, since they are adopted
+rather than called); `docs/library/int.md` and `docs/library/float.md` cover every method in
+`src/Type.zig`'s `int_methods`/`float_methods` tables, cross-checked arity by arity against
+that source rather than only against the rewrite context's prose. `docs/library/inventory.md`
+links all three from their rows and its status line now distinguishes a linked (written)
+family from an unlinked (checklist-only) one. Every example linked from the three pages was
+re-run against the built `emerald` binary and diffed against its `.expected` file.
+
+The next documentation slice continues `docs/library/inventory.md` family by family:
+`Math`, `String`, `List[T]`, `Dict[K, V]`, `Set[T]`, Tuples, `Range`, and `Random` remain
+unlinked rows. Do not invent unsettled behavior, start the separate Astro site, or build a
+documentation runner yet. `git diff --check` and `zig build test` (Debug) both pass; no Zig
+implementation changed in this documentation-only commit.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float

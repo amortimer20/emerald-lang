@@ -1,23 +1,24 @@
 # Standard-library inventory
 
-> Status: scaffolded checklist. This is not yet a full API reference. Each row becomes a
-> family page with signatures, semantics, a runnable example, and links to conformance cases.
+> Status: in progress. Each row becomes a family page with signatures, semantics, a runnable
+> example, and links to conformance cases; a linked family name below has one, an unlinked
+> one is still a checklist row.
 
 ## Prelude functions
 
 | API | Family page | Example/test source |
 | --- | --- | --- |
-| `print`, `write` | Prelude | `examples/greeter.em` |
-| `input`, `input_maybe` | Prelude | `conformance/runtime-errors/input-ended.em` |
-| `random`, `exit` | Prelude | `conformance/runtime-errors/random-empty-range.em` |
+| `print`, `write` | [Prelude](prelude.md) | `examples/greeter.em` |
+| `input`, `input_maybe` | [Prelude](prelude.md) | `conformance/runtime-errors/input-ended.em` |
+| `random`, `exit` | [Prelude](prelude.md) | `conformance/runtime-errors/random-empty-range.em` |
 | `assert` | Errors and tests | `conformance/runtime-errors/assertion.em` |
 
 ## Built-in types and namespaces
 
 | Family | Core surface to document | Example/test source |
 | --- | --- | --- |
-| `Int` | Arithmetic helpers, predicates, number theory, conversion, counting blocks | `conformance/run/int-methods.em` |
-| `Float` | Rounding, classification, conversion, angles, square root | `conformance/run/float-methods.em` |
+| [`Int`](int.md) | Arithmetic helpers, predicates, number theory, conversion, counting blocks | `conformance/run/int-methods.em` |
+| [`Float`](float.md) | Rounding, classification, conversion, angles, square root | `conformance/run/float-methods.em` |
 | `Math` | Constants, trigonometry, logarithms, powers | `conformance/run/math.em` |
 | `String` | Unicode-aware queries, editing, splitting, conversion | `conformance/run/string-methods.em` |
 | `List[T]` | Properties, reading, changing, higher-order, and shape methods | `examples/lists.em` |
