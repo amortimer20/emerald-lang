@@ -1,7 +1,7 @@
 # Section 6.4: ranges count upward, and counting down is said in words. A step
 # says only how far; the range or method says which way.
 
-var out: [Int] = []
+var out: List[Int] = []
 for i in 10.down_to(1) {
     out.append(i)
 }
@@ -41,7 +41,7 @@ for i in (0..<items.count).reverse() {
 }
 print(out)
 
-var nothing_left: [Int] = []
+var nothing_left: List[Int] = []
 for i in (0..<nothing_left.count).reverse() {
     print(nothing_left[i])
 }

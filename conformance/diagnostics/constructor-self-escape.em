@@ -1,4 +1,4 @@
-var made: [Pair] = []
+var made: List[Pair] = []
 
 struct Pair {
     var left: Int

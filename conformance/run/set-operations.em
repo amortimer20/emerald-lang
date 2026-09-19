@@ -1,9 +1,9 @@
-const left: {Int} = [1, 2, 3]
-const right: {Int} = [3, 4]
-const other: {Int} = [2, 4]
-const small: {Int} = [1, 2]
-const full: {Int} = [1, 2, 3]
-const separate: {Int} = [3, 4]
+const left: Set[Int] = [1, 2, 3]
+const right: Set[Int] = [3, 4]
+const other: Set[Int] = [2, 4]
+const small: Set[Int] = [1, 2]
+const full: Set[Int] = [1, 2, 3]
+const separate: Set[Int] = [3, 4]
 
 print(left.union(right))
 print(left.intersection(other))

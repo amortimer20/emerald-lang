@@ -1,5 +1,5 @@
 struct Bag {
-    const values: [Int]
+    const values: List[Int]
 }
 
 var bag = Bag([1])

@@ -26,5 +26,5 @@ const ranks = [Rank(3), Rank(1), Rank(2)]
 const sorted_ranks = ranks.sort()
 print(sorted_ranks[0].value, sorted_ranks[1].value, sorted_ranks[2].value)
 
-const empty: [Int] = []
+const empty: List[Int] = []
 print(empty.sort())

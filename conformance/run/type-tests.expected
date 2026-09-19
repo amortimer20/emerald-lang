@@ -8,7 +8,7 @@ Rex knows 1 trick(s) / Tom is not a dog
 Rex fetches / Generic knows no tricks / no one
 false true Nothing
 Int Float String Bool Nothing
-[Int] [String: Int] (Int, String)
+List[Int] Dict[String, Int] (Int, String)
 (Cat, Int) true false
 func(Int): Int true
 Int true false

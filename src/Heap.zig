@@ -127,7 +127,7 @@ pub const Map = struct {
     /// `element` is. A set's `value` kind is `.nothing`.
     key_kind: Value.Kind,
     value_kind: Value.Kind,
-    /// Whether this is section 8.2's `{T}` rather than `[K: V]`. They differ
+    /// Whether this is section 8.2's `Set[T]` rather than `Dict[K, V]`. They differ
     /// only in what they store and how they print.
     is_set: bool,
     /// Collector bookkeeping; see `collect`.

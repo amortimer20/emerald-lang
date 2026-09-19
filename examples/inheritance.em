@@ -49,7 +49,7 @@ class Square extends Rectangle {
 }
 
 ## A list of shapes can hold any of them, and each runs its own version.
-const shapes: [Shape] = [Rectangle(2, 3), Square(4)]
+const shapes: List[Shape] = [Rectangle(2, 3), Square(4)]
 for shape in shapes {
     print(shape.describe())
 }

@@ -6,7 +6,7 @@ diagnostics/list-while-portions.em:2:14: `drop_while` takes 1 block, but this ca
   print([1, 2].drop_while())
                ^^^^^^^^^^
 Write the block after the method, as in `numbers.drop_while { number => print(number) }`.
-diagnostics/list-while-portions.em:3:13: [String: Int] has no method `take_while`
+diagnostics/list-while-portions.em:3:13: Dict[String, Int] has no method `take_while`
   ["Ada": 12].take_while { (name, age) => true }
               ^^^^^^^^^^
 A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.

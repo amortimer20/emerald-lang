@@ -55,8 +55,8 @@ diagnostics/inheritance-syntax.em:48:18: a class extends at most one class
                    ^
 Emerald has single inheritance. Keep one base class.
 diagnostics/inheritance-syntax.em:50:17: a class can only extend another class
-  class D extends [Int] {
-                  ^^^^^
+  class D extends List[Int] {
+                  ^^^^^^^^^
 Name the base class, as in `class Dog extends Animal`.
 diagnostics/inheritance-syntax.em:54:9: `E` has no base class, so there is no `super`
           super.f()

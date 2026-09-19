@@ -16,7 +16,7 @@ const sentence = words.reduce("") { text, word =>
     }
 }
 
-const empty: [Int] = []
+const empty: List[Int] = []
 print(total, calls, sentence, empty.reduce(99) { accumulator, number => accumulator + number })
 
 # Changing a captured binding makes its own copy; reduce still sees its input.

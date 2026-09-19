@@ -1,7 +1,7 @@
 # A small grade book: the average, the highest score, how many scores beat the
 # average, and the scores in order, sorted without changing the original list.
 
-func average(scores: [Int]): Float {
+func average(scores: List[Int]): Float {
     var total = 0
     for score in scores {
         total += score
@@ -9,7 +9,7 @@ func average(scores: [Int]): Float {
     return total / scores.count
 }
 
-func highest(scores: [Int]): Int {
+func highest(scores: List[Int]): Int {
     var best = scores[0]
     for score in scores {
         best = score if score > best
@@ -18,7 +18,7 @@ func highest(scores: [Int]): Int {
 }
 
 # A parameter cannot change, so this sorts its own copy and returns it.
-func sorted(scores: [Int]): [Int] {
+func sorted(scores: List[Int]): List[Int] {
     var result = scores
     for pass in 0..<result.count {
         for index in 0..<result.count - 1 - pass {

@@ -23,7 +23,7 @@ print("#{first()} #{first()} #{second()} #{first()}")
 
 # Section 6.1: a loop variable is fresh each iteration, so each block keeps its
 # own value rather than the last one.
-var blocks: [func(): Int] = []
+var blocks: List[func(): Int] = []
 for i in 1..3 {
     blocks.append({ => i })
 }

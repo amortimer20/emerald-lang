@@ -13,7 +13,7 @@ mise use -g "github:amortimer20/emerald-lang@latest"
 Or for a specific version:
 
 ```bash
-mise use -g "github:amortimer20/emerald-lang@v0.1.1"
+mise use -g "github:amortimer20/emerald-lang@v0.2.0"
 ```
 
 `@latest` resolves through GitHub's release metadata; if it ever misbehaves (for example,

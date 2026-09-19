@@ -1,6 +1,13 @@
 # Current handoff
 
-   Updated: 2026-09-15. The completed standard-library slices cover the remaining List vocabulary
+   Updated: 2026-09-18. Collection type spellings now use the named built-in forms
+   `List[T]`, `Dict[K, V]`, and `Set[T]`; tuple types remain structural. List and dictionary
+   literals are unchanged, while sets continue to use a bracketed literal only where an
+   expected `Set[T]` type supplies their kind. The parser, formatter, diagnostic type display,
+   built-in diagnostic help, documentation, unit tests, and conformance cases have migrated;
+   the retired `[T]`, `[K: V]`, and `{T}` type spellings are rejected. Debug and ReleaseSafe
+   `zig build test` pass with pinned Zig 0.16.0, and `git diff --check` passes. The completed
+   standard-library slices cover the remaining List vocabulary
    together with its required randomness subsystem. The working tree implements `sort`,
    `sort!`, `sort_by`, `unique_by`, `associate`, `associate_by`, and `to_dictionary`, with
    static eligibility checks, stable ordering, duplicate-key replacement, and NaN runtime
@@ -188,7 +195,7 @@ result is rejected rather than treated as empty. Conformance covers order, callb
 empty input, result type, missing blocks, and that optional boundary. Dictionary and Set forms
 remain deferred.
 
-Part 12 adds String `code_points()` and `bytes()`. Both return `[Int]`: the former gives the
+Part 12 adds String `code_points()` and `bytes()`. Both return `List[Int]`: the former gives the
 Unicode scalar values of the stored spelling, while the latter gives its exact UTF-8 octets.
 They deliberately expose advanced representation details without introducing a premature
 `Byte` type; `chars()` remains the grapheme-aware operation for ordinary text. Conformance
@@ -196,13 +203,13 @@ covers an accent written with a combining mark and an emoji, plus the two UTF-8 
 
 Part 13 adds List `filter_map`. Its block returns one optional value for each input item;
 present values enter a new List in input order and `nothing` is omitted. It does not flatten:
-a block returning `[Int]?` produces `[[Int]]`. The checker requires an optional result and
+a block returning `List[Int]?` produces `List[List[Int]]`. The checker requires an optional result and
 directs an always-present block toward `map`; the evaluator retains a present result directly
 and releases `nothing`. Conformance covers callback count, unchanged input, empty input,
 nested List results, a non-optional block, and a missing block. Dictionary and Set forms stay
 deferred.
 
-Part 14 adds List `sum()` for `[Int]` and `[Float]`. It returns the matching numeric type,
+Part 14 adds List `sum()` for `List[Int]` and `List[Float]`. It returns the matching numeric type,
 visits items from left to right, and gives `0` or `0.0` for an empty List. Int accumulation
 checks every addition for overflow; Float accumulation retains the ordinary `Infinity` and
 `NaN` behavior. Non-numeric Lists receive a correction toward mapping to numbers first.
@@ -217,7 +224,7 @@ rejected even as the only element, because it has no order. Conformance covers n
 String, empty, and custom `Ordered` Lists, type and arity errors, optional elements, and the
 NaN runtime diagnostic.
 
-Part 16 adds List `average()` for `[Int]` and `[Float]`. It returns `Float?`, because a
+Part 16 adds List `average()` for `List[Int]` and `List[Float]`. It returns `Float?`, because a
 whole-number List can have a fractional mean; an empty List returns `nothing`. Each Int
 widening and all Float arithmetic follow the ordinary Float rules, including `Infinity` and
 `NaN`. Conformance covers both numeric element types, empty Lists, special Floats, static
@@ -287,7 +294,7 @@ is not the entry initializes once, on first use. Tuples work: the `(String, Int)
 `("score", 10)` literal, zero-based positions, equality position by position, and
 unpacking in declarations, `for` bindings, block parameters, and assignment, with nested
 patterns in all of them. Dictionaries
-and sets work: `[String: Int]` and `{String}`, their literals, bracket lookup producing an
+and sets work: `Dict[String, Int]` and `Set[String]`, their literals, bracket lookup producing an
 optional, bracket assignment, insertion order, equality by contents rather than order, and
 the essential vocabulary of 8.5. Memory is
 managed: reference counting reclaims promptly
@@ -1502,8 +1509,8 @@ knowing" below.
   never nest, so there is nothing a second layer could mean and no way to build one by
   accident. `Int?` costs exactly what `Int` costs, and at runtime an optional is simply the
   value or `nothing` — no boxing, no allocation, nothing for the collector to trace.
-  Placement stays structural: the flag on a list is `[String]?`, the same flag on its
-  element is `[String?]`.
+  Placement stays structural: the flag on a list is `List[String]?`, the same flag on its
+  element is `List[String?]`.
 - **Narrowing lives in the same state that definite assignment lives in.** `Snapshot` grew
   from a bool per binding to `{ assigned, type }`, so every place that already saved,
   restored, intersected, or merged flow state now does the same for what narrowing proved.
@@ -1639,9 +1646,9 @@ knowing" below.
   costs a copy; they must never run low. Every buffer is also linked into `Heap.live`, and
   `Heap.deinit` frees whatever is left, so error paths cannot leak. A unit test pins flat
   memory, and was confirmed to fail when `popScope` stops releasing.
-- **A buffer records its element kind**, because runtime has no static types but a `[Float]`
+- **A buffer records its element kind**, because runtime has no static types but a `List[Float]`
   must store `rates.append(2)` as `2.0`. List literals get their element type from the
-  checker's `literal_types` table, which is how `var rates: [Float] = [1, 2]` stores
+  checker's `literal_types` table, which is how `var rates: List[Float] = [1, 2]` stores
   Floats.
 - **Expected types flow into list literals** (`typeOfExpected`): from annotations,
   assignment targets, parameters, method arguments, return types, and the other side of a
@@ -1794,7 +1801,7 @@ later closed it (see "Names are XID and NFC" above).
 ### Checker decisions worth knowing
 
 - Section 4.4 describes numeric widening as applying "where arithmetic requires it", but
-  the same section relies on it to infer `[Float]` for `[1, 2.5]`, which is not arithmetic.
+  the same section relies on it to infer `List[Float]` for `[1, 2.5]`, which is not arithmetic.
   It is read here as applying wherever a value meets an expected numeric type, so
   `var rate: Float = 1` is accepted. **Worth confirming**, since it is an interpretation
   rather than a quotation.
@@ -2159,7 +2166,7 @@ maintainability work rather than reproduced behavioral failures:
 
 - **A literal mixing sibling classes needs its type written.** `[Dog(), Cat()]` is reported
   as a list holding `Dog`, since inference never looks for a common base class; `const pets:
-  [Animal] = [Dog(), Cat()]` works. A common-base rule would need designing with `if`
+  List[Animal] = [Dog(), Cat()]` works. A common-base rule would need designing with `if`
   branches and `or`, which infer the same way.
 
 - **What a block assigns is recorded by bare name.** `Facts.assigned_in_lambda` holds names,

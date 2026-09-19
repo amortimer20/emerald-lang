@@ -1,4 +1,4 @@
-diagnostics/list-sum.em:1:22: `sum` needs a List of Ints or Floats, but this is [String]
+diagnostics/list-sum.em:1:22: `sum` needs a List of Ints or Floats, but this is List[String]
   print(["one", "two"].sum())
                        ^^^
 Use `map` to produce numbers first, or choose an aggregation that fits this List's elements.

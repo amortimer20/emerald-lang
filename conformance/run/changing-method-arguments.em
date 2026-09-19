@@ -3,7 +3,7 @@
 # may read the variable the receiver lives in, and `self` as it is before the
 # call.
 struct Tally {
-    var marks: [String]
+    var marks: List[String]
 
     func mark(label: String = describe(), twice: Bool = self.marks.count > 1) {
         self.marks.append(label)

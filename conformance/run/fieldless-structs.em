@@ -4,7 +4,7 @@ func copy_marker(value: Marker): Marker {
 
 const first: Marker = Marker()
 const copied = copy_marker(first)
-const labels: [Marker: String] = [first: "ready"]
+const labels: Dict[Marker, String] = [first: "ready"]
 
 print(first)
 print(first == copied)

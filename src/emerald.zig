@@ -557,23 +557,23 @@ test "section 8.2's dictionary literal, lookup, and assignment" {
 }
 
 test "section 8.2's empty literals take their kind from the expected type" {
-    try expectOutput("const names: [String] = []\nprint(names)\n", "[]\n");
-    try expectOutput("const ages: [String: Int] = []\nprint(ages)\n", "[:]\n");
-    try expectOutput("const seen: {String} = []\nprint(seen)\n", "{}\n");
+    try expectOutput("const names: List[String] = []\nprint(names)\n", "[]\n");
+    try expectOutput("const ages: Dict[String, Int] = []\nprint(ages)\n", "[:]\n");
+    try expectOutput("const seen: Set[String] = []\nprint(seen)\n", "{}\n");
     try expectFailure("var names = []\n", "an empty list needs a type");
 }
 
 test "section 8.2's set literal is bracketed where a set is expected" {
-    try expectOutput("const seen: {String} = [\"red\", \"green\"]\nprint(seen)\n", "{\"red\", \"green\"}\n");
+    try expectOutput("const seen: Set[String] = [\"red\", \"green\"]\nprint(seen)\n", "{\"red\", \"green\"}\n");
     // Section 8.4: repeats collapse to one, and the first keeps its position.
-    try expectOutput("const seen: {Int} = [1, 2, 1, 3]\nprint(seen, seen.count)\n", "{1, 2, 3} 3\n");
+    try expectOutput("const seen: Set[Int] = [1, 2, 1, 3]\nprint(seen, seen.count)\n", "{1, 2, 3} 3\n");
     // Without an expected set type a bracketed list is a list, so 8.2 names
     // the conversion.
     try expectOutput("print([1, 2, 2, 3].to_set())\n", "{1, 2, 3}\n");
     // Only a literal takes its kind this way.
     try expectFailure(
-        "const names = [\"a\"]\nconst seen: {String} = names\n",
-        "this is [String], but `seen` was declared as {String}",
+        "const names = [\"a\"]\nconst seen: Set[String] = names\n",
+        "this is List[String], but `seen` was declared as Set[String]",
     );
 }
 
@@ -581,7 +581,7 @@ test "section 8.4 compares a dictionary by contents and a set by membership" {
     try expectOutput("print([\"a\": 1, \"b\": 2] == [\"b\": 2, \"a\": 1])\n", "true\n");
     try expectOutput("print([\"a\": 1] == [\"a\": 2], [\"a\": 1] == [\"a\": 1, \"b\": 2])\n", "false false\n");
     try expectOutput(
-        "const one: {Int} = [1, 2, 3]\nconst two: {Int} = [3, 2, 1]\nprint(one == two)\n",
+        "const one: Set[Int] = [1, 2, 3]\nconst two: Set[Int] = [3, 2, 1]\nprint(one == two)\n",
         "true\n",
     );
 }
@@ -592,7 +592,7 @@ test "section 8.4 visits a dictionary and a set in insertion order" {
         "Ava 12\nNoah 13\n",
     );
     try expectOutput(
-        "const seen: {String} = [\"red\", \"green\"]\nfor colour in seen {\n    print(colour)\n}\n",
+        "const seen: Set[String] = [\"red\", \"green\"]\nfor colour in seen {\n    print(colour)\n}\n",
         "red\ngreen\n",
     );
     // Section 8.6: a dictionary's block receives the entry as one tuple.
@@ -616,7 +616,7 @@ test "section 8.5's dictionary vocabulary" {
 }
 
 test "section 8.5's set vocabulary" {
-    const seen = "var seen: {String} = [\"red\"]\n";
+    const seen = "var seen: Set[String] = [\"red\"]\n";
     try expectOutput(seen ++ "seen.add(\"blue\")\nseen.add(\"red\")\nprint(seen, seen.count)\n", "{\"red\", \"blue\"} 2\n");
     try expectOutput(seen ++ "print(seen.contains?(\"red\"), seen.contains?(\"blue\"))\n", "true false\n");
     try expectOutput(seen ++ "seen.remove(\"red\")\nprint(seen, seen.empty?())\n", "{} true\n");
@@ -628,42 +628,42 @@ test "section 8.1 gives a dictionary and a set value semantics" {
         "[\"x\": 1] [\"x\": 1, \"y\": 2]\n",
     );
     try expectOutput(
-        "var a: {Int} = [1]\nvar b = a\nb.add(2)\nprint(a, b)\n",
+        "var a: Set[Int] = [1]\nvar b = a\nb.add(2)\nprint(a, b)\n",
         "{1} {1, 2}\n",
     );
     // Section 4.3: a `const` cannot be changed either way.
     try expectFailure("const ages = [\"a\": 1]\nages[\"b\"] = 2\n", "`ages` is a `const`, so its contents cannot change");
-    try expectFailure("const seen: {Int} = [1]\nseen.add(2)\n", "`seen` is a `const`, so its contents cannot change");
+    try expectFailure("const seen: Set[Int] = [1]\nseen.add(2)\n", "`seen` is a `const`, so its contents cannot change");
 }
 
 test "section 8.3 accepts only keys that can be found again" {
-    try expectFailure("var bad: [[Int]: String] = []\n", "[Int] cannot be a dictionary key");
-    try expectFailure("var bad: {[Int]} = []\n", "a set cannot hold [Int]");
-    try expectFailure("var bad: [Int?: String] = []\n", "Int? cannot be a dictionary key");
+    try expectFailure("var bad: Dict[List[Int], String] = []\n", "List[Int] cannot be a dictionary key");
+    try expectFailure("var bad: Set[List[Int]] = []\n", "a set cannot hold List[Int]");
+    try expectFailure("var bad: Dict[Int?, String] = []\n", "Int? cannot be a dictionary key");
     // A tuple qualifies when its positions do.
     try expectOutput(
-        "var byPair: [(String, Int): String] = [(\"a\", 1): \"first\"]\nprint(byPair[(\"a\", 1)], byPair[(\"b\", 2)])\n",
+        "var byPair: Dict[(String, Int), String] = [(\"a\", 1): \"first\"]\nprint(byPair[(\"a\", 1)], byPair[(\"b\", 2)])\n",
         "first nothing\n",
     );
 }
 
 test "section 9.2's normalized equality reaches dictionary keys and sets" {
     // The same text composed, and as `e` plus a combining acute accent.
-    try expectOutput("const seen: {String} = [\"caf\u{e9}\"]\nprint(seen.contains?(\"cafe\\u{301}\"))\n", "true\n");
+    try expectOutput("const seen: Set[String] = [\"caf\u{e9}\"]\nprint(seen.contains?(\"cafe\\u{301}\"))\n", "true\n");
     try expectOutput("const byName = [\"caf\u{e9}\": 1]\nprint(byName[\"cafe\\u{301}\"])\n", "1\n");
 }
 
 test "a dictionary key is looked up at the type the dictionary holds" {
     try expectFailure("const ages = [\"Ava\": 12]\nprint(ages[1])\n", "this is Int, but the dictionary's keys are String");
     // Section 4.4: a whole number reaches a `Float` key by widening.
-    try expectOutput("var rates: [Float: String] = [1.5: \"low\"]\nrates[2] = \"high\"\nprint(rates, rates[2.0])\n", "[1.5: \"low\", 2.0: \"high\"] high\n");
+    try expectOutput("var rates: Dict[Float, String] = [1.5: \"low\"]\nrates[2] = \"high\"\nprint(rates, rates[2.0])\n", "[1.5: \"low\", 2.0: \"high\"] high\n");
 }
 
 test "section 8.5 names a dictionary's and a set's operations apart" {
-    try expectFailure("const ages = [\"a\": 1]\nprint(ages.get(\"a\"))\n", "[String: Int] has no method `get`");
-    try expectFailure("const ages = [\"a\": 1]\nprint(ages.contains?(\"a\"))\n", "[String: Int] has no method `contains?`");
-    try expectFailure("const seen: {Int} = [1]\nprint(seen.contains_key?(1))\n", "{Int} has no method `contains_key?`");
-    try expectFailure("const ages = [\"a\": 1]\nprint(ages.first)\n", "[String: Int] has no property `first`");
+    try expectFailure("const ages = [\"a\": 1]\nprint(ages.get(\"a\"))\n", "Dict[String, Int] has no method `get`");
+    try expectFailure("const ages = [\"a\": 1]\nprint(ages.contains?(\"a\"))\n", "Dict[String, Int] has no method `contains?`");
+    try expectFailure("const seen: Set[Int] = [1]\nprint(seen.contains_key?(1))\n", "Set[Int] has no method `contains_key?`");
+    try expectFailure("const ages = [\"a\": 1]\nprint(ages.first)\n", "Dict[String, Int] has no property `first`");
 }
 
 test "a compound assignment needs an entry that is already there" {
@@ -729,7 +729,7 @@ test "unpacking checks the shape before it binds anything" {
 test "a tuple position is checked where it is written" {
     try expectFailure("const pair = (1, 2)\nprint(pair.2)\n", "(Int, Int) has no position 2");
     try expectFailure("const pair = (1, 2)\nprint(pair.count)\n", "a tuple has no `count`");
-    try expectFailure("print([1, 2].0)\n", "`[Int]` has no positions");
+    try expectFailure("print([1, 2].0)\n", "`List[Int]` has no positions");
 }
 
 test "section 4.4 widens a tuple position wherever one is expected" {
@@ -742,7 +742,7 @@ test "section 4.4 widens a tuple position wherever one is expected" {
         "func take(pair: (Float, Int)) {\n    print(pair)\n}\ntake((7, 8))\n",
         "(7.0, 8)\n",
     );
-    try expectOutput("const many: [(Float, Int)] = [(1, 2)]\nprint(many)\n", "[(1.0, 2)]\n");
+    try expectOutput("const many: List[(Float, Int)] = [(1, 2)]\nprint(many)\n", "[(1.0, 2)]\n");
 }
 
 test "a tuple is a value, so holding one cannot change another" {
@@ -1057,7 +1057,7 @@ test "a block reads its own file's names wherever it is called" {
             .text =
             \\const factor = 3
             \\
-            \\func apply(values: [Int], block: func(Int): Int): [Int] {
+            \\func apply(values: List[Int], block: func(Int): Int): List[Int] {
             \\    return values.map(block)
             \\}
             \\
@@ -1373,14 +1373,14 @@ test "section 4.2: the parser splits a trailing `?` in type position" {
     try expectOutput("var maybe: Int? = 5\nprint(maybe)\n", "5\n");
     // Section 4.5: optionals never nest.
     try expectFailure("var maybe: Int??\n", "a type cannot be optional twice");
-    try expectFailure("var maybe: [Int]??\n", "a type cannot be optional twice");
+    try expectFailure("var maybe: List[Int]??\n", "a type cannot be optional twice");
     try expectFailure("var maybe: Nothing?\n", "`Nothing?` is not a type");
     // Section 4.5: placement is structural.
-    try expectOutput("var maybe: [String]? = nothing\nprint(maybe)\n", "nothing\n");
-    try expectOutput("var each: [String?] = [nothing, \"Ava\"]\nprint(each)\n", "[nothing, \"Ava\"]\n");
+    try expectOutput("var maybe: List[String]? = nothing\nprint(maybe)\n", "nothing\n");
+    try expectOutput("var each: List[String?] = [nothing, \"Ava\"]\nprint(each)\n", "[nothing, \"Ava\"]\n");
     try expectFailure(
-        "var names: [String]? = nothing\nvar each: [String?] = names\n",
-        "this is [String]?, but `each` was declared as [String?]",
+        "var names: List[String]? = nothing\nvar each: List[String?] = names\n",
+        "this is List[String]?, but `each` was declared as List[String?]",
     );
 }
 
@@ -1493,7 +1493,7 @@ test "a for loop visits a range in order, and a range only counts upward" {
 
 test "counting down, stepping, and reversing say their direction in words" {
     const program =
-        \\var out: [Int] = []
+        \\var out: List[Int] = []
         \\for i in 5.down_to(1) {
         \\    out.append(i)
         \\}
@@ -1531,7 +1531,7 @@ test "reverse and step apply in the order written" {
 test "a computed count on the wrong side is empty, so walking backwards is safe" {
     try expectOutput("var count = 0\nfor i in count.down_to(1) {\n    print(i)\n}\nprint(9)\n", "9\n");
     try expectOutput(
-        "var items: [Int] = []\nfor i in (0..<items.count).reverse() {\n    print(items[i])\n}\nprint(9)\n",
+        "var items: List[Int] = []\nfor i in (0..<items.count).reverse() {\n    print(items[i])\n}\nprint(9)\n",
         "9\n",
     );
 }
@@ -1726,22 +1726,22 @@ test "a list literal, indexing, and count" {
 }
 
 test "an empty list takes its type from context" {
-    try expectOutput("var names: [Int] = []\nprint(names, names.empty?())\n", "[] true\n");
-    try expectOutput("func none(): [Int] {\n    return []\n}\nprint(none())\n", "[]\n");
+    try expectOutput("var names: List[Int] = []\nprint(names, names.empty?())\n", "[] true\n");
+    try expectOutput("func none(): List[Int] {\n    return []\n}\nprint(none())\n", "[]\n");
     try expectOutput("var xs = [1]\nprint(xs == [], [] != xs)\n", "false true\n");
     try expectFailure("var names = []\n", "an empty list needs a type");
 }
 
 test "a list of Ints and Floats is a list of Floats, and a Float list widens what it stores" {
     try expectOutput("print([1, 2.5])\n", "[1.0, 2.5]\n");
-    try expectOutput("var rates: [Float] = [1, 2]\nrates.append(3)\nrates[0] = 4\nprint(rates)\n", "[4.0, 2.0, 3.0]\n");
-    try expectOutput("var grid: [[Float]] = [[1], [2]]\nprint(grid)\n", "[[1.0], [2.0]]\n");
+    try expectOutput("var rates: List[Float] = [1, 2]\nrates.append(3)\nrates[0] = 4\nprint(rates)\n", "[4.0, 2.0, 3.0]\n");
+    try expectOutput("var grid: List[List[Float]] = [[1], [2]]\nprint(grid)\n", "[[1.0], [2.0]]\n");
     try expectFailure("var xs = [1, true]\n", "this is Bool, but the list holds Int");
 }
 
 test "lists are invariant, so an Int list is not a Float list" {
-    try expectFailure("var ints = [1]\nvar floats: [Float] = ints\n", "this is [Int], but `floats` was declared as [Float]");
-    try expectFailure("print([1] == [1.0])\n", "[Int] and [Float] cannot be compared");
+    try expectFailure("var ints = [1]\nvar floats: List[Float] = ints\n", "this is List[Int], but `floats` was declared as List[Float]");
+    try expectFailure("print([1] == [1.0])\n", "List[Int] and List[Float] cannot be compared");
 }
 
 test "assigning a list gives an independent copy" {
@@ -1759,7 +1759,7 @@ test "assigning a list gives an independent copy" {
 test "a list passed to a function is independent of the caller's" {
     const program =
         \\var scores = [1]
-        \\func show(items: [Int]) {
+        \\func show(items: List[Int]) {
         \\    scores.append(2)
         \\    print(items)
         \\}
@@ -1770,7 +1770,7 @@ test "a list passed to a function is independent of the caller's" {
     try expectOutput(program, "[1]\n[1, 2]\n");
 
     const returned =
-        \\func with_guest(guests: [Int], guest: Int): [Int] {
+        \\func with_guest(guests: List[Int], guest: Int): List[Int] {
         \\    var updated = guests
         \\    updated.append(guest)
         \\    return updated
@@ -1826,16 +1826,16 @@ test "lists compare element by element and print as they are written" {
 test "an index outside the list names the index and the valid range" {
     try expectFailure("var xs = [1, 2, 3]\nprint(xs[3])\n", "index 3 is outside this list, which has 3 elements");
     try expectFailure("var xs = [1]\nxs[-1] = 0\n", "index -1 is outside this list, which has 1 element");
-    try expectFailure("var xs: [Int] = []\nprint(xs[0])\n", "index 0 is outside this list, which is empty");
+    try expectFailure("var xs: List[Int] = []\nprint(xs[0])\n", "index 0 is outside this list, which is empty");
     try expectFailure("var xs = [1]\nxs.insert(3, 2)\n", "cannot insert at index 3 in a list of 1 element");
-    try expectFailure("var xs: [Int] = []\nprint(xs.remove_last())\n", "cannot remove an element from an empty list");
+    try expectFailure("var xs: List[Int] = []\nprint(xs.remove_last())\n", "cannot remove an element from an empty list");
 }
 
 test "a const, a parameter, a loop variable, and a temporary cannot change" {
     try expectFailure("const xs = [1]\nxs.append(2)\n", "`xs` is a `const`, so its contents cannot change");
     try expectFailure("const xs = [1]\nxs[0] = 2\n", "`xs` is a `const`, so its contents cannot change");
     try expectFailure(
-        "func f(guests: [Int]) {\n    guests.append(1)\n}\n",
+        "func f(guests: List[Int]) {\n    guests.append(1)\n}\n",
         "`guests` is a parameter, so a change to it would be lost when the function returns",
     );
     try expectFailure(
@@ -1843,7 +1843,7 @@ test "a const, a parameter, a loop variable, and a temporary cannot change" {
         "`row` is a loop variable, so a change to it would be lost",
     );
     try expectFailure(
-        "func make(): [Int] {\n    return [1]\n}\nmake().append(2)\n",
+        "func make(): List[Int] {\n    return [1]\n}\nmake().append(2)\n",
         "`append` changes a list, but this list is a temporary value, so the change would be lost",
     );
     // Reading through a const or a parameter is fine.
@@ -1851,8 +1851,8 @@ test "a const, a parameter, a loop variable, and a temporary cannot change" {
 }
 
 test "a misspelled member names what Emerald calls it" {
-    try expectFailure("var xs = [1]\nxs.push(2)\n", "[Int] has no method `push`");
-    try expectFailure("var xs = [1]\nprint(xs.length)\n", "[Int] has no property `length`");
+    try expectFailure("var xs = [1]\nxs.push(2)\n", "List[Int] has no method `push`");
+    try expectFailure("var xs = [1]\nprint(xs.length)\n", "List[Int] has no property `length`");
     try expectFailure("var xs = [1]\nprint(xs.count())\n", "`count` is a property, so it takes no parentheses");
     try expectFailure("var xs = [1]\nprint(xs.append)\n", "`append` is a method, so it needs parentheses");
     try expectFailure("var n = 5\nprint(n[0])\n", "Int cannot be indexed");
@@ -2181,7 +2181,7 @@ test "calls are checked for arity and argument types" {
 
 test "only a function can be called, and the diagnostic says what it is instead" {
     try expectFailure("var x = 5\nprint(x())\n", "`x` is Int, which is not a function");
-    try expectFailure("var x = [1]\nprint(x())\n", "`x` is [Int], which is not a function");
+    try expectFailure("var x = [1]\nprint(x())\n", "`x` is List[Int], which is not a function");
     // Section 15.2's prelude functions take any number of arguments of any
     // type, which no written type describes, so they can only be called.
     try expectFailure("var p = print\n", "`print` is built in, and built-in functions cannot be used as values");
@@ -2434,7 +2434,7 @@ test "captured variables outlive the call that made them, one set per call" {
 
 test "section 6.1: a loop variable is fresh each iteration, so blocks keep their own" {
     const program =
-        \\var blocks: [func(): Int] = []
+        \\var blocks: List[func(): Int] = []
         \\for i in 1..3 {
         \\    blocks.append({ => i })
         \\}
@@ -2547,12 +2547,12 @@ test "a call through a value names the binding when there is one" {
         "`f` takes 1 argument, but this call passes 2",
     );
     try expectFailure(
-        "const fs: [func(Int): Int] = [{ n => n }]\nprint(fs[0](1, 2))\n",
+        "const fs: List[func(Int): Int] = [{ n => n }]\nprint(fs[0](1, 2))\n",
         "this takes 1 argument, but this call passes 2",
     );
     // A function stored in a list is called through the element.
     try expectOutput(
-        "const fs: [func(Int): Int] = [{ n => n }, { n => n * 2 }]\nprint(fs[1](5))\n",
+        "const fs: List[func(Int): Int] = [{ n => n }, { n => n * 2 }]\nprint(fs[1](5))\n",
         "10\n",
     );
 }
@@ -2561,7 +2561,7 @@ test "each and map belong to lists, not to every value" {
     try expectFailure("\"abc\".each { c => print(c) }\n", "String has no method `each`");
     try expectFailure("print(5.map { n => n })\n", "Int has no method `map`");
     // Names from other languages point at Emerald's.
-    try expectFailure("[1].collect { n => n }\n", "[Int] has no method `collect`");
+    try expectFailure("[1].collect { n => n }\n", "List[Int] has no method `collect`");
 }
 
 // Section 19.5's collector.
@@ -2595,7 +2595,7 @@ test "a collection in the middle of building a value keeps the half-built value"
         \\func label(n: Int): String {
         \\    return "#{n}:#{n * 2}"
         \\}
-        \\var rows: [[String]] = []
+        \\var rows: List[List[String]] = []
         \\for i in 1..2000 {
         \\    rows.append([label(i), label(i + 1), label(i + 2)])
         \\}
@@ -2694,15 +2694,15 @@ test "a value that may be absent cannot be used until it is there" {
     try expectFailure("var s: String? = \"a\"\nprint(s.count)\n", "this is String?, so `count` may not be there to use");
     try expectFailure("var s: String? = \"a\"\nprint(s.upper())\n", "this is String?, so `upper` may not be there to use");
     try expectFailure("var s: String? = \"a\"\nprint(s + \"b\")\n", "`+` joins two Strings, but this is String? and String");
-    try expectFailure("var xs: [Int]? = nothing\nprint(xs[0])\n", "this is [Int]?, so it may not be there to use");
-    try expectFailure("var xs: [Int]? = nothing\nfor x in xs {\n    print(x)\n}\n", "this is [Int]?, so it may not be there to use");
-    try expectFailure("var xs: [Int]? = nothing\nxs[0] = 1\n", "this is [Int]?, so there may be nothing to assign into");
+    try expectFailure("var xs: List[Int]? = nothing\nprint(xs[0])\n", "this is List[Int]?, so it may not be there to use");
+    try expectFailure("var xs: List[Int]? = nothing\nfor x in xs {\n    print(x)\n}\n", "this is List[Int]?, so it may not be there to use");
+    try expectFailure("var xs: List[Int]? = nothing\nxs[0] = 1\n", "this is List[Int]?, so there may be nothing to assign into");
     try expectFailure("var n: Int? = 1\nprint(n < 2)\n", "`<` needs numbers, but these are Int? values");
 }
 
 test "sections 8.5, 8.6, and 9.2: what may come back empty-handed" {
     try expectOutput("print([3, 8].first.or(-1))\nprint([3, 8].last.or(-1))\n", "3\n8\n");
-    try expectOutput("const e: [Int] = []\nprint(e.first.or(-1))\nprint(e.last.or(-1))\n", "-1\n-1\n");
+    try expectOutput("const e: List[Int] = []\nprint(e.first.or(-1))\nprint(e.last.or(-1))\n", "-1\n-1\n");
     try expectOutput("print([3, 8, 9].find { n => n > 5 }.or(-1))\n", "8\n");
     try expectOutput("print([3, 8, 9].find { n => n > 90 }.or(-1))\n", "-1\n");
     try expectOutput("print([3, 8, 9].find_index { n => n > 5 }.or(-1))\n", "1\n");
@@ -2721,12 +2721,12 @@ test "section 15.2: input_maybe reports the end of the input as absence" {
 }
 
 test "section 4.5: a literal mixing `nothing` needs its type from context" {
-    try expectOutput("var each: [String?] = [nothing, \"Ava\"]\nprint(each)\n", "[nothing, \"Ava\"]\n");
+    try expectOutput("var each: List[String?] = [nothing, \"Ava\"]\nprint(each)\n", "[nothing, \"Ava\"]\n");
     try expectFailure("var each = [nothing, \"Ava\"]\n", "this list mixes `nothing` with String, so its type has to be written");
     // Placement is structural: these are different types.
     try expectFailure(
-        "var whole: [String]? = nothing\nvar each: [String?] = whole\n",
-        "this is [String]?, but `each` was declared as [String?]",
+        "var whole: List[String]? = nothing\nvar each: List[String?] = whole\n",
+        "this is List[String]?, but `each` was declared as List[String?]",
     );
 }
 

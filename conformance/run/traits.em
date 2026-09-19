@@ -69,7 +69,7 @@ var counter: Counter = ada
 counter.bump()
 print(counter.count, ada.count)
 
-const things: [Named] = [ada, Robot(1)]
+const things: List[Named] = [ada, Robot(1)]
 for thing in things {
     print(thing.name, thing is Greeter, thing is Robot, thing is Counter)
     if thing is Robot {
@@ -92,7 +92,7 @@ struct Jar with Labelled {
     const label: String = "jam"
 }
 
-const labels: [Labelled] = [Box(), Jar()]
+const labels: List[Labelled] = [Box(), Jar()]
 for item in labels {
     print(item.label)
 }

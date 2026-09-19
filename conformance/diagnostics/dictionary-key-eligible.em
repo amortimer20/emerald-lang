@@ -1,1 +1,1 @@
-var index: [[Int]: String] = []
+var index: Dict[List[Int], String] = []

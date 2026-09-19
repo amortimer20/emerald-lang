@@ -6,19 +6,19 @@
 ## is used, not when the program starts.
 const pass_mark = 5
 
-func total(scores: [Int]): Int {
+func total(scores: List[Int]): Int {
     var sum = 0
     scores.each { score => sum += score }
     return sum
 }
 
-func best(scores: [Int]): Int {
+func best(scores: List[Int]): Int {
     var highest = 0
     scores.each { score => highest = score if score > highest }
     return highest
 }
 
-func average(scores: [Int]): Int {
+func average(scores: List[Int]): Int {
     return 0 if scores.count == 0
     return total(scores) // scores.count
 }

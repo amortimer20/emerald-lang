@@ -1,4 +1,4 @@
-var hooks: [func()] = []
+var hooks: List[func()] = []
 
 struct Loop {
     var n: Int = 0

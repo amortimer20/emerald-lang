@@ -4,7 +4,7 @@ struct Point {
 
 struct Box {
     var corner: Point
-    var tags: [String]
+    var tags: List[String]
 
     const size: Int {
         return self.corner.x * 2
@@ -19,7 +19,7 @@ struct Box {
         }
     }
 
-    var labels: [String] {
+    var labels: List[String] {
         get {
             return self.tags
         }

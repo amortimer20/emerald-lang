@@ -10,9 +10,9 @@ diagnostics/class-mutability.em:27:1: `b` is a `const`, so its contents cannot c
   b.count = 1
   ^
 Declare `b` with `var` if it needs to change.
-diagnostics/class-mutability.em:29:13: Account cannot be a dictionary key
-  var keyed: [Account: Int] = []
-              ^^^^^^^
+diagnostics/class-mutability.em:29:17: Account cannot be a dictionary key
+  var keyed: Dict[Account, Int] = []
+                  ^^^^^^^
 A key must be a number, a `Bool`, a `String`, an enum value, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.
 diagnostics/class-mutability.em:30:7: Account and Other cannot be compared
   print(a == Other())

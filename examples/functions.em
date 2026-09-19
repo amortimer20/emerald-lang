@@ -40,7 +40,7 @@ label(88, suffix: " points")
 # A function can be declared inside another. It can be called anywhere in the
 # block around it, even above where it is written, and it shares that block's
 # variables, as a lambda does.
-func summarize(scores: [Int]): String {
+func summarize(scores: List[Int]): String {
     var total = 0
     for score in scores {
         add(score)

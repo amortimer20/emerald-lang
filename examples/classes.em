@@ -4,7 +4,7 @@
 ## rather than copied. Every name holding one refers to the same object.
 class Playlist {
     var name: String
-    var songs: [String] = []
+    var songs: List[String] = []
 
     func add(song: String) {
         self.songs.append(song)

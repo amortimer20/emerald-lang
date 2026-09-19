@@ -25,7 +25,7 @@ class Animal {
 }
 
 class Dog extends Animal {
-    var tricks: [String] = []
+    var tricks: List[String] = []
 
     constructor(name: String) {
         super(name)
@@ -67,7 +67,7 @@ print(pet.speak(2), pet.kind)
 print(rex.sound_count, rex.tricks)
 
 # An override keeps the base declaration's defaults, whichever version runs.
-const animals: [Animal] = [Animal("Generic"), rex, Puppy("Bit")]
+const animals: List[Animal] = [Animal("Generic"), rex, Puppy("Bit")]
 for animal in animals {
     print(animal.speak(), "/", animal.kind)
 }
@@ -220,7 +220,7 @@ class FullKennel extends Kennel {
     }
 }
 
-const kennels: [Kennel] = [Kennel(), FullKennel()]
+const kennels: List[Kennel] = [Kennel(), FullKennel()]
 for kennel in kennels {
     const resident = kennel.resident()
     if resident != nothing {
@@ -261,7 +261,7 @@ print(bit.speak())
 # Taking a method from an object still being built runs nothing, so a base
 # class's constructor may hand one on; it runs the object's own version once
 # the object is built.
-var introductions: [func(): String] = []
+var introductions: List[func(): String] = []
 
 class Guest {
     const name: String

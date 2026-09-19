@@ -12,12 +12,12 @@ struct Vector2 {
 # Whole numbers widen into Float parameters and fields.
 print(Vector2(1, 2.5))
 
-var opened: [Account] = []
+var opened: List[Account] = []
 
 struct Account {
     const owner: String
     var balance: Int
-    var history: [Int]
+    var history: List[Int]
 
     constructor(owner: String, opening: Int) {
         # A `const` field is set once, here, and never again.

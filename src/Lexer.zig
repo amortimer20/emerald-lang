@@ -794,8 +794,8 @@ test "newlines are suppressed while parentheses or brackets are open" {
 
 test "a brace inside parentheses ends its lines again until it closes" {
     try expectKinds("f({\n1\n2\n}\n)\n", &.{
-        .identifier,  .left_paren,  .left_brace,  .int_literal, .newline, .int_literal,
-        .newline,     .right_brace, .right_paren, .newline,     .eof,
+        .identifier, .left_paren,  .left_brace,  .int_literal, .newline, .int_literal,
+        .newline,    .right_brace, .right_paren, .newline,     .eof,
     });
 }
 
@@ -871,8 +871,8 @@ test "names use Unicode identifier characters" {
 }
 
 test "an optional collection type puts the question mark on its own" {
-    try expectKinds("var a: [String]?", &.{
-        .keyword_var, .identifier,    .colon,    .left_bracket,
+    try expectKinds("var a: List[String]?", &.{
+        .keyword_var, .identifier,    .colon,    .identifier, .left_bracket,
         .identifier,  .right_bracket, .question, .eof,
     });
 }

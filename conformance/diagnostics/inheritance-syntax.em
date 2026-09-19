@@ -47,7 +47,7 @@ class A {
 }
 class C extends A, B {
 }
-class D extends [Int] {
+class D extends List[Int] {
 }
 class E {
     func f() {

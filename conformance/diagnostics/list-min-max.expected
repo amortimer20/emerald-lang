@@ -1,8 +1,8 @@
-diagnostics/list-min-max.em:1:21: `min_max` needs a List of ordered values, but this is [Bool]
+diagnostics/list-min-max.em:1:21: `min_max` needs a List of ordered values, but this is List[Bool]
   print([true, false].min_max())
                       ^^^^^^^
 Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.
-diagnostics/list-min-max.em:3:21: `min_max` cannot choose from [Int?], whose elements may be absent
+diagnostics/list-min-max.em:3:21: `min_max` cannot choose from List[Int?], whose elements may be absent
   print(maybe_numbers.min_max())
                       ^^^^^^^
 Use `filter_map` to remove absent values first, so `nothing` can remain the empty-List result.

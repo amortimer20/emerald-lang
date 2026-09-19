@@ -9,7 +9,7 @@ struct Line {
 }
 
 struct Bag {
-    var values: [Int]
+    var values: List[Int]
 }
 
 struct Wrapper {
@@ -45,7 +45,7 @@ bag.values[0] = 99
 print(bag.values)
 
 # A field step through a dictionary lookup, then compound assignment.
-var lookup: [String: Point] = ["a": Point(1.0, 1)]
+var lookup: Dict[String, Point] = ["a": Point(1.0, 1)]
 lookup["a"].x += 1
 print(lookup["a"].or(Point(0.0, 0)))
 

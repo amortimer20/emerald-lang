@@ -875,17 +875,17 @@ const Printer = struct {
             try self.write(")");
         } else if (t.element) |element| {
             if (t.key) |key| {
-                try self.write("[");
+                try self.write("Dict[");
                 try self.printType(key.*);
-                try self.write(": ");
+                try self.write(", ");
                 try self.printType(element.*);
                 try self.write("]");
             } else if (t.set) {
-                try self.write("{");
+                try self.write("Set[");
                 try self.printType(element.*);
-                try self.write("}");
+                try self.write("]");
             } else {
-                try self.write("[");
+                try self.write("List[");
                 try self.printType(element.*);
                 try self.write("]");
             }

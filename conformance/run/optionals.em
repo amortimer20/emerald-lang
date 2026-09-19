@@ -51,7 +51,7 @@ print(counter + 5)
 
 # Section 8.5 and 8.6: absence from a collection.
 const numbers = [3, 8, 2, 9]
-const empty: [Int] = []
+const empty: List[Int] = []
 print(numbers.first.or(-1))
 print(numbers.last.or(-1))
 print(empty.first.or(-1))
@@ -66,8 +66,8 @@ print("hello".index_of("ll").or(-1))
 print("hello".index_of("z").or(-1))
 
 # Section 4.5: placement is structural.
-var whole: [String]? = nothing
-var each: [String?] = [nothing, "Ava"]
+var whole: List[String]? = nothing
+var each: List[String?] = [nothing, "Ava"]
 print(whole)
 print(each)
 

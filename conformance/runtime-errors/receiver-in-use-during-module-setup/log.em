@@ -1,6 +1,6 @@
 # The same for a file's own bindings while the file is being set up (14.1).
 struct Log {
-    var lines: [String]
+    var lines: List[String]
 
     func add(text: String) {
         self.lines.append(text)

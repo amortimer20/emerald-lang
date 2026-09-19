@@ -1,5 +1,5 @@
 struct Bag {
-    var values: [Int]
+    var values: List[Int]
 }
 
 var later: Int

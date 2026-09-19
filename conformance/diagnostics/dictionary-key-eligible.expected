@@ -1,4 +1,4 @@
-diagnostics/dictionary-key-eligible.em:1:13: [Int] cannot be a dictionary key
-  var index: [[Int]: String] = []
-              ^^^^^
+diagnostics/dictionary-key-eligible.em:1:17: List[Int] cannot be a dictionary key
+  var index: Dict[List[Int], String] = []
+                  ^^^^^^^^^
 A key must be a number, a `Bool`, a `String`, an enum value, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.

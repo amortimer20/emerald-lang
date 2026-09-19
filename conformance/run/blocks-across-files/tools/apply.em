@@ -1,6 +1,6 @@
 const factor = 3
 
-func apply(values: [Int], block: func(Int): Int): [Int] {
+func apply(values: List[Int], block: func(Int): Int): List[Int] {
     return values.map(block)
 }
 

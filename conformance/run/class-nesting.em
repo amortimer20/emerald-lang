@@ -23,7 +23,7 @@ class Node {
     var name: String
     var at: Point = Point(0, 0)
     var next: Node? = nothing
-    var points: [Point] = []
+    var points: List[Point] = []
 
     func link_back() {
         func inner() {
@@ -61,7 +61,7 @@ second.next = loop
 print(loop)
 
 class Log {
-    var lines: [String] = []
+    var lines: List[String] = []
 }
 struct Logger {
     const log: Log

@@ -1,5 +1,5 @@
 struct Index {
-    var labels: [Wrapper: String]
+    var labels: Dict[Wrapper, String]
 }
 
 struct Wrapper {
@@ -7,5 +7,5 @@ struct Wrapper {
 }
 
 struct Payload {
-    var values: [Int]
+    var values: List[Int]
 }

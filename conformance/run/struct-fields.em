@@ -4,12 +4,12 @@ struct Vector2 {
 }
 
 struct Bag {
-    var values: [Int]
+    var values: List[Int]
 }
 
 const first = Vector2(1, 2)
 const copied = first
-const labels: [Vector2: String] = [first: "point"]
+const labels: Dict[Vector2, String] = [first: "point"]
 
 print(first)
 print(first.x)

@@ -3,7 +3,7 @@
 const numbers = [3, 1, 1, 2]
 const decimals = [Float.infinity, 2.5, -1.0]
 const words = ["zebra", "apple", "apple"]
-const empty: [Int] = []
+const empty: List[Int] = []
 
 const (smallest, largest) = numbers.min_max()
 print(smallest.or(0), largest.or(0), empty.min_max())

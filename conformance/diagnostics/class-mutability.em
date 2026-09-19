@@ -26,5 +26,5 @@ a.home.x = 3
 const b = Box(a)
 b.count = 1
 b.account.balance = 5
-var keyed: [Account: Int] = []
+var keyed: Dict[Account, Int] = []
 print(a == Other())

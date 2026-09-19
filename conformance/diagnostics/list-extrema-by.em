@@ -1,5 +1,5 @@
 print([1, 2].min_by { number => number.even?() })
-const maybe_numbers: [Int?] = [1, nothing]
+const maybe_numbers: List[Int?] = [1, nothing]
 print(maybe_numbers.max_by { number => number.or(0) })
 print([1].min_by { number => nothing })
 print([1].max_by())

@@ -42,23 +42,23 @@ const odd = sequence.reject { number => number.even?() }
 print(even, odd, calls, sequence)
 
 # Traversal positions are zero-based and do not change the list.
-var indexed: [Int] = []
+var indexed: List[Int] = []
 sequence.each_with_index { number, index =>
     indexed.append(number + index)
 }
 print(indexed, sequence)
 
-var reverse_seen: [Int] = []
+var reverse_seen: List[Int] = []
 sequence.reverse_each { number => reverse_seen.append(number) }
 print(reverse_seen, sequence)
 
-var any_seen: [Int] = []
+var any_seen: List[Int] = []
 const has_even = sequence.any? { number =>
     any_seen.append(number)
     return number.even?()
 }
 print(has_even, any_seen)
-var short_seen: [Int] = []
+var short_seen: List[Int] = []
 const all_small = sequence.all? { number =>
     short_seen.append(number)
     return number < 2
@@ -76,12 +76,12 @@ const one_even = sequence.one? { number =>
     return number.even?()
 }
 print(one_even, short_seen)
-var take_seen: [Int] = []
+var take_seen: List[Int] = []
 const prefix = sequence.take_while { number =>
     take_seen.append(number)
     return number <= 2
 }
-var drop_seen: [Int] = []
+var drop_seen: List[Int] = []
 const suffix = sequence.drop_while { number =>
     drop_seen.append(number)
     return number <= 2
@@ -99,7 +99,7 @@ print(
     sequence.one? { number => number == 3 },
     sequence.count_where { number => number.even?() }
 )
-const empty_numbers: [Int] = []
+const empty_numbers: List[Int] = []
 print(empty_numbers.take_while { number => number > 0 }, empty_numbers.drop_while { number => number > 0 })
 print(empty_numbers.flat_map { number => [number] })
 print(
@@ -111,11 +111,11 @@ print(
 )
 
 # An empty list takes its type from context.
-var names: [Int] = []
+var names: List[Int] = []
 print(names, names == [])
 
 # Section 4.4 widening: a Float list stores whole numbers as Floats.
-var rates: [Float] = [1, 2.5]
+var rates: List[Float] = [1, 2.5]
 rates.append(3)
 print(rates, [1, 2.5])
 

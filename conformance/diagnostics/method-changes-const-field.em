@@ -12,7 +12,7 @@ struct Counter {
 
 struct Holder {
     const counter: Counter
-    const counts: [Int]
+    const counts: List[Int]
 
     func bump() {
         self.counter.increment()

@@ -24,7 +24,7 @@ struct Counter {
         return other._count == self._count
     }
 
-    func all_ticked(counters: [Counter]): [Int] {
+    func all_ticked(counters: List[Counter]): List[Int] {
         return counters.map { c => c._count }
     }
 

@@ -1,4 +1,4 @@
-diagnostics/list-invariance.em:7:25: this is [Int], but `mistaken` was declared as [Float]
-  var mistaken: [Float] = whole
-                          ^^^^^
-A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: [Float] = [1, 2]`.
+diagnostics/list-invariance.em:7:29: this is List[Int], but `mistaken` was declared as List[Float]
+  var mistaken: List[Float] = whole
+                              ^^^^^
+A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: List[Float] = [1, 2]`.

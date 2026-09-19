@@ -1,5 +1,5 @@
 struct Bag {
-    var values: [Int]
+    var values: List[Int]
 }
 
-const labels: [Bag: String] = []
+const labels: Dict[Bag, String] = []

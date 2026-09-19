@@ -46,7 +46,7 @@ class Song with Describable {
 }
 
 ## A list of the trait holds either, and each keeps its own behavior.
-const shelf: [Describable] = [Book("Dune", 412), Song("Blue", 185)]
+const shelf: List[Describable] = [Book("Dune", 412), Song("Blue", 185)]
 for item in shelf {
     print(item.describe())
 }

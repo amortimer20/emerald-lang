@@ -27,7 +27,7 @@ enum Direction {
     }
 
     # So do type-level members.
-    func Direction.all(): [Direction] {
+    func Direction.all(): List[Direction] {
         return [Direction.north, Direction.east, Direction.south, Direction.west]
     }
 }
@@ -44,12 +44,12 @@ facing = facing.turned_right()
 print(heading, facing)
 
 # They are stable dictionary keys and set members.
-var visits: [Direction: Int] = []
+var visits: Dict[Direction, Int] = []
 for direction in [Direction.east, Direction.north, Direction.east] {
     visits[direction] = visits[direction].or(0) + 1
 }
 print(visits)
-const seen: {Direction} = [Direction.west, Direction.west, Direction.south]
+const seen: Set[Direction] = [Direction.west, Direction.west, Direction.south]
 print(seen, seen.contains?(Direction.west))
 
 # A struct can hold one, and structural equality compares it.
@@ -93,7 +93,7 @@ const described: Described = Size.large
 print(described.describe(), described is Size)
 
 # An optional enum narrows like any optional.
-func largest(sizes: [Size]): Size? {
+func largest(sizes: List[Size]): Size? {
     var best: Size? = nothing
     for size in sizes {
         if best == nothing or size > best {

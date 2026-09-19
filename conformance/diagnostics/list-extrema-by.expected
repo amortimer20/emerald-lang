@@ -2,7 +2,7 @@ diagnostics/list-extrema-by.em:1:21: this block returns Bool, but `min_by` needs
   print([1, 2].min_by { number => number.even?() })
                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Return an Int, Float, String, or a type that adopts `Ordered`.
-diagnostics/list-extrema-by.em:3:21: `max_by` cannot choose from [Int?], whose elements may be absent
+diagnostics/list-extrema-by.em:3:21: `max_by` cannot choose from List[Int?], whose elements may be absent
   print(maybe_numbers.max_by { number => number.or(0) })
                       ^^^^^^
 Use `filter_map` to remove absent values first, so `nothing` can remain the empty-List result.

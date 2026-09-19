@@ -13,7 +13,7 @@ rows_copy[0].append(9)
 print(rows, rows_copy)
 
 # A parameter cannot change (7.1), so a function returns the changed value.
-func with_guest(guests: [Int], guest: Int): [Int] {
+func with_guest(guests: List[Int], guest: Int): List[Int] {
     var updated = guests
     updated.append(guest)
     return updated
@@ -26,7 +26,7 @@ print(party, bigger)
 # A change the function makes through a module binding does not show through
 # the parameter, which is its own value.
 var shared = [1]
-func show(items: [Int]) {
+func show(items: List[Int]) {
     shared.append(2)
     print(items)
 }

@@ -118,14 +118,14 @@ print(Count(2).twice_is?(Count(4)), Count(2).twice_is?(Count(5)))
 # A requirement can take and give `Self` in any shape, and a value of a known
 # type fills it in: here, a list of `Self`.
 trait Splittable {
-    func halves(): [Self]
+    func halves(): List[Self]
 }
 
 struct Length with Splittable, Labelled {
     const metres: Float
 
     @override
-    func halves(): [Length] {
+    func halves(): List[Length] {
         return [Length(self.metres / 2), Length(self.metres / 2)]
     }
 }

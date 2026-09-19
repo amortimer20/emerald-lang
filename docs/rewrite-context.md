@@ -321,18 +321,18 @@ An optional type is written with a trailing `?`:
 
 ```emerald
 var result: Int? = "42".to_int_maybe()
-var maybe_names: [String]? = nothing
-var names_that_may_be_absent: [String?] = [nothing, "Ava"]
+var maybe_names: List[String]? = nothing
+var names_that_may_be_absent: List[String?] = [nothing, "Ava"]
 ```
 
 The postfix form is settled. It is the spelling C#, Swift, and Kotlin already use, and C# is
 a language this design borrows from deliberately, so it arrives familiar to the people most
-likely to teach Emerald. Structural placement stays legible: `[String]?` is an optional list
-and `[String?]` is a list of optionals, matching the rule in 4.5.
+likely to teach Emerald. Structural placement stays legible: `List[String]?` is an optional list
+and `List[String?]` is a list of optionals, matching the rule in 4.5.
 
 `?` is a type constructor for this one relationship only. It is not a general generic
 system: users cannot declare their own `?`-like type constructors, and a bracketed spelling
-such as `Optional[Int]` was rejected precisely because it would invite that expectation.
+such as `OptionalList[Int]` was rejected precisely because it would invite that expectation.
 Optionals do not make all references nullable.
 
 **Lexical rule.** Because 3.3 lets an identifier end in `?`, the sequence `Int?` is
@@ -439,9 +439,9 @@ Mixed `Int`/`Float` comparisons compare their mathematical values without first 
 the integer into `Float`. Widening a large `Int` to `Float` may lose precision, but that
 loss must not make two distinct numeric values compare equal accidentally.
 
-Mutable collection types are invariant: `[Dog]` is not assignable to `[Animal]`. A mixed
+Mutable collection types are invariant: `List[Dog]` is not assignable to `List[Animal]`. A mixed
 list of sibling classes requires an explicit common superclass or trait annotation, while
-the established numeric widening still allows `[1, 2.5]` to infer `[Float]`.
+the established numeric widening still allows `[1, 2.5]` to infer `List[Float]`.
 
 `is` tests a runtime type and narrows a name within the proven branch. Explicit casts use
 normal control-flow narrowing; explicit downcast operators such as `as`, forced casts, and
@@ -459,7 +459,7 @@ its concrete runtime type:
 ```emerald
 var animal: Animal = Dog()
 print(animal.type_name)  # "Dog"
-print([1, 2].type_name)  # "[Int]"
+print([1, 2].type_name)  # "List[Int]"
 ```
 
 This universal property does not imply that values inherit from a common `Object` class.
@@ -941,7 +941,7 @@ received through a parameter is shared, so mutating it is allowed and visible to
 caller. Assigning a different value to any parameter name is an error.
 
 ```emerald
-func add_guest(guests: [String], guest: String): [String] {
+func add_guest(guests: List[String], guest: String): List[String] {
     guests.append(guest)    # error: `guests` is a copy, so the change would be lost
     guests = []             # error: parameters are read-only
 
@@ -1070,7 +1070,7 @@ Every method remains capturable. When a built-in higher-order method has an outp
 that depends on a future block, a bare capture requires an expected callable type:
 
 ```emerald
-const mapper: func(func(Int): String): [String] = numbers.map
+const mapper: func(func(Int): String): List[String] = numbers.map
 ```
 
 A capture such as `const mapper = numbers.map` lacks enough evidence to choose the mapped
@@ -1151,29 +1151,27 @@ List syntax is settled:
 
 ```emerald
 var scores = [10, 20, 30]
-var names: [String] = []
+var names: List[String] = []
 ```
 
-The compact type is `[String]`, not `List<String>`.
+Built-in collection types use named bracketed forms: `List[T]`, `Dict[K, V]`, and
+`Set[T]`. These are built-in type spellings, not user-defined generics.
 
 Dictionary and set syntax is settled. Square brackets are the literal for all three
 collections; a dictionary literal is recognized by its `key: value` entries, and a set
 literal is a bracketed list of elements in a place whose type is a set:
 
 ```emerald
-var ages: [String: Int] = [
+var ages: Dict[String, Int] = [
     "Ava": 12,
     "Noah": 13,
 ]
 
-var seen: {String} = [
+var seen: Set[String] = [
     "red",
     "green",
 ]
 ```
-
-`{String}` remains the set type's spelling. Braces are unambiguous there because a type
-only appears in a type position, such as after `:`.
 
 Nonempty list and dictionary literals normally infer their types. Without an expected set
 type, a bracketed list of elements is a list, so a set needs its type written or a
@@ -1182,13 +1180,13 @@ type as well as an annotation does, so `colors.union(["blue"])` passes a set. Em
 literals require an explicit type because their elements cannot establish one:
 
 ```emerald
-var names: [String] = []
-var ages: [String: Int] = []
-var seen: {String} = []
+var names: List[String] = []
+var ages: Dict[String, Int] = []
+var seen: Set[String] = []
 ```
 
 Only a literal takes its kind from the expected type. A list already stored in a binding
-stays a list, so `var seen: {String} = names` is a type error whose correction is
+stays a list, so `var seen: Set[String] = names` is a type error whose correction is
 `names.to_set()`.
 
 Printing is unambiguous even though the literals overlap. A dictionary writes its entries,
@@ -1440,9 +1438,9 @@ empty List; `filter_map` has its own explicit presence rule. Dictionary and Set 
 deferred.
 
 `filter_map` is currently a List operation. Its block returns `T?` for each input item;
-present results become items in a new `[T]`, while `nothing` contributes no item. It visits
+present results become items in a new `List[T]`, while `nothing` contributes no item. It visits
 every input item once, from left to right, and leaves the receiver unchanged. This does not
-flatten a present List result: a block returning `[Int]?` produces `[[Int]]`. A block returning
+flatten a present List result: a block returning `List[Int]?` produces `List[List[Int]]`. A block returning
 a non-optional value is rejected with a correction toward `map`, rather than silently treating
 every result as present. Dictionary and Set forms are deferred.
 
@@ -1455,13 +1453,13 @@ initial value is required, an empty List simply returns it. `reduce_right` and D
 Set forms are deferred. As with every List traversal, changing a captured binding during the
 block changes that binding's copy and does not add or remove items from this reduction.
 
-`sum()` is currently a List operation for `[Int]` and `[Float]`. It returns that same numeric
+`sum()` is currently a List operation for `List[Int]` and `List[Float]`. It returns that same numeric
 type and visits items from left to right. An empty numeric List returns its additive identity:
-`0` for `[Int]`, or `0.0` for `[Float]`. Int accumulation checks overflow at every addition;
+`0` for `List[Int]`, or `0.0` for `List[Float]`. Int accumulation checks overflow at every addition;
 Float accumulation follows Emerald's ordinary IEEE-754 arithmetic, including `Infinity` and
 `NaN`. Other List element types receive a correction toward mapping to numbers first.
 
-`average()` is currently a List operation for `[Int]` and `[Float]`. It returns `Float?`:
+`average()` is currently a List operation for `List[Int]` and `List[Float]`. It returns `Float?`:
 `nothing` for an empty List, otherwise the arithmetic mean after each Int has widened as it
 would for an ordinary Float operation. This keeps a fractional Int-list result visible, such
 as `[1, 2].average()` yielding `1.5`. Float accumulation and division follow ordinary
@@ -1612,8 +1610,8 @@ and `NaN`, so every displayed `Float` parses back. `to_string()` gives the displ
 `Int`, `Float`, or `Bool`.
 `pad_start` and `pad_end` describe logical placement more clearly than left and right in a
 Unicode language. `code_points()` returns the Unicode scalar values of the String's exact
-stored spelling as `[Int]`; a decomposed character therefore has more than one entry.
-`bytes()` returns its exact UTF-8 bytes as `[Int]`, each from 0 through 255. These are
+stored spelling as `List[Int]`; a decomposed character therefore has more than one entry.
+`bytes()` returns its exact UTF-8 bytes as `List[Int]`, each from 0 through 255. These are
 advanced conversions, while `chars()` remains the grapheme-aware beginner API. `words`,
 `title_case`, and case-insensitive Unicode comparison remain deferred until their locale and
 boundary behavior can be designed correctly. `letter?`, `digit?`, and slicing strings with
@@ -2184,7 +2182,7 @@ It does not introduce F-bounded polymorphism or an unrestricted metatype system.
 outside trait and type-member contracts require a demonstrated need.
 
 `Self` is written only in the parameter and result types of methods and type-level
-functions, in any shape such as `[Self]` or `Self?`; a field, a property, a local, or a
+functions, in any shape such as `List[Self]` or `Self?`; a field, a property, a local, or a
 top-level function rejects it. In a struct or class it is that type. In a trait it is
 whichever type adopts the trait: an implementation writes that type or `Self`, and inside
 the trait's own defaults `self` is a `Self`, so a default may pass `self` to a member
@@ -3202,7 +3200,7 @@ recorded in their normative sections:
 | Tuple variance (8.2, 4.4) | A tuple widens position by position; a list stays invariant | Nothing can assign to a tuple position, so a `(Int, Int)` used as a `(Float, Int)` can never be written through and observed as the wrong type. That is the entire argument that makes a list invariant, and it simply does not apply here. |
 | `entry.0.1` (8.2) | The lexer reads `0.1` as a decimal number; the parser splits it where it knows a member is named | The alternative was requiring `(entry.0).1`, which is a papercut with no teaching value. Splitting it costs a few lines in the one place that already knows a position is being written. |
 | A tuple's `count` (8.2, 8.5) | Tuples have none | 8.5 gives `count` to collections, whose size is a runtime question. A tuple's size is part of its type and is written in the source, so `count` could only ever return a constant the reader already typed. |
-| Set literals (8.2) | Square brackets, with the set type deciding; `{T}` stays the type spelling | Braces in expression position meant a block, a lambda, or a set, which forced `for n in ({1, 2, 3})` and made `{}` ambiguous. Brackets already build empty dictionaries from context, so sets follow the same rule. |
+| Set literals (8.2) | Square brackets, with the set type deciding; `Set[T]` stays the type spelling | Braces in expression position meant a block, a lambda, or a set, which forced `for n in ({1, 2, 3})` and made `{}` ambiguous. Brackets already build empty dictionaries from context, so sets follow the same rule. |
 | Leading-dot continuation (3.1) | A line beginning with `.` or `?.` continues the previous line | Method chaining is the pipeline notation, so chains need to wrap, and no valid line could begin with a member dot anyway. The one exception to deciding continuation from preceding tokens. |
 | Widening (4.4) | `Int` widens to `Float` wherever a `Float` is expected, not only in arithmetic | The section relied on it for `[1, 2.5]` already, and `var rate: Float = 1` being an error would teach nothing. |
 | String joining (9.2) | `+` joins two Strings and `+=` appends; nothing converts implicitly | Every language a beginner meets next has it, and building a string in a loop without it is awkward. It stays the only string operator, and interpolation stays the primary way to build prose. |
@@ -3248,7 +3246,7 @@ recorded in their normative sections:
 | Enum values inside the enum (10.4, 12) | Written `Direction.north` everywhere, including the enum's own methods | Enum values are type-level members, which are always reached through the type. A bare `north` inside the braces would be a second spelling that stops working one line outside them. |
 | Enum value lists (12) | Values come before every member, separated by newlines or commas | The spec's example lists one per line; commas let a short enum such as `small, medium, large` stay on one line, as `when` alternatives do. Requiring values first keeps the whole set readable in one place. |
 | When a `case` is complete (4.1, 6.3) | `else`, or coverage of every value of an enum or `Bool` subject, plus `nothing` when it may be absent; a complete statement `case` counts as running one arm | 6.3 lets a value case over an enum omit `else` when all values are covered. Treating the statement form the same way lets a function return from every arm without an unreachable `return` after the `case`, and needs no rule a reader cannot see: the arms list every value. |
-| `case` value types (6.3) | Arms agree on a type; `Int` with `Float` gives `Float`, and a `nothing` arm makes the result optional | A list literal mixing `nothing` needs an annotation because `[T]?` and `[T?]` differ; one value has only `T?` to mean, so requiring an annotation would add nothing. |
+| `case` value types (6.3) | Arms agree on a type; `Int` with `Float` gives `Float`, and a `nothing` arm makes the result optional | A list literal mixing `nothing` needs an annotation because `List[T]?` and `List[T?]` differ; one value has only `T?` to mean, so requiring an annotation would add nothing. |
 | Braces inside parentheses (3.1) | A `{` restores newline termination until its `}` | 3.1 suppresses newlines inside parentheses so arguments can wrap, but a `case` or a block passed as an argument has lines of its own, which could not be separated at all before. |
 | What `Self` is on a class (11.4) | The first class along the base chain to adopt the trait | A subclass inherits its base class's methods with their types unchanged, so taking `Self` as the subclass would make every inherited implementation stop conforming. Swift needs `final` or `Self`-returning initializers to square this; fixing `Self` where the trait is adopted keeps it sound with nothing new to learn. |
 | `Self` through a value seen as a trait (11.4) | A `Self` result is the trait; a member taking `Self` cannot be called | The value could be of any adopting type, so nothing can be checked to match its `Self`. Inside the trait's own defaults `self` is an opaque `Self`, which is what makes defaults that combine values of the same type possible without generics. |
@@ -3315,11 +3313,6 @@ for working Emerald programs, implementation measurements, or a dedicated design
 - whether `struct` should become `value`, so the declaration spells out Emerald's
   value-versus-reference distinction. Revisit this only as a dedicated syntax design pass,
   with beginner-facing examples and a migration assessment;
-- whether built-in collection types should use named bracketed forms — `List[T]`,
-  `Dict[K, V]`, and `Set[T]` — in place of `[T]`, `[K: V]`, and `{T}`. The candidate keeps
-  tuple types structural as `(T1, T2, ...)`, retains the concise list and dictionary
-  literals, and should decide whether explicit `set[...]` literals are needed for natural
-  set inference;
 - overloading, including overloaded constructors and `self(...)` delegation between them,
   and mixed-type operator contracts, if real Emerald programs show that defaults, named
   arguments, and named factory functions are genuinely insufficient;

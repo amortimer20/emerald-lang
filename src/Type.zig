@@ -2,11 +2,11 @@
 //!
 //! Section 4.1 requires every expression to have a type before execution. The
 //! built-in scalars are plain kinds; a list carries its element type, allocated
-//! by whoever builds it, so `[[Int]]` is a list whose element is `[Int]`.
+//! by whoever builds it, so `List[List[Int]]` is a list whose element is `List[Int]`.
 //! Optionals, the other collections, and user types arrive with their slices.
 //!
 //! Types print through `format`, so a diagnostic writes `{f}` and gets the
-//! spelling a program would write, such as `[Float]`.
+//! spelling a program would write, such as `List[Float]`.
 
 const std = @import("std");
 
@@ -21,15 +21,15 @@ pub const Kind = enum {
     string,
     /// Section 6.4's immutable integer count.
     range,
-    /// Section 8.2's `[T]`. `element` holds `T`.
+    /// Section 8.2's `List[T]`. `element` holds `T`.
     list,
     /// Section 8.2's `(String, Int)`. `elements` holds the positions, of which
     /// there are always at least two.
     tuple,
-    /// Section 8.2's `[String: Int]`. `key` holds the key type and `element`
+    /// Section 8.2's `Dict[String, Int]`. `key` holds the key type and `element`
     /// the value type.
     dictionary,
-    /// Section 8.2's `{String}`. `element` holds the member type.
+    /// Section 8.2's `Set[String]`. `element` holds the member type.
     set,
     /// Section 7.1's `func(Int): String`. `signature` holds its shape.
     function,
@@ -59,7 +59,7 @@ user: ?*const User = null,
 /// optionals never nest. There is nothing for a second layer to mean, so there
 /// is no way to build one by accident, and `Int?` stays as cheap to carry
 /// around as `Int`. Placement is still structural: this flag on a list is
-/// `[String]?`, while the same flag on its element is `[String?]`.
+/// `List[String]?`, while the same flag on its element is `List[String?]`.
 optional: bool = false,
 /// Section 11.4's `Self` written in a trait: a value of whichever type adopts
 /// `user`, the trait, known only through its contract. Unlike a value seen
@@ -296,9 +296,9 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         .float => try writer.writeAll("Float"),
         .string => try writer.writeAll("String"),
         .range => try writer.writeAll("Range"),
-        .list => try writer.print("[{f}]", .{self.element.?.*}),
-        .dictionary => try writer.print("[{f}: {f}]", .{ self.key.?.*, self.element.?.* }),
-        .set => try writer.print("{{{f}}}", .{self.element.?.*}),
+        .list => try writer.print("List[{f}]", .{self.element.?.*}),
+        .dictionary => try writer.print("Dict[{f}, {f}]", .{ self.key.?.*, self.element.?.* }),
+        .set => try writer.print("Set[{f}]", .{self.element.?.*}),
         .tuple => {
             try writer.writeAll("(");
             for (self.elements, 0..) |element, position| {
@@ -402,9 +402,9 @@ pub fn same(self: Type, other: Type) bool {
 /// Whether a value of this type may be used where `target` is expected.
 ///
 /// Section 4.4 widens `Int` to `Float` wherever a `Float` is expected. Lists are
-/// invariant (4.4): `[Int]` is not a `[Float]`, because a list is mutable and
+/// invariant (4.4): `List[Int]` is not a `List[Float]`, because a list is mutable and
 /// its elements would have to change type to become one. A list literal can
-/// still be built as `[Float]` from whole numbers, because the checker gives it
+/// still be built as `List[Float]` from whole numbers, because the checker gives it
 /// the expected element type before its elements are stored.
 ///
 /// Functions are invariant too. Parameter and result variance is a real rule
@@ -712,7 +712,7 @@ test "types print with their source spelling" {
     const arena = arena_state.allocator();
 
     const nested = try Type.listOf(arena, try Type.listOf(arena, .float));
-    try testing.expectEqualStrings("[[Float]]", try std.fmt.allocPrint(arena, "{f}", .{nested}));
+    try testing.expectEqualStrings("List[List[Float]]", try std.fmt.allocPrint(arena, "{f}", .{nested}));
     try testing.expectEqualStrings("Int", try std.fmt.allocPrint(arena, "{f}", .{Type.int}));
 }
 
@@ -758,6 +758,6 @@ test "Self is a value of its trait, but only Self is Self" {
     defer arena_state.deinit();
     const listed = try listOf(arena_state.allocator(), self_type.optionalOf());
     try testing.expect(listed.mentionsSelf());
-    try testing.expectEqualStrings("[Self?]", try std.fmt.allocPrint(arena_state.allocator(), "{f}", .{listed}));
+    try testing.expectEqualStrings("List[Self?]", try std.fmt.allocPrint(arena_state.allocator(), "{f}", .{listed}));
     try testing.expect(!structOf(&vector).mentionsSelf());
 }

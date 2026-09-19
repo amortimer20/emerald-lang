@@ -6,7 +6,7 @@ diagnostics/list-flat-map.em:2:14: `flat_map` takes 1 block, but this call passe
   print([1, 2].flat_map())
                ^^^^^^^^
 Write the block after the method, as in `numbers.flat_map { number => print(number) }`.
-diagnostics/list-flat-map.em:4:14: this block returns [Int]?, but `flat_map` needs a List
+diagnostics/list-flat-map.em:4:14: this block returns List[Int]?, but `flat_map` needs a List
   [1].flat_map { number => maybe }
                ^^^^^^^^^^^^^^^^^^^
 Return a List for each element, as in `numbers.flat_map { number => [number, number] }`.

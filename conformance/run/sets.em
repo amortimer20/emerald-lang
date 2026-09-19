@@ -1,5 +1,5 @@
 ## A bracketed list of elements is a set where a set is expected.
-var seen: {String} = ["red", "green", "red"]
+var seen: Set[String] = ["red", "green", "red"]
 print(seen, seen.count)
 
 seen.add("blue")
@@ -23,9 +23,9 @@ print(seen.all? { colour => colour.count >= 3 }, seen.one? { colour => colour ==
 print([1, 2, 2, 3].to_set())
 
 ## Section 8.4: membership decides equality, not insertion order.
-const one: {Int} = [1, 2, 3]
-const two: {Int} = [3, 2, 1]
+const one: Set[Int] = [1, 2, 3]
+const two: Set[Int] = [3, 2, 1]
 print(one == two)
 
-const empty: {String} = []
+const empty: Set[String] = []
 print(empty, empty.empty?())

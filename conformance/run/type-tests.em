@@ -34,7 +34,7 @@ class Cat extends Animal {
     }
 }
 
-const pets: [Animal] = [Animal("Generic"), Dog("Rex"), Puppy(), Cat()]
+const pets: List[Animal] = [Animal("Generic"), Dog("Rex"), Puppy(), Cat()]
 for pet in pets {
     print(pet.type_name, pet is Animal, pet is Dog, pet is Puppy, pet is Cat)
     if pet is Dog {

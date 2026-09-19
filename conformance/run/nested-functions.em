@@ -1,4 +1,4 @@
-func report(scores: [Int]): String {
+func report(scores: List[Int]): String {
     var total = 0
     for score in scores {
         add(score)

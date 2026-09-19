@@ -1,2 +1,2 @@
 const names = ["a", "b"]
-const seen: {String} = names
+const seen: Set[String] = names

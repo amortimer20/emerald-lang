@@ -41,8 +41,8 @@ print(make(), Vector2.made)
 
 # A `var` type-level field changes in place like any `var`.
 struct Registry {
-    var Registry.names: [String] = []
-    var Registry.scores: [String: Int] = []
+    var Registry.names: List[String] = []
+    var Registry.scores: Dict[String, Int] = []
     var Registry.last: Vector2 = Vector2(1, 1)
     var Registry.label: String? = nothing
 }

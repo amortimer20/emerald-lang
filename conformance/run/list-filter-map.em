@@ -16,7 +16,7 @@ const labels = numbers.filter_map { number =>
 }
 print(labels, calls, numbers)
 
-func singleton_if_even(number: Int): [Int]? {
+func singleton_if_even(number: Int): List[Int]? {
     if number.even?() {
         return [number]
     }
@@ -24,5 +24,5 @@ func singleton_if_even(number: Int): [Int]? {
 }
 
 const nested = numbers.filter_map { number => singleton_if_even(number) }
-const empty: [Int] = []
+const empty: List[Int] = []
 print(nested, empty.filter_map { number => label_if_even(number) })

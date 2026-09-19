@@ -2,6 +2,6 @@
 # would be lost when the function returns. It is rejected rather than silently
 # discarded.
 
-func add_guest(guests: [Int], guest: Int) {
+func add_guest(guests: List[Int], guest: Int) {
     guests.append(guest)
 }

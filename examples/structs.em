@@ -32,7 +32,7 @@ print(start, finish)
 ## field is set here once and never changes afterwards.
 struct Trip {
     const name: String
-    var stops: [Point]
+    var stops: List[Point]
     var distance: Float
 
     constructor(name: String, from: Point, to: Point) {
@@ -68,7 +68,7 @@ print(Trip.home(Point(6, 8)).distance, "after #{Trip.planned} trips")
 ## `self`. One that changes `self` can only be called on something that can
 ## change, such as a `var`; one that only reads can be called on anything.
 struct Tally {
-    var marks: [String]
+    var marks: List[String]
 
     func mark(label: String) {
         self.marks.append(label)

@@ -1,7 +1,7 @@
 # Section 8.6's keyed extrema return their List items, using the first tied key.
 
 const words = ["pear", "fig", "plum", "kiwi"]
-const empty: [String] = []
+const empty: List[String] = []
 print(words.min_by { word => word.count }.or(""), words.max_by { word => word.count }.or(""), empty.min_by { word => word.count })
 print(words.min_by { word => word }.or(""), words.max_by { word => word }.or(""))
 

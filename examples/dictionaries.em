@@ -23,7 +23,7 @@ print(ages)
 
 ## Counting things is what a dictionary is reached for most often.
 const words = ["red", "blue", "red", "green", "red"]
-var counts: [String: Int] = []
+var counts: Dict[String, Int] = []
 for word in words {
     counts[word] = counts[word].or(0) + 1
 }
@@ -41,7 +41,7 @@ func plural(count: Int): String {
 }
 
 ## A set records what it has seen, once each, in the order it first saw it.
-var seen: {String} = []
+var seen: Set[String] = []
 for word in words {
     seen.add(word)
 }

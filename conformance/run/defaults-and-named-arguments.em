@@ -19,7 +19,7 @@ print(distance(5), distance(5, 7), distance(end: 3, start: 1))
 
 # Explicit arguments run left to right as written, then the defaults that
 # are still needed, in parameter order.
-var log: [String] = []
+var log: List[String] = []
 func note(label: String): Int {
     log.append(label)
     return log.count

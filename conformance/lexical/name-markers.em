@@ -1,7 +1,7 @@
 ## Section 3.3 lets a name end in `?` or `!`. Each marker has to survive beside
 ## the operator it resembles: `?.` for optional chaining and `!=` for inequality.
 
-func empty?(names: [String]): Bool {
+func empty?(names: List[String]): Bool {
     return names.count == 0
 }
 

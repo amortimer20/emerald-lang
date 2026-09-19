@@ -1,8 +1,8 @@
-diagnostics/list-sort-and-associate.em:1:21: `sort` needs a List of ordered values, but this is [Bool]
+diagnostics/list-sort-and-associate.em:1:21: `sort` needs a List of ordered values, but this is List[Bool]
   print([true, false].sort())
                       ^^^^
 Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.
-diagnostics/list-sort-and-associate.em:3:21: `sort` cannot order [Int?], whose elements may be absent
+diagnostics/list-sort-and-associate.em:3:21: `sort` cannot order List[Int?], whose elements may be absent
   print(maybe_numbers.sort())
                       ^^^^
 Use `filter_map` to remove absent values first, or give each element a fallback with `.or(...)`.
@@ -18,7 +18,7 @@ diagnostics/list-sort-and-associate.em:7:22: this block returns Bool, but `sort_
   print([1, 2].sort_by { number => number.even?() })
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Return an Int, Float, String, or a type that adopts `Ordered`.
-diagnostics/list-sort-and-associate.em:8:14: [Int] cannot be a dictionary key
+diagnostics/list-sort-and-associate.em:8:14: List[Int] cannot be a dictionary key
   print([1, 2].unique_by { number => [number] })
                ^^^^^^^^^
 A key must be a number, a `Bool`, a `String`, an enum value, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.
@@ -26,7 +26,7 @@ diagnostics/list-sort-and-associate.em:9:24: this block returns Int, but `associ
   print([1, 2].associate { number => number })
                          ^^^^^^^^^^^^^^^^^^^^
 Return a two-element tuple, as in `items.associate { item => (item.name, item.count) }`.
-diagnostics/list-sort-and-associate.em:10:14: `to_dictionary` needs a List of two-element tuples, but this is [Int]
+diagnostics/list-sort-and-associate.em:10:14: `to_dictionary` needs a List of two-element tuples, but this is List[Int]
   print([1, 2].to_dictionary())
                ^^^^^^^^^^^^^
 Use `associate` or `associate_by` to build the key and value from each element instead.

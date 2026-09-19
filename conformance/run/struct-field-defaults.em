@@ -4,7 +4,7 @@ struct Settings {
     var volume: Int = 5
     var name: String
     var loud: Bool = self.volume > 7
-    var tags: [String] = []
+    var tags: List[String] = []
 }
 
 print(Settings(name: "quiet"))

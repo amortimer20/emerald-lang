@@ -37,12 +37,12 @@ func label_if_young(name: String, age: Int): String? {
     return nothing
 }
 print(ages.filter_map { (name, age) => label_if_young(name, age) })
-const seen: {Int} = [1, 2, 3]
+const seen: Set[Int] = [1, 2, 3]
 print(seen.find { value => value > 2 })
 
 ## Section 8.4: contents decide equality, not insertion order.
 print(["a": 1, "b": 2] == ["b": 2, "a": 1])
 print(["a": 1] == ["a": 2])
 
-const empty: [String: Int] = []
+const empty: Dict[String, Int] = []
 print(empty, empty.empty?())

@@ -1,7 +1,7 @@
 # Section 10: methods see the instance as `self`.
 struct Counter {
     var count: Int
-    var history: [Int]
+    var history: List[Int]
 
     # Changes `self`, which the checker works out from the body (4.3).
     func increment() {

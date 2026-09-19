@@ -2879,7 +2879,7 @@ fn requireReadyForSet(self: *Checker, assignment: Ast.Assignment, name: []const 
 /// anyone used to a language where an `[Int]` can pass for a `[Float]`.
 fn mismatchHelp(actual: Type, expected: Type, general: []const u8) []const u8 {
     if (actual.kind == .list and expected.kind == .list) {
-        return "A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: [Float] = [1, 2]`.";
+        return "A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: List[Float] = [1, 2]`.";
     }
     // Section 8.2: only a literal takes its kind from the expected type, so a
     // list already in a binding needs the conversion 8.2 names.
@@ -5192,7 +5192,7 @@ fn typeOfList(self: *Checker, expression: *const Ast.Expression, expected: ?Type
                 expression.span,
                 "an empty list needs a type",
                 .{},
-                "Say what it will hold, as in `var names: [Int] = []`, `var ages: [String: Int] = []`, or `var seen: {String} = []`.",
+                "Say what it will hold, as in `var names: List[Int] = []`, `var ages: Dict[String, Int] = []`, or `var seen: Set[String] = []`.",
             );
             return .invalid;
         };

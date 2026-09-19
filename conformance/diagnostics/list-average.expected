@@ -1,4 +1,4 @@
-diagnostics/list-average.em:1:22: `average` needs a List of Ints or Floats, but this is [String]
+diagnostics/list-average.em:1:22: `average` needs a List of Ints or Floats, but this is List[String]
   print(["one", "two"].average())
                        ^^^^^^^
 Use `map` to produce numbers first, or choose an aggregation that fits this List's elements.

@@ -10,7 +10,7 @@ func counter_from(start: Int): func(): Int {
     }
 }
 
-var counters: [func(): Int] = []
+var counters: List[func(): Int] = []
 for i in 1..500 {
     # The block is stored in the scope it captured, so each iteration leaves a
     # cycle behind that only the collector can reclaim.
@@ -21,7 +21,7 @@ print(counters.count)
 print(counters[0]())
 print(counters[499]())
 
-var labels: [String] = []
+var labels: List[String] = []
 for i in 1..2000 {
     labels.append("row #{i}")
 }

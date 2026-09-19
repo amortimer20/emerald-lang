@@ -1964,8 +1964,6 @@ fn rejectGuardedDeclaration(self: *Parser, name: Token) Error!void {
 /// optionality is only ever written in a type, never at a use site.
 fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     const token = self.peek();
-    if (token.kind == .left_bracket) return self.parseListType();
-    if (token.kind == .left_brace) return self.parseSetType();
     if (token.kind == .left_paren) return self.parseTupleType();
     if (token.kind == .keyword_func) return self.parseFunctionType();
     if (token.kind != .identifier) {
@@ -1979,6 +1977,9 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     _ = self.advance();
 
     var written = try self.identifier(token);
+    if (std.mem.eql(u8, written, "List") or std.mem.eql(u8, written, "Dict") or std.mem.eql(u8, written, "Set")) {
+        return self.parseCollectionType(token, written);
+    }
     var span = token.span;
     var question: ?Source.Span = null;
 
@@ -2018,7 +2019,7 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     written = try path.toOwnedSlice(self.arena);
 
     if (question == null and self.check(.question)) {
-        // A `?` that could not attach to a name, as in `[String]?`.
+        // A `?` that could not attach to a name, as in `List[String]?`.
         question = self.advance().span;
     }
     try self.rejectNestedOptional(question);
@@ -2087,31 +2088,38 @@ fn parseTupleType(self: *Parser) Error!Ast.TypeExpression {
     };
 }
 
-/// Section 8.2's `[T]`, and `[T]?` for an optional list.
-fn parseListType(self: *Parser) Error!Ast.TypeExpression {
-    const opening = self.advance();
+/// Section 8.2's `List[T]`, `Dict[K, V]`, and `Set[T]`.
+fn parseCollectionType(self: *Parser, name: Token, kind: []const u8) Error!Ast.TypeExpression {
+    const opening = self.peek();
+    if (opening.kind != .left_bracket) {
+        return self.reportFmt(opening.span, "expected `[` after `{s}`, found {s}", .{ kind, opening.kind.describe() }, "Write `List[Int]`, `Dict[String, Int]`, or `Set[String]`.");
+    }
+    _ = self.advance();
     try self.nest(opening.span);
     defer self.unnest();
 
     const first = try self.arena.create(Ast.TypeExpression);
     first.* = try self.parseTypeExpression();
 
-    // Section 8.2's `[String: Int]`, told from `[String]` by the colon.
+    // Only `Dict` takes two type parameters.
     var key: ?*const Ast.TypeExpression = null;
     var element = first;
-    if (self.match(.colon) != null) {
+    if (std.mem.eql(u8, kind, "Dict")) {
+        if (self.match(.comma) == null) return self.report(self.peek().span, "a `Dict` type needs a key and a value type", "Separate them with a comma, as in `Dict[String, Int]`.");
         key = first;
         element = try self.arena.create(Ast.TypeExpression);
         element.* = try self.parseTypeExpression();
+    } else if (self.check(.comma)) {
+        return self.report(self.peek().span, "this collection type takes one element type", "Write `List[T]` or `Set[T]`; only `Dict[K, V]` takes two types.");
     }
 
     const closing = self.peek();
     if (closing.kind != .right_bracket) {
         return self.reportFmt(
             closing.span,
-            "expected `]` to close this {s} type, found {s}",
-            .{ if (key == null) "list" else "dictionary", closing.kind.describe() },
-            "A list type is an element type in brackets, as in `[Int]`, and a dictionary type names both, as in `[String: Int]`.",
+            "expected `]` to close this collection type, found {s}",
+            .{closing.kind.describe()},
+            "Close the type parameters, as in `List[Int]` or `Dict[String, Int]`.",
         );
     }
     _ = self.advance();
@@ -2119,42 +2127,11 @@ fn parseListType(self: *Parser) Error!Ast.TypeExpression {
     const question: ?Source.Span = if (self.match(.question)) |token| token.span else null;
     try self.rejectNestedOptional(question);
     return .{
-        .span = spanning(opening.span, closing.span),
+        .span = spanning(name.span, closing.span),
         .name = "",
         .element = element,
         .key = key,
-        .question_span = question,
-    };
-}
-
-/// Section 8.2's `{String}`. Braces are unambiguous in a type position, which
-/// is why the set type keeps them while its literal uses brackets.
-fn parseSetType(self: *Parser) Error!Ast.TypeExpression {
-    const opening = self.advance();
-    try self.nest(opening.span);
-    defer self.unnest();
-
-    const element = try self.arena.create(Ast.TypeExpression);
-    element.* = try self.parseTypeExpression();
-
-    const closing = self.peek();
-    if (closing.kind != .right_brace) {
-        return self.reportFmt(
-            closing.span,
-            "expected `}}` to close this set type, found {s}",
-            .{closing.kind.describe()},
-            "A set type is a member type in braces, as in `{String}`.",
-        );
-    }
-    _ = self.advance();
-
-    const question: ?Source.Span = if (self.match(.question)) |token| token.span else null;
-    try self.rejectNestedOptional(question);
-    return .{
-        .span = spanning(opening.span, closing.span),
-        .name = "",
-        .element = element,
-        .set = true,
+        .set = std.mem.eql(u8, kind, "Set"),
         .question_span = question,
     };
 }
@@ -4100,4 +4077,3 @@ test "parser resumes after a malformed declaration before a valid function" {
     try testing.expect(parsed.diagnostics.len > 0);
     try testing.expectEqual(@as(usize, 3), parsed.program.statements.len);
 }
-

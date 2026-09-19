@@ -5,7 +5,7 @@
 class Window {
     var title: String
     var width: Int = 800
-    var tags: [String] = []
+    var tags: List[String] = []
     var Window.opened = 0
 
     constructor(title: String) {

@@ -353,7 +353,7 @@ pub const TypeExpression = struct {
     /// The element type of a list type, `T` in `[T]`, the value type of a
     /// dictionary, or the member type of a set; null otherwise.
     element: ?*const TypeExpression = null,
-    /// The key type of a dictionary type, `K` in `[K: V]`; null otherwise.
+    /// The key type of a dictionary type, `K` in `Dict[K, V]`; null otherwise.
     key: ?*const TypeExpression = null,
     /// Whether `element` is section 8.2's `{T}` rather than `[T]`.
     set: bool = false,

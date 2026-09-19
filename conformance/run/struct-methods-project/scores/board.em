@@ -1,7 +1,7 @@
 const _limit = 2
 
 struct Board {
-    var entries: [Int]
+    var entries: List[Int]
 
     # Reads a value private to this file, from wherever it is called.
     func record(score: Int) {

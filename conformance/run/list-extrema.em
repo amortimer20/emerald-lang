@@ -3,7 +3,7 @@
 const whole_numbers = [3, 1, 1, 2]
 const decimal_numbers = [Float.infinity, 2.5, -1.0]
 const words = ["zebra", "apple", "apple"]
-const empty: [Int] = []
+const empty: List[Int] = []
 
 print(whole_numbers.min().or(0), whole_numbers.max().or(0), empty.min(), empty.max())
 print(decimal_numbers.min().or(0.0), decimal_numbers.max().or(0.0))
