@@ -447,6 +447,13 @@ the established numeric widening still allows `[1, 2.5]` to infer `List[Float]`.
 normal control-flow narrowing; explicit downcast operators such as `as`, forced casts, and
 optional casts are deferred.
 
+Optional chaining uses `?.` for one nullable link: `user?.name` returns `String?`, and
+`user?.greet(message)` returns that call's result as an optional. When the receiver is
+`nothing`, the access or call returns `nothing` and call arguments are not evaluated. Each
+nullable link is written explicitly (`user?.address?.street`); a plain `.` still needs a
+present receiver. An optional chain is read-only, so an assignment or changing method call
+through `?.` is rejected.
+
 An `is` test that static analysis can prove always true or always false remains valid and
 produces that `Bool`, but receives a warning explaining the known result. The tested
 expression is still evaluated exactly once even when its result is known. Tests through a

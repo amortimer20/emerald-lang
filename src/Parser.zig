@@ -2931,18 +2931,12 @@ fn parsePostfix(self: *Parser) Error!*const Ast.Expression {
         base = switch (self.peek().kind) {
             .left_paren => try self.finishCall(base),
             .left_bracket => try self.finishIndex(base),
-            .dot => try self.finishMember(base),
+            .dot => try self.finishMember(base, false),
             .left_brace => if (self.in_control_header or !takesTrailingLambda(base))
                 return base
             else
                 try self.finishTrailingLambda(base),
-            // Section 4.5's `?.` waits for the chains it exists to shorten:
-            // with no objects yet there is nothing to reach through.
-            .question_dot => return self.report(
-                self.peek().span,
-                "optional chaining is not available yet",
-                "Check the value against `nothing` first, or give it a fallback with `.or(...)`.",
-            ),
+            .question_dot => try self.finishMember(base, true),
             else => return base,
         };
     }
@@ -3036,7 +3030,7 @@ fn finishIndex(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expr
 /// which is what lets section 4.5 spell its fallback `maybe.or(0)` — the
 /// spelling that matches `to_int_or` — without a keyword after `.` ever being
 /// able to mean anything but a member.
-fn finishMember(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expression {
+fn finishMember(self: *Parser, base: *const Ast.Expression, optional: bool) Error!*const Ast.Expression {
     _ = self.advance();
     const name = self.peek();
 
@@ -3075,6 +3069,7 @@ fn finishMember(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Exp
         .base = base,
         .name = written,
         .name_span = name.span,
+        .optional = optional,
     } });
 }
 
@@ -4025,6 +4020,20 @@ test "parsing releases every allocation failure" {
     };
 
     try testing.checkAllAllocationFailures(testing.allocator, Work.run, .{ &source, tokens.tokens });
+}
+
+test "optional member access is preserved for later checking" {
+    var source = try Source.init(testing.allocator, "test.em", "var label = user?.name\n");
+    defer source.deinit(testing.allocator);
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+    var parsed = try parse(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+
+    try testing.expectEqual(@as(usize, 0), parsed.diagnostics.len);
+    const initializer = parsed.program.statements[0].data.declaration.initializer.?;
+    try testing.expect(initializer.data.member.optional);
+    try testing.expectEqualStrings("name", initializer.data.member.name);
 }
 
 test "parser reports malformed declarations without crashing" {

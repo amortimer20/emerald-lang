@@ -523,6 +523,9 @@ pub const Expression = struct {
         base: *const Expression,
         name: []const u8,
         name_span: Source.Span,
+        /// `?.` short-circuits this access or its following call when `base`
+        /// is absent. A plain `.` leaves this false.
+        optional: bool = false,
         /// Section 8.2's `entry.0`, the zero-based position of a tuple member.
         /// Null when the member was written as a name.
         position: ?u32 = null,

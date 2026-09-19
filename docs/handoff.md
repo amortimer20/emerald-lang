@@ -39,6 +39,11 @@ with ordinary Int widening, results are Float, angles are radians, and real-doma
 produce ordinary IEEE `NaN` or infinity rather than a special exception. A project-defined
 `Math` namespace keeps precedence over the built-in namespace.
 
+Optional chaining is being delivered in small slices. Slice 1 is complete: the parser retains
+`?.` as an optional member access and the rewrite context settles its short-circuit, explicit
+link, and read-only rules. Later slices add checker and runtime behavior for object fields,
+properties, and reading method calls.
+
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
 optionals slice the user chose to do before the project slice, a tuple slice split out
