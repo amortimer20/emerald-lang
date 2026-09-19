@@ -26,7 +26,7 @@
 | `Set[T]` | Membership, set algebra, callbacks | `conformance/run/set-operations.em` |
 | Tuples | Positions, unpacking, equality | `examples/tuples.em` |
 | `Range` | Iteration, `count`, `empty?()`, `step`, `reverse`, `to_list` | `conformance/run/range-values.em` |
-| `Random` | Seeded range selection, choosing, and shuffling | `conformance/run/randomness.em` |
+| [`Random`](random.md) | Seeded range selection, choosing, and shuffling | `conformance/run/randomness.em` |
 
 ## Shared semantic labels
 

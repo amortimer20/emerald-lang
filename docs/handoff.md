@@ -66,13 +66,26 @@ all five family rows; its status line distinguishes a linked (written) family fr
 unlinked (checklist-only) one. Every example linked from the five pages was re-run against
 the built `emerald` binary and diffed against its `.expected` file.
 
+`docs/library/random.md` is also complete: the seeded `Random(seed:)` generator, backed by
+`src/prelude.em`'s own `class Random` (its `next`/`choose`/`shuffle!` are host-supplied, per
+that file's comment, and were verified directly — `next` raises a `RuntimeError` on an empty
+Range exactly like the global `random`, `choose` returns `nothing` for an empty List rather
+than raising, and `shuffle!` on a non-`var` List is a checking-time error, not a runtime
+`RuntimeError`, confirmed by triggering each against the built binary rather than assuming).
+`List`'s own `random()`/`shuffle()`/`shuffle!()` are cross-referenced from this page but
+documented on the `List` page instead, since they are List methods.
+
 The next documentation slice continues `docs/library/inventory.md` family by family:
-`List[T]`, `Dict[K, V]`, `Set[T]`, Tuples, `Range`, and `Random` remain unlinked rows —
-`List[T]` is the largest remaining surface (8.6's rich vocabulary) and worth checking the
-same way against `Type.zig`/the interpreter rather than only the rewrite context, given the
-slicing mismatch found this slice. Do not invent unsettled behavior, start the separate Astro
-site, or build a documentation runner yet. `git diff --check` and `zig build test` (Debug)
-both pass; no Zig implementation changed in this documentation-only commit.
+`List[T]`, `Dict[K, V]`, `Set[T]`, Tuples, and `Range` remain unlinked rows. `List[T]` is the
+largest remaining surface (8.6's rich vocabulary, built up over roughly twenty implementation
+parts) and needs the same source-and-binary verification as everything above rather than
+trusting the rewrite context's prose alone — many of its methods (`filter`, `map`, `reduce`,
+`sort_by`, and the rest of the callback-based vocabulary) are not in `src/Type.zig`'s static
+`list_methods` table at all, since a block's type depends on the receiver, and are instead
+handled directly in `Checker.zig`/`Interpreter.zig`. Do not invent unsettled behavior, start
+the separate Astro site, or build a documentation runner yet. `git diff --check` and
+`zig build test` (Debug) both pass; no Zig implementation changed in this documentation-only
+commit.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
