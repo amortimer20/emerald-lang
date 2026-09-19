@@ -10,7 +10,7 @@ them.
 | [Types and optionals](types-and-optionals.md) | Annotations, inference, `T?`, and narrowing | Drafted |
 | [Collections and ranges](collections-and-ranges.md) | Literals, iteration, and collection value semantics | Drafted |
 | [Objects and traits](objects-and-traits.md) | Structs, classes, enums, properties, and traits | Drafted |
-| Errors, tests, and projects | `try`, `@test`, modules, and command-line workflow | Planned |
+| [Errors, tests, and projects](errors-tests-and-projects.md) | `try`, `@test`, modules, and command-line workflow | Drafted |
 
 The [standard-library reference](../library/) is complementary: use this guide to learn the
 ideas, then use the reference to look up exact operations.

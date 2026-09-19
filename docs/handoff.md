@@ -244,13 +244,38 @@ exact wording) rather than inventing new snippets — all six example files were
 the built binary while writing the guide to confirm their current output. `docs/language/
 README.md` marks it "Drafted." `git diff --check` and `zig build test` (Debug) both pass.
 
-Only one language guide remains "Planned" in `docs/language/README.md`: Errors, tests, and
-projects — noting that `docs/library/errors.md` already covers `Error`/`raise`/`catch`/
-`finally`/`assert`/`@test` from the library-reference side, so this guide's remaining scope is
-mainly project structure (14.1's directories-as-namespaces, `using`, multi-file
-initialization) plus whatever language-level framing around testing and errors belongs beside
-that rather than in the library reference. Do not invent unsettled behavior or start the
-separate Astro site without explicit authorization.
+`docs/language/errors-tests-and-projects.md` is complete, closing out every guide
+`docs/language/README.md` lists — all four now read "Drafted." It covers project structure
+(one file vs. a `main.em` directory, every `.em` file included automatically, only the entry
+file's top level runs), namespaces and `using` (directory-derived namespaces, aliasing,
+same-directory visibility, file-level privacy), lazy once-only initialization and cross-file
+cycle detection, and how `@test`/test mode interacts with a multi-file project — cross-linking
+`docs/library/errors.md` for the `raise`/`catch`/`finally`/`assert` mechanics rather than
+repeating them, since that page already covers those in full. Two claims from 14.1 were
+checked directly rather than assumed and turned out to already be known-deferred, not new
+findings: `Program.arguments` is not implemented (no trace of it anywhere outside the AST's
+unrelated internal `Program` type), and a bare top-level `return` in the entry file is
+rejected today (`` `return` can only be used inside a function ``) rather than ending the
+program, matching this handoff's own existing "Known rough edges" entry — so neither is
+mentioned in the guide as available. One claim *was* independently verified true by
+construction, since it wasn't already covered by an existing conformance case: calling a
+function from a file that is still in the middle of its own initialization is fine (only
+reading one of its *bindings* before initialization reaches it is a cycle), confirmed with a
+throwaway two-file scratch project reaching back into the file that was still initializing.
+
+`tools/check-doc-examples.sh` also gained project-case support in the same commit: a
+conformance case or an example can be a *directory* holding `main.em` rather than a single
+`.em` file (conformance/README.md's project-case convention), and this guide is the first to
+link one of each kind. The checker now recognizes `examples/<name>` and
+`conformance/{run,diagnostics,runtime-errors}/<name>` links with no `.em` suffix, checks for
+`<name>/main.em`, and additionally runs it end to end for an `examples/` case exactly like an
+ordinary linked file. Verified non-vacuous by deliberately breaking a project link and
+confirming the script caught it before restoring it. `git diff --check` and `zig build test`
+(Debug) both pass.
+
+Every language guide and every library-inventory family is now written. Further documentation
+work is open-ended: the Astro site remains unstarted and requires explicit authorization
+before starting it; otherwise, whatever the user directs next.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
