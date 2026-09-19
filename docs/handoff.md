@@ -19,6 +19,19 @@ both Debug and ReleaseSafe with the pinned Zig 0.16.0. See `docs/journal.md`'s "
 the object model" and "Slice 15 completion" sections for how each of these was built and
 what was learned along the way.
 
+Release hardening has also substantially landed (`2d5aa0b`, `ed41d24`, `00cfae3`), under that
+name rather than as "Slice 16": `.github/workflows/ci.yml` runs `zig build test` in Debug and
+ReleaseSafe across Ubuntu/macOS/Windows on every push and PR, plus a bounded 1,000-case
+frontend fuzz job; a nightly `fuzz.yml` runs four fixed 10,000-case campaigns
+(`tools/fuzz.zig`: lexer → parser → format-twice-for-idempotence over generated UTF-8 text,
+including non-ASCII atoms; its first extended run already found and fixed a real formatter
+recovery bug). `testing.checkAllAllocationFailures` now exhaustively covers `Lexer`,
+`Parser`, `Formatter`, and `Project`. Both `docs/journal.md` (its "Slice 15 completion"
+section) and this file, before this pass, still described all of this as "Slice 16, queued"
+— stale by three commits' worth of work each of which updated a different paragraph of the
+old, since-split handoff without reconciling that older claim. See "Next step" for the real
+gap that remains once the completed part is discounted.
+
 **Documentation is complete and is the reference to trust for language and library
 behavior**, not this file: every guide `docs/language/README.md` lists is "Drafted" (Core
 language, Types and optionals, Collections and ranges, Objects and traits, Errors/tests/
@@ -56,11 +69,17 @@ That documentation pass found and fixed several real issues, most recently first
 
 ## Next step
 
-Nothing is queued. Candidates, in no particular order: Slice 16 (test-infrastructure and
-hardening — CI, allocator-failure testing, lexer/parser fuzzing, full Unicode conformance,
-multi-platform coverage); the LSP's second slice (hover, go to definition, find references,
-safe rename, completion — see the journal for what each needs); or whatever the user
-directs. `Section` numbers below refer to `docs/rewrite-context.md`.
+Closing the real remaining hardening gap: allocator-failure testing and fuzzing both stop at
+the frontend and never reach `Checker.zig` or `Interpreter.zig`. The one existing
+checker-level `checkAllAllocationFailures` test (`src/emerald.zig`) runs a single one-line
+`const answer = 42` program through `checkProject` only — never through `runProject`, so
+execution failure paths in the interpreter have no allocator-failure coverage at all, and
+`tools/fuzz.zig` stops after the formatter, never feeding generated input to the checker or
+interpreter. Unicode conformance is also narrower than "full" suggests: only two conformance
+cases (`unicode-text.em`, `unicode-names.em`) exist. Other candidates, lower priority: the
+LSP's second slice (hover, go to definition, find references, safe rename, completion — see
+the journal for what each needs); or whatever the user directs. `Section` numbers below
+refer to `docs/rewrite-context.md`.
 
 ## Documentation and rewrite-context hygiene
 
@@ -314,7 +333,8 @@ been re-verified against current source in this pass:
   call frame can leave some argument counts high until the interpreter heap is torn down.
   Host allocation failure stops the run and cannot be caught by Emerald, so this is not
   observable language behavior, but the ownership path should be made fully transactional
-  when allocator-failure testing is added.
+  when `Interpreter.zig` gets its own `checkAllAllocationFailures` coverage (see "Next
+  step" — the frontend already has this, `invoke` does not).
 
 - Recursive dictionary-key eligibility currently keeps a fixed path of 256 struct types.
   A cycle is correctly rejected, but an acyclic chain deeper than 256 is conservatively
