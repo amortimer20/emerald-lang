@@ -19,8 +19,8 @@
 | --- | --- | --- |
 | [`Int`](int.md) | Arithmetic helpers, predicates, number theory, conversion, counting blocks | `conformance/run/int-methods.em` |
 | [`Float`](float.md) | Rounding, classification, conversion, angles, square root | `conformance/run/float-methods.em` |
-| `Math` | Constants, trigonometry, logarithms, powers | `conformance/run/math.em` |
-| `String` | Unicode-aware queries, editing, splitting, conversion | `conformance/run/string-methods.em` |
+| [`Math`](math.md) | Constants, trigonometry, logarithms, powers | `conformance/run/math.em` |
+| [`String`](string.md) | Unicode-aware queries, editing, splitting, conversion | `conformance/run/string-methods.em` |
 | `List[T]` | Properties, reading, changing, higher-order, and shape methods | `examples/lists.em` |
 | `Dict[K, V]` | Lookup, entries, keys/values, set-like operations, callbacks | `examples/dictionaries.em` |
 | `Set[T]` | Membership, set algebra, callbacks | `conformance/run/set-operations.em` |

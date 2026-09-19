@@ -42,21 +42,37 @@ behavioral source. Every linked example was run with the built `emerald` binary 
 slice to confirm its output still matches what the guide says. `docs/language/README.md`'s
 status table now marks the core guide "Drafted" rather than "Scaffolded."
 
-The prelude, `Int`, and `Float` family pages are complete: `docs/library/prelude.md` covers
-`print`, `write`, `input`, `input_maybe`, `random`, and `exit` (`assert` stays with errors and
-tests; the operator traits stay with traits in the language guide, since they are adopted
-rather than called); `docs/library/int.md` and `docs/library/float.md` cover every method in
-`src/Type.zig`'s `int_methods`/`float_methods` tables, cross-checked arity by arity against
-that source rather than only against the rewrite context's prose. `docs/library/inventory.md`
-links all three from their rows and its status line now distinguishes a linked (written)
-family from an unlinked (checklist-only) one. Every example linked from the three pages was
-re-run against the built `emerald` binary and diffed against its `.expected` file.
+The prelude, `Int`, `Float`, `Math`, and `String` family pages are complete:
+`docs/library/prelude.md` covers `print`, `write`, `input`, `input_maybe`, `random`, and
+`exit` (`assert` stays with errors and tests; the operator traits stay with traits in the
+language guide, since they are adopted rather than called); `docs/library/int.md`,
+`docs/library/float.md`, and `docs/library/math.md` cover every method/function in
+`src/Type.zig`'s `int_methods`/`float_methods`/`math_functions` tables; `docs/library/string.md`
+covers every method in its `string_methods` table. All four were cross-checked member by
+member against that source rather than only against the rewrite context's prose, and this
+slice's own manual probing (a scratch `.em` file run against the built binary, not just
+reading source) confirmed a gap between the rewrite context's "settled" framing and the
+current implementation that was easy to miss from prose alone: 5.4's range-slicing syntax on
+`String`/`List` (`text[1..<4]`) and its omitted-endpoint forms still fail to parse or
+type-check, matching the existing "slicing with ranges" deferred note under section 9/8
+above rather than being unblocked by the recent range-values work — so the `String` page
+explicitly says not to write slicing into an example, and documents `substring(start[,
+count])` as the only way to take part of a string today. The same probing confirmed `String`
+has no `to_string` method (a `String` already displays as itself) despite 9.2's vocabulary
+list naming one, and pinned down the exact **Raises** message text for every
+bounds/empty-argument/parse failure in `String` by triggering each one directly rather than
+trusting the prose description alone. `docs/library/inventory.md` links
+all five family rows; its status line distinguishes a linked (written) family from an
+unlinked (checklist-only) one. Every example linked from the five pages was re-run against
+the built `emerald` binary and diffed against its `.expected` file.
 
 The next documentation slice continues `docs/library/inventory.md` family by family:
-`Math`, `String`, `List[T]`, `Dict[K, V]`, `Set[T]`, Tuples, `Range`, and `Random` remain
-unlinked rows. Do not invent unsettled behavior, start the separate Astro site, or build a
-documentation runner yet. `git diff --check` and `zig build test` (Debug) both pass; no Zig
-implementation changed in this documentation-only commit.
+`List[T]`, `Dict[K, V]`, `Set[T]`, Tuples, `Range`, and `Random` remain unlinked rows —
+`List[T]` is the largest remaining surface (8.6's rich vocabulary) and worth checking the
+same way against `Type.zig`/the interpreter rather than only the rewrite context, given the
+slicing mismatch found this slice. Do not invent unsettled behavior, start the separate Astro
+site, or build a documentation runner yet. `git diff --check` and `zig build test` (Debug)
+both pass; no Zig implementation changed in this documentation-only commit.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
