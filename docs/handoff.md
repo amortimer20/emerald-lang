@@ -75,8 +75,18 @@ than raising, and `shuffle!` on a non-`var` List is a checking-time error, not a
 `List`'s own `random()`/`shuffle()`/`shuffle!()` are cross-referenced from this page but
 documented on the `List` page instead, since they are List methods.
 
+`docs/library/range.md` is also complete: `count`, `empty?()`, `step`, `reverse()`, and
+`to_list()`, verified against `Checker.zig`'s `typeOfRangeMethod` and `Interpreter.zig`'s
+`rangeMethod`. Two distinct diagnostics for the same rule surfaced only by probing the
+binary: a **literal** step below `1` (`(1..10).step(0)`) is a checking-time error with one
+message, while a **computed** step that turns out to be below `1` raises a `RuntimeError`
+with a differently worded message at runtime, since the checker cannot see a computed value
+ahead of time; calling `step` twice on the same Range is likewise a checking-time error, not
+a runtime one. `count` and `to_list()` share one whole-`Int`-domain overflow condition with
+two distinct messages, both confirmed directly against the built binary.
+
 The next documentation slice continues `docs/library/inventory.md` family by family:
-`List[T]`, `Dict[K, V]`, `Set[T]`, Tuples, and `Range` remain unlinked rows. `List[T]` is the
+`List[T]`, `Dict[K, V]`, `Set[T]`, and Tuples remain unlinked rows. `List[T]` is the
 largest remaining surface (8.6's rich vocabulary, built up over roughly twenty implementation
 parts) and needs the same source-and-binary verification as everything above rather than
 trusting the rewrite context's prose alone — many of its methods (`filter`, `map`, `reduce`,
