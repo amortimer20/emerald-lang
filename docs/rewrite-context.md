@@ -3312,6 +3312,14 @@ question blocking the first interpreter slices. The following decisions intentio
 for working Emerald programs, implementation measurements, or a dedicated design pass:
 
 - nondecimal numeric literals and numeric suffixes;
+- whether `struct` should become `value`, so the declaration spells out Emerald's
+  value-versus-reference distinction. Revisit this only as a dedicated syntax design pass,
+  with beginner-facing examples and a migration assessment;
+- whether built-in collection types should use named bracketed forms — `List[T]`,
+  `Dict[K, V]`, and `Set[T]` — in place of `[T]`, `[K: V]`, and `{T}`. The candidate keeps
+  tuple types structural as `(T1, T2, ...)`, retains the concise list and dictionary
+  literals, and should decide whether explicit `set[...]` literals are needed for natural
+  set inference;
 - overloading, including overloaded constructors and `self(...)` delegation between them,
   and mixed-type operator contracts, if real Emerald programs show that defaults, named
   arguments, and named factory functions are genuinely insufficient;
