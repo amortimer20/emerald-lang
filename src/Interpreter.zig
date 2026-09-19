@@ -2010,6 +2010,8 @@ fn evaluateMember(self: *Interpreter, expression: *const Ast.Expression, member:
     if (self.facts.qualified.get(expression)) |key| {
         if (std.mem.eql(u8, key, Resolver.float_infinity_key)) return .initFloat(std.math.inf(f64));
         if (std.mem.eql(u8, key, Resolver.float_nan_key)) return .initFloat(std.math.nan(f64));
+        if (std.mem.eql(u8, key, Resolver.math_pi_key)) return .initFloat(std.math.pi);
+        if (std.mem.eql(u8, key, Resolver.math_e_key)) return .initFloat(std.math.e);
         return self.evaluateName(expression, key, key);
     }
     return self.evaluateProperty(expression, member);
@@ -2706,6 +2708,7 @@ fn evaluateCall(
     // resolver decided which, and recorded it.
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
+        if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
         if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
         if (self.functions.contains(key)) return self.callFunction(expression.span, key, call);
@@ -2746,6 +2749,13 @@ fn evaluateCall(
         return error.Exited;
     }
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
+}
+
+fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Error!Value {
+    var values: [2]f64 = undefined;
+    for (call.arguments, 0..) |argument, index| values[index] = toFloat(try self.evaluate(argument));
+    const name = key["Math.".len..];
+    return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else std.math.pow(f64, values[0], values[1]));
 }
 
 fn random(self: *Interpreter) std.Random {

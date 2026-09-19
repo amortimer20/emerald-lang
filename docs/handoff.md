@@ -30,6 +30,12 @@ ReleaseSafe campaign on Linux; failure output includes both campaign and case se
 Keep a longer scheduled campaign as later work, alongside validation with the pinned Zig
 toolchain and end-to-end conformance cases.
 
+The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
+trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
+with ordinary Int widening, results are Float, angles are radians, and real-domain misses
+produce ordinary IEEE `NaN` or infinity rather than a special exception. A project-defined
+`Math` namespace keeps precedence over the built-in namespace.
+
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
 optionals slice the user chose to do before the project slice, a tuple slice split out

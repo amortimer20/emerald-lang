@@ -30,6 +30,7 @@ const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Project = @import("Project.zig");
 const Source = @import("Source.zig");
+const Type = @import("Type.zig");
 
 const Resolver = @This();
 
@@ -216,6 +217,14 @@ pub const prelude_namespace = "emerald";
 /// built-in `Float` type is a user declaration with setup state.
 pub const float_infinity_key = "Float.infinity";
 pub const float_nan_key = "Float.nan";
+pub const math_pi_key = "Math.pi";
+pub const math_e_key = "Math.e";
+
+pub fn mathFunction(key: []const u8) ?Type.MathFunction {
+    const prefix = "Math.";
+    if (!std.mem.startsWith(u8, key, prefix)) return null;
+    return Type.math_functions.get(key[prefix.len..]);
+}
 
 /// The key of the prelude declaration `name`.
 pub fn preludeKey(comptime name: []const u8) []const u8 {
@@ -2088,6 +2097,23 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
             "`Float` has no type-level member named `{s}`",
             .{names[1]},
             "Its type-level constants are `Float.infinity` and `Float.nan`.",
+            .{},
+        );
+        return .reported;
+    }
+
+    // A project namespace named `Math` remains an ordinary namespace. The
+    // built-in namespace is only used when no project declaration owns it.
+    if (length == 2 and std.mem.eql(u8, names[0], "Math") and !self.namespaces.contains(self.namespaceFor("Math"))) {
+        if (std.mem.eql(u8, names[1], "pi")) return .{ .key = math_pi_key };
+        if (std.mem.eql(u8, names[1], "e")) return .{ .key = math_e_key };
+        const key = try std.fmt.allocPrint(self.arena, "Math.{s}", .{names[1]});
+        if (mathFunction(key) != null) return .{ .key = key };
+        try self.reportWithHelpFmt(
+            expression.span,
+            "`Math` has no member named `{s}`",
+            .{names[1]},
+            "Use its constants `Math.pi` and `Math.e`, or one of its documented numerical functions.",
             .{},
         );
         return .reported;

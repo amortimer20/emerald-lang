@@ -624,6 +624,23 @@ pub const FloatMethod = struct {
     pub const Result = enum { bool, int, float, string };
 };
 
+/// Section 9.3's namespace-level numerical operations. Their arguments are
+/// Floats, with Emerald's ordinary Int-to-Float widening at each call site.
+pub const MathFunction = struct { parameters: usize };
+pub const math_functions = std.StaticStringMap(MathFunction).initComptime(.{
+    .{ "sin", MathFunction{ .parameters = 1 } },
+    .{ "cos", MathFunction{ .parameters = 1 } },
+    .{ "tan", MathFunction{ .parameters = 1 } },
+    .{ "arc_sin", MathFunction{ .parameters = 1 } },
+    .{ "arc_cos", MathFunction{ .parameters = 1 } },
+    .{ "arc_tan", MathFunction{ .parameters = 1 } },
+    .{ "arc_tan2", MathFunction{ .parameters = 2 } },
+    .{ "natural_log", MathFunction{ .parameters = 1 } },
+    .{ "log10", MathFunction{ .parameters = 1 } },
+    .{ "log", MathFunction{ .parameters = 2 } },
+    .{ "power", MathFunction{ .parameters = 2 } },
+});
+
 pub const float_methods = std.StaticStringMap(FloatMethod).initComptime(.{
     .{ "abs", FloatMethod{ .parameters = &.{}, .result = .float } },
     .{ "clamp", FloatMethod{ .parameters = &.{ .float, .float }, .result = .float } },

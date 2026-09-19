@@ -1696,10 +1696,18 @@ A NaN bound in `clamp` or `between?` is an error; a NaN receiver propagates thro
 and makes `between?` false.
 
 Operations naturally performed by one value are methods, including `square_root()` and
-angle conversion such as `to_radians()`. `Math` holds broader operations and constants,
-including `pi`, `e`, `sin`, `cos`, logarithms, and explicit power helpers. Angles use
-radians by default. The language operator `**` remains the natural ordinary power
-expression.
+angle conversion such as `to_radians()`. `Math` holds broader operations and constants:
+`pi`, `e`, `sin`, `cos`, `tan`, `arc_sin`, `arc_cos`, `arc_tan`, `arc_tan2`,
+`natural_log`, `log10`, `log(value, base)`, and `power(base, exponent)`. Every function
+accepts `Int` through ordinary numeric widening and returns `Float`; angles use radians by
+default. The language operator `**` remains the natural ordinary power expression.
+
+`Math` follows ordinary IEEE Float results: an inverse-trigonometric input outside its real
+domain, a negative logarithm, an invalid logarithm base, or a negative base raised to a
+non-integral power gives `NaN`; `natural_log(0)` gives `-Infinity`. These values are visible
+and testable through the existing Float predicates rather than being special exceptions.
+`Math` is a built-in namespace only when a project has not declared its own `Math` namespace,
+so existing projects retain ownership of that ordinary namespace name.
 
 Randomness is a standard-library service, not syntax. The beginner form chooses from a
 range, making its bounds visible in the range itself:

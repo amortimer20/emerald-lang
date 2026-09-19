@@ -5525,7 +5525,9 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
     if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
-        std.mem.eql(u8, reference.key, Resolver.float_nan_key)) return .float;
+        std.mem.eql(u8, reference.key, Resolver.float_nan_key) or
+        std.mem.eql(u8, reference.key, Resolver.math_pi_key) or
+        std.mem.eql(u8, reference.key, Resolver.math_e_key)) return .float;
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
     // Section 11.2's `Named.introduction(self)` is a call that runs one trait's
     // default; taking it as a value is not part of that yet.
@@ -8151,6 +8153,11 @@ fn typeOfCall(
     };
 
     const name = reference.display;
+    if (Resolver.mathFunction(reference.key)) |function| {
+        if (!try self.requireArity(.{ .name = name, .name_span = call.callee.span, .base = call.callee }, call.arguments, function.parameters, function.parameters)) return .invalid;
+        for (call.arguments) |argument| _ = try self.typeOfExpected(argument, .float);
+        return .float;
+    }
     if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
         std.mem.eql(u8, reference.key, Resolver.float_nan_key))
     {
