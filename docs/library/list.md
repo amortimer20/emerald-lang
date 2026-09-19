@@ -93,10 +93,8 @@ Every consecutive run of `size` elements, stride 1; empty result if `size` excee
 ## pairs() -> List[(T, T)]
 
 Adjacent pairs: `[a, b, c].pairs()` is `[(a, b), (b, c)]` — not every combination, and not
-index/value pairs. **A known bug**: calling `pairs()` on an empty `List` crashes the
-interpreter outright (an integer-overflow panic in `Interpreter.zig`, not a catchable
-`RuntimeError`) rather than returning `[]`. Do not demonstrate `pairs()` on an empty `List`
-until that is fixed.
+index/value pairs. An empty or single-element `List` has no adjacent pair to report, so
+`pairs()` returns `[]`.
 
 ## zip(other: List[U]) -> List[(T, U)]
 

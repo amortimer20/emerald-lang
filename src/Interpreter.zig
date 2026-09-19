@@ -4703,17 +4703,20 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
             break :blk value;
         },
         .pairs => blk: {
-            const result = try self.heap.createList(.tuple, @max(items.len - 1, 0));
+            const count: usize = if (items.len == 0) 0 else items.len - 1;
+            const result = try self.heap.createList(.tuple, count);
             const value: Value = .{ .data = .{ .list = result } };
             errdefer self.heap.release(value);
-            for (items[0..@max(items.len - 1, 0)], items[1..]) |left, right| {
-                const tuple_items = try self.gpa.alloc(Value, 2);
-                const tuple_kinds = try self.gpa.alloc(Value.Kind, 2);
-                tuple_items[0] = Heap.retain(left);
-                tuple_items[1] = Heap.retain(right);
-                tuple_kinds[0] = list.element;
-                tuple_kinds[1] = list.element;
-                result.items.appendAssumeCapacity(.{ .data = .{ .tuple = try self.heap.createTuple(tuple_items, tuple_kinds) } });
+            if (count > 0) {
+                for (items[0..count], items[1..]) |left, right| {
+                    const tuple_items = try self.gpa.alloc(Value, 2);
+                    const tuple_kinds = try self.gpa.alloc(Value.Kind, 2);
+                    tuple_items[0] = Heap.retain(left);
+                    tuple_items[1] = Heap.retain(right);
+                    tuple_kinds[0] = list.element;
+                    tuple_kinds[1] = list.element;
+                    result.items.appendAssumeCapacity(.{ .data = .{ .tuple = try self.heap.createTuple(tuple_items, tuple_kinds) } });
+                }
             }
             break :blk value;
         },

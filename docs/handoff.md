@@ -98,13 +98,16 @@ research was delegated to a subagent (source: `Checker.zig`, `Interpreter.zig`,
 surprising claim in its report was independently re-verified against the binary before
 writing the page — all held up. Two findings worth carrying forward:
 
-- **A real crash bug, not yet fixed**: `[].pairs()` (an empty `List`) panics the interpreter
-  with an integer-overflow abort (`Interpreter.zig:4706`, `@max(items.len - 1, 0)` underflows
-  `items.len` before `@max` can clamp it, since `items.len` is `usize`) instead of returning
-  `[]` or raising a catchable error. Reproduced directly. `docs/library/list.md`'s `pairs()`
-  entry documents the bug and says not to demonstrate it on an empty `List`; the bug itself
-  is unfixed pending the user's direction, and belongs in "Known rough edges" or as its own
-  fix commit, not silently patched as a side effect of a documentation slice.
+- **A real crash bug, found while documenting and fixed in a follow-up commit**: `[].pairs()`
+  (an empty `List`) panicked the interpreter with an integer-overflow abort
+  (`Interpreter.zig:4706`, `@max(items.len - 1, 0)` underflowed `items.len` before `@max`
+  could clamp it, since `items.len` is `usize`) instead of returning `[]` or raising a
+  catchable error. Reproduced directly, then fixed by computing `count` with an explicit
+  `if (items.len == 0) 0 else items.len - 1` and guarding the pairing loop (which also
+  indexed `items[1..]` unconditionally, itself out of bounds when `items.len == 0`) behind
+  `count > 0`. `conformance/run/list-shape.em` gained empty- and single-element `pairs()`
+  cases; `zig build test` passes in both Debug and ReleaseSafe. `docs/library/list.md`'s
+  `pairs()` entry no longer needs a bug caveat.
 - **`reduce_right` is implemented** (added in `0a1b691`, four days before this slice) even
   though both `docs/rewrite-context.md:1470` and this handoff's own "Part 17" paragraph above
   still call it deferred — a second instance of the stale-prose trap the `String`/`List`
@@ -128,9 +131,9 @@ linked, so remaining documentation work is either the "Errors and tests" page (f
 or the language guides beyond "Core language" that `docs/language/README.md` still lists as
 "Planned" (Types and optionals; Collections and ranges; Objects and traits; Errors, tests, and
 projects). Do not invent unsettled behavior, start the separate Astro site, or build a
-documentation runner yet. `git diff --check` and `zig build test` (Debug) both pass; no Zig
-implementation changed in this documentation-only commit (the `pairs()` crash above was
-found, not fixed, by this slice).
+documentation runner yet. `git diff --check` passes, and `zig build test` passes in both
+Debug and ReleaseSafe (the `pairs()` fix above is the one Zig implementation change in this
+run of otherwise documentation-only slices).
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
