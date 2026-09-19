@@ -451,8 +451,11 @@ Optional chaining uses `?.` for one nullable link: `user?.name` returns `String?
 `user?.greet(message)` returns that call's result as an optional. When the receiver is
 `nothing`, the access or call returns `nothing` and call arguments are not evaluated. Each
 nullable link is written explicitly (`user?.address?.street`); a plain `.` still needs a
-present receiver. An optional chain is read-only, so an assignment or changing method call
-through `?.` is rejected.
+present receiver. An optional chain is read-only: an assignment through `?.` is rejected at
+check time, and so is a struct's changing method through `?.`, since `?.` only ever reads
+the receiver's value and a struct's changing method needs a place to write its change back
+into. A class's changing method is unaffected, since mutating its one shared object is
+sound however it's reached.
 
 An `is` test that static analysis can prove always true or always false remains valid and
 produces that `Bool`, but receives a warning explaining the known result. The tested
@@ -1467,9 +1470,11 @@ the initial value once, then visits items from left to right; each block result 
 next accumulator and the final accumulator is returned. The initial value also determines the
 result and accumulator type, which may differ from the List's element type. The block must
 take that accumulator followed by one List item and return the accumulator type. Because the
-initial value is required, an empty List simply returns it. `reduce_right` and Dictionary and
-Set forms are deferred. As with every List traversal, changing a captured binding during the
-block changes that binding's copy and does not add or remove items from this reduction.
+initial value is required, an empty List simply returns it. `reduce_right(initial) { accumulator,
+item => ... }` is the same shape, visiting from the List's end toward its start; Dictionary and
+Set forms of both remain deferred. As with every List traversal, changing a captured binding
+during the block changes that binding's copy and does not add or remove items from this
+reduction.
 
 `sum()` is currently a List operation for `List[Int]` and `List[Float]`. It returns that same numeric
 type and visits items from left to right. An empty numeric List returns its additive identity:

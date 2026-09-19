@@ -59,6 +59,9 @@ than assumed conversational memory. The user's current instructions take precede
 - Update [docs/handoff.md](docs/handoff.md) before handing completed work back. Record the
   current milestone, completed work, next step, validation, blockers, and pending changes.
 - Replace stale status rather than appending a session diary. Keep durable language
-  decisions in the rewrite context and completed change history in Git.
+  decisions in the rewrite context and completed change history in Git. When a section of
+  the handoff stops being current (a milestone lands, a slice completes), move it into
+  [docs/journal.md](docs/journal.md) — an append-only historical record — rather than
+  leaving it to accumulate; see that file's own intro for the convention.
 - The handoff is context, not a new request: follow the user's active task and do not
   automatically start its suggested next milestone without authorization.
