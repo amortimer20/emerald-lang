@@ -91,17 +91,46 @@ position widening (unlike `List`'s invariance), equality, and destructuring in e
 8.2 lists, cross-checked against `conformance/diagnostics/tuple-*.em` for each checking-time
 error's exact text.
 
-The next documentation slice continues `docs/library/inventory.md` family by family:
-`List[T]`, `Dict[K, V]`, and `Set[T]` remain unlinked rows. `List[T]` is the
-largest remaining surface (8.6's rich vocabulary, built up over roughly twenty implementation
-parts) and needs the same source-and-binary verification as everything above rather than
-trusting the rewrite context's prose alone — many of its methods (`filter`, `map`, `reduce`,
-`sort_by`, and the rest of the callback-based vocabulary) are not in `src/Type.zig`'s static
-`list_methods` table at all, since a block's type depends on the receiver, and are instead
-handled directly in `Checker.zig`/`Interpreter.zig`. Do not invent unsettled behavior, start
-the separate Astro site, or build a documentation runner yet. `git diff --check` and
-`zig build test` (Debug) both pass; no Zig implementation changed in this documentation-only
-commit.
+`docs/library/list.md`, `docs/library/dict.md`, and `docs/library/set.md` are now also
+complete, finishing every row of the "Built-in types and namespaces" table. `List[T]`'s
+research was delegated to a subagent (source: `Checker.zig`, `Interpreter.zig`,
+`conformance/run/list-*.em`, plus live probes against the built binary), and every
+surprising claim in its report was independently re-verified against the binary before
+writing the page — all held up. Two findings worth carrying forward:
+
+- **A real crash bug, not yet fixed**: `[].pairs()` (an empty `List`) panics the interpreter
+  with an integer-overflow abort (`Interpreter.zig:4706`, `@max(items.len - 1, 0)` underflows
+  `items.len` before `@max` can clamp it, since `items.len` is `usize`) instead of returning
+  `[]` or raising a catchable error. Reproduced directly. `docs/library/list.md`'s `pairs()`
+  entry documents the bug and says not to demonstrate it on an empty `List`; the bug itself
+  is unfixed pending the user's direction, and belongs in "Known rough edges" or as its own
+  fix commit, not silently patched as a side effect of a documentation slice.
+- **`reduce_right` is implemented** (added in `0a1b691`, four days before this slice) even
+  though both `docs/rewrite-context.md:1470` and this handoff's own "Part 17" paragraph above
+  still call it deferred — a second instance of the stale-prose trap the `String`/`List`
+  slicing gap already showed, this time in the opposite direction (documented as missing,
+  actually present). Now documented on the `List` page; the rewrite context and this
+  handoff's older prose are still stale on this point and worth correcting whenever that
+  section is next touched, though this documentation-only slice did not edit either.
+
+Also confirmed directly: `average()`/`min()`/`max()` return `T?`/`Float?` despite
+`src/Type.zig`'s static `list_methods` table listing bare `.float`/`.element` for them (those
+table entries only drive the interpreter's read-vs-mutate dispatch; the checker's own
+explicit code decides the real, optional-returning types); there is no `+`/`+=` on `List`
+(only `chain`); `List` range-slicing (`list[1..<3]`) fails the same way `String`'s does;
+`remove_if` does not exist despite being named as design intent in 8.5's prose; and `List` has
+no `to_string()`, matching `String`. `docs/library/inventory.md` links all three new pages,
+completing every row in that table.
+
+The next documentation slice is open: the "Built-in types and namespaces" table is now fully
+linked, so remaining documentation work is either the "Errors and tests" page (for `assert`,
+`raise`/`catch`/`finally`, and the `Error` hierarchy — currently only referenced, not written)
+or the language guides beyond "Core language" that `docs/language/README.md` still lists as
+"Planned" (Types and optionals; Collections and ranges; Objects and traits; Errors, tests, and
+projects). Do not invent unsettled behavior, start the separate Astro site, or build a
+documentation runner yet. `git diff --check` and `zig build test` (Debug) both pass; no Zig
+implementation changed in this documentation-only commit (the `pairs()` crash above was
+found, not fixed, by this slice).
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
