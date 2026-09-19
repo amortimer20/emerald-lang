@@ -192,6 +192,18 @@ already-known deferred item, not a defect introduced by this slice. `docs/langua
 marks this guide "Drafted." `git diff --check` passes, and `zig build test` passes in both
 Debug and ReleaseSafe.
 
+A second real bug turned up while researching the "Collections and ranges" guide, and was
+fixed the same way as the `pairs()` crash: `Checker.zig`'s "this list mixes `nothing` with
+{type}" diagnostic (for a literal like `[nothing, "Ava"]` with no expected type) suggested
+fixing it with `var each: [String?] = [...]` — the retired bracket-type spelling the v0.2.0
+collection-type-spelling migration was supposed to have removed everywhere, and which the
+parser itself now rejects outright. Confirmed by triggering the diagnostic, then confirming
+the retired spelling it suggested actually fails to parse. Now says
+`var each: List[String?] = [...]`, confirmed to actually compile and run.
+`conformance/diagnostics/optional-list-needs-type.expected` is regenerated; `zig build test`
+passes in both Debug and ReleaseSafe. A repo-wide grep found no other surviving instance of
+the retired spelling in a diagnostic, an example, or a doc.
+
 Remaining language guides `docs/language/README.md` lists as "Planned": Collections and
 ranges; Objects and traits; Errors, tests, and projects. Do not invent unsettled behavior or
 start the separate Astro site without explicit authorization.

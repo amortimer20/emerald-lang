@@ -5223,15 +5223,15 @@ fn typeOfList(self: *Checker, expression: *const Ast.Expression, expected: ?Type
     for (elements, types) |element, element_type| {
         if (element_type.assignableTo(target)) continue;
         // Section 4.5: a literal holding `nothing` needs the element type from
-        // context, because `[String]?` and `[String?]` are different types and
-        // the literal alone does not say which was meant.
+        // context, because `List[String]?` and `List[String?]` are different
+        // types and the literal alone does not say which was meant.
         if (element_type.kind == .nothing or target.kind == .nothing) {
             const present = if (target.kind == .nothing) element_type else target;
             try self.reportWithHelp(
                 expression.span,
                 "this list mixes `nothing` with {f}, so its type has to be written",
                 .{present},
-                "Say what it holds, as in `var each: [{f}?] = [...]`.",
+                "Say what it holds, as in `var each: List[{f}?] = [...]`.",
                 .{present},
             );
             return self.recordLiteral(expression, .invalid);
