@@ -3904,10 +3904,9 @@ fn callHigherOrder(
         return value;
     }
 
-    // The checker exposes these value-producing methods only on Lists for
-    // now. Keeping a runtime kind for the collection item still lets an
-    // already-diagnosed invalid Dictionary or Set call finish without a host
-    // crash while diagnostics are being collected.
+    // The remaining value-producing methods return Lists. Keeping a runtime
+    // kind for a collection item still lets an already-diagnosed invalid call
+    // finish without a host crash while diagnostics are being collected.
     const element_kind: Value.Kind = switch (receiver.data) {
         .list => |list| list.element,
         .map => |map| if (map.is_set) map.key_kind else .tuple,

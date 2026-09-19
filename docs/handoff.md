@@ -1,45 +1,26 @@
 # Current handoff
 
-   Updated: 2026-09-18. Collection type spellings now use the named built-in forms
-   `List[T]`, `Dict[K, V]`, and `Set[T]`; tuple types remain structural. List and dictionary
-   literals are unchanged, while sets continue to use a bracketed literal only where an
-   expected `Set[T]` type supplies their kind. The parser, formatter, diagnostic type display,
-   built-in diagnostic help, documentation, unit tests, and conformance cases have migrated;
-   the retired `[T]`, `[K: V]`, and `{T}` type spellings are rejected. Debug and ReleaseSafe
-   `zig build test` pass with pinned Zig 0.16.0, and `git diff --check` passes. The completed
-   standard-library slices cover the remaining List vocabulary
-   together with its required randomness subsystem. The working tree implements `sort`,
-   `sort!`, `sort_by`, `unique_by`, `associate`, `associate_by`, and `to_dictionary`, with
-   static eligibility checks, stable ordering, duplicate-key replacement, and NaN runtime
-   errors. The user confirmed that the same slice must also implement `shuffle`, `shuffle!`,
-   `random(range)`, collection `random()`, and seeded `Random` operations in one pass. The
-   earlier heap-only `Random` scaffold was removed during recovery before that intent was
-   known. The completed design instead keeps a seeded generator's private state in the
-   prelude `Random` class and implements its generic operations in the checker/interpreter,
-   avoiding a second managed-object kind. Global and seeded range choice, optional List
-   choice, copying/in-place shuffle, deterministic equal-seed behavior, and empty-range
-   errors now have conformance coverage. The complete `zig build test` suite passes in Debug
-   and ReleaseSafe with pinned Zig 0.16.0; Zig formatting and `git diff --check` pass too.
-   The next small prelude slice adds `exit()` and `exit(code)`: it uses statuses `0` through
-   `255`, bypasses catches, unwinds `finally`, and carries its requested status through the
-   API report and CLI. Debug coverage is complete; rerun ReleaseSafe and the full final checks
-   before committing this pending slice.
+   Updated: 2026-09-18. Emerald v0.2.0 shipped the named built-in collection type spellings:
+   `List[T]`, `Dict[K, V]`, and `Set[T]`; tuples remain structural. List and dictionary
+   literals are unchanged, while a bracketed set literal needs an expected `Set[T]` type.
+   The retired `[T]`, `[K: V]`, and `{T}` spellings are rejected throughout the parser,
+   formatter, diagnostics, documentation, examples, unit tests, and conformance suite.
+   `exit()` and `exit(code)` have also landed. Dictionary and Set `filter` and `reject` now
+   complete the deferred callback follow-through: predicates run once in deterministic
+   insertion order, Dictionaries receive destructurable `(key, value)` entries, results keep
+   the receiver kind, and sources are unchanged. Their dedicated run and diagnostic
+   conformance coverage is in this working tree. `zig build test` passes in Debug and
+   ReleaseSafe with pinned Zig 0.16.0 (the latter used a writable temporary Zig cache), and
+   `git diff --check` passes.
 
 ## Current milestone
 
-The current standard-library plan is:
-
-   1. Finish the deferred dictionary/set callback follow-through in the rewrite-context contract and golden run
-      coverage.
-   2. Continue the next deferred collection-family batch, keeping the work narrow and roadmap-driven rather than
-      broadening into unrelated runtime or parser cleanup.
-   3. Keep validation aligned with the pinned Zig toolchain and end-to-end conformance cases.
-
-   The repo already includes the earlier landings that matter for this plan: the core frontend, object model,
-   error handling, list-family helpers, the completed Range value slice, the dictionary/set transform family, the
-   list shape helpers, right-to-left reduction, and the set-operation family. The active work remains the next
-   standard-library layer rather than a rebuild of the language core. Validation is currently green on the exercised
-   conformance case and the targeted repository checks relevant to this change.
+Collection-method expansion is deliberately paused after the existing shape family
+(`zip`, `chain`, `chunks`, `windows`, and `pairs`) and Dictionary/Set `filter` and `reject`.
+Do not begin another collection-method batch without a new user decision: the current API is
+broad enough that it needs real use and documentation review before it grows. The next
+milestone should therefore be a non-collection roadmap item chosen with the user. Keep
+validation aligned with the pinned Zig toolchain and end-to-end conformance cases.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an
@@ -146,12 +127,14 @@ clear error. `unique` uses Emerald equality and keeps each value's first occurre
 input order. The conformance cases cover values, copy-on-write, type and arity errors, and
 negative counts.
 
-Part 5 adds List `filter` and `reject`. Both use an eager `func(Element): Bool` predicate,
-run it once per item in input order, and return a new List without changing the receiver.
-`filter` retains accepted items and `reject` retains rejected ones. The existing higher-order
-call path therefore supplies ordinary closure captures, nested patterns, errors, and stack
-traces without a second callback implementation. Dictionary and Set variants remain
-deferred with their broader transformation work.
+Part 5 adds `filter` and `reject` to Lists, Dictionaries, and Sets. Both use an eager
+`func(Element): Bool` predicate, run it once per item in input order, and return a new
+receiver-kind-preserving collection without changing the receiver. `filter` retains accepted
+items and `reject` retains rejected ones. Dictionary predicates receive one destructurable
+`(key, value)` tuple; Set predicates receive their member. The existing higher-order call path
+therefore supplies ordinary closure captures, nested patterns, errors, and stack traces
+without a second callback implementation. Dedicated conformance covers order, callback
+count, unchanged inputs, result kind, predicate types, and missing blocks.
 
 Part 6 adds `each_with_index` to Lists, Dictionaries, and Sets. Its block receives each
 ordinary logical item and then a zero-based `Int` position; dictionary entries remain the
