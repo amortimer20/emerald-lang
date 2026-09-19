@@ -232,9 +232,25 @@ snippet was run against the built binary while writing it, including the `Set`-f
 rejection and its `.to_set()` correction. `zig build test` passes in both Debug and
 ReleaseSafe.
 
-Remaining language guides `docs/language/README.md` lists as "Planned": Objects and traits;
-Errors, tests, and projects. Do not invent unsettled behavior or start the separate Astro
-site without explicit authorization.
+`docs/language/objects-and-traits.md` is complete: structs (value semantics, constructors,
+properties, type-level members, privacy), classes (shared-object semantics, inheritance,
+`@override`/`@abstract`), traits (requirements vs. defaults, conflicts, `Self`, operators via
+`Addable`/`Subtractable`/`Multipliable`/`Divisible`/`Ordered`), and enums. This is the
+largest language guide so far and leaned on already-existing, already-comprehensive example
+files (`examples/structs.em`, `classes.em`, `inheritance.em`, `traits.em`, `enums.em`,
+`operators.em`) and one exhaustive diagnostics file
+(`conformance/diagnostics/traits.em`, which alone covers nearly every trait mistake with its
+exact wording) rather than inventing new snippets — all six example files were re-run against
+the built binary while writing the guide to confirm their current output. `docs/language/
+README.md` marks it "Drafted." `git diff --check` and `zig build test` (Debug) both pass.
+
+Only one language guide remains "Planned" in `docs/language/README.md`: Errors, tests, and
+projects — noting that `docs/library/errors.md` already covers `Error`/`raise`/`catch`/
+`finally`/`assert`/`@test` from the library-reference side, so this guide's remaining scope is
+mainly project structure (14.1's directories-as-namespaces, `using`, multi-file
+initialization) plus whatever language-level framing around testing and errors belongs beside
+that rather than in the library reference. Do not invent unsettled behavior or start the
+separate Astro site without explicit authorization.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
