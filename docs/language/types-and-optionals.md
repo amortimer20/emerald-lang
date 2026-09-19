@@ -135,13 +135,31 @@ own `?.` — a single `?.` does not make the rest of a chain implicitly optional
 `user?.address.city` is rejected when `address` is itself optional (write the second `?.`).
 
 `?.` is read-only: assigning through a chain (`user?.name = "Ava"`) is a checking-time error,
-since it would hide whether the assignment actually happened. Calling a **changing** method
-through `?.` looks like the same restriction but is enforced differently: it type-checks —
-the checker doesn't reject it statically — and only raises a `RuntimeError`
-(`` an optional chain cannot call a changing method ``) the moment the chain actually runs
-with a present receiver. An absent receiver never reaches that check at all, since the whole
-chain short-circuits first. The correction is the same either way: check the receiver
-against `nothing` explicitly, then call the changing method with plain `.`.
+since it would hide whether the assignment actually happened. Calling a **struct's**
+changing method through `?.` is rejected the same way, and for the same reason: `?.` only
+ever reads the receiver's value, so a struct's changing method — which needs a place to write
+its change back into — has nowhere to put it.
+
+```emerald
+struct Counter {
+    var count: Int
+
+    func increment() {
+        self.count += 1
+    }
+}
+
+var maybe_counter: Counter? = Counter(0)
+maybe_counter?.increment()    # error: an optional chain cannot call a changing method
+```
+
+A **class**'s changing method is unaffected: the object is shared, so mutating it is exactly
+as visible afterward as mutating it any other way, whether or not `?.` was involved in
+reaching it. See
+[`conformance/diagnostics/optional-chain-changing-method.em`](../../conformance/diagnostics/optional-chain-changing-method.em)
+for a struct and a class side by side — one rejected, one accepted, from the same shape of
+code. The correction for the struct case is the same as for assignment: check the receiver
+against `nothing` explicitly first, then call the changing method with plain `.`.
 
 ### The one honest cost
 

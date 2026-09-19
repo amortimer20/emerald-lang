@@ -6225,7 +6225,22 @@ fn typeOfOptionalObjectMethodCall(self: *Checker, expression: *const Ast.Express
         return .invalid;
     }
     const present = base.payload();
-    return (try self.typeOfStructMethodCall(expression, call, member, present)).optionalOf();
+    const result = try self.typeOfStructMethodCall(expression, call, member, present);
+    if (result.kind != .invalid) {
+        // A struct's changing method has nowhere to write its change back to
+        // through `?.`, which only ever reads the receiver's value (4.5); a
+        // class is unaffected; `methodChanges` already says `false` for one,
+        // since mutating the one shared object is fine however it was
+        // reached.
+        const key = try self.memberKey(present, member.name) orelse try Resolver.methodKey(self.arena, present.user.?.name, member.name);
+        if (try self.methodChanges(key)) try self.report(
+            member.name_span,
+            "an optional chain cannot call a changing method",
+            .{},
+            "Check the receiver against `nothing` first, then call the changing method with `.`.",
+        );
+    }
+    return result.optionalOf();
 }
 
 /// Section 4.5: everything but `or` needs the value to be there first.

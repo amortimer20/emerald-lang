@@ -207,8 +207,31 @@ Optional chaining is being delivered in small slices. Slice 1 is complete: the p
 link, and read-only rules. Slice 2 adds object field and computed-property reads: an absent
 receiver returns `nothing`, a present result becomes optional, and the receiver is evaluated
 once. Reading methods also short-circuit: arguments are not evaluated for an absent receiver,
-their result is optional, and a changing method through `?.` raises with a correction toward
-an explicit presence check.
+and their result is optional.
+
+A struct's changing method called through `?.` is now rejected at check time rather than at
+runtime. While writing the "Types and optionals" language guide, the user asked what should
+change about `?.` given Emerald's philosophy; the answer — this restriction is exactly the
+kind of mistake 4.3's "errors are pedagogy" principle wants caught immediately, the same way
+assignment through `?.` already is, not only when the data happens to make the receiver
+present — was implemented as its own small slice once the user approved it. Investigating
+found the fix was simpler than expected: `methodChanges(key)` (`Checker.zig`), already used
+by the ordinary `.` call path to decide the *unrelated* struct-const-receiver diagnostic,
+already returns `false` for every class method by design (10.1: mutating a shared object is
+fine however it's reached), so calling it from `typeOfOptionalObjectMethodCall` needed no new
+analysis and naturally preserves the correct struct-only scope — confirmed by testing a
+struct's and a class's mutating method through `?.` side by side, both before and after the
+change, with the class case behaving identically throughout (it always worked; only the
+struct case moved from a runtime raise to a checking-time diagnostic reachable regardless of
+whether the receiver's data happens to be present or absent). The now-unreachable runtime
+raise in `Interpreter.zig::callMethod` was removed, matching the codebase's existing
+convention of relying on a doc comment for a checker-guaranteed invariant rather than a
+redundant runtime check. No prior conformance case exercised the old runtime raise at all;
+`conformance/diagnostics/optional-chain-changing-method.em` is new and covers both the
+rejected struct case and the still-accepted class case in one file. `zig build test` passes
+in both Debug and ReleaseSafe. `docs/language/types-and-optionals.md`'s optional-chaining
+section is updated to describe the corrected, struct-only, check-time rule instead of the
+prior runtime-only one.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an

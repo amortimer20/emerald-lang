@@ -1,0 +1,4 @@
+diagnostics/optional-chain-changing-method.em:19:16: an optional chain cannot call a changing method
+  maybe_counter?.increment()
+                 ^^^^^^^^^
+Check the receiver against `nothing` first, then call the changing method with `.`.

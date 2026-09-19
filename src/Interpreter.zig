@@ -4420,12 +4420,11 @@ fn callMethod(
     // `append` or `each` is never mistaken for a collection's.
     if (self.method_calls.get(call.callee)) |key| {
         if (member.optional) {
+            // The checker has already proved this is not a changing struct
+            // method (4.5): one has nowhere through `?.` to write its change
+            // back to, since this only ever reads the receiver's value.
             const receiver = try self.evaluate(member.base);
             if (receiver.data == .nothing) return Value.nothing;
-            if (self.changing_methods.contains(key)) {
-                self.heap.release(receiver);
-                return self.raise(member.name_span, "an optional chain cannot call a changing method", "Check the receiver against `nothing` first, then call the changing method with `.`.");
-            }
             return self.callStructMethod(expression, call, member, key, receiver);
         }
         return self.callStructMethod(expression, call, member, key, null);
