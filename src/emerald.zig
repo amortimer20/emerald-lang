@@ -785,9 +785,34 @@ fn buildProject(gpa: std.mem.Allocator, files: []const ProjectFile) !Project {
     return .{ .files = built, .entry = 0, .bad_directories = &.{} };
 }
 
+/// Small enough to keep `checkAllAllocationFailures`'s per-allocation-point
+/// rerun affordable, but wide enough to reach a struct declaration and
+/// construction, a method call, a list literal and iteration, arithmetic,
+/// and string interpolation in one program — well past `Checker.zig`'s and
+/// `Interpreter.zig`'s bare-statement paths that a one-line program never
+/// touches.
+const allocation_failure_program =
+    \\struct Point {
+    \\    var x: Int
+    \\    var y: Int
+    \\
+    \\    func sum(): Int {
+    \\        return self.x + self.y
+    \\    }
+    \\}
+    \\
+    \\var points = [Point(1, 2), Point(3, 4)]
+    \\var total = 0
+    \\for point in points {
+    \\    total = total + point.sum()
+    \\}
+    \\print("Total: #{total}")
+    \\
+;
+
 test "checking releases every allocation failure" {
     var project = try buildProject(testing.allocator, &.{
-        .{ .path = "main.em", .text = "const answer = 42\n" },
+        .{ .path = "main.em", .text = allocation_failure_program },
     });
     defer project.deinit(testing.allocator);
 
@@ -796,6 +821,33 @@ test "checking releases every allocation failure" {
             var report = try checkProject(gpa, input);
             defer report.deinit();
             if (!report.ok()) return error.UnexpectedDiagnostic;
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Work.run, .{&project});
+}
+
+test "running releases every allocation failure" {
+    var project = try buildProject(testing.allocator, &.{
+        .{ .path = "main.em", .text = allocation_failure_program },
+    });
+    defer project.deinit(testing.allocator);
+
+    const Work = struct {
+        fn run(gpa: std.mem.Allocator, input: *const Project) !void {
+            var out: std.Io.Writer.Allocating = .init(gpa);
+            defer out.deinit();
+            var no_input: std.Io.Reader = .fixed("");
+            // An `Allocating` writer can only ever fail by allocation, so its
+            // `error.WriteFailed` (`std.Io.Writer.Error`, which `RunError`
+            // legitimately includes for a real, non-memory-backed stream)
+            // is exactly the failure this harness is injecting.
+            var report = runProject(gpa, input, .{ .out = &out.writer, .in = &no_input }) catch |err| switch (err) {
+                error.WriteFailed => return error.OutOfMemory,
+                else => |e| return e,
+            };
+            defer report.deinit();
+            if (!report.ok()) return error.UnexpectedDiagnosticOrFailure;
         }
     };
 

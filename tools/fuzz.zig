@@ -4,8 +4,12 @@
 //!
 //! Inputs are always valid UTF-8 source text, but are intentionally not always
 //! valid Emerald. Every input must lex and parse without crashing or producing
-//! an unbounded diagnostic cascade. Inputs accepted by both stages are also
-//! formatted twice; formatting must keep them parseable and be idempotent.
+//! an unbounded diagnostic cascade. Inputs accepted by both stages also reach
+//! the checker, which must not crash either, and are formatted twice;
+//! formatting must keep them parseable and be idempotent. Execution is
+//! deliberately not exercised here: the generator has no loop keywords today,
+//! but a checked-but-unrun program cannot hang or produce unbounded output
+//! even if that changes, which running one could.
 
 const std = @import("std");
 const emerald = @import("emerald");
@@ -86,6 +90,13 @@ fn exercise(gpa: std.mem.Allocator, text: []const u8) !void {
     try requireBoundedDiagnostics(source.text, parsed.diagnostics.len);
 
     if (tokenized.diagnostics.len != 0 or parsed.diagnostics.len != 0) return;
+
+    // Syntactically valid input reaches the checker too, not only the
+    // formatter: a crash here is exactly what frontend fuzzing exists to
+    // catch, even though (unlike the lexer's and parser's) the checker's own
+    // diagnostic count is not required to be zero or bounded here.
+    var checked = try emerald.check(gpa, &source);
+    defer checked.deinit();
 
     const once = try emerald.Formatter.print(gpa, &source, tokenized.tokens, parsed.program);
     defer gpa.free(once);

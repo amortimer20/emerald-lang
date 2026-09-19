@@ -23,14 +23,26 @@ Release hardening has also substantially landed (`2d5aa0b`, `ed41d24`, `00cfae3`
 name rather than as "Slice 16": `.github/workflows/ci.yml` runs `zig build test` in Debug and
 ReleaseSafe across Ubuntu/macOS/Windows on every push and PR, plus a bounded 1,000-case
 frontend fuzz job; a nightly `fuzz.yml` runs four fixed 10,000-case campaigns
-(`tools/fuzz.zig`: lexer → parser → format-twice-for-idempotence over generated UTF-8 text,
-including non-ASCII atoms; its first extended run already found and fixed a real formatter
-recovery bug). `testing.checkAllAllocationFailures` now exhaustively covers `Lexer`,
-`Parser`, `Formatter`, and `Project`. Both `docs/journal.md` (its "Slice 15 completion"
-section) and this file, before this pass, still described all of this as "Slice 16, queued"
-— stale by three commits' worth of work each of which updated a different paragraph of the
-old, since-split handoff without reconciling that older claim. See "Next step" for the real
-gap that remains once the completed part is discounted.
+(`tools/fuzz.zig`: lexer → parser → checker → format-twice-for-idempotence over generated
+UTF-8 text, including non-ASCII atoms; its first extended run already found and fixed a real
+formatter recovery bug). `testing.checkAllAllocationFailures` covers `Lexer`, `Parser`,
+`Formatter`, and `Project` exhaustively, plus `checkProject` and `runProject` against a
+struct/list/loop/interpolation program broad enough to reach past bare-statement paths
+(`src/emerald.zig`). Both `docs/journal.md` (its "Slice 15 completion" section) and this
+file, before this pass, still described all of this as "Slice 16, queued" — stale by three
+commits' worth of work each of which updated a different paragraph of the old, since-split
+handoff without reconciling that older claim. This pass closed the specific gap that
+survived that staleness (allocator-failure testing and fuzzing never reaching the checker or
+interpreter, detailed in the previous "Next step") by adding the `runProject` allocator-
+failure test above and a checker stage to `tools/fuzz.zig`. The `runProject` test initially
+failed for a reason that turned out not to be a bug: `RunError` legitimately includes both
+`error.OutOfMemory` and `std.Io.Writer.Error`'s `error.WriteFailed` (`self.out` in
+`Interpreter.zig` may be real stdout, where a write can fail for reasons that have nothing to
+do with memory, so the interpreter is right not to collapse the two into one). The test's own
+output stream, though, is an in-memory `std.Io.Writer.Allocating`, where `WriteFailed` can
+only mean its backing (failing, by design) allocator failed — so the test's `Work.run`
+converts `WriteFailed` to `OutOfMemory` itself before checking the result, matching what
+`checkAllAllocationFailures` expects; no production code needed to change.
 
 **Documentation is complete and is the reference to trust for language and library
 behavior**, not this file: every guide `docs/language/README.md` lists is "Drafted" (Core
@@ -69,17 +81,16 @@ That documentation pass found and fixed several real issues, most recently first
 
 ## Next step
 
-Closing the real remaining hardening gap: allocator-failure testing and fuzzing both stop at
-the frontend and never reach `Checker.zig` or `Interpreter.zig`. The one existing
-checker-level `checkAllAllocationFailures` test (`src/emerald.zig`) runs a single one-line
-`const answer = 42` program through `checkProject` only — never through `runProject`, so
-execution failure paths in the interpreter have no allocator-failure coverage at all, and
-`tools/fuzz.zig` stops after the formatter, never feeding generated input to the checker or
-interpreter. Unicode conformance is also narrower than "full" suggests: only two conformance
-cases (`unicode-text.em`, `unicode-names.em`) exist. Other candidates, lower priority: the
-LSP's second slice (hover, go to definition, find references, safe rename, completion — see
-the journal for what each needs); or whatever the user directs. `Section` numbers below
-refer to `docs/rewrite-context.md`.
+Nothing is queued. What remains of the old "Slice 16" backlog, in no particular order:
+Unicode conformance is narrower than "full" suggests — only two conformance cases
+(`unicode-text.em`, `unicode-names.em`) exist, and the rewrite context (9.2) says
+`letter?`/`digit?`/`words`/`title_case`/case-insensitive comparison need "a dedicated locale
+and boundary design pass" first, which hasn't happened; `tools/fuzz.zig`'s generator has no
+loop keywords and doesn't execute anything, so the interpreter itself is still unfuzzed
+(deliberately, for now — see the file's own header comment for the hang-risk reasoning).
+Other candidates: the LSP's second slice (hover, go to definition, find references, safe
+rename, completion — see the journal for what each needs); or whatever the user directs.
+`Section` numbers below refer to `docs/rewrite-context.md`.
 
 ## Documentation and rewrite-context hygiene
 
