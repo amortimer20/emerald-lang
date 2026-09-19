@@ -7,6 +7,11 @@ Emerald is being reimplemented from scratch in Zig. The current language baselin
 implementation architecture, staged plan, and evidence-driven roadmap live in
 [`docs/rewrite-context.md`](docs/rewrite-context.md).
 
+The in-repository documentation source is being organized under
+[`docs/language/`](docs/language/) and [`docs/library/`](docs/library/). It is the
+canonical language and standard-library reference; a future documentation site may present
+that source without becoming a second specification.
+
 ## Rewrite status
 
 Emerald runs and type-checks. The whole frontend of section 19.2 exists — source manager,

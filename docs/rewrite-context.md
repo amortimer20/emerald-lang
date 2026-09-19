@@ -2794,6 +2794,19 @@ The initial test runner prints `N tests passed.` when all tests pass, or
 `N tests, F failed.` after running the complete discovered set. Assertion failures identify
 the test function in their diagnostic, and test failures use status 3.
 
+### 18.1.1 Documentation source
+
+The repository's `docs/language/` and `docs/library/` Markdown trees are the canonical
+programmer-facing language guide and standard-library reference. They live with the language
+implementation, examples, and conformance programs so a change to behavior updates its
+explanation in the same review. A future documentation site may consume these sources, but
+site presentation, search, and deployment do not become a second semantic authority.
+
+Reference entries state their callable shape, result, and edge behavior. They explicitly mark
+changing operations, optional results, callbacks, and value-dependent runtime failures.
+Runnable examples link to repository examples or conformance programs; documentation tooling
+eventually verifies those links and examples automatically.
+
 `build`, `debug`, package `add`, and a distribution command are later tooling. Names should
 describe user goals in full words.
 

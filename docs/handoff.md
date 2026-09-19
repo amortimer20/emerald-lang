@@ -28,6 +28,21 @@ properties, list materialization, ordinary iteration, every block form, and the 
 count diagnostic. `zig build test` passes in Debug and ReleaseSafe with pinned Zig 0.16.0,
 and `git diff --check` passes. There are no pending changes outside this milestone.
 
+Documentation scaffolding is complete. The canonical source lives in `docs/language/` and
+`docs/library/`, while a future Astro site may consume it as a separate presentation project.
+`docs/README.md` sets the source-of-truth, executable-example, and semantic-label policy;
+`docs/language/core.md` is the core-guide outline; and `docs/library/inventory.md` is the
+checklist for every built-in API family, with links to existing examples or conformance cases.
+
+The next authorized documentation slice is to fill the core-language guide before adding
+library pages. Keep it beginner-facing and source-grounded: cover bindings, primitive values,
+expressions, control flow, and functions with concise runnable examples. Link examples to
+existing `examples/` or `conformance/` files rather than creating a second behavioral source.
+Do not invent unsettled behavior, start the separate Astro site, or build a documentation
+runner yet. After the core guide, expand the inventory family by family, beginning with
+prelude functions and numeric types. `git diff --check` passes for the scaffolding; no Zig
+implementation changed in this documentation-only commit.
+
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
 with ordinary Int widening, results are Float, angles are radians, and real-domain misses
