@@ -30,18 +30,23 @@ and `git diff --check` passes. There are no pending changes outside this milesto
 
 Documentation scaffolding is complete. The canonical source lives in `docs/language/` and
 `docs/library/`, while a future Astro site may consume it as a separate presentation project.
-`docs/README.md` sets the source-of-truth, executable-example, and semantic-label policy;
-`docs/language/core.md` is the core-guide outline; and `docs/library/inventory.md` is the
-checklist for every built-in API family, with links to existing examples or conformance cases.
+`docs/README.md` sets the source-of-truth, executable-example, and semantic-label policy, and
+`docs/library/inventory.md` is the checklist for every built-in API family, with links to
+existing examples or conformance cases.
 
-The next authorized documentation slice is to fill the core-language guide before adding
-library pages. Keep it beginner-facing and source-grounded: cover bindings, primitive values,
-expressions, control flow, and functions with concise runnable examples. Link examples to
-existing `examples/` or `conformance/` files rather than creating a second behavioral source.
-Do not invent unsettled behavior, start the separate Astro site, or build a documentation
-runner yet. After the core guide, expand the inventory family by family, beginning with
-prelude functions and numeric types. `git diff --check` passes for the scaffolding; no Zig
-implementation changed in this documentation-only commit.
+The core-language guide (`docs/language/core.md`) is filled and no longer an outline: bindings
+and `const`/`var`, the initial value types, arithmetic and comparison expressions, `if`/`case`/
+loop control flow, and functions/lambdas/trailing blocks/closures, each with a short inline
+snippet and a link to an existing `examples/` or `conformance/run/` file rather than a second
+behavioral source. Every linked example was run with the built `emerald` binary during this
+slice to confirm its output still matches what the guide says. `docs/language/README.md`'s
+status table now marks the core guide "Drafted" rather than "Scaffolded."
+
+The next documentation slice is to expand `docs/library/inventory.md` family by family,
+beginning with the prelude functions and numeric types (`Int`, `Float`), per that inventory's
+own checklist. Do not invent unsettled behavior, start the separate Astro site, or build a
+documentation runner yet. `git diff --check` passes; no Zig implementation changed in this
+documentation-only commit.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
