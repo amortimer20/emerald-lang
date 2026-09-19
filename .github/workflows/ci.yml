@@ -24,9 +24,15 @@ jobs:
           - os: macos-latest
             build: debug
             optimize: Debug
+          - os: macos-latest
+            build: release-safe
+            optimize: ReleaseSafe
           - os: windows-latest
             build: debug
             optimize: Debug
+          - os: windows-latest
+            build: release-safe
+            optimize: ReleaseSafe
 
     steps:
       - name: Checkout

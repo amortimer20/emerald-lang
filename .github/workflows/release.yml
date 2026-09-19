@@ -19,19 +19,25 @@ jobs:
         include:
           - os: ubuntu-latest
             name: linux-x86_64
+            architecture: x86_64
             archive: tar
             asset: emerald-linux-x86_64.tar.gz
             binary: zig-out/bin/emerald
+            binary_name: emerald
           - os: macos-latest
             name: macos-arm64
+            architecture: arm64
             archive: tar
             asset: emerald-macos-arm64.tar.gz
             binary: zig-out/bin/emerald
+            binary_name: emerald
           - os: windows-latest
             name: windows-x86_64
+            architecture: x86_64
             archive: zip
             asset: emerald-windows-x86_64.zip
             binary: zig-out/bin/emerald.exe
+            binary_name: emerald.exe
 
     steps:
       - name: Checkout
@@ -44,6 +50,12 @@ jobs:
         shell: bash
         run: bash tools/check-toolchain.sh
 
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          actual="$(uname -m)"
+          test "$actual" = "${{ matrix.architecture }}"
+
       - name: Build Emerald
         shell: bash
         # `-Dcpu=baseline` keeps the release binary portable: without it Zig
@@ -52,21 +64,56 @@ jobs:
         # absent on a user's machine and crash with "Illegal instruction".
         run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
 
-      - name: Package binary
+      - name: Package and smoke-test binary
         shell: bash
         run: |
-          mkdir -p dist
+          mkdir -p dist smoke
           if [ "${{ matrix.archive }}" = "tar" ]; then
             tar -czf "dist/${{ matrix.asset }}" -C "$(dirname "${{ matrix.binary }}")" "$(basename "${{ matrix.binary }}")"
+            tar -xzf "dist/${{ matrix.asset }}" -C smoke
           else
             powershell -NoProfile -Command "Compress-Archive -Path '${{ matrix.binary }}' -DestinationPath 'dist/${{ matrix.asset }}' -Force"
+            powershell -NoProfile -Command "Expand-Archive -Path 'dist/${{ matrix.asset }}' -DestinationPath 'smoke' -Force"
           fi
-          sha256sum "dist/${{ matrix.asset }}" >> dist/SHA256SUMS
+          "./smoke/${{ matrix.binary_name }}" check examples/arithmetic.em
+          (
+            cd dist
+            if command -v sha256sum >/dev/null; then
+              sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+            else
+              shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+            fi
+          )
 
-      - name: Upload release asset
+      - name: Upload prepared release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: |
+            dist/${{ matrix.asset }}
+            dist/${{ matrix.asset }}.sha256
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download prepared release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Assemble checksums
+        shell: bash
+        run: cat dist/*.sha256 > dist/SHA256SUMS
+
+      - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/${{ matrix.asset }}
+            dist/emerald-*.tar.gz
+            dist/emerald-*.zip
             dist/SHA256SUMS
-

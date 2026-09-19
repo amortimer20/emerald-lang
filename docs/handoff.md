@@ -17,9 +17,10 @@
 
 Collection-method expansion is deliberately paused after the existing shape family
 (`zip`, `chain`, `chunks`, `windows`, and `pairs`) and Dictionary/Set `filter` and `reject`.
-Do not begin another collection-method batch without a new user decision: the current API is
-broad enough that it needs real use and documentation review before it grows. The next
-milestone should therefore be a non-collection roadmap item chosen with the user. Keep
+The active non-collection milestone is release hardening. Its first part makes CI run Debug
+and ReleaseSafe across Linux, macOS arm64, and Windows; release jobs assert their native
+architecture, smoke-test the extracted artifact, and aggregate one checksum manifest before
+publishing. Later parts add bounded fuzzing and systematic allocator-failure checks. Keep
 validation aligned with the pinned Zig toolchain and end-to-end conformance cases.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
