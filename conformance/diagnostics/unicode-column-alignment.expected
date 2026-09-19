@@ -1,0 +1,4 @@
+diagnostics/unicode-column-alignment.em:5:13: `oops` is not defined
+  print(café, oops)
+              ^^^^
+Check the spelling, or declare it before this line.

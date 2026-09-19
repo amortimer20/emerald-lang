@@ -9,6 +9,10 @@ print("one\ntwo\r\nthree\n".lines(), "abc".chars(), "ab".repeat(3), "stressed".r
 print("e\u{301}\u{1F44B}".code_points(), "\u{E9}".bytes())
 print("a-b-c".replace("-", " + "), "hello".substring(1, 3), "hello".substring(2))
 print("caf\u{E9}".insert_at(3, "!"), "cafe\u{301}".remove_suffix("\u{E9}"))
+# `substring` and `insert_at` count graphemes: a combining accent and a
+# three-person ZWJ family emoji each stay whole rather than splitting.
+print("cafe\u{301}s".substring(3, 2), "cafe\u{301}s".substring(4))
+print("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}!".insert_at(1, "-"))
 print("unhappy".remove_prefix("un"), "happy".remove_prefix("un"), "playing".remove_suffix("ing"), "play".remove_suffix("ing"))
 print("baallooon".collapse_repeats())
 var (before, separator, after) = "left::right".partition("::")

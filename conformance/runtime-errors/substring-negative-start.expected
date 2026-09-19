@@ -1,0 +1,4 @@
+runtime-errors/substring-negative-start.em:2:7: a substring cannot start at -1
+  print("hello".substring(-1))
+        ^^^^^^^^^^^^^^^^^^^^^
+Start at 0 or later.

@@ -1,0 +1,4 @@
+diagnostics/unicode-identifier-rejected.em:3:5: this character cannot be used in a name
+  var 😀 = 1
+      ^
+Names are made of letters, digits, and underscores. Emoji and symbols belong inside strings.

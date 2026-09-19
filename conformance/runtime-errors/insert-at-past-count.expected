@@ -1,0 +1,4 @@
+runtime-errors/insert-at-past-count.em:3:7: cannot insert at index 6 in a String of 5 characters
+  print("hello".insert_at(6, "!"))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+Insert at 0 through the String's `count`; inserting at `count` adds to the end.

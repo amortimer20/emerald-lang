@@ -81,14 +81,24 @@ That documentation pass found and fixed several real issues, most recently first
 
 ## Next step
 
-Nothing is queued. What remains of the old "Slice 16" backlog, in no particular order:
-Unicode conformance is narrower than "full" suggests — only two conformance cases
-(`unicode-text.em`, `unicode-names.em`) exist, and the rewrite context (9.2) says
+Nothing is queued. Unicode conformance grew from two cases to a wider, still not
+exhaustive, set covering real gaps found by reading `src/unicode.zig`/`src/strings.zig`
+against `conformance/` rather than guessing: an end-to-end case for the invalid-UTF-8
+source diagnostic (previously only unit-tested in `Source.zig`, never proven through the
+full pipeline); `trim`/`trim_start`/`trim_end`/`blank?` against actual Unicode `White_Space`
+characters (`unicode-whitespace.em`), not just ASCII space/tab; `substring`/`insert_at`
+keeping a combining-character grapheme and a three-person ZWJ emoji whole rather than
+splitting them (extended into `string-methods.em`); three new `runtime-errors/` cases for
+`substring`/`insert_at`'s documented-but-previously-untested out-of-range raises; a rejected
+emoji identifier; and a case proving diagnostic columns count Unicode scalars rather than
+UTF-8 bytes (`café` is 4 scalars but 5 bytes — a byte-based column would misplace the caret
+on the next token). What's still genuinely open: the rewrite context (9.2) says
 `letter?`/`digit?`/`words`/`title_case`/case-insensitive comparison need "a dedicated locale
-and boundary design pass" first, which hasn't happened; `tools/fuzz.zig`'s generator has no
-loop keywords and doesn't execute anything, so the interpreter itself is still unfuzzed
-(deliberately, for now — see the file's own header comment for the hang-risk reasoning).
-Other candidates: the LSP's second slice (hover, go to definition, find references, safe
+and boundary design pass" first, which hasn't happened, so there is nothing implemented yet
+to write a conformance case against; `tools/fuzz.zig`'s generator has no loop keywords and
+doesn't execute anything, so the interpreter itself is still unfuzzed (deliberately, for
+now — see the file's own header comment for the hang-risk reasoning). Other candidates: the
+LSP's second slice (hover, go to definition, find references, safe
 rename, completion — see the journal for what each needs); or whatever the user directs.
 `Section` numbers below refer to `docs/rewrite-context.md`.
 

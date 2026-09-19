@@ -1,0 +1,4 @@
+diagnostics/invalid-utf8.em:3:8: this is not valid UTF-8 text
+  var café = 1
+         ^^^
+Emerald source files are always UTF-8. Re-save this file as UTF-8.
