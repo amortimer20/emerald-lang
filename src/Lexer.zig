@@ -1044,14 +1044,18 @@ test "malformed inputs remain diagnosable without breaking the token stream" {
     }
 }
 
-test "allocator failures are surfaced as out-of-memory" {
+test "tokenization releases every allocation failure" {
     var source = try Source.init(testing.allocator, "test.em", "var name = \"Ava\"\n");
     defer source.deinit(testing.allocator);
 
-    var failing_allocator = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
-    const result = tokenize(failing_allocator.allocator(), &source);
+    const Work = struct {
+        fn run(gpa: std.mem.Allocator, input: *const Source) !void {
+            var tokenized = try tokenize(gpa, input);
+            defer tokenized.deinit(gpa);
+        }
+    };
 
-    try testing.expectError(error.OutOfMemory, result);
+    try testing.checkAllAllocationFailures(testing.allocator, Work.run, .{&source});
 }
 
 test "every operator and delimiter round-trips through its lexeme" {

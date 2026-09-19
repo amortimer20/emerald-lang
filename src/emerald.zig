@@ -785,6 +785,23 @@ fn buildProject(gpa: std.mem.Allocator, files: []const ProjectFile) !Project {
     return .{ .files = built, .entry = 0, .bad_directories = &.{} };
 }
 
+test "checking releases every allocation failure" {
+    var project = try buildProject(testing.allocator, &.{
+        .{ .path = "main.em", .text = "const answer = 42\n" },
+    });
+    defer project.deinit(testing.allocator);
+
+    const Work = struct {
+        fn run(gpa: std.mem.Allocator, input: *const Project) !void {
+            var report = try checkProject(gpa, input);
+            defer report.deinit();
+            if (!report.ok()) return error.UnexpectedDiagnostic;
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Work.run, .{&project});
+}
+
 fn expectProjectOutput(files: []const ProjectFile, expected: []const u8) !void {
     var project = try buildProject(testing.allocator, files);
     defer project.deinit(testing.allocator);

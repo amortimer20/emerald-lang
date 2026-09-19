@@ -121,11 +121,14 @@ pub fn loadIn(
         }
     }
 
-    return .{
+    var project: Project = .{
         .files = try loader.files.toOwnedSlice(gpa),
         .entry = entry_index,
-        .bad_directories = try loader.bad_directories.toOwnedSlice(gpa),
+        .bad_directories = &.{},
     };
+    errdefer project.deinit(gpa);
+    project.bad_directories = try loader.bad_directories.toOwnedSlice(gpa);
+    return project;
 }
 
 fn byPath(_: void, a: File, b: File) bool {
@@ -239,9 +242,12 @@ const Loader = struct {
                     var source = try Source.init(self.gpa, display, bytes);
                     errdefer source.deinit(self.gpa);
 
+                    const file_namespace = try self.gpa.dupe(u8, namespace);
+                    errdefer self.gpa.free(file_namespace);
+
                     try self.files.append(self.gpa, .{
                         .source = source,
-                        .namespace = try self.gpa.dupe(u8, namespace),
+                        .namespace = file_namespace,
                         .entry = false,
                     });
                 },
@@ -273,8 +279,10 @@ const Loader = struct {
                     // and against the first file in it, so the report has
                     // something to point at.
                     if (segment == null and self.files.items.len > before) {
+                        const bad_path = try self.gpa.dupe(u8, nested_relative);
+                        errdefer self.gpa.free(bad_path);
                         try self.bad_directories.append(self.gpa, .{
-                            .path = try self.gpa.dupe(u8, nested_relative),
+                            .path = bad_path,
                         });
                     }
                 },
@@ -379,9 +387,24 @@ test "a directory name becomes a namespace segment" {
     }
 }
 
-test "namespace creation surfaces allocator failures" {
-    var failing_allocator = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
-    try testing.expectError(error.OutOfMemory, namespaceSegment(failing_allocator.allocator(), "project_name"));
+test "project loading releases every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "main.em", .data = "var answer = 42\n" });
+    try tmp.dir.createDirPath(testing.io, "shapes");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "shapes/square.em", .data = "struct Square {}\n" });
+    try tmp.dir.createDirPath(testing.io, "2bad");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "2bad/circle.em", .data = "struct Circle {}\n" });
+
+    const Work = struct {
+        fn run(gpa: std.mem.Allocator, io: std.Io, base: std.Io.Dir) !void {
+            var project = try loadIn(gpa, io, base, "main.em");
+            defer project.deinit(gpa);
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Work.run, .{ testing.io, tmp.dir });
 }
 
 test "project loading keeps invalid directories tracked without dropping their files" {

@@ -48,3 +48,22 @@ jobs:
       - name: Run test suite
         shell: bash
         run: zig build test -Doptimize=${{ matrix.optimize }}
+
+  fuzz:
+    name: bounded frontend fuzz
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain with Mise
+        uses: jdx/mise-action@v2
+
+      - name: Validate toolchain
+        shell: bash
+        run: bash tools/check-toolchain.sh
+
+      - name: Run fixed fuzz campaign
+        shell: bash
+        run: zig build fuzz -Doptimize=ReleaseSafe -- 12648430 1000

@@ -20,8 +20,15 @@ Collection-method expansion is deliberately paused after the existing shape fami
 The active non-collection milestone is release hardening. Its first part makes CI run Debug
 and ReleaseSafe across Linux, macOS arm64, and Windows; release jobs assert their native
 architecture, smoke-test the extracted artifact, and aggregate one checksum manifest before
-publishing. Later parts add bounded fuzzing and systematic allocator-failure checks. Keep
-validation aligned with the pinned Zig toolchain and end-to-end conformance cases.
+publishing. The second part exhaustively injects allocation failure into project loading,
+lexing, parsing, formatting, and a small end-to-end checker run with Zig's
+`checkAllAllocationFailures`; it fixed formatter output cleanup and two project-loader
+ownership transfers. The third part adds `zig build fuzz -- [seed] [cases]`: a deterministic,
+bounded valid-UTF-8 frontend campaign that checks lexer/parser recovery, diagnostic bounds, and
+formatter parseability and idempotence for accepted inputs. CI runs a fixed 1,000-case
+ReleaseSafe campaign on Linux; failure output includes both campaign and case seed for replay.
+Keep a longer scheduled campaign as later work, alongside validation with the pinned Zig
+toolchain and end-to-end conformance cases.
 
 Slices 1 through 11 of section 20 are complete, plus a loop slice the user approved
 inserting before slice 8, a string slice the user chose to do before slice 9, an

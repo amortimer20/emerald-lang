@@ -157,6 +157,7 @@ pub fn print(
     const trivia = try collectTrivia(allocator, source, tokens);
     defer allocator.free(trivia);
     var printer: Printer = .{ .gpa = allocator, .source = source, .trivia = trivia };
+    errdefer printer.out.deinit(allocator);
     try printer.printProgram(program);
 
     // Exactly one trailing newline, matching §3.1's formatter-output rule,
@@ -1231,6 +1232,30 @@ fn expectFormats(text: []const u8, expected: []const u8) !void {
     const formatted = try formatText(gpa, text);
     defer gpa.free(formatted);
     try testing.expectEqualStrings(expected, formatted);
+}
+
+test "formatting releases every allocation failure" {
+    var source = try Source.init(testing.allocator, "test.em", "# note\nvar score = 2 + 3\n");
+    defer source.deinit(testing.allocator);
+
+    var tokenized = try Lexer.tokenize(testing.allocator, &source);
+    defer tokenized.deinit(testing.allocator);
+    var parsed = try Parser.parse(testing.allocator, &source, tokenized.tokens);
+    defer parsed.deinit();
+
+    const Work = struct {
+        fn run(
+            gpa: std.mem.Allocator,
+            input: *const Source,
+            input_tokens: []const Token,
+            program: Ast.Program,
+        ) !void {
+            const formatted = try print(gpa, input, input_tokens, program);
+            defer gpa.free(formatted);
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Work.run, .{ &source, tokenized.tokens, parsed.program });
 }
 
 test "blank-line runs collapse to exactly one, and a block never starts or ends with one" {

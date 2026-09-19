@@ -99,6 +99,22 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_unicode_check.addArgs(args);
     b.step("unicode-conformance", "Check the Unicode tables against a full database download").dependOn(&run_unicode_check.step);
 
+    // A deterministic, bounded frontend campaign. It deliberately is not a
+    // dependency of `test`: CI selects a short fixed campaign, while a local
+    // run can choose a seed and case count with `zig build fuzz -- <seed> <cases>`.
+    const fuzz = b.addExecutable(.{
+        .name = "emerald-fuzz",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/fuzz.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "emerald", .module = emerald_module }},
+        }),
+    });
+    const run_fuzz = b.addRunArtifact(fuzz);
+    if (b.args) |args| run_fuzz.addArgs(args);
+    b.step("fuzz", "Run deterministic bounded frontend fuzz cases").dependOn(&run_fuzz.step);
+
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_conformance.step);
