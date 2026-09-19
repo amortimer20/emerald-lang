@@ -31,6 +31,14 @@ An empty literal needs an explicit type (`var x: Dict[String, Int] = []`), since
 entries to infer a type from; a nonempty `key: value` literal infers one. An empty `Dict`
 prints as `[:]`.
 
+A literal repeating a key whose value is known before the program runs (a literal or an enum
+value — numbers compare by value, so `1` and `1.0` repeat each other) is a checking-time
+error: a later entry would just replace the earlier one, so writing both is a mistake to
+report rather than resolve silently. A key computed at runtime is unrelated — the checker
+cannot see it coming, so it collides silently and the later value wins without moving its
+insertion position. See
+[`conformance/diagnostics/dictionary-duplicate-keys.em`](../../conformance/diagnostics/dictionary-duplicate-keys.em).
+
 ## Size and lookup
 
 ## count -> Int

@@ -5065,10 +5065,35 @@ fn typeOfDictionary(self: *Checker, expression: *const Ast.Expression, expected:
     }
 
     try self.requireEligibleKey(key, expression.span);
+    try self.checkDuplicateKeys(entries);
 
     const built = try Type.dictionaryOf(self.arena, key, value);
     try self.literal_types.put(self.arena, expression, built);
     return built;
+}
+
+/// Section 8.4: a dictionary literal repeating a key whose value is known
+/// before the program runs is an error, the same rule `case`/`when` uses for
+/// a repeated alternative (`knownAlternative`) — a later entry would just
+/// replace the earlier one, so writing both is a mistake to report rather
+/// than resolve silently. A computed key that happens to collide at runtime
+/// is unrelated: the later value wins there without this diagnostic, since
+/// the checker cannot see it coming.
+fn checkDuplicateKeys(self: *Checker, entries: []const Ast.Expression.Entry) Error!void {
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    for (entries) |entry| {
+        const known = try self.knownAlternative(entry.key) orelse continue;
+        if (seen.contains(known)) {
+            try self.report(
+                entry.key.span,
+                "this key is already used above",
+                .{},
+                "A dictionary holds each key once, and the later value would just replace the earlier one. Remove one of the two entries.",
+            );
+            continue;
+        }
+        try seen.put(self.arena, known, {});
+    }
 }
 
 /// The one type a literal's keys or values share, widening `Int` to `Float`

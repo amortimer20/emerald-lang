@@ -204,6 +204,24 @@ the retired spelling it suggested actually fails to parse. Now says
 passes in both Debug and ReleaseSafe. A repo-wide grep found no other surviving instance of
 the retired spelling in a diagnostic, an example, or a doc.
 
+A third issue turned up in the same research pass, this time a missing feature rather than a
+stale message or a crash: 8.4 settles "a statically known duplicate dictionary literal key is
+an error," but nothing enforced it — `["Ava": 1, "Ava": 2]` type-checked cleanly. This is
+unambiguously settled design, not an open question, so it was implemented rather than only
+flagged: `Checker.zig::typeOfDictionary` now calls a new `checkDuplicateKeys`, reusing
+`knownAlternative` (`case`/`when`'s existing "is this alternative's value known before the
+program runs" helper — a literal, `nothing`, or an enum value) key for key, which already
+handles Int/Float value-equality (`1` repeats `1.0`) and enum-value identity correctly with
+no new logic. A computed key is unaffected, exactly as 8.4 says: it collides silently at
+runtime and the later value wins. The message deliberately does not echo the key's value
+back (`` this key is already used above ``, no interpolated key) after checking that the
+existing `case`/`when` duplicate diagnostic makes the same choice — `knownAlternative`'s
+enum-value keys are internal resolver strings (`Color::red`), never meant for display, and an
+earlier draft of this message leaked one directly before that comparison caught it.
+`conformance/diagnostics/dictionary-duplicate-keys.em` covers a String, a numeric, and an enum
+repeat, plus the still-silent computed-key case in the same file. `docs/library/dict.md`
+documents the rule. `zig build test` passes in both Debug and ReleaseSafe.
+
 Remaining language guides `docs/language/README.md` lists as "Planned": Collections and
 ranges; Objects and traits; Errors, tests, and projects. Do not invent unsettled behavior or
 start the separate Astro site without explicit authorization.

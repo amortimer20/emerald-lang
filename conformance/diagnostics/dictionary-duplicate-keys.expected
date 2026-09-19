@@ -1,0 +1,12 @@
+diagnostics/dictionary-duplicate-keys.em:8:56: this key is already used above
+  var by_name: Dict[String, Int] = ["Ava": 1, "Noah": 2, "Ava": 3]
+                                                         ^^^^^
+A dictionary holds each key once, and the later value would just replace the earlier one. Remove one of the two entries.
+diagnostics/dictionary-duplicate-keys.em:10:59: this key is already used above
+  var by_number: Dict[Float, String] = [1: "one", 2: "two", 1.0: "also one"]
+                                                            ^^^
+A dictionary holds each key once, and the later value would just replace the earlier one. Remove one of the two entries.
+diagnostics/dictionary-duplicate-keys.em:16:72: this key is already used above
+  var by_color: Dict[Color, String] = [Color.red: "r", Color.green: "g", Color.red: "also r"]
+                                                                         ^^^^^^^^^
+A dictionary holds each key once, and the later value would just replace the earlier one. Remove one of the two entries.
