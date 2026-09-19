@@ -7,7 +7,7 @@ them.
 | Guide | Scope | Status |
 | --- | --- | --- |
 | [Core language](core.md) | Syntax, values, expressions, control flow, and functions | Drafted |
-| Types and optionals | Annotations, inference, `T?`, and narrowing | Planned |
+| [Types and optionals](types-and-optionals.md) | Annotations, inference, `T?`, and narrowing | Drafted |
 | Collections and ranges | Literals, iteration, and collection value semantics | Planned |
 | Objects and traits | Structs, classes, enums, properties, and traits | Planned |
 | Errors, tests, and projects | `try`, `@test`, modules, and command-line workflow | Planned |

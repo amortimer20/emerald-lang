@@ -161,11 +161,40 @@ example's syntax, one at a time, and confirming the script caught each before re
 `docs/` touches an `.em` link. `git diff --check` passes, and `zig build test` passes in both
 Debug and ReleaseSafe.
 
-There is no more open item from `docs/README.md`'s original work order. Further documentation
-work is now open-ended: the language guides `docs/language/README.md` still lists as
-"Planned" (Types and optionals; Collections and ranges; Objects and traits; Errors, tests, and
-projects), or anything else the user directs. Do not invent unsettled behavior or start the
-separate Astro site without explicit authorization.
+There is no more open item from `docs/README.md`'s original work order. The user then
+authorized continuing with the next language guide on its own judgment.
+
+`docs/language/types-and-optionals.md` is complete: numeric widening and the
+`to_x`/`to_x_or`/`to_x_maybe` conversion family, collection invariance versus a tuple's
+position-by-position widening, `is`/`type_name` and exactly when narrowing is lost (same-branch
+reassignment, a block that captures a reassignable variable, a module-level variable any
+function assigns) versus kept (`const`, read-only parameters, a loop body that doesn't undo
+it), and the optional vocabulary (`?`, never nesting, `.or(...)`, `?.`, and the lossy-op/
+companion table). Direct probing against the built binary (not just 4.4's prose) surfaced two
+things worth knowing:
+
+- **Calling a changing method through `?.` is accepted by the checker and only rejected at
+  runtime.** `Checker.zig::typeOfOptionalObjectMethodCall` never inspects whether the method
+  changes `self`; the rejection (`` an optional chain cannot call a changing method ``) lives
+  in `Interpreter.zig:4427` and only fires once the chain actually runs with a present
+  receiver — an absent receiver short-circuits before ever reaching it. The rewrite context's
+  "raises" language is accurate but reads ambiguously; the guide now says explicitly that this
+  is a runtime-only check, confirmed by writing the identical call on a `nothing`-valued
+  binding (silently fine) and a present one (raises) side by side.
+- **The "warning for a type test whose answer is already known" that 4.4 describes is not
+  implemented** — confirmed by running `x is Int` on a statically-`Int` `x` and seeing no
+  diagnostic at all — matching this handoff's own pre-existing "Known rough edges" entry that
+  diagnostics have no severity levels yet. The guide documents the test as evaluating once and
+  returning the correct `Bool`, without claiming a warning that doesn't exist yet.
+
+Neither is a bug to fix: both are the documented, current, correctly-scoped state of an
+already-known deferred item, not a defect introduced by this slice. `docs/language/README.md`
+marks this guide "Drafted." `git diff --check` passes, and `zig build test` passes in both
+Debug and ReleaseSafe.
+
+Remaining language guides `docs/language/README.md` lists as "Planned": Collections and
+ranges; Objects and traits; Errors, tests, and projects. Do not invent unsettled behavior or
+start the separate Astro site without explicit authorization.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
