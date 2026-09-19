@@ -41,6 +41,9 @@ than assumed conversational memory. The user's current instructions take precede
   Do not commit caches, generated binaries, or machine-specific paths.
 - Run checks appropriate to the change. For behavior changes, prefer end-to-end Emerald
   examples that verify results and diagnostics. Report checks actually run and any blockers.
+- When a change under `docs/` adds or edits an `.em` link, also run
+  `bash tools/check-doc-examples.sh` (after `zig build`) so a stale or broken documentation
+  example is caught before it is committed.
 - Run `git diff --check` before finishing. Do not claim `zig build` or `zig build test`
   passes until the build layout exists and those commands have actually succeeded.
 

@@ -35,7 +35,11 @@ semantics, API signatures, examples, and cross-links to executable conformance s
 
 ## Initial work order
 
-1. Complete the core-language guide outline in [`language/`](language/).
-2. Complete the API inventory in [`library/inventory.md`](library/inventory.md).
-3. Turn each inventory family into a reference page with runnable examples.
-4. Add an automated check that examples referenced by documentation remain executable.
+1. Complete the core-language guide outline in [`language/`](language/). Done.
+2. Complete the API inventory in [`library/inventory.md`](library/inventory.md). Done.
+3. Turn each inventory family into a reference page with runnable examples. Done.
+4. Add an automated check that examples referenced by documentation remain executable. Done:
+   `bash tools/check-doc-examples.sh` (after `zig build`) confirms every `.em` file a
+   documentation page links to still exists, and actually runs every linked `examples/` file
+   to completion — `conformance/` links are only checked for existence, since `zig build
+   test` already verifies their exact behavior continuously.

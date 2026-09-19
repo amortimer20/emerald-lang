@@ -144,14 +144,28 @@ against a scratch project rather than assumed from 16.3. `docs/library/inventory
 new "Errors and tests" section (this content isn't a free function or a generic built-in
 type, so it didn't fit either existing table) and now has every row linked.
 
-This closes out `docs/README.md`'s work order steps 1–3 (core-language guide; complete the
-inventory; a reference page per family). Step 4 — an automated check that every example a
-documentation page links to stays executable, so a page can't silently drift from the
-implementation the way the `String`/`List` slicing gap or the `reduce_right` staleness did —
-is the next natural documentation task and does not yet exist in any form; the checking done
-so far has been this session manually re-running each linked file against the built binary
-per slice. Do not invent unsettled behavior or start the separate Astro site. `git diff
---check` passes, and `zig build test` passes in both Debug and ReleaseSafe.
+This closes out all four of `docs/README.md`'s work-order steps. Step 4 is
+`tools/check-doc-examples.sh`: it greps every `docs/language/*.md` and `docs/library/*.md`
+file for a `../../{examples,conformance}/...\.em` markdown link, confirms each still exists
+(catching the broken-link case, such as a conformance case getting renamed out from under a
+page), and actually runs every linked `examples/` file to completion — a couple of blank
+lines piped to its stdin satisfy `input()` in the one example that calls it
+(`examples/greeter.em`), so nothing needs per-file special-casing. `conformance/`-linked
+files are checked only for existence, not re-run, since `zig build test`'s conformance
+runner already verifies their exact behavior continuously; duplicating that here would only
+mean maintaining two copies of the four different invocation shapes (`check`/`run`, stdout
+vs. stderr, project directories) that `run/`, `diagnostics/`, and `runtime-errors/` each
+need. Verified non-vacuous by deliberately breaking a link and deliberately breaking an
+example's syntax, one at a time, and confirming the script caught each before restoring it.
+`AGENTS.md` now asks that this run alongside the ordinary Zig checks whenever a change under
+`docs/` touches an `.em` link. `git diff --check` passes, and `zig build test` passes in both
+Debug and ReleaseSafe.
+
+There is no more open item from `docs/README.md`'s original work order. Further documentation
+work is now open-ended: the language guides `docs/language/README.md` still lists as
+"Planned" (Types and optionals; Collections and ranges; Objects and traits; Errors, tests, and
+projects), or anything else the user directs. Do not invent unsettled behavior or start the
+separate Astro site without explicit authorization.
 
 The `Math` standard-library slice is complete: `Math.pi`, `Math.e`, trigonometry, inverse
 trigonometry, natural/base-10/arbitrary-base logarithms, and `Math.power`. Inputs are Float
