@@ -553,6 +553,22 @@ fn expectFailure(text: []const u8, expected_message: []const u8) !void {
     try testing.expectEqualStrings(expected_message, problem.message);
 }
 
+test "File.read rejects invalid UTF-8 as FileError" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "invalid.bin", .data = "\xff" });
+
+    const relative = try std.fmt.allocPrint(testing.allocator, ".zig-cache/tmp/{s}/invalid.bin", .{tmp.sub_path});
+    defer testing.allocator.free(relative);
+    const absolute = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, relative, testing.allocator);
+    defer testing.allocator.free(absolute);
+    const program = try std.fmt.allocPrint(testing.allocator, "File.read(\"{s}\")", .{absolute});
+    defer testing.allocator.free(program);
+    const expected = try std.fmt.allocPrint(testing.allocator, "FileError: could not read as UTF-8 text `{s}`", .{absolute});
+    defer testing.allocator.free(expected);
+    try expectFailure(program, expected);
+}
+
 test "a step-limited run stops even when Emerald catches ordinary errors" {
     var source = try Source.init(testing.allocator, "test.em",
         \\try {
