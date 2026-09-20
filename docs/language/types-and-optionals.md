@@ -58,11 +58,11 @@ if maybe != nothing and maybe is Dog and maybe.tricks > 0 {
 ```
 
 `type_name` is reserved: no type may declare a member with that name, and it cannot be
-assigned. A test that static analysis can already answer before the program runs (`x is Int`
-when `x`'s declared type is already `Int`) still evaluates its operand exactly once and
-returns the correct `Bool` — Emerald's plan is to also warn about a result the reader could
-already see, but diagnostics have no severity levels yet, so today that specific case prints
-nothing extra. Run
+assigned. A test that static analysis can already answer before the program runs still
+evaluates its operand exactly once and returns the correct `Bool`, but emits a warning: for
+example, `x is Int` when `x` is already `Int`, or a test between two unrelated classes. A
+test involving a trait receives no false-result warning, because a subclass may adopt that
+trait later in the hierarchy. Run
 [`conformance/run/type-tests.em`](../../conformance/run/type-tests.em) for the full picture:
 class hierarchies, tuples, function types, collections, `nothing`/`Nothing`, and evaluating
 the tested expression only once even when a block runs a visible side effect.

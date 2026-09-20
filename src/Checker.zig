@@ -4828,8 +4828,28 @@ fn typeOfTypeTest(self: *Checker, expression: *const Ast.Expression) Error!Type 
             .{},
             "The value is already known to be this type here. Remove the test, or check a type it might not be.",
         );
+    } else if (typeTestAlwaysFalse(value, target)) {
+        try self.reportWarning(
+            expression.span,
+            "this `is` test always answers `false`",
+            .{},
+            "These classes are not related, so no value of one can also be the other. Remove the test, or check a related class.",
+        );
     }
     return .bool;
+}
+
+/// Whether Section 4.4 can prove this type test false without looking at a
+/// value. A class can hold an instance of any subclass, so two classes can
+/// overlap precisely when either is in the other's inheritance chain. Traits
+/// deliberately do not participate: a subclass may adopt a trait that its
+/// base class does not, and proving that no such subclass exists is outside
+/// this bounded warning.
+fn typeTestAlwaysFalse(value: Type, target: Type) bool {
+    const present = value.payload();
+    const wanted = target.payload();
+    if (!isClass(present) or !isClass(wanted)) return false;
+    return !present.user.?.extends(wanted.user.?) and !wanted.user.?.extends(present.user.?);
 }
 
 /// The name in `name == nothing`, written either way round.

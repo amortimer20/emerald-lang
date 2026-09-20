@@ -54,7 +54,7 @@ converts `WriteFailed` to `OutOfMemory` itself before checking the result, match
 Diagnostics now have a severity (`Diagnostic.Severity`: `err`/`warning`), unlocking three
 warnings the rewrite context had long described as "waiting for a severity" (6.3/12, 4.4,
 6.5): a nonexhaustive statement `case` with a coverable subject, an `is` test already known
-to be true, and code after a statement that can never complete. A warning renders with a
+to be true or known false between unrelated classes, and code after a statement that can never complete. A warning renders with a
 `warning: ` marker but is otherwise the canonical shape, and — unlike an error — does not
 stop checking or execution; `check`/`run`/`test` still exit `1` once nothing more specific
 (a runtime failure, a test failure) took priority, so it is never silently missed. Getting
@@ -117,12 +117,11 @@ comparison need "a dedicated locale and boundary design pass" first, which hasn'
 
 ## Next step
 
-Nothing is queued. Diagnostic severities exist now, but only the "always true" half of the
-`is`-test warning is implemented; proving a test always *false* (an unrelated class, or a
-trait no possible subclass could adopt, since a subclass may adopt a trait its parent does
-not) is a distinct, harder analysis and remains open, listed under "Deferred". Other
-candidates: the LSP's second slice (hover, go to definition, find references, safe rename,
-completion — see the journal for what each needs); or whatever the user directs. `Section` numbers below refer to
+Nothing is queued. Type-test diagnostics now also warn for the bounded, provably false case
+of unrelated concrete classes; traits remain deliberately excluded because a subclass may
+adopt one independently. Other candidates: the LSP's second slice (hover, go to definition,
+find references, safe rename, completion — see the journal for what each needs); or whatever
+the user directs. `Section` numbers below refer to
 `docs/rewrite-context.md`.
 
 ## Documentation and rewrite-context hygiene

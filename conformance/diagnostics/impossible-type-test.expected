@@ -1,0 +1,4 @@
+diagnostics/impossible-type-test.em:10:4: warning: this `is` test always answers `false`
+  if animal is Vehicle {
+     ^^^^^^^^^^^^^^^^^
+These classes are not related, so no value of one can also be the other. Remove the test, or check a related class.
