@@ -48,11 +48,28 @@ own code. The checker warns when a type declares `to_string` without adopting th
 
 ## Next step
 
-Nothing is queued by design. The LSP's second phase (hover, go-to-definition, find
-references, safe rename, completion — see the journal's LSP notes) is the named prospective
-slice; 15.5's own list puts locale-aware formatting, dates, durations, and serialization in
-later passes, and streaming/binary file I/O stays deferred. Follow the user's active request
-rather than treating any of this as an automatic backlog.
+A 2026-09-20 roadmap review triaged prior "what's next" suggestions from both agents against
+the current binary. Closed and no longer live: per-family runnable examples, `!`/optional/
+callback/raise labeling, conformance-programs-as-executable-examples, the filesystem design,
+and the five maintainability findings (retired in `6a6a718`). What's open, in recommended
+order, none yet authorized to start:
+
+1. A program entry point: `Program.arguments` and a bare top-level `return` (both under
+   "Deferred" below) plus exit-code plumbing (15.2/24, 14.1) — small, and the last piece
+   between the file I/O and formatting that already exist and a genuinely useful CLI program.
+2. A real, non-toy Emerald program as a shakedown, to generate the next backlog empirically
+   rather than by guessing at one.
+3. The LSP's second phase (hover, go-to-definition, find references, safe rename,
+   completion — see the journal's LSP notes) — highest day-to-day payoff, lowest design
+   risk, since the first slice already proved the architecture.
+
+Named but unordered: `emerald explain`/diagnostic polish; a custom equality/hashing design
+pass, the natural sibling to `Textual`/`Ordered`; the always-false `is` warning for traits;
+streaming/binary file I/O and recursive directory delete (deferred out of the filesystem
+slice). The big deferred-features list (generics, enum payloads, wider operator overloading,
+package manager, concurrency) stays last by design — those are large design commitments, not
+implementation backlog. This is context, not authorization: follow the user's active request
+rather than starting any of it unprompted.
 
 ## Deferred
 

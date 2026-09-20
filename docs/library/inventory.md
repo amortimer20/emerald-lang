@@ -1,8 +1,8 @@
 # Standard-library inventory
 
 > Status: every row below has its family page. Each links signatures, semantics, a runnable
-> example, and conformance cases. The next documentation work is `docs/README.md`'s step 4:
-> an automated check that every example a page links to stays executable.
+> example, and conformance cases. `tools/check-doc-examples.sh` automatically checks that
+> every linked example stays executable after a build (`docs/README.md`'s step 4, done).
 
 ## Prelude functions
 
