@@ -2851,7 +2851,11 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
     if (std.mem.eql(u8, suffix, "File::read") or std.mem.eql(u8, suffix, "File::read_lines")) {
         const path = values[0].data.string.bytes;
         const bytes = cwd.readFileAlloc(io, path, self.gpa, .unlimited) catch {
-            if (!fileKind(cwd, io, path, .file)) return self.raiseFileMessage(span, try std.fmt.allocPrint(self.arena, "the file `{s}` does not exist", .{path}));
+            const stat = cwd.statFile(io, path, .{}) catch |err| switch (err) {
+                error.FileNotFound => return self.raiseFileMessage(span, try std.fmt.allocPrint(self.arena, "the file `{s}` does not exist", .{path})),
+                else => return self.raiseFilePath(span, path, "read"),
+            };
+            if (stat.kind != .file) return self.raiseFilePath(span, path, "read");
             return self.raiseFilePath(span, path, "read");
         };
         if (!std.unicode.utf8ValidateSlice(bytes)) {

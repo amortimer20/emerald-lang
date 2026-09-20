@@ -1,0 +1,4 @@
+runtime-errors/file-read-directory.em:1:1: FileError: could not read `conformance/runtime-errors/directory-not-empty`
+  File.read("conformance/runtime-errors/directory-not-empty")
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Check that the path exists and that this program may access it.

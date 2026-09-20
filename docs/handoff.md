@@ -192,7 +192,8 @@ genuinely unimplemented. Elsewhere, the audit found and fixed:
 - `build.zig` provides `zig build`, `zig build test`, and `zig build run`.
 - `File`, `Directory`, and `Path` are prelude namespaces backed by whole-file native
   operations in `Interpreter.zig`; their UTF-8 and `FileError` behavior is covered by
-  `conformance/run/file-directory-path.em` and `conformance/runtime-errors/file-missing.em`.
+  `conformance/run/file-directory-path.em`, `conformance/runtime-errors/file-missing.em`,
+  `file-read-directory.em`, `file-write-directory.em`, and `directory-not-empty/`.
 - `src/Project.zig` finds and loads the files a program is made of, which is section
   14.1's rule and nothing more: the file alone, unless its own directory holds `main.em`,
   in which case every `.em` file under that directory comes with it. It derives each
@@ -305,7 +306,7 @@ from that review.
 - Interpreter-detected failures currently use the common `RuntimeError` type. Grow the
   hierarchy with the feature that produces each failure instead of designing it all at
   once. The first existing requirements to reconcile are `RecursionError` in section 7.2
-  and `InputError` in sections 2 and 15.2; later conversion, filesystem, regex, and network
+  and `InputError` in sections 2 and 15.2; later conversion, regex, and network
   work should add its specific error types in the same implementation slice.
 
 - **A literal mixing sibling classes needs its type written.** `[Dog(), Cat()]` is reported
