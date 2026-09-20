@@ -1928,3 +1928,26 @@ off. Deferred language features in section 21 remain deferred.
   `main` instead takes a `std.process.Init` supplying the allocator, `Io`, and arguments;
   `addExecutable` and `addTest` take a `root_module` built by `b.createModule`.
 
+## Handoff consolidation, 2026-09-20
+
+The live handoff had accumulated completed-slice prose despite the journal split. Its stale
+"Slice 16 queued" account was already corrected by the hardening commits; this consolidation
+retired the remaining narrative from the live starting point and left a concise status,
+next-step, rough-edge, and validation record there.
+
+Since the prior journal entries, `6fca3c8` added String/List range slicing and bounded
+execution to the fuzz runner; `6a6a718` retired the five object-model maintainability review
+findings; `9aea23d` through `37cddef` shipped and completed the whole-file `File`,
+`Directory`, and `Path` library area, including `FileError`, documentation, and failure
+coverage; and `f671b1f` added the conservative always-false `is` warning for unrelated
+classes. The latter intentionally excludes traits, because a subclass may adopt a trait its
+base class does not.
+
+This consolidation's first pass over-trimmed: it dropped five still-true "Deferred" items
+(`remove_if`, `Trait.method` as a value, bare top-level `return`/`Program.arguments`,
+capturing a built-in function or method plus variadics generally, and a module-level
+lambda's declaration-site-vs-call-site capture check) without re-verifying they'd actually
+been resolved. None had been — each was re-checked directly against the binary before
+restoring them to a "Deferred" section in the live handoff. The lesson: "no longer current"
+has to be confirmed per item before a section is retired, not inferred from how much other,
+genuinely-resolved work landed in the same pass.
