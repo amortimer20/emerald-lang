@@ -34,7 +34,8 @@ func greet(): String {
 
 See [`examples/project/main.em`](../../examples/project/main.em) (which pulls in
 `scoring/scores.em` and `scoring/grades.em` beside it) for a small multi-file project end to
-end,
+end, and [`examples/ledger/main.em`](../../examples/ledger/main.em) for a persisted
+command-line project using `Program.arguments`, `File`, `Directory`, and `Path`,
 and
 [`conformance/diagnostics/module-statement`](../../conformance/diagnostics/module-statement)
 and

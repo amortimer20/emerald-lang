@@ -53,6 +53,14 @@ accepted by `check`/`run`/`test` alike, though only `run`/`test` populate it), a
 `finally` blocks, exactly like reaching the end of the file. `exit(code)`'s plumbing needed
 no work; it was already complete.
 
+The first real-program shakedown is complete:
+[`examples/ledger/`](../examples/ledger/) is a persisted personal-finance CLI with `add`,
+`list`, `summary`, and `category` commands. It uses a deliberately simple tab-delimited
+store through `File`/`Directory`/`Path`, command-line arguments, structs and `Textual`,
+collection transforms, numeric formatting, and typed input/store errors. Its end-to-end
+workflow found no language defect; it did catch an ordinary API spelling mistake while being
+written (`starts_with?`, not `starts_with`).
+
 ## Next step
 
 A 2026-09-20 roadmap review triaged prior "what's next" suggestions from both agents against
@@ -61,9 +69,7 @@ callback/raise labeling, conformance-programs-as-executable-examples, the filesy
 the five maintainability findings (retired in `6a6a718`), and the program entry point. What's
 open, in recommended order, none yet authorized to start:
 
-1. A real, non-toy Emerald program as a shakedown, to generate the next backlog empirically
-   rather than by guessing at one.
-2. The LSP's second phase (hover, go-to-definition, find references, safe rename,
+1. The LSP's second phase (hover, go-to-definition, find references, safe rename,
    completion — see the journal's LSP notes) — highest day-to-day payoff, lowest design
    risk, since the first slice already proved the architecture.
 

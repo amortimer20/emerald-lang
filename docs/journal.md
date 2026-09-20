@@ -1943,6 +1943,22 @@ coverage; and `f671b1f` added the conservative always-false `is` warning for unr
 classes. The latter intentionally excludes traits, because a subclass may adopt a trait its
 base class does not.
 
+## Ledger shakedown, 2026-09-20
+
+The roadmap's first remaining item became [`examples/ledger/`](../examples/ledger/): a
+two-file, persisted personal-finance command-line project. Its `add`, `list`, `summary`, and
+`category` commands store a tab-delimited journal under `.emerald-ledger/` in the working
+directory. It deliberately keeps dates as lightly validated `YYYY-MM-DD` strings rather than
+turning the example into a date-time or serialization design pass.
+
+The program exercised `Program.arguments`, multi-file project loading, `File`, `Directory`,
+and `Path`; structs through `Textual`; `List`/`Dict` transforms; numeric formatting; optional
+parsing; and a program-defined `LedgerError`. Full add/list/summary/category persistence plus
+empty-store and invalid-input paths ran against the built binary. The only issue discovered
+was an ordinary authoring error — the predicate is `starts_with?`, not `starts_with` — so the
+shakedown adds no new language backlog item. The next recommended work is the LSP's second
+slice.
+
 This consolidation's first pass over-trimmed: it dropped five still-true "Deferred" items
 (`remove_if`, `Trait.method` as a value, bare top-level `return`/`Program.arguments`,
 capturing a built-in function or method plus variadics generally, and a module-level
