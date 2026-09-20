@@ -83,6 +83,10 @@ pub fn displayKey(arena: std.mem.Allocator, key: []const u8) std.mem.Allocator.E
 /// this one find what the resolver decided about it.
 pub const Site = struct { file: u32, start: u32 };
 
+/// Where a declaration is written: its file and its name's span, for go to
+/// definition and find references (18.5).
+pub const Target = struct { file: u32, span: Source.Span };
+
 /// The key a nested function (7.1) is known by: its name, then where its name
 /// is written. `@` appears in no name, so it collides with no other key.
 fn nestedKey(arena: std.mem.Allocator, file: u32, function: Ast.FunctionDeclaration) std.mem.Allocator.Error![]const u8 {
@@ -173,6 +177,14 @@ pub const Facts = struct {
     /// that builds on them, their keys.
     traits: NameSet = .empty,
     adopted: std.StringHashMapUnmanaged([]const []const u8) = .empty,
+    /// Every declared module-level symbol (type, function, method, property, field,
+    /// type member, enum value, module variable), mapped to where it is declared.
+    declarations: std.StringHashMapUnmanaged(Target) = .empty,
+    /// Every identifier expression (`Expression.Data.name`), mapped to the
+    /// declaration it references.
+    expression_targets: std.AutoHashMapUnmanaged(*const Ast.Expression, Target) = .empty,
+    /// Every assignment destination name, mapped to the declaration it references.
+    assignment_targets: std.AutoHashMapUnmanaged(Site, Target) = .empty,
 
     /// The key a bare name has in `file`, or null when the name is not a
     /// module-level declaration visible there.
@@ -549,6 +561,11 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
             .kind = .type,
         });
         try self.facts.owner.put(self.arena, key, self.file);
+        try self.facts.declarations.put(self.arena, key, .{ .file = self.file, .span = declaration.name_span });
+        if (declaration.constructor) |ctor| {
+            const ctor_key = try methodKey(self.arena, key, "constructor");
+            try self.facts.declarations.put(self.arena, ctor_key, .{ .file = self.file, .span = ctor.keyword_span });
+        }
         if (declaration.trait) try self.facts.traits.put(self.arena, key, {});
         // Constructing a value runs its constructor, which may read module
         // variables and call functions like any function body, so a call to
@@ -575,6 +592,7 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
                 try module.put(self.arena, member_key, .{ .mutable = false, .span = field.name_span });
                 try self.facts.owner.put(self.arena, member_key, self.file);
                 try self.facts.type_members.put(self.arena, member_key, key);
+                try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = field.name_span });
                 try self.enum_values.put(self.arena, member_key, {});
                 if (listing.items.len > 0) try listing.appendSlice(self.arena, ", ");
                 try listing.print(self.arena, "`{s}`", .{field.name});
@@ -582,11 +600,15 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
             try self.enum_listings.put(self.arena, key, listing.items);
         }
         for (declaration.fields) |field| {
-            try self.instance_members.put(self.arena, try methodKey(self.arena, key, field.name), {});
+            const field_key = try methodKey(self.arena, key, field.name);
+            try self.instance_members.put(self.arena, field_key, {});
+            try self.facts.declarations.put(self.arena, field_key, .{ .file = self.file, .span = field.name_span });
         }
         for (declaration.methods) |method| {
-            try self.instance_members.put(self.arena, try methodKey(self.arena, key, method.name), {});
-            try self.hoistMember(method.name, try methodKey(self.arena, key, method.name));
+            const method_key = try methodKey(self.arena, key, method.name);
+            try self.instance_members.put(self.arena, method_key, {});
+            try self.hoistMember(method.name, method_key);
+            try self.facts.declarations.put(self.arena, method_key, .{ .file = self.file, .span = method.name_span });
         }
         // Section 10.4's members live in the module scope under their method
         // keys, so `Vector2.origin` is reached exactly as `Shapes.area` is.
@@ -599,6 +621,7 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
             try self.facts.module_reads.put(self.arena, member_key, .empty);
             try self.facts.calls.put(self.arena, member_key, .empty);
             try self.facts.type_members.put(self.arena, member_key, key);
+            try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = function.member_span });
             // Calling it reaches the type, which sets up its fields first.
             try self.facts.calls.getPtr(member_key).?.put(self.arena, setup, {});
         }
@@ -608,13 +631,18 @@ fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
             try module.put(self.arena, member_key, .{ .mutable = field.mutable, .span = field.name_span });
             try self.facts.owner.put(self.arena, member_key, self.file);
             try self.facts.type_members.put(self.arena, member_key, key);
+            try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = field.name_span });
         }
         for (declaration.properties) |property| {
-            try self.instance_members.put(self.arena, try methodKey(self.arena, key, property.name), {});
-            try self.hoistMember(property.name, try methodKey(self.arena, key, property.name));
+            const prop_key = try methodKey(self.arena, key, property.name);
+            try self.instance_members.put(self.arena, prop_key, {});
+            try self.hoistMember(property.name, prop_key);
+            try self.facts.declarations.put(self.arena, prop_key, .{ .file = self.file, .span = property.name_span });
             if (property.setter != null) {
                 const setter_name = try std.fmt.allocPrint(self.arena, "{s}" ++ setter_suffix, .{property.name});
-                try self.hoistMember(setter_name, try setterKey(self.arena, key, property.name));
+                const setter_key = try setterKey(self.arena, key, property.name);
+                try self.hoistMember(setter_name, setter_key);
+                try self.facts.declarations.put(self.arena, setter_key, .{ .file = self.file, .span = property.name_span });
             }
         }
     }
@@ -712,6 +740,7 @@ fn hoistModuleName(
 
     try module.put(self.arena, key, .{ .mutable = mutable, .span = span });
     try self.facts.owner.put(self.arena, key, self.file);
+    try self.facts.declarations.put(self.arena, key, .{ .file = self.file, .span = span });
     try self.module_declarations.put(self.arena, key, .{
         .file = self.file,
         .span = span,
@@ -950,6 +979,7 @@ fn hoistFunctions(self: *Resolver, statements: []const Ast.Statement) Error!void
             .kind = .function,
         });
         try self.facts.owner.put(self.arena, key, self.file);
+        try self.facts.declarations.put(self.arena, key, .{ .file = self.file, .span = function.name_span });
         try self.facts.module_reads.put(self.arena, key, .empty);
         try self.facts.calls.put(self.arena, key, .empty);
         try self.noteElsewhere(function.name);
@@ -1013,6 +1043,16 @@ fn lookup(self: *Resolver, name: []const u8) ?Found {
         return .{ .binding = binding, .scope = prelude_scope, .key = name };
     }
     return null;
+}
+
+/// Which of `self.files` declares `found`: the current file for a local
+/// (deeper than `module_scope`) or an unowned module-level binding, the
+/// binding's own recorded owner for a module-level one, and the last file —
+/// where the embedded prelude source lives — for a prelude binding.
+fn targetFileFor(self: *Resolver, found: Found) u32 {
+    if (found.scope > module_scope) return self.file;
+    if (found.scope == module_scope) return self.facts.owner.get(found.key) orelse self.file;
+    return @intCast(self.files.len - 1);
 }
 
 /// Whether the name is already visible within the current function, which is
@@ -1490,6 +1530,8 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             };
             if (!try self.declaredAbove(found, assignment.name_span)) return;
 
+            try self.facts.assignment_targets.put(self.arena, .{ .file = self.file, .start = assignment.name_span.start }, .{ .file = targetFileFor(self, found), .span = found.binding.span });
+
             if (self.lambda_depth > 0) {
                 try self.facts.assigned_in_lambda.put(self.arena, assignment.name, {});
             }
@@ -1628,6 +1670,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     continue;
                 };
                 if (!try self.declaredAbove(found, name.span)) continue;
+                try self.facts.assignment_targets.put(self.arena, .{ .file = self.file, .start = name.span.start }, .{ .file = targetFileFor(self, found), .span = found.binding.span });
                 if (self.lambda_depth > 0) {
                     try self.facts.assigned_in_lambda.put(self.arena, name.text, {});
                 }
@@ -2246,6 +2289,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                 );
             };
             if (!try self.declaredAbove(found, expression.span)) return;
+            try self.facts.expression_targets.put(self.arena, expression, .{ .file = targetFileFor(self, found), .span = found.binding.span });
             if (found.binding.kind == .later_parameter) {
                 return self.report(
                     expression.span,

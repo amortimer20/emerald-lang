@@ -88,6 +88,31 @@ the Emerald lexer reads as an escape introducer, so the test failed to parse rat
 testing what it meant to. Fixed by escaping the path as an Emerald string literal before
 splicing it in (`escapeAsEmeraldStringLiteral` in `src/emerald.zig`).
 
+Go to definition is implemented, the next piece of the LSP's second phase named below. It
+started as an unfinished draft from another agent (Google Antigravity, trialed separately)
+that hit its usage limit mid-task; the draft didn't compile and was reviewed and hardened
+before landing. `Resolver.zig`'s hoisting now records `facts.declarations` (every module-level
+symbol's own name span), `facts.expression_targets` (every name read's resolved declaration),
+and `facts.assignment_targets` (same, for assignment destinations) — the same fact-gathering
+pass, extended rather than re-walked. `Lsp.zig` answers `textDocument/definition` by checking,
+in order: the innermost expression at the cursor (a name or member access, plus a call's own
+callee — see below), an assignment destination, a written type annotation, and the declaration
+name itself. Fixed during review: a compile error from assuming `Type` represented `T?` as a
+wrapping `Kind` rather than the plain bool flag it is; a fixed 256-byte key buffer that
+silently truncated a long namespaced-type-plus-member lookup instead of allocating like
+`Resolver.methodKey` does; three copies of the same "which file owns this binding" computation
+factored into one `targetFileFor`; and `pathToUri` silently coercing an unexpectedly-relative
+path into a fake-absolute one instead of asserting the invariant that it never receives one.
+Also fixed, found only by an end-to-end smoke test rather than by reading the diff: a plain
+function or constructor call's own name (`Point(1, 2)`, `Shapes.area(3)`) could not be jumped
+to at all, because `Checker.typeOfCall` resolves a call's callee through `referenceOf` without
+ever calling `typeOf` on it, so the callee has no entry in `expression_types` for
+`expressionAt` (hover's lookup, reused here) to find — only the call as a whole does.
+Still missing, matching this file's other conservative capture-analysis entries: a
+declaration, assignment, or type annotation written inside a lambda's own block body is
+unreachable, since the statement-tree walkers descend into every block a statement owns but
+not into an expression looking for one.
+
 ## Next step
 
 A 2026-09-20 roadmap review triaged prior "what's next" suggestions from both agents against
@@ -98,10 +123,12 @@ opportunistic trait `is` analysis (streaming I/O and the bounded implementation 
 were bundled with it but were not done, and were not promoted to a named next step; nothing
 currently motivates either). What's open, in recommended order, none yet authorized to start:
 
-1. The rest of the LSP's second phase: go to definition and find references next (sharing
-   hover's foundation plus a name-to-declaration index), then safe rename (built on find
-   references), then completion last (its own parser recovery strategy, the one piece that
-   is not "more of the same" — see `Lsp.zig`'s header).
+1. The rest of the LSP's second phase: find references next (the `declarations`/
+   `expression_targets`/`assignment_targets` facts go to definition added are most of what it
+   needs too — the remaining piece is inverting them, one declaration to every read of it,
+   rather than a read to its declaration), then safe rename (built on find references), then
+   completion last (its own parser recovery strategy, the one piece that is not "more of the
+   same" — see `Lsp.zig`'s header).
 
 Named but unordered: `emerald explain`/diagnostic polish; a custom equality/hashing design
 pass, the natural sibling to `Textual`/`Ordered`; streaming/binary file I/O and recursive
@@ -141,17 +168,23 @@ this session's changes where that mattered):
   dictionary-key checks use a 256-type/object path; character indexing is linear; repeated
   dictionary or set deletion is quadratic.
 - `emerald check` on a missing file exits `64`; section 18.1 does not yet specify that case.
+- Go to definition does not reach a declaration, assignment, or type annotation written inside
+  a lambda's own block body — the statement-tree walkers behind it descend into every block a
+  *statement* owns, not into an *expression* looking for one.
 
 ## Validation and repository state
 
 The latest completed slices, including the program entry point, the ledger shakedown, the
-trait-aware impossible-type-test warning, LSP hover, and the Windows path/lexer fix above,
-passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe (359/359
-tests), `bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check` with
-pinned Zig 0.16.0 — run on Linux; the Windows-specific fixes could not be verified on real
-Windows locally, so CI is the first real check of them. The working tree was clean after
-commit `2407bef` (`Implement LSP hover, and give the language server project awareness`)
-before this pass.
+trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, and go to
+definition, passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe
+(364/364 tests), `bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check`
+with pinned Zig 0.16.0. Go to definition was also checked end to end against the real LSP
+server over JSON-RPC (single-file member access and constructor calls, and a two-file project
+crossing into a sibling file), not just its Zig unit tests, which is how the constructor-call
+gap above was actually found. The Windows path/lexer fix's Windows-specific half could not be
+verified locally and was confirmed by CI instead. The working tree was clean after commit
+`69ba017` (`Fix two Windows-only CI failures: Path.join and a lexer-unsafe test`) before this
+pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a

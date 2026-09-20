@@ -10,12 +10,23 @@
 //! interpreter's sake) and a document's whole project (14.1), since a file
 //! checked alone sees none of its own project's other declarations —
 //! `loadDocument` below reads one from disk, substituting the editor's own
-//! buffer for the open file. Go to definition and find references are next,
-//! sharing this same foundation plus a name-to-declaration index; rename
-//! after that, built on find references; completion last, since it alone
-//! needs a different parser recovery strategy — today a broken construct
-//! like `foo.` discards its whole enclosing statement rather than leaving a
-//! partial node to offer completions against.
+//! buffer for the open file.
+//!
+//! Go to definition is the second piece, answered by three facts
+//! `Resolver.zig`'s existing hoisting pass now also records: `declarations`
+//! (every module-level symbol's own name span), `expression_targets` (every
+//! name read's resolved declaration), and `assignment_targets` (the same, for
+//! assignment destinations). A member access, a call's own callee (resolved
+//! separately from `expressionAt`'s hover lookup — `Checker.typeOfCall` never
+//! gives the callee itself an entry in `expression_types`), a written type
+//! annotation, and a declaration name each get their own small walk of the
+//! statement tree below, since none of them is a name read the resolver
+//! already tracked. Find references is next, sharing this same foundation —
+//! inverting it, one declaration to every read, rather than a read to its
+//! declaration; rename after that, built on find references; completion
+//! last, since it alone needs a different parser recovery strategy — today a
+//! broken construct like `foo.` discards its whole enclosing statement rather
+//! than leaving a partial node to offer completions against.
 //!
 //! Wire format: JSON-RPC 2.0 framed as `Content-Length: N\r\n\r\n` followed
 //! by exactly N bytes of JSON (LSP's own framing, independent of JSON-RPC
@@ -44,12 +55,14 @@ const Formatter = emerald.Formatter;
 const unicode = emerald.unicode;
 const Project = emerald.Project;
 const Type = emerald.Type;
+const Resolver = emerald.Resolver;
 
 // Wire shapes. Plain Zig types `std.json.Stringify.write` serializes by
 // reflection — no JSON-specific annotation needed on any of them.
 
 const Position = struct { line: u32, character: u32 };
 const Range = struct { start: Position, end: Position };
+const Location = struct { uri: []const u8, range: Range };
 const LspDiagnostic = struct { range: Range, severity: u32, message: []const u8 };
 const DocumentSymbol = struct {
     name: []const u8,
@@ -262,6 +275,40 @@ fn percentDecode(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
     return out.toOwnedSlice(gpa);
 }
 
+/// The inverse of `uriToPath`: converts a filesystem path to a `file://` URI,
+/// percent-encoding characters outside the unreserved set, and ensuring
+/// Windows drive letters have a leading slash (`file:///C:/...`). `path`
+/// itself is always absolute here — it comes from a `Project.File.source.path`
+/// built from `uriToPath`'s own decoded, absolute path (`loadProjectFor`) — so
+/// an unexpectedly relative one is a bug upstream to surface, not a shape to
+/// paper over by guessing where root is.
+fn pathToUri(gpa: std.mem.Allocator, path: []const u8) ![]u8 {
+    if (std.mem.startsWith(u8, path, "file://")) return try gpa.dupe(u8, path);
+
+    const has_drive_letter = path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':';
+    std.debug.assert(has_drive_letter or (path.len > 0 and (path[0] == '/' or path[0] == '\\')));
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+
+    try out.appendSlice(gpa, "file://");
+    if (has_drive_letter) try out.append(gpa, '/');
+
+    for (path) |b| {
+        const c = if (b == '\\') '/' else b;
+        switch (c) {
+            'a'...'z', 'A'...'Z', '0'...'9', '-', '_', '.', '~', '/', ':' => try out.append(gpa, c),
+            else => {
+                const hex = "0123456789ABCDEF";
+                try out.append(gpa, '%');
+                try out.append(gpa, hex[(c >> 4) & 0xF]);
+                try out.append(gpa, hex[c & 0xF]);
+            },
+        }
+    }
+    return out.toOwnedSlice(gpa);
+}
+
 /// Runs until `exit` or a clean end of the input stream (the client closed
 /// its side of stdio).
 pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.Writer) !void {
@@ -384,6 +431,7 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
                 .documentSymbolProvider = true,
                 .documentFormattingProvider = true,
                 .hoverProvider = true,
+                .definitionProvider = true,
             },
         });
         return false;
@@ -442,6 +490,13 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
         const uri = try stringField(text_document, "uri");
         const position = try positionField(params);
         if (id) |request_id| try onHover(server, gpa, uri, position, request_id, out);
+        return false;
+    }
+    if (std.mem.eql(u8, method, "textDocument/definition")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        const position = try positionField(params);
+        if (id) |request_id| try onDefinition(server, gpa, uri, position, request_id, out);
         return false;
     }
 
@@ -689,7 +744,7 @@ fn onHover(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: P
     });
 }
 
-const Found = struct { span: Source.Span, type: Type };
+const Found = struct { span: Source.Span, type: Type, expression: *const Ast.Expression };
 
 /// The smallest expression of `analysis`'s checked types whose own file is
 /// `file` and whose span contains `offset` — the innermost thing the cursor
@@ -703,11 +758,494 @@ fn expressionAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?Foun
     while (iterator.next()) |entry| {
         const info = entry.value_ptr.*;
         if (info.file != file) continue;
-        const span = entry.key_ptr.*.span;
+        const expr = entry.key_ptr.*;
+        const span = expr.span;
         if (offset < span.start or offset > span.end) continue;
-        if (best == null or span.len() < best.?.span.len()) best = .{ .span = span, .type = info.type };
+        if (best == null or span.len() < best.?.span.len()) best = .{ .span = span, .type = info.type, .expression = expr };
     }
     return best;
+}
+
+// Go to definition.
+//
+// `findAssignmentInStatement`, `findTypeInStatement`, and `findDeclNameInStatement`
+// below walk the statement tree, descending into every block a statement owns
+// (loop bodies, `try`/`catch`/`finally`, a `case` arm's block form) — the same
+// set `Resolver`'s own fact-gathering walks. They do not descend into an
+// expression looking for a lambda literal's own block body, so a declaration,
+// assignment, or type annotation written inside a lambda stays unreachable by
+// go to definition for now, same as several other conservative spots in the
+// capture/definite-assignment analysis (see `docs/handoff.md`'s rough edges).
+
+fn onDefinition(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, id: std.json.Value, out: *std.Io.Writer) !void {
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+
+    var loaded = try loadDocument(server, gpa, uri, document.text.items);
+    defer loaded.deinit(gpa);
+
+    var analysis = (try emerald.analyzeProject(gpa, &loaded.project)) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    defer analysis.deinit(gpa);
+
+    const source = &loaded.project.files[loaded.index].source;
+    const offset = offsetFromPosition(source, position);
+    const target = (try definitionAt(gpa, &analysis, loaded.index, offset)) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+
+    // Prelude declarations are embedded in the binary and have no file on disk.
+    if (target.file >= loaded.project.files.len) {
+        try respond(gpa, out, id, null);
+        return;
+    }
+
+    const target_file = &loaded.project.files[target.file];
+    const target_uri = if (target.file == loaded.index)
+        try gpa.dupe(u8, uri)
+    else
+        try pathToUri(gpa, target_file.source.path);
+    defer gpa.free(target_uri);
+
+    try respond(gpa, out, id, Location{
+        .uri = target_uri,
+        .range = lspRange(&target_file.source, target.span),
+    });
+}
+
+/// Finds the declaration target of whatever symbol is at `offset` in `file`:
+/// an identifier, a member access, an assignment destination, a type annotation,
+/// or a declaration name itself.
+fn definitionAt(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, offset: u32) !?Resolver.Target {
+    // 1. Innermost expression at cursor.
+    if (expressionAt(analysis, file, offset)) |found| {
+        const expr = found.expression;
+        if (expr.data == .name) {
+            if (analysis.resolved.facts.expression_targets.get(expr)) |target| return target;
+        } else if (expr.data == .member) {
+            const member = expr.data.member;
+            if (offset >= member.name_span.start and offset <= member.name_span.end) {
+                if (try memberDefinition(gpa, analysis, file, expr)) |target| return target;
+            }
+        } else if (expr.data == .call) {
+            // `Checker.typeOfCall` resolves a call's callee through
+            // `referenceOf`/`self.find`, never through `typeOf`, so the callee
+            // itself has no entry of its own in `expression_types` — only the
+            // call as a whole does. `expressionAt` above lands on the call, and
+            // a click on the plain function or constructor name it calls
+            // (`Point(1, 2)`, `Shapes.area(3)`) has to be unwrapped from here.
+            const callee = expr.data.call.callee;
+            if (offset >= callee.span.start and offset <= callee.span.end) {
+                if (callee.data == .name) {
+                    if (analysis.resolved.facts.expression_targets.get(callee)) |target| return target;
+                } else if (callee.data == .member) {
+                    const member = callee.data.member;
+                    if (offset >= member.name_span.start and offset <= member.name_span.end) {
+                        if (try memberDefinition(gpa, analysis, file, callee)) |target| return target;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Assignment destination name.
+    if (assignmentTargetAt(analysis, file, offset)) |target| return target;
+
+    // 3. Written TypeExpression.
+    if (typeExpressionTargetAt(analysis, file, offset)) |target| return target;
+
+    // 4. Declaration name itself.
+    if (declarationNameAt(analysis, file, offset)) |target| return target;
+
+    return null;
+}
+
+fn memberDefinition(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, expr: *const Ast.Expression) !?Resolver.Target {
+    const member = expr.data.member;
+
+    // A namespace-qualified reference (e.g. `Shapes.area` or `Shapes.Circle`).
+    if (analysis.resolved.facts.qualified.get(expr)) |key| {
+        if (analysis.resolved.facts.declarations.get(key)) |target| return target;
+    }
+
+    // A method call recorded by the checker.
+    if (analysis.checked.method_calls.get(expr)) |key| {
+        if (analysis.resolved.facts.declarations.get(key)) |target| return target;
+    }
+
+    // A super member read.
+    if (analysis.checked.super_members.get(expr)) |key| {
+        if (analysis.resolved.facts.declarations.get(key)) |target| return target;
+    }
+
+    // An instance field or property read on a known struct/class type.
+    // `optional` (Type.zig) is a flag alongside `kind`/`user`, not a wrapping
+    // kind, so `T?`'s member access reads `user` exactly as `T`'s does.
+    if (analysis.checked.expression_types.get(member.base)) |base_info| {
+        const base_type = base_info.type;
+        if (base_type.kind == .struct_value and base_type.user != null) {
+            if (try findMemberInHierarchy(gpa, analysis, base_type.user.?.name, member.name)) |target| return target;
+        }
+    }
+
+    // A type-level member access (e.g. `Direction.north` or `Player.count`).
+    if (member.base.data == .name) {
+        const base_name = member.base.data.name;
+        const base_key = analysis.resolved.facts.keyFor(file, base_name) orelse base_name;
+        if (try findMemberInHierarchy(gpa, analysis, base_key, member.name)) |target| return target;
+    }
+
+    return null;
+}
+
+/// Walks `start_type_key`'s base chain, then its adopted traits, for a member
+/// named `member_name` — same key shape as `Resolver.methodKey`, built with
+/// `gpa` rather than a fixed buffer, since a namespaced type name plus a
+/// descriptive member name is not bounded the way the resolver's own arena
+/// allocation isn't either.
+fn findMemberInHierarchy(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, start_type_key: []const u8, member_name: []const u8) !?Resolver.Target {
+    var type_key = start_type_key;
+    while (true) {
+        const key = try Resolver.methodKey(gpa, type_key, member_name);
+        defer gpa.free(key);
+        if (analysis.resolved.facts.declarations.get(key)) |t| return t;
+
+        if (analysis.resolved.facts.bases.get(type_key)) |base_key| {
+            type_key = base_key;
+        } else break;
+    }
+
+    if (analysis.resolved.facts.adopted.get(start_type_key)) |traits| {
+        for (traits) |trait_key| {
+            const key = try Resolver.methodKey(gpa, trait_key, member_name);
+            defer gpa.free(key);
+            if (analysis.resolved.facts.declarations.get(key)) |t| return t;
+        }
+    }
+    return null;
+}
+
+fn assignmentTargetAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?Resolver.Target {
+    if (file >= analysis.parsed.len) return null;
+    return findAssignmentInStatements(analysis.parsed[file].program.statements, file, offset, &analysis.resolved.facts.assignment_targets);
+}
+
+fn findAssignmentInStatements(statements: []const Ast.Statement, file: u32, offset: u32, targets: *const std.AutoHashMapUnmanaged(Resolver.Site, Resolver.Target)) ?Resolver.Target {
+    for (statements) |statement| {
+        if (findAssignmentInStatement(statement, file, offset, targets)) |target| return target;
+    }
+    return null;
+}
+
+fn findAssignmentInStatement(statement: Ast.Statement, file: u32, offset: u32, targets: *const std.AutoHashMapUnmanaged(Resolver.Site, Resolver.Target)) ?Resolver.Target {
+    switch (statement.data) {
+        .assignment => |a| {
+            if (offset >= a.name_span.start and offset <= a.name_span.end) {
+                return targets.get(.{ .file = file, .start = a.name_span.start });
+            }
+        },
+        .destructuring_assignment => |da| {
+            for (da.pattern.names) |name| {
+                if (offset >= name.span.start and offset <= name.span.end) {
+                    return targets.get(.{ .file = file, .start = name.span.start });
+                }
+            }
+        },
+        .conditional => |c| {
+            if (findAssignmentInStatements(c.then_block.statements, file, offset, targets)) |target| return target;
+            if (c.otherwise) |other| switch (other) {
+                .block => |b| if (findAssignmentInStatements(b.statements, file, offset, targets)) |target| return target,
+                .chained => |s| if (findAssignmentInStatement(s.*, file, offset, targets)) |target| return target,
+            };
+        },
+        .while_loop => |w| {
+            if (findAssignmentInStatements(w.body.statements, file, offset, targets)) |target| return target;
+        },
+        .for_loop => |f| {
+            if (findAssignmentInStatements(f.body.statements, file, offset, targets)) |target| return target;
+        },
+        .case_statement => |case| {
+            for (case.arms) |arm| {
+                if (arm.body == .block) {
+                    if (findAssignmentInStatements(arm.body.block.statements, file, offset, targets)) |target| return target;
+                }
+            }
+            if (case.otherwise) |otherwise| {
+                if (otherwise == .block) {
+                    if (findAssignmentInStatements(otherwise.block.statements, file, offset, targets)) |target| return target;
+                }
+            }
+        },
+        .try_statement => |t| {
+            if (findAssignmentInStatements(t.body.statements, file, offset, targets)) |target| return target;
+            for (t.catches) |c| {
+                if (findAssignmentInStatements(c.body.statements, file, offset, targets)) |target| return target;
+            }
+            if (t.finally_block) |fb| {
+                if (findAssignmentInStatements(fb.statements, file, offset, targets)) |target| return target;
+            }
+        },
+        .function_declaration => |f| {
+            if (findAssignmentInStatements(f.body.statements, file, offset, targets)) |target| return target;
+        },
+        .struct_declaration => |s| {
+            if (s.constructor) |c| {
+                if (findAssignmentInStatements(c.body.statements, file, offset, targets)) |target| return target;
+            }
+            for (s.methods) |m| {
+                if (findAssignmentInStatements(m.body.statements, file, offset, targets)) |target| return target;
+            }
+            for (s.properties) |p| {
+                if (findAssignmentInStatements(p.getter.body.statements, file, offset, targets)) |target| return target;
+                if (p.setter) |setter| {
+                    if (findAssignmentInStatements(setter.body.statements, file, offset, targets)) |target| return target;
+                }
+            }
+            for (s.type_functions) |tf| {
+                if (findAssignmentInStatements(tf.declaration.body.statements, file, offset, targets)) |target| return target;
+            }
+        },
+        else => {},
+    }
+    return null;
+}
+
+fn typeExpressionTargetAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?Resolver.Target {
+    if (file >= analysis.parsed.len) return null;
+    return findTypeInStatements(analysis.parsed[file].program.statements, file, offset, analysis);
+}
+
+fn checkTypeExpr(type_expr: Ast.TypeExpression, file: u32, offset: u32, analysis: *const emerald.Analysis) ?Resolver.Target {
+    if (offset < type_expr.span.start or offset > type_expr.span.end) return null;
+
+    if (type_expr.element) |elem| {
+        if (checkTypeExpr(elem.*, file, offset, analysis)) |t| return t;
+    }
+    if (type_expr.key) |k| {
+        if (checkTypeExpr(k.*, file, offset, analysis)) |t| return t;
+    }
+    if (type_expr.positions) |positions| {
+        for (positions) |pos| {
+            if (checkTypeExpr(pos, file, offset, analysis)) |t| return t;
+        }
+    }
+    if (type_expr.signature) |sig| {
+        for (sig.parameters) |param| {
+            if (checkTypeExpr(param, file, offset, analysis)) |t| return t;
+        }
+        if (sig.result) |res| {
+            if (checkTypeExpr(res.*, file, offset, analysis)) |t| return t;
+        }
+    }
+
+    if (type_expr.name.len > 0) {
+        const type_key = analysis.resolved.facts.keyFor(file, type_expr.name) orelse type_expr.name;
+        if (analysis.resolved.facts.declarations.get(type_key)) |target| return target;
+        if (analysis.resolved.facts.namespaceAliasFor(file, type_expr.name)) |alias| {
+            if (analysis.resolved.facts.declarations.get(alias)) |target| return target;
+        }
+    }
+    return null;
+}
+
+fn findTypeInStatements(statements: []const Ast.Statement, file: u32, offset: u32, analysis: *const emerald.Analysis) ?Resolver.Target {
+    for (statements) |statement| {
+        if (findTypeInStatement(statement, file, offset, analysis)) |target| return target;
+    }
+    return null;
+}
+
+fn findTypeInStatement(statement: Ast.Statement, file: u32, offset: u32, analysis: *const emerald.Analysis) ?Resolver.Target {
+    switch (statement.data) {
+        .declaration => |d| {
+            if (d.annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
+        },
+        .destructuring => |d| {
+            if (d.annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
+        },
+        .function_declaration => |f| {
+            for (f.parameters) |p| if (checkTypeExpr(p.annotation, file, offset, analysis)) |t| return t;
+            if (f.return_annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
+            if (findTypeInStatements(f.body.statements, file, offset, analysis)) |t| return t;
+        },
+        .struct_declaration => |s| {
+            if (s.base) |base| if (checkTypeExpr(base, file, offset, analysis)) |t| return t;
+            for (s.traits) |tr| if (checkTypeExpr(tr, file, offset, analysis)) |t| return t;
+            for (s.fields) |f| if (checkTypeExpr(f.annotation, file, offset, analysis)) |t| return t;
+            for (s.properties) |p| if (checkTypeExpr(p.annotation, file, offset, analysis)) |t| return t;
+            if (s.constructor) |c| {
+                for (c.parameters) |p| if (checkTypeExpr(p.annotation, file, offset, analysis)) |t| return t;
+                if (findTypeInStatements(c.body.statements, file, offset, analysis)) |t| return t;
+            }
+            for (s.methods) |m| {
+                for (m.parameters) |p| if (checkTypeExpr(p.annotation, file, offset, analysis)) |t| return t;
+                if (m.return_annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
+                if (findTypeInStatements(m.body.statements, file, offset, analysis)) |t| return t;
+            }
+            for (s.type_functions) |tf| {
+                for (tf.declaration.parameters) |p| if (checkTypeExpr(p.annotation, file, offset, analysis)) |t| return t;
+                if (tf.declaration.return_annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
+                if (findTypeInStatements(tf.declaration.body.statements, file, offset, analysis)) |t| return t;
+            }
+            for (s.type_fields) |tf| {
+                if (tf.annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
+            }
+        },
+        .conditional => |c| {
+            if (findTypeInStatements(c.then_block.statements, file, offset, analysis)) |t| return t;
+            if (c.otherwise) |other| switch (other) {
+                .block => |b| if (findTypeInStatements(b.statements, file, offset, analysis)) |t| return t,
+                .chained => |s| if (findTypeInStatement(s.*, file, offset, analysis)) |t| return t,
+            };
+        },
+        .while_loop => |w| {
+            if (findTypeInStatements(w.body.statements, file, offset, analysis)) |t| return t;
+        },
+        .for_loop => |f| {
+            if (findTypeInStatements(f.body.statements, file, offset, analysis)) |t| return t;
+        },
+        .case_statement => |case| {
+            for (case.arms) |arm| {
+                if (arm.body == .block) {
+                    if (findTypeInStatements(arm.body.block.statements, file, offset, analysis)) |t| return t;
+                }
+            }
+            if (case.otherwise) |otherwise| {
+                if (otherwise == .block) {
+                    if (findTypeInStatements(otherwise.block.statements, file, offset, analysis)) |t| return t;
+                }
+            }
+        },
+        .try_statement => |try_stmt| {
+            if (findTypeInStatements(try_stmt.body.statements, file, offset, analysis)) |target| return target;
+            for (try_stmt.catches) |c| {
+                if (c.annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |target| return target;
+                if (findTypeInStatements(c.body.statements, file, offset, analysis)) |target| return target;
+            }
+            if (try_stmt.finally_block) |fb| {
+                if (findTypeInStatements(fb.statements, file, offset, analysis)) |target| return target;
+            }
+        },
+        else => {},
+    }
+    return null;
+}
+
+fn declarationNameAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?Resolver.Target {
+    if (file >= analysis.parsed.len) return null;
+    return findDeclNameInStatements(analysis.parsed[file].program.statements, file, offset);
+}
+
+fn findDeclNameInStatements(statements: []const Ast.Statement, file: u32, offset: u32) ?Resolver.Target {
+    for (statements) |statement| {
+        if (findDeclNameInStatement(statement, file, offset)) |t| return t;
+    }
+    return null;
+}
+
+fn findDeclNameInStatement(statement: Ast.Statement, file: u32, offset: u32) ?Resolver.Target {
+    switch (statement.data) {
+        .declaration => |d| {
+            if (offset >= d.name_span.start and offset <= d.name_span.end) return .{ .file = file, .span = d.name_span };
+        },
+        .destructuring => |d| {
+            for (d.pattern.names) |name| {
+                if (offset >= name.span.start and offset <= name.span.end) return .{ .file = file, .span = name.span };
+            }
+        },
+        .function_declaration => |f| {
+            if (offset >= f.name_span.start and offset <= f.name_span.end) return .{ .file = file, .span = f.name_span };
+            for (f.parameters) |p| {
+                if (offset >= p.name_span.start and offset <= p.name_span.end) return .{ .file = file, .span = p.name_span };
+            }
+            if (findDeclNameInStatements(f.body.statements, file, offset)) |t| return t;
+        },
+        .struct_declaration => |s| {
+            if (offset >= s.name_span.start and offset <= s.name_span.end) return .{ .file = file, .span = s.name_span };
+            for (s.fields) |f| {
+                if (offset >= f.name_span.start and offset <= f.name_span.end) return .{ .file = file, .span = f.name_span };
+            }
+            if (s.constructor) |c| {
+                if (offset >= c.keyword_span.start and offset <= c.keyword_span.end) return .{ .file = file, .span = c.keyword_span };
+                for (c.parameters) |p| {
+                    if (offset >= p.name_span.start and offset <= p.name_span.end) return .{ .file = file, .span = p.name_span };
+                }
+                if (findDeclNameInStatements(c.body.statements, file, offset)) |t| return t;
+            }
+            for (s.methods) |m| {
+                if (offset >= m.name_span.start and offset <= m.name_span.end) return .{ .file = file, .span = m.name_span };
+                for (m.parameters) |p| {
+                    if (offset >= p.name_span.start and offset <= p.name_span.end) return .{ .file = file, .span = p.name_span };
+                }
+                if (findDeclNameInStatements(m.body.statements, file, offset)) |t| return t;
+            }
+            for (s.properties) |p| {
+                if (offset >= p.name_span.start and offset <= p.name_span.end) return .{ .file = file, .span = p.name_span };
+                if (findDeclNameInStatements(p.getter.body.statements, file, offset)) |t| return t;
+                if (p.setter) |setter| {
+                    if (findDeclNameInStatements(setter.body.statements, file, offset)) |t| return t;
+                }
+            }
+            for (s.type_functions) |tf| {
+                if (offset >= tf.member_span.start and offset <= tf.member_span.end) return .{ .file = file, .span = tf.member_span };
+                for (tf.declaration.parameters) |p| {
+                    if (offset >= p.name_span.start and offset <= p.name_span.end) return .{ .file = file, .span = p.name_span };
+                }
+                if (findDeclNameInStatements(tf.declaration.body.statements, file, offset)) |t| return t;
+            }
+            for (s.type_fields) |tf| {
+                if (offset >= tf.name_span.start and offset <= tf.name_span.end) return .{ .file = file, .span = tf.name_span };
+            }
+        },
+        .conditional => |c| {
+            if (findDeclNameInStatements(c.then_block.statements, file, offset)) |t| return t;
+            if (c.otherwise) |other| switch (other) {
+                .block => |b| if (findDeclNameInStatements(b.statements, file, offset)) |t| return t,
+                .chained => |s| if (findDeclNameInStatement(s.*, file, offset)) |t| return t,
+            };
+        },
+        .while_loop => |w| {
+            if (findDeclNameInStatements(w.body.statements, file, offset)) |t| return t;
+        },
+        .for_loop => |f| {
+            if (offset >= f.name_span.start and offset <= f.name_span.end) return .{ .file = file, .span = f.name_span };
+            if (f.pattern) |pat| {
+                for (pat.names) |name| {
+                    if (offset >= name.span.start and offset <= name.span.end) return .{ .file = file, .span = name.span };
+                }
+            }
+            if (findDeclNameInStatements(f.body.statements, file, offset)) |t| return t;
+        },
+        .case_statement => |case| {
+            for (case.arms) |arm| {
+                if (arm.body == .block) {
+                    if (findDeclNameInStatements(arm.body.block.statements, file, offset)) |t| return t;
+                }
+            }
+            if (case.otherwise) |otherwise| {
+                if (otherwise == .block) {
+                    if (findDeclNameInStatements(otherwise.block.statements, file, offset)) |t| return t;
+                }
+            }
+        },
+        .try_statement => |try_stmt| {
+            if (findDeclNameInStatements(try_stmt.body.statements, file, offset)) |target| return target;
+            for (try_stmt.catches) |c| {
+                if (offset >= c.name_span.start and offset <= c.name_span.end) return .{ .file = file, .span = c.name_span };
+                if (findDeclNameInStatements(c.body.statements, file, offset)) |target| return target;
+            }
+            if (try_stmt.finally_block) |fb| {
+                if (findDeclNameInStatements(fb.statements, file, offset)) |target| return target;
+            }
+        },
+        else => {},
+    }
+    return null;
 }
 
 const testing = std.testing;
@@ -863,4 +1401,98 @@ test "expressionAt finds the innermost expression, not the outer one it nests in
 
     try testing.expectEqual(@as(?Found, null), expressionAt(&analysis, 0, 999));
     try testing.expectEqual(@as(?Found, null), expressionAt(&analysis, 1, 22));
+}
+
+test "definitionAt jumps from a variable's read to its declaration" {
+    const gpa = testing.allocator;
+    const text = "var total = 5\nprint(total)\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const use_offset: u32 = @intCast(std.mem.indexOf(u8, text, "total)").?);
+    const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
+    try testing.expectEqual(@as(u32, 0), target.file);
+    const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "total =").?);
+    try testing.expectEqual(decl_offset, target.span.start);
+}
+
+test "definitionAt jumps from a member access to the field it names" {
+    const gpa = testing.allocator;
+    const text = "struct Point {\n    var x: Int\n}\nconst p = Point(1)\nprint(p.x)\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const use_offset: u32 = @intCast(std.mem.indexOf(u8, text, "p.x)").? + 2);
+    const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
+    const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "x: Int").?);
+    try testing.expectEqual(decl_offset, target.span.start);
+}
+
+test "definitionAt jumps from a written type annotation to the struct it names" {
+    const gpa = testing.allocator;
+    const text = "struct Circle {}\nvar c: Circle = Circle()\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const use_offset: u32 = @intCast(std.mem.indexOf(u8, text, ": Circle =").? + 2);
+    const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
+    const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "struct Circle").? + "struct ".len);
+    try testing.expectEqual(decl_offset, target.span.start);
+}
+
+test "definitionAt reaches an assignment inside a case arm's block" {
+    // Regression test: `findAssignmentInStatement` originally had no
+    // `.case_statement` branch, so this returned null even though
+    // `Resolver`'s own fact-gathering walks into case arms fine.
+    const gpa = testing.allocator;
+    const text = "var x = 1\ncase 1 {\n    when 1 {\n        x = 2\n    }\n}\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const use_offset: u32 = @intCast(std.mem.indexOf(u8, text, "x = 2").?);
+    const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
+    const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "x = 1").?);
+    try testing.expectEqual(decl_offset, target.span.start);
+}
+
+test "definitionAt jumps from a constructor call's own name to its struct" {
+    // Regression test: the checker resolves a call's callee through
+    // `referenceOf`, never `typeOf` (Checker.typeOfCall), so `expressionAt`
+    // (which only knows what the checker gave a `Type`) lands on the whole
+    // call rather than the callee, and a naive `expr.data == .name` check
+    // in `definitionAt` never even sees the callee node.
+    const gpa = testing.allocator;
+    const text = "struct Point {\n    var x: Int\n}\nconst p = Point(1)\nprint(p)\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const use_offset: u32 = @intCast(std.mem.indexOf(u8, text, "Point(1)").? + 1);
+    const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
+    const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "struct Point").? + "struct ".len);
+    try testing.expectEqual(decl_offset, target.span.start);
 }
