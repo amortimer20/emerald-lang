@@ -52,6 +52,10 @@ pub const StructType = struct {
     /// place and compared by identity.
     class: bool = false,
     fields: []const Field,
+    /// Field names are resolved when the descriptor is built, rather than at
+    /// every interpreted read or write. Kept alongside `fields` because the
+    /// numeric result is that slice's layout position.
+    field_positions: std.StringHashMapUnmanaged(usize) = .empty,
     /// Section 10.3's computed properties, which store nothing and so are
     /// neither displayed nor compared. Each names the functions that run it:
     /// for a class, the nearest version to the object's own class (10.7).
@@ -89,6 +93,12 @@ pub const StructType = struct {
         name: []const u8,
         kind: Kind,
     };
+
+    /// The layout position of a stored field. Runtime descriptors are built
+    /// from `Type.User.fields`, so this is the same order the checker uses.
+    pub fn fieldPosition(self: *const StructType, name: []const u8) ?usize {
+        return self.field_positions.get(name);
+    }
 
     pub const Property = struct {
         name: []const u8,
@@ -417,13 +427,7 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
             else => false,
         },
         .list => |a| switch (right.data) {
-            .list => |b| blk: {
-                if (a.items.items.len != b.items.items.len) break :blk false;
-                for (a.items.items, b.items.items) |x, y| {
-                    if (!try equals(gpa, x, y)) break :blk false;
-                }
-                break :blk true;
-            },
+            .list => |b| equalsSequence(gpa, a.items.items, b.items.items),
             else => false,
         },
         // Section 8.4: a set compares by membership and a dictionary by its
@@ -443,13 +447,7 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
         // Section 8.4: tuples compare their values position by position. The
         // checker has already proved the arities match.
         .tuple => |a| switch (right.data) {
-            .tuple => |b| blk: {
-                if (a.items.len != b.items.len) break :blk false;
-                for (a.items, b.items) |x, y| {
-                    if (!try equals(gpa, x, y)) break :blk false;
-                }
-                break :blk true;
-            },
+            .tuple => |b| equalsSequence(gpa, a.items, b.items),
             else => false,
         },
         .struct_value => |a| switch (right.data) {
@@ -458,14 +456,21 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
                 // Section 10.1: classes compare by identity.
                 if (a.descriptor.class) break :blk a == b;
                 if (a.variant != b.variant) break :blk false;
-                for (a.fields, b.fields) |left_field, right_field| {
-                    if (!try equals(gpa, left_field, right_field)) break :blk false;
-                }
-                break :blk true;
+                break :blk try equalsSequence(gpa, a.fields, b.fields);
             },
             else => false,
         },
     };
+}
+
+/// Equality for the ordered value storage shared by lists, tuples, and value
+/// structs. Their outer identities have already been checked by their caller.
+fn equalsSequence(gpa: std.mem.Allocator, left: []const Value, right: []const Value) std.mem.Allocator.Error!bool {
+    if (left.len != right.len) return false;
+    for (left, right) |a, b| {
+        if (!try equals(gpa, a, b)) return false;
+    }
+    return true;
 }
 
 /// Whether two callable values are the same function.

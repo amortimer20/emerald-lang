@@ -119,6 +119,16 @@ pub const User = struct {
         owner: []const u8 = "",
     };
 
+    /// The stored field named `name`, together with its layout position.
+    /// Keeping this lookup beside the checked metadata makes the declaration
+    /// order that constructors and the runtime share explicit.
+    pub fn field(self: *const User, name: []const u8) ?struct { value: Field, position: usize } {
+        for (self.fields, 0..) |candidate, position| {
+            if (std.mem.eql(u8, candidate.name, name)) return .{ .value = candidate, .position = position };
+        }
+        return null;
+    }
+
     /// Whether this is `other` or extends it, directly or through its base
     /// classes (10.7).
     pub fn extends(self: *const User, other: *const User) bool {

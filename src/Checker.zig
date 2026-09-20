@@ -123,6 +123,11 @@ pub const MethodCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const 
 pub const TypeTest = struct { value: Type, target: Type };
 pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
 
+const StructSite = struct {
+    file: u32,
+    declaration: Ast.StructDeclaration,
+};
+
 /// Why a binding may or may not change. Each reason gets its own correction,
 /// because the fix for a `const` is not the fix for a parameter.
 const Mutability = enum { variable, constant, parameter, loop_variable };
@@ -321,6 +326,7 @@ pub fn check(
     var checker: Checker = .{ .arena = arena, .prelude = prelude, .module = module, .facts = facts };
     try checker.scopes.append(arena, prelude);
     try checker.scopes.append(arena, module);
+    var struct_sites: std.ArrayList(StructSite) = .empty;
 
     // Hoisted, as in the resolver. The resolver has rejected duplicate names,
     // so every declaration here is the only one with its key.
@@ -329,6 +335,7 @@ pub fn check(
         for (program.statements) |statement| {
             if (statement.data == .struct_declaration) {
                 const declaration = statement.data.struct_declaration;
+                try struct_sites.append(arena, .{ .file = @intCast(index), .declaration = declaration });
                 const key = checker.keyOf(declaration.name);
                 const user = try arena.create(Type.User);
                 user.* = .{ .name = key, .display_name = declaration.name, .class = declaration.class, .trait = declaration.trait, .enumeration = declaration.enumeration };
@@ -398,52 +405,37 @@ pub fn check(
 
     // Section 10.7: every base class is known before any field is resolved,
     // since a subclass's fields begin with its base class's.
-    for (programs, 0..) |program, index| {
-        checker.file = @intCast(index);
-        for (program.statements) |statement| {
-            if (statement.data != .struct_declaration) continue;
-            try checker.resolveBase(statement.data.struct_declaration);
-        }
+    for (struct_sites.items) |site| {
+        checker.file = site.file;
+        try checker.resolveBase(site.declaration);
     }
-    for (programs, 0..) |program, index| {
-        checker.file = @intCast(index);
-        for (program.statements) |statement| {
-            if (statement.data != .struct_declaration) continue;
-            try checker.breakBaseCycle(statement.data.struct_declaration);
-            try checker.resolveTraits(statement.data.struct_declaration);
-        }
+    for (struct_sites.items) |site| {
+        checker.file = site.file;
+        try checker.breakBaseCycle(site.declaration);
+        try checker.resolveTraits(site.declaration);
     }
-    for (programs, 0..) |program, index| {
-        checker.file = @intCast(index);
-        for (program.statements) |statement| {
-            if (statement.data != .struct_declaration) continue;
-            try checker.breakTraitCycle(statement.data.struct_declaration);
-        }
+    for (struct_sites.items) |site| {
+        checker.file = site.file;
+        try checker.breakTraitCycle(site.declaration);
     }
 
     // Every type identity exists before any field annotation is resolved, so
     // fields may name a type declared later or in another file.
     checker.resolving_struct_fields = true;
-    for (programs, 0..) |program, index| {
-        checker.file = @intCast(index);
-        for (program.statements) |statement| {
-            if (statement.data != .struct_declaration) continue;
-            try checker.ensureStructChecked(checker.keyOf(statement.data.struct_declaration.name));
-        }
+    for (struct_sites.items) |site| {
+        checker.file = site.file;
+        try checker.ensureStructChecked(checker.keyOf(site.declaration.name));
     }
     checker.resolving_struct_fields = false;
 
     // A field may refer to a struct whose fields are declared later. Validate
     // dictionary keys only after all of that metadata is complete.
-    for (programs, 0..) |program, index| {
-        checker.file = @intCast(index);
-        for (program.statements) |statement| {
-            if (statement.data != .struct_declaration) continue;
-            const declaration = statement.data.struct_declaration;
-            const user = checker.structs.get(checker.keyOf(declaration.name)).?.user.?;
-            for (declaration.fields, user.fields[user.inherited..]) |field, checked_field| {
-                try checker.validateKeyAnnotations(field.annotation, checked_field.type);
-            }
+    for (struct_sites.items) |site| {
+        checker.file = site.file;
+        const declaration = site.declaration;
+        const user = checker.structs.get(checker.keyOf(declaration.name)).?.user.?;
+        for (declaration.fields, user.fields[user.inherited..]) |field, checked_field| {
+            try checker.validateKeyAnnotations(field.annotation, checked_field.type);
         }
     }
 
@@ -2625,9 +2617,7 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                         break;
                     }
                 }
-                const found = for (element.user.?.fields) |candidate| {
-                    if (std.mem.eql(u8, candidate.name, field.name)) break candidate;
-                } else null;
+                const found = element.user.?.field(field.name);
                 if (found == null) {
                     if (try self.propertyOf(element, field.name)) |property| {
                         if (index + 1 < assignment.steps.len) {
@@ -2675,10 +2665,10 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                     element = .invalid;
                     break;
                 };
-                if (!stored.mutable and frozen == null) {
-                    frozen = .{ .name = field.name, .span = field.span, .owner = element, .field_type = stored.type };
+                if (!stored.value.mutable and frozen == null) {
+                    frozen = .{ .name = field.name, .span = field.span, .owner = element, .field_type = stored.value.type };
                 }
-                element = stored.type;
+                element = stored.value.type;
                 index += 1;
             },
             .index => |index_expression| {
@@ -5771,8 +5761,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
         if (try self.memberOwner(base, member.name)) |owner| {
             if (try self.reportPrivate(owner, member.name, member.name_span)) return .invalid;
         }
-        for (base.user.?.fields) |field| {
-            if (!std.mem.eql(u8, field.name, member.name)) continue;
+        if (base.user.?.field(member.name)) |field| {
             if (isSuper(member.base)) {
                 try self.reportWithHelp(
                     member.name_span,
@@ -5783,7 +5772,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
                 );
                 return .invalid;
             }
-            return field.type;
+            return field.value.type;
         }
         if (try self.propertyOf(base, member.name)) |property| {
             if (isSuper(member.base)) try self.super_members.put(self.arena, expression, property.getter);

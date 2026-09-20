@@ -356,6 +356,9 @@ pub fn run(
                     .properties = properties,
                     .depth = depth,
                 };
+                for (fields, 0..) |field, position| {
+                    try descriptor.field_positions.put(interpreter.arena, field.name, position);
+                }
                 for (properties) |*property| {
                     property.depth = depth;
                     property.owner = descriptor.display_name;
@@ -1265,10 +1268,7 @@ fn storeInObject(self: *Interpreter, span: Source.Span, in_object: InObject, val
 /// is a computed property instead. The checker has proved it is one or the
 /// other.
 fn fieldPosition(instance: *const Heap.StructValue, name: []const u8) ?usize {
-    for (instance.descriptor.fields, 0..) |field, index| {
-        if (std.mem.eql(u8, field.name, name)) return index;
-    }
-    return null;
+    return instance.descriptor.fieldPosition(name);
 }
 
 /// Section 10.3's getter, run on a value that only lends itself to the call.

@@ -984,14 +984,12 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
         );
 
     const field_name = self.peek();
-    if (field_name.kind != .identifier) {
-        return self.reportFmt(
-            field_name.span,
-            "expected a field name, found {s}",
-            .{field_name.kind.describe()},
-            "A stored field has a name and type, as in `var x: Float`.",
-        );
-    }
+    if (field_name.kind != .identifier) return self.reportFmt(
+        field_name.span,
+        "expected a field name, found {s}",
+        .{field_name.kind.describe()},
+        "A stored field has a name and type, as in `var x: Float`.",
+    );
     _ = self.advance();
     if (self.check(.dot)) {
         if (self.in_trait) {
@@ -1010,23 +1008,8 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
         try members.type_fields.append(self.arena, try self.parseTypeField(mutable, field_name, name));
         return;
     }
-    if (self.match(.colon) == null) {
-        if (self.check(.left_brace)) {
-            return self.reportFmt(
-                self.peek().span,
-                "`{s}` needs a type before its body",
-                .{self.text(field_name)},
-                try std.fmt.allocPrint(self.arena, "A property states the type it gives, as in `const {s}: Float {{ ... }}`.", .{self.text(field_name)}),
-            );
-        }
-        return self.reportFmt(
-            self.peek().span,
-            "expected `:` and a type after `{s}`, found {s}",
-            .{ self.text(field_name), self.peek().kind.describe() },
-            "Every stored field needs an explicit type, as in `var x: Float`.",
-        );
-    }
-    const annotation = try self.parseTypeExpression();
+    const typed = try self.parseNamedType(field_name, .field);
+    const annotation = typed.annotation;
     if (self.check(.left_brace)) {
         var property = try self.parseProperty(mutable, field_name, annotation);
         if (self.in_trait or self.has_traits) property.override_span = annotations.override;
@@ -1742,28 +1725,41 @@ fn parseParameter(self: *Parser) Error!Ast.Parameter {
         );
     }
     _ = self.advance();
+    const typed = try self.parseNamedType(name, .parameter);
+    const default: ?*const Ast.Expression = if (self.match(.equal) != null) try self.parseExpression() else null;
+    return .{ .name = try self.identifier(name), .name_span = name.span, .annotation = typed.annotation, .default = default };
+}
 
-    if (self.check(.equal)) {
-        return self.reportFmt(
-            self.peek().span,
-            "`{s}` needs a type before its default",
-            .{self.text(name)},
-            "Write the type first, as in `count: Int = 0`.",
-        );
-    }
+const NamedTypeContext = enum { parameter, field };
+const NamedType = struct { annotation: Ast.TypeExpression };
 
+/// Parses the common `name: Type` portion of a parameter or stored field.
+/// The surrounding declarations keep their own rules for defaults and bodies.
+fn parseNamedType(self: *Parser, name: Token, context: NamedTypeContext) Error!NamedType {
+    if (self.check(.equal)) return self.reportFmt(
+        self.peek().span,
+        "`{s}` needs a type before its default",
+        .{self.text(name)},
+        "Write the type first, as in `count: Int = 0`.",
+    );
     if (self.match(.colon) == null) {
+        if (context == .field and self.check(.left_brace)) return self.reportFmt(
+            self.peek().span,
+            "`{s}` needs a type before its body",
+            .{self.text(name)},
+            try std.fmt.allocPrint(self.arena, "A property states the type it gives, as in `const {s}: Float {{ ... }}`.", .{self.text(name)}),
+        );
         return self.reportFmt(
             self.peek().span,
             "expected `:` and a type after `{s}`, found {s}",
             .{ self.text(name), self.peek().kind.describe() },
-            "Every parameter needs an explicit type, as in `count: Int`.",
+            if (context == .parameter)
+                "Every parameter needs an explicit type, as in `count: Int`."
+            else
+                "Every stored field needs an explicit type, as in `var x: Float`.",
         );
     }
-
-    const annotation = try self.parseTypeExpression();
-    const default: ?*const Ast.Expression = if (self.match(.equal) != null) try self.parseExpression() else null;
-    return .{ .name = try self.identifier(name), .name_span = name.span, .annotation = annotation, .default = default };
+    return .{ .annotation = try self.parseTypeExpression() };
 }
 
 /// Section 7.1 allows a bare `return` for a function with no result. Whether a
@@ -1997,9 +1993,12 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
 
     // Section 14.2: the fully qualified spelling that resolves a collision is
     // valid anywhere a type is written, not only at a constructor call.
-    var path: std.ArrayList(u8) = .empty;
-    try path.appendSlice(self.arena, written);
+    var path: ?std.ArrayList(u8) = null;
     while (self.check(.dot)) {
+        if (path == null) {
+            path = .empty;
+            try path.?.appendSlice(self.arena, written);
+        }
         _ = self.advance();
         const segment = self.peek();
         if (segment.kind != .identifier) {
@@ -2019,10 +2018,10 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
         } else {
             span.end = segment.span.end;
         }
-        try path.append(self.arena, '.');
-        try path.appendSlice(self.arena, part);
+        try path.?.append(self.arena, '.');
+        try path.?.appendSlice(self.arena, part);
     }
-    written = try path.toOwnedSlice(self.arena);
+    if (path) |*qualified| written = try qualified.toOwnedSlice(self.arena);
 
     if (question == null and self.check(.question)) {
         // A `?` that could not attach to a name, as in `List[String]?`.

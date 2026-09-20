@@ -283,48 +283,16 @@ object/property reads) were removed because both have since shipped.
 - `remove_if` on `List` (removing every value matching a block) does not exist, despite
   being named as design intent in 8.5's prose.
 
-## Review findings still open
+## Review findings
 
-An adversarial review of the fieldless-struct and required-fields slices (`7214005^..ed868a4`)
-found several defects, all since fixed (`1850085`, `72e7df4`) and the argument-checking
-duplication it originally also listed has since been retired by a later chunked review. The
-remaining items are maintainability work, not reproduced behavioral failures, and have not
-been re-verified against current source in this pass:
-
-- **Struct field lookup is hand-written twice instead of resolved once.** `evaluateProperty`
-  (`Interpreter.zig`) and `typeOfMember` (`Checker.zig`) each independently scan
-  `descriptor.fields`/`user.fields` by name with their own `std.mem.eql` loop. A tuple
-  position is resolved once, by the parser, into a numeric `Member.position`; a qualified
-  name is resolved once, by the resolver, into `Facts.qualified`. A struct field never got
-  the same treatment, so correctness depends on the checker's scan and the interpreter's
-  scans (`fieldPosition`, used by reads, stores, and `containerSlot`) agreeing by
-  construction rather than by sharing one answer. Since properties arrived, a name the
-  interpreter's scan misses is read as a property, so a divergence (case sensitivity,
-  Unicode normalization) would now fail on a missing property rather than an `unreachable`.
-  Worth resolving a member to its field position or accessor once, before the object model
-  grows further.
-- **Struct equality duplicates the tuple/list sequence-equality pattern.** The
-  `.struct_value` case in `Value.equals` — descriptor-identity check, then a paired loop
-  calling `equals` recursively and stopping at the first mismatch — is structurally
-  identical to the `.tuple` case immediately above it, and to `.list`'s. A small
-  `equalsSequence(gpa, a, b)` helper would remove the third copy.
-- **Struct field parsing duplicates parameter parsing.** `parseParameter` parses "name →
-  require `:` → `parseTypeExpression()` → optional `= default`", and `parseStructMember`
-  repeats the same sequence by hand for a stored field, with its own messages. Defaults
-  arrived for both at once, so they have not diverged yet, but a change to one (a new
-  annotation form, say) has to be made twice.
-- **Every parsed type annotation now allocates, even without a namespace path.**
-  `parseTypeExpression` used to return a zero-copy slice straight from source text in the
-  common case (`Int`, `String`, an element type with no `.`). This slice's qualified-path
-  handling unconditionally builds an `ArrayList(u8)` and copies the name into it before
-  checking whether a `.` ever follows, so every parameter, return type, variable annotation,
-  and now every struct field pays an allocation it did not need before. Start the list only
-  once a `.` is actually seen.
-- **`check()` scans every statement four times to find struct declarations.** Four separate
-  `for (programs) |program| for (program.statements) |statement|` loops each refilter
-  `statement.data == .struct_declaration` — for identity and hoisting, field resolution,
-  dictionary-key eligibility, and the final pass over bodies. Collecting matches into a flat
-  list on the first pass and iterating that list afterwards would filter once.
+The five maintainability findings from the fieldless-struct and required-fields review are
+retired in the current, uncommitted maintenance slice: checked and runtime struct metadata
+own field lookup (with runtime descriptor positions indexed once), sequence equality is shared
+by lists, tuples, and value structs, parameter and stored-field annotations share their parser,
+unqualified type annotations remain zero-copy, and `check()` collects struct sites while
+hoisting before running its struct-only phases. Validation: `zig build test` in Debug and
+ReleaseSafe, plus `git diff --check`, all pass with pinned Zig 0.16.0. No open findings remain
+from that review; the pending changes are limited to this maintenance slice.
 
 ## Known rough edges
 
