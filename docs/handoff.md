@@ -129,6 +129,23 @@ prelude-declared symbol (`RuntimeError` and the rest) is not found at all, for t
 location in. Verified end to end over JSON-RPC, including a two-file project, both with and
 without `includeDeclaration`.
 
+Rename is implemented, directly on find references: the declaration plus every site find
+references collects, each site's span replaced by the new name and grouped into one
+`TextEdit` array per file as a standard LSP `WorkspaceEdit` (`std.json.ArrayHashMap`, the
+first dynamic-keyed JSON object this server writes rather than a fixed struct). A new
+`isValidIdentifier` checks the proposed name against the lexer's own identifier grammar
+(Unicode's XID classes, with a single trailing `?` or `!` allowed) before touching anything,
+so a rename cannot write a name the parser would immediately reject. `textDocument/rename`
+returns a JSON-RPC error (`-32602`, reusing "invalid params" since LSP defines no
+rename-specific code) rather than an edit for an invalid name, a closed document, a project
+that fails to check, a position that resolves to nothing, or a prelude-declared symbol — the
+last for the same reason go to definition and find references already decline one. No
+`prepareRename`: a client that calls it first (VS Code does) falls back to its own idea of the
+word under the cursor, and the resolution above still runs against whatever position that
+implies, so it fails safely rather than renaming the wrong thing. Verified end to end over
+JSON-RPC: a cross-file rename correctly grouped into two files' edits, and an invalid new name
+correctly rejected rather than crashing or silently corrupting the source.
+
 ## Next step
 
 A 2026-09-20 roadmap review triaged prior "what's next" suggestions from both agents against
@@ -139,10 +156,10 @@ opportunistic trait `is` analysis (streaming I/O and the bounded implementation 
 were bundled with it but were not done, and were not promoted to a named next step; nothing
 currently motivates either). What's open, in recommended order, none yet authorized to start:
 
-1. The rest of the LSP's second phase: safe rename next, built directly on find references
-   (a rename is find references' own result set, each site's span replaced), then completion
-   last (its own parser recovery strategy, the one piece that is not "more of the same" — see
-   `Lsp.zig`'s header).
+1. The last piece of the LSP's second phase: completion, its own parser recovery strategy —
+   the one piece that is not "more of the same" — since a broken construct like `foo.` today
+   discards its whole enclosing statement rather than leaving a partial node to offer
+   completions against (see `Lsp.zig`'s header).
 
 Named but unordered: `emerald explain`/diagnostic polish; a custom equality/hashing design
 pass, the natural sibling to `Textual`/`Ordered`; streaming/binary file I/O and recursive
@@ -189,22 +206,26 @@ this session's changes where that mattered):
   lambda-local symbol: references finds it, definition-from-inside-the-lambda cannot.
 - Find references does not find a reference to a prelude-declared symbol (`RuntimeError` and
   the rest), matching go to definition's own reason for declining one: a prelude declaration
-  has no file on disk to report a location in.
+  has no file on disk to report a location in. Rename declines the same symbols for the same
+  reason.
+- Rename has no `prepareRename`, so a client with no fallback of its own (most have one) may
+  offer to rename a position that then turns out not to be renameable.
 
 ## Validation and repository state
 
 The latest completed slices, including the program entry point, the ledger shakedown, the
 trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
-definition, and find references, passed `bash tools/check-toolchain.sh`, `zig build test` in
-Debug and ReleaseSafe (367/367 tests), `bash tools/check-doc-examples.sh` after `zig build`,
-and `git diff --check` with pinned Zig 0.16.0. Both go to definition and find references were
-also checked end to end against the real LSP server over JSON-RPC (single-file member access
-and constructor calls, and a two-file project crossing into a sibling file, the latter both
-with and without `includeDeclaration`), not just their Zig unit tests, which is how go to
+definition, find references, and rename, passed `bash tools/check-toolchain.sh`,
+`zig build test` in Debug and ReleaseSafe (369/369 tests), `bash tools/check-doc-examples.sh`
+after `zig build`, and `git diff --check` with pinned Zig 0.16.0. Go to definition, find
+references, and rename were each also checked end to end against the real LSP server over
+JSON-RPC (single-file member access and constructor calls; a two-file project crossing into a
+sibling file, both with and without `includeDeclaration`; a cross-file rename's grouped edits;
+an invalid new name's rejection), not just their Zig unit tests, which is how go to
 definition's constructor-call gap above was actually found. The Windows path/lexer fix's
 Windows-specific half could not be verified locally and was confirmed by CI instead. The
-working tree was clean after commit `cd4d3a4` (`Implement LSP go to definition, hardening an
-unfinished draft`) before this pass.
+working tree was clean after commit `b03d84c` (`Implement LSP find references`) before this
+pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a

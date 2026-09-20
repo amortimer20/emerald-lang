@@ -26,11 +26,18 @@
 //! Find references is the third piece, the same three facts read the other
 //! way: given a declaration's site, one ordinary recursive descent through
 //! every file's whole statement and expression tree collects every read,
-//! write, and type use whose own resolved site matches it. Rename after
-//! that, built directly on find references; completion last, since it alone
-//! needs a different parser recovery strategy — today a broken construct
-//! like `foo.` discards its whole enclosing statement rather than leaving a
-//! partial node to offer completions against.
+//! write, and type use whose own resolved site matches it.
+//!
+//! Rename is the fourth piece, directly on top: find references' own result
+//! set (the declaration included), each site's span replaced by the new
+//! name and grouped into one `TextEdit` array per file. No `prepareRename`
+//! — a client that calls it first (VS Code does) falls back to its own idea
+//! of the word under the cursor, and `onRename` below resolves and validates
+//! the real target itself regardless of what range the client assumed.
+//! Completion is last, since it alone needs a different parser recovery
+//! strategy — today a broken construct like `foo.` discards its whole
+//! enclosing statement rather than leaving a partial node to offer
+//! completions against.
 //!
 //! Wire format: JSON-RPC 2.0 framed as `Content-Length: N\r\n\r\n` followed
 //! by exactly N bytes of JSON (LSP's own framing, independent of JSON-RPC
@@ -405,12 +412,12 @@ fn respond(gpa: std.mem.Allocator, out: *std.Io.Writer, id: std.json.Value, resu
     try writeMessage(gpa, out, .{ .jsonrpc = "2.0", .id = id, .result = result });
 }
 
+fn respondError(gpa: std.mem.Allocator, out: *std.Io.Writer, id: std.json.Value, code: i32, message: []const u8) !void {
+    try writeMessage(gpa, out, .{ .jsonrpc = "2.0", .id = id, .@"error" = .{ .code = code, .message = message } });
+}
+
 fn respondMethodNotFound(gpa: std.mem.Allocator, out: *std.Io.Writer, id: std.json.Value) !void {
-    try writeMessage(gpa, out, .{
-        .jsonrpc = "2.0",
-        .id = id,
-        .@"error" = .{ .code = @as(i32, -32601), .message = "method not found" },
-    });
+    try respondError(gpa, out, id, -32601, "method not found");
 }
 
 fn notify(gpa: std.mem.Allocator, out: *std.Io.Writer, method: []const u8, params: anytype) !void {
@@ -437,6 +444,7 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
                 .hoverProvider = true,
                 .definitionProvider = true,
                 .referencesProvider = true,
+                .renameProvider = true,
             },
         });
         return false;
@@ -512,11 +520,19 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
         if (id) |request_id| try onReferences(server, gpa, uri, position, include_declaration, request_id, out);
         return false;
     }
+    if (std.mem.eql(u8, method, "textDocument/rename")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        const position = try positionField(params);
+        const params_obj = params orelse return error.InvalidParams;
+        const new_name = try stringField(params_obj, "newName");
+        if (id) |request_id| try onRename(server, gpa, uri, position, new_name, request_id, out);
+        return false;
+    }
 
-    // Anything else, including every feature still deferred (rename,
-    // completion) and `$/cancelRequest`: a well-formed "not found" for a
-    // request, silently ignored for a notification — never a crash or a
-    // hang either way.
+    // Anything else, including completion, still deferred, and
+    // `$/cancelRequest`: a well-formed "not found" for a request, silently
+    // ignored for a notification — never a crash or a hang either way.
     if (id) |request_id| try respondMethodNotFound(gpa, out, request_id);
     return false;
 }
@@ -1602,6 +1618,119 @@ fn collectReferencesInExpression(
     }
 }
 
+// Rename.
+//
+// A rename is find references' own result set — the declaration and every
+// site that reads, writes, or names it — with each site's span replaced by
+// the new name, grouped into one `TextEdit` array per file. No prepareRename:
+// a client that calls it first (VS Code does) falls back to renaming
+// whatever word sits under the cursor by its own rules, and `textDocument/
+// rename` below still validates and resolves the real target itself, so a
+// client picking the wrong word boundary fails safely rather than renaming
+// the wrong thing.
+
+fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, new_name: []const u8, id: std.json.Value, out: *std.Io.Writer) !void {
+    if (!isValidIdentifier(new_name)) {
+        try respondError(gpa, out, id, invalid_params_code, "not a valid Emerald name");
+        return;
+    }
+
+    const document = server.documents.get(uri) orelse {
+        try respondError(gpa, out, id, invalid_params_code, "document not open");
+        return;
+    };
+
+    var loaded = try loadDocument(server, gpa, uri, document.text.items);
+    defer loaded.deinit(gpa);
+
+    var analysis = (try emerald.analyzeProject(gpa, &loaded.project)) orelse {
+        try respondError(gpa, out, id, invalid_params_code, "the project does not check cleanly");
+        return;
+    };
+    defer analysis.deinit(gpa);
+
+    const source = &loaded.project.files[loaded.index].source;
+    const offset = offsetFromPosition(source, position);
+    const target = (try definitionAt(gpa, &analysis, loaded.index, offset)) orelse {
+        try respondError(gpa, out, id, invalid_params_code, "nothing here can be renamed");
+        return;
+    };
+    // Prelude declarations are embedded in the binary: no file on disk to
+    // write a rename into, same reason `onDefinition`/`onReferences` decline.
+    if (target.file >= loaded.project.files.len) {
+        try respondError(gpa, out, id, invalid_params_code, "a built-in name cannot be renamed");
+        return;
+    }
+
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    try sites.append(gpa, target);
+    for (analysis.parsed, 0..) |parsed, file_index| {
+        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
+    }
+
+    var by_file: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(TextEdit)) = .empty;
+    defer {
+        for (by_file.values()) |*edits| edits.deinit(gpa);
+        by_file.deinit(gpa);
+    }
+    for (sites.items) |site| {
+        const gop = try by_file.getOrPut(gpa, site.file);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        const site_source = &loaded.project.files[site.file].source;
+        try gop.value_ptr.append(gpa, .{ .range = lspRange(site_source, site.span), .newText = new_name });
+    }
+
+    var changes: std.json.ArrayHashMap([]const TextEdit) = .{};
+    defer {
+        for (changes.map.keys()) |key| gpa.free(key);
+        for (changes.map.values()) |edits| gpa.free(edits);
+        changes.map.deinit(gpa);
+    }
+    var file_iterator = by_file.iterator();
+    while (file_iterator.next()) |entry| {
+        const file_index = entry.key_ptr.*;
+        const file_source_path = loaded.project.files[file_index].source.path;
+        const site_uri = if (file_index == loaded.index)
+            try gpa.dupe(u8, uri)
+        else
+            try pathToUri(gpa, file_source_path);
+        const edits = try entry.value_ptr.toOwnedSlice(gpa);
+        try changes.map.put(gpa, site_uri, edits);
+    }
+
+    try respond(gpa, out, id, WorkspaceEdit{ .changes = changes });
+}
+
+const WorkspaceEdit = struct { changes: std.json.ArrayHashMap([]const TextEdit) };
+
+/// JSON-RPC's own "invalid params" code, reused for every reason `onRename`
+/// declines: an unrenameable name is as much an invalid request as a
+/// malformed one, and LSP defines no rename-specific code.
+const invalid_params_code: i32 = -32602;
+
+/// Whether `name` could be lexed back as a single identifier token — the
+/// same rule `Lexer.lexIdentifier` uses (Unicode's XID classes, with a
+/// single trailing `?` or `!` allowed) — checked so a rename is rejected
+/// before it writes a name the parser would immediately choke on.
+fn isValidIdentifier(name: []const u8) bool {
+    if (name.len == 0) return false;
+    const first, const first_len = unicode.decode(name, 0);
+    if (!unicode.isIdentifierStart(first)) return false;
+    var index: usize = first_len;
+    while (index < name.len) {
+        const c = name[index];
+        if ((c == '?' or c == '!') and index == name.len - 1) {
+            index += 1;
+            continue;
+        }
+        const point, const length = unicode.decode(name, index);
+        if (!unicode.isIdentifierContinue(point)) return false;
+        index += length;
+    }
+    return true;
+}
+
 const testing = std.testing;
 
 test "a framed message round-trips through reading and writing" {
@@ -1932,4 +2061,21 @@ test "collectReferencesInStatements finds a struct's use in a sibling file of th
     try testing.expectEqual(@as(u32, 0), sites.items[0].file);
     const use_offset: u32 = @intCast(std.mem.indexOf(u8, main_text, "Circle(2.0)").?);
     try testing.expectEqual(use_offset, sites.items[0].span.start);
+}
+
+test "isValidIdentifier accepts an ordinary name, a predicate name, and an accented one" {
+    try testing.expect(isValidIdentifier("total"));
+    try testing.expect(isValidIdentifier("_private"));
+    try testing.expect(isValidIdentifier("starts_with?"));
+    try testing.expect(isValidIdentifier("reverse!"));
+    try testing.expect(isValidIdentifier("café"));
+}
+
+test "isValidIdentifier rejects an empty name, a leading digit, whitespace, and a mid-word ? or !" {
+    try testing.expect(!isValidIdentifier(""));
+    try testing.expect(!isValidIdentifier("1total"));
+    try testing.expect(!isValidIdentifier("total count"));
+    try testing.expect(!isValidIdentifier("total-count"));
+    try testing.expect(!isValidIdentifier("is?even"));
+    try testing.expect(!isValidIdentifier("do!thing"));
 }
