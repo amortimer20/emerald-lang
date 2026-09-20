@@ -360,8 +360,8 @@ fn publishDiagnostics(server: *Server, gpa: std.mem.Allocator, uri: []const u8, 
     for (report.diagnostics) |diagnostic| {
         try diagnostics.append(gpa, .{
             .range = lspRange(&source, diagnostic.span),
-            .severity = 1, // Error: every diagnostic is one today (18.1's
-            // severity concept does not exist yet — see Lsp.zig's header).
+            // LSP's `DiagnosticSeverity`: 1 is Error, 2 is Warning.
+            .severity = if (diagnostic.severity == .warning) 2 else 1,
             .message = diagnostic.message,
         });
     }
