@@ -126,9 +126,16 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
 
     try out.interface.flush();
 
+    // A warning (Diagnostic.Severity) does not stop checking or execution,
+    // unlike an error, so it may sit alongside a normal, complete run: print
+    // it, but keep going rather than returning immediately. `warned` remembers
+    // to still report status 1 (18.1's status for "diagnostics") once nothing
+    // more specific (a runtime failure, a test failure) took priority.
+    var warned = false;
     if (report.diagnostics.len != 0) {
         try writeDiagnostics(gpa, io, sources, report.diagnostics);
-        return @intFromEnum(ExitCode.source_diagnostics);
+        if (emerald.Diagnostic.anyErrors(report.diagnostics)) return @intFromEnum(ExitCode.source_diagnostics);
+        warned = true;
     }
 
     if (report.failure) |failure| {
@@ -157,6 +164,7 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
         try writeAll(io, .stdout, summary);
     }
 
+    if (warned) return @intFromEnum(ExitCode.source_diagnostics);
     if (command == .check) try writeAll(io, .stdout, "No problems found.\n");
     return @intFromEnum(ExitCode.success);
 }

@@ -256,7 +256,12 @@ fn produce(
             var report = try emerald.runProject(gpa, project, .{ .out = &out.writer, .in = &in });
             defer report.deinit();
 
-            if (report.diagnostics.len != 0) {
+            // A warning (Diagnostic.Severity) does not stop checking or
+            // execution, so it may sit alongside a normal run; this category
+            // asserts the program's own printed output, which `diagnostics/`
+            // already exists to check warning and error text against, so a
+            // warning here is not itself a failure.
+            if (emerald.Diagnostic.anyErrors(report.diagnostics)) {
                 const rendered = try renderDiagnostics(gpa, sources, report.diagnostics);
                 defer gpa.free(rendered);
                 std.debug.print(

@@ -44,6 +44,22 @@ only mean its backing (failing, by design) allocator failed — so the test's `W
 converts `WriteFailed` to `OutOfMemory` itself before checking the result, matching what
 `checkAllAllocationFailures` expects; no production code needed to change.
 
+Diagnostics now have a severity (`Diagnostic.Severity`: `err`/`warning`), unlocking three
+warnings the rewrite context had long described as "waiting for a severity" (6.3/12, 4.4,
+6.5): a nonexhaustive statement `case` with a coverable subject, an `is` test already known
+to be true, and code after a statement that can never complete. A warning renders with a
+`warning: ` marker but is otherwise the canonical shape, and — unlike an error — does not
+stop checking or execution; `check`/`run`/`test` still exit `1` once nothing more specific
+(a runtime failure, a test failure) took priority, so it is never silently missed. Getting
+this right took two follow-up fixes past the checker changes themselves: `emerald.zig`'s
+`analyze()` originally discarded a warnings-only result's diagnostics entirely once it
+decided to keep running (a real bug, caught by testing a `run`, not just a `check`, against
+a warnings-only program); and a nested function declared after a `return` was a false
+positive for the unreachable-code warning, since section 7.1 hoists it rather than running
+it at its written position — both fixed, with regression cases for each
+(`conformance/run/warning-does-not-block-execution.em`, and the existing
+`conformance/run/nested-functions.em` continuing to pass cleanly).
+
 **Documentation is complete and is the reference to trust for language and library
 behavior**, not this file: every guide `docs/language/README.md` lists is "Drafted" (Core
 language, Types and optionals, Collections and ranges, Objects and traits, Errors/tests/
@@ -79,28 +95,32 @@ That documentation pass found and fixed several real issues, most recently first
   the full audit below); 5.4 now carries the same "not yet implemented" framing as the
   library's other unbuilt roadmap facilities.
 
+Unicode conformance also grew from two cases to a wider, still not exhaustive, set covering
+real gaps found by reading `src/unicode.zig`/`src/strings.zig` against `conformance/` rather
+than guessing: an end-to-end case for the invalid-UTF-8 source diagnostic (previously only
+unit-tested in `Source.zig`, never proven through the full pipeline); `trim`/`trim_start`/
+`trim_end`/`blank?` against actual Unicode `White_Space` characters (`unicode-whitespace.em`),
+not just ASCII space/tab; `substring`/`insert_at` keeping a combining-character grapheme and
+a three-person ZWJ emoji whole rather than splitting them (extended into `string-methods.em`);
+three new `runtime-errors/` cases for `substring`/`insert_at`'s documented-but-previously-
+untested out-of-range raises; a rejected emoji identifier; and a case proving diagnostic
+columns count Unicode scalars rather than UTF-8 bytes (`café` is 4 scalars but 5 bytes — a
+byte-based column would misplace the caret on the next token). Not "full" conformance still:
+the rewrite context (9.2) says `letter?`/`digit?`/`words`/`title_case`/case-insensitive
+comparison need "a dedicated locale and boundary design pass" first, which hasn't happened.
+
 ## Next step
 
-Nothing is queued. Unicode conformance grew from two cases to a wider, still not
-exhaustive, set covering real gaps found by reading `src/unicode.zig`/`src/strings.zig`
-against `conformance/` rather than guessing: an end-to-end case for the invalid-UTF-8
-source diagnostic (previously only unit-tested in `Source.zig`, never proven through the
-full pipeline); `trim`/`trim_start`/`trim_end`/`blank?` against actual Unicode `White_Space`
-characters (`unicode-whitespace.em`), not just ASCII space/tab; `substring`/`insert_at`
-keeping a combining-character grapheme and a three-person ZWJ emoji whole rather than
-splitting them (extended into `string-methods.em`); three new `runtime-errors/` cases for
-`substring`/`insert_at`'s documented-but-previously-untested out-of-range raises; a rejected
-emoji identifier; and a case proving diagnostic columns count Unicode scalars rather than
-UTF-8 bytes (`café` is 4 scalars but 5 bytes — a byte-based column would misplace the caret
-on the next token). What's still genuinely open: the rewrite context (9.2) says
-`letter?`/`digit?`/`words`/`title_case`/case-insensitive comparison need "a dedicated locale
-and boundary design pass" first, which hasn't happened, so there is nothing implemented yet
-to write a conformance case against; `tools/fuzz.zig`'s generator has no loop keywords and
-doesn't execute anything, so the interpreter itself is still unfuzzed (deliberately, for
-now — see the file's own header comment for the hang-risk reasoning). Other candidates: the
-LSP's second slice (hover, go to definition, find references, safe
-rename, completion — see the journal for what each needs); or whatever the user directs.
-`Section` numbers below refer to `docs/rewrite-context.md`.
+Nothing is queued. Diagnostic severities exist now, but only the "always true" half of the
+`is`-test warning is implemented; proving a test always *false* (an unrelated class, or a
+trait no possible subclass could adopt, since a subclass may adopt a trait its parent does
+not) is a distinct, harder analysis and remains open, listed under "Deferred". Other
+candidates: the LSP's second slice (hover, go to definition, find references, safe rename,
+completion — see the journal for what each needs); execution-level fuzzing (`tools/fuzz.zig`
+still only reaches the checker, not the interpreter, deliberately — see the file's own
+header comment for the hang-risk reasoning); the maintainability backlog under "Review
+findings still open" below; or whatever the user directs. `Section` numbers below refer to
+`docs/rewrite-context.md`.
 
 ## Documentation and rewrite-context hygiene
 
@@ -181,7 +201,13 @@ genuinely unimplemented. Elsewhere, the audit found and fixed:
 - `src/Diagnostic.zig` renders the canonical four-part shape from section 17.1, with the
   underline measured in scalars so it aligns past multi-byte characters. A runtime error
   also carries a stack trace, innermost call first, with runs of identical frames
-  summarized.
+  summarized. `Diagnostic.Severity` (`err`/`warning`) decides whether a diagnostic stops
+  checking (and reaching a program before it runs) or is only reported: `Checker.zig` uses
+  it for three warnings — a nonexhaustive statement `case` with a coverable subject, an
+  `is` test already known to be true, and code after a statement that can never complete —
+  and `emerald.zig`/`main.zig` let a warnings-only result still check, run, or test
+  normally, printing the warning and exiting `1` only once nothing more specific (a runtime
+  failure, a test failure) took priority.
 - `src/Token.zig` holds the token kinds, the keyword table, and `canEndExpression`, which
   is the continuation-token list section 3.1 refers to. The switch is exhaustive, so a new
   kind cannot be added without classifying it.
@@ -244,19 +270,16 @@ object/property reads) were removed because both have since shipped.
 - A call inside a block written at module level is not checked against module variables not
   yet assigned, since the block may run later; the runtime reports the read as unassigned.
 - Taking `Trait.method` as a value (rejected with a message for now).
-- The warning for a type test whose answer is known before the program runs (`x is Int`
-  when `x`'s declared type is already `Int`), which needs diagnostics with a severity.
-  Confirmed still absent this pass: the test evaluates and returns the right `Bool` with no
-  extra diagnostic.
+- Proving an `is` test always *false* (an unrelated class, or a trait no possible subclass
+  could adopt, since a subclass may adopt a trait its parent does not) — a harder analysis
+  than the always-*true* case, which is implemented (see "Implemented so far"). Such a test
+  is accepted and evaluated normally, with no diagnostic.
 - Capturing a built-in method such as `numbers.append` (7.4 says every method is capturable,
   with an expected type for `numbers.map`), variadics, and capturing a built-in function
   such as `print`, which no written function type describes.
 - A bare top-level `return` (14.1 describes it ending the program) is rejected outside a
   function today. Confirmed this pass: `` `return` can only be used inside a function ``.
   `Program.arguments` (15.2/24) is likewise unimplemented — no trace of it anywhere.
-- The warning for unreachable code after a `return`. Diagnostics have no severity yet; until
-  they do, code after two branches that both return is treated as assigned everything
-  rather than reported.
 - Section 6.2's `if ... then ... else` expression is unaffected by this; `unless` is not a
   keyword and never will be.
 - `List`/`String` range-slicing (`text[1..<4]`, `list[1..<3]`) and its omitted-endpoint

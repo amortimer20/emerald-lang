@@ -36,7 +36,9 @@ const prelude_text = @embedFile("prelude.em");
 /// Everything a stage reported, owned by one arena.
 pub const Report = struct {
     arena_state: std.heap.ArenaAllocator,
-    /// Problems found before execution. Non-empty means nothing ran.
+    /// Problems found before execution. An error here means nothing ran; a
+    /// warning does not stop checking or execution, so it may sit alongside
+    /// `failure`, `test_failures`, or a normal, complete run.
     diagnostics: []const Diagnostic,
     /// The error that stopped execution, when execution started and failed.
     failure: ?Diagnostic = null,
@@ -47,7 +49,7 @@ pub const Report = struct {
     exit_code: ?u8 = null,
 
     pub fn ok(self: Report) bool {
-        return self.diagnostics.len == 0 and self.failure == null and self.test_failures.len == 0;
+        return !Diagnostic.anyErrors(self.diagnostics) and self.failure == null and self.test_failures.len == 0;
     }
 
     pub fn deinit(self: *Report) void {
@@ -386,8 +388,12 @@ fn analyze(
         const copies = try dupeDiagnostics(arena, checked.diagnostics);
         return .{ .arena_state = arena_state, .diagnostics = copies };
     }
+    // `ok()` above only stopped for an error, so only warnings can remain.
+    // They do not block checking or execution, but still have to reach the
+    // caller rather than being silently dropped.
+    const warnings = try dupeDiagnostics(arena, checked.diagnostics);
 
-    const running = streams orelse return .{ .arena_state = arena_state, .diagnostics = &.{} };
+    const running = streams orelse return .{ .arena_state = arena_state, .diagnostics = warnings };
 
     var outcome = try Interpreter.run(
         gpa,
@@ -416,7 +422,7 @@ fn analyze(
         null;
 
     const test_failures = try dupeDiagnostics(arena, outcome.test_failures);
-    return .{ .arena_state = arena_state, .diagnostics = &.{}, .failure = failure, .test_failures = test_failures, .test_count = outcome.test_count, .exit_code = outcome.exit_code };
+    return .{ .arena_state = arena_state, .diagnostics = warnings, .failure = failure, .test_failures = test_failures, .test_count = outcome.test_count, .exit_code = outcome.exit_code };
 }
 
 /// Copies one file's diagnostics into the report's arena, stamping the file

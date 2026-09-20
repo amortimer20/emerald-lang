@@ -6,6 +6,10 @@ diagnostics/error-checking.em:2:1: a bare `raise` needs an error being handled
   raise
   ^^^^^
 Use `raise SomeError("message")`, or put the bare `raise` inside a `catch` block.
+diagnostics/error-checking.em:2:1: warning: this code can never run
+  raise
+  ^^^^^
+Every path above it already returns, raises, breaks, or continues. Remove it, or move it earlier.
 diagnostics/error-checking.em:6:14: a catch type must be an Error, but this is Int
   catch error: Int {
                ^^^

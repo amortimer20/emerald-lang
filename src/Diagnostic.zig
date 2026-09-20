@@ -43,12 +43,19 @@ pub const Frame = struct {
     named: bool = true,
 };
 
+/// Section 17.2: an error stops checking (and, before a program runs, ever
+/// reaching it), while a warning is reported but does not — section 12's
+/// nonexhaustive enum `case`, for one, still runs. Scarce by design: most
+/// diagnostics are, and should stay, errors.
+pub const Severity = enum { err, warning };
+
 /// What is wrong, in the user's vocabulary. Never names an implementation detail.
 message: []const u8,
 /// The source range to underline.
 span: Source.Span,
 /// The concrete correction to suggest.
 help: []const u8,
+severity: Severity = .err,
 /// The calls active when a runtime error was raised, innermost first. Empty for
 /// every diagnostic reported before a program runs.
 trace: []const Frame = &.{},
@@ -67,12 +74,21 @@ const gutter = "  ";
 pub fn render(self: Diagnostic, sources: []const Source, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     const source = sources[self.file];
     const start = source.location(self.span.start);
-    try writer.print("{s}:{d}:{d}: {s}\n", .{
-        source.path,
-        start.line,
-        start.column,
-        self.message,
-    });
+    if (self.severity == .warning) {
+        try writer.print("{s}:{d}:{d}: warning: {s}\n", .{
+            source.path,
+            start.line,
+            start.column,
+            self.message,
+        });
+    } else {
+        try writer.print("{s}:{d}:{d}: {s}\n", .{
+            source.path,
+            start.line,
+            start.column,
+            self.message,
+        });
+    }
 
     const line_text = source.lineText(start.line);
     try writer.print("{s}{s}\n", .{ gutter, line_text });
@@ -113,6 +129,15 @@ pub fn render(self: Diagnostic, sources: []const Source, writer: *std.Io.Writer)
         try writer.writeAll("while handling this earlier error:\n");
         try earlier.render(sources, writer);
     }
+}
+
+/// Whether any of `diagnostics` stops checking (or execution), rather than
+/// merely being reported. A warnings-only list answers `false`.
+pub fn anyErrors(diagnostics: []const Diagnostic) bool {
+    for (diagnostics) |diagnostic| {
+        if (diagnostic.severity == .err) return true;
+    }
+    return false;
 }
 
 fn sameFrame(a: Frame, b: Frame) bool {
@@ -190,6 +215,37 @@ test "renders the canonical shape from section 17.1" {
         \\Assign `score` on every branch before reading it.
         \\
     , rendered);
+}
+
+test "a warning renders its severity but keeps the same shape" {
+    var source = try Source.init(testing.allocator, "main.em", "case direction {\n}\n");
+    defer source.deinit(testing.allocator);
+
+    const start: u32 = @intCast(std.mem.indexOf(u8, source.text, "case").?);
+    const diagnostic: Diagnostic = .{
+        .message = "this `case` does not cover `Direction.south`",
+        .span = .{ .start = start, .end = start + 4 },
+        .help = "Add an arm for it, or `else { }` to accept the gap.",
+        .severity = .warning,
+    };
+
+    const rendered = try diagnostic.renderAlloc(testing.allocator, &.{source});
+    defer testing.allocator.free(rendered);
+
+    try testing.expectEqualStrings(
+        \\main.em:1:1: warning: this `case` does not cover `Direction.south`
+        \\  case direction {
+        \\  ^^^^
+        \\Add an arm for it, or `else { }` to accept the gap.
+        \\
+    , rendered);
+}
+
+test "anyErrors is false for a warnings-only list" {
+    const warning: Diagnostic = .{ .message = "m", .span = .{ .start = 0, .end = 0 }, .help = "h", .severity = .warning };
+    try testing.expect(!anyErrors(&.{warning}));
+    const err: Diagnostic = .{ .message = "m", .span = .{ .start = 0, .end = 0 }, .help = "h" };
+    try testing.expect(anyErrors(&.{ warning, err }));
 }
 
 test "the underline aligns past multi-byte scalars" {

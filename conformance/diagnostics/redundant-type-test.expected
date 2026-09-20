@@ -1,0 +1,4 @@
+diagnostics/redundant-type-test.em:5:4: warning: this `is` test always answers `true`
+  if score is Int {
+     ^^^^^^^^^^^^
+The value is already known to be this type here. Remove the test, or check a type it might not be.

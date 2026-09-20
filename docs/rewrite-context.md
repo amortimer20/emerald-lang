@@ -457,11 +457,15 @@ the receiver's value and a struct's changing method needs a place to write its c
 into. A class's changing method is unaffected, since mutating its one shared object is
 sound however it's reached.
 
-An `is` test that static analysis can prove always true or always false remains valid and
-produces that `Bool`, but receives a warning explaining the known result. The tested
-expression is still evaluated exactly once even when its result is known. Tests through a
-base class or trait receive no warning when the runtime value could genuinely have the
-target type. No binding-pattern extension to `is` is included initially.
+An `is` test that static analysis can prove always true remains valid and produces `true`,
+but receives a warning (17.1) explaining the known result: this fires when the value's type
+here, narrowing included, is already exactly the target. The tested expression is still
+evaluated exactly once even when its result is known. Tests through a base class or trait
+receive no warning when the runtime value could genuinely have the target type. Proving a
+test always false — an unrelated class, or a trait no possible subclass could adopt — is a
+distinct, harder analysis (a subclass may adopt a trait its parent does not) and is not
+implemented; such a test is accepted and evaluated normally today. No binding-pattern
+extension to `is` is included initially.
 
 Every value exposes a read-only `type_name` property using Emerald's source spelling for
 its concrete runtime type:
@@ -824,8 +828,10 @@ that covers every value runs one of its arms, so returns and definite assignment
 as complete. Value arms agree on a type, with `Int` and `Float` giving `Float` and a
 `nothing` arm making the result optional. Known duplicates are literals and enum values;
 numbers compare by value, so `when 1.0` repeats `when 1` when both are exact in `Float`.
-The warning for a nonexhaustive enum statement `case` waits for diagnostics with a
-severity.
+A nonexhaustive statement `case` with a coverable subject (an enum or `Bool`) and no `else`
+is a warning (17.1's `Diagnostic.Severity`), reported but not stopping checking; an `Int` or
+`String` subject can't be exhausted, so no warning applies there, and an explicit empty
+`else { }` acknowledges the gap deliberately.
 
 ### 6.4 Loops
 
@@ -941,6 +947,12 @@ when written inside a lambda.
 A function returning no value has the return type `Nothing`, which may be written or
 omitted, and it may use bare `return`. A recursive function that returns a value requires
 an explicit return type so checking does not depend on circular inference (7.2).
+
+A statement that follows one that can never complete — `return`, `raise`, `break`, or
+`continue`, or an `if`/`case` every branch of which can't — is a warning (17.1), reported
+once at the first such statement in its block. A nested function declared after a `return`
+is not itself unreachable code: it is hoisted (7.1), so its position relative to a `return`
+in the same block does not matter.
 
 ## 7. Functions and callable values
 
@@ -2289,10 +2301,9 @@ display includes the type, such as `Direction.north`. Declaration order does not
 ordering; an enum must explicitly adopt `Ordered` when its domain needs it. Enums may have
 methods, computed properties, and trait conformance, but no stored instance fields.
 
-An enum statement case that omits members and has no `else` is meant to produce a warning,
-but (6.3) this waits for diagnostics with a severity: today it is silently accepted, with
-no diagnostic at all. An explicit empty `else` acknowledges intentional omission. Duplicate
-known alternatives are errors.
+An enum statement case that omits members and has no `else` produces a warning (6.3, 17.1).
+An explicit empty `else` acknowledges intentional omission. Duplicate known alternatives are
+errors.
 
 An enum lists its values first, one name per line or separated by commas, and at least
 one; a value written after a member, a stored field, a constructor, or `extends` is an
@@ -2757,6 +2768,16 @@ Assign `score` on every branch before reading it.
 
 Locations include file, line, and useful column spans. The lexer, parser, checker, lowering,
 interpreter, and future backends preserve source spans rather than reconstructing them.
+
+Every diagnostic has a severity, error or warning. An error stops checking, and, before a
+program runs, being reached at all; a warning renders with a `warning: ` marker after the
+location but is otherwise the same four-part shape, and does not stop checking or execution.
+`emerald check`/`run`/`test` still exit `1` (18.1) when only warnings were found, once
+nothing more specific (a runtime failure, a test failure) took priority, so a warning is
+never silently missed, but the checked program still runs. Warnings currently reported: a
+nonexhaustive statement `case` with a coverable subject (6.3, 12); an `is` test already known
+to be true (4.4); and code after a statement that can never complete, such as after
+`return` (6.5).
 
 ### 17.2 Pedagogical behavior
 

@@ -79,7 +79,7 @@ pub const Checked = struct {
     trait_calls: MethodCalls,
 
     pub fn ok(self: Checked) bool {
-        return self.diagnostics.len == 0;
+        return !Diagnostic.anyErrors(self.diagnostics);
     }
 
     pub fn deinit(self: *Checked) void {
@@ -1690,6 +1690,24 @@ fn reportWithHelp(
     });
 }
 
+/// Like `report`, but a warning (17.2/Diagnostic.Severity): reported, but
+/// does not stop checking or, before a program runs, ever reaching it.
+fn reportWarning(
+    self: *Checker,
+    span: Source.Span,
+    comptime message_format: []const u8,
+    message_args: anytype,
+    help: []const u8,
+) Error!void {
+    try self.diagnostics.append(self.arena, .{
+        .message = try std.fmt.allocPrint(self.arena, message_format, message_args),
+        .span = span,
+        .help = help,
+        .file = self.file,
+        .severity = .warning,
+    });
+}
+
 fn pushScope(self: *Checker) Error!void {
     const scope = try self.arena.create(Scope);
     scope.* = .empty;
@@ -1700,7 +1718,28 @@ fn pushScope(self: *Checker) Error!void {
 
 fn checkStatements(self: *Checker, statements: []const Ast.Statement) Error!void {
     if (self.scopes.items[self.scopes.items.len - 1] != self.module) try self.hoistNestedFunctions(statements);
-    for (statements) |statement| try self.checkStatement(statement);
+    // Once one statement cannot complete (`stmtCompletes`), everything after
+    // it in this same list is unreachable; warn once, at the first of them,
+    // rather than once per remaining statement. A nested function declaration
+    // is hoisted (`hoistNestedFunctions`) rather than run at its own position,
+    // so section 7.1's idiom of writing helpers after the code that calls
+    // them, even after a `return`, is not itself unreachable code.
+    var unreachable_from: ?usize = null;
+    for (statements, 0..) |statement, index| {
+        try self.checkStatement(statement);
+        if (unreachable_from == null and !self.stmtCompletes(statement)) unreachable_from = index + 1;
+    }
+    if (unreachable_from) |from| {
+        const first = for (statements[from..]) |statement| {
+            if (statement.data != .function_declaration) break statement;
+        } else null;
+        if (first) |statement| try self.reportWarning(
+            statement.span,
+            "this code can never run",
+            .{},
+            "Every path above it already returns, raises, breaks, or continues. Remove it, or move it earlier.",
+        );
+    }
 }
 
 /// Section 7.1's nested functions, callable anywhere in the block that
@@ -4786,6 +4825,17 @@ fn typeOfTypeTest(self: *Checker, expression: *const Ast.Expression) Error!Type 
     const value = try self.typeOf(test_.value);
     const target = try self.resolveTypeExpression(test_.target);
     try self.type_tests.put(self.arena, expression, .{ .value = value, .target = target });
+    // The answer is already known before the program runs when the value's
+    // type here (narrowing included) is already exactly the target: `.same`
+    // ignores `.invalid`, which would otherwise cascade from an earlier error.
+    if (value.kind != .invalid and target.kind != .invalid and value.same(target)) {
+        try self.reportWarning(
+            expression.span,
+            "this `is` test always answers `true`",
+            .{},
+            "The value is already known to be this type here. Remove the test, or check a type it might not be.",
+        );
+    }
     return .bool;
 }
 
@@ -7963,7 +8013,22 @@ fn checkCase(self: *Checker, case: *const Ast.Case, expected: ?Type) Error!Type 
         for (finishing.items[1..]) |path| self.intersect(path);
     }
 
-    if (!produces) return .nothing;
+    if (!produces) {
+        // Section 12: a `case` statement, unlike one producing a value, may
+        // simply skip every arm, so a missing case is a warning rather than
+        // an error. Only fires when the subject's values could be listed at
+        // all (an enum or `Bool`); an `Int` or `String` subject can't be
+        // exhausted, so `coverage.missing` stays empty for it (`caseCoverage`).
+        if (!exhaustive and coverage.missing.len > 0) {
+            try self.reportWarning(
+                case.keyword_span,
+                "this `case` does not cover {s}",
+                .{coverage.missing},
+                "Add an arm for each, or `else { }` to accept the gap deliberately.",
+            );
+        }
+        return .nothing;
+    }
     if (!exhaustive) {
         if (coverage.missing.len > 0) {
             try self.reportWithHelp(

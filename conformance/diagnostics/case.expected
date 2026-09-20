@@ -6,6 +6,10 @@ diagnostics/case.em:15:17: this `case` needs an `else`, since its arms cannot co
   const numbers = case 5 {
                   ^^^^
 A `case` that produces a value needs one for every possible subject. Add `else then ...` after the last arm.
+diagnostics/case.em:19:1: warning: this `case` does not cover `Direction.east` or `Direction.south`
+  case heading {
+  ^^^^
+Add an arm for each, or `else { }` to accept the gap deliberately.
 diagnostics/case.em:20:27: an earlier arm already matches this
       when Direction.north, Direction.north {
                             ^^^^^^^^^^^^^^^
