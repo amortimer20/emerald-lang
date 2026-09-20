@@ -21,12 +21,16 @@
 //! gives the callee itself an entry in `expression_types`), a written type
 //! annotation, and a declaration name each get their own small walk of the
 //! statement tree below, since none of them is a name read the resolver
-//! already tracked. Find references is next, sharing this same foundation —
-//! inverting it, one declaration to every read, rather than a read to its
-//! declaration; rename after that, built on find references; completion
-//! last, since it alone needs a different parser recovery strategy — today a
-//! broken construct like `foo.` discards its whole enclosing statement rather
-//! than leaving a partial node to offer completions against.
+//! already tracked.
+//!
+//! Find references is the third piece, the same three facts read the other
+//! way: given a declaration's site, one ordinary recursive descent through
+//! every file's whole statement and expression tree collects every read,
+//! write, and type use whose own resolved site matches it. Rename after
+//! that, built directly on find references; completion last, since it alone
+//! needs a different parser recovery strategy — today a broken construct
+//! like `foo.` discards its whole enclosing statement rather than leaving a
+//! partial node to offer completions against.
 //!
 //! Wire format: JSON-RPC 2.0 framed as `Content-Length: N\r\n\r\n` followed
 //! by exactly N bytes of JSON (LSP's own framing, independent of JSON-RPC
@@ -432,6 +436,7 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
                 .documentFormattingProvider = true,
                 .hoverProvider = true,
                 .definitionProvider = true,
+                .referencesProvider = true,
             },
         });
         return false;
@@ -499,11 +504,19 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
         if (id) |request_id| try onDefinition(server, gpa, uri, position, request_id, out);
         return false;
     }
+    if (std.mem.eql(u8, method, "textDocument/references")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        const position = try positionField(params);
+        const include_declaration = includeDeclarationField(params);
+        if (id) |request_id| try onReferences(server, gpa, uri, position, include_declaration, request_id, out);
+        return false;
+    }
 
-    // Anything else, including every feature still deferred (definition,
-    // references, rename, completion) and `$/cancelRequest`: a well-formed
-    // "not found" for a request, silently ignored for a notification —
-    // never a crash or a hang either way.
+    // Anything else, including every feature still deferred (rename,
+    // completion) and `$/cancelRequest`: a well-formed "not found" for a
+    // request, silently ignored for a notification — never a crash or a
+    // hang either way.
     if (id) |request_id| try respondMethodNotFound(gpa, out, request_id);
     return false;
 }
@@ -544,6 +557,19 @@ fn arrayField(maybe_params: ?std.json.Value, name: []const u8) !std.json.Array {
     const field = params.object.get(name) orelse return error.InvalidParams;
     if (field != .array) return error.InvalidParams;
     return field.array;
+}
+
+/// `textDocument/references`'s `context.includeDeclaration`, defaulted
+/// rather than required — unlike a position or a URI, a client omitting or
+/// misshaping this one preference is not malformed enough to fail the whole
+/// request over.
+fn includeDeclarationField(maybe_params: ?std.json.Value) bool {
+    const params = maybe_params orelse return false;
+    if (params != .object) return false;
+    const context = params.object.get("context") orelse return false;
+    if (context != .object) return false;
+    const field = context.object.get("includeDeclaration") orelse return false;
+    return field == .bool and field.bool;
 }
 
 // Live diagnostics.
@@ -1248,6 +1274,334 @@ fn findDeclNameInStatement(statement: Ast.Statement, file: u32, offset: u32) ?Re
     return null;
 }
 
+// Find references.
+//
+// `definitionAt` above answers "what does the cursor point to?" with a single
+// `Resolver.Target` — a declaration's own file and name span, the same
+// whether the cursor sits on a read, a write, or the declaration itself.
+// Find references answers the opposite question, "what points to this
+// declaration?", by visiting every expression and declaration site in every
+// file of the project and keeping the ones whose own resolved target is the
+// same site. Unlike `definitionAt`'s handful of narrow, point-query walkers
+// (built to stop at the first match nearest one offset), this needs every
+// match anywhere, so it is one ordinary recursive descent through the whole
+// statement and expression tree — which, as a side effect, reaches into a
+// lambda's own block body, the one place `definitionAt`'s narrower walkers
+// still cannot (see this file's other rough edges).
+
+fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, include_declaration: bool, id: std.json.Value, out: *std.Io.Writer) !void {
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+
+    var loaded = try loadDocument(server, gpa, uri, document.text.items);
+    defer loaded.deinit(gpa);
+
+    var analysis = (try emerald.analyzeProject(gpa, &loaded.project)) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    defer analysis.deinit(gpa);
+
+    const source = &loaded.project.files[loaded.index].source;
+    const offset = offsetFromPosition(source, position);
+    const target = (try definitionAt(gpa, &analysis, loaded.index, offset)) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    // Prelude declarations are embedded in the binary and have no file on
+    // disk, exactly `onDefinition`'s own reason for the same check.
+    if (target.file >= loaded.project.files.len) {
+        try respond(gpa, out, id, null);
+        return;
+    }
+
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    if (include_declaration) try sites.append(gpa, target);
+    for (analysis.parsed, 0..) |parsed, file_index| {
+        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
+    }
+
+    var locations: std.ArrayList(Location) = .empty;
+    defer {
+        for (locations.items) |location| gpa.free(location.uri);
+        locations.deinit(gpa);
+    }
+    for (sites.items) |site| {
+        const site_file = &loaded.project.files[site.file];
+        const site_uri = if (site.file == loaded.index)
+            try gpa.dupe(u8, uri)
+        else
+            try pathToUri(gpa, site_file.source.path);
+        try locations.append(gpa, .{ .uri = site_uri, .range = lspRange(&site_file.source, site.span) });
+    }
+
+    try respond(gpa, out, id, locations.items);
+}
+
+fn targetEql(a: Resolver.Target, b: Resolver.Target) bool {
+    return a.file == b.file and a.span.start == b.span.start and a.span.end == b.span.end;
+}
+
+fn collectReferencesInStatements(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    target: Resolver.Target,
+    file: u32,
+    statements: []const Ast.Statement,
+    out: *std.ArrayList(Resolver.Target),
+) std.mem.Allocator.Error!void {
+    for (statements) |statement| try collectReferencesInStatement(gpa, analysis, target, file, statement, out);
+}
+
+fn collectReferencesInStatement(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    target: Resolver.Target,
+    file: u32,
+    statement: Ast.Statement,
+    out: *std.ArrayList(Resolver.Target),
+) std.mem.Allocator.Error!void {
+    switch (statement.data) {
+        .expression => |e| try collectReferencesInExpression(gpa, analysis, target, file, e, out),
+        .declaration => |d| {
+            if (d.annotation) |ann| try collectReferencesInTypeExpression(gpa, analysis, target, file, ann, out);
+            if (d.initializer) |init_expr| try collectReferencesInExpression(gpa, analysis, target, file, init_expr, out);
+        },
+        .assignment => |a| {
+            if (analysis.resolved.facts.assignment_targets.get(.{ .file = file, .start = a.name_span.start })) |found| {
+                if (targetEql(found, target)) try out.append(gpa, .{ .file = file, .span = a.name_span });
+            }
+            for (a.steps) |step| switch (step) {
+                .index => |idx| try collectReferencesInExpression(gpa, analysis, target, file, idx, out),
+                .field => {},
+            };
+            try collectReferencesInExpression(gpa, analysis, target, file, a.value, out);
+        },
+        .conditional => |c| {
+            try collectReferencesInExpression(gpa, analysis, target, file, c.condition, out);
+            try collectReferencesInStatements(gpa, analysis, target, file, c.then_block.statements, out);
+            if (c.otherwise) |other| switch (other) {
+                .block => |b| try collectReferencesInStatements(gpa, analysis, target, file, b.statements, out),
+                .chained => |s| try collectReferencesInStatement(gpa, analysis, target, file, s.*, out),
+            };
+        },
+        .while_loop => |w| {
+            try collectReferencesInExpression(gpa, analysis, target, file, w.condition, out);
+            try collectReferencesInStatements(gpa, analysis, target, file, w.body.statements, out);
+        },
+        .for_loop => |f| {
+            try collectReferencesInExpression(gpa, analysis, target, file, f.iterable, out);
+            try collectReferencesInStatements(gpa, analysis, target, file, f.body.statements, out);
+        },
+        .break_statement, .continue_statement => {},
+        .function_declaration => |f| try collectReferencesInFunction(gpa, analysis, target, file, f, out),
+        .struct_declaration => |s| try collectReferencesInStruct(gpa, analysis, target, file, s, out),
+        .return_statement => |r| if (r.value) |v| try collectReferencesInExpression(gpa, analysis, target, file, v, out),
+        .raise_statement => |r| if (r.value) |v| try collectReferencesInExpression(gpa, analysis, target, file, v, out),
+        .try_statement => |t| {
+            try collectReferencesInStatements(gpa, analysis, target, file, t.body.statements, out);
+            for (t.catches) |c| {
+                if (c.annotation) |ann| try collectReferencesInTypeExpression(gpa, analysis, target, file, ann, out);
+                try collectReferencesInStatements(gpa, analysis, target, file, c.body.statements, out);
+            }
+            if (t.finally_block) |fb| try collectReferencesInStatements(gpa, analysis, target, file, fb.statements, out);
+        },
+        .assert_statement => |a| {
+            try collectReferencesInExpression(gpa, analysis, target, file, a.condition, out);
+            if (a.message) |m| try collectReferencesInExpression(gpa, analysis, target, file, m, out);
+        },
+        .destructuring => |d| {
+            if (d.annotation) |ann| try collectReferencesInTypeExpression(gpa, analysis, target, file, ann, out);
+            try collectReferencesInExpression(gpa, analysis, target, file, d.initializer, out);
+        },
+        .destructuring_assignment => |da| {
+            for (da.pattern.names) |name| {
+                if (analysis.resolved.facts.assignment_targets.get(.{ .file = file, .start = name.span.start })) |found| {
+                    if (targetEql(found, target)) try out.append(gpa, .{ .file = file, .span = name.span });
+                }
+            }
+            try collectReferencesInExpression(gpa, analysis, target, file, da.value, out);
+        },
+        .case_statement => |case| try collectReferencesInCase(gpa, analysis, target, file, case.*, out),
+    }
+}
+
+fn collectReferencesInFunction(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    target: Resolver.Target,
+    file: u32,
+    f: Ast.FunctionDeclaration,
+    out: *std.ArrayList(Resolver.Target),
+) std.mem.Allocator.Error!void {
+    for (f.parameters) |p| {
+        try collectReferencesInTypeExpression(gpa, analysis, target, file, p.annotation, out);
+        if (p.default) |d| try collectReferencesInExpression(gpa, analysis, target, file, d, out);
+    }
+    if (f.return_annotation) |ann| try collectReferencesInTypeExpression(gpa, analysis, target, file, ann, out);
+    try collectReferencesInStatements(gpa, analysis, target, file, f.body.statements, out);
+}
+
+fn collectReferencesInStruct(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    target: Resolver.Target,
+    file: u32,
+    s: Ast.StructDeclaration,
+    out: *std.ArrayList(Resolver.Target),
+) std.mem.Allocator.Error!void {
+    if (s.base) |base| try collectReferencesInTypeExpression(gpa, analysis, target, file, base, out);
+    for (s.traits) |tr| try collectReferencesInTypeExpression(gpa, analysis, target, file, tr, out);
+    for (s.fields) |field| {
+        try collectReferencesInTypeExpression(gpa, analysis, target, file, field.annotation, out);
+        if (field.default) |d| try collectReferencesInExpression(gpa, analysis, target, file, d, out);
+    }
+    for (s.properties) |p| {
+        try collectReferencesInTypeExpression(gpa, analysis, target, file, p.annotation, out);
+        try collectReferencesInFunction(gpa, analysis, target, file, p.getter, out);
+        if (p.setter) |setter| try collectReferencesInFunction(gpa, analysis, target, file, setter, out);
+    }
+    if (s.constructor) |c| {
+        for (c.parameters) |p| {
+            try collectReferencesInTypeExpression(gpa, analysis, target, file, p.annotation, out);
+            if (p.default) |d| try collectReferencesInExpression(gpa, analysis, target, file, d, out);
+        }
+        try collectReferencesInStatements(gpa, analysis, target, file, c.body.statements, out);
+    }
+    for (s.methods) |m| try collectReferencesInFunction(gpa, analysis, target, file, m, out);
+    for (s.type_functions) |tf| try collectReferencesInFunction(gpa, analysis, target, file, tf.declaration, out);
+    for (s.type_fields) |tf| {
+        if (tf.annotation) |ann| try collectReferencesInTypeExpression(gpa, analysis, target, file, ann, out);
+        try collectReferencesInExpression(gpa, analysis, target, file, tf.initializer, out);
+    }
+}
+
+fn collectReferencesInCase(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    target: Resolver.Target,
+    file: u32,
+    case: Ast.Case,
+    out: *std.ArrayList(Resolver.Target),
+) std.mem.Allocator.Error!void {
+    if (case.subject) |subject| try collectReferencesInExpression(gpa, analysis, target, file, subject, out);
+    for (case.arms) |arm| {
+        for (arm.alternatives) |alt| try collectReferencesInExpression(gpa, analysis, target, file, alt, out);
+        switch (arm.body) {
+            .block => |b| try collectReferencesInStatements(gpa, analysis, target, file, b.statements, out),
+            .value => |v| try collectReferencesInExpression(gpa, analysis, target, file, v, out),
+        }
+    }
+    if (case.otherwise) |otherwise| switch (otherwise) {
+        .block => |b| try collectReferencesInStatements(gpa, analysis, target, file, b.statements, out),
+        .value => |v| try collectReferencesInExpression(gpa, analysis, target, file, v, out),
+    };
+}
+
+/// Mirrors `checkTypeExpr`'s recursion exactly, but collects every match
+/// instead of stopping at the first one that contains a byte offset.
+fn collectReferencesInTypeExpression(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    target: Resolver.Target,
+    file: u32,
+    type_expr: Ast.TypeExpression,
+    out: *std.ArrayList(Resolver.Target),
+) std.mem.Allocator.Error!void {
+    if (type_expr.element) |elem| try collectReferencesInTypeExpression(gpa, analysis, target, file, elem.*, out);
+    if (type_expr.key) |k| try collectReferencesInTypeExpression(gpa, analysis, target, file, k.*, out);
+    if (type_expr.positions) |positions| {
+        for (positions) |pos| try collectReferencesInTypeExpression(gpa, analysis, target, file, pos, out);
+    }
+    if (type_expr.signature) |sig| {
+        for (sig.parameters) |param| try collectReferencesInTypeExpression(gpa, analysis, target, file, param, out);
+        if (sig.result) |res| try collectReferencesInTypeExpression(gpa, analysis, target, file, res.*, out);
+    }
+
+    if (type_expr.name.len > 0) {
+        const type_key = analysis.resolved.facts.keyFor(file, type_expr.name) orelse type_expr.name;
+        var found = analysis.resolved.facts.declarations.get(type_key);
+        if (found == null) {
+            if (analysis.resolved.facts.namespaceAliasFor(file, type_expr.name)) |alias| {
+                found = analysis.resolved.facts.declarations.get(alias);
+            }
+        }
+        if (found) |f| if (targetEql(f, target)) try out.append(gpa, .{ .file = file, .span = type_expr.span });
+    }
+}
+
+fn collectReferencesInExpression(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    target: Resolver.Target,
+    file: u32,
+    expr: *const Ast.Expression,
+    out: *std.ArrayList(Resolver.Target),
+) std.mem.Allocator.Error!void {
+    switch (expr.data) {
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .enum_value, .string_literal => {},
+        .name => {
+            if (analysis.resolved.facts.expression_targets.get(expr)) |found| {
+                if (targetEql(found, target)) try out.append(gpa, .{ .file = file, .span = expr.span });
+            }
+        },
+        .member => |member| {
+            if (try memberDefinition(gpa, analysis, file, expr)) |found| {
+                if (targetEql(found, target)) try out.append(gpa, .{ .file = file, .span = member.name_span });
+            }
+            try collectReferencesInExpression(gpa, analysis, target, file, member.base, out);
+        },
+        .unary => |u| try collectReferencesInExpression(gpa, analysis, target, file, u.operand, out),
+        .binary => |b| {
+            try collectReferencesInExpression(gpa, analysis, target, file, b.left, out);
+            try collectReferencesInExpression(gpa, analysis, target, file, b.right, out);
+        },
+        .logical => |l| {
+            try collectReferencesInExpression(gpa, analysis, target, file, l.left, out);
+            try collectReferencesInExpression(gpa, analysis, target, file, l.right, out);
+        },
+        .comparison => |c| for (c.operands) |operand| try collectReferencesInExpression(gpa, analysis, target, file, operand, out),
+        .call => |call| {
+            try collectReferencesInExpression(gpa, analysis, target, file, call.callee, out);
+            for (call.arguments) |arg| try collectReferencesInExpression(gpa, analysis, target, file, arg, out);
+        },
+        .range => |r| {
+            try collectReferencesInExpression(gpa, analysis, target, file, r.start, out);
+            try collectReferencesInExpression(gpa, analysis, target, file, r.end, out);
+        },
+        .interpolation => |parts| for (parts) |part| switch (part) {
+            .text => {},
+            .expression => |e| try collectReferencesInExpression(gpa, analysis, target, file, e, out),
+        },
+        .list_literal, .tuple_literal => |items| for (items) |item| try collectReferencesInExpression(gpa, analysis, target, file, item, out),
+        .dictionary_literal => |entries| for (entries) |entry| {
+            try collectReferencesInExpression(gpa, analysis, target, file, entry.key, out);
+            try collectReferencesInExpression(gpa, analysis, target, file, entry.value, out);
+        },
+        .index => |i| {
+            try collectReferencesInExpression(gpa, analysis, target, file, i.base, out);
+            try collectReferencesInExpression(gpa, analysis, target, file, i.index, out);
+        },
+        .slice => |s| {
+            try collectReferencesInExpression(gpa, analysis, target, file, s.base, out);
+            if (s.start) |start| try collectReferencesInExpression(gpa, analysis, target, file, start, out);
+            if (s.end) |end| try collectReferencesInExpression(gpa, analysis, target, file, end, out);
+        },
+        .lambda => |lambda| switch (lambda.body) {
+            .expression => |e| try collectReferencesInExpression(gpa, analysis, target, file, e, out),
+            .block => |block| try collectReferencesInStatements(gpa, analysis, target, file, block.statements, out),
+        },
+        .case_expression => |case| try collectReferencesInCase(gpa, analysis, target, file, case.*, out),
+        .type_test => |t| {
+            try collectReferencesInExpression(gpa, analysis, target, file, t.value, out);
+            try collectReferencesInTypeExpression(gpa, analysis, target, file, t.target, out);
+        },
+    }
+}
+
 const testing = std.testing;
 
 test "a framed message round-trips through reading and writing" {
@@ -1495,4 +1849,87 @@ test "definitionAt jumps from a constructor call's own name to its struct" {
     const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
     const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "struct Point").? + "struct ".len);
     try testing.expectEqual(decl_offset, target.span.start);
+}
+
+test "collectReferencesInStatements finds every read of a variable, but not its declaration" {
+    const gpa = testing.allocator;
+    const text = "var total = 5\nprint(total)\nprint(total + 1)\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "total =").?);
+    const target = (try definitionAt(gpa, &analysis, 0, decl_offset)).?;
+
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    try collectReferencesInStatements(gpa, &analysis, target, 0, analysis.parsed[0].program.statements, &sites);
+
+    try testing.expectEqual(@as(usize, 2), sites.items.len);
+    const first_use: u32 = @intCast(std.mem.indexOf(u8, text, "total)").?);
+    const second_use: u32 = @intCast(std.mem.indexOf(u8, text, "total + 1").?);
+    try testing.expectEqual(first_use, sites.items[0].span.start);
+    try testing.expectEqual(second_use, sites.items[1].span.start);
+}
+
+test "collectReferencesInStatements finds both a struct's constructor call and its type annotation" {
+    const gpa = testing.allocator;
+    const text = "struct Point {\n    var x: Int\n}\nconst p = Point(1)\nvar q: Point = p\nprint(q)\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "struct Point").? + "struct ".len);
+    const target = (try definitionAt(gpa, &analysis, 0, decl_offset)).?;
+
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    try collectReferencesInStatements(gpa, &analysis, target, 0, analysis.parsed[0].program.statements, &sites);
+
+    try testing.expectEqual(@as(usize, 2), sites.items.len);
+    const call_offset: u32 = @intCast(std.mem.indexOf(u8, text, "Point(1)").?);
+    const annotation_offset: u32 = @intCast(std.mem.indexOf(u8, text, ": Point =").? + 2);
+    try testing.expectEqual(call_offset, sites.items[0].span.start);
+    try testing.expectEqual(annotation_offset, sites.items[1].span.start);
+}
+
+test "collectReferencesInStatements finds a struct's use in a sibling file of the same project" {
+    const gpa = testing.allocator;
+    const main_text = "const c = Shapes.Circle(2.0)\nprint(c)\n";
+    const shapes_text = "struct Circle {\n    var radius: Float\n}\n";
+    var main_source = try Source.init(gpa, "main.em", main_text);
+    defer main_source.deinit(gpa);
+    var shapes_source = try Source.init(gpa, "shapes/circle.em", shapes_text);
+    defer shapes_source.deinit(gpa);
+    var files = [_]emerald.Project.File{
+        .{ .source = main_source, .namespace = "", .entry = true },
+        .{ .source = shapes_source, .namespace = "Shapes", .entry = false },
+    };
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const decl_offset: u32 = @intCast(std.mem.indexOf(u8, shapes_text, "struct Circle").? + "struct ".len);
+    const target = (try definitionAt(gpa, &analysis, 1, decl_offset)).?;
+    try testing.expectEqual(@as(u32, 1), target.file);
+
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    for (analysis.parsed, 0..) |parsed, file_index| {
+        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
+    }
+
+    try testing.expectEqual(@as(usize, 1), sites.items.len);
+    try testing.expectEqual(@as(u32, 0), sites.items[0].file);
+    const use_offset: u32 = @intCast(std.mem.indexOf(u8, main_text, "Circle(2.0)").?);
+    try testing.expectEqual(use_offset, sites.items[0].span.start);
 }

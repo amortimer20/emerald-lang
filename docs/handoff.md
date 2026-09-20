@@ -113,6 +113,22 @@ declaration, assignment, or type annotation written inside a lambda's own block 
 unreachable, since the statement-tree walkers descend into every block a statement owns but
 not into an expression looking for one.
 
+Find references is implemented, the same three facts read the other way: given a
+declaration's site (found by reusing `definitionAt` itself — the cursor can sit on a read, a
+write, or the declaration), one ordinary recursive descent through every file's whole
+statement and expression tree collects every site whose own resolved target matches it. Unlike
+`definitionAt`'s narrow, stop-at-the-first-match walkers, this one visits every sub-expression
+of every statement (loop conditions, call arguments, list/dict literals, binary and logical
+operands, and so on) and every written type annotation, since finding every reference needs
+full coverage rather than a point query — and, as a side effect, it reaches into a lambda's own
+block body, the one place `definitionAt` still cannot (the gap above). `textDocument/references`
+respects `context.includeDeclaration`, defaulted to false rather than required, since an absent
+or malformed one is a missing preference, not a malformed request. A reference to a
+prelude-declared symbol (`RuntimeError` and the rest) is not found at all, for the same reason
+`onDefinition` already declines it: a prelude declaration has no file on disk to report a
+location in. Verified end to end over JSON-RPC, including a two-file project, both with and
+without `includeDeclaration`.
+
 ## Next step
 
 A 2026-09-20 roadmap review triaged prior "what's next" suggestions from both agents against
@@ -123,12 +139,10 @@ opportunistic trait `is` analysis (streaming I/O and the bounded implementation 
 were bundled with it but were not done, and were not promoted to a named next step; nothing
 currently motivates either). What's open, in recommended order, none yet authorized to start:
 
-1. The rest of the LSP's second phase: find references next (the `declarations`/
-   `expression_targets`/`assignment_targets` facts go to definition added are most of what it
-   needs too — the remaining piece is inverting them, one declaration to every read of it,
-   rather than a read to its declaration), then safe rename (built on find references), then
-   completion last (its own parser recovery strategy, the one piece that is not "more of the
-   same" — see `Lsp.zig`'s header).
+1. The rest of the LSP's second phase: safe rename next, built directly on find references
+   (a rename is find references' own result set, each site's span replaced), then completion
+   last (its own parser recovery strategy, the one piece that is not "more of the same" — see
+   `Lsp.zig`'s header).
 
 Named but unordered: `emerald explain`/diagnostic polish; a custom equality/hashing design
 pass, the natural sibling to `Textual`/`Ordered`; streaming/binary file I/O and recursive
@@ -170,21 +184,27 @@ this session's changes where that mattered):
 - `emerald check` on a missing file exits `64`; section 18.1 does not yet specify that case.
 - Go to definition does not reach a declaration, assignment, or type annotation written inside
   a lambda's own block body — the statement-tree walkers behind it descend into every block a
-  *statement* owns, not into an *expression* looking for one.
+  *statement* owns, not into an *expression* looking for one. Find references does not have
+  this gap (it visits every expression, lambda bodies included), so the two can disagree on a
+  lambda-local symbol: references finds it, definition-from-inside-the-lambda cannot.
+- Find references does not find a reference to a prelude-declared symbol (`RuntimeError` and
+  the rest), matching go to definition's own reason for declining one: a prelude declaration
+  has no file on disk to report a location in.
 
 ## Validation and repository state
 
 The latest completed slices, including the program entry point, the ledger shakedown, the
-trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, and go to
-definition, passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe
-(364/364 tests), `bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check`
-with pinned Zig 0.16.0. Go to definition was also checked end to end against the real LSP
-server over JSON-RPC (single-file member access and constructor calls, and a two-file project
-crossing into a sibling file), not just its Zig unit tests, which is how the constructor-call
-gap above was actually found. The Windows path/lexer fix's Windows-specific half could not be
-verified locally and was confirmed by CI instead. The working tree was clean after commit
-`69ba017` (`Fix two Windows-only CI failures: Path.join and a lexer-unsafe test`) before this
-pass.
+trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
+definition, and find references, passed `bash tools/check-toolchain.sh`, `zig build test` in
+Debug and ReleaseSafe (367/367 tests), `bash tools/check-doc-examples.sh` after `zig build`,
+and `git diff --check` with pinned Zig 0.16.0. Both go to definition and find references were
+also checked end to end against the real LSP server over JSON-RPC (single-file member access
+and constructor calls, and a two-file project crossing into a sibling file, the latter both
+with and without `includeDeclaration`), not just their Zig unit tests, which is how go to
+definition's constructor-call gap above was actually found. The Windows path/lexer fix's
+Windows-specific half could not be verified locally and was confirmed by CI instead. The
+working tree was clean after commit `cd4d3a4` (`Implement LSP go to definition, hardening an
+unfinished draft`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a
