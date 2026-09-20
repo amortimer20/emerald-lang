@@ -18,6 +18,16 @@ repeated.remove(3)
 print(repeated)
 repeated.remove_all(3)
 print(repeated)
+
+# `remove_if` is `reject`'s in-place sibling: every accepted element is
+# removed, and the receiver keeps whatever the block rejects.
+var sized = [1, 2, 3, 4, 5]
+sized.remove_if { number => number.even?() }
+print(sized)
+var untouched: List[Int] = []
+untouched.remove_if { number => number > 0 }
+print(untouched, untouched.empty?())
+
 repeated.clear()
 print(repeated, repeated.empty?())
 

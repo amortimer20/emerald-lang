@@ -4383,6 +4383,39 @@ fn callPartition(
     return result;
 }
 
+/// Section 8.5's `remove_if`: removes every element the block accepts,
+/// compacting in place the same way `mutateList`'s `remove_all` does for a
+/// single value, but deciding item by item with the block instead of `==`.
+fn callRemoveIf(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    receiver: Value,
+) Error!Value {
+    const block = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(block);
+
+    const list = receiver.data.list;
+    const callable = self.closureCallable(block.data.closure);
+    const closure = block.data.closure;
+    const items = &list.items;
+
+    var kept: usize = 0;
+    for (items.items) |item| {
+        const argument = [_]Value{Heap.retain(item)};
+        const produced = try self.invokeClosure(expression.span, closure, callable, &argument);
+        defer self.heap.release(produced);
+        if (produced.data.bool) {
+            self.heap.release(item);
+        } else {
+            items.items[kept] = item;
+            kept += 1;
+        }
+    }
+    items.shrinkRetainingCapacity(kept);
+    return Value.nothing;
+}
+
 fn callGroupBy(
     self: *Interpreter,
     expression: *const Ast.Expression,
@@ -4704,6 +4737,11 @@ fn callMethod(
         const receiver = try self.evaluate(member.base);
         defer self.heap.release(receiver);
         if (receiver.data == .list) return self.callPartition(expression, call, member, receiver);
+    }
+    if (std.mem.eql(u8, member.name, "remove_if")) {
+        const receiver = try self.evaluate(member.base);
+        defer self.heap.release(receiver);
+        return self.callRemoveIf(expression, call, receiver);
     }
     if (std.mem.eql(u8, member.name, "group_by")) {
         const receiver = try self.evaluate(member.base);

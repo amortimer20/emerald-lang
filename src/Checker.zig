@@ -6085,6 +6085,13 @@ fn typeOfMethodCall(
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             return Type.listOf(self.arena, base.element.?.*);
         }
+        // Section 8.5: `remove_if` is `reject`'s in-place sibling. Index
+        // removal remains the distinct `remove_at(index)` operation.
+        if (std.mem.eql(u8, member.name, "remove_if")) {
+            _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
+            try self.requireChangeable(member);
+            return .nothing;
+        }
         if (std.mem.eql(u8, member.name, "partition")) {
             _ = try self.requireBlock(call, member, base, .bool) orelse return .invalid;
             const element = base.element.?.*;

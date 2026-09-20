@@ -60,6 +60,8 @@ the end and every out-of-range endpoint raise rather than being clamped.
 
 ## remove_all(element: T) -> Nothing
 
+## remove_if(block: func(T): Bool) -> Nothing
+
 ## remove_at(index: Int) -> T
 
 ## remove_first() -> T
@@ -68,7 +70,7 @@ the end and every out-of-range endpoint raise rather than being clamped.
 
 ## clear() -> Nothing
 
-**Changes** all eight need a changeable receiver — a `const`, a struct's `const` field, a
+**Changes** all nine need a changeable receiver — a `const`, a struct's `const` field, a
 function parameter, a loop variable, or a temporary value is rejected, each with its own
 diagnostic (`` `{name}` is a `const`, so its contents cannot change ``, a parameter's "the
 change would be lost when the function returns," and a temporary's "the change would be
@@ -76,7 +78,10 @@ lost" — 4.3, 7.1).
 
 `insert` accepts any index from `0` through `count` inclusive (`count` appends).
 `remove`/`remove_all` match by value and quietly do nothing if the element is absent — no
-raise. `remove_at`, `remove_first`, and `remove_last` return the element they removed.
+raise. `remove_if` is `reject`'s in-place sibling: it removes every element the block
+accepts, in place, rather than returning a new `List`; index removal remains the distinct
+`remove_at(index)`. `remove_at`, `remove_first`, and `remove_last` return the element they
+removed.
 
 **Raises**: `remove_at` for an index outside `0..<count`, sharing "Indexing"'s exact message
 above; `insert` for an index outside `0..count` with its own wording
