@@ -52,6 +52,9 @@ pub const Checked = struct {
     /// from whole numbers when that is what is expected, and the interpreter
     /// needs to know so that it can widen them as it stores them.
     literal_types: LiteralTypes,
+    /// Every expression's type, by expression, for the language server's
+    /// hover (18.5).
+    expression_types: ExpressionTypes,
     /// Checked user-defined struct metadata, also used to build runtime
     /// descriptors without resolving source annotations a second time.
     structs: Structs,
@@ -118,6 +121,11 @@ const Binding = struct {
 };
 
 pub const LiteralTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
+/// An expression's type together with which of the project's files it came
+/// from (`Diagnostic.file`'s indexing) — needed because a byte offset alone
+/// is ambiguous across files: each `Source`'s spans start over at 0.
+pub const ExpressionType = struct { file: u32, type: Type };
+pub const ExpressionTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, ExpressionType);
 pub const Structs = std.StringHashMapUnmanaged(Type);
 pub const MethodCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
 pub const TypeTest = struct { value: Type, target: Type };
@@ -221,6 +229,11 @@ block_scopes: usize = 0,
 active_narrows: std.ArrayList(ActiveNarrow) = .empty,
 pending_return_types: std.ArrayList(Type) = .empty,
 literal_types: LiteralTypes = .empty,
+/// Every expression's type, by expression, recorded as `typeOf` computes it.
+/// Unlike `literal_types` (only what the interpreter needs to widen a
+/// literal), this covers every expression kind, for the language server's
+/// hover (18.5) to answer "what is this" for whatever the cursor is on.
+expression_types: ExpressionTypes = .empty,
 /// Field metadata is completed for every struct before recursive key
 /// eligibility is judged, so declaration order cannot change the answer.
 resolving_struct_fields: bool = false,
@@ -566,6 +579,7 @@ pub fn check(
         .diagnostics = owned,
         .signatures = checker.signatures,
         .literal_types = checker.literal_types,
+        .expression_types = checker.expression_types,
         .structs = checker.structs,
         .changing_methods = changing,
         .method_calls = checker.method_calls,
@@ -5067,7 +5081,17 @@ fn markAllAssigned(self: *Checker) void {
 
 // Expressions.
 
+/// `typeOfUnrecorded`, remembered in `expression_types` for every expression
+/// this or `typeOfExpected` computes — the language server's hover (18.5)
+/// needs an answer for whatever expression the cursor lands on, not only the
+/// few kinds `literal_types` already tracked for the interpreter's sake.
 fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
+    const result = try self.typeOfUnrecorded(expression);
+    try self.expression_types.put(self.arena, expression, .{ .file = self.file, .type = result });
+    return result;
+}
+
+fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Type {
     return switch (expression.data) {
         .int_literal => .int,
         .float_literal => .float,
@@ -5163,12 +5187,16 @@ fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, refere
 /// types the same way, which is what lets `numbers.each { n => ... }` leave
 /// `n` unannotated (7.2).
 fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
-    if (expression.data == .list_literal) return self.typeOfList(expression, expected);
-    if (expression.data == .lambda) return self.typeOfLambda(expression, expected);
-    if (expression.data == .tuple_literal) return self.typeOfTuple(expression, expected);
-    if (expression.data == .dictionary_literal) return self.typeOfDictionary(expression, expected);
-    if (expression.data == .case_expression) return self.typeOfCase(expression, expected);
-    return self.typeOf(expression);
+    const result: Type = switch (expression.data) {
+        .list_literal => try self.typeOfList(expression, expected),
+        .lambda => try self.typeOfLambda(expression, expected),
+        .tuple_literal => try self.typeOfTuple(expression, expected),
+        .dictionary_literal => try self.typeOfDictionary(expression, expected),
+        .case_expression => try self.typeOfCase(expression, expected),
+        else => return self.typeOf(expression),
+    };
+    try self.expression_types.put(self.arena, expression, .{ .file = self.file, .type = result });
+    return result;
 }
 
 /// Section 8.2's `["Ava": 12]`. Keys and values infer their types the way a

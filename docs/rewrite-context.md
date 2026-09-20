@@ -2959,18 +2959,24 @@ unchanged:
 - document symbols;
 - format on save.
 
-It deliberately does not yet advertise hover, go to definition, find references, rename, or
-completion — each needs real new infrastructure this slice does not build (an
-offset-to-AST-node lookup that exists nowhere yet, a general per-expression type map where
-today only a few narrow expression kinds are recorded, and, for completion specifically, a
-materially different parser recovery strategy, since a broken construct like `foo.` today
-discards its whole enclosing statement rather than leaving a partial node to offer
-completions against). The eventual full feature set adds:
+Inferred-type hover is implemented, the second slice's first piece. It needed two things
+the first slice's file-scoped features never did: `Checker.zig`'s `expression_types` (every
+expression's type, by expression — `analyzeProject` in `src/emerald.zig` exposes checking's
+full detail without executing anything) and a document's whole project (14.1), since a file
+checked alone sees none of its own project's other declarations. `Lsp.zig`'s `loadDocument`
+reads a document's project from disk, substituting the editor's own buffer for the open
+file — the one exception to the first slice's "never touches disk," needed because hover and
+everything after it have to see beyond one file to be useful for a real, multi-file program.
+Diagnostics publishing was upgraded the same way, fixing a latent gap: previously, opening
+one file of a multi-file project showed false "not defined" errors for anything it referenced
+from a sibling file.
 
-- inferred-type hover information;
-- go to definition and find references;
-- context-aware completion;
-- safe rename.
+It deliberately does not yet advertise go to definition, find references, rename, or
+completion. Go to definition and find references are next, sharing hover's foundation plus a
+name-to-declaration index; rename after that, built on find references; completion last,
+since it alone needs a materially different parser recovery strategy — a broken construct
+like `foo.` today discards its whole enclosing statement rather than leaving a partial node
+to offer completions against.
 
 Quick fixes correspond to known diagnostics and deterministic edits. The official VS Code
 extension comes first, while the server remains editor-independent.

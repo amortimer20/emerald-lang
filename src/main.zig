@@ -257,7 +257,7 @@ fn executeLsp(gpa: std.mem.Allocator, io: std.Io) !u8 {
     var in_buffer: [4096]u8 = undefined;
     var in = std.Io.File.stdin().readerStreaming(io, &in_buffer);
 
-    Lsp.run(gpa, &in.interface, &out.interface) catch |err| switch (err) {
+    Lsp.run(gpa, io, &in.interface, &out.interface) catch |err| switch (err) {
         error.OutOfMemory => return internalFailure(io, error.OutOfMemory),
         error.WriteFailed => return internalFailure(io, error.WriteFailed),
         error.ReadFailed => {

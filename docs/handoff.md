@@ -61,25 +61,42 @@ collection transforms, numeric formatting, and typed input/store errors. Its end
 workflow found no language defect; it did catch an ordinary API spelling mistake while being
 written (`starts_with?`, not `starts_with`).
 
+The LSP's second phase has begun: inferred-type hover is implemented. It needed two things
+the first slice's file-scoped features (diagnostics, document symbols, format on save) never
+did — `Checker.zig`'s `expression_types` (every expression's type, by expression, via a new
+`emerald.analyzeProject` that exposes checking's full detail without executing anything) and
+a document's whole project (14.1), so a file checked alone no longer misses its own project's
+other declarations. `Lsp.zig`'s `loadDocument` reads a document's project from disk,
+substituting the editor's own buffer for the open file — the first slice's "never touches
+disk" now has this one exception. Diagnostics publishing was upgraded the same way, fixing a
+latent gap where opening one file of a multi-file project showed false "not defined" errors
+for anything it referenced from a sibling file. Also fixed in passing: the LSP was publishing
+every warning as an LSP "Error"; `Diagnostic.Severity` existed by the time that code was
+written but the mapping was never updated.
+
 ## Next step
 
 A 2026-09-20 roadmap review triaged prior "what's next" suggestions from both agents against
 the current binary. Closed and no longer live: per-family runnable examples, `!`/optional/
 callback/raise labeling, conformance-programs-as-executable-examples, the filesystem design,
-the five maintainability findings (retired in `6a6a718`), and the program entry point. What's
-open, in recommended order, none yet authorized to start:
+the five maintainability findings (retired in `6a6a718`), the program entry point, and the
+opportunistic trait `is` analysis (streaming I/O and the bounded implementation limits below
+were bundled with it but were not done, and were not promoted to a named next step; nothing
+currently motivates either). What's open, in recommended order, none yet authorized to start:
 
-1. The LSP's second phase (hover, go-to-definition, find references, safe rename,
-   completion — see the journal's LSP notes) — highest day-to-day payoff, lowest design
-   risk, since the first slice already proved the architecture.
+1. The rest of the LSP's second phase: go to definition and find references next (sharing
+   hover's foundation plus a name-to-declaration index), then safe rename (built on find
+   references), then completion last (its own parser recovery strategy, the one piece that
+   is not "more of the same" — see `Lsp.zig`'s header).
 
 Named but unordered: `emerald explain`/diagnostic polish; a custom equality/hashing design
 pass, the natural sibling to `Textual`/`Ordered`; streaming/binary file I/O and recursive
-directory delete (deferred out of the filesystem
-slice). The big deferred-features list (generics, enum payloads, wider operator overloading,
-package manager, concurrency) stays last by design — those are large design commitments, not
-implementation backlog. This is context, not authorization: follow the user's active request
-rather than starting any of it unprompted.
+directory delete (deferred out of the filesystem slice; recursive delete has no design
+blocker, streaming/binary I/O needs its own design pass first). The big deferred-features
+list (generics, enum payloads, wider operator overloading, package manager, concurrency)
+stays last by design — those are large design commitments, not implementation backlog. This
+is context, not authorization: follow the user's active request rather than starting any of
+it unprompted.
 
 ## Deferred
 
@@ -113,11 +130,11 @@ this session's changes where that mattered):
 
 ## Validation and repository state
 
-The latest completed slices, including `format`/`to_string(base:)`, `Textual`, and the
-program entry point, passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and
-ReleaseSafe, `bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check`
-with pinned Zig 0.16.0. The working tree was clean after commit `2d26af3` (`Update handoff with the triaged
-roadmap`) before this pass.
+The latest completed slices, including the program entry point, the ledger shakedown, the
+trait-aware impossible-type-test warning, and LSP hover, passed `bash tools/check-toolchain.sh`,
+`zig build test` in Debug and ReleaseSafe, `bash tools/check-doc-examples.sh` after
+`zig build`, and `git diff --check` with pinned Zig 0.16.0. The working tree was clean after
+commit `b2756d7` (`Fix the LSP publishing every warning as an error`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a

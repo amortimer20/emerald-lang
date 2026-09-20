@@ -1,14 +1,21 @@
 //! `emerald lsp` (section 18.5): a Language Server Protocol server over
-//! stdio. This first slice covers what already reuses the compiler almost
-//! unchanged — live diagnostics, document symbols, and format on save — and
-//! deliberately does not advertise hover, go to definition, find references,
-//! rename, or completion, which each need real new infrastructure this slice
-//! does not build (an offset→AST-node lookup that exists nowhere yet, a
-//! general per-expression type map where today only a few narrow expression
-//! kinds are recorded, and — for completion specifically — a materially
-//! different parser recovery strategy, since today a broken construct like
-//! `foo.` discards its whole enclosing statement rather than leaving a
-//! partial node to offer completions against).
+//! stdio. The first slice covered what already reused the compiler almost
+//! unchanged — live diagnostics, document symbols, and format on save — all
+//! naturally file-scoped, needing no more than the one open document.
+//!
+//! Hover is the second slice's first piece. It needed two things the first
+//! slice's file-scoped features never did: an expression's inferred type
+//! (`Checker.zig`'s `expression_types`, every expression's type by
+//! expression, not only the few kinds `literal_types` tracked for the
+//! interpreter's sake) and a document's whole project (14.1), since a file
+//! checked alone sees none of its own project's other declarations —
+//! `loadDocument` below reads one from disk, substituting the editor's own
+//! buffer for the open file. Go to definition and find references are next,
+//! sharing this same foundation plus a name-to-declaration index; rename
+//! after that, built on find references; completion last, since it alone
+//! needs a different parser recovery strategy — today a broken construct
+//! like `foo.` discards its whole enclosing statement rather than leaving a
+//! partial node to offer completions against.
 //!
 //! Wire format: JSON-RPC 2.0 framed as `Content-Length: N\r\n\r\n` followed
 //! by exactly N bytes of JSON (LSP's own framing, independent of JSON-RPC
@@ -24,7 +31,8 @@
 //! One document store, one arena per request that needs to build a tree
 //! (document symbols, formatting) — this mirrors `src/Repl.zig`'s own
 //! pattern of building a throwaway in-memory `Source` from whatever text is
-//! current, rather than ever touching disk.
+//! current. `loadDocument` is the one exception: hover and everything after
+//! it need a document's project, which only disk knows.
 
 const std = @import("std");
 const emerald = @import("emerald");
@@ -34,6 +42,8 @@ const Parser = emerald.Parser;
 const Ast = emerald.Ast;
 const Formatter = emerald.Formatter;
 const unicode = emerald.unicode;
+const Project = emerald.Project;
+const Type = emerald.Type;
 
 // Wire shapes. Plain Zig types `std.json.Stringify.write` serializes by
 // reflection — no JSON-specific annotation needed on any of them.
@@ -92,6 +102,27 @@ fn lspPosition(source: *const Source, offset: u32) Position {
     return .{ .line = location.line - 1, .character = character };
 }
 
+/// The inverse of `lspPosition`: an LSP position (zero-based line, UTF-16
+/// code units into it) to a byte offset. A line or character past the end of
+/// the text clamps to the nearest valid offset rather than indexing out of
+/// range — a client's position can be stale by one keystroke the moment a
+/// fast edit follows a request.
+fn offsetFromPosition(source: *const Source, position: Position) u32 {
+    const last_line = @as(u32, @intCast(source.line_starts.len));
+    const line = @min(position.line + 1, last_line);
+    const line_start = source.line_starts[line - 1];
+    const line_text = source.lineText(line);
+
+    var character: u32 = 0;
+    var i: u32 = 0;
+    while (i < line_text.len and character < position.character) {
+        const decoded = unicode.decode(line_text, i);
+        character += std.unicode.utf16CodepointSequenceLength(decoded[0]) catch 1;
+        i += decoded[1];
+    }
+    return line_start + i;
+}
+
 const Document = struct {
     text: std.ArrayList(u8) = .empty,
 
@@ -103,6 +134,10 @@ const Document = struct {
 
 const Server = struct {
     gpa: std.mem.Allocator,
+    /// For reading a document's project (14.1) from disk. Every other server
+    /// operation stays in memory (see this file's header); this is the one
+    /// exception, needed for any feature that has to see beyond one file.
+    io: std.Io,
     documents: std.StringHashMapUnmanaged(Document) = .empty,
 
     fn deinit(self: *Server) void {
@@ -138,10 +173,99 @@ const Server = struct {
     }
 };
 
+// Loading a document's project (14.1).
+//
+// Every feature above this needs only the one open file (diagnostics,
+// document symbols, formatting are all naturally file-scoped), so the header
+// comment's "rather than ever touching disk" held for the first slice. Hover
+// and everything after it type-check the file, and a file inside a real
+// project checked alone sees none of its own project's other declarations —
+// exactly the false "not defined" a lone `.em` file never has. `loadDocument`
+// is the one place this file reads from disk, reusing `Project.load`, the
+// same loader the CLI uses.
+
+/// A document's project (14.1) and which of its files the document itself is.
+const Loaded = struct {
+    project: Project,
+    /// Index into `project.files` (and `project.sources()`) of the open
+    /// document, so a diagnostic or a hover result can be matched back to it.
+    index: u32,
+
+    fn deinit(self: *Loaded, gpa: std.mem.Allocator) void {
+        self.project.deinit(gpa);
+        self.* = undefined;
+    }
+};
+
+/// Loads the project `uri` belongs to, substituting `text` — the editor's own
+/// buffer, which may hold unsaved edits — for that one file, and reading
+/// every other file of a multi-file project from disk, the best available
+/// text for a file the editor has not opened. Falls back to a project of the
+/// one open document by itself, exactly how a lone `.em` file already works
+/// everywhere else, when `uri` names no real path, the project cannot be read
+/// (most commonly a new, unsaved file), or — a path mismatch too unusual to
+/// silently paper over — its own path is not among the files found there.
+fn loadDocument(server: *Server, gpa: std.mem.Allocator, uri: []const u8, text: []const u8) !Loaded {
+    if (try loadProjectFor(server, gpa, uri, text)) |loaded| return loaded;
+    const source = try Source.init(gpa, uri, text);
+    const files = try gpa.alloc(Project.File, 1);
+    files[0] = .{ .source = source, .namespace = "", .entry = true };
+    return .{ .project = .{ .files = files, .entry = 0, .bad_directories = &.{} }, .index = 0 };
+}
+
+fn loadProjectFor(server: *Server, gpa: std.mem.Allocator, uri: []const u8, text: []const u8) !?Loaded {
+    const path = (try uriToPath(gpa, uri)) orelse return null;
+    defer gpa.free(path);
+    var project = Project.load(gpa, server.io, path) catch return null;
+    errdefer project.deinit(gpa);
+    for (project.files, 0..) |*file, index| {
+        if (!std.mem.eql(u8, file.source.path, path)) continue;
+        const replaced = try Source.init(gpa, path, text);
+        file.source.deinit(gpa);
+        file.source = replaced;
+        return .{ .project = project, .index = @intCast(index) };
+    }
+    project.deinit(gpa);
+    return null;
+}
+
+/// A `file://` URI to a plain, percent-decoded filesystem path. Null for any
+/// other scheme (an editor's unsaved, never-written buffer commonly gets
+/// `untitled:`), which has no project to load.
+fn uriToPath(gpa: std.mem.Allocator, uri: []const u8) !?[]u8 {
+    const prefix = "file://";
+    if (!std.mem.startsWith(u8, uri, prefix)) return null;
+    var rest = uri[prefix.len..];
+    // `file:///C:/Users/...`: the leading slash before a Windows drive letter
+    // is the URI's, not the path's.
+    if (rest.len >= 3 and rest[0] == '/' and std.ascii.isAlphabetic(rest[1]) and rest[2] == ':') {
+        rest = rest[1..];
+    }
+    return try percentDecode(gpa, rest);
+}
+
+fn percentDecode(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    var i: usize = 0;
+    while (i < text.len) {
+        if (text[i] == '%' and i + 2 < text.len) {
+            if (std.fmt.parseInt(u8, text[i + 1 .. i + 3], 16)) |byte| {
+                try out.append(gpa, byte);
+                i += 3;
+                continue;
+            } else |_| {}
+        }
+        try out.append(gpa, text[i]);
+        i += 1;
+    }
+    return out.toOwnedSlice(gpa);
+}
+
 /// Runs until `exit` or a clean end of the input stream (the client closed
 /// its side of stdio).
-pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer) !void {
-    var server: Server = .{ .gpa = gpa };
+pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.Writer) !void {
+    var server: Server = .{ .gpa = gpa, .io = io };
     defer server.deinit();
 
     while (true) {
@@ -259,6 +383,7 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
                 .textDocumentSync = .{ .openClose = true, .change = 1 },
                 .documentSymbolProvider = true,
                 .documentFormattingProvider = true,
+                .hoverProvider = true,
             },
         });
         return false;
@@ -312,8 +437,15 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
         if (id) |request_id| try onFormatting(server, gpa, uri, request_id, out);
         return false;
     }
+    if (std.mem.eql(u8, method, "textDocument/hover")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        const position = try positionField(params);
+        if (id) |request_id| try onHover(server, gpa, uri, position, request_id, out);
+        return false;
+    }
 
-    // Anything else, including every deferred feature (hover, definition,
+    // Anything else, including every feature still deferred (definition,
     // references, rename, completion) and `$/cancelRequest`: a well-formed
     // "not found" for a request, silently ignored for a notification —
     // never a crash or a hang either way.
@@ -336,6 +468,21 @@ fn stringField(container: std.json.Value, name: []const u8) ![]const u8 {
     return field.string;
 }
 
+fn intField(container: std.json.Value, name: []const u8) !i64 {
+    if (container != .object) return error.InvalidParams;
+    const field = container.object.get(name) orelse return error.InvalidParams;
+    if (field != .integer) return error.InvalidParams;
+    return field.integer;
+}
+
+fn positionField(maybe_params: ?std.json.Value) !Position {
+    const position = try objectField(maybe_params, "position");
+    return .{
+        .line = std.math.cast(u32, try intField(position, "line")) orelse return error.InvalidParams,
+        .character = std.math.cast(u32, try intField(position, "character")) orelse return error.InvalidParams,
+    };
+}
+
 fn arrayField(maybe_params: ?std.json.Value, name: []const u8) !std.json.Array {
     const params = maybe_params orelse return error.InvalidParams;
     if (params != .object) return error.InvalidParams;
@@ -349,17 +496,23 @@ fn arrayField(maybe_params: ?std.json.Value, name: []const u8) !std.json.Array {
 fn publishDiagnostics(server: *Server, gpa: std.mem.Allocator, uri: []const u8, out: *std.Io.Writer) !void {
     const document = server.documents.get(uri) orelse return;
 
-    var source = try Source.init(gpa, uri, document.text.items);
-    defer source.deinit(gpa);
+    var loaded = try loadDocument(server, gpa, uri, document.text.items);
+    defer loaded.deinit(gpa);
 
-    var report = try emerald.check(gpa, &source);
+    var report = try emerald.checkProject(gpa, &loaded.project);
     defer report.deinit();
 
+    const source = &loaded.project.files[loaded.index].source;
     var diagnostics: std.ArrayList(LspDiagnostic) = .empty;
     defer diagnostics.deinit(gpa);
     for (report.diagnostics) |diagnostic| {
+        // A project's other files are checked too, so their share of the
+        // whole project's diagnostics still needs its own report — not
+        // published here, since this document's editor is the only one this
+        // server currently has open enough to ask for again.
+        if (diagnostic.file != loaded.index) continue;
         try diagnostics.append(gpa, .{
-            .range = lspRange(&source, diagnostic.span),
+            .range = lspRange(source, diagnostic.span),
             // LSP's `DiagnosticSeverity`: 1 is Error, 2 is Warning.
             .severity = if (diagnostic.severity == .warning) 2 else 1,
             .message = diagnostic.message,
@@ -492,6 +645,71 @@ fn onFormatting(server: *Server, gpa: std.mem.Allocator, uri: []const u8, id: st
     try respond(gpa, out, id, &[_]TextEdit{edit});
 }
 
+// Hover.
+
+const Hover = struct {
+    contents: MarkupContent,
+    range: Range,
+};
+
+const MarkupContent = struct {
+    kind: []const u8 = "plaintext",
+    value: []const u8,
+};
+
+fn onHover(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, id: std.json.Value, out: *std.Io.Writer) !void {
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+
+    var loaded = try loadDocument(server, gpa, uri, document.text.items);
+    defer loaded.deinit(gpa);
+
+    var analysis = (try emerald.analyzeProject(gpa, &loaded.project)) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    defer analysis.deinit(gpa);
+
+    const source = &loaded.project.files[loaded.index].source;
+    const offset = offsetFromPosition(source, position);
+    const found = expressionAt(&analysis, loaded.index, offset) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+
+    var text: std.Io.Writer.Allocating = .init(gpa);
+    defer text.deinit();
+    try text.writer.print("{f}", .{found.type});
+
+    try respond(gpa, out, id, Hover{
+        .contents = .{ .value = text.written() },
+        .range = lspRange(source, found.span),
+    });
+}
+
+const Found = struct { span: Source.Span, type: Type };
+
+/// The smallest expression of `analysis`'s checked types whose own file is
+/// `file` and whose span contains `offset` — the innermost thing the cursor
+/// is on, since a member access's base name is its own smaller expression
+/// nested inside the whole access. Prefers no expression over an ambiguous
+/// tie, which two expressions of the same span cannot produce today, since
+/// every kind of expression node owns a distinct span from what it wraps.
+fn expressionAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?Found {
+    var best: ?Found = null;
+    var iterator = analysis.checked.expression_types.iterator();
+    while (iterator.next()) |entry| {
+        const info = entry.value_ptr.*;
+        if (info.file != file) continue;
+        const span = entry.key_ptr.*.span;
+        if (offset < span.start or offset > span.end) continue;
+        if (best == null or span.len() < best.?.span.len()) best = .{ .span = span, .type = info.type };
+    }
+    return best;
+}
+
 const testing = std.testing;
 
 test "a framed message round-trips through reading and writing" {
@@ -590,4 +808,59 @@ test "document symbols cover a struct's members, an enum's values, and a trait's
     try testing.expectEqual(@as(u32, SymbolKind.interface), symbols[2].kind);
     try testing.expectEqualStrings("name", symbols[2].children[0].name);
     try testing.expectEqual(@as(u32, SymbolKind.property), symbols[2].children[0].kind);
+}
+
+test "offsetFromPosition is lspPosition's inverse, including astral scalars" {
+    const gpa = testing.allocator;
+    var source = try Source.init(gpa, "t.em", "a🎉b\nsecond line\n");
+    defer source.deinit(gpa);
+
+    // Every byte offset on the first line round-trips through a position.
+    for ([_]u32{ 0, 1, 5, 6 }) |offset| {
+        const position = lspPosition(&source, offset);
+        try testing.expectEqual(offset, offsetFromPosition(&source, position));
+    }
+    // The second line, and a character count past its end clamps rather
+    // than indexing out of range.
+    try testing.expectEqual(@as(u32, 7), offsetFromPosition(&source, .{ .line = 1, .character = 0 }));
+    try testing.expectEqual(@as(u32, 18), offsetFromPosition(&source, .{ .line = 1, .character = 999 }));
+}
+
+test "uriToPath percent-decodes and strips a Windows drive letter's extra slash" {
+    const gpa = testing.allocator;
+
+    const plain = (try uriToPath(gpa, "file:///home/ada/greet.em")).?;
+    defer gpa.free(plain);
+    try testing.expectEqualStrings("/home/ada/greet.em", plain);
+
+    const spaced = (try uriToPath(gpa, "file:///home/ada/my%20file.em")).?;
+    defer gpa.free(spaced);
+    try testing.expectEqualStrings("/home/ada/my file.em", spaced);
+
+    const windows = (try uriToPath(gpa, "file:///C:/Users/ada/greet.em")).?;
+    defer gpa.free(windows);
+    try testing.expectEqualStrings("C:/Users/ada/greet.em", windows);
+
+    try testing.expectEqual(@as(?[]u8, null), try uriToPath(gpa, "untitled:Untitled-1"));
+}
+
+test "expressionAt finds the innermost expression, not the outer one it nests in" {
+    const gpa = testing.allocator;
+    var source = try Source.init(gpa, "t.em", "var total = 5\nprint(total)\n");
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    // Offset 22 is the "total" read inside `print(total)`, which sits nested
+    // inside the whole `print(total)` call — the call's own span also
+    // contains that offset, so finding the smaller of the two is the point.
+    const found = expressionAt(&analysis, 0, 22).?;
+    try testing.expectEqual(Type.int, found.type);
+    try testing.expectEqual(@as(u32, 5), found.span.len());
+
+    try testing.expectEqual(@as(?Found, null), expressionAt(&analysis, 0, 999));
+    try testing.expectEqual(@as(?Found, null), expressionAt(&analysis, 1, 22));
 }

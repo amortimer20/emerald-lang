@@ -2052,3 +2052,60 @@ The proof deliberately stops there. A trait-typed value, struct, or enum has a d
 possible-value model and remains accepted without a false-result warning until that model is
 designed. `conformance/diagnostics/impossible-type-test.em` covers both the warning and a
 subclass that makes the trait test possible.
+
+## LSP slice two, part one: inferred-type hover, 2026-09-20
+
+A roadmap review had marked LSP slice two (hover, go to definition, find references, rename,
+completion) as "mostly more of the same kind of work, not new design risk" — an
+underestimate corrected by actually reading `Lsp.zig`'s own header, which named exactly what
+was missing: an offset-to-AST-node lookup, a general per-expression type map, and, for
+completion only, a different parser recovery strategy. Hover needed the first two; this
+session built them and shipped hover, deliberately as its own slice rather than attempting
+all five features at once.
+
+The type map turned out simpler than expected. `Checker.zig`'s `typeOf` was already the one
+function every expression's type passes through; wrapping it (`typeOf` now calls the renamed
+`typeOfUnrecorded` and records the result) reaches every call site without touching any of
+them, so the recording cannot fall out of sync with what checking actually computes. The
+first attempt tried to restructure `typeOf`'s existing `return switch (...) {...}` in place,
+which broke type inference on several bare enum-literal arms (`.invalid`) that relied on the
+`return` statement's top-down context; the wrap-instead-of-restructure approach sidesteps
+this entirely by leaving the original switch untouched.
+
+The map's value had to carry a file index, not just a `Type`: a byte offset is only
+meaningful within its own file's `Source`, and a flat, project-wide map without that tag
+would let one file's expression span numerically collide with another's.
+
+The bigger discovery was that the LSP had no project awareness at all — every open file was
+checked alone, `emerald.check`'s lone-file path, regardless of whether it actually belonged
+to a multi-file project on disk. Hover is close to useless without this (a file's own
+sibling declarations would look undefined), so this session fixed it for hover and
+diagnostics both, rather than shipping hover on top of a known-broken foundation. The fix
+reuses `Project.load` (the CLI's own loader), with the editor's in-memory buffer substituted
+for the one file actually open, so unsaved edits are what gets checked rather than stale
+disk content. Diagnostics are still only published for the currently open document, filtered
+by which project file each diagnostic belongs to (`Diagnostic.file`); publishing a whole
+project's diagnostics for files the editor has not opened is a possible future refinement,
+not attempted here.
+
+Getting checking's detail out of the pipeline needed a new `emerald.analyzeProject`, since
+the existing `check`/`checkProject` discard `Checker.Checked` before returning. The first
+version of this leaked a real bug: it freed the synthetic prelude `Source` as soon as its own
+function returned, on the reasoning that `analyze()` already does exactly that and works
+correctly. The reasoning was incomplete — `analyze()`'s diagnostics are formatted into
+strings *during* checking, while `checked.expression_types` keeps raw `Type` values formatted
+only later, by hover, after the prelude source was already gone. Every declared name
+(`Ast.StructDeclaration.name` included) is a zero-copy slice of its own file's source, so
+hovering over anything whose type is a prelude-declared class (`RuntimeError`, not just a
+trait like `Ordered`) read freed memory — caught by a real test showing `[170, 170, ...]`
+(Zig's debug-mode poison byte) instead of the name. The fix keeps the prelude `Source` inside
+`Analysis` itself, freed only by its own `deinit`. Both the bug and the fix are pinned by a
+regression test that formats a prelude type's name after `analyzeProject` has returned.
+
+The apparent hang chasing that bug down turned out to be two unrelated tooling issues, not
+Emerald bugs: a hand-rolled test script's `read_message` called one extra time per
+notification (consuming the diagnostics notification inside a discarded `call()` return, then
+blocking forever on a second message that was never coming), and this sandbox's `pkill`
+silently aborts the rest of a compound Bash command on its own nonzero exit even under
+`|| true`, which had been masking cleanup and producing misleading "no output at all"
+results. Neither should be mistaken for a server-side defect if seen again.

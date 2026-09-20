@@ -77,6 +77,141 @@ pub fn checkProject(gpa: std.mem.Allocator, project: *const Project) Error!Repor
     return onLargeStack(gpa, project, null, false, null);
 }
 
+/// Checking's full detail, kept alive for a language-server tool (18.5) that
+/// needs more than pass or fail — hover's inferred type for whatever
+/// expression the cursor is on, most directly. Checking only: nothing here
+/// executes the program. Everything `checked.expression_types`' expression
+/// pointers point into is held here too, since freeing the parsed trees
+/// would leave them dangling; `deinit` releases all of it together.
+pub const Analysis = struct {
+    /// A declaration's name, like every other identifier text, is a slice of
+    /// its own file's source rather than a copy (`Ast.StructDeclaration.name`
+    /// and the rest) — so a prelude type's `display_name` (`RuntimeError`,
+    /// `Ordered`, ...) stays valid only as long as this does. Kept alongside
+    /// `tokenized`/`parsed`/`resolved`/`checked` for exactly the same reason
+    /// they are: freeing it before the caller is done reading `checked`
+    /// leaves whatever pointed into it — here, text, there, syntax nodes —
+    /// dangling.
+    prelude_source: Source,
+    tokenized: []Lexer.Tokenized,
+    parsed: []Parser.Parsed,
+    resolved: Resolver.Resolved,
+    checked: Checker.Checked,
+
+    /// Whether checking finished with no error. A warning may remain, but a
+    /// warning never stops checking, so `expression_types` is trustworthy
+    /// either way.
+    pub fn ok(self: Analysis) bool {
+        return self.checked.ok();
+    }
+
+    pub fn deinit(self: *Analysis, gpa: std.mem.Allocator) void {
+        self.checked.deinit();
+        self.resolved.deinit();
+        for (self.parsed) |*one| one.deinit();
+        gpa.free(self.parsed);
+        for (self.tokenized) |*one| one.deinit(gpa);
+        gpa.free(self.tokenized);
+        self.prelude_source.deinit(gpa);
+        self.* = undefined;
+    }
+};
+
+/// Lexes, parses, resolves, and checks a whole project (14.1) on the large
+/// stack every recursive stage needs (this file's header), without running
+/// anything. `null` means an earlier stage — invalid encoding, a directory
+/// that cannot be a namespace, a lexical or parse error, or an unresolved
+/// name — already stopped the pipeline (17.2's rule against cascades) before
+/// there was anything for checking to see; `check`/`run` would report the
+/// same stage's diagnostics in that case. A tool built on this has no
+/// diagnostics of its own to show, so it only needs to know whether it has
+/// an answer, not why it does not.
+pub fn analyzeProject(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis {
+    const Task = struct {
+        gpa: std.mem.Allocator,
+        project: *const Project,
+        result: Error!?Analysis = undefined,
+
+        fn go(task: *@This(), available: usize) void {
+            _ = available;
+            task.result = analyzeOnce(task.gpa, task.project);
+        }
+    };
+
+    var task: Task = .{ .gpa = gpa, .project = project };
+    const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
+        return error.StackUnavailable;
+    thread.join();
+    return task.result;
+}
+
+fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis {
+    for (project.files) |file| {
+        if (Source.findInvalidUtf8(file.source.text) != null) return null;
+    }
+    if (project.bad_directories.len != 0) return null;
+
+    // The prelude joins the project the same way `analyze` joins it, so a
+    // program's own use of `Ordered`, `Textual`, and the rest resolves and
+    // checks the same way it would for `check`/`run`. On success this moves
+    // into the returned `Analysis`, which owns it from there; every early
+    // "nothing to check" exit below still owns it and frees it itself.
+    var prelude_source = try Source.init(gpa, "prelude.em", prelude_text);
+    errdefer prelude_source.deinit(gpa);
+    const files = try gpa.alloc(Project.File, project.files.len + 1);
+    defer gpa.free(files);
+    @memcpy(files[0..project.files.len], project.files);
+    files[project.files.len] = .{ .source = prelude_source, .namespace = Resolver.prelude_namespace, .entry = false };
+
+    const tokenized = try gpa.alloc(Lexer.Tokenized, files.len);
+    var lexed: usize = 0;
+    var lex_ok = true;
+    while (lexed < files.len) : (lexed += 1) {
+        tokenized[lexed] = try Lexer.tokenize(gpa, &files[lexed].source);
+        if (tokenized[lexed].diagnostics.len != 0) lex_ok = false;
+    }
+    if (!lex_ok) {
+        for (tokenized) |*one| one.deinit(gpa);
+        gpa.free(tokenized);
+        prelude_source.deinit(gpa);
+        return null;
+    }
+
+    const parsed = try gpa.alloc(Parser.Parsed, files.len);
+    var parsed_count: usize = 0;
+    var parse_ok = true;
+    while (parsed_count < files.len) : (parsed_count += 1) {
+        parsed[parsed_count] = try Parser.parse(gpa, &files[parsed_count].source, tokenized[parsed_count].tokens);
+        if (parsed[parsed_count].diagnostics.len != 0) parse_ok = false;
+    }
+    if (!parse_ok) {
+        for (parsed) |*one| one.deinit();
+        gpa.free(parsed);
+        for (tokenized) |*one| one.deinit(gpa);
+        gpa.free(tokenized);
+        prelude_source.deinit(gpa);
+        return null;
+    }
+
+    const programs = try gpa.alloc(Ast.Program, files.len);
+    defer gpa.free(programs);
+    for (parsed, programs) |one, *program| program.* = one.program;
+
+    var resolved = try Resolver.resolve(gpa, files, programs, project.enclosing_project);
+    if (!resolved.ok()) {
+        resolved.deinit();
+        for (parsed) |*one| one.deinit();
+        gpa.free(parsed);
+        for (tokenized) |*one| one.deinit(gpa);
+        gpa.free(tokenized);
+        prelude_source.deinit(gpa);
+        return null;
+    }
+
+    const checked = try Checker.check(gpa, files, programs, resolved.facts);
+    return .{ .prelude_source = prelude_source, .tokenized = tokenized, .parsed = parsed, .resolved = resolved, .checked = checked };
+}
+
 /// A single file is a complete program, so it is a project of one. Nothing
 /// below this needs to know which it was given.
 ///
@@ -487,6 +622,89 @@ fn dupeDiagnostics(arena: std.mem.Allocator, diagnostics: []const Diagnostic) ![
     const copies = try arena.alloc(Diagnostic, diagnostics.len);
     for (diagnostics, copies) |diagnostic, *copy| copy.* = try dupeDiagnostic(arena, diagnostic);
     return copies;
+}
+
+test "analyzeProject exposes every expression's type, keyed by expression and its own file" {
+    const gpa = testing.allocator;
+    var source = try Source.init(gpa, "test.em", "var total = 5\nprint(total)\n");
+    defer source.deinit(gpa);
+    // `files` is borrowed by `project` for the lone-file shape above, so it
+    // has to outlive the `analyzeProject` call, exactly as `check` needs it to.
+    var files = [_]Project.File{lone(&source)};
+    const project = loneProject(&files);
+
+    var analysis = (try analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.ok());
+
+    var found_int_literal = false;
+    var iterator = analysis.checked.expression_types.iterator();
+    while (iterator.next()) |entry| {
+        if (entry.key_ptr.*.data != .int_literal) continue;
+        try testing.expectEqual(@as(u32, 0), entry.value_ptr.file);
+        try testing.expectEqual(Type.int, entry.value_ptr.type);
+        found_int_literal = true;
+    }
+    try testing.expect(found_int_literal);
+}
+
+test "analyzeProject returns null rather than checked detail when an earlier stage fails" {
+    const gpa = testing.allocator;
+
+    // A parse error: nothing ever reaches the checker.
+    {
+        var source = try Source.init(gpa, "test.em", "func f( {\n");
+        defer source.deinit(gpa);
+        var files = [_]Project.File{lone(&source)};
+        const project = loneProject(&files);
+        try testing.expectEqual(@as(?Analysis, null), try analyzeProject(gpa, &project));
+    }
+
+    // An unresolved name: the resolver stops it before checking runs.
+    {
+        var source = try Source.init(gpa, "test.em", "print(totally_undefined)\n");
+        defer source.deinit(gpa);
+        var files = [_]Project.File{lone(&source)};
+        const project = loneProject(&files);
+        try testing.expectEqual(@as(?Analysis, null), try analyzeProject(gpa, &project));
+    }
+}
+
+test "a prelude type's display name stays valid after analyzeProject returns" {
+    // Regression test: `RuntimeError` is declared in prelude.em, not the
+    // program, and every declared name is a slice of its own file's source
+    // rather than a copy. `Analysis` used to free the prelude's `Source`
+    // before returning, which left a value's own type formatting readable
+    // memory that was no longer prelude.em's text.
+    const gpa = testing.allocator;
+    var source = try Source.init(gpa, "test.em",
+        \\try {
+        \\    raise RuntimeError("boom")
+        \\}
+        \\catch error: RuntimeError {
+        \\    print(error.message)
+        \\}
+        \\
+    );
+    defer source.deinit(gpa);
+    var files = [_]Project.File{lone(&source)};
+    const project = loneProject(&files);
+
+    var analysis = (try analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.ok());
+
+    var found: ?Type = null;
+    var iterator = analysis.checked.expression_types.iterator();
+    while (iterator.next()) |entry| {
+        if (entry.key_ptr.*.data != .name) continue;
+        if (!std.mem.eql(u8, entry.key_ptr.*.data.name, "error")) continue;
+        found = entry.value_ptr.type;
+    }
+
+    const text = try std.fmt.allocPrint(gpa, "{f}", .{found.?});
+    defer gpa.free(text);
+    try testing.expectEqualStrings("RuntimeError", text);
 }
 
 const testing = std.testing;
