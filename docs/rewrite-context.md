@@ -2592,9 +2592,8 @@ status.
 
 ### 15.3 Files, directories, and paths
 
-Like regular expressions (15.4), this is a standard-library roadmap facility, not part of
-the current interpreter: no `File`, `Directory`, or `Path` type exists yet in `src/prelude.em`
-or `docs/library/`. These names are the settled design to build toward:
+`Path`'s lexical helpers are implemented; `File` and `Directory` remain the next whole-file
+library chunk. The complete settled surface is:
 
 ```emerald
 File.read(path)
@@ -2611,7 +2610,7 @@ Directory.exists?(path)
 Directory.create(path)
 Directory.delete(path)
 
-Path.join(first, second)
+Path.join(parts)
 Path.name(path)
 Path.stem(path)
 Path.extension(path)
@@ -2621,7 +2620,9 @@ Path.absolute(path)
 ```
 
 `File` touches files, `Directory` touches directories, and `Path` performs lexical path
-work. `File.file?` and `File.directory?` are rejected as redundant or misplaced. `move`
+work. `Path.join`, `name`, `stem`, `extension`, `parent`, and `absolute?` are pure lexical
+operations; `absolute` joins the filesystem chunk because it resolves a real path.
+`File.file?` and `File.directory?` are rejected as redundant or misplaced. `move`
 initially covers renaming. File deletion is `delete`, not `delete!`, because the verb is
 already explicit and has no harmless counterpart.
 

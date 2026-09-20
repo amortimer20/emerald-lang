@@ -19,6 +19,10 @@ both Debug and ReleaseSafe with the pinned Zig 0.16.0. See `docs/journal.md`'s "
 the object model" and "Slice 15 completion" sections for how each of these was built and
 what was learned along the way.
 
+The first filesystem-library chunk is pending commit: `Path` now supplies pure lexical joining,
+component, parent, extension, and absolute-syntax helpers. The next chunk adds whole-file
+`File`/`Directory` operations and `Path.absolute`.
+
 Release hardening has also substantially landed (`2d5aa0b`, `ed41d24`, `00cfae3`), under that
 name rather than as "Slice 16": `.github/workflows/ci.yml` runs `zig build test` in Debug and
 ReleaseSafe across Ubuntu/macOS/Windows on every push and PR, plus a bounded 1,000-case

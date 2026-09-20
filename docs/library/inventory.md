@@ -27,6 +27,7 @@
 | [Tuples](tuples.md) | Positions, unpacking, equality | `examples/tuples.em` |
 | [`Range`](range.md) | Iteration, `count`, `empty?()`, `step`, `reverse`, `to_list` | `conformance/run/range-values.em` |
 | [`Random`](random.md) | Seeded range selection, choosing, and shuffling | `conformance/run/randomness.em` |
+| [`Path`](path.md) | Lexical joining, components, and absolute syntax | `conformance/run/path.em` |
 
 ## Errors and tests
 

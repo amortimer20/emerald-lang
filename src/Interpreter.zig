@@ -2763,6 +2763,7 @@ fn evaluateCall(
     // resolver decided which, and recorded it.
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
+        if (std.mem.startsWith(u8, key, "emerald.Path::")) return self.callPath(call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
         if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
@@ -2804,6 +2805,34 @@ fn evaluateCall(
         return error.Exited;
     }
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
+}
+
+/// Section 15.3's lexical path helpers. These never inspect the filesystem.
+fn callPath(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
+    const values = try self.evaluateArguments(call.arguments);
+    defer {
+        for (values) |value| self.heap.release(value);
+        self.gpa.free(values);
+    }
+    const key = self.facts.qualified.get(call.callee).?;
+    const name = key["emerald.Path::".len..];
+    if (std.mem.eql(u8, name, "absolute?")) return .{ .data = .{ .bool = std.fs.path.isAbsolute(values[0].data.string.bytes) } };
+    if (std.mem.eql(u8, name, "name")) return self.heap.copyText(std.fs.path.basename(values[0].data.string.bytes));
+    if (std.mem.eql(u8, name, "stem")) return self.heap.copyText(std.fs.path.stem(values[0].data.string.bytes));
+    if (std.mem.eql(u8, name, "extension")) {
+        const extension = std.fs.path.extension(values[0].data.string.bytes);
+        return self.heap.copyText(if (extension.len == 0) extension else extension[1..]);
+    }
+    if (std.mem.eql(u8, name, "parent")) return self.heap.copyText(std.fs.path.dirname(values[0].data.string.bytes) orelse "");
+    if (std.mem.eql(u8, name, "join")) {
+        const list = values[0].data.list;
+        const parts = try self.gpa.alloc([]const u8, list.items.items.len);
+        defer self.gpa.free(parts);
+        for (list.items.items, parts) |part, *out| out.* = part.data.string.bytes;
+        const joined = try std.fs.path.join(self.gpa, parts);
+        return .{ .data = .{ .string = try self.heap.createText(joined) } };
+    }
+    unreachable;
 }
 
 fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {
