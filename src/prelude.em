@@ -15,14 +15,36 @@ class AssertionError extends Error {
     }
 }
 
+# Section 15.3's filesystem failures. Native whole-file functions below build
+# this ordinary Error value, so callers can catch filesystem failures without
+# catching unrelated RuntimeErrors.
 class FileError extends RuntimeError {
     constructor(message: String) {
         super(message)
     }
 }
 
-# Section 15.3's lexical path namespace. `absolute` joins the whole-file
-# filesystem slice because resolving a path consults the host filesystem.
+# Whole-file filesystem namespaces. Their bodies establish the ordinary
+# type-level signatures; the interpreter supplies the native operation.
+class File {
+    func File.read(path: String): String { return "" }
+    func File.write(path: String, contents: String) {}
+    func File.append(path: String, contents: String) {}
+    func File.read_lines(path: String): List[String] { return [] }
+    func File.write_lines(path: String, lines: List[String]) {}
+    func File.exists?(path: String): Bool { return false }
+    func File.copy(source: String, destination: String) {}
+    func File.move(source: String, destination: String) {}
+    func File.delete(path: String) {}
+}
+
+class Directory {
+    func Directory.exists?(path: String): Bool { return false }
+    func Directory.create(path: String) {}
+    func Directory.delete(path: String) {}
+    func Directory.list(path: String): List[String] { return [] }
+}
+
 class Path {
     func Path.join(parts: List[String]): String { return "" }
     func Path.name(path: String): String { return "" }
@@ -30,6 +52,7 @@ class Path {
     func Path.extension(path: String): String { return "" }
     func Path.parent(path: String): String { return "" }
     func Path.absolute?(path: String): Bool { return false }
+    func Path.absolute(path: String): String { return "" }
 }
 
 # Section 9.3's repeatable randomness source. Its state is private and the

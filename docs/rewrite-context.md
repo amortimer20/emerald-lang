@@ -2369,8 +2369,9 @@ diagnostics.
 ### 13.3 Resources
 
 Garbage collection manages memory, not timely release of files, sockets, locks, or similar
-resources. `File` itself is not implemented yet (15.3); the pattern below is the settled
-design for whatever type eventually needs it. A developer may close a resource explicitly:
+resources. Whole-file `File` operations need no explicit resource management (15.3); the
+streaming design below remains deferred until a real program needs it. A developer may close a
+resource explicitly:
 
 ```emerald
 var file = File.open("scores.txt")
@@ -2592,8 +2593,8 @@ status.
 
 ### 15.3 Files, directories, and paths
 
-`Path`'s lexical helpers are implemented; `File` and `Directory` remain the next whole-file
-library chunk. The complete settled surface is:
+`File`, `Directory`, and `Path` provide whole-file UTF-8 text operations, directory work,
+and lexical path manipulation:
 
 ```emerald
 File.read(path)
@@ -2610,6 +2611,8 @@ Directory.exists?(path)
 Directory.create(path)
 Directory.delete(path)
 
+Directory.list(path)
+
 Path.join(parts)
 Path.name(path)
 Path.stem(path)
@@ -2619,19 +2622,19 @@ Path.absolute?(path)
 Path.absolute(path)
 ```
 
-`File` touches files, `Directory` touches directories, and `Path` performs lexical path
-work. `Path.join`, `name`, `stem`, `extension`, `parent`, and `absolute?` are pure lexical
-operations; `absolute` joins the filesystem chunk because it resolves a real path.
-`File.file?` and `File.directory?` are rejected as redundant or misplaced. `move`
-initially covers renaming. File deletion is `delete`, not `delete!`, because the verb is
-already explicit and has no harmless counterpart.
+`File.exists?` and `Directory.exists?` are mutually exclusive for real paths; there are no
+redundant classification predicates. `Directory.create` creates parents as needed and succeeds
+when the directory already exists. `Directory.delete` removes only empty directories. `list`
+returns unsorted full paths for files and subdirectories together. `Path.join` accepts a
+`List[String]`; `extension` omits its dot and `parent` returns `""` when there is none.
 
-Whole-file helpers close their handles automatically. Streaming adds `File.open`, handle
-methods, explicit `close`, and `File.with_open` only when required by a real program.
+Whole-file helpers close their handles automatically. `read`, `read_lines`, `write`,
+`write_lines`, and `append` are UTF-8 text only; `write_lines` writes a newline after every
+line. `Path.absolute` is the one Path operation that consults the filesystem.
 
-File APIs raise typed errors for missing paths, access failures, invalid encodings, and
-short writes rather than returning misleading empty values. Optional discovery methods
-may be added only where absence is ordinary.
+Every operation other than the two predicates raises `FileError` for missing paths, access
+failures, invalid UTF-8, and failed writes. Streaming, binary I/O, recursive deletion, and
+more-specific filesystem error subclasses remain deferred.
 
 ### 15.4 Regular expressions
 

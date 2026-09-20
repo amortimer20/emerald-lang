@@ -2763,7 +2763,7 @@ fn evaluateCall(
     // resolver decided which, and recorded it.
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
-        if (std.mem.startsWith(u8, key, "emerald.Path::")) return self.callPath(call);
+        if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
         if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
@@ -2807,32 +2807,157 @@ fn evaluateCall(
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
 }
 
-/// Section 15.3's lexical path helpers. These never inspect the filesystem.
-fn callPath(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
+fn isFilesystemKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, "emerald.File::") or
+        std.mem.startsWith(u8, key, "emerald.Directory::") or
+        std.mem.startsWith(u8, key, "emerald.Path::");
+}
+
+/// Section 15.3's deliberately small whole-file surface. The prelude declares
+/// ordinary type-level signatures; this dispatch is their native body.
+fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: Ast.Expression.Call) Error!Value {
     const values = try self.evaluateArguments(call.arguments);
     defer {
         for (values) |value| self.heap.release(value);
         self.gpa.free(values);
     }
-    const key = self.facts.qualified.get(call.callee).?;
-    const name = key["emerald.Path::".len..];
-    if (std.mem.eql(u8, name, "absolute?")) return .{ .data = .{ .bool = std.fs.path.isAbsolute(values[0].data.string.bytes) } };
-    if (std.mem.eql(u8, name, "name")) return self.heap.copyText(std.fs.path.basename(values[0].data.string.bytes));
-    if (std.mem.eql(u8, name, "stem")) return self.heap.copyText(std.fs.path.stem(values[0].data.string.bytes));
-    if (std.mem.eql(u8, name, "extension")) {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const cwd = std.Io.Dir.cwd();
+    const suffix = key["emerald.".len..];
+    if (std.mem.eql(u8, suffix, "File::exists?")) return .{ .data = .{ .bool = fileKind(cwd, io, values[0].data.string.bytes, .file) } };
+    if (std.mem.eql(u8, suffix, "Directory::exists?")) return .{ .data = .{ .bool = fileKind(cwd, io, values[0].data.string.bytes, .directory) } };
+    if (std.mem.eql(u8, suffix, "Path::absolute?")) return .{ .data = .{ .bool = std.fs.path.isAbsolute(values[0].data.string.bytes) } };
+    if (std.mem.eql(u8, suffix, "Path::name")) return self.heap.copyText(std.fs.path.basename(values[0].data.string.bytes));
+    if (std.mem.eql(u8, suffix, "Path::stem")) return self.heap.copyText(std.fs.path.stem(values[0].data.string.bytes));
+    if (std.mem.eql(u8, suffix, "Path::extension")) {
         const extension = std.fs.path.extension(values[0].data.string.bytes);
         return self.heap.copyText(if (extension.len == 0) extension else extension[1..]);
     }
-    if (std.mem.eql(u8, name, "parent")) return self.heap.copyText(std.fs.path.dirname(values[0].data.string.bytes) orelse "");
-    if (std.mem.eql(u8, name, "join")) {
+    if (std.mem.eql(u8, suffix, "Path::parent")) return self.heap.copyText(std.fs.path.dirname(values[0].data.string.bytes) orelse "");
+    if (std.mem.eql(u8, suffix, "Path::join")) {
         const list = values[0].data.list;
         const parts = try self.gpa.alloc([]const u8, list.items.items.len);
         defer self.gpa.free(parts);
         for (list.items.items, parts) |part, *out| out.* = part.data.string.bytes;
-        const joined = try std.fs.path.join(self.gpa, parts);
+        const joined = std.fs.path.join(self.gpa, parts) catch return self.raiseFile(span, "join these paths");
         return .{ .data = .{ .string = try self.heap.createText(joined) } };
     }
+    if (std.mem.eql(u8, suffix, "Path::absolute")) {
+        const resolved = cwd.realPathFileAlloc(io, values[0].data.string.bytes, self.gpa) catch return self.raiseFilePath(span, values[0].data.string.bytes, "find");
+        defer self.gpa.free(resolved);
+        const absolute = try self.gpa.dupe(u8, resolved);
+        return .{ .data = .{ .string = try self.heap.createText(absolute) } };
+    }
+    if (std.mem.eql(u8, suffix, "File::read") or std.mem.eql(u8, suffix, "File::read_lines")) {
+        const path = values[0].data.string.bytes;
+        const bytes = cwd.readFileAlloc(io, path, self.gpa, .unlimited) catch {
+            if (!fileKind(cwd, io, path, .file)) return self.raiseFileMessage(span, try std.fmt.allocPrint(self.arena, "the file `{s}` does not exist", .{path}));
+            return self.raiseFilePath(span, path, "read");
+        };
+        if (!std.unicode.utf8ValidateSlice(bytes)) {
+            self.gpa.free(bytes);
+            return self.raiseFilePath(span, path, "read as UTF-8 text");
+        }
+        if (std.mem.eql(u8, suffix, "File::read")) return .{ .data = .{ .string = try self.heap.createText(bytes) } };
+        defer self.gpa.free(bytes);
+        return self.fileLines(bytes);
+    }
+    if (std.mem.eql(u8, suffix, "File::write") or std.mem.eql(u8, suffix, "File::write_lines")) {
+        const path = values[0].data.string.bytes;
+        const contents = if (std.mem.eql(u8, suffix, "File::write")) values[1].data.string.bytes else try self.joinLines(values[1].data.list);
+        defer if (std.mem.eql(u8, suffix, "File::write_lines")) self.gpa.free(contents);
+        cwd.writeFile(io, .{ .sub_path = path, .data = contents }) catch return self.raiseFilePath(span, path, "write");
+        return Value.nothing;
+    }
+    if (std.mem.eql(u8, suffix, "File::append")) {
+        const path = values[0].data.string.bytes;
+        const old = cwd.readFileAlloc(io, path, self.gpa, .unlimited) catch return self.raiseFilePath(span, path, "append to");
+        defer self.gpa.free(old);
+        if (!std.unicode.utf8ValidateSlice(old)) return self.raiseFilePath(span, path, "append UTF-8 text to");
+        const combined = std.mem.concat(self.gpa, u8, &.{ old, values[1].data.string.bytes }) catch return error.OutOfMemory;
+        defer self.gpa.free(combined);
+        cwd.writeFile(io, .{ .sub_path = path, .data = combined }) catch return self.raiseFilePath(span, path, "append to");
+        return Value.nothing;
+    }
+    if (std.mem.eql(u8, suffix, "File::copy")) {
+        cwd.copyFile(values[0].data.string.bytes, cwd, values[1].data.string.bytes, io, .{ .replace = true }) catch return self.raiseFilePath(span, values[0].data.string.bytes, "copy");
+        return Value.nothing;
+    }
+    if (std.mem.eql(u8, suffix, "File::move")) {
+        cwd.rename(values[0].data.string.bytes, cwd, values[1].data.string.bytes, io) catch return self.raiseFilePath(span, values[0].data.string.bytes, "move");
+        return Value.nothing;
+    }
+    if (std.mem.eql(u8, suffix, "File::delete")) {
+        cwd.deleteFile(io, values[0].data.string.bytes) catch return self.raiseFilePath(span, values[0].data.string.bytes, "delete");
+        return Value.nothing;
+    }
+    if (std.mem.eql(u8, suffix, "Directory::create")) {
+        cwd.createDirPath(io, values[0].data.string.bytes) catch return self.raiseFilePath(span, values[0].data.string.bytes, "create");
+        return Value.nothing;
+    }
+    if (std.mem.eql(u8, suffix, "Directory::delete")) {
+        cwd.deleteDir(io, values[0].data.string.bytes) catch |err| {
+            if (err == error.DirNotEmpty) return self.raiseFileMessage(span, try std.fmt.allocPrint(self.arena, "`{s}` is not empty, so it cannot be deleted", .{values[0].data.string.bytes}));
+            return self.raiseFilePath(span, values[0].data.string.bytes, "delete");
+        };
+        return Value.nothing;
+    }
+    if (std.mem.eql(u8, suffix, "Directory::list")) return self.listDirectory(span, cwd, io, values[0].data.string.bytes);
     unreachable;
+}
+
+fn fileKind(cwd: std.Io.Dir, io: std.Io, path: []const u8, kind: std.Io.File.Kind) bool {
+    const stat = cwd.statFile(io, path, .{}) catch return false;
+    return stat.kind == kind;
+}
+
+fn fileLines(self: *Interpreter, bytes: []const u8) Error!Value {
+    const count = if (bytes.len == 0) 0 else std.mem.count(u8, bytes, "\n") + @intFromBool(bytes[bytes.len - 1] != '\n');
+    const list = try self.heap.createList(.string, count);
+    var pieces = std.mem.splitScalar(u8, bytes, '\n');
+    while (pieces.next()) |piece| {
+        if (piece.len == 0 and pieces.rest().len == 0 and bytes.len > 0 and bytes[bytes.len - 1] == '\n') break;
+        list.items.appendAssumeCapacity(try self.heap.copyText(piece));
+    }
+    return .{ .data = .{ .list = list } };
+}
+
+fn joinLines(self: *Interpreter, lines: *Heap.List) Error![]u8 {
+    var text: std.ArrayList(u8) = .empty;
+    for (lines.items.items) |line| {
+        try text.appendSlice(self.gpa, line.data.string.bytes);
+        try text.append(self.gpa, '\n');
+    }
+    return text.toOwnedSlice(self.gpa);
+}
+
+fn listDirectory(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: std.Io, path: []const u8) Error!Value {
+    var directory = cwd.openDir(io, path, .{ .iterate = true }) catch return self.raiseFilePath(span, path, "list");
+    defer directory.close(io);
+    var iterator = directory.iterate();
+    var entries: std.ArrayList(Value) = .empty;
+    defer entries.deinit(self.gpa);
+    errdefer for (entries.items) |entry| self.heap.release(entry);
+    while (iterator.next(io) catch return self.raiseFilePath(span, path, "list")) |entry| {
+        const full = std.fs.path.join(self.gpa, &.{ path, entry.name }) catch return error.OutOfMemory;
+        entries.append(self.gpa, .{ .data = .{ .string = try self.heap.createText(full) } }) catch return error.OutOfMemory;
+    }
+    const list = try self.heap.createList(.string, entries.items.len);
+    list.items.appendSliceAssumeCapacity(entries.items);
+    return .{ .data = .{ .list = list } };
+}
+
+fn raiseFilePath(self: *Interpreter, span: Source.Span, path: []const u8, verb: []const u8) Error {
+    return self.raiseFileMessage(span, std.fmt.allocPrint(self.arena, "could not {s} `{s}`", .{ verb, path }) catch return error.OutOfMemory);
+}
+
+fn raiseFile(self: *Interpreter, span: Source.Span, verb: []const u8) Error {
+    return self.raiseFileMessage(span, std.fmt.allocPrint(self.arena, "could not {s}", .{verb}) catch return error.OutOfMemory);
+}
+
+fn raiseFileMessage(self: *Interpreter, span: Source.Span, message: []const u8) Error {
+    self.raised_value = self.makeError(Resolver.preludeKey("FileError"), message) catch return error.OutOfMemory;
+    return self.raiseTyped(span, "FileError", message, "Check that the path exists and that this program may access it.");
 }
 
 fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {

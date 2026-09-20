@@ -19,9 +19,10 @@ both Debug and ReleaseSafe with the pinned Zig 0.16.0. See `docs/journal.md`'s "
 the object model" and "Slice 15 completion" sections for how each of these was built and
 what was learned along the way.
 
-The first filesystem-library chunk is pending commit: `Path` now supplies pure lexical joining,
-component, parent, extension, and absolute-syntax helpers. The next chunk adds whole-file
-`File`/`Directory` operations and `Path.absolute`.
+The whole-file filesystem slice is now implemented: `File`, `Directory`, and `Path` provide
+UTF-8 text I/O, recursive/idempotent directory creation, empty-only deletion, listing, and
+path helpers; filesystem failures raise the new `FileError` subclass. Streaming, binary I/O,
+and recursive deletion remain deliberately deferred.
 
 Release hardening has also substantially landed (`2d5aa0b`, `ed41d24`, `00cfae3`), under that
 name rather than as "Slice 16": `.github/workflows/ci.yml` runs `zig build test` in Debug and
@@ -121,8 +122,7 @@ Nothing is queued. Diagnostic severities exist now, but only the "always true" h
 trait no possible subclass could adopt, since a subclass may adopt a trait its parent does
 not) is a distinct, harder analysis and remains open, listed under "Deferred". Other
 candidates: the LSP's second slice (hover, go to definition, find references, safe rename,
-completion — see the journal for what each needs); the maintainability backlog under "Review
-findings still open" below; or whatever the user directs. `Section` numbers below refer to
+completion — see the journal for what each needs); or whatever the user directs. `Section` numbers below refer to
 `docs/rewrite-context.md`.
 
 ## Documentation and rewrite-context hygiene
@@ -152,11 +152,10 @@ genuinely unimplemented. Elsewhere, the audit found and fixed:
 - Section 12 said a nonexhaustive enum `case` statement "produces a warning," while section
   6.3 already correctly said this waits for diagnostic severities and isn't built. Section
   12 now matches 6.3: silently accepted today, no diagnostic at all.
-- A `Textual` trait (15.1), the `File`/`Directory`/`Path` API (15.3, plus the 13.3 resource
-  example that used it), and the numeric `.format()`/`.to_string(base:)` API (15.5) were
-  all presented as settled/current with no caveat, but none of the three exist anywhere in
-  `src/`. Each now carries the same explicit "roadmap, not yet implemented" framing that
-  15.4 (Regex) already used.
+- A `Textual` trait (15.1) and the numeric `.format()`/`.to_string(base:)` API (15.5) were
+  presented as settled/current with no caveat, but neither exists anywhere in `src/`; both
+  now carry the same explicit "roadmap, not yet implemented" framing that 15.4 (Regex) uses.
+  The previously missing whole-file `File`/`Directory`/`Path` API has since shipped.
 - The CLI command list (18.1) included `emerald new`, `emerald explain`, and `emerald help`,
   none of which exist in `src/main.zig`'s `Command` enum (only `check run test format repl
   lsp` do; `lsp` itself was missing from the doc's list). The `--diagnostic-format=json` flag
@@ -191,6 +190,9 @@ genuinely unimplemented. Elsewhere, the audit found and fixed:
 ## Implemented so far
 
 - `build.zig` provides `zig build`, `zig build test`, and `zig build run`.
+- `File`, `Directory`, and `Path` are prelude namespaces backed by whole-file native
+  operations in `Interpreter.zig`; their UTF-8 and `FileError` behavior is covered by
+  `conformance/run/file-directory-path.em` and `conformance/runtime-errors/file-missing.em`.
 - `src/Project.zig` finds and loads the files a program is made of, which is section
   14.1's rule and nothing more: the file alone, unless its own directory holds `main.em`,
   in which case every `.em` file under that directory comes with it. It derives each
@@ -290,13 +292,13 @@ object/property reads) were removed because both have since shipped.
 ## Review findings
 
 The five maintainability findings from the fieldless-struct and required-fields review are
-retired in the current, uncommitted maintenance slice: checked and runtime struct metadata
+retired in `6a6a718`: checked and runtime struct metadata
 own field lookup (with runtime descriptor positions indexed once), sequence equality is shared
 by lists, tuples, and value structs, parameter and stored-field annotations share their parser,
 unqualified type annotations remain zero-copy, and `check()` collects struct sites while
 hoisting before running its struct-only phases. Validation: `zig build test` in Debug and
-ReleaseSafe, plus `git diff --check`, all pass with pinned Zig 0.16.0. No open findings remain
-from that review; the pending changes are limited to this maintenance slice.
+ReleaseSafe, plus `git diff --check`, passed with pinned Zig 0.16.0. No open findings remain
+from that review.
 
 ## Known rough edges
 

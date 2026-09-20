@@ -1,0 +1,4 @@
+runtime-errors/file-missing.em:1:1: FileError: the file `missing-file-for-file-error.txt` does not exist
+  File.read("missing-file-for-file-error.txt")
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Check that the path exists and that this program may access it.
