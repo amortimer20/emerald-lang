@@ -74,7 +74,7 @@ pub fn check(gpa: std.mem.Allocator, source: *const Source) Error!Report {
 
 /// The same, for a whole project (14.1).
 pub fn checkProject(gpa: std.mem.Allocator, project: *const Project) Error!Report {
-    return onLargeStack(gpa, project, null, false);
+    return onLargeStack(gpa, project, null, false, null);
 }
 
 /// A single file is a complete program, so it is a project of one. Nothing
@@ -98,19 +98,31 @@ pub const Streams = struct {
 
 /// Checks a source file and then executes it with `streams`.
 pub fn run(gpa: std.mem.Allocator, source: *const Source, streams: Streams) Error!Report {
+    return runWithStepLimit(gpa, source, streams, null);
+}
+
+/// Checks and runs one file with an optional host-imposed execution budget.
+/// A limit is for tools that run untrusted/generated programs; normal CLI
+/// execution remains unbounded and therefore has no new language behavior.
+pub fn runWithStepLimit(gpa: std.mem.Allocator, source: *const Source, streams: Streams, step_limit: ?usize) Error!Report {
     var files = [_]Project.File{lone(source)};
     const project = loneProject(&files);
-    return runProject(gpa, &project, streams);
+    return runProjectWithStepLimit(gpa, &project, streams, step_limit);
 }
 
 /// The same, for a whole project (14.1).
 pub fn runProject(gpa: std.mem.Allocator, project: *const Project, streams: Streams) Error!Report {
-    return onLargeStack(gpa, project, streams, false);
+    return runProjectWithStepLimit(gpa, project, streams, null);
+}
+
+/// The project counterpart to `runWithStepLimit`.
+pub fn runProjectWithStepLimit(gpa: std.mem.Allocator, project: *const Project, streams: Streams, step_limit: ?usize) Error!Report {
+    return onLargeStack(gpa, project, streams, false, step_limit);
 }
 
 /// Checks a project, skips its entry statements, and runs every `@test` function.
 pub fn testProject(gpa: std.mem.Allocator, project: *const Project, streams: Streams) Error!Report {
-    return onLargeStack(gpa, project, streams, true);
+    return onLargeStack(gpa, project, streams, true, null);
 }
 
 /// Everything `emerald format` (18.3) needs to know about one project.
@@ -244,16 +256,17 @@ comptime {
     );
 }
 
-fn onLargeStack(gpa: std.mem.Allocator, project: *const Project, streams: ?Streams, test_mode: bool) Error!Report {
+fn onLargeStack(gpa: std.mem.Allocator, project: *const Project, streams: ?Streams, test_mode: bool, step_limit: ?usize) Error!Report {
     const Task = struct {
         gpa: std.mem.Allocator,
         project: *const Project,
         streams: ?Streams,
         test_mode: bool,
+        step_limit: ?usize,
         result: Error!Report = undefined,
 
         fn go(task: *@This(), available: usize) void {
-            task.result = analyze(task.gpa, task.project, task.streams, task.test_mode, .here(available));
+            task.result = analyze(task.gpa, task.project, task.streams, task.test_mode, task.step_limit, .here(available));
         }
     };
 
@@ -264,7 +277,7 @@ fn onLargeStack(gpa: std.mem.Allocator, project: *const Project, streams: ?Strea
     // is the host's choice, as little as 1 MiB, so the guard could not be told
     // honestly how much there is, and a program within section 7.2's
     // guarantees could fail or crash. Failing to start is the honest outcome.
-    var task: Task = .{ .gpa = gpa, .project = project, .streams = streams, .test_mode = test_mode };
+    var task: Task = .{ .gpa = gpa, .project = project, .streams = streams, .test_mode = test_mode, .step_limit = step_limit };
     const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
@@ -280,6 +293,7 @@ fn analyze(
     project: *const Project,
     streams: ?Streams,
     test_mode: bool,
+    step_limit: ?usize,
     stack: Interpreter.StackLimit,
 ) Error!Report {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
@@ -413,6 +427,7 @@ fn analyze(
         running.in,
         stack,
         test_mode,
+        step_limit,
     );
     defer outcome.deinit();
 
@@ -536,6 +551,29 @@ fn expectFailure(text: []const u8, expected_message: []const u8) !void {
     const problem = report.failure orelse
         if (report.diagnostics.len != 0) report.diagnostics[0] else return error.ExpectedAFailure;
     try testing.expectEqualStrings(expected_message, problem.message);
+}
+
+test "a step-limited run stops even when Emerald catches ordinary errors" {
+    var source = try Source.init(testing.allocator, "test.em",
+        \\try {
+        \\    while true {
+        \\    }
+        \\}
+        \\catch error {
+        \\    print("caught")
+        \\}
+    );
+    defer source.deinit(testing.allocator);
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var no_input: std.Io.Reader = .fixed("");
+    var report = try runWithStepLimit(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input }, 12);
+    defer report.deinit();
+
+    try testing.expect(report.failure != null);
+    try testing.expectEqualStrings("this run exceeded its execution limit of 12 steps", report.failure.?.message);
+    try testing.expectEqualStrings("", out.written());
 }
 
 test "section 15.2 exit reports its requested status after finally" {

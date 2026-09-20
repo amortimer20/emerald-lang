@@ -25,7 +25,9 @@ ReleaseSafe across Ubuntu/macOS/Windows on every push and PR, plus a bounded 1,0
 frontend fuzz job; a nightly `fuzz.yml` runs four fixed 10,000-case campaigns
 (`tools/fuzz.zig`: lexer → parser → checker → format-twice-for-idempotence over generated
 UTF-8 text, including non-ASCII atoms; its first extended run already found and fixed a real
-formatter recovery bug). `testing.checkAllAllocationFailures` covers `Lexer`, `Parser`,
+formatter recovery bug). The fuzz runner now also executes checker-clean generated programs
+with a fixed 100-step interpreter budget and discarded output; step exhaustion is an
+uncatchable host boundary, so generated loops cannot hang the campaign. `testing.checkAllAllocationFailures` covers `Lexer`, `Parser`,
 `Formatter`, and `Project` exhaustively, plus `checkProject` and `runProject` against a
 struct/list/loop/interpolation program broad enough to reach past bare-statement paths
 (`src/emerald.zig`). Both `docs/journal.md` (its "Slice 15 completion" section) and this
@@ -90,10 +92,9 @@ That documentation pass found and fixed several real issues, most recently first
 - `docs/rewrite-context.md`'s optional-chaining paragraph (4.4) said only "an assignment or
   changing method call through `?.` is rejected," without saying when or for which receiver
   kind; corrected to match the fix above (check time, struct-only).
-- String/List range-slicing (`text[1..<4]`, `list[1..<3]`) and its omitted-endpoint forms
-  are described in detail in 5.4 but do not parse or type-check at all (confirmed during
-  the full audit below); 5.4 now carries the same "not yet implemented" framing as the
-  library's other unbuilt roadmap facilities.
+- String/List range-slicing is now implemented: inclusive/exclusive and omitted endpoints
+  return independent values, String bounds count graphemes, and invalid bounds raise clear
+  diagnostics. `conformance/run/range-slicing.em` covers the forms and List value semantics.
 
 Unicode conformance also grew from two cases to a wider, still not exhaustive, set covering
 real gaps found by reading `src/unicode.zig`/`src/strings.zig` against `conformance/` rather
@@ -116,9 +117,7 @@ Nothing is queued. Diagnostic severities exist now, but only the "always true" h
 trait no possible subclass could adopt, since a subclass may adopt a trait its parent does
 not) is a distinct, harder analysis and remains open, listed under "Deferred". Other
 candidates: the LSP's second slice (hover, go to definition, find references, safe rename,
-completion — see the journal for what each needs); execution-level fuzzing (`tools/fuzz.zig`
-still only reaches the checker, not the interpreter, deliberately — see the file's own
-header comment for the hang-risk reasoning); the maintainability backlog under "Review
+completion — see the journal for what each needs); the maintainability backlog under "Review
 findings still open" below; or whatever the user directs. `Section` numbers below refer to
 `docs/rewrite-context.md`.
 
@@ -171,11 +170,8 @@ genuinely unimplemented. Elsewhere, the audit found and fixed:
 - Section 23's process checklist had "identify whether the old prototype agrees or
   conflicts" as a mandatory step, but no prototype artifacts exist anywhere in this
   repository to consult; repointed at section 22's existing departure table instead.
-- 5.4's String/List range-slicing syntax (`text[1..<4]`, `items[2..<]`) was presented as
-  settled; none of it works — indexing requires an `Int` and rejects a `Range` outright,
-  and the omitted-endpoint forms don't even parse. Given the roadmap framing now used
-  consistently elsewhere in this same pass (15.1, 15.3, 15.5), it gets the same treatment
-  here rather than being left as a standing exception.
+- 5.4's String/List range-slicing syntax was audited as unimplemented, then implemented with
+  independent-value and grapheme-boundary conformance coverage.
 
 ## Completed foundation
 
@@ -282,11 +278,8 @@ object/property reads) were removed because both have since shipped.
   `Program.arguments` (15.2/24) is likewise unimplemented — no trace of it anywhere.
 - Section 6.2's `if ... then ... else` expression is unaffected by this; `unless` is not a
   keyword and never will be.
-- `List`/`String` range-slicing (`text[1..<4]`, `list[1..<3]`) and its omitted-endpoint
-  forms fail to parse/type-check — confirmed directly against the binary while writing the
-  library reference pages. `letter?`/`digit?` (general category tables), and `words`,
-  `title_case`, and case-insensitive Unicode comparison, need a dedicated locale and
-  boundary design pass first.
+- `letter?`/`digit?` (general category tables), and `words`, `title_case`, and
+  case-insensitive Unicode comparison need a dedicated locale and boundary design pass first.
 - `remove_if` on `List` (removing every value matching a block) does not exist, despite
   being named as design intent in 8.5's prose.
 

@@ -2,11 +2,12 @@
 
 `List[T]` is Emerald's ordered, indexable, growable collection. Elements are compared and
 found by value (`Value.equals`, recursive/structural), never identity. Indexing is
-zero-based; there is no negative indexing, and slicing a `List` with a range
-(`list[1..<3]`) is not implemented — do not write it into an example. There is no `+`/`+=`
+ zero-based; there is no negative indexing. There is no `+`/`+=`
 concatenation operator on `List`; `chain` is the way to join two.
 
 Run [`conformance/run/lists.em`](../../conformance/run/lists.em) for most cases below,
+[`conformance/run/range-slicing.em`](../../conformance/run/range-slicing.em) for range
+slicing,
 [`conformance/run/list-values.em`](../../conformance/run/list-values.em) for copy-on-write
 value semantics, and the other `conformance/run/list-*.em` files cited per section. Every
 example on this page was re-run against the built binary while writing it.
@@ -39,6 +40,15 @@ Zero-based read and write, including compound assignment (`list[i] += 1`).
 `` index {n} is outside this list, which is empty `` for an empty receiver, or
 `` index {n} is outside this list, which has {count} element(s) `` otherwise, with help
 naming the valid range.
+
+## list[start..<end] -> List[T]
+
+## list[start..end] -> List[T]
+
+Returns an independent List: changing the result never changes the receiver. `..<` excludes
+its end and allows `count`; `..` includes its end and must name an existing element. Either
+endpoint may be omitted only inside the brackets (`list[..<3]`, `list[2..<]`). A start after
+the end and every out-of-range endpoint raise rather than being clamped.
 
 ## Basic mutation
 

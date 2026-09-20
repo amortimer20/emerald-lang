@@ -693,11 +693,7 @@ numbers.map { number => number * 2 }
 Square brackets perform zero-based indexing on indexable values. Out-of-range access is an
 error with the requested index and valid range in the diagnostic.
 
-Lists and strings are meant to also slice with range syntax, producing independent values,
-but none of this is implemented yet: indexing requires an `Int` today, and a `Range` value
-(8.6) is rejected there with "an index must be an Int, but this is Range"; the
-omitted-endpoint forms below do not even parse ("expected an expression, found `]`"). The
-settled design to build toward:
+Lists and strings slice with range syntax, producing independent values:
 
 ```emerald
 text[1..<4]       # exclusive end
@@ -707,9 +703,11 @@ items[..<3]       # from the beginning
 ```
 
 String boundaries count graphemes. Endpoints outside valid boundaries, and a start after
-the end, are errors rather than silently clamped or emptied; an exclusive endpoint may equal the length, and `items[i..<i]` is
-empty at any valid boundary. Omitted endpoints exist only inside slicing brackets and do
-not create unbounded range values.
+the end, are errors rather than silently clamped or emptied; an exclusive endpoint may equal
+the length, and `items[i..<i]` is empty at any valid boundary. An inclusive endpoint names
+an existing item. Omitted endpoints exist only inside slicing brackets and do not create
+unbounded range values. A dictionary does not slice, and a parenthesized `Range` used as an
+ordinary index remains a type error.
 
 Method chaining is the pipeline notation:
 
@@ -1651,9 +1649,8 @@ Unicode language. `code_points()` returns the Unicode scalar values of the Strin
 stored spelling as `List[Int]`; a decomposed character therefore has more than one entry.
 `bytes()` returns its exact UTF-8 bytes as `List[Int]`, each from 0 through 255. These are
 advanced conversions, while `chars()` remains the grapheme-aware beginner API. `words`,
-`title_case`, and case-insensitive Unicode comparison remain deferred until their locale and
-boundary behavior can be designed correctly. `letter?`, `digit?`, and slicing strings with
-ranges also remain deferred.
+`title_case`, case-insensitive Unicode comparison, `letter?`, and `digit?` remain deferred
+until their locale and boundary behavior can be designed correctly.
 
 String equality uses canonical Unicode normalization, remains case-sensitive, and feeds
 the same normalized equality into dictionary keys and sets. Ordinary string ordering is
@@ -3019,6 +3016,13 @@ source manager
 Stages communicate through explicit data structures. The syntax tree does not contain
 Zig runtime values, and semantic types do not depend on the interpreter. This keeps a
 future bytecode, C-emitting, LLVM, or other backend replaceable.
+
+Tools that execute generated or otherwise untrusted programs may set an interpreter step
+budget. It decrements at every statement and expression, and exhaustion stops the run at
+the host boundary rather than as a catchable Emerald error; this is a tooling resource limit,
+not ordinary language behavior or a program-configurable execution timeout. The deterministic
+fuzz runner uses it with discarded output, so execution-level fuzzing cannot hang or retain
+unbounded output even as its generator gains loops.
 
 ### 19.3 Source model
 

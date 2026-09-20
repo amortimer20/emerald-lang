@@ -505,6 +505,7 @@ const Printer = struct {
             .type_test => |t| headerNeedsParens(t.value),
             .member => |m| headerNeedsParens(m.base),
             .index => |i| headerNeedsParens(i.base),
+            .slice => |s| headerNeedsParens(s.base),
             .comparison => |c| {
                 for (c.operands) |operand| if (headerNeedsParens(operand)) return true;
                 return false;
@@ -982,6 +983,14 @@ const Printer = struct {
                 try self.printOperand(index.base, .postfix, false);
                 try self.write("[");
                 try self.printExpr(index.index);
+                try self.write("]");
+            },
+            .slice => |slice| {
+                try self.printOperand(slice.base, .postfix, false);
+                try self.write("[");
+                if (slice.start) |start| try self.printExpr(start);
+                try self.write(if (slice.inclusive) ".." else "..<");
+                if (slice.end) |end| try self.printExpr(end);
                 try self.write("]");
             },
             .member => |m| try self.printMemberAccess(m),

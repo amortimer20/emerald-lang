@@ -50,7 +50,7 @@ jobs:
         run: zig build test -Doptimize=${{ matrix.optimize }}
 
   fuzz:
-    name: bounded frontend fuzz
+    name: bounded execution fuzz
     runs-on: ubuntu-latest
 
     steps:

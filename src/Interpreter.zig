@@ -112,7 +112,10 @@ const TypeSetup = struct {
 /// `Returned`, `Broke`, and `Continued` are control flow rather than failures:
 /// each unwinds through `execute` to the construct that handles it, the way
 /// `Raised` unwinds to the top. The checker guarantees every one has a handler.
-const Error = error{ Raised, Returned, Broke, Continued, Exited } || RunError;
+/// `StepLimit` is an interpreter resource boundary rather than an Emerald
+/// `RuntimeError`: a bounded host (the fuzz runner) must be able to stop even
+/// a program that catches every ordinary error and loops again.
+const Error = error{ Raised, Returned, Broke, Continued, Exited, StepLimit } || RunError;
 
 /// Lives as long as the run: hoisted functions, module bindings, and the
 /// failure that ends the program.
@@ -219,6 +222,11 @@ taken_fields: std.ArrayList(TakenField) = .empty,
 return_value: ?Value = null,
 
 stack: StackLimit,
+/// Null for ordinary Emerald execution. A bounded caller decrements this at
+/// every statement and expression, which covers each loop iteration as well
+/// as recursive computation without assigning a cost to language constructs.
+steps_remaining: ?usize = null,
+step_limit: usize = 0,
 
 pub fn run(
     gpa: std.mem.Allocator,
@@ -238,6 +246,7 @@ pub fn run(
     in: *std.Io.Reader,
     stack: StackLimit,
     test_mode: bool,
+    step_limit: ?usize,
 ) RunError!Outcome {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
@@ -278,6 +287,8 @@ pub fn run(
         .literal_types = literal_types,
         .heap = .init(gpa),
         .stack = stack,
+        .steps_remaining = step_limit,
+        .step_limit = step_limit orelse 0,
         .test_mode = test_mode,
     };
     // Whatever the counts did not reclaim, including lists still held by
@@ -473,6 +484,7 @@ pub fn run(
                         continue;
                     },
                     error.Exited => return .{ .arena_state = arena_state, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.exit_code },
+                    error.StepLimit => return .{ .arena_state = arena_state, .failure = interpreter.failure, .test_failures = failures.items, .test_count = count },
                     error.Returned, error.Broke, error.Continued => unreachable,
                     else => |other| return other,
                 };
@@ -488,6 +500,7 @@ pub fn run(
         // top-level `return` is deferred. It rejects `break` and `continue`
         // outside a loop.
         error.Exited => {},
+        error.StepLimit => {},
         error.Returned, error.Broke, error.Continued => unreachable,
         else => |other| return other,
     };
@@ -632,6 +645,28 @@ fn guardStack(self: *Interpreter, span: Source.Span) Error!void {
     return self.raiseTooMuchRecursion(span, innermost, false);
 }
 
+/// Stops a bounded run before it can consume unbounded CPU or output. This is
+/// deliberately not `raise`: user `catch` handles Emerald errors, whereas a
+/// host-imposed execution budget must always reach the host.
+fn guardStep(self: *Interpreter, span: Source.Span) Error!void {
+    if (self.steps_remaining) |*count| {
+        if (count.* > 0) {
+            count.* -= 1;
+            return;
+        }
+        const trace = try self.arena.alloc(Diagnostic.Frame, self.call_stack.items.len);
+        for (trace, 0..) |*frame, index| frame.* = self.call_stack.items[self.call_stack.items.len - 1 - index];
+        self.failure = .{
+            .message = try std.fmt.allocPrint(self.arena, "this run exceeded its execution limit of {d} steps", .{self.step_limit}),
+            .span = span,
+            .help = try self.arena.dupe(u8, "The host stopped this bounded run before it could keep executing."),
+            .trace = trace,
+            .file = self.file,
+        };
+        return error.StepLimit;
+    }
+}
+
 // Statements.
 
 fn executeAll(self: *Interpreter, statements: []const Ast.Statement) Error!void {
@@ -743,6 +778,7 @@ fn popScope(self: *Interpreter) void {
 
 fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
     try self.guardStack(statement.span);
+    try self.guardStep(statement.span);
 
     switch (statement.data) {
         .expression => |expression| self.heap.release(try self.evaluate(expression)),
@@ -1903,6 +1939,7 @@ fn initializeModule(self: *Interpreter, file: u32) Error!void {
 
 fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
     try self.guardStack(expression.span);
+    try self.guardStep(expression.span);
 
     return switch (expression.data) {
         .int_literal => |value| .initInt(value),
@@ -1930,6 +1967,7 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .dictionary_literal => |entries| self.evaluateDictionary(expression, entries),
         .tuple_literal => |positions| self.evaluateTuple(expression, positions),
         .index => |index| self.evaluateIndex(expression, index),
+        .slice => |slice| self.evaluateSlice(expression, slice),
         // A namespace-qualified name is a reference, not a property access.
         .member => |member| self.evaluateMember(expression, member),
         .string_literal => |bytes| self.evaluateStringLiteral(expression, bytes),
@@ -2339,6 +2377,76 @@ fn evaluateIndex(self: *Interpreter, expression: *const Ast.Expression, index: A
     const list = base.data.list;
     const at = try self.checkIndex(list, position, expression.span);
     return Heap.retain(list.items.items[at]);
+}
+
+/// Section 5.4's List/String slices are values, never views: copying a List
+/// retains each selected element into new list storage, and String text is
+/// copied into a new heap text. Missing bounds exist only in this syntax.
+fn evaluateSlice(self: *Interpreter, expression: *const Ast.Expression, slice: Ast.Expression.Slice) Error!Value {
+    const base = try self.evaluate(slice.base);
+    defer self.heap.release(base);
+    const start = try self.evaluateSliceBound(slice.start);
+    const end = try self.evaluateSliceBound(slice.end);
+
+    return switch (base.data) {
+        .list => |list| blk: {
+            const bounds = try self.sliceBounds(expression.span, "list", @intCast(list.items.items.len), start, end, slice.inclusive);
+            break :blk self.copyList(list.element, list.items.items[bounds.start..bounds.end]);
+        },
+        .string => |text| blk: {
+            const count: i64 = @intCast(unicode.graphemeCount(text.bytes));
+            const bounds = try self.sliceBounds(expression.span, "String", count, start, end, slice.inclusive);
+            break :blk self.heap.copyText(strings.substring(text.bytes, @intCast(bounds.start), @intCast(bounds.end - bounds.start)) catch unreachable);
+        },
+        else => unreachable, // The checker permits only the two cases above.
+    };
+}
+
+fn evaluateSliceBound(self: *Interpreter, expression: ?*const Ast.Expression) Error!?i64 {
+    const bound = expression orelse return null;
+    const value = try self.evaluate(bound);
+    defer self.heap.release(value);
+    return value.data.int;
+}
+
+const SliceBounds = struct { start: usize, end: usize };
+
+/// Validates the half-open interval used internally for both source spellings.
+/// `..` includes its written endpoint while `..<` excludes it; an omitted end
+/// always means the collection's end, so both `items[2..]` and `items[2..<]`
+/// run through the last item.
+fn sliceBounds(
+    self: *Interpreter,
+    span: Source.Span,
+    subject: []const u8,
+    count: i64,
+    written_start: ?i64,
+    written_end: ?i64,
+    inclusive: bool,
+) Error!SliceBounds {
+    const start = written_start orelse 0;
+    if (start < 0 or start > count) return self.raiseFmt(
+        span,
+        "slice start {d} is outside this {s}, which has {d} {s}",
+        .{ start, subject, count, if (std.mem.eql(u8, subject, "String")) "characters" else "elements" },
+        "A slice start may be from 0 through the collection's count.",
+    );
+    const end = if (written_end) |written| blk: {
+        if (written < 0 or written > count or (inclusive and written == count)) return self.raiseFmt(
+            span,
+            "slice end {d} is outside this {s}, which has {d} {s}",
+            .{ written, subject, count, if (std.mem.eql(u8, subject, "String")) "characters" else "elements" },
+            if (inclusive) "An inclusive end must name an existing position." else "An exclusive end may equal the collection's count.",
+        );
+        break :blk if (inclusive) written + 1 else written;
+    } else count;
+    if (start > end) return self.raiseFmt(
+        span,
+        "slice start {d} comes after its end {d}",
+        .{ start, if (written_end) |written| written else count },
+        "Write the start at or before the end.",
+    );
+    return .{ .start = @intCast(start), .end = @intCast(end) };
 }
 
 /// Section 9.1: indexing a string counts characters, from zero.

@@ -1,0 +1,8 @@
+diagnostics/slice-types.em:2:14: an index must be an Int, but this is Bool
+  print(values[true..<2])
+               ^^^^
+Indices count whole positions, starting from 0.
+diagnostics/slice-types.em:3:7: Dict[String, Int] cannot be sliced
+  print(["score": 10][0..<1])
+        ^^^^^^^^^^^^^
+Only a list or a String can be sliced with a range.

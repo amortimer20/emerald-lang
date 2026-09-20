@@ -2297,6 +2297,11 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             try self.walkExpression(index.base);
             try self.walkExpression(index.index);
         },
+        .slice => |slice| {
+            try self.walkExpression(slice.base);
+            if (slice.start) |start| try self.walkExpression(start);
+            if (slice.end) |end| try self.walkExpression(end);
+        },
         .member => |member| {
             // `Shapes.area` is one name, not a property of a value. Deciding
             // which it is happens once, here, and the answer is recorded for

@@ -8,9 +8,8 @@ is linear time, which is the honest cost of that guarantee; `code_points()` and 
 below are the advanced escape hatch when a program specifically needs code points or raw
 UTF-8 bytes instead.
 
-`letter?`, `digit?`, `words`, `title_case`, case-insensitive comparison, and slicing a
-`String` with a range (`text[1..<4]`) are unsettled and not yet implemented — do not write
-them into an example. `+` joins two strings and `+=` appends; it is the one operator strings
+`letter?`, `digit?`, `words`, `title_case`, and case-insensitive comparison remain deferred.
+`+` joins two strings and `+=` appends; it is the one operator strings
 have, and it does not convert a non-`String` operand (`"Score: " + 10` is rejected in favor
 of interpolation or `to_string()`). Equality (`==`) and ordering compare Unicode-normalized
 text, not raw bytes, so two byte-different but canonically equivalent strings are equal; a
@@ -18,6 +17,8 @@ text, not raw bytes, so two byte-different but canonically equivalent strings ar
 
 Run [`conformance/run/string-methods.em`](../../conformance/run/string-methods.em) for the
 value cases below,
+[`conformance/run/range-slicing.em`](../../conformance/run/range-slicing.em) for range
+slicing,
 [`conformance/diagnostics/string-editing.em`](../../conformance/diagnostics/string-editing.em)
 for argument-type and arity mistakes, and
 [`conformance/runtime-errors/string-padding.em`](../../conformance/runtime-errors/string-padding.em)
@@ -86,6 +87,15 @@ one character, since the plain `e` inside it is not a character of its own. `ind
 returns the optional first match position rather than `-1`, per the optionals rule in 4.5.
 
 ## Editing
+
+## text[start..<end] -> String
+
+## text[start..end] -> String
+
+Both forms return an independent substring measured in grapheme clusters. `..<` excludes its
+end and permits `count`; `..` includes its end and therefore must name an existing character.
+Either endpoint may be omitted only inside the brackets (`text[..<3]`, `text[2..<]`). A start
+after the end and every out-of-range endpoint raise rather than being clamped.
 
 ## replace(old: String, new: String) -> String
 

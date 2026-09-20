@@ -456,6 +456,8 @@ pub const Expression = struct {
         dictionary_literal: []const Entry,
         /// Section 5.4's zero-based `base[index]`.
         index: Index,
+        /// Section 5.4's independent `base[start..<end]` value.
+        slice: Slice,
         /// `base.name`: a property, or a method when it is the callee of a call.
         member: Member,
         /// Section 7.4's `{ value => value * 2 }`.
@@ -517,6 +519,15 @@ pub const Expression = struct {
     pub const Index = struct {
         base: *const Expression,
         index: *const Expression,
+    };
+
+    /// A List or String slice. Missing bounds occur only in brackets: they do
+    /// not make a partially bounded Range value.
+    pub const Slice = struct {
+        base: *const Expression,
+        start: ?*const Expression,
+        end: ?*const Expression,
+        inclusive: bool,
     };
 
     pub const Member = struct {

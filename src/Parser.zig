@@ -331,6 +331,12 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
             break :blk deepest;
         },
         .index => |index| @max(index.base.depth, index.index.depth),
+        .slice => |slice| blk: {
+            var deepest = slice.base.depth;
+            if (slice.start) |start| deepest = @max(deepest, start.depth);
+            if (slice.end) |end| deepest = @max(deepest, end.depth);
+            break :blk deepest;
+        },
         .member => |member| member.base.depth,
         .type_test => |test_| test_.value.depth,
         // A block body's statements each carry their own bound, so only an
@@ -3007,6 +3013,35 @@ fn finishIndex(self: *Parser, base: *const Ast.Expression) Error!*const Ast.Expr
     defer self.in_control_header = saved_header;
     _ = self.advance();
 
+    // A range written directly in brackets is slicing, not an ordinary Range
+    // value used as an index. Endpoints use the same arithmetic grammar as a
+    // Range, while either endpoint may be omitted only here.
+    const content_start = self.index;
+    const start: ?*const Ast.Expression = if (self.check(.dot_dot) or self.check(.dot_dot_less)) null else try self.parseAdditive();
+    if (self.peek().kind == .dot_dot or self.peek().kind == .dot_dot_less) {
+        const inclusive = self.advance().kind == .dot_dot;
+        const end: ?*const Ast.Expression = if (self.check(.right_bracket)) null else try self.parseAdditive();
+        const closing = self.peek();
+        if (closing.kind != .right_bracket) {
+            return self.reportFmt(
+                closing.span,
+                "expected `]` to close this slice, found {s}",
+                .{closing.kind.describe()},
+                "A slice has one range, as in `items[1..<3]`.",
+            );
+        }
+        _ = self.advance();
+        return self.node(spanning(base.span, closing.span), .{ .slice = .{
+            .base = base,
+            .start = start,
+            .end = end,
+            .inclusive = inclusive,
+        } });
+    }
+
+    // No range marker: preserve ordinary indexing, including its full
+    // expression grammar and dictionary-key behavior.
+    self.index = content_start;
     const index = try self.parseExpression();
     const closing = self.peek();
     if (closing.kind != .right_bracket) {

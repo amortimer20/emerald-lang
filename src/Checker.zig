@@ -4228,6 +4228,9 @@ fn expressionChangesSelf(self: *Checker, expression: *const Ast.Expression, rece
         },
         .index => |index| try self.expressionChangesSelf(index.base, receiver) or
             try self.expressionChangesSelf(index.index, receiver),
+        .slice => |slice| try self.expressionChangesSelf(slice.base, receiver) or
+            (if (slice.start) |start| try self.expressionChangesSelf(start, receiver) else false) or
+            (if (slice.end) |end| try self.expressionChangesSelf(end, receiver) else false),
         .member => |member| self.expressionChangesSelf(member.base, receiver),
         .type_test => |test_| self.expressionChangesSelf(test_.value, receiver),
         // `self` cannot appear inside a block (see `Parser.self_allowed`).
@@ -5032,6 +5035,7 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
             break :blk .string;
         },
         .index => |index| self.typeOfIndex(index),
+        .slice => |slice| self.typeOfSlice(slice),
         // A namespace-qualified name is a reference, not a property access:
         // `Shapes.area` names one declaration, as the resolver worked out.
         .member => |member| if (try self.referenceOf(expression)) |reference|
@@ -5577,6 +5581,25 @@ fn typeOfIndex(self: *Checker, index: Ast.Expression.Index) Error!Type {
         return .invalid;
     }
     return base.element.?.*;
+}
+
+/// Section 5.4: only Lists and Strings slice, and each bound is an Int.
+/// Unlike a Range value, a slice may omit either bound within its brackets.
+fn typeOfSlice(self: *Checker, slice: Ast.Expression.Slice) Error!Type {
+    const base = try self.typeOf(slice.base);
+    if (slice.start) |start| try self.requireIndex(start);
+    if (slice.end) |end| try self.requireIndex(end);
+    if (base.kind == .invalid) return .invalid;
+    if (!try self.requirePresent(base, slice.base, null)) return .invalid;
+    if (base.kind == .string) return .string;
+    if (base.kind == .list) return base;
+    try self.report(
+        slice.base.span,
+        "{f} cannot be sliced",
+        .{base},
+        "Only a list or a String can be sliced with a range.",
+    );
+    return .invalid;
 }
 
 /// The key a dictionary is indexed by, which must be its key type rather than

@@ -113,7 +113,7 @@ pub fn build(b: *std.Build) void {
     });
     const run_fuzz = b.addRunArtifact(fuzz);
     if (b.args) |args| run_fuzz.addArgs(args);
-    b.step("fuzz", "Run deterministic bounded frontend fuzz cases").dependOn(&run_fuzz.step);
+    b.step("fuzz", "Run deterministic bounded execution fuzz cases").dependOn(&run_fuzz.step);
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);
