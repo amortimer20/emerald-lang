@@ -219,6 +219,9 @@ pub const float_infinity_key = "Float.infinity";
 pub const float_nan_key = "Float.nan";
 pub const math_pi_key = "Math.pi";
 pub const math_e_key = "Math.e";
+/// Section 14.1's `Program.arguments`: the program's own CLI arguments,
+/// excluding the Emerald executable and entry-file paths.
+pub const program_arguments_key = "Program.arguments";
 
 pub fn mathFunction(key: []const u8) ?Type.MathFunction {
     const prefix = "Math.";
@@ -2097,6 +2100,20 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
             "`Float` has no type-level member named `{s}`",
             .{names[1]},
             "Its type-level constants are `Float.infinity` and `Float.nan`.",
+            .{},
+        );
+        return .reported;
+    }
+
+    // A project namespace named `Program` remains an ordinary namespace, the
+    // same way `Math` does below.
+    if (length == 2 and std.mem.eql(u8, names[0], "Program") and !self.namespaces.contains(self.namespaceFor("Program"))) {
+        if (std.mem.eql(u8, names[1], "arguments")) return .{ .key = program_arguments_key };
+        try self.reportWithHelpFmt(
+            expression.span,
+            "`Program` has no type-level member named `{s}`",
+            .{names[1]},
+            "Its one member is `Program.arguments`.",
             .{},
         );
         return .reported;

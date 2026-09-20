@@ -2838,6 +2838,11 @@ There is no `fmt` alias. `run` checks the complete project before executing; `ch
 performs the same analysis without initializing modules or executing user code. This is
 useful when a program would prompt, open a window, modify files, or run indefinitely.
 
+`emerald <command> <file.em> -- <program-argument>...` hands everything after `--` to the
+program as 14.1's `Program.arguments`, never to Emerald itself; `check`, `run`, and `test`
+all accept the same syntax, though only `run` and `test` ever give a program arguments to
+read. Without `--`, `Program.arguments` is `[]`.
+
 A machine-readable `--diagnostic-format=json` flag is a later-tooling design, not yet
 implemented (no diagnostic-producing command accepts it today). The design to build
 toward: an initial versioned JSON object containing a schema version and a diagnostics

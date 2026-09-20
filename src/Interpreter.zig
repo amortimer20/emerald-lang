@@ -150,6 +150,10 @@ raised_value: ?Value = null,
 caught_value: ?Value = null,
 caught_failure: ?Diagnostic = null,
 exit_code: ?u8 = null,
+/// Section 14.1's `Program.arguments`: the program's own CLI arguments,
+/// excluding the Emerald executable and entry-file paths. Empty outside the
+/// CLI's `run`/`test` commands.
+arguments: []const []const u8 = &.{},
 /// One string for each string literal, made the first time the literal runs
 /// and shared by every run after it, so a loop that prints a literal does not
 /// allocate.
@@ -244,6 +248,7 @@ pub fn run(
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
+    arguments: []const []const u8,
     stack: StackLimit,
     test_mode: bool,
     step_limit: ?usize,
@@ -277,6 +282,7 @@ pub fn run(
         .facts = facts,
         .out = out,
         .in = in,
+        .arguments = arguments,
         .signatures = signatures,
         .changing_methods = changing_methods,
         .method_calls = method_calls,
@@ -499,12 +505,14 @@ pub fn run(
 
     interpreter.executeAll(programs[entry].statements) catch |err| switch (err) {
         error.Raised => {},
-        // The checker rejects `return` outside a function, and section 14.1's
-        // top-level `return` is deferred. It rejects `break` and `continue`
-        // outside a loop.
+        // Section 14.1's bare top-level `return` ends the program successfully,
+        // exactly like reaching the end of the entry file's statements; any
+        // pending `finally` blocks have already run while this unwound.
+        error.Returned => {},
         error.Exited => {},
         error.StepLimit => {},
-        error.Returned, error.Broke, error.Continued => unreachable,
+        // The checker rejects `break` and `continue` outside a loop.
+        error.Broke, error.Continued => unreachable,
         else => |other| return other,
     };
 
@@ -1984,9 +1992,21 @@ fn evaluateMember(self: *Interpreter, expression: *const Ast.Expression, member:
         if (std.mem.eql(u8, key, Resolver.float_nan_key)) return .initFloat(std.math.nan(f64));
         if (std.mem.eql(u8, key, Resolver.math_pi_key)) return .initFloat(std.math.pi);
         if (std.mem.eql(u8, key, Resolver.math_e_key)) return .initFloat(std.math.e);
+        if (std.mem.eql(u8, key, Resolver.program_arguments_key)) return self.programArguments();
         return self.evaluateName(expression, key, key);
     }
     return self.evaluateProperty(expression, member);
+}
+
+/// Section 14.1's `Program.arguments`, built fresh from `self.arguments` each
+/// time it is read, the same as any other value rather than one shared list a
+/// caller's mutation could see reflected in another's.
+fn programArguments(self: *Interpreter) Error!Value {
+    const list = try self.heap.createList(.string, self.arguments.len);
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+    for (self.arguments) |argument| list.items.appendAssumeCapacity(try self.heap.copyText(argument));
+    return result;
 }
 
 /// The expressions whose helpers need only the node, sharing one call site:

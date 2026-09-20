@@ -203,8 +203,10 @@ captures: std.StringHashMapUnmanaged(Resolver.NameSet) = .empty,
 /// return type is still being inferred, and `return expr` records its value's
 /// type in `pending_return_types` instead of checking it.
 current_return_type: ?Type = null,
-/// Whether `return` is legal here. Section 14.1's top-level `return`, which
-/// ends the program, is deferred, so it is rejected outside a function.
+/// Whether `return` is inside a function, a constructor, or a computed
+/// property here. False and not constructing means a bare top-level `return`
+/// is legal instead (14.1), since the entry file's top level is the only
+/// other place a `return` statement can appear (`checkReturn`).
 in_function: bool = false,
 /// Bare `raise` is valid only while a catch body is being checked.
 catch_depth: usize = 0,
@@ -243,6 +245,10 @@ loops: std.ArrayList(Loop) = .empty,
 /// reported here and used to turn a bare module-level name into the one key
 /// the whole program knows it by.
 file: u32 = 0,
+/// Every file of the program, indexed by `file`. Kept only to answer whether
+/// the file currently being checked is the entry file (14.1), for a bare
+/// top-level `return`.
+files: []const Project.File = &.{},
 
 /// The constructor being checked. Whether each field has been set is kept as
 /// bindings in the constructor's own scope (see `fieldSetKey`), so branches,
@@ -323,7 +329,7 @@ pub fn check(
     const module = try arena.create(Scope);
     module.* = .empty;
 
-    var checker: Checker = .{ .arena = arena, .prelude = prelude, .module = module, .facts = facts };
+    var checker: Checker = .{ .arena = arena, .prelude = prelude, .module = module, .facts = facts, .files = files };
     try checker.scopes.append(arena, prelude);
     try checker.scopes.append(arena, module);
     var struct_sites: std.ArrayList(StructSite) = .empty;
@@ -3057,6 +3063,24 @@ fn checkReturn(self: *Checker, return_statement: Ast.Return) Error!void {
         return;
     }
     if (!self.in_function) {
+        // Section 14.1: a bare top-level `return` is allowed only in the
+        // entry file, and only bare — it ends the program successfully
+        // rather than producing a value. `checkModuleFile` (Resolver.zig)
+        // already keeps a non-entry file's top level to declarations, so
+        // reaching this point outside a function or constructor means the
+        // entry file's top level is what is being checked.
+        if (self.files[self.file].entry) {
+            if (return_statement.value) |value| {
+                _ = try self.typeOf(value);
+                try self.report(
+                    value.span,
+                    "a top-level `return` cannot return a value",
+                    .{},
+                    "It always ends the program successfully. Use `exit(code)` to choose a status.",
+                );
+            }
+            return;
+        }
         try self.report(
             return_statement.keyword_span,
             "`return` can only be used inside a function",
@@ -5664,6 +5688,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         std.mem.eql(u8, reference.key, Resolver.float_nan_key) or
         std.mem.eql(u8, reference.key, Resolver.math_pi_key) or
         std.mem.eql(u8, reference.key, Resolver.math_e_key)) return .float;
+    if (std.mem.eql(u8, reference.key, Resolver.program_arguments_key)) return try Type.listOf(self.arena, .string);
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
     // Section 11.2's `Named.introduction(self)` is a call that runs one trait's
     // default; taking it as a value is not part of that yet.
@@ -8460,6 +8485,16 @@ fn typeOfCall(
         );
         try self.typeArguments(call.arguments);
         return .float;
+    }
+    if (std.mem.eql(u8, reference.key, Resolver.program_arguments_key)) {
+        try self.report(
+            call.callee.span,
+            "`{s}` is a constant, so it takes no parentheses",
+            .{name},
+            "Remove `()` and use the List directly.",
+        );
+        try self.typeArguments(call.arguments);
+        return try Type.listOf(self.arena, .string);
     }
     if (self.receivers.get(reference.key)) |receiver| {
         if (receiver.user.?.trait) return self.typeOfTraitDefaultCall(expression, call, reference);

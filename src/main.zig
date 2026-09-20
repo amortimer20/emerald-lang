@@ -21,7 +21,7 @@ const ExitCode = enum(u8) {
 };
 
 const usage =
-    \\usage: emerald <command> <file.em>
+    \\usage: emerald <command> <file.em> [-- <program-argument>...]
     \\
     \\commands:
     \\  check           report problems without running the program
@@ -32,6 +32,9 @@ const usage =
     \\  repl            start an interactive session
     \\  lsp             start a language server over stdio (an optional
     \\                  trailing --stdio is accepted and ignored)
+    \\
+    \\Arguments after `--` are the running program's own (Program.arguments, 14.1),
+    \\never Emerald's; `run`/`test` are the commands that give a program any.
     \\
 ;
 
@@ -80,8 +83,17 @@ pub fn main(init: std.process.Init) !u8 {
         return misuse(io);
     }
 
-    if (args.len != 3) return misuse(io);
-    return execute(gpa, io, command, args[2]);
+    if (args.len < 3) return misuse(io);
+    // Section 14.1: `--` separates Emerald's own arguments from the running
+    // program's. Only `run`/`test` ever hand these to a program
+    // (`Program.arguments`); `check` accepts and simply never uses them, so
+    // one parsing rule covers all three rather than special-casing `check`.
+    var program_arguments: []const []const u8 = &.{};
+    if (args.len > 3) {
+        if (!std.mem.eql(u8, args[3], "--")) return misuse(io);
+        program_arguments = args[4..];
+    }
+    return execute(gpa, io, command, args[2], program_arguments);
 }
 
 fn misuse(io: std.Io) !u8 {
@@ -89,7 +101,7 @@ fn misuse(io: std.Io) !u8 {
     return @intFromEnum(ExitCode.invalid_usage);
 }
 
-fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8) !u8 {
+fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8) !u8 {
     // Section 14.1: the file alone, unless it sits beside a `main.em`, in which
     // case the whole project comes with it.
     var project = emerald.Project.load(gpa, io, path) catch |err| {
@@ -115,8 +127,8 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
 
     const analysis = switch (command) {
         .check => emerald.checkProject(gpa, &project),
-        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface }),
-        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface }),
+        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .arguments = program_arguments }),
+        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .arguments = program_arguments }),
         // `main` routes `format`, `repl`, and `lsp` to their own functions
         // before this is reached.
         .format, .repl, .lsp => unreachable,

@@ -94,7 +94,9 @@ with `down_to`, and `step`/`reverse` adjust either direction. See
 `return` leaves the nearest function (not an enclosing one, when written
 inside a lambda). A branch that always returns is excluded from definite
 assignment, so ordinary guard-clause functions type-check. See
-[`conformance/run/early-return.em`](../../conformance/run/early-return.em).
+[`conformance/run/early-return.em`](../../conformance/run/early-return.em). A bare `return`
+with no enclosing function is legal only at a program's own top level, where it ends the
+program instead — see [Errors, tests, and projects](errors-tests-and-projects.md#ending-the-program-early-and-reading-its-arguments).
 
 ## Functions and blocks
 

@@ -41,6 +41,37 @@ and
 [`conformance/diagnostics/module-needs-value`](../../conformance/diagnostics/module-needs-value)
 for the two rejections above with their exact wording.
 
+## Ending the program early, and reading its arguments
+
+Only the entry file's top level may use a bare `return` — nowhere else outside a function.
+It ends the program successfully right where it runs, after any pending `finally` blocks
+finish their cleanup, and it cannot return a value:
+
+```emerald
+print("starting")
+if some_condition {
+    return
+}
+print("only reached when some_condition is false")
+```
+
+Use `exit(code)` (see [Prelude](../library/prelude.md)) instead when the program needs to
+choose its own status. Code written after an *unconditional* top-level `return` warns the
+same way code after `raise` or an unconditional `break` does — the checker only knows a
+conditional one like the example above might not run.
+
+`Program.arguments` is a `List[String]` of the program's own command-line arguments — a
+project's, not Emerald's own — read from whatever follows `--`:
+
+```text
+emerald run greet.em -- Ava
+```
+
+excluding the `emerald` executable and the entry file's own path. Each read is a fresh,
+independent `List`, and it is always `[]` outside `emerald run`/`emerald test` — under
+`emerald check`, the REPL, or the LSP, there is no invocation to take it from. See
+[`Program`](../library/program.md) for the full page.
+
 ## Namespaces and `using`
 
 Directories form namespaces; the file inside contributes nothing to the name. A directory

@@ -1,0 +1,4 @@
+diagnostics/program-arguments-unknown-member.em:2:7: `Program` has no type-level member named `args`
+  print(Program.args)
+        ^^^^^^^^^^^^
+Its one member is `Program.arguments`.

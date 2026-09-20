@@ -1,0 +1,4 @@
+diagnostics/program-arguments-call.em:2:7: `Program.arguments` is a constant, so it takes no parentheses
+  print(Program.arguments())
+        ^^^^^^^^^^^^^^^^^
+Remove `()` and use the List directly.

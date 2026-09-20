@@ -1990,3 +1990,36 @@ is a new way to break that promise. And diagnostics deliberately stay on the fie
 form, so assembling an assertion failure never runs a program's own code — the debug form
 is also the more useful one there. The checker warns when a type declares `to_string`
 without adopting the trait, which is where someone arriving from C# or Java lands.
+
+## The program entry point, 2026-09-20
+
+14.1's two remaining pieces — `Program.arguments` and a bare top-level `return` — were the
+roadmap review's first item, small enough to do as one slice once `exit(code)` turned out to
+already be complete (nothing to do there beyond confirming it against the binary).
+
+`Program.arguments` followed `Float.infinity`/`Math.pi`'s existing pattern for a type-level
+constant that is not a user declaration: a key the resolver's `qualify()` recognizes
+(`Program.arguments`), a fixed type the checker returns for it, and a value the interpreter
+builds on read. The one new plumbing was getting the CLI's actual argv into that read: a
+`Streams.arguments` field, defaulted to `&.{}` so every existing call site (tests, the REPL,
+the fuzz runner) kept compiling unchanged, threaded through to `Interpreter.run` and read
+fresh into a new `List` on every access — a shared cached list would have let one caller's
+mutation leak into another's, which copy-on-write value semantics don't allow anywhere else.
+`main.zig` gained `-- <program-argument>...` after the file path, accepted by all of
+`check`/`run`/`test` alike so one parsing rule covers all three, though only `run`/`test`
+populate the list.
+
+The top-level `return` turned out to need less than expected: the resolver already rejects
+any executable statement outside the entry file's top level (`checkModuleFile`'s "this would
+never run"), so by the time `Checker.checkReturn` ever sees a `return` with `in_function`
+false, the entry file's top level is the only place it can be — no new state to track, only
+`self.files[self.file].entry` added for a self-documenting, non-inferred check rather than
+leaning on that reasoning implicitly. The interpreter side was a one-line change: `run`'s
+final `catch` had `error.Returned => unreachable` with a comment naming this exact feature as
+the reason it could never fire; removing the `unreachable` and treating it like reaching the
+end of the file was the entire fix, since `finally` unwinding was already shared with an
+ordinary function return.
+
+One pre-existing unit test encoded the old rejection as its expectation
+(`"print(1)\nreturn\n"` expecting `` `return` can only be used inside a function ``) and
+needed updating to the new behavior rather than being a regression.

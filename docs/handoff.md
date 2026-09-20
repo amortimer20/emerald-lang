@@ -46,20 +46,24 @@ because `Value.writeThrough` carries a comptime display context through the whol
 `{}` keeps diagnostics on the field-based form so building a failure never runs a program's
 own code. The checker warns when a type declares `to_string` without adopting the trait.
 
+The program entry point (14.1) is complete: `Program.arguments` is a `List[String]` built
+from whatever follows `--` on the command line (`emerald <command> <file.em> -- <args>...`,
+accepted by `check`/`run`/`test` alike, though only `run`/`test` populate it), and a bare
+`return` at the entry file's own top level ends the program successfully after pending
+`finally` blocks, exactly like reaching the end of the file. `exit(code)`'s plumbing needed
+no work; it was already complete.
+
 ## Next step
 
 A 2026-09-20 roadmap review triaged prior "what's next" suggestions from both agents against
 the current binary. Closed and no longer live: per-family runnable examples, `!`/optional/
 callback/raise labeling, conformance-programs-as-executable-examples, the filesystem design,
-and the five maintainability findings (retired in `6a6a718`). What's open, in recommended
-order, none yet authorized to start:
+the five maintainability findings (retired in `6a6a718`), and the program entry point. What's
+open, in recommended order, none yet authorized to start:
 
-1. A program entry point: `Program.arguments` and a bare top-level `return` (both under
-   "Deferred" below) plus exit-code plumbing (15.2/24, 14.1) — small, and the last piece
-   between the file I/O and formatting that already exist and a genuinely useful CLI program.
-2. A real, non-toy Emerald program as a shakedown, to generate the next backlog empirically
+1. A real, non-toy Emerald program as a shakedown, to generate the next backlog empirically
    rather than by guessing at one.
-3. The LSP's second phase (hover, go-to-definition, find references, safe rename,
+2. The LSP's second phase (hover, go-to-definition, find references, safe rename,
    completion — see the journal's LSP notes) — highest day-to-day payoff, lowest design
    risk, since the first slice already proved the architecture.
 
@@ -78,8 +82,6 @@ regressions from recent work — each checked directly, including against the co
 this session's changes where that mattered):
 
 - Taking `Trait.method` as a value is rejected with a diagnostic rather than supported.
-- A bare top-level `return` (14.1 describes it ending the program) is rejected outside a
-  function; `Program.arguments` (15.2/24) is likewise unimplemented.
 - Capturing a built-in function (`print`) or method (`numbers.append`) as a value, and
   variadic functions generally, are rejected — no written function type describes them yet.
 - A module-level lambda or nested function that reads a module variable unassigned at its
@@ -105,11 +107,11 @@ this session's changes where that mattered):
 
 ## Validation and repository state
 
-The latest completed slices, including `format`/`to_string(base:)` and `Textual`, passed
-`bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe, `bash
-tools/check-doc-examples.sh` after `zig build`, and `git diff --check` with pinned Zig
-0.16.0. The working tree was clean after commit `0cf33d0` (`Implement numeric format() and
-to_string(base:)`) before this pass.
+The latest completed slices, including `format`/`to_string(base:)`, `Textual`, and the
+program entry point, passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and
+ReleaseSafe, `bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check`
+with pinned Zig 0.16.0. The working tree was clean after commit `2d26af3` (`Update handoff with the triaged
+roadmap`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a

@@ -94,6 +94,9 @@ fn loneProject(files: []Project.File) Project {
 pub const Streams = struct {
     out: *std.Io.Writer,
     in: *std.Io.Reader,
+    /// Section 14.1's `Program.arguments`. Empty unless the caller has actual
+    /// program arguments to give, such as the CLI's `run`/`test` commands.
+    arguments: []const []const u8 = &.{},
 };
 
 /// Checks a source file and then executes it with `streams`.
@@ -425,6 +428,7 @@ fn analyze(
         resolved.facts,
         running.out,
         running.in,
+        running.arguments,
         stack,
         test_mode,
         step_limit,
@@ -605,6 +609,28 @@ test "section 15.2 exit reports its requested status after finally" {
     try testing.expect(report.ok());
     try testing.expectEqual(@as(?u8, 42), report.exit_code);
     try testing.expectEqualStrings("cleanup\n", out.written());
+}
+
+test "section 14.1's Program.arguments carries the program's own CLI arguments" {
+    var source = try Source.init(testing.allocator, "test.em", "print(Program.arguments, Program.arguments.count)\n");
+    defer source.deinit(testing.allocator);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var no_input: std.Io.Reader = .fixed("");
+    var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input, .arguments = &.{ "one", "two" } });
+    defer report.deinit();
+    try testing.expect(report.ok());
+    try testing.expectEqualStrings("[\"one\", \"two\"] 2\n", out.written());
+}
+
+test "Program.arguments is empty by default, and each read is independent" {
+    try expectOutput("print(Program.arguments)\n", "[]\n");
+    // A `List` is copy-on-write value semantics (8.2), so mutating one read
+    // never shows up in another.
+    try expectOutput(
+        "var mine = Program.arguments\nmine.append(\"extra\")\nprint(mine, Program.arguments)\n",
+        "[\"extra\"] []\n",
+    );
 }
 
 test "section 8.2's dictionary literal, lookup, and assignment" {
@@ -2336,7 +2362,11 @@ test "return is checked against the function's type" {
     try expectFailure("func f(): Int {\n    return true\n}\n", "this is Bool, but the function returns Int");
     try expectFailure("func f(): Int {\n    return\n}\n", "this function must return a value");
     try expectFailure("func f(): Nothing {\n    return 1\n}\n", "this function returns Nothing, so `return` cannot produce a value");
-    try expectFailure("print(1)\nreturn\n", "`return` can only be used inside a function");
+    try expectFailure("return\nprint(1)\n", "this code can never run");
+    try expectFailure("return 1\n", "a top-level `return` cannot return a value");
+    // Section 14.1: a bare top-level `return` ends the program successfully,
+    // right where it runs, unlike inside a function.
+    try expectOutput("print(1)\nreturn\nprint(2)\n", "1\n");
     try expectOutput("func half(n: Int): Float {\n    return n\n}\nprint(half(3))\n", "3.0\n");
 }
 
