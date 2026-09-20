@@ -12,6 +12,12 @@ print(6.lcm(8), (-6).lcm(8), 0.lcm(8))
 print(0.factorial(), 1.factorial(), 5.factorial(), 20.factorial())
 print(42.to_float(), 42.to_float().type_name)
 
+# 15.5's `to_string(base:)` and `format(group_digits:)`.
+print(255.to_string(), 255.to_string(base: 16), 255.to_string(base: 2))
+print(0.to_string(base: 16), (-255).to_string(base: 16), 255.to_string(16))
+print(1234567.format(), 1234567.format(group_digits: true))
+print((-1234567).format(group_digits: true), 42.format(group_digits: true))
+
 var evaluations = 0
 func counted(value: Int): Int {
     evaluations += 1

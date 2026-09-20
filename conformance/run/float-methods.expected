@@ -13,4 +13,8 @@ false false false true true
 1.5 Infinity true
 Int Float
 Float Float
+12.50 12 12.5
+1,234,567.89 1,234,567.5
+-1,234,567.89
+NaN Infinity -Infinity
 2.5 3

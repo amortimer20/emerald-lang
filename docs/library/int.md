@@ -39,9 +39,20 @@ Whether the receiver falls in `minimum..maximum`, inclusive on both ends.
 
 The three sign predicates. `0` answers `zero?` true and both sign predicates false.
 
-## to_string() -> String
+## to_string(base: Int = 10) -> String
 
-The receiver's canonical decimal text, the same text `print` and interpolation display.
+The receiver's text in `base`: decimal by default, the same text `print` and interpolation
+display. A named `base` from 2 through 36 spells the receiver in that base instead, digits
+`0`-`9` then lowercase `a`-`z`, with a leading `-` for a negative receiver
+(`255.to_string(base: 16)` is `"ff"`; `(-255).to_string(base: 16)` is `"-ff"`).
+
+**Raises** for a `base` outside 2 through 36.
+
+## format(group_digits: Bool = false) -> String
+
+Decimal text, the same as `to_string()`, with `,` inserted every three digits from the right
+when `group_digits` is `true` (`1234567.format(group_digits: true)` is `"1,234,567"`). See
+[`Float.format`](float.md) for the decimal-place-rounding sibling.
 
 ## Int-only methods
 

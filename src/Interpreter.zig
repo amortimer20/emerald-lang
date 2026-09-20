@@ -5620,6 +5620,19 @@ fn callToSet(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
 fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Value {
     const receiver = try self.evaluate(member.base);
     defer self.heap.release(receiver);
+
+    // Section 15.5: named, defaulted arguments, so they bypass the plain
+    // positional `arguments` evaluated below.
+    if (receiver.data == .int and std.mem.eql(u8, member.name, "to_string")) {
+        return self.intToString(span, call, receiver.data.int);
+    }
+    if (receiver.data == .int and std.mem.eql(u8, member.name, "format")) {
+        return self.intFormat(call, receiver.data.int);
+    }
+    if (receiver.data == .float and std.mem.eql(u8, member.name, "format")) {
+        return self.floatFormat(span, call, receiver.data.float);
+    }
+
     const arguments = try self.evaluateArguments(call.arguments);
     defer {
         for (arguments) |argument| self.heap.release(argument);
@@ -5740,6 +5753,119 @@ fn intMethod(self: *Interpreter, span: Source.Span, value: i64, name: []const u8
         .factorial => self.integerFactorial(span, value),
         .to_float => .initFloat(@floatFromInt(value)),
     };
+}
+
+/// Section 15.5's `to_string(base:)`: decimal text by default, or any base 2
+/// through 36 (digits `0`-`9` then lowercase `a`-`z`) when named.
+fn intToString(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, value: i64) Error!Value {
+    const bound = try self.evaluateBound(call, &.{"base"}, &.{true});
+    defer self.gpa.free(bound.values);
+    defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+    const base: i64 = if (bound.values[0].data == .nothing) 10 else bound.values[0].data.int;
+    if (base < 2 or base > 36) return self.raiseFmt(
+        span,
+        "`to_string` needs a base from 2 to 36, but received {d}",
+        .{base},
+        "Pass a base between 2 (binary) and 36 (using letters as extra digits).",
+    );
+    return self.ownedText(try self.digitsInBase(value, @intCast(base)));
+}
+
+/// The receiver's magnitude written in `base`, with a leading `-` restored
+/// for a negative value. `base` is already proven to be 2 through 36.
+fn digitsInBase(self: *Interpreter, value: i64, base: u64) Error![]u8 {
+    const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
+    var magnitude = integerMagnitude(value);
+    var reversed: [64]u8 = undefined;
+    var count: usize = 0;
+    if (magnitude == 0) {
+        reversed[0] = '0';
+        count = 1;
+    } else {
+        while (magnitude != 0) : (magnitude /= base) {
+            reversed[count] = alphabet[magnitude % base];
+            count += 1;
+        }
+    }
+    const negative = value < 0;
+    const text = try self.gpa.alloc(u8, count + @as(usize, if (negative) 1 else 0));
+    var index: usize = 0;
+    if (negative) {
+        text[0] = '-';
+        index = 1;
+    }
+    while (count > 0) {
+        count -= 1;
+        text[index] = reversed[count];
+        index += 1;
+    }
+    return text;
+}
+
+/// Section 15.5's `format(group_digits:)` on an `Int`: decimal digits, with
+/// thousands separators inserted when asked.
+fn intFormat(self: *Interpreter, call: Ast.Expression.Call, value: i64) Error!Value {
+    const bound = try self.evaluateBound(call, &.{"group_digits"}, &.{true});
+    defer self.gpa.free(bound.values);
+    defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+    const group_digits = bound.values[0].data != .nothing and bound.values[0].data.bool;
+    return self.ownedText(try self.formatMagnitude(integerMagnitude(value), value < 0, group_digits));
+}
+
+/// Decimal digits of `magnitude`, comma-grouped every three from the right
+/// when `group_digits`, with a leading `-` when `negative`. Shared by
+/// `Int.format` and `Float.format`.
+fn formatMagnitude(self: *Interpreter, magnitude: u64, negative: bool, group_digits: bool) Error![]u8 {
+    var buffer: [20]u8 = undefined;
+    const digits = decimalDigits(magnitude, &buffer);
+    const body = if (group_digits) try self.groupDigits(digits) else digits;
+    defer if (group_digits) self.gpa.free(body);
+    const text = try self.gpa.alloc(u8, body.len + @as(usize, if (negative) 1 else 0));
+    var index: usize = 0;
+    if (negative) {
+        text[0] = '-';
+        index = 1;
+    }
+    @memcpy(text[index..], body);
+    return text;
+}
+
+fn decimalDigits(magnitude_in: u64, buffer: *[20]u8) []const u8 {
+    var magnitude = magnitude_in;
+    if (magnitude == 0) {
+        buffer[0] = '0';
+        return buffer[0..1];
+    }
+    var count: usize = 0;
+    while (magnitude != 0) : (magnitude /= 10) {
+        buffer[count] = @intCast('0' + magnitude % 10);
+        count += 1;
+    }
+    std.mem.reverse(u8, buffer[0..count]);
+    return buffer[0..count];
+}
+
+/// Inserts a `,` every three digits from the right of a plain digit string
+/// (no sign, no decimal point).
+fn groupDigits(self: *Interpreter, digits: []const u8) Error![]u8 {
+    if (digits.len <= 3) return self.gpa.dupe(u8, digits);
+    const groups = (digits.len - 1) / 3;
+    const text = try self.gpa.alloc(u8, digits.len + groups);
+    var write_index = text.len;
+    var read_index = digits.len;
+    var since_comma: usize = 0;
+    while (read_index > 0) {
+        read_index -= 1;
+        write_index -= 1;
+        text[write_index] = digits[read_index];
+        since_comma += 1;
+        if (since_comma == 3 and read_index != 0) {
+            write_index -= 1;
+            text[write_index] = ',';
+            since_comma = 0;
+        }
+    }
+    return text;
 }
 
 fn requireOrderedBounds(self: *Interpreter, span: Source.Span, name: []const u8, minimum: i64, maximum: i64) Error!void {
@@ -5961,6 +6087,63 @@ fn roundFloatTo(value: f64, places: i64) f64 {
 
     const scale = std.math.pow(f64, 10, @as(f64, @floatFromInt(-places)));
     return @round(value / scale) * scale;
+}
+
+fn displayFloatAlloc(self: *Interpreter, value: f64) Error![]u8 {
+    var built: std.Io.Writer.Allocating = .init(self.gpa);
+    defer built.deinit();
+    try Value.displayFloat(value, &built.writer);
+    return built.toOwnedSlice();
+}
+
+/// Section 15.5's `format(decimal_places:, group_digits:)` on a `Float`. NaN
+/// and infinity always display the way `to_string` does, ignoring both
+/// arguments, since neither has a decimal or grouped form.
+fn floatFormat(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, value: f64) Error!Value {
+    const bound = try self.evaluateBound(call, &.{ "decimal_places", "group_digits" }, &.{ true, true });
+    defer self.gpa.free(bound.values);
+    defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+    const group_digits = bound.values[1].data != .nothing and bound.values[1].data.bool;
+
+    if (!std.math.isFinite(value)) return self.ownedText(try self.displayFloatAlloc(value));
+
+    if (bound.values[0].data == .nothing) {
+        const text = try self.displayFloatAlloc(value);
+        return self.ownedText(if (group_digits) try self.groupFloatText(text) else text);
+    }
+
+    const places = bound.values[0].data.int;
+    if (places < 0 or places > 100) return self.raiseFmt(
+        span,
+        "`format` needs a decimal_places from 0 to 100, but received {d}",
+        .{places},
+        "Pass a whole number of digits after the decimal point.",
+    );
+    const fixed = try std.fmt.allocPrint(self.gpa, "{d:.[1]}", .{ value, @as(usize, @intCast(places)) });
+    return self.ownedText(if (group_digits) try self.groupFloatText(fixed) else fixed);
+}
+
+/// Inserts thousands separators into the integer part of already-rendered
+/// Float text, skipping scientific notation, which has no integer part to
+/// group.
+fn groupFloatText(self: *Interpreter, text: []u8) Error![]u8 {
+    if (std.mem.indexOfScalar(u8, text, 'e') != null) return text;
+    const negative = text.len > 0 and text[0] == '-';
+    const start: usize = if (negative) 1 else 0;
+    const point = std.mem.indexOfScalar(u8, text, '.') orelse text.len;
+    const grouped_digits = try self.groupDigits(text[start..point]);
+    defer self.gpa.free(grouped_digits);
+    const fraction = text[point..];
+    const result = try self.gpa.alloc(u8, @as(usize, if (negative) 1 else 0) + grouped_digits.len + fraction.len);
+    var index: usize = 0;
+    if (negative) {
+        result[0] = '-';
+        index = 1;
+    }
+    @memcpy(result[index..][0..grouped_digits.len], grouped_digits);
+    @memcpy(result[index + grouped_digits.len ..][0..fraction.len], fraction);
+    self.gpa.free(text);
+    return result;
 }
 
 /// Section 9.2's string methods, on the receiver's bytes. The checker has

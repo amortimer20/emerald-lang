@@ -10,11 +10,11 @@ diagnostics/named-argument-unsupported.em:5:14: a named argument needs a functio
   print(double(n: 1))
                ^
 Pass this value by position instead.
-diagnostics/named-argument-unsupported.em:8:15: a named argument needs a function, method, or type called by its own name
+diagnostics/named-argument-unsupported.em:9:15: a named argument needs a function, method, or type called by its own name
   scores.insert(element: 5, index: 0)
                 ^^^^^^^
 Pass this value by position instead.
-diagnostics/named-argument-unsupported.em:9:19: a named argument needs a function, method, or type called by its own name
-  print(3.to_string(base: 2))
-                    ^^^^
+diagnostics/named-argument-unsupported.em:10:15: a named argument needs a function, method, or type called by its own name
+  scores.remove(element: 1)
+                ^^^^^^^
 Pass this value by position instead.

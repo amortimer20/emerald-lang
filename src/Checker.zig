@@ -5894,8 +5894,9 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             return .invalid;
         }
     }
-    if ((base.kind == .int and Type.int_methods.has(member.name)) or
-        (base.kind == .float and Type.float_methods.has(member.name)) or
+    if ((base.kind == .int and (Type.int_methods.has(member.name) or
+        std.mem.eql(u8, member.name, "to_string") or std.mem.eql(u8, member.name, "format"))) or
+        (base.kind == .float and (Type.float_methods.has(member.name) or std.mem.eql(u8, member.name, "format"))) or
         (base.kind == .bool and std.mem.eql(u8, member.name, "to_string")))
     {
         try self.reportWithHelp(
@@ -5992,9 +5993,15 @@ fn typeOfMethodCall(
         return .invalid;
     }
     if (base.kind != .struct_value or base.optional) {
+        // Section 15.5's `to_string(base:)` and `format(...)` are the one
+        // exception: built-in methods with their own named, defaulted
+        // arguments, matched the same way a declared method's are.
+        const named_builtin = (base.kind == .int and
+            (std.mem.eql(u8, member.name, "to_string") or std.mem.eql(u8, member.name, "format"))) or
+            (base.kind == .float and std.mem.eql(u8, member.name, "format"));
         // Nothing else about the call is checked, since a named value's
         // position means nothing here and would only report again.
-        if (try self.rejectNames(call)) {
+        if (!named_builtin and try self.rejectNames(call)) {
             try self.typeArguments(call.arguments);
             return .invalid;
         }
@@ -7450,6 +7457,30 @@ fn typeOfStringMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Exp
 /// Section 9.3's integer methods. Their arguments are deliberately all `Int`:
 /// widening one to `Float` would change what an integer-only operation means.
 fn typeOfIntMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    // Section 15.5: `base` and `group_digits` are named and defaulted, unlike
+    // every other Int method's plain positional arguments, so they bypass
+    // `int_methods` for their own argument matching.
+    if (std.mem.eql(u8, member.name, "to_string")) {
+        try self.checkArguments(call, member.name, .{
+            .types = &.{.int},
+            .names = &.{"base"},
+            .has_default = &.{true},
+            .arity_help = "Call it with no arguments for decimal text, or name a base, as in `to_string(base: 16)`.",
+            .mismatch_help = "Pass a whole number base.",
+        });
+        return .string;
+    }
+    if (std.mem.eql(u8, member.name, "format")) {
+        try self.checkArguments(call, member.name, .{
+            .types = &.{.bool},
+            .names = &.{"group_digits"},
+            .has_default = &.{true},
+            .arity_help = "Call it with no arguments, or `group_digits: true` to add thousands separators.",
+            .mismatch_help = "Pass a Bool.",
+        });
+        return .string;
+    }
+
     const method = Type.int_methods.get(member.name) orelse {
         try self.reportUnknownMember(.int, member, "method");
         try self.typeArguments(call.arguments);
@@ -7481,6 +7512,19 @@ fn typeOfIntMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expres
 /// Section 9.3's floating-point methods. Float operands use the same
 /// `Int`-to-`Float` widening as every other expected Float position.
 fn typeOfFloatMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    // Section 15.5: `format` takes two named, defaulted arguments, unlike
+    // every other Float method's plain positional arguments.
+    if (std.mem.eql(u8, member.name, "format")) {
+        try self.checkArguments(call, member.name, .{
+            .types = &.{ Type.int.optionalOf(), .bool },
+            .names = &.{ "decimal_places", "group_digits" },
+            .has_default = &.{ true, true },
+            .arity_help = "Call it with no arguments, `decimal_places: n`, `group_digits: true`, or both.",
+            .mismatch_help = "Pass a whole number of decimal places, or a Bool.",
+        });
+        return .string;
+    }
+
     const method = Type.float_methods.get(member.name) orelse {
         try self.reportUnknownMember(.float, member, "method");
         try self.typeArguments(call.arguments);
@@ -7587,8 +7631,8 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
             .dictionary => "A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.",
             .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
             .string => "A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `insert_at`, `substring`, `remove_prefix`, `remove_suffix`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `split`, `partition`, `lines`, `chars`, `code_points`, `bytes`, `to_int`, and `to_float`.",
-            .int => "An Int has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `to_float`, and `to_string`.",
-            .float => "A Float has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `floor`, `ceil`, `round`, `round_to`, `truncate`, `finite?`, `infinite?`, `nan?`, `to_int`, and `to_string`.",
+            .int => "An Int has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `to_float`, `to_string`, and `format`.",
+            .float => "A Float has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `floor`, `ceil`, `round`, `round_to`, `truncate`, `finite?`, `infinite?`, `nan?`, `to_int`, `to_string`, and `format`.",
             else => "Check the spelling, or what kind of value this is.",
         },
     );

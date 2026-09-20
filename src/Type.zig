@@ -620,7 +620,6 @@ pub const int_methods = std.StaticStringMap(IntMethod).initComptime(.{
     .{ "lcm", IntMethod{ .parameters = 1, .result = .int } },
     .{ "factorial", IntMethod{ .parameters = 0, .result = .int } },
     .{ "to_float", IntMethod{ .parameters = 0, .result = .float } },
-    .{ "to_string", IntMethod{ .parameters = 0, .result = .string } },
 });
 
 /// Section 9.3's methods on a `Float`. An `Int` is accepted for a `.float`

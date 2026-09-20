@@ -4,3 +4,5 @@
 `to_int` cannot produce an Int from a non-finite Float
 the result of `truncate` is outside the range of Int
 -9223372036854775808
+`format` needs a decimal_places from 0 to 100, but received -1
+`format` needs a decimal_places from 0 to 100, but received 101

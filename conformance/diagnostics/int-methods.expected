@@ -17,7 +17,7 @@ Pass a whole number.
 diagnostics/int-methods.em:5:3: Int has no method `unknown`
   1.unknown()
     ^^^^^^^
-An Int has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `to_float`, and `to_string`.
+An Int has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `to_float`, `to_string`, and `format`.
 diagnostics/int-methods.em:6:9: `even?` is a method, so it needs parentheses
   print(1.even?)
           ^^^^^

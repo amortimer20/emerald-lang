@@ -20,6 +20,12 @@ print(1.5.clamp(-infinity, infinity), infinity.round_to(2), nan.round_to(-2).nan
 print(2.5.floor().type_name, 2.5.round_to(0).type_name)
 print(Float.nan.type_name, Float.infinity.type_name)
 
+# 15.5's `format(decimal_places:, group_digits:)`.
+print(12.5.format(decimal_places: 2), 12.0.format(decimal_places: 0), 12.5.format())
+print(1234567.891.format(decimal_places: 2, group_digits: true), 1234567.5.format(group_digits: true))
+print((-1234567.891).format(decimal_places: 2, group_digits: true))
+print(nan.format(decimal_places: 2), infinity.format(group_digits: true), (-infinity).format())
+
 var evaluations = 0
 func counted(value: Float): Float {
     evaluations += 1

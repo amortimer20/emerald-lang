@@ -39,3 +39,17 @@ catch error: RuntimeError {
 }
 
 print((-9223372036854775808.0).to_int())
+
+try {
+    print(12.5.format(decimal_places: -1))
+}
+catch error: RuntimeError {
+    print(error.message)
+}
+
+try {
+    print(12.5.format(decimal_places: 101))
+}
+catch error: RuntimeError {
+    print(error.message)
+}

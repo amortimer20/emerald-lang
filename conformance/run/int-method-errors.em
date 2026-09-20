@@ -55,3 +55,17 @@ try {
 catch error: RuntimeError {
     print(error.message)
 }
+
+try {
+    print(255.to_string(base: 1))
+}
+catch error: RuntimeError {
+    print(error.message)
+}
+
+try {
+    print(255.to_string(base: 37))
+}
+catch error: RuntimeError {
+    print(error.message)
+}

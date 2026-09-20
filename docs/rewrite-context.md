@@ -2666,10 +2666,10 @@ String interpolation handles ordinary formatting. A simple explicit formatting f
 may cover reusable templates and numeric presentation, but it should not become a second
 mini-language prematurely.
 
-Numbers use readable named arguments rather than compact format codes. None of this exists
-yet — `to_string()` on `Int`/`Float` today takes no arguments (see
-[docs/library/int.md](library/int.md) and [docs/library/float.md](library/float.md)) and
-there is no `format()` method at all. The settled design to build toward:
+Numbers use readable named arguments rather than compact format codes. `Int.to_string` takes
+a named, defaulted `base`, and both `Int` and `Float` have a `format()` (see
+[docs/library/int.md](library/int.md) and [docs/library/float.md](library/float.md) for the
+full pages):
 
 ```emerald
 12.5.format(decimal_places: 2)       # "12.50"
@@ -2680,8 +2680,8 @@ there is no `format()` method at all. The settled design to build toward:
 
 `format()` returns a `String`; `round_to()` changes a numeric value. Default formatting is
 locale-independent. Locale-aware formatting is a separate later facility. Infinity and
-NaN render plainly as `"Infinity"` and `"NaN"`, and are exposed as type-level `Float`
-constants.
+NaN render plainly as `"Infinity"` and `"NaN"`, ignoring `format`'s arguments, and are exposed
+as type-level `Float` constants.
 
 Dates, time zones, durations, serialization, networking, and concurrency belong in later
 standard-library passes. Their absence must not be patched with premature general-purpose

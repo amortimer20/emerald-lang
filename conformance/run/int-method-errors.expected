@@ -6,3 +6,5 @@ a negative Int has no factorial, but this is -1
 21! does not fit in Int
 the result of `gcd` does not fit in Int
 the least common multiple of 9223372036854775807 and 2 does not fit in Int
+`to_string` needs a base from 2 to 36, but received 1
+`to_string` needs a base from 2 to 36, but received 37
