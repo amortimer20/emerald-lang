@@ -10,7 +10,9 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 The Zig rewrite implements the current rewrite-context language surface: control flow,
 functions, optionals, collections, Unicode strings, structs, classes, inheritance, traits,
 enums, typed errors, projects/namespaces, range values and slicing. The formatter, REPL, and
-the LSP's first slice (diagnostics, document symbols, format on save) are complete.
+the LSP's first two phases (diagnostics, document symbols, format on save, hover, go to
+definition, find references, rename, and completion) are complete, with each phase's own known
+gaps listed under "Active rough edges" below.
 
 The standard library's whole-file filesystem area is complete. `File`, `Directory`, and
 `Path` provide UTF-8 text I/O, recursive/idempotent directory creation, empty-only directory
@@ -146,20 +148,39 @@ implies, so it fails safely rather than renaming the wrong thing. Verified end t
 JSON-RPC: a cross-file rename correctly grouped into two files' edits, and an invalid new name
 correctly rejected rather than crashing or silently corrupting the source.
 
+Completion is implemented, the last piece of the LSP's second phase and the one piece that
+was never going to be "more of the same." An in-progress member access, `foo.` or `foo.par`,
+does not merely lack a type the checker never computed — it fails to *parse* at all:
+`finishMember` (`Parser.zig`) reports a diagnostic and unwinds to the nearest statement
+boundary, discarding everything before the dot along with it. Building a real error-tolerant
+grammar to keep a partial node around would touch `Parser.zig`'s recovery for every caller
+(`check`, `run`, `format`, and every conformance and diagnostic golden file), to serve one
+editor feature — so a completion request instead patches a throwaway copy of the buffer:
+`foo.` becomes `foo.placeholder()`, a fixed, always-valid synthetic call, and
+`appendUnclosedBrackets` closes whatever `(`, `[`, or `{` the surrounding statement (very often
+still unclosed — `print(foo.` mid-call is the ordinary case) had left open. A bare
+`placeholder` with no call very nearly worked and was the first thing tried: it still gets
+discarded as an unused-result statement (section 5.2) when the dot sits alone on its own line,
+and separately, a dot's own newline-suppression (`Lexer.zig`'s continuation rule, for fluent
+chains) can swallow a real, unrelated statement immediately following on the next line into
+the same broken expression. Wrapping the placeholder in a call fixes both: `)` both makes it a
+call and ends the newline suppression. Scoped to a value's own member access (fields,
+properties, methods, walking base classes and adopted traits) — a type-qualified base's own
+completions (10.4) turned out to need a second, separate analysis pass and were cut from this
+slice; see the rough edge below for the specific reason the same trick can't reach them.
+
 ## Next step
 
-A 2026-09-20 roadmap review triaged prior "what's next" suggestions from both agents against
-the current binary. Closed and no longer live: per-family runnable examples, `!`/optional/
-callback/raise labeling, conformance-programs-as-executable-examples, the filesystem design,
-the five maintainability findings (retired in `6a6a718`), the program entry point, and the
-opportunistic trait `is` analysis (streaming I/O and the bounded implementation limits below
-were bundled with it but were not done, and were not promoted to a named next step; nothing
-currently motivates either). What's open, in recommended order, none yet authorized to start:
-
-1. The last piece of the LSP's second phase: completion, its own parser recovery strategy —
-   the one piece that is not "more of the same" — since a broken construct like `foo.` today
-   discards its whole enclosing statement rather than leaving a partial node to offer
-   completions against (see `Lsp.zig`'s header).
+The LSP's second phase is complete: hover, go to definition, find references, rename, and
+completion. A 2026-09-20 roadmap review had triaged prior "what's next" suggestions from both
+agents against the binary at the time; everything from that review is now either closed or
+named-but-unordered below, and nothing is yet authorized as the next thing to build. Closed and
+no longer live from that review: per-family runnable examples, `!`/optional/callback/raise
+labeling, conformance-programs-as-executable-examples, the filesystem design, the five
+maintainability findings (retired in `6a6a718`), the program entry point, and the opportunistic
+trait `is` analysis (streaming I/O and the bounded implementation limits below were bundled
+with it but were not done, and were not promoted to a named next step; nothing currently
+motivates either).
 
 Named but unordered: `emerald explain`/diagnostic polish; a custom equality/hashing design
 pass, the natural sibling to `Textual`/`Ordered`; streaming/binary file I/O and recursive
@@ -210,21 +231,30 @@ this session's changes where that mattered):
   reason.
 - Rename has no `prepareRename`, so a client with no fallback of its own (most have one) may
   offer to rename a position that then turns out not to be renameable.
+- Completion answers only a value's own member access (fields, properties, methods). A
+  type-qualified base's own completions (10.4's `Vector2.origin`) are not answered:
+  `Resolver.zig`'s `qualify` validates a type-qualified reference eagerly, so patching in an
+  unknown placeholder member fails the *whole* analysis (a resolver diagnostic, not a checker
+  one) rather than leaving one expression untyped the way an unknown instance member does.
+  Namespace-level completion (`Shapes.` suggesting what the namespace declares) and a bare
+  identifier with no preceding dot are also not answered.
 
 ## Validation and repository state
 
 The latest completed slices, including the program entry point, the ledger shakedown, the
 trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
-definition, find references, and rename, passed `bash tools/check-toolchain.sh`,
-`zig build test` in Debug and ReleaseSafe (369/369 tests), `bash tools/check-doc-examples.sh`
+definition, find references, rename, and completion, passed `bash tools/check-toolchain.sh`,
+`zig build test` in Debug and ReleaseSafe (374/374 tests), `bash tools/check-doc-examples.sh`
 after `zig build`, and `git diff --check` with pinned Zig 0.16.0. Go to definition, find
-references, and rename were each also checked end to end against the real LSP server over
-JSON-RPC (single-file member access and constructor calls; a two-file project crossing into a
-sibling file, both with and without `includeDeclaration`; a cross-file rename's grouped edits;
-an invalid new name's rejection), not just their Zig unit tests, which is how go to
-definition's constructor-call gap above was actually found. The Windows path/lexer fix's
-Windows-specific half could not be verified locally and was confirmed by CI instead. The
-working tree was clean after commit `b03d84c` (`Implement LSP find references`) before this
+references, rename, and completion were each also checked end to end against the real LSP
+server over JSON-RPC (single-file member access and constructor calls; a two-file project
+crossing into a sibling file, both with and without `includeDeclaration`; a cross-file rename's
+grouped edits; an invalid new name's rejection; completion on its own line, mid-call with an
+unclosed paren, and the documented type-qualified-base and no-dot cases correctly returning
+nothing), not just their Zig unit tests — which is how both go to definition's constructor-call
+gap and completion's own bare-placeholder failure mode were actually found. The Windows
+path/lexer fix's Windows-specific half could not be verified locally and was confirmed by CI
+instead. The working tree was clean after commit `e975670` (`Implement LSP rename`) before this
 pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run

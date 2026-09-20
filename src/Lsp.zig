@@ -34,10 +34,16 @@
 //! — a client that calls it first (VS Code does) falls back to its own idea
 //! of the word under the cursor, and `onRename` below resolves and validates
 //! the real target itself regardless of what range the client assumed.
-//! Completion is last, since it alone needs a different parser recovery
-//! strategy — today a broken construct like `foo.` discards its whole
-//! enclosing statement rather than leaving a partial node to offer
-//! completions against.
+//!
+//! Completion is the fifth and last piece, the one that needed a different
+//! strategy rather than more of the same: an in-progress member access,
+//! `foo.` or `foo.par`, does not merely lack a type the checker never
+//! computed — it fails to *parse* at all, discarding its whole enclosing
+//! statement (see the section below for why, and how a completion request
+//! works around it without touching the shared parser). Scoped to a value's
+//! own member access; a type-qualified base's own members (10.4) and a bare
+//! identifier with no preceding dot are both out of scope this round (see
+//! this file's own completion section and `docs/handoff.md`'s rough edges).
 //!
 //! Wire format: JSON-RPC 2.0 framed as `Content-Length: N\r\n\r\n` followed
 //! by exactly N bytes of JSON (LSP's own framing, independent of JSON-RPC
@@ -445,6 +451,7 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
                 .definitionProvider = true,
                 .referencesProvider = true,
                 .renameProvider = true,
+                .completionProvider = .{ .triggerCharacters = &[_][]const u8{"."} },
             },
         });
         return false;
@@ -529,10 +536,17 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
         if (id) |request_id| try onRename(server, gpa, uri, position, new_name, request_id, out);
         return false;
     }
+    if (std.mem.eql(u8, method, "textDocument/completion")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        const position = try positionField(params);
+        if (id) |request_id| try onCompletion(server, gpa, uri, position, request_id, out);
+        return false;
+    }
 
-    // Anything else, including completion, still deferred, and
-    // `$/cancelRequest`: a well-formed "not found" for a request, silently
-    // ignored for a notification — never a crash or a hang either way.
+    // Anything else, and `$/cancelRequest`: a well-formed "not found" for a
+    // request, silently ignored for a notification — never a crash or a
+    // hang either way.
     if (id) |request_id| try respondMethodNotFound(gpa, out, request_id);
     return false;
 }
@@ -1731,6 +1745,245 @@ fn isValidIdentifier(name: []const u8) bool {
     return true;
 }
 
+// Completion.
+//
+// The one piece that is not "more of the same" (see this file's header): a
+// member access still being typed, `foo.` or `foo.par`, does not merely lack
+// a type the checker never computed (hover's `.call` callee problem) — it
+// fails to *parse* at all. `finishMember` (`Parser.zig`) reports a
+// diagnostic and returns `error.ParseFailed`, which unwinds past the whole
+// expression to the nearest statement boundary (`skipToNextStatement`), so
+// nothing before the dot survives either. Building a real error-tolerant
+// grammar to keep a partial node around would touch `Parser.zig`'s recovery
+// for every caller — `check`, `run`, `format`, and every conformance and
+// diagnostic golden file along with them — to serve one editor feature.
+//
+// Instead, a completion request patches a throwaway copy of the buffer:
+// replace whatever partial name follows the dot with `placeholder()`, a
+// fixed, always-valid synthetic call. A bare `placeholder` (no call) will
+// not do: written where a statement is expected, section 5.2's "a call may
+// discard its result, but a pure expression whose result is unused is a
+// mistake" (`finishExpressionStatement`) discards it exactly like the
+// original broken dot did, and a trailing `.` also suppresses the newline
+// after it (`Lexer.zig`'s continuation rule, for fluent chains spanning
+// lines), so an unparenthesized placeholder can silently swallow whatever
+// real statement follows on the next line into the same expression. A call
+// closes with `)` — a token that ends an expression, so neither problem
+// applies — and always type-checks `foo`'s own type regardless of whether
+// `placeholder` turns out to name a real member.
+//
+// The statement is very often still unclosed around the dot (`print(foo.`
+// mid-call is the ordinary case, not the exception), so
+// `appendUnclosedBrackets` also counts `(`, `[`, and `{` from the top of the
+// file to the dot and closes what's still open — a plain character count,
+// blind to string and comment contents, same tradeoff as every other
+// heuristic in this file that reads source text directly rather than
+// through the lexer. Nothing past the completion point is used for
+// anything, so a later imbalance in the *real* file cannot make this worse.
+//
+// Only a value's own member access is answered this way. A type-qualified
+// base (`Vector2.` for its type-level members, 10.4) is not: unlike an
+// instance property access, which the checker validates and tolerates,
+// `Resolver.zig`'s own `qualify` validates a type-qualified reference
+// eagerly and reports an unresolvable one as a resolver diagnostic, which
+// fails the whole analysis outright (`emerald.analyzeProject` returns null)
+// rather than merely leaving one expression untyped — so `placeholder()`
+// cannot stand in for an unknown type-level member the way it can for an
+// unknown instance one. Answering it would need a second, separate analysis
+// pass; not attempted in this slice (see the rough edge this leaves in
+// `docs/handoff.md`). An identifier typed with no preceding dot needs none
+// of this either — it already parses as an ordinary (if undefined) name —
+// and is likewise not implemented in this slice.
+
+const CompletionItem = struct { label: []const u8 };
+
+/// A member expression could not spell this — it is not a valid identifier,
+/// so it cannot collide with a real member name — and long enough that a
+/// short, real prefix never accidentally matches it while scanning for it.
+const completion_placeholder = "emeraldLanguageServerCompletionPlaceholder";
+
+fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, id: std.json.Value, out: *std.Io.Writer) !void {
+    const empty: []const CompletionItem = &.{};
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, empty);
+        return;
+    };
+
+    const text = document.text.items;
+    var temp_source = try Source.init(gpa, uri, text);
+    defer temp_source.deinit(gpa);
+    const cursor_offset = offsetFromPosition(&temp_source, position);
+
+    const dot_offset = dotBeforeCursor(text, cursor_offset) orelse {
+        try respond(gpa, out, id, empty);
+        return;
+    };
+
+    // A bare `placeholder` (no call) can land as a statement on its own —
+    // `foo.\n` with nothing else on the line — where section 5.2's "a call
+    // may discard its result, but a pure expression whose result is unused
+    // is a mistake" rejects it outright (`finishExpressionStatement`,
+    // `Parser.zig`), discarding the whole statement before the checker ever
+    // sees it. `placeholder()` is always a call, so it always survives that
+    // rule regardless of where it lands, and it closes with `)` — a token
+    // that can end an expression — so it stops a dot's own newline
+    // suppression from swallowing whatever real code follows on the next
+    // line (`Lexer.zig`'s continuation rule: a trailing `.` continues a
+    // statement onto the next line; a trailing `)` does not).
+    var patched: std.ArrayList(u8) = .empty;
+    defer patched.deinit(gpa);
+    try patched.appendSlice(gpa, text[0 .. dot_offset + 1]);
+    try patched.appendSlice(gpa, completion_placeholder);
+    try patched.appendSlice(gpa, "()");
+    try appendUnclosedBrackets(gpa, &patched, text, dot_offset);
+    try patched.appendSlice(gpa, text[cursor_offset..]);
+
+    var loaded = try loadDocument(server, gpa, uri, patched.items);
+    defer loaded.deinit(gpa);
+
+    var analysis = (try emerald.analyzeProject(gpa, &loaded.project)) orelse {
+        try respond(gpa, out, id, empty);
+        return;
+    };
+    defer analysis.deinit(gpa);
+
+    // The base expression's own span still ends exactly at the dot in the
+    // patched text, whether or not it ended up wrapped as a call's callee
+    // (`Checker.typeOfMethodCall` types the base directly; a namespace- or
+    // type-qualified callee is resolved without `typeOf` at all, the same
+    // gap `definitionAt` works around — so this looks the base up by
+    // position rather than by walking to the synthetic call itself).
+    const base = findExpressionEndingAt(&analysis, loaded.index, dot_offset) orelse {
+        try respond(gpa, out, id, empty);
+        return;
+    };
+
+    var items: std.ArrayList(CompletionItem) = .empty;
+    defer items.deinit(gpa);
+
+    // A type-qualified base (`Vector2.` rather than a value's own member
+    // access) is not answered here — see this file's header for why the
+    // same placeholder trick cannot reach it.
+    if (analysis.checked.expression_types.get(base)) |base_info| {
+        if (base_info.type.kind == .struct_value and base_info.type.user != null) {
+            try collectInstanceMembers(gpa, &analysis, base_info.type.user.?.name, &items);
+        }
+    }
+
+    try respond(gpa, out, id, items.items);
+}
+
+/// The offset of the `.` immediately before whatever identifier prefix (if
+/// any) sits right before `cursor`, or null when `cursor` is not a member
+/// access in progress at all.
+fn dotBeforeCursor(text: []const u8, cursor: u32) ?u32 {
+    var index = cursor;
+    while (index > 0) {
+        const c = text[index - 1];
+        const is_identifier_byte = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_';
+        if (!is_identifier_byte) break;
+        index -= 1;
+    }
+    if (index == 0 or text[index - 1] != '.') return null;
+    return index - 1;
+}
+
+/// Appends whatever closes `(`, `[`, and `{` left open between the start of
+/// `text` and `end` — a best-effort, string-only count, blind to string and
+/// comment contents, like every other heuristic here that reads source text
+/// directly. Silently caps at a depth no real program approaches, rather
+/// than growing without bound on adversarial input.
+fn appendUnclosedBrackets(gpa: std.mem.Allocator, patched: *std.ArrayList(u8), text: []const u8, end: u32) !void {
+    var stack: [128]u8 = undefined;
+    var depth: usize = 0;
+    for (text[0..end]) |c| {
+        switch (c) {
+            '(', '[', '{' => {
+                if (depth < stack.len) {
+                    stack[depth] = switch (c) {
+                        '(' => ')',
+                        '[' => ']',
+                        else => '}',
+                    };
+                }
+                depth += 1;
+            },
+            ')', ']', '}' => {
+                if (depth > 0) depth -= 1;
+            },
+            else => {},
+        }
+    }
+    var i: usize = @min(depth, stack.len);
+    while (i > 0) {
+        i -= 1;
+        try patched.append(gpa, stack[i]);
+    }
+}
+
+/// The expression in `file` whose own span ends exactly at `offset` — the
+/// only ambiguity a plain span comparison could have (some other, unrelated
+/// expression coincidentally ending at the same byte in some other file) is
+/// exactly what `file` rules out.
+fn findExpressionEndingAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?*const Ast.Expression {
+    var iterator = analysis.checked.expression_types.iterator();
+    while (iterator.next()) |entry| {
+        if (entry.value_ptr.*.file != file) continue;
+        if (entry.key_ptr.*.span.end == offset) return entry.key_ptr.*;
+    }
+    return null;
+}
+
+fn findStructDeclarationAt(analysis: *const emerald.Analysis, target: Resolver.Target) ?Ast.StructDeclaration {
+    if (target.file >= analysis.parsed.len) return null;
+    for (analysis.parsed[target.file].program.statements) |statement| {
+        if (statement.data != .struct_declaration) continue;
+        const s = statement.data.struct_declaration;
+        if (s.name_span.start == target.span.start and s.name_span.end == target.span.end) return s;
+    }
+    return null;
+}
+
+fn addCompletionOnce(gpa: std.mem.Allocator, seen: *std.StringHashMapUnmanaged(void), out: *std.ArrayList(CompletionItem), name: []const u8) !void {
+    const result = try seen.getOrPut(gpa, name);
+    if (result.found_existing) return;
+    try out.append(gpa, .{ .label = name });
+}
+
+/// A struct or class's own instance fields, properties, and methods — not
+/// its type-level functions or fields (10.4), which belong to the type
+/// itself rather than to a value of it, and not its constructor, which is
+/// never written after a dot.
+fn addInstanceMembers(s: Ast.StructDeclaration, gpa: std.mem.Allocator, seen: *std.StringHashMapUnmanaged(void), out: *std.ArrayList(CompletionItem)) !void {
+    for (s.fields) |field| try addCompletionOnce(gpa, seen, out, field.name);
+    for (s.properties) |property| try addCompletionOnce(gpa, seen, out, property.name);
+    for (s.methods) |method| try addCompletionOnce(gpa, seen, out, method.name);
+}
+
+/// A value's own completions: `type_key`'s instance members, then its base
+/// classes' (10.7), most-derived first so an override hides what it
+/// overrides, then its adopted traits' (11.2).
+fn collectInstanceMembers(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, type_key: []const u8, out: *std.ArrayList(CompletionItem)) !void {
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(gpa);
+
+    var current_key: ?[]const u8 = type_key;
+    while (current_key) |key| {
+        if (analysis.resolved.facts.declarations.get(key)) |target| {
+            if (findStructDeclarationAt(analysis, target)) |s| try addInstanceMembers(s, gpa, &seen, out);
+        }
+        current_key = analysis.resolved.facts.bases.get(key);
+    }
+
+    if (analysis.resolved.facts.adopted.get(type_key)) |traits| {
+        for (traits) |trait_key| {
+            if (analysis.resolved.facts.declarations.get(trait_key)) |target| {
+                if (findStructDeclarationAt(analysis, target)) |s| try addInstanceMembers(s, gpa, &seen, out);
+            }
+        }
+    }
+}
+
 const testing = std.testing;
 
 test "a framed message round-trips through reading and writing" {
@@ -2078,4 +2331,144 @@ test "isValidIdentifier rejects an empty name, a leading digit, whitespace, and 
     try testing.expect(!isValidIdentifier("total-count"));
     try testing.expect(!isValidIdentifier("is?even"));
     try testing.expect(!isValidIdentifier("do!thing"));
+}
+
+test "dotBeforeCursor finds the dot before an in-progress name, before nothing, and not at all" {
+    const text = "foo.bar";
+    try testing.expectEqual(@as(?u32, 3), dotBeforeCursor(text, 7));
+    try testing.expectEqual(@as(?u32, 3), dotBeforeCursor(text, 4));
+    try testing.expectEqual(@as(?u32, null), dotBeforeCursor(text, 3));
+    try testing.expectEqual(@as(?u32, null), dotBeforeCursor("", 0));
+}
+
+test "appendUnclosedBrackets closes what a call left open, in matching order, and nothing when balanced" {
+    const gpa = testing.allocator;
+    var patched: std.ArrayList(u8) = .empty;
+    defer patched.deinit(gpa);
+
+    try appendUnclosedBrackets(gpa, &patched, "print(foo", 9);
+    try testing.expectEqualStrings(")", patched.items);
+
+    patched.clearRetainingCapacity();
+    try appendUnclosedBrackets(gpa, &patched, "a([{foo", 7);
+    try testing.expectEqualStrings("}])", patched.items);
+
+    patched.clearRetainingCapacity();
+    try appendUnclosedBrackets(gpa, &patched, "print(1, 2)", 11);
+    try testing.expectEqualStrings("", patched.items);
+}
+
+test "collectInstanceMembers finds a class's own members and its base class's" {
+    const gpa = testing.allocator;
+    const text =
+        \\class Animal {
+        \\    var name: String
+        \\    func speak() {}
+        \\}
+        \\class Dog extends Animal {
+        \\    var breed: String
+        \\    constructor(name: String, breed: String) {
+        \\        super(name)
+        \\        self.breed = breed
+        \\    }
+        \\}
+        \\print(Dog("Rex", "Lab"))
+    ;
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.ok());
+
+    var items: std.ArrayList(CompletionItem) = .empty;
+    defer items.deinit(gpa);
+    try collectInstanceMembers(gpa, &analysis, "Dog", &items);
+
+    var labels: std.StringHashMapUnmanaged(void) = .empty;
+    defer labels.deinit(gpa);
+    for (items.items) |item| try labels.put(gpa, item.label, {});
+    try testing.expect(labels.contains("breed"));
+    try testing.expect(labels.contains("name"));
+    try testing.expect(labels.contains("speak"));
+    try testing.expectEqual(@as(usize, 3), items.items.len);
+}
+
+test "collectInstanceMembers finds a class's own members and its adopted trait's default" {
+    const gpa = testing.allocator;
+    const text =
+        \\trait Greeter {
+        \\    func greet(): String {
+        \\        return "hi"
+        \\    }
+        \\}
+        \\class Item with Greeter {
+        \\    var id: Int
+        \\}
+        \\print(Item(1))
+    ;
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.ok());
+
+    var items: std.ArrayList(CompletionItem) = .empty;
+    defer items.deinit(gpa);
+    try collectInstanceMembers(gpa, &analysis, "Item", &items);
+
+    var labels: std.StringHashMapUnmanaged(void) = .empty;
+    defer labels.deinit(gpa);
+    for (items.items) |item| try labels.put(gpa, item.label, {});
+    try testing.expect(labels.contains("id"));
+    try testing.expect(labels.contains("greet"));
+    try testing.expectEqual(@as(usize, 2), items.items.len);
+}
+
+test "completion end to end: a broken member access mid-call patches into something the checker can type" {
+    const gpa = testing.allocator;
+    const text = "struct Point {\n    var x: Int\n    var y: Int\n}\nconst p = Point(1, 2)\nprint(p.\n";
+    const dot_position: u32 = @intCast(std.mem.indexOf(u8, text, "p.\n").? + 1);
+    const cursor: u32 = dot_position + 1;
+    try testing.expectEqual(@as(?u32, dot_position), dotBeforeCursor(text, cursor));
+
+    var patched: std.ArrayList(u8) = .empty;
+    defer patched.deinit(gpa);
+    try patched.appendSlice(gpa, text[0 .. dot_position + 1]);
+    try patched.appendSlice(gpa, completion_placeholder);
+    try patched.appendSlice(gpa, "()");
+    try appendUnclosedBrackets(gpa, &patched, text, dot_position);
+    try patched.appendSlice(gpa, text[cursor..]);
+
+    var source = try Source.init(gpa, "t.em", patched.items);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    // Not `analysis.ok()`: the checker rightly reports that `Point` has no
+    // method by the placeholder's name — same as hovering a typo reports one
+    // — but it still resolves and records `p`'s own type regardless, which
+    // is the only thing completion actually needs from this pass.
+    try testing.expect(!analysis.ok());
+
+    const base = findExpressionEndingAt(&analysis, 0, dot_position).?;
+    const base_info = analysis.checked.expression_types.get(base).?;
+    try testing.expectEqualStrings("Point", base_info.type.user.?.name);
+
+    var items: std.ArrayList(CompletionItem) = .empty;
+    defer items.deinit(gpa);
+    try collectInstanceMembers(gpa, &analysis, base_info.type.user.?.name, &items);
+
+    var labels: std.StringHashMapUnmanaged(void) = .empty;
+    defer labels.deinit(gpa);
+    for (items.items) |item| try labels.put(gpa, item.label, {});
+    try testing.expect(labels.contains("x"));
+    try testing.expect(labels.contains("y"));
 }
