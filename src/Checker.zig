@@ -818,6 +818,13 @@ fn ensureStructChecked(self: *Checker, key: []const u8) Error!void {
     try self.checkStructDeclaration(self.struct_declarations.get(key).?);
 }
 
+/// Whether this type displays through section 15.1's `Textual`, directly or
+/// through a trait or base class that adopts it.
+fn conformsToTextual(self: *Checker, user: *const Type.User) bool {
+    const textual = self.structs.get(Resolver.preludeKey("Textual")) orelse return false;
+    return user.conformsTo(textual.user orelse return false);
+}
+
 fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
     const key = self.keyOf(declaration.name);
     const struct_type = self.structs.get(key).?;
@@ -855,6 +862,20 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
                 "It gives the name of the value's type, and cannot be declared again. Give this member another name.",
             );
             continue;
+        }
+        // Section 15.1: `to_string` displays a value only through `Textual`,
+        // and adoption is explicit like every other trait's (11.2). Someone
+        // arriving from a language where overriding the method is enough gets
+        // told what the missing half is, rather than a silent debug form.
+        if (member.kind == .method and std.mem.eql(u8, member.name, "to_string") and
+            !self.conformsToTextual(user))
+        {
+            try self.reportWarning(
+                member.span,
+                "`{s}` declares `to_string`, but does not adopt `Textual`, so it still displays as `{s}(...)`",
+                .{ declaration.name, declaration.name },
+                "Write `with Textual` on the declaration to display through this method. Calling `to_string()` yourself already works either way.",
+            );
         }
         const first = seen.get(member.name) orelse {
             try seen.put(self.arena, member.name, member);

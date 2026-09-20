@@ -2211,6 +2211,41 @@ fn evaluateStringLiteral(self: *Interpreter, expression: *const Ast.Expression, 
     return .{ .data = .{ .string = cached.value_ptr.* } };
 }
 
+/// Section 15.1's `Textual`, in the shape `Value.writeThrough` consumes: the
+/// context that renders a value adopting the trait through its own
+/// `to_string()`. Only `print`, `write`, and interpolation supply one, so a
+/// custom rendering reaches every place a program displays a value on purpose,
+/// nested inside a collection included, while diagnostic text keeps the
+/// field-based form rather than running a program's own code mid-failure.
+const TextualDisplay = struct {
+    interpreter: *Interpreter,
+    /// Where the display was asked for, which is where a `to_string()` that
+    /// raises reports.
+    span: Source.Span,
+
+    /// Writes `value` through its own `to_string()`, or answers false when its
+    /// type does not adopt the trait and the plain form belongs there instead.
+    pub fn writeTextual(self: TextualDisplay, value: Value, writer: *std.Io.Writer) Error!bool {
+        if (!value.data.struct_value.descriptor.isOrExtends(Resolver.preludeKey("Textual"))) return false;
+        const text = try self.interpreter.callTextual(self.span, value);
+        defer self.interpreter.heap.release(text);
+        try writer.writeAll(text.data.string.bytes);
+        return true;
+    }
+};
+
+/// Runs a `Textual` value's own `to_string()`. The version is the one the
+/// value's own class runs (10.7), so an override wins, and an object still
+/// being built reports the same "ran before this was built" error that any
+/// other method call on it would.
+fn callTextual(self: *Interpreter, span: Source.Span, value: Value) Error!Value {
+    const method = value.data.struct_value.descriptor.methods.?.get("to_string").?;
+    try self.requireVersionBuilt(span, value, method.key, method);
+    var callable = self.namedCallable(method.key);
+    callable.self_value = Heap.retain(value);
+    return self.invoke(span, callable, &.{});
+}
+
 /// Section 5.1: each interpolated value appears as `print` would display it.
 fn evaluateInterpolation(self: *Interpreter, parts: []const Ast.Expression.Part) Error!Value {
     var built: std.Io.Writer.Allocating = .init(self.gpa);
@@ -2220,7 +2255,10 @@ fn evaluateInterpolation(self: *Interpreter, parts: []const Ast.Expression.Part)
         .expression => |part_expression| {
             const value = try self.evaluate(part_expression);
             defer self.heap.release(value);
-            try value.display(&built.writer);
+            try value.writeThrough(&built.writer, false, TextualDisplay{
+                .interpreter = self,
+                .span = part_expression.span,
+            });
         },
     };
     return .{ .data = .{ .string = try self.heap.createText(try built.toOwnedSlice()) } };
@@ -3476,6 +3514,10 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
 /// call. Displaying each as it arrived would interleave the output of an
 /// argument that prints with the line being built, and an argument that
 /// failed would leave half a line behind.
+///
+/// The whole line is built before any of it reaches the output for the same
+/// reason: a `Textual` value renders by running its own `to_string()`, which
+/// can raise partway through a line that has already begun.
 fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call, newline: bool) Error!Value {
     const values = try self.evaluateArguments(call.arguments);
     defer {
@@ -3483,13 +3525,19 @@ fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call, newline: bool) E
         self.gpa.free(values);
     }
 
+    var line: std.Io.Writer.Allocating = .init(self.gpa);
+    defer line.deinit();
     for (values, 0..) |value, position| {
         // Section 15.2 separates multiple arguments with one space.
-        if (position != 0) try self.out.writeAll(" ");
-        try value.display(self.out);
+        if (position != 0) try line.writer.writeAll(" ");
+        try value.writeThrough(&line.writer, false, TextualDisplay{
+            .interpreter = self,
+            .span = call.arguments[position].span,
+        });
     }
     // Section 15.2: `print` ends the line and `write` does not.
-    if (newline) try self.out.writeAll("\n");
+    if (newline) try line.writer.writeAll("\n");
+    try self.out.writeAll(line.written());
     // Section 15.2 gives both no result, which is section 4.2's `Nothing`.
     return Value.nothing;
 }

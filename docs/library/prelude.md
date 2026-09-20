@@ -5,8 +5,9 @@ declaration of the same name replaces the prelude's for that file (15.2). This p
 `print`, `write`, `input`, `input_maybe`, `random`, and `exit`. `assert` is documented with
 errors and tests, since its behavior belongs beside `raise`/`catch` rather than beside these
 six; the prelude's operator traits (`Addable`, `Subtractable`, `Multipliable`, `Divisible`,
-`Ordered`) belong with traits in the language guide, since they are adopted by user types
-rather than called directly.
+`Ordered`) and its display trait ([`Textual`](../language/objects-and-traits.md#display))
+belong with traits in the language guide, since they are adopted by user types rather than
+called directly.
 
 ## print(...values) -> Nothing
 
@@ -14,9 +15,11 @@ rather than called directly.
 
 Both accept zero or more values of any type and display each one the way string
 interpolation would — a string as its own text, everything else the same as `to_string()`
-or its type's own display. Multiple arguments are separated by one space, evaluated left to
-right. `print` appends a trailing newline; `write` does not, so repeated `write` calls build
-one line. There is no separator customization; interpolation is the way to build deliberate
+or its type's own display, including a type that supplies one by adopting
+[`Textual`](../language/objects-and-traits.md#display). Multiple arguments are separated by
+one space and evaluated left to right, and the whole line is built before any of it is
+written, so a `to_string()` that raises leaves no partial output. `print` appends a trailing
+newline; `write` does not, so repeated `write` calls build one line. There is no separator customization; interpolation is the way to build deliberate
 prose around a value. See [`examples/greeter.em`](../../examples/greeter.em) and
 [`examples/blocks.em`](../../examples/blocks.em) (which uses `write` inside a loop).
 

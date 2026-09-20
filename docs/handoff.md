@@ -39,16 +39,20 @@ rounding. Both methods are the first built-ins with real named/defaulted argumen
 declared function, method, or type, so `typeOfMethodCall`'s general "a built-in takes no
 names" rejection now carves out this one exception.
 
+The `Textual` trait (15.1) is implemented, as the sixth prelude trait in 11.5's family
+rather than as new display machinery. A type adopting it renders through its own
+`to_string()` in `print`, `write`, and interpolation, and everywhere the value appears,
+because `Value.writeThrough` carries a comptime display context through the whole walk;
+`{}` keeps diagnostics on the field-based form so building a failure never runs a program's
+own code. The checker warns when a type declares `to_string` without adopting the trait.
+
 ## Next step
 
-The `Textual` trait for custom print/interpolation display is next (15.5 named it as the
-step after formatting). It deserves its own design pass before implementation — it changes
-core display behavior for every struct and class, including open questions (does a nested
-object inside a `List`/`Dict` display through it, or only a top-level value?) that shouldn't
-be decided inside an implementation diff. Otherwise, the LSP's second phase (hover,
-go-to-definition, find references, safe rename, completion — see the journal's LSP notes) is
-the other named prospective slice. Follow the user's active request rather than treating
-this as an automatic backlog.
+Nothing is queued by design. The LSP's second phase (hover, go-to-definition, find
+references, safe rename, completion — see the journal's LSP notes) is the named prospective
+slice; 15.5's own list puts locale-aware formatting, dates, durations, and serialization in
+later passes, and streaming/binary file I/O stays deferred. Follow the user's active request
+rather than treating any of this as an automatic backlog.
 
 ## Deferred
 
@@ -84,11 +88,11 @@ this session's changes where that mattered):
 
 ## Validation and repository state
 
-The latest completed slices, including `remove_if` and `format`/`to_string(base:)`, passed
+The latest completed slices, including `format`/`to_string(base:)` and `Textual`, passed
 `bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe, `bash
 tools/check-doc-examples.sh` after `zig build`, and `git diff --check` with pinned Zig
-0.16.0. The working tree was clean after commit `1665933` (`Implement List.remove_if`)
-before this pass.
+0.16.0. The working tree was clean after commit `0cf33d0` (`Implement numeric format() and
+to_string(base:)`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a

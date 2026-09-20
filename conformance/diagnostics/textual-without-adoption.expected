@@ -1,0 +1,4 @@
+diagnostics/textual-without-adoption.em:8:10: warning: `Point` declares `to_string`, but does not adopt `Textual`, so it still displays as `Point(...)`
+      func to_string(): String {
+           ^^^^^^^^^
+Write `with Textual` on the declaration to display through this method. Calling `to_string()` yourself already works either way.

@@ -2552,13 +2552,23 @@ New convenience methods should meet at least one of these tests:
 conveniences. Ruby is a source of inspiration, while clearer names from Kotlin, Python,
 C#, Swift, or common practice win when Ruby abbreviates or overloads a word.
 
-A simple `Textual` trait with `to_string(): String` is meant to control deliberate
-user-facing display in printing and interpolation, with structs and classes that omit it
-retaining a useful field-based debug representation. This trait is not yet implemented:
-today every struct and class always prints and interpolates through its field-based debug
-representation, and a type's own `to_string()` method (used explicitly, as in
-`255.to_string()`) has no effect on `print`/`write`/interpolation. Enums default to their
-qualified names. Display customization must not alter equality or identity once built.
+A simple `Textual` trait with `to_string(): String` controls deliberate user-facing display
+in printing and interpolation, with structs, classes, and enums that omit it retaining a
+useful field-based debug representation; enums that omit it default to their qualified
+names. It is a prelude trait in 11.5's family, adopted explicitly like every other: a method
+named `to_string` alone changes no display, and the checker warns when a type declares one
+without adopting the trait.
+
+An adopting value renders through its own `to_string()` wherever it appears, nested in a
+collection or another type's debug form included, because the display walk carries the
+resolution with it. What the trait replaces is a value's own rendering and never how a
+container frames it, so an adopting value is not quoted the way a nested `String` is.
+`to_string()` is ordinary code: a raise propagates from the `print` or interpolation that
+ran it and is catchable there, with no partial line written, and a value that reaches itself
+shows `Name(...)` at the repeat under the same guard the debug form uses. Diagnostics —
+assertion failures and runtime error text — deliberately keep the field-based form, so
+building a failure never runs the program's own code. Display customization must not alter
+equality or identity once built.
 
 ### 15.2 Prelude
 

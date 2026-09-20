@@ -225,6 +225,44 @@ to `a = a + b`. Run [`examples/operators.em`](../../examples/operators.em) for a
 adopting `Addable`/`Ordered` directly and a trait (`Doubling`) whose own default combines
 `Self` values through `+` without knowing the concrete type.
 
+### Display
+
+`Textual` is the prelude trait in the same family, and it decides how a value displays:
+
+```emerald
+struct Money with Textual {
+    const cents: Int
+
+    @override
+    func to_string(): String {
+        return "$#{self.cents // 100}"
+    }
+}
+```
+
+`print`, `write`, and interpolation then render the value through that method, and so does
+every place it appears — nested in a list, a dictionary, a tuple, a set, or another type's
+field-by-field form. What the trait replaces is how the *value* renders, never how a
+container frames it, so an adopting value is not quoted the way a nested `String` is:
+`[Money(399)]` displays `[$3]`, not `["$3"]`. A type that does not adopt it keeps the
+field-by-field form (`Reading(sensor: "north", value: 21.5)`), which is the more useful one
+while you are still inspecting a value. Enums adopt it the same way, in place of their
+`Enum.value` default.
+
+Adoption is explicit, exactly as for `Addable` or `Ordered`: declaring a method named
+`to_string` without `with Textual` leaves the display alone, and the checker warns that it
+did. Calling `to_string()` yourself works either way, so `print(x)` and `x.to_string()`
+always agree for a type that has the method — the same relationship `Int` and `Float`
+already have with their own `to_string()`.
+
+Two details follow from `to_string()` being ordinary code. If it raises, the raise
+propagates from the `print` or interpolation that triggered it and is catchable there, and
+nothing of the interrupted line reaches the output. If a value reaches itself, the repeat
+displays as `Name(...)` rather than running forever, the same guard the field-by-field form
+uses. Diagnostics deliberately stay on the field-by-field form — an assertion failure shows
+`Point(x: 1)`, never a program's own rendering — so that building a failure message never
+runs the program's code. Run [`examples/textual.em`](../../examples/textual.em).
+
 ## Enums
 
 An enum is a closed set of named values, listed first in the declaration, one per line or
@@ -245,7 +283,7 @@ instance fields, since there's nothing to construct: an enum value just *is* one
 listed names. Two enum values compare equal exactly when they're the same name; declaration
 order creates no ordering on its own — a `Ordered`-adopting enum states its own order
 explicitly, the way any other type would. A value's default display includes its type,
-`Weather.sunny`, unless a method overrides that.
+`Weather.sunny`, unless the enum adopts [`Textual`](#display).
 
 `case`/`when` (introduced in [Core language](core.md#control-flow)) is what makes an enum
 useful: a value-producing `case` that covers every enum value needs no `else` at all, which

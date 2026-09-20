@@ -189,12 +189,25 @@ pub fn isNumber(self: Value) bool {
 /// obviously not one: `<func greet>` for a named function, `<lambda>` for one
 /// written inline.
 pub fn display(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-    return self.write(writer, false);
+    return self.writeThrough(writer, false, {});
 }
 
 /// The value as it would be written inside a collection: a string is quoted,
 /// so `["a, b"]` and `["a", "b"]` cannot be mistaken for each other.
 pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Error!void {
+    return self.writeThrough(writer, quoted, {});
+}
+
+/// `write`, resolving section 15.1's `Textual` through `textual`: either `{}`,
+/// which writes every value's plain form, or a context with a `writeTextual`
+/// method that renders a value adopting the trait through its own
+/// `to_string()` and answers whether it did.
+///
+/// The context is threaded through the whole walk, so an adopting value
+/// renders the same way nested inside a collection as it does alone. Only
+/// `print`, `write`, and interpolation supply one; diagnostic text passes `{}`
+/// so that building a failure never runs a program's own code.
+pub fn writeThrough(self: Value, writer: *std.Io.Writer, quoted: bool, textual: anytype) !void {
     switch (self.data) {
         .nothing => try writer.writeAll("nothing"),
         .bool => |value| try writer.writeAll(if (value) "true" else "false"),
@@ -224,7 +237,7 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             try writer.writeAll("[");
             for (list.items.items, 0..) |item, position| {
                 if (position != 0) try writer.writeAll(", ");
-                try item.write(writer, true);
+                try item.writeThrough(writer, true, textual);
             }
             try writer.writeAll("]");
         },
@@ -234,7 +247,7 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             try writer.writeAll("(");
             for (tuple.items, 0..) |item, position| {
                 if (position != 0) try writer.writeAll(", ");
-                try item.write(writer, true);
+                try item.writeThrough(writer, true, textual);
             }
             try writer.writeAll(")");
         },
@@ -246,7 +259,7 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
                 try writer.writeAll("{");
                 for (map.entries.items, 0..) |entry, position| {
                     if (position != 0) try writer.writeAll(", ");
-                    try entry.key.write(writer, true);
+                    try entry.key.writeThrough(writer, true, textual);
                 }
                 return writer.writeAll("}");
             }
@@ -254,9 +267,9 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             try writer.writeAll("[");
             for (map.entries.items, 0..) |entry, position| {
                 if (position != 0) try writer.writeAll(", ");
-                try entry.key.write(writer, true);
+                try entry.key.writeThrough(writer, true, textual);
                 try writer.writeAll(": ");
-                try entry.value.write(writer, true);
+                try entry.value.writeThrough(writer, true, textual);
             }
             try writer.writeAll("]");
         },
@@ -284,6 +297,15 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             defer if (instance.descriptor.class) {
                 displaying_count -= 1;
             };
+            // Section 15.1: a type that adopts `Textual` renders through its
+            // own `to_string()`. It sits inside the cycle guard above, so an
+            // object that reaches itself still shows `Name(...)` rather than
+            // running forever. An enum adopting the trait uses it too, which
+            // is section 12's "unless a method provides another
+            // representation."
+            if (@TypeOf(textual) != void) {
+                if (try textual.writeTextual(self, writer)) return;
+            }
             // Section 15.1: an enum value shows its qualified name.
             if (instance.descriptor.values.len > 0) {
                 return writer.print("{s}.{s}", .{ instance.descriptor.display_name, instance.descriptor.values[instance.variant] });
@@ -292,7 +314,7 @@ pub fn write(self: Value, writer: *std.Io.Writer, quoted: bool) std.Io.Writer.Er
             for (instance.fields, instance.descriptor.fields, 0..) |value, field, index| {
                 if (index != 0) try writer.writeAll(", ");
                 try writer.print("{s}: ", .{field.name});
-                try value.write(writer, true);
+                try value.writeThrough(writer, true, textual);
             }
             try writer.writeAll(")");
         },

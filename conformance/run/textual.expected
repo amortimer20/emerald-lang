@@ -1,0 +1,14 @@
+(1, 2)
+the point is (1, 2)
+(1, 2)
+[(1, 2), (3, 4)]
+("left", (1, 2))
+["origin": (1, 2)]
+{(1, 2)}
+Box(item: (1, 2))
+H [S] Plain.first
+[animal generic, dog Rex]
+#zig em
+caught cannot render
+caught nested
+node -> Node(...)

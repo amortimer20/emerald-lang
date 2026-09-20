@@ -1951,3 +1951,42 @@ been resolved. None had been — each was re-checked directly against the binary
 restoring them to a "Deferred" section in the live handoff. The lesson: "no longer current"
 has to be confirmed per item before a section is retired, not inferred from how much other,
 genuinely-resolved work landed in the same pass.
+
+## Numeric formatting and `Textual`, 2026-09-20
+
+Two 15.5/15.1 slices that had been described as design intent for a long time, built in
+that order because the second depends on nothing from the first but reads better after it.
+
+`Int.to_string(base:)` and `Int`/`Float` `format(...)` landed first. The interesting part
+was not the formatting but the argument shape: these are the first built-in methods with
+real named, defaulted arguments, and `typeOfMethodCall` had a blanket rejection of named
+arguments for anything whose receiver is not a struct, on the reasoning that a built-in has
+no declared parameters to match. That rejection now carves out these two names and routes
+them through `checkArguments`/`evaluateBound`, the same machinery a declared function's
+call uses, rather than growing a parallel one. A pre-existing conformance case asserted
+that `3.to_string(base: 2)` was rejected; it was rewritten around a list method, since the
+assertion it made is no longer true of the language.
+
+`Textual` then landed as the sixth prelude trait in 11.5's family rather than as new
+display machinery, which is what made it small. The decisive observation was that the
+question "trait or inherited-from-`Object` method" was already answered in 4.4: `type_name`
+is universal without implying a common root, so a universal behavior with a per-type
+override point is an established pattern here, and `Addable`/`Ordered` already show what
+"a prelude trait whose method built-in machinery runs" looks like. Explicit adoption, the
+runtime descriptor check, trait-default and override resolution, and the "ran before this
+was built" guard all came from existing mechanisms unchanged.
+
+The one genuinely new piece of engineering was reaching user code from `Value.write`, which
+is pure, recursive, and cannot import the interpreter. It became `writeThrough`, taking a
+comptime context that is either `{}` or something with a `writeTextual` method; Zig infers
+the error set per instantiation, so the interpreter's raises propagate with no out-of-band
+smuggling and the `{}` path compiles to what was there before. Threading the context
+through the recursion is what makes an adopting value render the same nested in a list as
+it does alone, which was the design question worth settling before writing any of it.
+
+Two smaller things fell out. `print` now builds its whole line before writing any of it:
+its doc comment already promised no half-line on failure, and a `to_string()` that raises
+is a new way to break that promise. And diagnostics deliberately stay on the field-based
+form, so assembling an assertion failure never runs a program's own code — the debug form
+is also the more useful one there. The checker warns when a type declares `to_string`
+without adopting the trait, which is where someone arriving from C# or Java lands.

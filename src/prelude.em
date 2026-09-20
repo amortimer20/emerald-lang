@@ -90,3 +90,12 @@ trait Divisible {
 trait Ordered {
     func compare(other: Self): Int
 }
+
+# Section 15.1's display contract. A type that adopts it renders through its
+# own `to_string()` in `print`, `write`, and interpolation, wherever the value
+# appears; one that does not keeps the field-based debug form. Adoption is
+# explicit, as for every other trait: a method named `to_string` alone changes
+# nothing about how a value displays.
+trait Textual {
+    func to_string(): String
+}
