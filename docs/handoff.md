@@ -20,9 +20,9 @@ binary I/O, and recursive deletion remain deferred.
 Release hardening is in place: CI runs Debug and ReleaseSafe tests on Ubuntu, macOS, and
 Windows; the fuzz runner checks, formats, and boundedly executes generated clean programs;
 and allocator-failure coverage reaches the frontend pipeline and interpreter. The checker also
-warns for `is` tests known true and for the bounded known-false case of unrelated concrete
-classes. Traits deliberately receive no false-result warning because a subclass may adopt a
-trait independently.
+warns for `is` tests known true and for bounded known-false cases: unrelated concrete classes,
+or a class whose declared subclasses never adopt the tested trait. Trait-typed values, structs,
+and enums remain outside that false-result proof.
 
 Language and library documentation is complete through the pages listed in
 [`docs/language/README.md`](language/README.md) and
@@ -74,8 +74,8 @@ open, in recommended order, none yet authorized to start:
    risk, since the first slice already proved the architecture.
 
 Named but unordered: `emerald explain`/diagnostic polish; a custom equality/hashing design
-pass, the natural sibling to `Textual`/`Ordered`; the always-false `is` warning for traits;
-streaming/binary file I/O and recursive directory delete (deferred out of the filesystem
+pass, the natural sibling to `Textual`/`Ordered`; streaming/binary file I/O and recursive
+directory delete (deferred out of the filesystem
 slice). The big deferred-features list (generics, enum payloads, wider operator overloading,
 package manager, concurrency) stays last by design — those are large design commitments, not
 implementation backlog. This is context, not authorization: follow the user's active request

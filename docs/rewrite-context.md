@@ -461,11 +461,12 @@ An `is` test that static analysis can prove always true or false remains valid a
 that result, but receives a warning (17.1) explaining the known result. The true warning
 fires when the value's type here, narrowing included, is already exactly the target. The
 false warning fires when both sides are classes with no inheritance relationship: no instance
-can be both. The tested expression is still evaluated exactly once even when its result is
-known. Tests through a base class or trait receive no warning when the runtime value could
-genuinely have the target type. Traits receive no false warning: a subclass may adopt a trait
-that its parent does not, so proving no possible subclass could adopt one is a distinct,
-deferred analysis. No binding-pattern extension to `is` is included initially.
+can be both. It also fires for a class tested against a trait when neither that class nor any
+declared subclass adopts the trait. The tested expression is still evaluated exactly once even
+when its result is known. Tests through a base class or trait receive no warning when the
+runtime value could genuinely have the target type. A trait-typed value, struct, or enum still
+receives no false warning: its possible value set needs a separate analysis. No
+binding-pattern extension to `is` is included initially.
 
 Every value exposes a read-only `type_name` property using Emerald's source spelling for
 its concrete runtime type:
@@ -3381,7 +3382,7 @@ recorded in their normative sections:
 | Where trait conflicts are reported (11.2) | At the declaration that first brings the conflicting traits together | Reporting at every subclass and every trait built on top would repeat one mistake many times, far from where it can be fixed. |
 | Where `is` binds (4.4) | With the comparisons, without chaining; `is not` is rejected with a correction | Like Kotlin and Swift, a test reads as one condition that `not`, `and`, and `or` combine. A second spelling for the negated test would be the kind of duplicate 5.2 declines for `!`. |
 | Narrowing inside `and` and `or` (4.4, 4.5) | The right side is checked knowing how the left side went | It runs only then, so the proof holds, and without it `animal is Dog and animal.tricks > 0` and `x != nothing and x > 3` needed a nested `if`. |
-| The always-known type test warning (4.4) | A warning for an exactly known true result, or two unrelated classes known false | The test remains a valid `Bool` and still evaluates its operand once. Traits stay out of the false proof because a subclass may adopt one independently. |
+| The always-known type test warning (4.4) | A warning for an exactly known true result, unrelated classes known false, or a class whose declared subclasses never adopt the tested trait | The test remains a valid `Bool` and still evaluates its operand once. A trait-typed value, struct, or enum stays out of the false proof until its possible values are designed. |
 | Reusing a base class's names (10.7) | Not allowed for any member, private ones included, except a public method or property replaced with `@override` | 10.4 already keeps one name space so a name means one thing. Allowing a private name to be reused would give one object two fields of one name, each seen from different braces, which is harder to explain than a rename. |
 | Override results (10.7) | The same type, a subclass where the replaced method gives a class, or a value always present where it gives an optional of that type; parameters must match exactly | A subclass object needs nothing done to it to stand in for its base class, and neither does a present value for its optional, so a covariant result costs nothing and lets `clone()` or a factory give its own class, or a subclass promise the value a base class may not have (as Swift and Kotlin allow). Found in the inheritance review. Parameter variance is the confusing direction and is not needed yet. Numeric widening is excluded because it would need a conversion the calling code does not know to make. |
 | Reaching an override too early (10.2, 10.7) | A runtime error when an object runs a version of a method or property declared by a class whose part of it has not begun | The base-first order and the permission to pass `self` on once a base class's fields are set leave a way for a subclass's override to read an unset field, which a static rule could close only by forbidding that permission too. Checking at dispatch costs one comparison where an override runs. A method taken from the object is checked when called rather than when taken, since taking it runs nothing (found in the inheritance review). |

@@ -60,9 +60,10 @@ if maybe != nothing and maybe is Dog and maybe.tricks > 0 {
 `type_name` is reserved: no type may declare a member with that name, and it cannot be
 assigned. A test that static analysis can already answer before the program runs still
 evaluates its operand exactly once and returns the correct `Bool`, but emits a warning: for
-example, `x is Int` when `x` is already `Int`, or a test between two unrelated classes. A
-test involving a trait receives no false-result warning, because a subclass may adopt that
-trait later in the hierarchy. Run
+example, `x is Int` when `x` is already `Int`, a test between two unrelated classes, or a
+class tested against a trait that neither it nor any declared subclass adopts. A trait-typed
+value, struct, or enum receives no false-result warning yet, because its possible values need
+a separate analysis. Run
 [`conformance/run/type-tests.em`](../../conformance/run/type-tests.em) for the full picture:
 class hierarchies, tuples, function types, collections, `nothing`/`Nothing`, and evaluating
 the tested expression only once even when a block runs a visible side effect.

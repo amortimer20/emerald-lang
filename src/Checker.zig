@@ -4873,28 +4873,58 @@ fn typeOfTypeTest(self: *Checker, expression: *const Ast.Expression) Error!Type 
             .{},
             "The value is already known to be this type here. Remove the test, or check a type it might not be.",
         );
-    } else if (typeTestAlwaysFalse(value, target)) {
-        try self.reportWarning(
-            expression.span,
-            "this `is` test always answers `false`",
-            .{},
-            "These classes are not related, so no value of one can also be the other. Remove the test, or check a related class.",
-        );
+    } else if (self.typeTestAlwaysFalse(value, target)) |reason| {
+        switch (reason) {
+            .unrelated_classes => try self.reportWarning(
+                expression.span,
+                "this `is` test always answers `false`",
+                .{},
+                "These classes are not related, so no value of one can also be the other. Remove the test, or check a related class.",
+            ),
+            .unadopted_trait => try self.reportWarning(
+                expression.span,
+                "this `is` test always answers `false`",
+                .{},
+                try std.fmt.allocPrint(
+                    self.arena,
+                    "Neither this class nor any class extending it adopts `{s}`. Remove the test, or check a trait it might adopt.",
+                    .{target.user.?.display_name},
+                ),
+            ),
+        }
     }
     return .bool;
 }
 
 /// Whether Section 4.4 can prove this type test false without looking at a
 /// value. A class can hold an instance of any subclass, so two classes can
-/// overlap precisely when either is in the other's inheritance chain. Traits
-/// deliberately do not participate: a subclass may adopt a trait that its
-/// base class does not, and proving that no such subclass exists is outside
-/// this bounded warning.
-fn typeTestAlwaysFalse(value: Type, target: Type) bool {
+/// overlap precisely when either is in the other's inheritance chain. The
+/// trait case below similarly scans every declared subclass before deciding.
+const TypeTestFalse = enum {
+    unrelated_classes,
+    unadopted_trait,
+};
+
+fn typeTestAlwaysFalse(self: *Checker, value: Type, target: Type) ?TypeTestFalse {
     const present = value.payload();
     const wanted = target.payload();
-    if (!isClass(present) or !isClass(wanted)) return false;
-    return !present.user.?.extends(wanted.user.?) and !wanted.user.?.extends(present.user.?);
+    if (isClass(present) and isClass(wanted)) {
+        if (!present.user.?.extends(wanted.user.?) and !wanted.user.?.extends(present.user.?)) {
+            return .unrelated_classes;
+        }
+        return null;
+    }
+    // A class may hold any declared subclass. When no such class adopts the
+    // trait, the whole-program checker can prove the test false. Do not extend
+    // this to a trait-typed value, a struct, or an enum yet: their possible
+    // value sets need a separate design rather than an accidental warning.
+    if (!isClass(present) or wanted.kind != .struct_value or !wanted.user.?.trait) return null;
+    var types = self.structs.valueIterator();
+    while (types.next()) |candidate| {
+        const user = candidate.user.?;
+        if (user.class and user.extends(present.user.?) and user.conformsTo(wanted.user.?)) return null;
+    }
+    return .unadopted_trait;
 }
 
 /// The name in `name == nothing`, written either way round.

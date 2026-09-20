@@ -2039,3 +2039,16 @@ ordinary function return.
 One pre-existing unit test encoded the old rejection as its expectation
 (`"print(1)\nreturn\n"` expecting `` `return` can only be used inside a function ``) and
 needed updating to the new behavior rather than being a regression.
+
+## Trait-aware impossible type tests, 2026-09-20
+
+`f671b1f` already warned when two unrelated classes make an `is` test false. This follow-up
+extends that proof to a class tested against a trait: the checker scans the class and every
+declared subclass, warning only when none adopts the target trait. A subclass adopting the
+trait suppresses the warning, so the check remains sound for the runtime object an
+upcast class value may hold.
+
+The proof deliberately stops there. A trait-typed value, struct, or enum has a different
+possible-value model and remains accepted without a false-result warning until that model is
+designed. `conformance/diagnostics/impossible-type-test.em` covers both the warning and a
+subclass that makes the trait test possible.

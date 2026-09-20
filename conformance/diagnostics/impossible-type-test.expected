@@ -1,4 +1,8 @@
-diagnostics/impossible-type-test.em:10:4: warning: this `is` test always answers `false`
+diagnostics/impossible-type-test.em:20:4: warning: this `is` test always answers `false`
   if animal is Vehicle {
      ^^^^^^^^^^^^^^^^^
 These classes are not related, so no value of one can also be the other. Remove the test, or check a related class.
+diagnostics/impossible-type-test.em:23:4: warning: this `is` test always answers `false`
+  if animal is Trained {
+     ^^^^^^^^^^^^^^^^^
+Neither this class nor any class extending it adopts `Trained`. Remove the test, or check a trait it might adopt.
