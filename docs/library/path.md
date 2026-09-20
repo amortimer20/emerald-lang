@@ -5,7 +5,7 @@
 
 ## join(parts: List[String]) -> String
 
-Combines zero or more path parts with the platform separator.
+Combines zero or more path parts with `/`, the same on every platform Emerald runs on.
 
 ## name, stem, extension, parent
 

@@ -786,11 +786,28 @@ test "File read methods reject invalid UTF-8 as FileError" {
     defer testing.allocator.free(absolute);
     const expected = try std.fmt.allocPrint(testing.allocator, "FileError: could not read as UTF-8 text `{s}`", .{absolute});
     defer testing.allocator.free(expected);
+
+    // `absolute` is a real filesystem path, `\`-separated on Windows, so it
+    // cannot be spliced into an Emerald string literal verbatim: `\a`, `\U`,
+    // and the rest are not escapes the lexer recognizes.
+    const literal = try escapeAsEmeraldStringLiteral(testing.allocator, absolute);
+    defer testing.allocator.free(literal);
+
     for ([_][]const u8{ "File.read", "File.read_lines" }) |method| {
-        const program = try std.fmt.allocPrint(testing.allocator, "{s}(\"{s}\")", .{ method, absolute });
+        const program = try std.fmt.allocPrint(testing.allocator, "{s}(\"{s}\")", .{ method, literal });
         defer testing.allocator.free(program);
         try expectFailure(program, expected);
     }
+}
+
+fn escapeAsEmeraldStringLiteral(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
+    var escaped: std.ArrayList(u8) = .empty;
+    errdefer escaped.deinit(gpa);
+    for (text) |byte| {
+        if (byte == '\\' or byte == '"') try escaped.append(gpa, '\\');
+        try escaped.append(gpa, byte);
+    }
+    return escaped.toOwnedSlice(gpa);
 }
 
 test "a step-limited run stops even when Emerald catches ordinary errors" {

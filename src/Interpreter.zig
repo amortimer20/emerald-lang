@@ -2865,6 +2865,24 @@ fn evaluateCall(
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
 }
 
+/// `Path.join` (15.3) is lexical, not a wrapper over the host's own path
+/// rules — a joined path reads the same on every platform, unlike
+/// `std.fs.path.join`, which uses `\` on Windows. The real filesystem calls
+/// this feeds still accept `/`-separated paths on every platform Emerald
+/// supports.
+fn joinPathParts(gpa: std.mem.Allocator, parts: []const []const u8) std.mem.Allocator.Error![]u8 {
+    var joined: std.ArrayList(u8) = .empty;
+    errdefer joined.deinit(gpa);
+    for (parts) |part| {
+        if (part.len == 0) continue;
+        const needs_separator = joined.items.len != 0 and joined.items[joined.items.len - 1] != '/' and part[0] != '/';
+        if (needs_separator) try joined.append(gpa, '/');
+        const trims_separator = joined.items.len != 0 and joined.items[joined.items.len - 1] == '/' and part[0] == '/';
+        try joined.appendSlice(gpa, if (trims_separator) part[1..] else part);
+    }
+    return joined.toOwnedSlice(gpa);
+}
+
 fn isFilesystemKey(key: []const u8) bool {
     return std.mem.startsWith(u8, key, "emerald.File::") or
         std.mem.startsWith(u8, key, "emerald.Directory::") or
@@ -2897,7 +2915,7 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         const parts = try self.gpa.alloc([]const u8, list.items.items.len);
         defer self.gpa.free(parts);
         for (list.items.items, parts) |part, *out| out.* = part.data.string.bytes;
-        const joined = std.fs.path.join(self.gpa, parts) catch return self.raiseFile(span, "join these paths");
+        const joined = joinPathParts(self.gpa, parts) catch return self.raiseFile(span, "join these paths");
         return .{ .data = .{ .string = try self.heap.createText(joined) } };
     }
     if (std.mem.eql(u8, suffix, "Path::absolute")) {
@@ -3001,7 +3019,7 @@ fn listDirectory(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: std
     defer entries.deinit(self.gpa);
     errdefer for (entries.items) |entry| self.heap.release(entry);
     while (iterator.next(io) catch return self.raiseFilePath(span, path, "list")) |entry| {
-        const full = std.fs.path.join(self.gpa, &.{ path, entry.name }) catch return error.OutOfMemory;
+        const full = joinPathParts(self.gpa, &.{ path, entry.name }) catch return error.OutOfMemory;
         entries.append(self.gpa, .{ .data = .{ .string = try self.heap.createText(full) } }) catch return error.OutOfMemory;
     }
     const list = try self.heap.createList(.string, entries.items.len);

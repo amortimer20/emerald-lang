@@ -74,6 +74,20 @@ for anything it referenced from a sibling file. Also fixed in passing: the LSP w
 every warning as an LSP "Error"; `Diagnostic.Severity` existed by the time that code was
 written but the mapping was never updated.
 
+Windows CI is green again. Two independent bugs, both host-specific, were hiding behind
+`zig build test` passing everywhere else: `Path.join` (15.3) used `std.fs.path.join`, which
+joins with the host's native separator, so the same Emerald program printed `\`-joined paths
+on Windows and `/`-joined paths elsewhere — real paths still worked (Windows accepts `/` too;
+`std.os.windows.normalizePath` converts it before the Win32 call), but the *lexical* contract
+`docs/library/path.md` documents cannot mean "whatever the host does" and still be tested by
+one golden file shared across all three CI platforms. `Path.join` and `Directory.list`'s
+internal path-building now both go through a new `joinPathParts` (`Interpreter.zig`) that
+always joins with `/`. Separately, a Debug-only Zig test built an Emerald program by splicing
+a real absolute path straight into a string literal; on Windows that path contains `\`, which
+the Emerald lexer reads as an escape introducer, so the test failed to parse rather than
+testing what it meant to. Fixed by escaping the path as an Emerald string literal before
+splicing it in (`escapeAsEmeraldStringLiteral` in `src/emerald.zig`).
+
 ## Next step
 
 A 2026-09-20 roadmap review triaged prior "what's next" suggestions from both agents against
@@ -131,10 +145,13 @@ this session's changes where that mattered):
 ## Validation and repository state
 
 The latest completed slices, including the program entry point, the ledger shakedown, the
-trait-aware impossible-type-test warning, and LSP hover, passed `bash tools/check-toolchain.sh`,
-`zig build test` in Debug and ReleaseSafe, `bash tools/check-doc-examples.sh` after
-`zig build`, and `git diff --check` with pinned Zig 0.16.0. The working tree was clean after
-commit `b2756d7` (`Fix the LSP publishing every warning as an error`) before this pass.
+trait-aware impossible-type-test warning, LSP hover, and the Windows path/lexer fix above,
+passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe (359/359
+tests), `bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check` with
+pinned Zig 0.16.0 — run on Linux; the Windows-specific fixes could not be verified on real
+Windows locally, so CI is the first real check of them. The working tree was clean after
+commit `2407bef` (`Implement LSP hover, and give the language server project awareness`)
+before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a
