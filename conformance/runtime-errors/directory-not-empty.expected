@@ -1,0 +1,4 @@
+runtime-errors/directory-not-empty/main.em:1:1: FileError: `conformance/runtime-errors/directory-not-empty` is not empty, so it cannot be deleted
+  Directory.delete("conformance/runtime-errors/directory-not-empty")
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Check that the path exists and that this program may access it.
