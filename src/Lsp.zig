@@ -30,10 +30,11 @@
 //!
 //! Rename is the fourth piece, directly on top: find references' own result
 //! set (the declaration included), each site's span replaced by the new
-//! name and grouped into one `TextEdit` array per file. No `prepareRename`
-//! — a client that calls it first (VS Code does) falls back to its own idea
-//! of the word under the cursor, and `onRename` below resolves and validates
-//! the real target itself regardless of what range the client assumed.
+//! name and grouped into one `TextEdit` array per file. `prepareRename`
+//! reuses that same result set rather than a separate word-boundary guess:
+//! whichever site contains the cursor is the range offered, so a client
+//! never highlights more or less than a rename from there would actually
+//! touch.
 //!
 //! Completion is the fifth and last piece, the one that needed a different
 //! strategy rather than more of the same: an in-progress member access,
@@ -450,7 +451,7 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
                 .hoverProvider = true,
                 .definitionProvider = true,
                 .referencesProvider = true,
-                .renameProvider = true,
+                .renameProvider = .{ .prepareProvider = true },
                 .completionProvider = .{ .triggerCharacters = &[_][]const u8{"."} },
             },
         });
@@ -534,6 +535,13 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
         const params_obj = params orelse return error.InvalidParams;
         const new_name = try stringField(params_obj, "newName");
         if (id) |request_id| try onRename(server, gpa, uri, position, new_name, request_id, out);
+        return false;
+    }
+    if (std.mem.eql(u8, method, "textDocument/prepareRename")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        const position = try positionField(params);
+        if (id) |request_id| try onPrepareRename(server, gpa, uri, position, request_id, out);
         return false;
     }
     if (std.mem.eql(u8, method, "textDocument/completion")) {
@@ -1643,12 +1651,57 @@ fn collectReferencesInExpression(
 //
 // A rename is find references' own result set — the declaration and every
 // site that reads, writes, or names it — with each site's span replaced by
-// the new name, grouped into one `TextEdit` array per file. No prepareRename:
-// a client that calls it first (VS Code does) falls back to renaming
-// whatever word sits under the cursor by its own rules, and `textDocument/
-// rename` below still validates and resolves the real target itself, so a
-// client picking the wrong word boundary fails safely rather than renaming
-// the wrong thing.
+// the new name, grouped into one `TextEdit` array per file.
+
+fn onPrepareRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, id: std.json.Value, out: *std.Io.Writer) !void {
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+
+    var loaded = try loadDocument(server, gpa, uri, document.text.items);
+    defer loaded.deinit(gpa);
+
+    var analysis = (try emerald.analyzeProject(gpa, &loaded.project)) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    defer analysis.deinit(gpa);
+
+    const source = &loaded.project.files[loaded.index].source;
+    const offset = offsetFromPosition(source, position);
+    const target = (try definitionAt(gpa, &analysis, loaded.index, offset)) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    // Prelude declarations have no file on disk to rename, same reason
+    // `onRename` below declines them.
+    if (target.file >= loaded.project.files.len) {
+        try respond(gpa, out, id, null);
+        return;
+    }
+
+    // The same set `onRename` would edit, reused rather than re-derived, so
+    // the range this offers is always exactly what a rename from here would
+    // actually touch: the declaration itself and every site find references
+    // collects. Whichever one contains the cursor is the range to answer
+    // with, and none of them will if the cursor turned out to be on
+    // something else in the same expression (a call's arguments, say).
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    try sites.append(gpa, target);
+    for (analysis.parsed, 0..) |parsed, file_index| {
+        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
+    }
+
+    for (sites.items) |site| {
+        if (site.file == loaded.index and offset >= site.span.start and offset <= site.span.end) {
+            try respond(gpa, out, id, lspRange(source, site.span));
+            return;
+        }
+    }
+    try respond(gpa, out, id, null);
+}
 
 fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, new_name: []const u8, id: std.json.Value, out: *std.Io.Writer) !void {
     if (!isValidIdentifier(new_name)) {

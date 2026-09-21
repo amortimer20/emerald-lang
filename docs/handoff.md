@@ -142,12 +142,21 @@ so a rename cannot write a name the parser would immediately reject. `textDocume
 returns a JSON-RPC error (`-32602`, reusing "invalid params" since LSP defines no
 rename-specific code) rather than an edit for an invalid name, a closed document, a project
 that fails to check, a position that resolves to nothing, or a prelude-declared symbol — the
-last for the same reason go to definition and find references already decline one. No
-`prepareRename`: a client that calls it first (VS Code does) falls back to its own idea of the
-word under the cursor, and the resolution above still runs against whatever position that
-implies, so it fails safely rather than renaming the wrong thing. Verified end to end over
-JSON-RPC: a cross-file rename correctly grouped into two files' edits, and an invalid new name
-correctly rejected rather than crashing or silently corrupting the source.
+last for the same reason go to definition and find references already decline one. Verified
+end to end over JSON-RPC: a cross-file rename correctly grouped into two files' edits, and an
+invalid new name correctly rejected rather than crashing or silently corrupting the source.
+
+`prepareRename` is now implemented too, closing the gap noted when rename first landed. It
+answers from the same result set `onRename` itself would edit (the declaration plus every
+site find references collects) rather than a separate word-boundary computation of its own:
+whichever site contains the cursor is the range offered, so a client's highlighted range can
+never disagree with what the rename that follows actually touches. Declines the same cases
+`onRename` does (a closed document, a project that fails to check, a position that resolves
+to nothing, a prelude-declared symbol) by returning `null` rather than an error, since
+`prepareRename` failing just means "nothing to rename here," not a malformed request.
+Verified end to end over JSON-RPC against a real document: the range for an instance field
+read, the range for a type name reached through a constructor call, and `null` for a
+prelude builtin (`print`).
 
 Completion is implemented, the last piece of the LSP's second phase and the one piece that
 was never going to be "more of the same." An in-progress member access, `foo.` or `foo.par`,
@@ -262,8 +271,6 @@ this session's changes where that mattered):
   the rest), matching go to definition's own reason for declining one: a prelude declaration
   has no file on disk to report a location in. Rename declines the same symbols for the same
   reason.
-- Rename has no `prepareRename`, so a client with no fallback of its own (most have one) may
-  offer to rename a position that then turns out not to be renameable.
 - Completion answers only a value's own member access (fields, properties, methods). A
   type-qualified base's own completions (10.4's `Vector2.origin`) are not answered:
   `Resolver.zig`'s `qualify` validates a type-qualified reference eagerly, so patching in an
@@ -281,11 +288,11 @@ this session's changes where that mattered):
 
 The latest completed slices, including the program entry point, the ledger shakedown, the
 trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
-definition, find references, rename, completion, the per-project brace style, and recursive
-directory deletion, passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and
-ReleaseSafe (383/383 tests), `bash tools/check-doc-examples.sh` after `zig build`, and
-`git diff --check` with pinned Zig 0.16.0. Go to definition, find references, rename, and
-completion were each also checked end
+definition, find references, rename (`prepareRename` included), completion, the per-project
+brace style, and recursive directory deletion, passed `bash tools/check-toolchain.sh`,
+`zig build test` in Debug and ReleaseSafe (383/383 tests), `bash tools/check-doc-examples.sh`
+after `zig build`, and `git diff --check` with pinned Zig 0.16.0. Go to definition, find
+references, rename, and completion were each also checked end
 to end against the real LSP server over JSON-RPC (single-file member access and constructor
 calls; a two-file project crossing into a sibling file, both with and without
 `includeDeclaration`; a cross-file rename's grouped edits; an invalid new name's rejection;
@@ -301,10 +308,12 @@ Stroustrup default). Recursive directory deletion was checked the same way, beyo
 unit test: a manual `emerald run` against a real nested directory tree, printing
 `Directory.exists?` before and after, confirming the deletion was idempotent on a second
 call, and independently confirming with `ls` on the host filesystem that the whole tree —
-not just the top-level path — was actually gone. The Windows path/lexer fix's
-Windows-specific half could not be verified locally and was confirmed by CI instead. The
-working tree was clean after commit `0dd083b` (`Make brace style a per-project choice
-instead of hardcoded Stroustrup`) before this pass.
+not just the top-level path — was actually gone. `prepareRename` was checked over real
+JSON-RPC too: the range for an instance field read, the range for a type name reached
+through a constructor call, `null` for a prelude builtin, and that `textDocument/rename`
+itself still behaves identically afterward. The Windows path/lexer fix's Windows-specific
+half could not be verified locally and was confirmed by CI instead. The working tree was
+clean after commit `3549e07` (`Implement Directory.delete_recursive`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a

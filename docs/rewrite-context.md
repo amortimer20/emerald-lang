@@ -2984,27 +2984,35 @@ unchanged:
 - document symbols;
 - format on save.
 
-Inferred-type hover is implemented, the second slice's first piece. It needed two things
-the first slice's file-scoped features never did: `Checker.zig`'s `expression_types` (every
-expression's type, by expression — `analyzeProject` in `src/emerald.zig` exposes checking's
-full detail without executing anything) and a document's whole project (14.1), since a file
-checked alone sees none of its own project's other declarations. `Lsp.zig`'s `loadDocument`
-reads a document's project from disk, substituting the editor's own buffer for the open
-file — the one exception to the first slice's "never touches disk," needed because hover and
-everything after it have to see beyond one file to be useful for a real, multi-file program.
-Diagnostics publishing was upgraded the same way, fixing a latent gap: previously, opening
-one file of a multi-file project showed false "not defined" errors for anything it referenced
-from a sibling file.
+The second slice is complete: hover, go to definition, find references, rename (with
+`prepareRename`), and completion, in that order, each building on what came before.
 
-It deliberately does not yet advertise go to definition, find references, rename, or
-completion. Go to definition and find references are next, sharing hover's foundation plus a
-name-to-declaration index; rename after that, built on find references; completion last,
-since it alone needs a materially different parser recovery strategy — a broken construct
-like `foo.` today discards its whole enclosing statement rather than leaving a partial node
-to offer completions against.
+Inferred-type hover needed two things the first slice's file-scoped features never did:
+`Checker.zig`'s `expression_types` (every expression's type, by expression — `analyzeProject`
+in `src/emerald.zig` exposes checking's full detail without executing anything) and a
+document's whole project (14.1), since a file checked alone sees none of its own project's
+other declarations. `Lsp.zig`'s `loadDocument` reads a document's project from disk,
+substituting the editor's own buffer for the open file — the one exception to the first
+slice's "never touches disk," needed because hover and everything after it have to see
+beyond one file to be useful for a real, multi-file program. Diagnostics publishing was
+upgraded the same way, fixing a latent gap: previously, opening one file of a multi-file
+project showed false "not defined" errors for anything it referenced from a sibling file.
 
-Quick fixes correspond to known diagnostics and deterministic edits. The official VS Code
-extension comes first, while the server remains editor-independent.
+Go to definition and find references share hover's foundation plus a name-to-declaration
+index the resolver's existing hoisting pass now also records. Rename is find references' own
+result set (the declaration included), each site's span replaced by the new name;
+`prepareRename` reuses that same result set to answer with whichever site contains the
+cursor, rather than a separate word-boundary guess of its own. Completion needed a materially
+different strategy from the rest: a broken construct like `foo.` fails to *parse* at all,
+discarding its whole enclosing statement, so a completion request patches a throwaway copy of
+the buffer (`foo.` becomes a synthetic call) rather than changing the shared parser's recovery
+for every caller. It is scoped to a value's own member access; a type-qualified base's own
+members (10.4), namespace-level completion, and a bare identifier with no preceding dot
+remain open.
+
+Quick fixes correspond to known diagnostics and deterministic edits, and are not yet
+implemented. The official VS Code extension comes first, while the server remains
+editor-independent.
 
 ### 18.6 Debugging
 
