@@ -170,6 +170,16 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     misused.addCheck(.{ .expect_stderr_match = "usage: emerald" });
     test_step.dependOn(&misused.step);
 
+    // A missing file is a different problem from a malformed command line
+    // (64): the invocation itself was fine, so it gets its own status (66,
+    // `sysexits.h`'s `EX_NOINPUT`) rather than sharing 64's.
+    const missing = b.addRunArtifact(exe);
+    missing.addArg("check");
+    missing.addArg("definitely-does-not-exist.em");
+    missing.expectExitCode(66);
+    missing.addCheck(.{ .expect_stderr_match = "cannot read 'definitely-does-not-exist.em'" });
+    test_step.dependOn(&missing.step);
+
     // `emerald format` (18.3): a file already in the canonical style needs no
     // rewrite, `--check` reports one that does without touching it, and a
     // file that cannot parse safely is refused exactly as `check` refuses one

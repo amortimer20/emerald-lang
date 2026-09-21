@@ -11,12 +11,19 @@ const Repl = @import("Repl.zig");
 const Lsp = @import("Lsp.zig");
 
 /// Section 18.1 fixes these, so they are named rather than written as bare numbers.
+/// `invalid_usage` and `missing_input` both borrow their values from BSD's
+/// `sysexits.h` (`EX_USAGE`/`EX_NOINPUT`), matching `internal_failure`'s own
+/// `EX_SOFTWARE`: a command typed wrong and a file that cannot be read are
+/// different problems for a caller to act on (fix the invocation, or check
+/// the path), so they keep the distinct codes the standard already gives
+/// them rather than sharing one.
 const ExitCode = enum(u8) {
     success = 0,
     source_diagnostics = 1,
     runtime_error = 2,
     test_failures = 3,
     invalid_usage = 64,
+    missing_input = 66,
     internal_failure = 70,
 };
 
@@ -111,7 +118,7 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
             err,
         }) catch "emerald: cannot read the requested file\n";
         try writeAll(io, .stderr, message);
-        return @intFromEnum(ExitCode.invalid_usage);
+        return @intFromEnum(ExitCode.missing_input);
     };
     defer project.deinit(gpa);
 
@@ -193,7 +200,7 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
         const message = std.fmt.bufPrint(&buffer, "emerald: cannot read '{s}': {t}\n", .{ path, err }) catch
             "emerald: cannot read the requested file\n";
         try writeAll(io, .stderr, message);
-        return @intFromEnum(ExitCode.invalid_usage);
+        return @intFromEnum(ExitCode.missing_input);
     };
     defer project.deinit(gpa);
 

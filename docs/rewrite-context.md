@@ -2876,8 +2876,11 @@ editor.
 
 Process statuses are stable: `0` means success, `1` means source or formatting diagnostics,
 `2` means an uncaught runtime error, `3` means tests completed with failures, `64` means
-invalid command usage, and `70` means an internal Emerald failure. An explicit
-`exit(code)` from a running program uses the requested valid code.
+invalid command usage, `66` means the named file could not be read (missing, unreadable, or
+similar — a problem with what was named, not with how the command was typed), and `70` means
+an internal Emerald failure. `64`/`66`/`70` are BSD `sysexits.h`'s own
+`EX_USAGE`/`EX_NOINPUT`/`EX_SOFTWARE`. An explicit `exit(code)` from a running program uses
+the requested valid code.
 
 The initial test runner prints `N tests passed.` when all tests pass, or
 `N tests, F failed.` after running the complete discovered set. Assertion failures identify
@@ -3451,6 +3454,7 @@ recorded in their normative sections:
 | Constructing a message-only error subclass (13.1) | It gets `Error(message)` when it declares no constructor and its complete stored state is only the inherited message; a hierarchy with more fields uses ordinary subclass constructors | Section 13's canonical `class InvalidScore extends Error { }` is immediately raised as `InvalidScore("...")`. Requiring boilerplate that only forwards the message would contradict that teaching example and make the most common custom error need ceremony, while bypassing fields or constructor arguments from an intermediate error class would create an invalid object. |
 | An assertion's optional message (16.2) | Written after a comma: `assert condition, "explanation"` | The comma reads as one assertion with supporting context, requires no new keyword or parentheses, and leaves the condition as the first thing a beginner sees. The message is evaluated only when the assertion fails. |
 | Brace style, revisited (3.4, 18.3) | Both Stroustrup and Allman are legal source; a project picks one canonical style in `emerald.toml`'s `brace_style`, and the formatter always normalizes to it | The original rule made Stroustrup the only legal spelling anywhere, reasoning from the formatter's "one canonical output" promise as if that meant one output for the whole language rather than one per project. But brace placement is whitespace, which 3.1 already calls non-semantic, and casing (3.3) already shows the language tolerating a non-conventional choice as a style matter rather than banning it outright. The two styles aren't symmetric with casing, though: the formatter can rewrite whitespace unconditionally, but it can't safely rename an identifier, which is why casing stays a warning rather than a rewrite. 18.3's promise survives intact — every file in a project still normalizes to exactly one style — it is just no longer the same style for every project. |
+| A missing or unreadable file's exit status (18.1) | `66` (`sysexits.h`'s `EX_NOINPUT`), not `64` | `check`/`run`/`test`/`format` all shared `64` with a malformed invocation before this, but the two are different problems for a caller to act on: `64` means the command itself was typed wrong (bad flags, wrong argument count), while a well-formed command naming a path that turns out missing or unreadable is an environment problem, exactly what `EX_NOINPUT` exists to distinguish. `70` (`EX_SOFTWARE`, `internal_failure`) already established that this project borrows meanings from `sysexits.h` rather than inventing its own, so `66` continues that rather than picking an arbitrary unused number. |
 
 ## 23. Consistency rules for future work
 

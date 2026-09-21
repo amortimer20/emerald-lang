@@ -206,6 +206,14 @@ treats an already-gone one the same way, both via `std.Io.Dir`'s own native supp
 teardown now uses it (called twice, proving the idempotence) in place of the six manual
 `File.delete`/`Directory.delete` calls an empty-only `Directory.delete` used to require.
 
+`emerald check`/`run`/`test`/`format` on a missing or unreadable file now exits `66`
+(`ExitCode.missing_input`) rather than sharing `64` with a malformed invocation — the two
+are different problems for a caller to act on, and `sysexits.h`'s `EX_NOINPUT` already names
+this one, the same standard `64`/`70` (`EX_USAGE`/`EX_SOFTWARE`) already came from. Section
+18.1's exit-status table and the decision table (22) both record it. `build.zig`'s CLI test
+suite gained a case for it, run against the real binary the same way the existing usage and
+diagnostic exit codes already are.
+
 ## Next step
 
 The LSP's second phase is complete: hover, go to definition, find references, rename, and
@@ -261,7 +269,6 @@ this session's changes where that mattered):
 - A few bounded implementation limits are intentional for now: display and recursive
   dictionary-key checks use a 256-type/object path; character indexing is linear; repeated
   dictionary or set deletion is quadratic.
-- `emerald check` on a missing file exits `64`; section 18.1 does not yet specify that case.
 - Go to definition does not reach a declaration, assignment, or type annotation written inside
   a lambda's own block body — the statement-tree walkers behind it descend into every block a
   *statement* owns, not into an *expression* looking for one. Find references does not have
@@ -289,9 +296,10 @@ this session's changes where that mattered):
 The latest completed slices, including the program entry point, the ledger shakedown, the
 trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
 definition, find references, rename (`prepareRename` included), completion, the per-project
-brace style, and recursive directory deletion, passed `bash tools/check-toolchain.sh`,
-`zig build test` in Debug and ReleaseSafe (383/383 tests), `bash tools/check-doc-examples.sh`
-after `zig build`, and `git diff --check` with pinned Zig 0.16.0. Go to definition, find
+brace style, recursive directory deletion, and the missing-input exit status, passed
+`bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe (383/383 tests),
+`bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check` with pinned Zig
+0.16.0. Go to definition, find
 references, rename, and completion were each also checked end
 to end against the real LSP server over JSON-RPC (single-file member access and constructor
 calls; a two-file project crossing into a sibling file, both with and without
@@ -311,9 +319,12 @@ call, and independently confirming with `ls` on the host filesystem that the who
 not just the top-level path — was actually gone. `prepareRename` was checked over real
 JSON-RPC too: the range for an instance field read, the range for a type name reached
 through a constructor call, `null` for a prelude builtin, and that `textDocument/rename`
-itself still behaves identically afterward. The Windows path/lexer fix's Windows-specific
-half could not be verified locally and was confirmed by CI instead. The working tree was
-clean after commit `3549e07` (`Implement Directory.delete_recursive`) before this pass.
+itself still behaves identically afterward. The missing-input exit status was checked against the real binary for `check`, `run`,
+`test`, and `format` alike (one shared code path), plus a new `build.zig` CLI test case
+(`66`, not `64`) alongside the existing usage-error one it now stands apart from.
+The Windows path/lexer fix's Windows-specific half could not be verified locally and was
+confirmed by CI instead. The working tree was clean after commit `ccf1433`
+(`Implement LSP prepareRename`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a
