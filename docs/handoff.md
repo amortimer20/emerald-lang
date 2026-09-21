@@ -176,10 +176,15 @@ discarded as an unused-result statement (section 5.2) when the dot sits alone on
 and separately, a dot's own newline-suppression (`Lexer.zig`'s continuation rule, for fluent
 chains) can swallow a real, unrelated statement immediately following on the next line into
 the same broken expression. Wrapping the placeholder in a call fixes both: `)` both makes it a
-call and ends the newline suppression. Scoped to a value's own member access (fields,
-properties, methods, walking base classes and adopted traits) — a type-qualified base's own
-completions (10.4) turned out to need a second, separate analysis pass and were cut from this
-slice; see the rough edge below for the specific reason the same trick can't reach them.
+call and ends the newline suppression. Value completion follows the checker's known base type,
+including inherited and adopted-trait members. Type-qualified and namespace bases use a second,
+resolver-clean throwaway analysis instead: it replaces the incomplete path with `print()` and
+consults resolver facts for the named type's own type-level members, or a namespace's direct
+declarations and child namespaces. A bare identifier similarly returns visible module-level
+names, `using` aliases, root namespaces, and prelude functions. A matching walk of the parsed
+statement and expression tree adds the cursor's lexical bindings first — function and lambda
+parameters, earlier declarations, loop/catch bindings, and instance `self` — preserving normal
+inner-scope shadowing over the file-wide list.
 
 Brace style (3.4) is now a per-project choice rather than a single hardcoded rule: a project
 picks Stroustrup (the default) or Allman in `emerald.toml`'s new `brace_style` key — the
@@ -329,13 +334,6 @@ this session's changes where that mattered):
   the rest), matching go to definition's own reason for declining one: a prelude declaration
   has no file on disk to report a location in. Rename declines the same symbols for the same
   reason.
-- Completion answers only a value's own member access (fields, properties, methods). A
-  type-qualified base's own completions (10.4's `Vector2.origin`) are not answered:
-  `Resolver.zig`'s `qualify` validates a type-qualified reference eagerly, so patching in an
-  unknown placeholder member fails the *whole* analysis (a resolver diagnostic, not a checker
-  one) rather than leaving one expression untyped the way an unknown instance member does.
-  Namespace-level completion (`Shapes.` suggesting what the namespace declares) and a bare
-  identifier with no preceding dot are also not answered.
 - `emerald.toml`'s `brace_style` is read by a hand-rolled single-key line scanner, not a real
   TOML parser (24 is still unimplemented beyond this one key): a missing file, an unknown key,
   a malformed line, or a value other than `"allman"` all silently fall back to the
@@ -358,11 +356,12 @@ references, rename, and completion were each also checked end
 to end against the real LSP server over JSON-RPC (single-file member access and constructor
 calls; a two-file project crossing into a sibling file, both with and without
 `includeDeclaration`; a cross-file rename's grouped edits; an invalid new name's rejection;
-completion on its own line, mid-call with an unclosed paren, and the documented
-type-qualified-base and no-dot cases correctly returning nothing), not just their Zig unit
+completion on its own line and mid-call with an unclosed paren), not just their Zig unit
 tests — which is how both go to definition's constructor-call gap and completion's own
-bare-placeholder failure mode were actually found. Brace style was checked the same way: the
-CLI (`emerald format` normalizing a hand-written mix of both styles to whichever
+bare-placeholder failure mode were actually found. The completion follow-up added Zig tests
+for type members, namespace children and aliases, bare prelude names, and local function,
+lambda, and method bindings. Brace style was
+checked the same way: the CLI (`emerald format` normalizing a hand-written mix of both styles to whichever
 `emerald.toml` asked for, in both directions, and idempotently on a second pass) and the LSP
 (`textDocument/formatting` over real JSON-RPC against a real two-file project with an
 `emerald.toml`, and separately against a lone file outside any project, confirming the

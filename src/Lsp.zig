@@ -41,10 +41,9 @@
 //! `foo.` or `foo.par`, does not merely lack a type the checker never
 //! computed — it fails to *parse* at all, discarding its whole enclosing
 //! statement (see the section below for why, and how a completion request
-//! works around it without touching the shared parser). Scoped to a value's
-//! own member access; a type-qualified base's own members (10.4) and a bare
-//! identifier with no preceding dot are both out of scope this round (see
-//! this file's own completion section and `docs/handoff.md`'s rough edges).
+//! works around it without touching the shared parser). The same completion
+//! pass also answers type-qualified and namespace members from resolver facts,
+//! plus visible module-level names at a bare identifier.
 //!
 //! Wire format: JSON-RPC 2.0 framed as `Content-Length: N\r\n\r\n` followed
 //! by exactly N bytes of JSON (LSP's own framing, independent of JSON-RPC
@@ -1841,19 +1840,15 @@ fn isValidIdentifier(name: []const u8) bool {
 // through the lexer. Nothing past the completion point is used for
 // anything, so a later imbalance in the *real* file cannot make this worse.
 //
-// Only a value's own member access is answered this way. A type-qualified
-// base (`Vector2.` for its type-level members, 10.4) is not: unlike an
-// instance property access, which the checker validates and tolerates,
-// `Resolver.zig`'s own `qualify` validates a type-qualified reference
-// eagerly and reports an unresolvable one as a resolver diagnostic, which
-// fails the whole analysis outright (`emerald.analyzeProject` returns null)
-// rather than merely leaving one expression untyped — so `placeholder()`
-// cannot stand in for an unknown type-level member the way it can for an
-// unknown instance one. Answering it would need a second, separate analysis
-// pass; not attempted in this slice (see the rough edge this leaves in
-// `docs/handoff.md`). An identifier typed with no preceding dot needs none
-// of this either — it already parses as an ordinary (if undefined) name —
-// and is likewise not implemented in this slice.
+// A type-qualified base (`Vector2.` for its type-level members, 10.4) is
+// different: `Resolver.zig` validates it eagerly, so the synthetic unknown
+// member fails resolution before the checker can record a type for the base.
+// Rather than making the shared resolver tolerate a name it should reject in
+// every other caller, completion reads the base path before the dot and finds
+// its declaration in the resolver facts already gathered by this throwaway
+// analysis. The same facts list a namespace's direct declarations. A bare
+// identifier has no broken syntax at all, so its visible module keys are
+// enough to offer useful top-level completions.
 
 const CompletionItem = struct { label: []const u8 };
 
@@ -1874,10 +1869,7 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     defer temp_source.deinit(gpa);
     const cursor_offset = offsetFromPosition(&temp_source, position);
 
-    const dot_offset = dotBeforeCursor(text, cursor_offset) orelse {
-        try respond(gpa, out, id, empty);
-        return;
-    };
+    const dot_offset = dotBeforeCursor(text, cursor_offset) orelse return onBareCompletion(server, gpa, uri, position, id, out);
 
     // A bare `placeholder` (no call) can land as a statement on its own —
     // `foo.\n` with nothing else on the line — where section 5.2's "a call
@@ -1901,11 +1893,8 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     var loaded = try loadDocument(server, gpa, uri, patched.items);
     defer loaded.deinit(gpa);
 
-    var analysis = (try emerald.analyzeProject(gpa, &loaded.project)) orelse {
-        try respond(gpa, out, id, empty);
-        return;
-    };
-    defer analysis.deinit(gpa);
+    var analysis = try emerald.analyzeProject(gpa, &loaded.project);
+    defer if (analysis) |*found| found.deinit(gpa);
 
     // The base expression's own span still ends exactly at the dot in the
     // patched text, whether or not it ended up wrapped as a call's callee
@@ -1913,24 +1902,333 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // type-qualified callee is resolved without `typeOf` at all, the same
     // gap `definitionAt` works around — so this looks the base up by
     // position rather than by walking to the synthetic call itself).
-    const base = findExpressionEndingAt(&analysis, loaded.index, dot_offset) orelse {
-        try respond(gpa, out, id, empty);
-        return;
-    };
-
     var items: std.ArrayList(CompletionItem) = .empty;
     defer items.deinit(gpa);
 
-    // A type-qualified base (`Vector2.` rather than a value's own member
-    // access) is not answered here — see this file's header for why the
-    // same placeholder trick cannot reach it.
-    if (analysis.checked.expression_types.get(base)) |base_info| {
-        if (base_info.type.kind == .struct_value and base_info.type.user != null) {
-            try collectInstanceMembers(gpa, &analysis, base_info.type.user.?.name, &items);
+    if (analysis) |*found| {
+        if (findExpressionEndingAt(found, loaded.index, dot_offset)) |base| {
+            if (found.checked.expression_types.get(base)) |base_info| {
+                if (base_info.type.kind == .struct_value and base_info.type.user != null) {
+                    try collectInstanceMembers(gpa, found, base_info.type.user.?.name, &items);
+                }
+            }
         }
     }
 
+    // A type and namespace have no value expression for the checker to type.
+    // Resolve their source path directly through the facts instead.
+    if (items.items.len == 0) if (pathBeforeDot(text, dot_offset)) |written| {
+        // The value-member patch intentionally contains an unknown member,
+        // which is a resolver error for `Vector2.placeholder()`. Build one
+        // second, resolver-clean view that replaces the entire incomplete
+        // path with an ordinary call. Its facts still include every project
+        // declaration, including the type or namespace we need to inspect.
+        var facts_text: std.ArrayList(u8) = .empty;
+        defer facts_text.deinit(gpa);
+        const path_start = dot_offset - @as(u32, @intCast(written.len));
+        try facts_text.appendSlice(gpa, text[0..path_start]);
+        try facts_text.appendSlice(gpa, "print()");
+        try appendUnclosedBrackets(gpa, &facts_text, text, path_start);
+        try facts_text.appendSlice(gpa, text[cursor_offset..]);
+        var facts_loaded = try loadDocument(server, gpa, uri, facts_text.items);
+        defer facts_loaded.deinit(gpa);
+        var facts_analysis = (try emerald.analyzeProject(gpa, &facts_loaded.project)) orelse {
+            try respond(gpa, out, id, empty);
+            return;
+        };
+        defer facts_analysis.deinit(gpa);
+
+        const key = try completionPathKey(gpa, &facts_analysis, facts_loaded.index, written);
+        defer gpa.free(key);
+        if (facts_analysis.resolved.facts.declarations.get(key)) |target| {
+            if (findStructDeclarationAt(&facts_analysis, target)) |s| {
+                try collectTypeMembers(gpa, s, &items);
+            } else {
+                try collectNamespaceMembers(gpa, &facts_analysis, key, &items);
+            }
+        } else {
+            try collectNamespaceMembers(gpa, &facts_analysis, key, &items);
+        }
+        // `items` borrows names from this throwaway analysis, so serialize
+        // while its arena still owns those names.
+        try respond(gpa, out, id, items.items);
+        return;
+    };
+
     try respond(gpa, out, id, items.items);
+}
+
+/// Completes names visible at a bare identifier. Resolver facts provide the
+/// file-wide part; the parsed statement tree supplies the enclosing lexical
+/// scopes, innermost first, so a local shadows a module name naturally.
+fn onBareCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, id: std.json.Value, out: *std.Io.Writer) !void {
+    const empty: []const CompletionItem = &.{};
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, empty);
+        return;
+    };
+    var source = try Source.init(gpa, uri, document.text.items);
+    defer source.deinit(gpa);
+    const cursor = offsetFromPosition(&source, position);
+    var patched: std.ArrayList(u8) = .empty;
+    defer patched.deinit(gpa);
+    const start = identifierStartBefore(document.text.items, cursor);
+    try patched.appendSlice(gpa, document.text.items[0..start]);
+    try patched.appendSlice(gpa, "print()");
+    try patched.appendSlice(gpa, document.text.items[cursor..]);
+
+    var loaded = try loadDocument(server, gpa, uri, patched.items);
+    defer loaded.deinit(gpa);
+    var analysis = (try emerald.analyzeProject(gpa, &loaded.project)) orelse {
+        try respond(gpa, out, id, empty);
+        return;
+    };
+    defer analysis.deinit(gpa);
+
+    var items: std.ArrayList(CompletionItem) = .empty;
+    defer items.deinit(gpa);
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(gpa);
+    // `print()` replaces the typed prefix in the throwaway source. Its final
+    // byte is the equivalent cursor position for walking the parsed scopes.
+    const patched_cursor = start + @as(u32, @intCast("print()".len));
+    try collectLocalCandidatesInStatements(gpa, analysis.parsed[loaded.index].program.statements, patched_cursor, &seen, &items);
+    if (loaded.index < analysis.resolved.facts.module_keys.len) {
+        var keys = analysis.resolved.facts.module_keys[loaded.index].keyIterator();
+        while (keys.next()) |name| {
+            // Resolver keeps type-level members in this table under their
+            // internal `Type::member` key; they belong after a dot, not in a
+            // bare completion list.
+            if (std.mem.indexOf(u8, name.*, Resolver.method_separator) == null) try addCompletionOnce(gpa, &seen, &items, name.*);
+        }
+    }
+    if (loaded.index < analysis.resolved.facts.namespace_aliases.len) {
+        var aliases = analysis.resolved.facts.namespace_aliases[loaded.index].keyIterator();
+        while (aliases.next()) |name| try addCompletionOnce(gpa, &seen, &items, name.*);
+    }
+    for (Resolver.prelude) |name| try addCompletionOnce(gpa, &seen, &items, name);
+    try collectNamespaceMembersSeen(gpa, &analysis, "", &seen, &items);
+    try respond(gpa, out, id, items.items);
+}
+
+/// Adds lexical bindings at `cursor`, from the innermost enclosing block out.
+/// A statement block owns a scope (6.1), so its nested block is visited before
+/// declarations in its parent; `seen` therefore preserves ordinary shadowing.
+fn collectLocalCandidatesInStatements(
+    gpa: std.mem.Allocator,
+    statements: []const Ast.Statement,
+    cursor: u32,
+    seen: *std.StringHashMapUnmanaged(void),
+    out: *std.ArrayList(CompletionItem),
+) std.mem.Allocator.Error!void {
+    // Lambdas are expressions rather than statements, so find one before the
+    // statement-level block walk below. The recursive expression walk only
+    // follows a child whose span contains the cursor.
+    for (statements) |statement| {
+        if (spanContains(statement.span, cursor) and try collectLambdaCandidatesInStatement(gpa, statement, cursor, seen, out)) return;
+    }
+    // Find the one nested scope containing the cursor first.
+    nested: for (statements) |statement| switch (statement.data) {
+        .function_declaration => |f| if (spanContains(f.body.span, cursor)) {
+            try collectFunctionLocalCandidates(gpa, f, cursor, false, seen, out);
+            break :nested;
+        },
+        .struct_declaration => |s| {
+            if (s.constructor) |constructor| if (spanContains(constructor.body.span, cursor)) {
+                try collectConstructorLocalCandidates(gpa, constructor, cursor, seen, out);
+                break :nested;
+            };
+            for (s.methods) |method| if (spanContains(method.body.span, cursor)) {
+                try collectFunctionLocalCandidates(gpa, method, cursor, true, seen, out);
+                break :nested;
+            };
+            for (s.properties) |property| {
+                if (spanContains(property.getter.body.span, cursor)) {
+                    try collectFunctionLocalCandidates(gpa, property.getter, cursor, true, seen, out);
+                    break :nested;
+                }
+                if (property.setter) |setter| if (spanContains(setter.body.span, cursor)) {
+                    try collectFunctionLocalCandidates(gpa, setter, cursor, true, seen, out);
+                    break :nested;
+                };
+            }
+            for (s.type_functions) |type_function| if (spanContains(type_function.declaration.body.span, cursor)) {
+                try collectFunctionLocalCandidates(gpa, type_function.declaration, cursor, false, seen, out);
+                break :nested;
+            };
+        },
+        .conditional => |conditional| {
+            if (spanContains(conditional.then_block.span, cursor)) {
+                try collectLocalCandidatesInStatements(gpa, conditional.then_block.statements, cursor, seen, out);
+                break :nested;
+            }
+            if (conditional.otherwise) |otherwise| switch (otherwise) {
+                .block => |block| if (spanContains(block.span, cursor)) {
+                    try collectLocalCandidatesInStatements(gpa, block.statements, cursor, seen, out);
+                    break :nested;
+                },
+                .chained => |chained| if (spanContains(chained.span, cursor)) {
+                    try collectLocalCandidatesInStatements(gpa, &.{chained.*}, cursor, seen, out);
+                    break :nested;
+                },
+            };
+        },
+        .while_loop => |loop| if (spanContains(loop.body.span, cursor)) {
+            try collectLocalCandidatesInStatements(gpa, loop.body.statements, cursor, seen, out);
+            break :nested;
+        },
+        .for_loop => |loop| if (spanContains(loop.body.span, cursor)) {
+            try collectLocalCandidatesInStatements(gpa, loop.body.statements, cursor, seen, out);
+            if (loop.pattern) |pattern| for (pattern.names) |name| try addCompletionOnce(gpa, seen, out, name.text) else if (loop.name.len != 0) try addCompletionOnce(gpa, seen, out, loop.name);
+            break :nested;
+        },
+        .try_statement => |protected| {
+            if (spanContains(protected.body.span, cursor)) {
+                try collectLocalCandidatesInStatements(gpa, protected.body.statements, cursor, seen, out);
+                break :nested;
+            }
+            for (protected.catches) |caught| if (spanContains(caught.body.span, cursor)) {
+                try collectLocalCandidatesInStatements(gpa, caught.body.statements, cursor, seen, out);
+                try addCompletionOnce(gpa, seen, out, caught.name);
+                break :nested;
+            };
+            if (protected.finally_block) |finally_block| if (spanContains(finally_block.span, cursor)) {
+                try collectLocalCandidatesInStatements(gpa, finally_block.statements, cursor, seen, out);
+                break :nested;
+            };
+        },
+        .case_statement => |case| {
+            for (case.arms) |arm| if (arm.body == .block and spanContains(arm.body.block.span, cursor)) {
+                try collectLocalCandidatesInStatements(gpa, arm.body.block.statements, cursor, seen, out);
+                break :nested;
+            };
+            if (case.otherwise) |otherwise| if (otherwise == .block and spanContains(otherwise.block.span, cursor)) {
+                try collectLocalCandidatesInStatements(gpa, otherwise.block.statements, cursor, seen, out);
+                break :nested;
+            };
+        },
+        else => {},
+    };
+
+    // This block's earlier declarations are visible at the cursor. A later
+    // declaration is intentionally absent, matching the resolver's order.
+    for (statements) |statement| {
+        if (statement.span.start >= cursor) break;
+        switch (statement.data) {
+            .declaration => |declaration| try addCompletionOnce(gpa, seen, out, declaration.name),
+            .destructuring => |destructuring| for (destructuring.pattern.names) |name| try addCompletionOnce(gpa, seen, out, name.text),
+            .function_declaration => |function| try addCompletionOnce(gpa, seen, out, function.name),
+            else => {},
+        }
+    }
+}
+
+fn collectFunctionLocalCandidates(
+    gpa: std.mem.Allocator,
+    function: Ast.FunctionDeclaration,
+    cursor: u32,
+    has_self: bool,
+    seen: *std.StringHashMapUnmanaged(void),
+    out: *std.ArrayList(CompletionItem),
+) !void {
+    try collectLocalCandidatesInStatements(gpa, function.body.statements, cursor, seen, out);
+    for (function.parameters) |parameter| try addCompletionOnce(gpa, seen, out, parameter.name);
+    if (has_self) try addCompletionOnce(gpa, seen, out, "self");
+}
+
+fn collectConstructorLocalCandidates(
+    gpa: std.mem.Allocator,
+    constructor: Ast.StructDeclaration.Constructor,
+    cursor: u32,
+    seen: *std.StringHashMapUnmanaged(void),
+    out: *std.ArrayList(CompletionItem),
+) !void {
+    try collectLocalCandidatesInStatements(gpa, constructor.body.statements, cursor, seen, out);
+    for (constructor.parameters) |parameter| try addCompletionOnce(gpa, seen, out, parameter.name);
+    try addCompletionOnce(gpa, seen, out, "self");
+}
+
+fn collectLambdaCandidatesInStatement(gpa: std.mem.Allocator, statement: Ast.Statement, cursor: u32, seen: *std.StringHashMapUnmanaged(void), out: *std.ArrayList(CompletionItem)) std.mem.Allocator.Error!bool {
+    return switch (statement.data) {
+        .expression => |expression| collectLambdaCandidatesInExpression(gpa, expression, cursor, seen, out),
+        .declaration => |declaration| if (declaration.initializer) |initializer| collectLambdaCandidatesInExpression(gpa, initializer, cursor, seen, out) else false,
+        .assignment => |assignment| collectLambdaCandidatesInExpression(gpa, assignment.value, cursor, seen, out),
+        .conditional => |conditional| collectLambdaCandidatesInExpression(gpa, conditional.condition, cursor, seen, out),
+        .while_loop => |loop| collectLambdaCandidatesInExpression(gpa, loop.condition, cursor, seen, out),
+        .for_loop => |loop| collectLambdaCandidatesInExpression(gpa, loop.iterable, cursor, seen, out),
+        .return_statement => |returned| if (returned.value) |value| collectLambdaCandidatesInExpression(gpa, value, cursor, seen, out) else false,
+        .raise_statement => |raised| if (raised.value) |value| collectLambdaCandidatesInExpression(gpa, value, cursor, seen, out) else false,
+        .assert_statement => |assertion| blk: {
+            if (try collectLambdaCandidatesInExpression(gpa, assertion.condition, cursor, seen, out)) break :blk true;
+            break :blk if (assertion.message) |message| collectLambdaCandidatesInExpression(gpa, message, cursor, seen, out) else false;
+        },
+        .destructuring => |destructuring| collectLambdaCandidatesInExpression(gpa, destructuring.initializer, cursor, seen, out),
+        else => false,
+    };
+}
+
+fn collectLambdaCandidatesInExpression(gpa: std.mem.Allocator, expression: *const Ast.Expression, cursor: u32, seen: *std.StringHashMapUnmanaged(void), out: *std.ArrayList(CompletionItem)) std.mem.Allocator.Error!bool {
+    if (!spanContains(expression.span, cursor)) return false;
+    switch (expression.data) {
+        .lambda => |lambda| {
+            switch (lambda.body) {
+                .expression => |body| _ = try collectLambdaCandidatesInExpression(gpa, body, cursor, seen, out),
+                .block => |body| try collectLocalCandidatesInStatements(gpa, body.statements, cursor, seen, out),
+            }
+            for (lambda.parameters) |parameter| {
+                if (parameter.pattern) |pattern| {
+                    for (pattern.names) |name| try addCompletionOnce(gpa, seen, out, name.text);
+                } else if (!std.mem.eql(u8, parameter.name, "_")) {
+                    try addCompletionOnce(gpa, seen, out, parameter.name);
+                }
+            }
+            return true;
+        },
+        .unary => |unary| return collectLambdaCandidatesInExpression(gpa, unary.operand, cursor, seen, out),
+        .binary => |binary| {
+            if (try collectLambdaCandidatesInExpression(gpa, binary.left, cursor, seen, out)) return true;
+            return collectLambdaCandidatesInExpression(gpa, binary.right, cursor, seen, out);
+        },
+        .logical => |logical| {
+            if (try collectLambdaCandidatesInExpression(gpa, logical.left, cursor, seen, out)) return true;
+            return collectLambdaCandidatesInExpression(gpa, logical.right, cursor, seen, out);
+        },
+        .comparison => |comparison| for (comparison.operands) |operand| if (try collectLambdaCandidatesInExpression(gpa, operand, cursor, seen, out)) return true,
+        .call => |call| {
+            if (try collectLambdaCandidatesInExpression(gpa, call.callee, cursor, seen, out)) return true;
+            for (call.arguments) |argument| if (try collectLambdaCandidatesInExpression(gpa, argument, cursor, seen, out)) return true;
+        },
+        .member => |member| return collectLambdaCandidatesInExpression(gpa, member.base, cursor, seen, out),
+        .index => |index| {
+            if (try collectLambdaCandidatesInExpression(gpa, index.base, cursor, seen, out)) return true;
+            return collectLambdaCandidatesInExpression(gpa, index.index, cursor, seen, out);
+        },
+        .slice => |slice| {
+            if (try collectLambdaCandidatesInExpression(gpa, slice.base, cursor, seen, out)) return true;
+            if (slice.start) |start| if (try collectLambdaCandidatesInExpression(gpa, start, cursor, seen, out)) return true;
+            if (slice.end) |end| return collectLambdaCandidatesInExpression(gpa, end, cursor, seen, out);
+        },
+        .range => |range| {
+            if (try collectLambdaCandidatesInExpression(gpa, range.start, cursor, seen, out)) return true;
+            return collectLambdaCandidatesInExpression(gpa, range.end, cursor, seen, out);
+        },
+        .list_literal, .tuple_literal => |items| for (items) |item| if (try collectLambdaCandidatesInExpression(gpa, item, cursor, seen, out)) return true,
+        .dictionary_literal => |entries| for (entries) |entry| {
+            if (try collectLambdaCandidatesInExpression(gpa, entry.key, cursor, seen, out)) return true;
+            if (try collectLambdaCandidatesInExpression(gpa, entry.value, cursor, seen, out)) return true;
+        },
+        .interpolation => |parts| for (parts) |part| switch (part) {
+            .text => {},
+            .expression => |part_expression| if (try collectLambdaCandidatesInExpression(gpa, part_expression, cursor, seen, out)) return true,
+        },
+        .type_test => |test_expression| return collectLambdaCandidatesInExpression(gpa, test_expression.value, cursor, seen, out),
+        else => {},
+    }
+    return false;
+}
+
+fn spanContains(span: Source.Span, offset: u32) bool {
+    return offset >= span.start and offset <= span.end;
 }
 
 /// The offset of the `.` immediately before whatever identifier prefix (if
@@ -1946,6 +2244,44 @@ fn dotBeforeCursor(text: []const u8, cursor: u32) ?u32 {
     }
     if (index == 0 or text[index - 1] != '.') return null;
     return index - 1;
+}
+
+/// The identifier path ending immediately before a member dot. This is only
+/// an LSP recovery aid; the parser remains the authority for ordinary source.
+fn pathBeforeDot(text: []const u8, dot: u32) ?[]const u8 {
+    var start: usize = dot;
+    while (start > 0) {
+        const c = text[start - 1];
+        const path_byte = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or
+            (c >= '0' and c <= '9') or c == '_' or c == '.';
+        if (!path_byte) break;
+        start -= 1;
+    }
+    return if (start == dot) null else text[start..dot];
+}
+
+fn identifierStartBefore(text: []const u8, cursor: u32) u32 {
+    var start = cursor;
+    while (start > 0) {
+        const c = text[start - 1];
+        const identifier_byte = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or
+            (c >= '0' and c <= '9') or c == '_';
+        if (!identifier_byte) break;
+        start -= 1;
+    }
+    return start;
+}
+
+fn completionPathKey(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, written: []const u8) ![]u8 {
+    if (analysis.resolved.facts.keyFor(file, written)) |key| return gpa.dupe(u8, key);
+    const dot = std.mem.indexOfScalar(u8, written, '.') orelse {
+        if (analysis.resolved.facts.namespaceAliasFor(file, written)) |alias| return gpa.dupe(u8, alias);
+        return gpa.dupe(u8, written);
+    };
+    if (analysis.resolved.facts.namespaceAliasFor(file, written[0..dot])) |alias| {
+        return std.fmt.allocPrint(gpa, "{s}{s}", .{ alias, written[dot..] });
+    }
+    return gpa.dupe(u8, written);
 }
 
 /// Appends whatever closes `(`, `[`, and `{` left open between the start of
@@ -2041,6 +2377,49 @@ fn collectInstanceMembers(gpa: std.mem.Allocator, analysis: *const emerald.Analy
                 if (findStructDeclarationAt(analysis, target)) |s| try addInstanceMembers(s, gpa, &seen, out);
             }
         }
+    }
+}
+
+/// Section 10.4's members reached through a type rather than an instance.
+/// They are not inherited, unlike the instance members above.
+fn collectTypeMembers(gpa: std.mem.Allocator, s: Ast.StructDeclaration, out: *std.ArrayList(CompletionItem)) !void {
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(gpa);
+    for (s.type_functions) |function| try addCompletionOnce(gpa, &seen, out, function.member);
+    for (s.type_fields) |field| try addCompletionOnce(gpa, &seen, out, field.name);
+}
+
+/// Direct children of `namespace`, plus direct child namespaces inferred from
+/// declarations below it. Resolver keys use `::` for type members, which are
+/// deliberately not namespace completions.
+fn collectNamespaceMembers(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, namespace: []const u8, out: *std.ArrayList(CompletionItem)) !void {
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(gpa);
+    try collectNamespaceMembersSeen(gpa, analysis, namespace, &seen, out);
+}
+
+fn collectNamespaceMembersSeen(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    namespace: []const u8,
+    seen: *std.StringHashMapUnmanaged(void),
+    out: *std.ArrayList(CompletionItem),
+) !void {
+    var declarations = analysis.resolved.facts.declarations.keyIterator();
+    while (declarations.next()) |entry| {
+        const key = entry.*;
+        if (std.mem.indexOfScalar(u8, key, Resolver.private_separator[0]) != null) continue;
+        if (namespace.len == 0 and std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".")) continue;
+        const rest = if (namespace.len == 0) key else blk: {
+            if (!std.mem.startsWith(u8, key, namespace) or key.len <= namespace.len or key[namespace.len] != '.') continue;
+            break :blk key[namespace.len + 1 ..];
+        };
+        if (rest.len == 0) continue;
+        const type_member = std.mem.indexOf(u8, rest, Resolver.method_separator);
+        const nested = std.mem.indexOfScalar(u8, rest, '.');
+        const end = if (type_member) |member| if (nested) |dot| @min(member, dot) else member else nested orelse rest.len;
+        if (type_member != null and (nested == null or type_member.? < nested.?)) continue;
+        try addCompletionOnce(gpa, seen, out, rest[0..end]);
     }
 }
 
@@ -2488,6 +2867,186 @@ test "collectInstanceMembers finds a class's own members and its adopted trait's
     try testing.expect(labels.contains("id"));
     try testing.expect(labels.contains("greet"));
     try testing.expectEqual(@as(usize, 2), items.items.len);
+}
+
+test "completion collects a type's own type-level members, not its instance members" {
+    const gpa = testing.allocator;
+    const text =
+        \\struct Vector {
+        \\    var x: Int
+        \\    func Vector.origin(): Vector {
+        \\        return Vector(0)
+        \\    }
+        \\    const Vector.unit = Vector(1)
+        \\}
+        \\print(Vector.origin())
+    ;
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.ok());
+
+    const target = analysis.resolved.facts.declarations.get("Vector").?;
+    const declaration = findStructDeclarationAt(&analysis, target).?;
+    var items: std.ArrayList(CompletionItem) = .empty;
+    defer items.deinit(gpa);
+    try collectTypeMembers(gpa, declaration, &items);
+
+    var labels: std.StringHashMapUnmanaged(void) = .empty;
+    defer labels.deinit(gpa);
+    for (items.items) |item| try labels.put(gpa, item.label, {});
+    try testing.expect(labels.contains("origin"));
+    try testing.expect(labels.contains("unit"));
+    try testing.expect(!labels.contains("x"));
+}
+
+test "completion collects direct namespace members and child namespaces" {
+    const gpa = testing.allocator;
+    var main = try Source.init(gpa, "main.em", "using Art = Shapes\nprint(Art.area())\n");
+    defer main.deinit(gpa);
+    var shapes = try Source.init(gpa, "shapes/math.em",
+        \\func area(): Int {
+        \\    return 1
+        \\}
+    );
+    defer shapes.deinit(gpa);
+    var nested = try Source.init(gpa, "shapes/drawing/line.em", "func draw() {}\n");
+    defer nested.deinit(gpa);
+    var files = [_]emerald.Project.File{
+        .{ .source = main, .namespace = "", .entry = true },
+        .{ .source = shapes, .namespace = "Shapes", .entry = false },
+        .{ .source = nested, .namespace = "Shapes.Drawing", .entry = false },
+    };
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.ok());
+
+    var items: std.ArrayList(CompletionItem) = .empty;
+    defer items.deinit(gpa);
+    try collectNamespaceMembers(gpa, &analysis, "Shapes", &items);
+    var labels: std.StringHashMapUnmanaged(void) = .empty;
+    defer labels.deinit(gpa);
+    for (items.items) |item| try labels.put(gpa, item.label, {});
+    try testing.expect(labels.contains("area"));
+    try testing.expect(labels.contains("Drawing"));
+
+    const alias_key = try completionPathKey(gpa, &analysis, 0, "Art");
+    defer gpa.free(alias_key);
+    try testing.expectEqualStrings("Shapes", alias_key);
+}
+
+test "completion handler answers type members and a bare visible name" {
+    const gpa = testing.allocator;
+    var server: Server = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+    const uri = "untitled:completion.em";
+
+    const type_text =
+        \\struct Vector {
+        \\    func Vector.origin(): Vector {
+        \\        return Vector()
+        \\    }
+        \\    const Vector.unit = Vector()
+        \\}
+        \\Vector.
+    ;
+    try server.store(uri, type_text);
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try onCompletion(&server, gpa, uri, .{ .line = 6, .character = 7 }, .{ .integer = 1 }, &out.writer);
+    var reader: std.Io.Reader = .fixed(out.written());
+    var response = (try readMessage(gpa, &reader)).?;
+    defer response.deinit();
+    var labels: std.StringHashMapUnmanaged(void) = .empty;
+    defer labels.deinit(gpa);
+    for (response.value.object.get("result").?.array.items) |item| {
+        const label = item.object.get("label").?;
+        try testing.expect(label == .string);
+        try labels.put(gpa, label.string, {});
+    }
+    try testing.expect(labels.contains("origin"));
+    try testing.expect(labels.contains("unit"));
+
+    out.clearRetainingCapacity();
+    try server.store(uri, "pri");
+    try onCompletion(&server, gpa, uri, .{ .line = 0, .character = 3 }, .{ .integer = 2 }, &out.writer);
+    reader = .fixed(out.written());
+    var bare_response = (try readMessage(gpa, &reader)).?;
+    defer bare_response.deinit();
+    labels.clearRetainingCapacity();
+    for (bare_response.value.object.get("result").?.array.items) |item| {
+        const label = item.object.get("label").?;
+        try testing.expect(label == .string);
+        try labels.put(gpa, label.string, {});
+    }
+    try testing.expect(labels.contains("print"));
+
+    out.clearRetainingCapacity();
+    try server.store(uri,
+        \\func total(first: Int): Int {
+        \\    const second = 2
+        \\    if true {
+        \\        inn
+        \\    }
+        \\    const after = 3
+        \\    return first + second
+        \\}
+    );
+    try onCompletion(&server, gpa, uri, .{ .line = 3, .character = 11 }, .{ .integer = 3 }, &out.writer);
+    reader = .fixed(out.written());
+    var local_response = (try readMessage(gpa, &reader)).?;
+    defer local_response.deinit();
+    labels.clearRetainingCapacity();
+    for (local_response.value.object.get("result").?.array.items) |item| {
+        const label = item.object.get("label").?;
+        try testing.expect(label == .string);
+        try labels.put(gpa, label.string, {});
+    }
+    try testing.expect(labels.contains("first"));
+    try testing.expect(labels.contains("second"));
+    try testing.expect(!labels.contains("after"));
+
+    out.clearRetainingCapacity();
+    try server.store(uri,
+        \\[1].each { value =>
+        \\    val
+        \\}
+    );
+    try onCompletion(&server, gpa, uri, .{ .line = 1, .character = 7 }, .{ .integer = 4 }, &out.writer);
+    reader = .fixed(out.written());
+    var lambda_response = (try readMessage(gpa, &reader)).?;
+    defer lambda_response.deinit();
+    labels.clearRetainingCapacity();
+    for (lambda_response.value.object.get("result").?.array.items) |item| {
+        const label = item.object.get("label").?;
+        try testing.expect(label == .string);
+        try labels.put(gpa, label.string, {});
+    }
+    try testing.expect(labels.contains("value"));
+
+    out.clearRetainingCapacity();
+    try server.store(uri,
+        \\struct Box {
+        \\    func inspect() {
+        \\        sel
+        \\    }
+        \\}
+    );
+    try onCompletion(&server, gpa, uri, .{ .line = 2, .character = 11 }, .{ .integer = 5 }, &out.writer);
+    reader = .fixed(out.written());
+    var method_response = (try readMessage(gpa, &reader)).?;
+    defer method_response.deinit();
+    labels.clearRetainingCapacity();
+    for (method_response.value.object.get("result").?.array.items) |item| {
+        const label = item.object.get("label").?;
+        try testing.expect(label == .string);
+        try labels.put(gpa, label.string, {});
+    }
+    try testing.expect(labels.contains("self"));
 }
 
 test "completion end to end: a broken member access mid-call patches into something the checker can type" {
