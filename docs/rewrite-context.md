@@ -198,11 +198,10 @@ English; casing conventions apply only to writing systems that have case.
 
 ### 3.4 Braces and parentheses
 
-Braces delimit blocks. Whitespace is not semantic.
-
-Stroustrup braces are the teaching and formatter convention: an opening brace ends its
-header line, a closing brace begins a line, and `else`, `catch`, and `finally` begin their
-own lines.
+Braces delimit blocks. Whitespace is not semantic — brace placement included, so the
+grammar accepts a block's opening brace either trailing the line that introduces it
+(Stroustrup) or starting its own line right after (Allman); a closing brace begins a line
+either way, and `else`, `catch`, and `finally` begin their own lines under both styles.
 
 ```emerald
 if score >= 10 {
@@ -212,6 +211,25 @@ else {
     print("Keep trying.")
 }
 ```
+
+```emerald
+if score >= 10
+{
+    print("You win!")
+}
+else
+{
+    print("Keep trying.")
+}
+```
+
+A project picks exactly one of the two as its canonical style, in `emerald.toml`'s
+`brace_style` (`stroustrup`, the default, or `allman`); the formatter always normalizes
+every file to that one choice, regardless of which style it was written in, so a project
+still reads as one consistent style throughout — §18.3's "one canonical output" promise is
+about a project having one answer, not about the language having only one legal way to
+write a brace. An earlier draft made Stroustrup the only legal spelling anywhere, with no
+per-project choice at all; it was reversed; see the decision table in section 22 for why.
 
 Conditions conventionally omit parentheses:
 
@@ -2053,13 +2071,15 @@ class Dog extends Animal with Speaker {
 ```
 
 An earlier draft also allowed a block-free top-level form whose body ran to end of file,
-inspired by GDScript. It is removed. It contradicted the formatter contract in 18.3, which
-promises one canonical output with no style configuration: the formatter would have had to
-either rewrite block-free types into braced ones, making the form pointless, or maintain two
-canonical outputs. It also added a second parsing mode, a second shape for error recovery to
-understand, and a second way to teach a class declaration, in exchange for saving one brace
-in single-type files. Braces already delimit every other block in the language, so the
-uniform rule is both simpler to implement and easier to explain.
+inspired by GDScript. It is removed. It contradicted the formatter contract in 18.3: the
+formatter would have had to either rewrite block-free types into braced ones, making the
+form pointless, or maintain a second canonical output for a *different construct entirely*
+(a type body with no braces at all, not merely different brace placement — unlike 3.4's
+later brace-style choice, there is no shared parsed shape the two could both normalize to).
+It also added a second parsing mode, a second shape for error recovery to understand, and a
+second way to teach a class declaration, in exchange for saving one brace in single-type
+files. Braces already delimit every other block in the language, so the uniform rule is
+both simpler to implement and easier to explain.
 
 ### 10.7 Inheritance and overriding
 
@@ -2412,7 +2432,8 @@ Inside a project, every `.em` file under the project root is included; no import
 needed merely to make project files exist. `main.em` is the entry file, and `emerald run
 path/to/file.em` may select another entry explicitly. Until a manifest exists, the project
 root is the directory containing `main.em`, independent of the terminal's working
-directory. What `emerald.toml` holds is still a roadmap item (24).
+directory. What else `emerald.toml` holds, beyond 3.4's `brace_style`, is still a roadmap
+item (24).
 
 Only the directory a file sits in is consulted, never a directory above it. `emerald run
 ex1.em` in a folder of exercises sees no project even when one exists further up, which is
@@ -2891,14 +2912,18 @@ emerald new guessing_game
 
 creates a directory with a readable `main.em` and no mandatory manifest. A manifest named
 `emerald.toml` appears only when configuration, dependencies, distribution, or warning
-policy requires it. Build configuration is data, not executable Emerald code.
+policy requires it. Build configuration is data, not executable Emerald code. Its first
+real key, `brace_style` (3.4), exists for exactly that reason: a project reads it once, and
+everything else it might eventually hold remains open.
 
 ### 18.3 Formatter
 
-`emerald format` has one canonical output and no style configuration. It applies the
-settled Stroustrup brace layout, indentation, spacing, final newlines, and comment-preserving
-rules. It must understand tokens so braces inside strings and interpolation do not affect
-indentation.
+`emerald format` has one canonical output per project, with exactly one configuration
+axis: `emerald.toml`'s `brace_style` (3.4) picks Stroustrup (the default) or Allman, and
+every file in the project is normalized to that one choice. Beyond that one axis there is
+no further style configuration. The formatter applies indentation, spacing, final
+newlines, and comment-preserving rules the same way regardless of brace style. It must
+understand tokens so braces inside strings and interpolation do not affect indentation.
 
 The formatter refuses to rewrite a file it cannot parse safely. Block-comment interiors
 retain deliberate diagrams and formatting. Format-on-save uses the same implementation as
@@ -3417,6 +3442,7 @@ recorded in their normative sections:
 | A trait an unresolved `with` name might have meant (11.2, 11.5) | An operator's "needs to adopt" is not reported for a type whose `with` list has any name that failed to resolve | `struct Money with Addible { ... }` followed by `Money(1) + Money(2)` reported the typo and then, separately, that `Money` does not adopt `Addable`, guessing that unresolved name was meant to be it. Matches the existing rule that an already-invalid type is treated as usable so one mistake is reported once, rather than judging conformance a broken `with` list cannot yet state. Found in the diagnostics review. |
 | Constructing a message-only error subclass (13.1) | It gets `Error(message)` when it declares no constructor and its complete stored state is only the inherited message; a hierarchy with more fields uses ordinary subclass constructors | Section 13's canonical `class InvalidScore extends Error { }` is immediately raised as `InvalidScore("...")`. Requiring boilerplate that only forwards the message would contradict that teaching example and make the most common custom error need ceremony, while bypassing fields or constructor arguments from an intermediate error class would create an invalid object. |
 | An assertion's optional message (16.2) | Written after a comma: `assert condition, "explanation"` | The comma reads as one assertion with supporting context, requires no new keyword or parentheses, and leaves the condition as the first thing a beginner sees. The message is evaluated only when the assertion fails. |
+| Brace style, revisited (3.4, 18.3) | Both Stroustrup and Allman are legal source; a project picks one canonical style in `emerald.toml`'s `brace_style`, and the formatter always normalizes to it | The original rule made Stroustrup the only legal spelling anywhere, reasoning from the formatter's "one canonical output" promise as if that meant one output for the whole language rather than one per project. But brace placement is whitespace, which 3.1 already calls non-semantic, and casing (3.3) already shows the language tolerating a non-conventional choice as a style matter rather than banning it outright. The two styles aren't symmetric with casing, though: the formatter can rewrite whitespace unconditionally, but it can't safely rename an identifier, which is why casing stays a warning rather than a rewrite. 18.3's promise survives intact — every file in a project still normalizes to exactly one style — it is just no longer the same style for every project. |
 
 ## 23. Consistency rules for future work
 

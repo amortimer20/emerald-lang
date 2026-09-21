@@ -24,6 +24,12 @@ pub const entry_file_name = "main.em";
 
 pub const extension = ".em";
 
+/// Section 3.4: a project picks exactly one canonical brace style, and the
+/// formatter always normalizes to it — never a mix, and never left to each
+/// file. `stroustrup` (the opening brace trails its header) is the default
+/// when no `emerald.toml` says otherwise, or asks for something else.
+pub const BraceStyle = enum { stroustrup, allman };
+
 /// How deep a project's directories may nest. A namespace no one can read is
 /// not worth walking, and a bound keeps a symlink loop from running forever.
 pub const max_depth = 16;
@@ -62,6 +68,11 @@ entry: u32,
 /// so rather than leaving the reader to wonder where the rest of it went.
 enclosing_project: ?[]const u8 = null,
 bad_directories: []const BadDirectory,
+/// Read from `emerald.toml` at the project root, when a project has one
+/// (14.1's single-file programs have no root to read one from, and keep the
+/// default). Roadmap item 24 leaves everything else about that file open;
+/// this is its first real key.
+brace_style: BraceStyle = .stroustrup,
 
 pub const LoadError = std.Io.Dir.ReadFileAllocError || std.mem.Allocator.Error ||
     std.Io.Dir.OpenError || std.Io.Dir.Iterator.Error ||
@@ -125,6 +136,7 @@ pub fn loadIn(
         .files = try loader.files.toOwnedSlice(gpa),
         .entry = entry_index,
         .bad_directories = &.{},
+        .brace_style = readBraceStyle(gpa, io, root),
     };
     errdefer project.deinit(gpa);
     project.bad_directories = try loader.bad_directories.toOwnedSlice(gpa);
@@ -133,6 +145,33 @@ pub fn loadIn(
 
 fn byPath(_: void, a: File, b: File) bool {
     return std.mem.order(u8, a.source.path, b.source.path) == .lt;
+}
+
+/// A missing file, an unreadable one, or one with no `brace_style` line all
+/// mean the same thing: the default. `emerald.toml` is still a roadmap item
+/// (24), so this reads only the one key it needs today rather than a real
+/// TOML parser — a line of `key = "value"`, `#` comments, and blank lines are
+/// all it understands.
+fn readBraceStyle(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) BraceStyle {
+    const bytes = dir.readFileAlloc(io, "emerald.toml", gpa, .limited(64 * 1024)) catch return .stroustrup;
+    defer gpa.free(bytes);
+    return parseBraceStyle(bytes);
+}
+
+fn parseBraceStyle(text: []const u8) BraceStyle {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        const key = std.mem.trim(u8, line[0..eq], " \t");
+        if (!std.mem.eql(u8, key, "brace_style")) continue;
+        const raw_value = std.mem.trim(u8, line[eq + 1 ..], " \t");
+        const value = std.mem.trim(u8, raw_value, "\"");
+        if (std.mem.eql(u8, value, "allman")) return .allman;
+        return .stroustrup;
+    }
+    return .stroustrup;
 }
 
 /// A file that is not in a project is the whole program, exactly as it was
@@ -421,6 +460,22 @@ test "project loading keeps invalid directories tracked without dropping their f
     try testing.expectEqual(@as(usize, 2), project.files.len);
     try testing.expectEqual(@as(usize, 1), project.bad_directories.len);
     try testing.expectEqualStrings("2bad", project.bad_directories[0].path);
+}
+
+test "a project reads its brace style from emerald.toml, defaulting to stroustrup" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "main.em", .data = "var answer = 42\n" });
+
+    var default_project = try loadIn(testing.allocator, testing.io, tmp.dir, "main.em");
+    defer default_project.deinit(testing.allocator);
+    try testing.expectEqual(BraceStyle.stroustrup, default_project.brace_style);
+
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "emerald.toml", .data = "# a comment\nbrace_style = \"allman\"\n" });
+    var allman_project = try loadIn(testing.allocator, testing.io, tmp.dir, "main.em");
+    defer allman_project.deinit(testing.allocator);
+    try testing.expectEqual(BraceStyle.allman, allman_project.brace_style);
 }
 
 test "project loading keeps nested invalid directories tracked with their full path" {

@@ -197,17 +197,46 @@ fn skipSeparators(self: *Parser) void {
     while (self.check(.newline)) _ = self.advance();
 }
 
-/// The next token that is neither a newline nor a documentation comment, without
-/// consuming anything.
-fn peekPastNewlines(self: *Parser) Token {
-    var at = self.index;
-    while (at < self.tokens.len) : (at += 1) {
-        switch (self.tokens[at].kind) {
+/// The next token at or after `at` that is neither a newline nor a
+/// documentation comment, without consuming anything.
+fn tokenAfterNewlines(self: *Parser, at: usize) Token {
+    var i = at;
+    while (i < self.tokens.len) : (i += 1) {
+        switch (self.tokens[i].kind) {
             .newline, .doc_comment => {},
-            else => return self.tokens[at],
+            else => return self.tokens[i],
         }
     }
     return self.tokens[self.tokens.len - 1];
+}
+
+/// The next token that is neither a newline nor a documentation comment, without
+/// consuming anything.
+fn peekPastNewlines(self: *Parser) Token {
+    return self.tokenAfterNewlines(self.index);
+}
+
+/// Section 3.4: a block's opening `{` may start its own line (Allman) as
+/// well as trail its header (Stroustrup) — brace placement is whitespace,
+/// and whitespace is not semantic (§3.1), so the grammar accepts both
+/// regardless of which one `emerald.toml`'s `brace_style` asks the
+/// formatter to always output. `atLeftBrace` answers the question without
+/// consuming anything; `skipToLeftBrace` consumes the newlines in between,
+/// but only once it already knows a `{` is what they lead to, so a
+/// statement that turns out not to open a block keeps its own terminating
+/// newline untouched.
+fn atLeftBrace(self: *Parser) bool {
+    return self.peekPastNewlines().kind == .left_brace;
+}
+
+fn skipToLeftBrace(self: *Parser) void {
+    if (!self.atLeftBrace()) return;
+    while (true) {
+        switch (self.peek().kind) {
+            .newline, .doc_comment => _ = self.advance(),
+            else => return,
+        }
+    }
 }
 
 /// Recovery after a failed statement: skip to the start of the next one.
@@ -709,6 +738,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         }
     }
 
+    self.skipToLeftBrace();
     if (self.match(.left_brace) == null) {
         return self.reportFmt(
             self.peek().span,
@@ -1010,6 +1040,7 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
     }
     const typed = try self.parseNamedType(field_name, .field);
     const annotation = typed.annotation;
+    self.skipToLeftBrace();
     if (self.check(.left_brace)) {
         var property = try self.parseProperty(mutable, field_name, annotation);
         if (self.in_trait or self.has_traits) property.override_span = annotations.override;
@@ -1207,6 +1238,7 @@ fn parseTypeField(
     // Both mistakes below are noted rather than reported, with the rest of
     // the declaration still read, so the struct body carries on normally.
     var initializer: *const Ast.Expression = undefined;
+    self.skipToLeftBrace();
     if (self.check(.left_brace)) {
         const opening = self.peek().span;
         _ = try self.parseBlock();
@@ -1333,12 +1365,13 @@ fn parseProperty(
     };
 }
 
-/// Whether the tokens at `at` are `get {` or `set {`. Neither word is a
-/// keyword, so this is the one place they mean anything.
+/// Whether the tokens at `at` are `get {` or `set {`, allowing the `{` to
+/// start its own line (Allman) rather than trail `get`/`set` immediately.
+/// Neither word is a keyword, so this is the one place they mean anything.
 fn startsAccessor(self: *Parser, at: usize) bool {
-    if (at + 1 >= self.tokens.len) return false;
+    if (at >= self.tokens.len) return false;
     const word = self.tokens[at];
-    if (word.kind != .identifier or self.tokens[at + 1].kind != .left_brace) return false;
+    if (word.kind != .identifier or self.tokenAfterNewlines(at + 1).kind != .left_brace) return false;
     const spelled = self.text(word);
     return std.mem.eql(u8, spelled, "get") or std.mem.eql(u8, spelled, "set");
 }
@@ -1604,7 +1637,7 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
     var return_annotation: ?Ast.TypeExpression = null;
     if (self.match(.colon) != null) return_annotation = try self.parseTypeExpression();
 
-    if (abstract and !self.check(.left_brace)) {
+    if (abstract and !self.atLeftBrace()) {
         const end = if (return_annotation) |annotation| annotation.span else name.span;
         return .{
             .span = spanning(keyword.span, end),
@@ -1625,7 +1658,7 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
             .{self.text(name)},
             "Remove the body, and let each subclass supply one with `@override`. Or remove `@abstract` to keep this body.",
         );
-    } else if (body_rule == .required and method and self.in_class and self.check(.newline)) {
+    } else if (body_rule == .required and method and self.in_class and self.check(.newline) and !self.atLeftBrace()) {
         return self.reportFmt(
             self.peek().span,
             "`{s}` needs a body",
@@ -1743,7 +1776,7 @@ fn parseNamedType(self: *Parser, name: Token, context: NamedTypeContext) Error!N
         "Write the type first, as in `count: Int = 0`.",
     );
     if (self.match(.colon) == null) {
-        if (context == .field and self.check(.left_brace)) return self.reportFmt(
+        if (context == .field and self.atLeftBrace()) return self.reportFmt(
             self.peek().span,
             "`{s}` needs a type before its body",
             .{self.text(name)},
@@ -2244,7 +2277,9 @@ fn parseIf(self: *Parser) Error!Ast.Statement {
 /// allows where it is written.
 fn parseCase(self: *Parser) Error!*const Ast.Case {
     const keyword = self.advance();
+    self.skipToLeftBrace();
     const subject: ?*const Ast.Expression = if (self.check(.left_brace)) null else try self.parseHeaderExpression();
+    self.skipToLeftBrace();
     const opening = self.peek();
     if (opening.kind != .left_brace) {
         return self.reportFmt(
@@ -2356,7 +2391,7 @@ fn parseCaseArms(self: *Parser, opening: Token, subjectless: bool, parts: *CaseP
 fn parseCaseBody(self: *Parser, produces: *?bool) Error!Ast.Case.Body {
     const body: Ast.Case.Body = if (self.match(.keyword_then) != null)
         .{ .value = try self.parseExpression() }
-    else if (self.check(.left_brace))
+    else if (self.atLeftBrace())
         .{ .block = try self.parseBlock() }
     else
         return self.reportFmt(
@@ -2405,13 +2440,14 @@ fn parseHeaderExpression(self: *Parser) Error!*const Ast.Expression {
 }
 
 fn parseBlock(self: *Parser) Error!Ast.Block {
+    self.skipToLeftBrace();
     const opening = self.peek();
     if (opening.kind != .left_brace) {
         return self.reportFmt(
             opening.span,
             "expected `{{` to open a block, found {s}",
             .{opening.kind.describe()},
-            "A body is written in braces, opening on the same line as the line that introduces it.",
+            "A body is written in braces, either trailing the line that introduces it or starting its own line right after.",
         );
     }
     try self.nest(opening.span);
@@ -4123,4 +4159,98 @@ test "parser resumes after a malformed declaration before a valid function" {
 
     try testing.expect(parsed.diagnostics.len > 0);
     try testing.expectEqual(@as(usize, 3), parsed.program.statements.len);
+}
+
+/// Section 3.4: brace placement is whitespace, so the grammar accepts a
+/// block's opening `{` on its own line (Allman) exactly as readily as
+/// trailing its header (Stroustrup) — only the formatter picks one
+/// canonical style to always print.
+fn expectParsesCleanly(source_text: []const u8) !void {
+    var source = try Source.init(testing.allocator, "test.em", source_text);
+    defer source.deinit(testing.allocator);
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+    var parsed = try parse(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+    try testing.expectEqual(@as(usize, 0), parsed.diagnostics.len);
+}
+
+test "Allman brace style parses for if, else, and else if" {
+    try expectParsesCleanly("if true\n{\n    print(1)\n}\nelse if false\n{\n    print(2)\n}\nelse\n{\n    print(3)\n}\n");
+}
+
+test "Allman brace style parses for while and for" {
+    try expectParsesCleanly("while true\n{\n    break\n}\nfor x in [1, 2]\n{\n    print(x)\n}\n");
+}
+
+test "Allman brace style parses for a struct, class, and trait body" {
+    try expectParsesCleanly("struct Point\n{\n    var x: Int\n}\nclass Dog\n{\n    var name: String\n}\ntrait Named\n{\n    func name(): String\n}\n");
+}
+
+test "Allman brace style parses for a function and a constructor" {
+    try expectParsesCleanly("func square(n: Int): Int\n{\n    return n * n\n}\nclass Box\n{\n    var value: Int\n    constructor(value: Int)\n    {\n        self.value = value\n    }\n}\n");
+}
+
+test "Allman brace style parses for a read-only property, and a var property's get/set" {
+    try expectParsesCleanly(
+        \\struct Circle
+        \\{
+        \\    var radius: Float
+        \\    const area: Float
+        \\    {
+        \\        return self.radius * self.radius
+        \\    }
+        \\    var diameter: Float
+        \\    {
+        \\        get
+        \\        {
+        \\            return self.radius * 2
+        \\        }
+        \\        set
+        \\        {
+        \\            self.radius = value / 2
+        \\        }
+        \\    }
+        \\}
+        \\
+    );
+}
+
+test "Allman brace style parses for a case statement, its arms, and try/catch/finally" {
+    try expectParsesCleanly(
+        \\case 1
+        \\{
+        \\    when 1
+        \\    {
+        \\        print(1)
+        \\    }
+        \\    else
+        \\    {
+        \\        print(2)
+        \\    }
+        \\}
+        \\try
+        \\{
+        \\    print(3)
+        \\}
+        \\catch e
+        \\{
+        \\    print(4)
+        \\}
+        \\finally
+        \\{
+        \\    print(5)
+        \\}
+        \\
+    );
+}
+
+test "Allman brace style still leaves a genuinely missing body an error" {
+    var source = try Source.init(testing.allocator, "test.em", "func square(n: Int): Int\n\nvar ok = 1\n");
+    defer source.deinit(testing.allocator);
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+    var parsed = try parse(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+    try testing.expect(parsed.diagnostics.len > 0);
 }

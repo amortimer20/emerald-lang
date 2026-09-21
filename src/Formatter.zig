@@ -1,6 +1,13 @@
 //! The canonical formatter (section 18.3): `Formatter.print` turns a parsed
-//! file back into Emerald source in the one settled style, and `emerald.zig`'s
-//! `formatProject` is what `emerald format` and format-on-save both call.
+//! file back into Emerald source in one project's canonical style, and
+//! `emerald.zig`'s `formatProject` is what `emerald format` and
+//! format-on-save both call. Every choice but one is fixed language-wide;
+//! `brace_style` (`Project.BraceStyle`, section 3.4) is the one axis a
+//! project picks for itself, in `emerald.toml`, and `printBraceOpen` is the
+//! single place that choice is applied — every block-opening call site goes
+//! through it, so the parser's own tolerance of both styles (`Parser.zig`'s
+//! `atLeftBrace`/`skipToLeftBrace`) never has to leak into how one is
+//! printed back out.
 //!
 //! Section 18.3 requires the output to be comment-preserving, but `Lexer.zig`
 //! discards ordinary `#` and `#[ ... ]#` comments entirely (they never become
@@ -45,6 +52,7 @@
 const std = @import("std");
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
+const Project = @import("Project.zig");
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
 
@@ -153,10 +161,11 @@ pub fn print(
     source: *const Source,
     tokens: []const Token,
     program: Ast.Program,
+    brace_style: Project.BraceStyle,
 ) ![]const u8 {
     const trivia = try collectTrivia(allocator, source, tokens);
     defer allocator.free(trivia);
-    var printer: Printer = .{ .gpa = allocator, .source = source, .trivia = trivia };
+    var printer: Printer = .{ .gpa = allocator, .source = source, .trivia = trivia, .brace_style = brace_style };
     errdefer printer.out.deinit(allocator);
     try printer.printProgram(program);
 
@@ -175,6 +184,7 @@ const Printer = struct {
     gpa: std.mem.Allocator,
     source: *const Source,
     trivia: []const Trivia,
+    brace_style: Project.BraceStyle = .stroustrup,
     trivia_cursor: usize = 0,
     out: std.ArrayList(u8) = .empty,
     indent: u32 = 0,
@@ -330,10 +340,29 @@ const Printer = struct {
     // Blocks.
 
     fn printBlock(self: *Printer, block: Ast.Block) PrintError!void {
-        try self.write("{\n");
+        try self.printBraceOpen();
         try self.printStatementsIndented(block.statements, block.span.end);
         try self.writeIndent();
         try self.write("}");
+    }
+
+    /// Section 3.4: a block's opening brace either trails the header that
+    /// introduces it (Stroustrup) or starts its own line at the header's own
+    /// indent (Allman). `Project.BraceStyle` is one canonical choice per
+    /// project (`emerald.toml`'s `brace_style`), and the formatter always
+    /// normalizes to it regardless of how the block was actually written —
+    /// brace placement is whitespace, and whitespace is not semantic.
+    /// Called with the cursor right after whatever introduces the block, and
+    /// with `self.indent` still at that header's own depth.
+    fn printBraceOpen(self: *Printer) PrintError!void {
+        switch (self.brace_style) {
+            .stroustrup => try self.write(" {\n"),
+            .allman => {
+                try self.write("\n");
+                try self.writeIndent();
+                try self.write("{\n");
+            },
+        }
     }
 
     fn printStatementsIndented(self: *Printer, statements: []const Ast.Statement, end: u32) PrintError!void {
@@ -445,16 +474,18 @@ const Printer = struct {
 
         try self.write("if ");
         try self.printHeaderExpr(node.condition);
-        try self.write(" ");
         try self.printBlock(node.then_block);
 
         if (node.otherwise) |otherwise| {
             try self.write("\n");
             try self.writeIndent();
-            try self.write("else ");
+            try self.write("else");
             switch (otherwise) {
                 .block => |block| try self.printBlock(block),
-                .chained => |stmt| try self.printIf(stmt.data.conditional),
+                .chained => |stmt| {
+                    try self.write(" ");
+                    try self.printIf(stmt.data.conditional);
+                },
             }
         }
     }
@@ -462,7 +493,6 @@ const Printer = struct {
     fn printWhile(self: *Printer, w: Ast.While) PrintError!void {
         try self.write("while ");
         try self.printHeaderExpr(w.condition);
-        try self.write(" ");
         try self.printBlock(w.body);
     }
 
@@ -471,7 +501,6 @@ const Printer = struct {
         if (f.pattern) |pattern| try self.printPattern(pattern) else try self.write(f.name);
         try self.write(" in ");
         try self.printHeaderExpr(f.iterable);
-        try self.write(" ");
         try self.printBlock(f.body);
     }
 
@@ -519,7 +548,7 @@ const Printer = struct {
     }
 
     fn printTry(self: *Printer, t: Ast.Try) PrintError!void {
-        try self.write("try ");
+        try self.write("try");
         try self.printBlock(t.body);
         for (t.catches) |c| {
             try self.write("\n");
@@ -530,13 +559,12 @@ const Printer = struct {
                 try self.write(": ");
                 try self.printType(a);
             }
-            try self.write(" ");
             try self.printBlock(c.body);
         }
         if (t.finally_block) |finally_block| {
             try self.write("\n");
             try self.writeIndent();
-            try self.write("finally ");
+            try self.write("finally");
             try self.printBlock(finally_block);
         }
     }
@@ -581,7 +609,7 @@ const Printer = struct {
             // not a trailing block (see `printHeaderExpr`).
             try self.printHeaderExpr(subject);
         }
-        try self.write(" {\n");
+        try self.printBraceOpen();
         self.indent += 1;
 
         const mark = self.out.items.len;
@@ -617,10 +645,7 @@ const Printer = struct {
 
     fn printCaseBody(self: *Printer, body: Ast.Case.Body) PrintError!void {
         switch (body) {
-            .block => |block| {
-                try self.write(" ");
-                try self.printBlock(block);
-            },
+            .block => |block| try self.printBlock(block),
             .value => |value| {
                 try self.write(" then ");
                 try self.printExpr(value);
@@ -695,7 +720,7 @@ const Printer = struct {
                 try self.printType(trait);
             }
         }
-        try self.write(" {\n");
+        try self.printBraceOpen();
 
         var members: std.ArrayList(Member) = .empty;
         defer members.deinit(self.gpa);
@@ -745,7 +770,7 @@ const Printer = struct {
     fn printConstructor(self: *Printer, c: Ast.StructDeclaration.Constructor) PrintError!void {
         try self.write("constructor(");
         try self.printParameters(c.parameters);
-        try self.write(") ");
+        try self.write(")");
         try self.printBlock(c.body);
     }
 
@@ -778,7 +803,6 @@ const Printer = struct {
             try self.printType(r);
         }
         if (f.abstract_span == null) {
-            try self.write(" ");
             try self.printBlock(f.body);
         }
     }
@@ -813,21 +837,20 @@ const Printer = struct {
         // A trait's requirement property (10.5/11.1) has no body at all.
         if (p.getter.abstract_span != null) return;
 
-        try self.write(" ");
         if (!p.mutable) {
             try self.printBlock(p.getter.body);
             return;
         }
 
-        try self.write("{\n");
+        try self.printBraceOpen();
         self.indent += 1;
         try self.writeIndent();
-        try self.write("get ");
+        try self.write("get");
         try self.printBlock(p.getter.body);
         try self.write("\n");
         if (p.setter) |setter| {
             try self.writeIndent();
-            try self.write("set ");
+            try self.write("set");
             try self.printBlock(setter.body);
             try self.write("\n");
         }
@@ -1223,7 +1246,7 @@ const testing = std.testing;
 
 /// Lexes, parses, and formats `text`, asserting both stages succeed. Callers
 /// own the result.
-fn formatText(gpa: std.mem.Allocator, text: []const u8) ![]const u8 {
+fn formatText(gpa: std.mem.Allocator, text: []const u8, brace_style: Project.BraceStyle) ![]const u8 {
     var source = try Source.init(gpa, "test.em", text);
     defer source.deinit(gpa);
 
@@ -1235,14 +1258,21 @@ fn formatText(gpa: std.mem.Allocator, text: []const u8) ![]const u8 {
     defer parsed.deinit();
     try testing.expectEqual(@as(usize, 0), parsed.diagnostics.len);
 
-    const formatted = try print(gpa, &source, tokenized.tokens, parsed.program);
+    const formatted = try print(gpa, &source, tokenized.tokens, parsed.program, brace_style);
     defer gpa.free(formatted);
     return try gpa.dupe(u8, formatted);
 }
 
 fn expectFormats(text: []const u8, expected: []const u8) !void {
     const gpa = testing.allocator;
-    const formatted = try formatText(gpa, text);
+    const formatted = try formatText(gpa, text, .stroustrup);
+    defer gpa.free(formatted);
+    try testing.expectEqualStrings(expected, formatted);
+}
+
+fn expectFormatsWithStyle(brace_style: Project.BraceStyle, text: []const u8, expected: []const u8) !void {
+    const gpa = testing.allocator;
+    const formatted = try formatText(gpa, text, brace_style);
     defer gpa.free(formatted);
     try testing.expectEqualStrings(expected, formatted);
 }
@@ -1263,7 +1293,7 @@ test "formatting releases every allocation failure" {
             input_tokens: []const Token,
             program: Ast.Program,
         ) !void {
-            const formatted = try print(gpa, input, input_tokens, program);
+            const formatted = try print(gpa, input, input_tokens, program, .stroustrup);
             defer gpa.free(formatted);
         }
     };
@@ -1331,9 +1361,33 @@ test "a call's multi-line arguments never gain a trailing comma, unlike a list l
 
 test "formatting already-canonical output is a no-op" {
     const gpa = testing.allocator;
-    const once = try formatText(gpa, "struct Point {\n    var x: Float\n    var y: Float\n}\n\nprint(Point(1, 2))\n");
+    const once = try formatText(gpa, "struct Point {\n    var x: Float\n    var y: Float\n}\n\nprint(Point(1, 2))\n", .stroustrup);
     defer gpa.free(once);
-    const twice = try formatText(gpa, once);
+    const twice = try formatText(gpa, once, .stroustrup);
     defer gpa.free(twice);
     try testing.expectEqualStrings(once, twice);
+}
+
+test "the formatter normalizes to Allman when a project asks for it" {
+    try expectFormatsWithStyle(
+        .allman,
+        "if true {\n    print(1)\n}\nelse {\n    print(2)\n}\n",
+        "if true\n{\n    print(1)\n}\nelse\n{\n    print(2)\n}\n",
+    );
+}
+
+test "the formatter accepts Allman-written source and still normalizes to Stroustrup" {
+    try expectFormatsWithStyle(
+        .stroustrup,
+        "if true\n{\n    print(1)\n}\nelse\n{\n    print(2)\n}\n",
+        "if true {\n    print(1)\n}\nelse {\n    print(2)\n}\n",
+    );
+}
+
+test "Allman brace style reaches every kind of block: struct, function, property, case" {
+    try expectFormatsWithStyle(
+        .allman,
+        "struct Point {\n    var x: Int\n    const doubled: Int {\n        return self.x * 2\n    }\n}\nfunc square(n: Int): Int {\n    return n * n\n}\ncase 1 {\n    when 1 {\n        print(1)\n    }\n}\n",
+        "struct Point\n{\n    var x: Int\n    const doubled: Int\n    {\n        return self.x * 2\n    }\n}\n\nfunc square(n: Int): Int\n{\n    return n * n\n}\n\ncase 1\n{\n    when 1\n    {\n        print(1)\n    }\n}\n",
+    );
 }

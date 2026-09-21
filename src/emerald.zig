@@ -373,7 +373,7 @@ fn formatAnalyze(gpa: std.mem.Allocator, project: *const Project) Error!FormatRe
 
     const files_out = try arena.alloc(FormattedFile, project.files.len);
     for (project.files, tokenized, parsed, files_out) |file, one_tokenized, one_parsed, *out| {
-        const formatted = try Formatter.print(arena, &file.source, one_tokenized.tokens, one_parsed.program);
+        const formatted = try Formatter.print(arena, &file.source, one_tokenized.tokens, one_parsed.program, project.brace_style);
         out.* = .{ .text = formatted, .changed = !std.mem.eql(u8, formatted, file.source.text) };
     }
 

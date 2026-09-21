@@ -142,7 +142,7 @@ fn exercise(gpa: std.mem.Allocator, text: []const u8) !bool {
         defer run_report.deinit();
     }
 
-    const once = try emerald.Formatter.print(gpa, &source, tokenized.tokens, parsed.program);
+    const once = try emerald.Formatter.print(gpa, &source, tokenized.tokens, parsed.program, .stroustrup);
     defer gpa.free(once);
     var formatted_source = try emerald.Source.init(gpa, "formatted-fuzz.em", once);
     defer formatted_source.deinit(gpa);
@@ -153,7 +153,7 @@ fn exercise(gpa: std.mem.Allocator, text: []const u8) !bool {
     defer formatted_parsed.deinit();
     if (formatted_parsed.diagnostics.len != 0) return error.FormatterProducedDiagnostics;
 
-    const twice = try emerald.Formatter.print(gpa, &formatted_source, formatted_tokens.tokens, formatted_parsed.program);
+    const twice = try emerald.Formatter.print(gpa, &formatted_source, formatted_tokens.tokens, formatted_parsed.program, .stroustrup);
     defer gpa.free(twice);
     if (!std.mem.eql(u8, once, twice)) return error.FormatterIsNotIdempotent;
     return ran;

@@ -12,7 +12,8 @@ functions, optionals, collections, Unicode strings, structs, classes, inheritanc
 enums, typed errors, projects/namespaces, range values and slicing. The formatter, REPL, and
 the LSP's first two phases (diagnostics, document symbols, format on save, hover, go to
 definition, find references, rename, and completion) are complete, with each phase's own known
-gaps listed under "Active rough edges" below.
+gaps listed under "Active rough edges" below. Brace style (3.4) is a per-project choice, read
+from `emerald.toml`; see below for what changed and why.
 
 The standard library's whole-file filesystem area is complete. `File`, `Directory`, and
 `Path` provide UTF-8 text I/O, recursive/idempotent directory creation, empty-only directory
@@ -169,6 +170,24 @@ properties, methods, walking base classes and adopted traits) — a type-qualifi
 completions (10.4) turned out to need a second, separate analysis pass and were cut from this
 slice; see the rough edge below for the specific reason the same trick can't reach them.
 
+Brace style (3.4) is now a per-project choice rather than a single hardcoded rule: a project
+picks Stroustrup (the default) or Allman in `emerald.toml`'s new `brace_style` key — the
+manifest's first real key, ahead of the rest of it (24), which stays a roadmap item. This
+reverses the original "Stroustrup is the only legal spelling anywhere" decision (see the
+decision table addition in `rewrite-context.md` section 22 for why). The grammar itself
+accepts both styles unconditionally and everywhere a block opens (`if`/`while`/`for`,
+`try`/`catch`/`finally`, `case` and its arms, struct/class/trait/enum bodies, functions,
+constructors, and both a read-only and a `get`/`set` property) — brace placement is
+whitespace, so the parser was made to treat it that way, via `Parser.zig`'s new
+`atLeftBrace`/`skipToLeftBrace` (peeking, and optionally skipping, past a newline wherever the
+grammar already checked for a `{`). The formatter is the only place the choice matters:
+`Project.zig`'s `readBraceStyle` reads `emerald.toml` next to `main.em` (a hand-rolled
+single-key reader, not a TOML library, matching the manifest's still-minimal scope) and
+`Formatter.zig`'s `printBraceOpen` is the one place every block-opening call site now goes
+through, so `emerald format`/format-on-save always normalize to the project's chosen style
+regardless of which one a file was actually written in. A lone file outside any project (no
+`main.em` to root a manifest search from) always defaults to Stroustrup.
+
 ## Next step
 
 The LSP's second phase is complete: hover, go to definition, find references, rename, and
@@ -238,24 +257,34 @@ this session's changes where that mattered):
   one) rather than leaving one expression untyped the way an unknown instance member does.
   Namespace-level completion (`Shapes.` suggesting what the namespace declares) and a bare
   identifier with no preceding dot are also not answered.
+- `emerald.toml`'s `brace_style` is read by a hand-rolled single-key line scanner, not a real
+  TOML parser (24 is still unimplemented beyond this one key): a missing file, an unknown key,
+  a malformed line, or a value other than `"allman"` all silently fall back to the
+  `stroustrup` default rather than producing a diagnostic. Fine for one key with two valid
+  values; revisit once the manifest holds enough that a silent typo becomes worth catching.
 
 ## Validation and repository state
 
 The latest completed slices, including the program entry point, the ledger shakedown, the
 trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
-definition, find references, rename, and completion, passed `bash tools/check-toolchain.sh`,
-`zig build test` in Debug and ReleaseSafe (374/374 tests), `bash tools/check-doc-examples.sh`
-after `zig build`, and `git diff --check` with pinned Zig 0.16.0. Go to definition, find
-references, rename, and completion were each also checked end to end against the real LSP
-server over JSON-RPC (single-file member access and constructor calls; a two-file project
-crossing into a sibling file, both with and without `includeDeclaration`; a cross-file rename's
-grouped edits; an invalid new name's rejection; completion on its own line, mid-call with an
-unclosed paren, and the documented type-qualified-base and no-dot cases correctly returning
-nothing), not just their Zig unit tests — which is how both go to definition's constructor-call
-gap and completion's own bare-placeholder failure mode were actually found. The Windows
-path/lexer fix's Windows-specific half could not be verified locally and was confirmed by CI
-instead. The working tree was clean after commit `e975670` (`Implement LSP rename`) before this
-pass.
+definition, find references, rename, completion, and the per-project brace style, passed
+`bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe (382/382 tests),
+`bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check` with pinned Zig
+0.16.0. Go to definition, find references, rename, and completion were each also checked end
+to end against the real LSP server over JSON-RPC (single-file member access and constructor
+calls; a two-file project crossing into a sibling file, both with and without
+`includeDeclaration`; a cross-file rename's grouped edits; an invalid new name's rejection;
+completion on its own line, mid-call with an unclosed paren, and the documented
+type-qualified-base and no-dot cases correctly returning nothing), not just their Zig unit
+tests — which is how both go to definition's constructor-call gap and completion's own
+bare-placeholder failure mode were actually found. Brace style was checked the same way: the
+CLI (`emerald format` normalizing a hand-written mix of both styles to whichever
+`emerald.toml` asked for, in both directions, and idempotently on a second pass) and the LSP
+(`textDocument/formatting` over real JSON-RPC against a real two-file project with an
+`emerald.toml`, and separately against a lone file outside any project, confirming the
+Stroustrup default). The Windows path/lexer fix's Windows-specific half could not be verified
+locally and was confirmed by CI instead. The working tree was clean after commit `e975670`
+(`Implement LSP rename`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a

@@ -736,13 +736,20 @@ fn onFormatting(server: *Server, gpa: std.mem.Allocator, uri: []const u8, id: st
         return;
     };
 
+    // §3.4/18.3: the canonical brace style is a per-project choice
+    // (`emerald.toml`'s `brace_style`), so formatting a single open file
+    // still goes through `loadDocument` to find the project it belongs to —
+    // the same reason hover and everything after it needed it.
+    var loaded = try loadDocument(server, gpa, uri, document.text.items);
+    defer loaded.deinit(gpa);
+    const source = &loaded.project.files[loaded.index].source;
+
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const source = try Source.init(arena, uri, document.text.items);
-    const tokenized = try Lexer.tokenize(arena, &source);
-    const parsed = if (tokenized.diagnostics.len == 0) try Parser.parse(arena, &source, tokenized.tokens) else null;
+    const tokenized = try Lexer.tokenize(arena, source);
+    const parsed = if (tokenized.diagnostics.len == 0) try Parser.parse(arena, source, tokenized.tokens) else null;
 
     // 18.3: refuses to rewrite a file it cannot parse safely — no edit at all.
     if (tokenized.diagnostics.len != 0 or parsed.?.diagnostics.len != 0) {
@@ -750,9 +757,9 @@ fn onFormatting(server: *Server, gpa: std.mem.Allocator, uri: []const u8, id: st
         return;
     }
 
-    const formatted = try Formatter.print(arena, &source, tokenized.tokens, parsed.?.program);
+    const formatted = try Formatter.print(arena, source, tokenized.tokens, parsed.?.program, loaded.project.brace_style);
     const whole_document = Source.Span{ .start = 0, .end = @intCast(document.text.items.len) };
-    const edit = TextEdit{ .range = lspRange(&source, whole_document), .newText = formatted };
+    const edit = TextEdit{ .range = lspRange(source, whole_document), .newText = formatted };
     try respond(gpa, out, id, &[_]TextEdit{edit});
 }
 
