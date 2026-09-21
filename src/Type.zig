@@ -153,6 +153,31 @@ pub const User = struct {
         }
         return false;
     }
+
+    /// The nearest class both `self` and `other` are also a value of, through
+    /// 10.7's single-inheritance chain, or null when they share none. A
+    /// struct's `base` is always null, so this only ever finds one for two
+    /// classes; sibling structs and trait-only commonality are not attempted
+    /// here (structs do not inherit at all, and a shared trait is a weaker,
+    /// narrower kind of commonality a caller can still fall back to on its
+    /// own, since 11.5's trait contracts stay reachable through `is`).
+    pub fn commonBase(self: *const User, other: *const User) ?*const User {
+        var chain: [256]*const User = undefined;
+        var count: usize = 0;
+        var at: ?*const User = self;
+        while (at) |current| : (at = current.base) {
+            if (count == chain.len) break;
+            chain[count] = current;
+            count += 1;
+        }
+        at = other;
+        while (at) |current| : (at = current.base) {
+            for (chain[0..count]) |ancestor| {
+                if (ancestor == current) return current;
+            }
+        }
+        return null;
+    }
 };
 
 pub const Signatures = std.StringHashMapUnmanaged(Signature);
@@ -778,6 +803,26 @@ test "an object of a subclass is assignable to its base class but not the revers
     defer arena_state.deinit();
     const dogs = try listOf(arena_state.allocator(), structOf(&dog));
     try testing.expect(!dogs.assignableTo(try listOf(arena_state.allocator(), structOf(&animal))));
+}
+
+test "commonBase finds the nearest shared ancestor, or none for unrelated classes" {
+    var animal: User = .{ .name = "Animal", .display_name = "Animal", .class = true };
+    var dog: User = .{ .name = "Dog", .display_name = "Dog", .class = true, .base = &animal };
+    const puppy: User = .{ .name = "Puppy", .display_name = "Puppy", .class = true, .base = &dog };
+    var cat: User = .{ .name = "Cat", .display_name = "Cat", .class = true, .base = &animal };
+    const other: User = .{ .name = "Other", .display_name = "Other", .class = true };
+
+    // Siblings under the same base share it.
+    try testing.expectEqual(@as(?*const User, &animal), dog.commonBase(&cat));
+    try testing.expectEqual(@as(?*const User, &animal), cat.commonBase(&dog));
+    // One extending the other finds the ancestor, not some looser common one.
+    try testing.expectEqual(@as(?*const User, &dog), puppy.commonBase(&dog));
+    try testing.expectEqual(@as(?*const User, &animal), puppy.commonBase(&cat));
+    // A type shares a base with itself.
+    try testing.expectEqual(@as(?*const User, &dog), dog.commonBase(&dog));
+    // Nothing in common at all.
+    try testing.expectEqual(@as(?*const User, null), dog.commonBase(&other));
+    try testing.expectEqual(@as(?*const User, null), animal.commonBase(&other));
 }
 
 test "Self is a value of its trait, but only Self is Self" {

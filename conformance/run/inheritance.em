@@ -72,6 +72,11 @@ for animal in animals {
     print(animal.speak(), "/", animal.kind)
 }
 
+# The same elements, with no annotation: sibling subclasses infer their
+# nearest shared base (10.7) rather than requiring `List[Animal]` spelled out.
+const inferred_animals = [Animal("Generic"), rex, Puppy("Bit")]
+print(inferred_animals.count, inferred_animals[2].kind)
+
 # A subclass object is the same object whichever type sees it.
 print(pet == rex, animals[1] == rex, animals[0] == rex)
 func loudest(of: Animal): Animal {

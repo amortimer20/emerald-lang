@@ -32,6 +32,20 @@ var counts: Dict[String, Int] = []
 var seen: Set[String] = []
 ```
 
+A literal's element type is inferred from its elements when nothing else says it, widening
+the same way `[1, 2.5]` already infers `List[Float]`: elements of different but related
+classes infer their nearest shared base rather than reporting a mismatch.
+
+```emerald
+var pets = [Dog("Rex"), Cat("Tom")]   # List[Animal], with no annotation needed
+```
+
+Two classes that share only a trait, with no common base class, still need an explicit
+annotation — inferring across a trait would expose only the trait's own contract on the
+result, not either class's own members. A dictionary's values and a value-producing
+`case`'s arms widen the same way. Run
+[`conformance/run/sibling-class-inference.em`](../../conformance/run/sibling-class-inference.em).
+
 Printing is unambiguous even though the literals overlap: a `List` prints as written
 (`[1, 2, 3]`), a `Dict` prints its entries (`["Ava": 12]`, or `[:]` empty), and a `Set` prints
 in braces (`{"red"}`, or `{}` empty) — so a printed collection always says which of the three

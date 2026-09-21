@@ -1,0 +1,4 @@
+diagnostics/sibling-class-inference-unrelated.em:20:27: this is Fish, but the list holds Dog
+  const pets = [Dog("Rex"), Fish("Nemo")]
+                            ^^^^^^^^^^^^
+A list holds one type of value.

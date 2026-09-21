@@ -5285,16 +5285,28 @@ fn checkDuplicateKeys(self: *Checker, entries: []const Ast.Expression.Entry) Err
 }
 
 /// The one type a literal's keys or values share, widening `Int` to `Float`
-/// when both appear, as a list literal's elements do (4.4). A type that fits
-/// none of the others is returned as-is, and the caller reports each entry that
-/// does not fit it.
+/// when both appear, and sibling classes to their nearest shared base (10.7),
+/// as a list literal's elements do (4.4) — see `typeOfList` for why that
+/// widening skips an optional either side. A type that fits none of the
+/// others is returned as-is, and the caller reports each entry that does not
+/// fit it.
 fn unifiedType(types: []const Type) Type {
     if (types.len == 0) return .invalid;
     var unified = types[0];
     for (types) |candidate| {
         if (candidate.isInvalid()) return .invalid;
         if (candidate.assignableTo(unified)) continue;
-        if (unified.assignableTo(candidate)) unified = candidate;
+        if (unified.assignableTo(candidate)) {
+            unified = candidate;
+            continue;
+        }
+        if (unified.kind == .struct_value and candidate.kind == .struct_value and
+            !unified.optional and !candidate.optional)
+        {
+            if (unified.user.?.commonBase(candidate.user.?)) |base| {
+                unified = Type.structOf(base);
+            }
+        }
     }
     return unified;
 }
@@ -5468,7 +5480,26 @@ fn typeOfList(self: *Checker, expression: *const Ast.Expression, expected: ?Type
     if (expected_element == null) {
         for (types[1..]) |candidate| {
             if (candidate.assignableTo(target)) continue;
-            if (target.assignableTo(candidate)) target = candidate;
+            if (target.assignableTo(candidate)) {
+                target = candidate;
+                continue;
+            }
+            // Sibling classes widen to their nearest shared base (10.7)
+            // rather than reporting a mismatch outright: `[Dog(), Cat()]`
+            // infers `List[Animal]` the same way an explicit
+            // `List[Animal]` annotation already accepts both. Left to the
+            // mismatch report below when either side is optional, rather
+            // than risk silently dropping a `?` `Type.structOf` has no way
+            // to carry: a rarer shape than the plain-class case this widens,
+            // and `nothing`'s own handling already covers the common optional
+            // case (a literal element that is `nothing`).
+            if (target.kind == .struct_value and candidate.kind == .struct_value and
+                !target.optional and !candidate.optional)
+            {
+                if (target.user.?.commonBase(candidate.user.?)) |base| {
+                    target = Type.structOf(base);
+                }
+            }
         }
     }
 
@@ -8320,7 +8351,10 @@ fn checkCaseBody(
 }
 
 /// What a `case`'s value arms agree on. `nothing` in some arms makes the
-/// others' type optional, and `Int` and `Float` arms give `Float`.
+/// others' type optional, `Int` and `Float` arms give `Float`, and sibling
+/// classes widen to their nearest shared base (10.7), the same widening
+/// `typeOfList`/`unifiedType` do and for the same reason: a factory-style
+/// case is exactly where arms naturally each give a different subclass.
 fn caseResultType(self: *Checker, results: []const Type, spans: []const Source.Span) Error!Type {
     var target: ?Type = null;
     var absent = false;
@@ -8335,7 +8369,17 @@ fn caseResultType(self: *Checker, results: []const Type, spans: []const Source.S
             continue;
         };
         if (result.assignableTo(current)) continue;
-        if (current.assignableTo(result)) target = result;
+        if (current.assignableTo(result)) {
+            target = result;
+            continue;
+        }
+        if (current.kind == .struct_value and result.kind == .struct_value and
+            !current.optional and !result.optional)
+        {
+            if (current.user.?.commonBase(result.user.?)) |base| {
+                target = Type.structOf(base);
+            }
+        }
     }
     const agreed = target orelse return .nothing;
     for (results, spans) |result, span| {

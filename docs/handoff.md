@@ -249,6 +249,24 @@ Conformance coverage: `conformance/run/equatable-and-hashable.em` (structs and c
 and two `conformance/diagnostics/` cases (the two "declares without adopting" warnings; the
 `Equatable`-without-`Hashable` key rejection for both a dictionary and a set).
 
+A mixed sibling-class literal now infers its nearest shared base (10.7) instead of
+requiring an explicit annotation: `[Dog(), Cat()]` infers `List[Animal]` on its own, the
+same base an explicit `List[Animal]` annotation already accepted them under. `Type.User`
+gained `commonBase`, a plain walk up the single-inheritance chain (10.7 rules out multiple
+bases, so this is just two linked-list walks, not a real graph search), and `typeOfList`,
+`unifiedType` (dictionary values), and `caseResultType` (a value-producing `case`'s arms)
+each fall back to it when two element types are related but neither widens to the other the
+existing way. Deliberately narrow: a shared trait with no common base class still needs an
+explicit annotation, since inferring to the trait would expose only its contract on the
+result rather than either class's own members — a real loss `Int`-to-`Float` widening or
+base-class widening never costs. Guarded against either side being optional, since
+`Type.structOf` cannot carry a `?` neither side already had; that case still reports the
+mismatch rather than risk silently dropping one. Conformance coverage:
+`conformance/run/sibling-class-inference.em` (a sibling pair, three including the base
+itself, a deeper subclass finding the same base as its sibling, dictionary values, and a
+`case` expression's arms) and `conformance/diagnostics/sibling-class-inference-unrelated.em`
+(two classes with no common base still report the mismatch).
+
 ## Next step
 
 The LSP's second phase is complete: hover, go to definition, find references, rename, and
@@ -294,8 +312,6 @@ this session's changes where that mattered):
 
 - Runtime failures currently share `RuntimeError` except `AssertionError` and `FileError`.
   Add a focused subclass only with the feature that needs programs to distinguish it.
-- A mixed sibling-class list needs an explicit common base or trait annotation:
-  `const pets: List[Animal] = [Dog(), Cat()]`.
 - Capture and definite-assignment analysis remains conservative in several known ways:
   it tracks lambda assignments by bare name, over-approximates type setup/default reads, and
   does not follow a function reached through a value.
@@ -331,13 +347,15 @@ this session's changes where that mattered):
 The latest completed slices, including the program entry point, the ledger shakedown, the
 trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
 definition, find references, rename (`prepareRename` included), completion, the per-project
-brace style, recursive directory deletion, the missing-input exit status, and custom
-equality and hashing, passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and
-ReleaseSafe (383/383 tests, unchanged by the equality/hashing work — its coverage is
-conformance-suite cases, run as one meta-test rather than counted individually),
-`bash tools/check-doc-examples.sh` after `zig build` (89 linked files), and `git diff
---check` with pinned Zig 0.16.0, plus a 500-case fuzz run after the `Value.zig`/`Heap.zig`
-error-set changes. Go to definition, find
+brace style, recursive directory deletion, the missing-input exit status, custom equality
+and hashing, and sibling-class literal inference, passed `bash tools/check-toolchain.sh`,
+`zig build test` in Debug and ReleaseSafe (384/384 tests — the one new count is
+`Type.zig`'s `commonBase` test; the rest of this work's coverage is conformance-suite
+cases, run as one meta-test rather than counted individually), `bash
+tools/check-doc-examples.sh` after `zig build` (90 linked files), and `git diff --check`
+with pinned Zig 0.16.0, plus two separate 500-case fuzz runs (after the
+`Value.zig`/`Heap.zig` error-set changes, and again after the list/dict/`case`
+widening changes). Go to definition, find
 references, rename, and completion were each also checked end
 to end against the real LSP server over JSON-RPC (single-file member access and constructor
 calls; a two-file project crossing into a sibling file, both with and without
@@ -370,9 +388,14 @@ inferred-error-set cycle between `Value.equals` and `Heap.lookupIn` was confirme
 standalone minimal Zig reproduction before the fix, and the fix's cross-file error-tag
 coercion (declared independently in `Value.zig` rather than imported from
 `Interpreter.zig`) was confirmed the same way, before either was applied to the real code.
-The Windows path/lexer fix's Windows-specific half could not be verified locally and was
-confirmed by CI instead. The working tree was clean after commit `112a126`
-(`Give a missing or unreadable file its own exit status`) before this pass.
+Sibling-class literal inference was checked against the real binary too, beyond its
+conformance coverage: the exact motivating example from a user report (`[Dog(), Cat()]`
+with no annotation), a three-way widen that includes the base class itself, a deeper
+subclass finding the same base as a shallower sibling (not some looser common ancestor),
+and confirming a genuinely unrelated pair (`Dog`/`Fish`) still reports the mismatch rather
+than the fix over-widening. The Windows path/lexer fix's Windows-specific half could not be
+verified locally and was confirmed by CI instead. The working tree was clean after commit
+`128c101` (`Implement custom equality and hashing (Equatable, Hashable)`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a
