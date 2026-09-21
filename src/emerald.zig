@@ -2795,6 +2795,21 @@ test "hoisting never permits reading an uninitialized captured variable" {
     try expectOutput("var total: Int\nfunc reset() {\n    total = 0\n}\nreset()\nprint(1)\n", "1\n");
 }
 
+test "a module lambda checks its captures when it is called, not when it is created" {
+    try expectOutput(
+        "const report: func(): Int = { => ready }\nvar ready = 7\nprint(report())\n",
+        "7\n",
+    );
+    try expectFailure(
+        "const report: func(): Int = { => ready }\nprint(report())\nvar ready = 7\n",
+        "`report` reads `ready`, which is not assigned yet here",
+    );
+    try expectFailure(
+        "print(({ => ready })())\nvar ready = 7\n",
+        "`this lambda` reads `ready`, which is not assigned yet here",
+    );
+}
+
 test "a nested function is hoisted within its block and shares its variables" {
     try expectOutput(
         "if true {\n    var total = 0\n    add(2)\n    add(3)\n    print(total)\n    func add(n: Int) {\n        total += n\n    }\n}\n",

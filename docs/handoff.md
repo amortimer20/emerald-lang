@@ -347,10 +347,6 @@ this session's changes where that mattered):
 - Taking `Trait.method` as a value is rejected with a diagnostic rather than supported.
 - Capturing a built-in function (`print`) or method (`numbers.append`) as a value, and
   variadic functions generally, are rejected — no written function type describes them yet.
-- A module-level lambda or nested function that reads a module variable unassigned at its
-  own *declaration* site is flagged even when every actual call happens after the variable
-  is assigned; the capture check uses declaration-site state rather than call-site order.
-  Predates this session's changes.
 
 ## Active rough edges
 

@@ -207,6 +207,13 @@ inferring: Resolver.NameSet = .empty,
 bodies_checked: Resolver.NameSet = .empty,
 /// Memoized by `capturesOf`.
 captures: std.StringHashMapUnmanaged(Resolver.NameSet) = .empty,
+/// Module bindings initialized with a lambda literal. Their capture set is
+/// checked when the binding is called, not while creating the lambda.
+module_lambdas: std.StringHashMapUnmanaged(*const Ast.Expression) = .empty,
+/// A module-level lambda body is type-checked when it is created, but its
+/// captures are checked when it is called. This marks that temporary walk so
+/// an unassigned module binding is not mistaken for an immediate read.
+checking_module_lambda: bool = false,
 /// The enclosing function's return type while checking its body. Null means a
 /// return type is still being inferred, and `return expr` records its value's
 /// type in `pending_return_types` instead of checking it.
@@ -2484,6 +2491,9 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
         .assigned = assigned,
         .mutability = if (declaration.mutable) .variable else .constant,
     });
+    if (current == self.module) if (declaration.initializer) |initializer| {
+        if (initializer.data == .lambda) try self.module_lambdas.put(self.arena, name, initializer);
+    };
 }
 
 fn checkAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
@@ -4682,6 +4692,27 @@ fn checkCapturesOf(
     );
 }
 
+/// A module lambda is created without running its body. Its direct captures
+/// therefore belong to a call of the value, where the module's definite-
+/// assignment state is the one that matters.
+fn checkLambdaCaptures(self: *Checker, call_span: Source.Span, lambda: *const Ast.Expression, display: []const u8) Error!void {
+    const reads = self.facts.lambda_reads.get(lambda) orelse return;
+    var first: ?[]const u8 = null;
+    var it = reads.keyIterator();
+    while (it.next()) |read| {
+        if (self.module.get(read.*)) |binding| if (binding.assigned) continue;
+        if (first == null or std.mem.order(u8, read.*, first.?) == .lt) first = read.*;
+    }
+    const name = first orelse return;
+    try self.reportWithHelp(
+        call_span,
+        "`{s}` reads `{s}`, which is not assigned yet here",
+        .{ display, name },
+        "Move this call below the line that assigns `{s}`.",
+        .{name},
+    );
+}
+
 // Supporting checks.
 
 fn requireCondition(self: *Checker, expression: *const Ast.Expression) Error!void {
@@ -5140,6 +5171,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
                 break :blk binding.type;
             }
             if (!binding.assigned) {
+                if (self.checking_module_lambda and self.module.getPtr(self.keyOf(name)) == binding) break :blk binding.type;
                 try self.reportUnassigned(expression.span, name, binding.*);
                 // Treated as assigned from here so one unassigned read does not
                 // report again at every later use.
@@ -5620,6 +5652,9 @@ fn typeOfLambda(self: *Checker, expression: *const Ast.Expression, expected: ?Ty
     else
         null;
 
+    const outer_checking_module_lambda = self.checking_module_lambda;
+    self.checking_module_lambda = self.scopes.items[self.scopes.items.len - 1] == self.module;
+    defer self.checking_module_lambda = outer_checking_module_lambda;
     const result = try self.checkLambdaBody(expression, lambda, parameter_types, parameter_names, wanted_result);
 
     const lambda_type = try Type.functionOf(self.arena, .{
@@ -8650,7 +8685,11 @@ fn typeOfCall(
         // Anything that is not a plain name — a lambda called where it is
         // written, an element of a list of functions — is called through its
         // value.
-        return self.typeOfValueCall(call, try self.typeOf(call.callee), null);
+        const callee_type = try self.typeOf(call.callee);
+        if (!self.in_function and call.callee.data == .lambda) {
+            try self.checkLambdaCaptures(expression.span, call.callee, "this lambda");
+        }
+        return self.typeOfValueCall(call, callee_type, null);
     };
 
     const name = reference.display;
@@ -8739,7 +8778,12 @@ fn typeOfCall(
 
     // A variable holding a function is called through its value, which is how
     // a parameter or a local that received a lambda is used.
-    if (!binding.is_function) return self.typeOfValueCall(call, binding.type, name);
+    if (!binding.is_function) {
+        if (!self.in_function) if (self.module_lambdas.get(reference.key)) |lambda| {
+            try self.checkLambdaCaptures(expression.span, lambda, name);
+        };
+        return self.typeOfValueCall(call, binding.type, name);
+    }
 
     const key = binding.function_key orelse reference.key;
     if (binding.function_key != null) try self.checkNestedUse(call.callee);

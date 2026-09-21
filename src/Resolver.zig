@@ -119,6 +119,10 @@ pub const Facts = struct {
     /// compound assignment reads before it writes, so it counts; a plain
     /// assignment does not, because it needs no earlier value.
     module_reads: std.StringHashMapUnmanaged(NameSet) = .empty,
+    /// The same direct module reads for each lambda. A lambda has no declared
+    /// name to use as a `module_reads` key, but a module binding can later be
+    /// called through its value, so the checker needs its capture set there.
+    lambda_reads: std.AutoHashMapUnmanaged(*const Ast.Expression, NameSet) = .empty,
     /// For each function, the other program functions its own body calls.
     /// Calls to prelude functions are not recorded; they read no program state.
     calls: std.StringHashMapUnmanaged(NameSet) = .empty,
@@ -302,6 +306,9 @@ nested_uses: std.ArrayList(NestedUse) = .empty,
 block_locals: std.ArrayList(BlockLocals) = .empty,
 /// How many lambda bodies enclose the statement being walked.
 lambda_depth: u32 = 0,
+/// The lambda currently being walked, if any. Its direct module reads belong
+/// to the lambda rather than the surrounding named function.
+current_lambda: ?*const Ast.Expression = null,
 /// Every module-level variable and where it is declared, so a name used above
 /// its declaration can be reported as exactly that rather than as a
 /// misspelling. Keyed the way the module scope is.
@@ -1262,8 +1269,12 @@ fn namespaceFor(self: *Resolver, name: []const u8) []const u8 {
 /// module-level variable. Reads of the function's own parameters and locals,
 /// and anything at the top level, are not captures.
 fn noteRead(self: *Resolver, found: Found) Error!void {
-    const function = self.current_function orelse return;
     if (found.scope != module_scope or found.binding.kind != .variable) return;
+    if (self.current_lambda) |lambda| {
+        try self.facts.lambda_reads.getPtr(lambda).?.put(self.arena, found.key, {});
+        return;
+    }
+    const function = self.current_function orelse return;
     try self.facts.module_reads.getPtr(function).?.put(self.arena, found.key, {});
 }
 
@@ -2288,7 +2299,13 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     "Check the spelling, or declare it before this line.",
                 );
             };
-            if (!try self.declaredAbove(found, expression.span)) return;
+            // Creating a lambda does not read its module captures. Their
+            // declaration may therefore follow the lambda, provided the
+            // eventual call comes after assignment; Checker verifies that
+            // call-site condition from `lambda_reads`.
+            const deferred_module_capture = self.current_lambda != null and
+                found.scope == module_scope and found.binding.kind == .variable;
+            if (!deferred_module_capture and !try self.declaredAbove(found, expression.span)) return;
             try self.facts.expression_targets.put(self.arena, expression, .{ .file = targetFileFor(self, found), .span = found.binding.span });
             if (found.binding.kind == .later_parameter) {
                 return self.report(
@@ -2396,7 +2413,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             .text => {},
             .expression => |part_expression| try self.walkExpression(part_expression),
         },
-        .lambda => |lambda| try self.walkLambda(lambda),
+        .lambda => |lambda| try self.walkLambda(expression, lambda),
         .case_expression => |case| try self.walkCase(case),
         .tuple_literal => |positions| for (positions) |position| try self.walkExpression(position),
         .type_test => |test_| try self.walkExpression(test_.value),
@@ -2415,15 +2432,19 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
 /// `names.each { name => ... }` is allowed alongside an outer `name`. Crossing
 /// a function boundary has always been allowed, and a parameter that names what
 /// the block receives is the whole point of writing one.
-fn walkLambda(self: *Resolver, lambda: Ast.Expression.Lambda) Error!void {
+fn walkLambda(self: *Resolver, expression: *const Ast.Expression, lambda: Ast.Expression.Lambda) Error!void {
     try self.push();
     const outer_boundary = self.function_boundary;
+    const outer_lambda = self.current_lambda;
     self.function_boundary = self.scopes.items.len - 1;
     self.lambda_depth += 1;
+    self.current_lambda = expression;
+    try self.facts.lambda_reads.put(self.arena, expression, .empty);
     defer {
         self.pop();
         self.function_boundary = outer_boundary;
         self.lambda_depth -= 1;
+        self.current_lambda = outer_lambda;
     }
 
     const parameters = &self.scopes.items[self.scopes.items.len - 1];

@@ -1144,6 +1144,10 @@ calling convention. Parameter types are inferred when the receiver determines th
 Closures capture lexical variables by reference, allowing a block to update surrounding
 state. Loop bindings remain fresh per iteration.
 
+Creating a module-level lambda does not run its body. It may therefore capture a module
+variable declared later, provided a call through its module binding comes only after that
+variable has received a value. Calling it earlier remains a definite-assignment error.
+
 `return` inside a lambda exits only that lambda invocation. `break` and `continue` cannot
 reach out of a lambda to control an enclosing loop or an `each` call. A struct method may
 not create a closure that later mutates its original `self`; explicitly copy `self` into a
@@ -3487,6 +3491,7 @@ recorded in their normative sections:
 | Exclusive access and objects (4.3, 10.1) | Not applied to an object as a whole; a struct in an object's field is taken out of the field while a setter or changing method runs on it, and reaching that field meanwhile is a runtime error | The class slice first stored a copy back instead, which silently discarded any change made to the field during the call and let the call's own code read the old value. That is the half-changed state 4.3 exists to prevent, and Swift likewise enforces exclusive access to a class's stored properties at runtime while leaving the reference itself unchecked. Found in the object model review. |
 | What `const` and the change inference see through (4.3, 10.1) | Both stop at the first object on a path | "The rule stops at the first reference, which is exactly where sharing begins." The same boundary decides whether a struct method changes its struct, so `self.log.lines.append(x)` on a struct holding a `Log` object leaves the struct unchanged and works on a `const`. |
 | What a nested function sees (7.1) | The variables above its declaration, as a lambda there would; uses are checked | 7.1 says both "capture surrounding bindings like lambdas" and "hoisted". Seeing only what is above matches a lambda and matches what a top-level function sees of the module, so one rule covers every function. Hoisting then only moves where it can be called from, and each call above the declaration is checked against what the function reads. |
+| When a module lambda's captures are checked (7.4) | At a direct call through its module binding, not when the lambda is created | Creating a lambda does not evaluate its body, so declaration-site checking rejected a safe `const read = { => later }` before `later` was assigned. A known module binding retains enough information to check its real call site, preserving the early-call error without requiring general flow analysis through arbitrary function values. |
 | Using a nested function in a lambda or as a value (7.1) | Judged where it is written | The function could run from there, and 7.1 says hoisting never permits reading an uninitialized captured variable. Judging where the lambda or value is finally called would need flow analysis through values. The cost is rejecting some programs that would run, and moving the use below the assignment always fixes that. |
 | Nested tuple patterns (7.4, 8.2) | Allowed wherever a tuple is unpacked | 7.4 requires them in lambda parameters. One pattern form everywhere is simpler to teach than a rule that nests in a block's header but not in `const (a, (b, c)) = ...`. |
 | Calling a captured changing method from inside itself (4.3, 7.5) | Runtime error | The call has the copy to itself while it changes it, as a changing method has its receiver. Letting the inner call work on the same copy would make the outer call's result silently overwrite the inner one's changes. |
