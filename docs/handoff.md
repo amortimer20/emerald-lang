@@ -303,10 +303,40 @@ into per-rule severity (an ESLint/Rubocop shape) or stays a small, closed set of
 (a rustfmt/gofmt shape) is still open; see roadmap item 24 in `rewrite-context.md`. The
 bounded implementation limits remain intentional; nothing currently motivates changing them.
 The big deferred-features list (generics, enum payloads, wider operator overloading, package
-manager, concurrency, networking) stays last by design — those are large design commitments
-of their own, not implementation backlog, each needing a dedicated design pass before any of
-them are schedulable at all. This is context, not authorization: follow the user's active
-request rather than starting any of it unprompted.
+manager) stays last by design — those are large design commitments of their own, not
+implementation backlog, each needing a dedicated design pass before any of them are
+schedulable at all. This is context, not authorization: follow the user's active request
+rather than starting any of it unprompted.
+
+Networking and concurrency (also big, also deferred) have a live design conversation ahead
+of them, not started implementation: the user wants to build a POC web app, which surfaced
+both as real prerequisites. Modules/imports are *not* one — multi-file projects, namespaces,
+and `using` already work (14.1/14.2); what's actually missing is a package manager for
+external dependencies, which is a different, still-fully-dormant item. Wider overloading is
+probably not a real blocker either — nothing about routing, request/response modeling, or
+handlers needs it that named/defaulted arguments and traits don't already cover; pushed back
+on prioritizing it for this goal specifically. Concurrency is the harder of the two, since
+it's a runtime-execution-model question, not a library addition: the interpreter is
+currently single-threaded with no suspend/resume mechanism at all. Current leaning, not yet
+decided: coroutine-based concurrency (stackless, `async`/`await`-shaped, closest to
+JavaScript/Python's model) on a single-threaded event loop, chosen over raw threads+locks
+(historically the hardest, most error-prone model — deliberately not offered as an option)
+or an Erlang-style actor model (the safest of the alternatives, but needing per-actor heap
+isolation, the largest runtime rewrite of the three, disproportionate for a POC). True
+parallelism was **not** ruled out by that choice: the proven path (Node.js's own history)
+adds it later as isolated worker threads, each with its own heap, communicating only by
+copied messages — additive, not a redesign of the single-threaded model underneath. Whatever
+gets built should keep the scheduler/event-loop concept the kind of thing more than one
+could exist of later, rather than an unclonable global — a minor implementation-hygiene note
+for whoever eventually builds it, not a decision that changes what ships first. Sequencing:
+concurrency's semantics belong in the interpreter first, pinned by conformance tests, the
+same discipline as everything else — and the user considers this *more* true than usual, not
+less: they see the current Zig interpreter as a means to an end, with 1.0 requiring a real
+compiler backend eventually (§19.2/19.6 already keep the frontend pipeline backend-agnostic
+for exactly this reason). A compiler is a far more expensive place to discover a scheduling
+mistake than an interpreter is, so proving concurrency's semantics cheaply here first matters
+more, not less, given where this is ultimately headed. User wants to research further before
+deciding the model — **not authorized to start** design or implementation yet.
 
 ## Deferred
 
