@@ -1,0 +1,8 @@
+diagnostics/equatable-hash-without-adoption.em:8:10: warning: `Point` declares `equals`, but does not adopt `Equatable`, so `==` still compares it the default way
+      func equals(other: Point): Bool {
+           ^^^^^^
+Write `with Equatable` on the declaration to compare through this method.
+diagnostics/equatable-hash-without-adoption.em:12:10: warning: `Point` declares `hash`, but does not adopt `Hashable`, so it still hashes the default way
+      func hash(): Int {
+           ^^^^
+Write `with Hashable` on the declaration (it requires `Equatable` too) to hash through this method.

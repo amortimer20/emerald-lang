@@ -597,8 +597,11 @@ pub fn uniqueMap(self: *Heap, slot: *Value) std.mem.Allocator.Error!*Map {
 
 /// Stores `key` with `value`, taking over one holder of each. An existing key
 /// keeps its position and takes the new value, which is section 8.4's rule.
-pub fn put(self: *Heap, map: *Map, hash: u64, key: Value, value: Value) std.mem.Allocator.Error!void {
-    switch (try self.locate(map, hash, key)) {
+/// `equatable` resolves section 8.4's `Equatable` exactly as `Value.equals`'s
+/// own parameter of the same name does; see it for what `{}` versus a real
+/// context means.
+pub fn put(self: *Heap, map: *Map, hash: u64, key: Value, value: Value, equatable: anytype) !void {
+    switch (try self.locate(map, hash, key, equatable)) {
         .entry => |index| {
             const entry = &map.entries.items[index];
             // The key that is already there stays, so the new one is dropped.
@@ -667,8 +670,9 @@ fn reindex(self: *Heap, map: *Map, size: usize) std.mem.Allocator.Error!void {
 
 /// Section 8.5's `remove`. Returns the value that was stored, or null when the
 /// key was not there. The caller takes over one holder of the returned value.
-pub fn removeKey(self: *Heap, map: *Map, hash: u64, key: Value) std.mem.Allocator.Error!?Value {
-    const index = switch (try self.locate(map, hash, key)) {
+/// `equatable` is `put`'s own parameter of the same name.
+pub fn removeKey(self: *Heap, map: *Map, hash: u64, key: Value, equatable: anytype) !?Value {
+    const index = switch (try self.locate(map, hash, key, equatable)) {
         .entry => |at| at,
         .vacancy => return null,
     };
@@ -684,13 +688,15 @@ pub fn removeKey(self: *Heap, map: *Map, hash: u64, key: Value) std.mem.Allocato
 }
 
 /// The entry with this key, or null. A free function because `Value.equals`
-/// compares two maps and has no heap to ask.
+/// compares two maps and has no heap to ask. `equatable` is `put`'s own
+/// parameter of the same name.
 pub fn lookupIn(
     gpa: std.mem.Allocator,
     map: *const Map,
     hash: u64,
     key: Value,
-) std.mem.Allocator.Error!?Map.Entry {
+    equatable: anytype,
+) !?Map.Entry {
     if (map.slots.len == 0) return null;
     const mask = map.slots.len - 1;
     var at = @as(usize, @truncate(hash)) & mask;
@@ -698,7 +704,7 @@ pub fn lookupIn(
         const index = map.slots[at];
         if (index == Map.vacant) return null;
         const entry = map.entries.items[index];
-        if (entry.hash == hash and try Value.equals(gpa, entry.key, key)) return entry;
+        if (entry.hash == hash and try Value.equals(gpa, entry.key, key, equatable)) return entry;
         at = (at + 1) & mask;
     }
 }
@@ -713,7 +719,8 @@ pub const Found = union(enum) {
 
 /// Section 8.3's lookup. Equality is Emerald's `==`, which for strings
 /// normalizes (9.2) and so may allocate, which is why this can fail.
-pub fn locate(self: *Heap, map: *const Map, hash: u64, key: Value) std.mem.Allocator.Error!Found {
+/// `equatable` is `put`'s own parameter of the same name.
+pub fn locate(self: *Heap, map: *const Map, hash: u64, key: Value, equatable: anytype) !Found {
     if (map.slots.len == 0) return .{ .vacancy = 0 };
 
     const mask = map.slots.len - 1;
@@ -724,7 +731,7 @@ pub fn locate(self: *Heap, map: *const Map, hash: u64, key: Value) std.mem.Alloc
         const entry = map.entries.items[index];
         // The stored hash rules out almost every entry without comparing, which
         // matters because comparing two strings can mean normalizing them.
-        if (entry.hash == hash and try Value.equals(self.gpa, entry.key, key)) {
+        if (entry.hash == hash and try Value.equals(self.gpa, entry.key, key, equatable)) {
             return .{ .entry = index };
         }
         at = (at + 1) & mask;
@@ -1432,7 +1439,7 @@ fn mapOfInts(heap: *Heap, pairs: []const [2]i64) !Value {
     const map = try heap.createMap(.int, .int, false);
     for (pairs) |pair| {
         const key: Value = .initInt(pair[0]);
-        try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(pair[1]));
+        try heap.put(map, try Value.hash(testing.allocator, key, {}), key, .initInt(pair[1]), {});
     }
     return .{ .data = .{ .map = map } };
 }
@@ -1447,16 +1454,16 @@ test "a dictionary keeps insertion order, and a replaced value keeps its place" 
 
     // Section 8.4: replacing a value keeps the entry where it was.
     const key: Value = .initInt(2);
-    try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(99));
+    try heap.put(map, try Value.hash(testing.allocator, key, {}), key, .initInt(99), {});
     try testing.expectEqual(@as(usize, 3), map.count());
     try testing.expectEqual(@as(i64, 99), map.entries.items[1].value.data.int);
     try testing.expectEqual(@as(i64, 1), map.entries.items[0].key.data.int);
     try testing.expectEqual(@as(i64, 3), map.entries.items[2].key.data.int);
 
     // Removing and reinserting moves it to the end.
-    _ = try heap.removeKey(map, try Value.hash(testing.allocator, key), key);
+    _ = try heap.removeKey(map, try Value.hash(testing.allocator, key, {}), key, {});
     try testing.expectEqual(@as(usize, 2), map.count());
-    try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(7));
+    try heap.put(map, try Value.hash(testing.allocator, key, {}), key, .initInt(7), {});
     try testing.expectEqual(@as(i64, 2), map.entries.items[2].key.data.int);
 }
 
@@ -1471,18 +1478,18 @@ test "a dictionary finds its keys after it has grown past its first table" {
     var at: i64 = 0;
     while (at < 200) : (at += 1) {
         const key: Value = .initInt(at);
-        try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(at * 2));
+        try heap.put(map, try Value.hash(testing.allocator, key, {}), key, .initInt(at * 2), {});
     }
     try testing.expectEqual(@as(usize, 200), map.count());
 
     at = 0;
     while (at < 200) : (at += 1) {
         const key: Value = .initInt(at);
-        const found = try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, key), key);
+        const found = try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, key, {}), key, {});
         try testing.expectEqual(@as(i64, at * 2), found.?.value.data.int);
     }
     const absent: Value = .initInt(1000);
-    try testing.expect(try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, absent), absent) == null);
+    try testing.expect(try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, absent, {}), absent, {}) == null);
 }
 
 test "removing an entry leaves every later key still findable" {
@@ -1498,18 +1505,18 @@ test "removing an entry leaves every later key still findable" {
     var at: i64 = 0;
     while (at < 50) : (at += 1) {
         const key: Value = .initInt(at);
-        try heap.put(map, try Value.hash(testing.allocator, key), key, .initInt(at * 2));
+        try heap.put(map, try Value.hash(testing.allocator, key, {}), key, .initInt(at * 2), {});
     }
 
     const removed: Value = .initInt(0);
-    _ = try heap.removeKey(map, try Value.hash(testing.allocator, removed), removed);
+    _ = try heap.removeKey(map, try Value.hash(testing.allocator, removed, {}), removed, {});
     try testing.expectEqual(@as(usize, 49), map.count());
-    try testing.expect(try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, removed), removed) == null);
+    try testing.expect(try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, removed, {}), removed, {}) == null);
 
     at = 1;
     while (at < 50) : (at += 1) {
         const key: Value = .initInt(at);
-        const found = try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, key), key);
+        const found = try lookupIn(testing.allocator, map, try Value.hash(testing.allocator, key, {}), key, {});
         try testing.expectEqual(@as(i64, at * 2), found.?.value.data.int);
     }
 }
@@ -1526,7 +1533,7 @@ test "a shared dictionary is copied before it changes" {
     const separate = try heap.uniqueMap(&copy);
     try testing.expect(separate != original.data.map);
     const key: Value = .initInt(2);
-    try heap.put(separate, try Value.hash(testing.allocator, key), key, .initInt(20));
+    try heap.put(separate, try Value.hash(testing.allocator, key, {}), key, .initInt(20), {});
     try testing.expectEqual(@as(usize, 1), original.data.map.count());
     try testing.expectEqual(@as(usize, 2), separate.count());
 }
@@ -1545,7 +1552,7 @@ test "the collector reclaims a cycle through a dictionary" {
 
     const map = try heap.createMap(.int, .closure, false);
     const key: Value = .initInt(1);
-    try heap.put(map, try Value.hash(testing.allocator, key), key, .{ .data = .{ .closure = closure } });
+    try heap.put(map, try Value.hash(testing.allocator, key, {}), key, .{ .data = .{ .closure = closure } }, {});
 
     try environment.bindings.put(testing.allocator, "table", .{
         .kind = .map,

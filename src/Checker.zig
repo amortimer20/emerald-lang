@@ -897,6 +897,27 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
                 "Write `with Textual` on the declaration to display through this method. Calling `to_string()` yourself already works either way.",
             );
         }
+        // Section 8.4: `equals`/`hash` back `==`/hashing only through
+        // `Equatable`/`Hashable`, for the same reason `to_string` needs
+        // `Textual` above.
+        if (member.kind == .method and std.mem.eql(u8, member.name, "equals")) {
+            const traits = self.equatableAndHashable();
+            if (!(if (traits.equatable) |t| user.conformsTo(t) else false)) try self.reportWarning(
+                member.span,
+                "`{s}` declares `equals`, but does not adopt `Equatable`, so `==` still compares it the default way",
+                .{declaration.name},
+                "Write `with Equatable` on the declaration to compare through this method.",
+            );
+        }
+        if (member.kind == .method and std.mem.eql(u8, member.name, "hash")) {
+            const traits = self.equatableAndHashable();
+            if (!(if (traits.hashable) |t| user.conformsTo(t) else false)) try self.reportWarning(
+                member.span,
+                "`{s}` declares `hash`, but does not adopt `Hashable`, so it still hashes the default way",
+                .{declaration.name},
+                "Write `with Hashable` on the declaration (it requires `Equatable` too) to hash through this method.",
+            );
+        }
         const first = seen.get(member.name) orelse {
             try seen.put(self.arena, member.name, member);
             continue;
@@ -5278,15 +5299,44 @@ fn unifiedType(types: []const Type) Type {
     return unified;
 }
 
+const EquatableTraits = struct { equatable: ?*const Type.User, hashable: ?*const Type.User };
+
+/// Section 8.4's `Equatable`/`Hashable`, as `Type.eligibleKey` needs them:
+/// `Type` cannot look either up itself, since it does not know about the
+/// checker's table of declared types.
+fn equatableAndHashable(self: *Checker) EquatableTraits {
+    return .{
+        .equatable = if (self.structs.get(Resolver.preludeKey("Equatable"))) |t| t.user else null,
+        .hashable = if (self.structs.get(Resolver.preludeKey("Hashable"))) |t| t.user else null,
+    };
+}
+
 /// Section 8.3: a dictionary key needs stable equality and hashing.
 fn requireEligibleKey(self: *Checker, key: Type, span: Source.Span) Error!void {
-    if (key.eligibleKey()) return;
+    const traits = self.equatableAndHashable();
+    if (key.eligibleKey(traits.equatable, traits.hashable)) return;
+    if (key.kind == .struct_value and adoptsEquatableWithoutHashable(key.user.?, traits)) {
+        try self.report(
+            span,
+            "{f} adopts `Equatable` but not `Hashable`, so it cannot be a dictionary key",
+            .{key},
+            "Its default hash could then disagree with its custom `equals`. Add `with Hashable` and a matching `hash()`.",
+        );
+        return;
+    }
     try self.report(
         span,
         "{f} cannot be a dictionary key",
         .{key},
         "A key must be a number, a `Bool`, a `String`, an enum value, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.",
     );
+}
+
+fn adoptsEquatableWithoutHashable(user: *const Type.User, traits: EquatableTraits) bool {
+    const equatable_user = traits.equatable orelse return false;
+    if (!user.conformsTo(equatable_user)) return false;
+    const adopts_hashable = if (traits.hashable) |h| user.conformsTo(h) else false;
+    return !adopts_hashable;
 }
 
 /// Section 8.2's `("score", 10)`. Each position takes its own type, and an
@@ -5346,7 +5396,17 @@ fn typeOfSet(self: *Checker, expression: *const Ast.Expression, want: Type) Erro
 /// A set member is stored and found the same way a dictionary key is, so it
 /// answers to the same rule (8.3).
 fn requireEligibleMember(self: *Checker, member: Type, span: Source.Span) Error!void {
-    if (member.eligibleKey()) return;
+    const traits = self.equatableAndHashable();
+    if (member.eligibleKey(traits.equatable, traits.hashable)) return;
+    if (member.kind == .struct_value and adoptsEquatableWithoutHashable(member.user.?, traits)) {
+        try self.report(
+            span,
+            "{f} adopts `Equatable` but not `Hashable`, so a set cannot hold it",
+            .{member},
+            "Its default hash could then disagree with its custom `equals`. Add `with Hashable` and a matching `hash()`.",
+        );
+        return;
+    }
     try self.report(
         span,
         "a set cannot hold {f}",

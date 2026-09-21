@@ -224,18 +224,28 @@ pub fn setOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.Erro
 /// scalars, strings, and tuples whose positions recursively qualify. A list can
 /// change after it is stored, and an absent key is not a key at all, so neither
 /// qualifies. Enums and structs join this when they exist.
-pub fn eligibleKey(self: Type) bool {
+///
+/// `equatable`/`hashable` are section 8.4's `Equatable`/`Hashable` traits'
+/// own `User`, when the prelude declares them (always, outside a unit test
+/// building a bare `Type` with no checker behind it) — passed in rather than
+/// looked up here because `Type` does not otherwise know about the checker's
+/// table of declared types. A struct that adopts `Equatable` without also
+/// adopting `Hashable` is excluded even though it would otherwise qualify:
+/// the default structural hash could then disagree with its custom
+/// `equals`, exactly what `hash`'s own doc comment (`Value.zig`) requires
+/// never happen.
+pub fn eligibleKey(self: Type, equatable: ?*const User, hashable: ?*const User) bool {
     var seen: [256]*const User = undefined;
-    return self.eligibleKeyInner(&seen, 0);
+    return self.eligibleKeyInner(&seen, 0, equatable, hashable);
 }
 
-fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize) bool {
+fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize, equatable: ?*const User, hashable: ?*const User) bool {
     if (self.optional) return false;
     return switch (self.kind) {
         .bool, .int, .float, .string => true,
         .tuple => blk: {
             for (self.elements) |element| {
-                if (!element.eligibleKeyInner(seen, depth)) break :blk false;
+                if (!element.eligibleKeyInner(seen, depth, equatable, hashable)) break :blk false;
             }
             break :blk true;
         },
@@ -247,13 +257,17 @@ fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize) bool {
             // classes are not initial dictionary keys, and a trait's value
             // may be an object.
             if (user.class or user.trait) break :blk false;
+            if (equatable) |eq| {
+                const adopts_hashable = if (hashable) |h| user.conformsTo(h) else false;
+                if (user.conformsTo(eq) and !adopts_hashable) break :blk false;
+            }
             for (seen[0..depth]) |earlier| {
                 if (earlier == user) break :blk false;
             }
             if (depth == seen.len) break :blk false;
             seen[depth] = user;
             for (user.fields) |field| {
-                if (!field.type.eligibleKeyInner(seen, depth + 1)) break :blk false;
+                if (!field.type.eligibleKeyInner(seen, depth + 1, equatable, hashable)) break :blk false;
             }
             break :blk true;
         },

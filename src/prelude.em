@@ -92,6 +92,22 @@ trait Ordered {
     func compare(other: Self): Int
 }
 
+# Section 8.4's custom equality: `a == b` runs `a.equals(b)` on a type that
+# adopts `Equatable`, in place of the default (structural for a struct or
+# tuple, identity for a class); `!=` is always `not equals(other)`, never
+# separately overridable. `Hashable` builds on it (11.2's `with Equatable`
+# trait composition) because a hash must agree with equality (8.4): a type
+# whose `equals` this replaces cannot safely keep the default structural
+# hash, so adopting `Equatable` alone does not make a type a dictionary or
+# set key again — `Hashable`'s own `hash()` is what does.
+trait Equatable {
+    func equals(other: Self): Bool
+}
+
+trait Hashable with Equatable {
+    func hash(): Int
+}
+
 # Section 15.1's display contract. A type that adopts it renders through its
 # own `to_string()` in `print`, `write`, and interpolation, wherever the value
 # appears; one that does not keeps the field-based debug form. Adoption is

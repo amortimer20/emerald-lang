@@ -214,6 +214,41 @@ this one, the same standard `64`/`70` (`EX_USAGE`/`EX_SOFTWARE`) already came fr
 suite gained a case for it, run against the real binary the same way the existing usage and
 diagnostic exit codes already are.
 
+Custom equality and hashing are implemented: `Equatable.equals(other: Self): Bool` and
+`Hashable.hash(): Int` (which requires `Equatable`, 11.2's trait composition), closing the
+gap `Textual`/`Ordered` left explicit ("custom equality, hashing... are deferred", 11.5). A
+struct or class adopting `Equatable` replaces the default `==`/`!=` (structural for a
+struct, identity for a class); a struct additionally adopting `Hashable` becomes a
+dictionary or set key through that pair of methods instead of the structural default —
+adopting `Equatable` alone does not, and is refused as a key rather than silently kept on a
+hash that could disagree with the custom `equals`. Classes stay outside key eligibility
+either way, unrelated to this feature: their fields can still change while stored as a key,
+which is the actual, pre-existing reason, not something `Hashable` was ever going to fix
+(floated for a future pass — a class made entirely of `const` fields — in roadmap item 24).
+
+The real engineering cost was `Value.equals`/`Value.hash` (`src/Value.zig`) having no way to
+call a user's method at all — both were plain functions with no interpreter context, unlike
+everything else this session touched. Reused `Textual`'s own answer to that exact problem:
+`Value.writeThrough`'s `textual: anytype` context, generalized into `equatable`/`hashable`
+parameters threaded through every recursive comparison and hash — list elements, dictionary
+values, struct fields, and `Heap.zig`'s own key lookup (`lookupIn`/`locate`/`put`/
+`removeKey`), which calls `Value.equals` to resolve hash collisions and so needed the same
+parameter threaded through roughly thirty call sites in `Interpreter.zig`. That mutual
+recursion (`equals` calling `Heap.lookupIn` calling `equals`) doesn't compile with both
+sides using Zig's inferred error sets — confirmed empirically with a minimal reproduction
+before touching the real code — so `Value.zig` gained one explicit `DispatchedError` set
+(the same small, stable vocabulary `Interpreter.Error` names, declared independently rather
+than imported, which a separate empirical check confirmed Zig coerces fine either
+direction: error tags unify by name across files, not by which file declared them, so nothing
+needed to import the other despite each referencing the other's shape). `Checker.zig` warns
+when a type declares `equals`/`hash` without adopting the matching trait, the same pattern
+`to_string`/`Textual` already used, and reports a specific reason (not the generic "cannot
+be a key" message) when a type adopts `Equatable` without `Hashable` and is used as one.
+Conformance coverage: `conformance/run/equatable-and-hashable.em` (structs and classes,
+`!=` derivation, nested comparison, a trait built on `Hashable`, an `equals()` that raises)
+and two `conformance/diagnostics/` cases (the two "declares without adopting" warnings; the
+`Equatable`-without-`Hashable` key rejection for both a dictionary and a set).
+
 ## Next step
 
 The LSP's second phase is complete: hover, go to definition, find references, rename, and
@@ -227,10 +262,10 @@ trait `is` analysis (streaming I/O and the bounded implementation limits below w
 with it but were not done, and were not promoted to a named next step; nothing currently
 motivates either).
 
-Named but unordered: `emerald explain`/diagnostic polish; a custom equality/hashing design
-pass, the natural sibling to `Textual`/`Ordered`; streaming/binary file I/O (still needs its
-own design pass — recursive directory deletion, the other half of this bullet, no longer
-does; it shipped, see below); expanding `emerald.toml`
+Named but unordered: `emerald explain`/diagnostic polish; streaming/binary file I/O (still
+needs its own design pass — recursive directory deletion, the other half of this bullet,
+and custom equality/hashing, the natural sibling to `Textual`/`Ordered` this bullet also
+once named, no longer do; both shipped, see below); expanding `emerald.toml`
 beyond `brace_style` with more formatting-convention keys and a configurable warning level
 for formatting-adjacent diagnostics — explicitly not ready to start (user said so), and
 needs its own design pass first: whether the manifest grows into per-rule severity (an
@@ -296,10 +331,13 @@ this session's changes where that mattered):
 The latest completed slices, including the program entry point, the ledger shakedown, the
 trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
 definition, find references, rename (`prepareRename` included), completion, the per-project
-brace style, recursive directory deletion, and the missing-input exit status, passed
-`bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe (383/383 tests),
-`bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check` with pinned Zig
-0.16.0. Go to definition, find
+brace style, recursive directory deletion, the missing-input exit status, and custom
+equality and hashing, passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and
+ReleaseSafe (383/383 tests, unchanged by the equality/hashing work — its coverage is
+conformance-suite cases, run as one meta-test rather than counted individually),
+`bash tools/check-doc-examples.sh` after `zig build` (89 linked files), and `git diff
+--check` with pinned Zig 0.16.0, plus a 500-case fuzz run after the `Value.zig`/`Heap.zig`
+error-set changes. Go to definition, find
 references, rename, and completion were each also checked end
 to end against the real LSP server over JSON-RPC (single-file member access and constructor
 calls; a two-file project crossing into a sibling file, both with and without
@@ -319,12 +357,22 @@ call, and independently confirming with `ls` on the host filesystem that the who
 not just the top-level path — was actually gone. `prepareRename` was checked over real
 JSON-RPC too: the range for an instance field read, the range for a type name reached
 through a constructor call, `null` for a prelude builtin, and that `textDocument/rename`
-itself still behaves identically afterward. The missing-input exit status was checked against the real binary for `check`, `run`,
-`test`, and `format` alike (one shared code path), plus a new `build.zig` CLI test case
-(`66`, not `64`) alongside the existing usage-error one it now stands apart from.
+itself still behaves identically afterward. The missing-input exit status was checked
+against the real binary for `check`, `run`, `test`, and `format` alike (one shared code
+path), plus a new `build.zig` CLI test case (`66`, not `64`) alongside the existing
+usage-error one it now stands apart from. Custom equality and hashing were checked by
+generating each conformance case's `.expected` file by hand and reading it before
+committing, per the conformance suite's own contract — including a fixed unsoundness caught
+this way and not by any pre-existing test: `Set[Weird]` (a struct adopting `Equatable`
+without `Hashable`) held two elements its own `equals()` called equal, before
+`Type.eligibleKey` learned to refuse that combination as a key. The mutual
+inferred-error-set cycle between `Value.equals` and `Heap.lookupIn` was confirmed with a
+standalone minimal Zig reproduction before the fix, and the fix's cross-file error-tag
+coercion (declared independently in `Value.zig` rather than imported from
+`Interpreter.zig`) was confirmed the same way, before either was applied to the real code.
 The Windows path/lexer fix's Windows-specific half could not be verified locally and was
-confirmed by CI instead. The working tree was clean after commit `ccf1433`
-(`Implement LSP prepareRename`) before this pass.
+confirmed by CI instead. The working tree was clean after commit `112a126`
+(`Give a missing or unreadable file its own exit status`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a

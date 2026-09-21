@@ -1318,10 +1318,29 @@ enums, and structs or tuples whose contents recursively qualify are initial cand
 optional is not a key: an absent key is not a key at all. A set's members answer to the
 same rule, because a set stores and finds them the way a dictionary stores and finds keys.
 Stored value-type keys are copied, so later mutation of the original cannot invalidate
-lookup. Classes and collections are not initial dictionary keys, and custom hashing is
-deferred. NaN is rejected directly or recursively.
+lookup. Classes and collections are not dictionary keys, for the same reason lists are not:
+their contents can change after they are stored, which is exactly what could not then be
+found again. NaN is rejected directly or recursively.
+
+A struct that adopts `Hashable` (8.4) is a key through its own `equals()`/`hash()` instead
+of the structural default; one that adopts `Equatable` without also adopting `Hashable` is
+excluded, even though it would otherwise qualify, because its default structural hash could
+then disagree with its custom `equals` — the checker names this reason specifically, rather
+than folding it into the generic "cannot be a key" message. `Hashable` does not lift the
+class exclusion above: a class's fields can still change while it is stored, whatever its
+`equals`/`hash` compare.
 
 ### 8.4 Equality and order
+
+A struct or class may adopt `Equatable` (11.5) to replace the default `==`/`!=` — structural
+for a struct or tuple, identity for a class — with its own `equals(other: Self): Bool`;
+`!=` is always `not equals(other)`, never separately overridable. Adoption is explicit, as
+for any trait (11.2): declaring `equals` without `with Equatable` is a warning, not a
+behavior change, the same as `to_string` without `Textual` (15.1). `Hashable`, which
+requires `Equatable` (11.2's trait composition), adds `hash(): Int` and is what actually
+makes a struct a dictionary or set key through that pair of methods rather than the
+structural default (8.3) — adopting `Equatable` alone changes comparison but not key
+eligibility.
 
 Lists compare element-by-element in order. Sets compare by membership. Dictionaries
 compare by key/value contents rather than insertion order. Tuples compare their values
@@ -1862,9 +1881,9 @@ field-by-field by default:
 Vector2(1, 1) == Vector2(1, 1)   # true
 ```
 
-A class stored inside a struct still compares according to class identity. User-defined
-equality and hashing are deferred because they must be designed together with dictionary
-keys and set membership.
+A class stored inside a struct still compares according to class identity. Either default
+can be replaced by adopting `Equatable`/`Hashable` (8.4, 11.5), designed together with
+dictionary keys and set membership as this paragraph once anticipated.
 
 A class declares the same members a struct does — stored fields with defaults, a
 constructor, methods, properties, type-level members, and private members — and follows the
@@ -2276,29 +2295,35 @@ a < b       # a.compare(b) < 0
 The initial overloadable set is narrow:
 
 - arithmetic: addition, subtraction, multiplication, and division;
-- ordering through one `Ordered.compare(other: Self): Int` contract.
+- ordering through one `Ordered.compare(other: Self): Int` contract;
+- equality through one `Equatable.equals(other: Self): Bool` contract (8.4), with
+  `Hashable.hash(): Int` alongside it for a type that also wants to be a dictionary or set
+  key with its own notion of equality.
 
 Assignment, boolean short-circuit operators, member access, calls, and language control
-flow are not overloadable. Custom equality, hashing, and indexing are deferred. Operators
-use `Self` for both operands and the result.
+flow are not overloadable. Custom indexing is deferred. Operators use `Self` for both
+operands and the result.
 
 Mixed-type operators are deferred. Because a type declares one `add`, a user type cannot
 currently accept both `Vector2 + Vector2` and `Vector2 + Float`; the second is written as a
 named method such as `scaled_by`. This is a consequence of deferring overloading in 7.3 and
 is the intended initial limit, not an oversight. Built-in `Int`-to-`Float` widening is
 unaffected because it is language arithmetic rather than a user contract. `Ordered` does not
-redefine equality.
+redefine equality — it is `Equatable`'s own job, a separate contract entirely.
 
 The contracts are prelude traits, one per operator so a type takes only the operators that
 mean something for it: `Addable.add`, `Subtractable.subtract`, `Multipliable.multiply`,
-`Divisible.divide`, and `Ordered.compare`, each taking `other: Self`. Adoption is explicit,
-as for any trait (11.2): a method named `add` alone does not make `+` work. `/` gives what
-`divide` gives, not always a `Float`. `%`, `//`, `**`, and unary `-` are not overloadable.
-The left operand's type decides, and it may not be optional; `2 * vector` is rejected. Every
-ordering comparison in a chain runs `compare`. An operator never changes its operands, so a
-struct's method that changes `self` cannot back one; on an object it follows the object's
-class, like any call. An operator on `self` is a call through `self` under 10.2's
-construction rules, and `a += b` is `a = a + b`.
+`Divisible.divide`, `Ordered.compare`, and `Equatable.equals`, each taking `other: Self`;
+`Hashable.hash` takes nothing, since a hash is not a comparison. Adoption is explicit,
+as for any trait (11.2): a method named `add` alone does not make `+` work, and a method
+named `equals` or `hash` alone does not change how `==` or a dictionary/set behaves —
+declaring one without adopting the matching trait is a warning, the same as `to_string`
+without `Textual` (15.1). `/` gives what `divide` gives, not always a `Float`. `%`, `//`,
+`**`, and unary `-` are not overloadable. The left operand's type decides, and it may not be
+optional; `2 * vector` is rejected. Every ordering comparison in a chain runs `compare`. An
+operator never changes its operands, so a struct's method that changes `self` cannot back
+one; on an object it follows the object's class, like any call. An operator on `self` is a
+call through `self` under 10.2's construction rules, and `a += b` is `a = a + b`.
 
 ## 12. Enums and branching
 
@@ -3455,6 +3480,7 @@ recorded in their normative sections:
 | An assertion's optional message (16.2) | Written after a comma: `assert condition, "explanation"` | The comma reads as one assertion with supporting context, requires no new keyword or parentheses, and leaves the condition as the first thing a beginner sees. The message is evaluated only when the assertion fails. |
 | Brace style, revisited (3.4, 18.3) | Both Stroustrup and Allman are legal source; a project picks one canonical style in `emerald.toml`'s `brace_style`, and the formatter always normalizes to it | The original rule made Stroustrup the only legal spelling anywhere, reasoning from the formatter's "one canonical output" promise as if that meant one output for the whole language rather than one per project. But brace placement is whitespace, which 3.1 already calls non-semantic, and casing (3.3) already shows the language tolerating a non-conventional choice as a style matter rather than banning it outright. The two styles aren't symmetric with casing, though: the formatter can rewrite whitespace unconditionally, but it can't safely rename an identifier, which is why casing stays a warning rather than a rewrite. 18.3's promise survives intact — every file in a project still normalizes to exactly one style — it is just no longer the same style for every project. |
 | A missing or unreadable file's exit status (18.1) | `66` (`sysexits.h`'s `EX_NOINPUT`), not `64` | `check`/`run`/`test`/`format` all shared `64` with a malformed invocation before this, but the two are different problems for a caller to act on: `64` means the command itself was typed wrong (bad flags, wrong argument count), while a well-formed command naming a path that turns out missing or unreadable is an environment problem, exactly what `EX_NOINPUT` exists to distinguish. `70` (`EX_SOFTWARE`, `internal_failure`) already established that this project borrows meanings from `sysexits.h` rather than inventing its own, so `66` continues that rather than picking an arbitrary unused number. |
+| Custom equality and hashing, undeferred (8.3, 8.4, 11.5) | `Equatable.equals(other: Self): Bool` and `Hashable.hash(): Int` (which requires `Equatable`), the same shape as `Ordered`/`Addable`; `Hashable` alone lifts a struct's dictionary/set-key eligibility past the structural default, and adopting `Equatable` without `Hashable` is refused as a key rather than silently kept on the old structural hash | The gap was explicit ("custom equality, hashing... are deferred") once `Textual` gave the value-protocol family a visible hole: a type could control display, ordering, and arithmetic, but not `==` or its own key behavior. `Value.equals`/`Value.hash` had no way to call a user method at all — both were plain functions with no interpreter context — so this reused `Textual`'s own answer to that exact problem: `Value.writeThrough`'s `textual: anytype` context, generalized into `equatable`/`hashable` parameters threaded through every recursive comparison and hash (list elements, dictionary values, struct fields, and `Heap.zig`'s own key lookup, which calls `Value.equals` to resolve collisions). Classes stay excluded from key eligibility regardless of `Hashable`: the exclusion was never about missing equality, only that a class's fields can change while it is stored as a key, which `Hashable` does not address. A future pass could lift that specific case for a class made entirely of `const` fields, which cannot change after construction — floated, not designed, in the roadmap (24). |
 
 ## 23. Consistency rules for future work
 
@@ -3489,6 +3515,11 @@ for working Emerald programs, implementation measurements, or a dedicated design
   and mixed-type operator contracts, if real Emerald programs show that defaults, named
   arguments, and named factory functions are genuinely insufficient;
 - immutable collection views, covariance, `Any`, user generics, and user `Iterable`;
+- whether a class made entirely of `const` fields (which cannot change after construction,
+  unlike an ordinary class) could be a dictionary or set key when it adopts `Hashable`
+  (8.3, 8.4). Classes are excluded today for a mutability reason `Hashable` does not
+  address on its own; this would need its own eligibility rule, checked statically rather
+  than trusted the way Java, Swift, and C# trust a mutable key not to change while stored;
 - stable C ABI declarations and ownership rules based on an actual library binding;
 - what else `emerald.toml` holds and how it interacts with `main.em`. The rest of the
   project rules were settled with the project slice and are recorded in 14.1, 14.2, and the

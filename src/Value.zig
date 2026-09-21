@@ -331,9 +331,18 @@ pub fn writeThrough(self: Value, writer: *std.Io.Writer, quoted: bool, textual: 
 ///
 /// Section 8.4 makes the hash itself a runtime detail: nothing observable may
 /// depend on it, and the order a program sees comes from insertion order.
-pub fn hash(gpa: std.mem.Allocator, value: Value) std.mem.Allocator.Error!u64 {
+///
+/// `hashable` resolves section 8.4's `Hashable` the same way `equatable`
+/// resolves `Equatable` in `equals` above: `{}` for the default structural
+/// hash, or a context whose `customHash` runs a type adopting the trait
+/// through its own `hash()`, answering `null` when it does not adopt it.
+/// `Hashable` requires `Equatable` (11.2), so whatever hashes through here
+/// also compares through `equatable` above — the checker's own key-eligibility
+/// rule (`Type.eligibleKey`) is what keeps the two from disagreeing, by
+/// refusing a type that adopts one without the other as a key at all.
+pub fn hash(gpa: std.mem.Allocator, value: Value, hashable: anytype) DispatchedError!u64 {
     var hasher = std.hash.Wyhash.init(0);
-    try hashInto(gpa, value, &hasher);
+    try hashInto(gpa, value, &hasher, hashable);
     return hasher.final();
 }
 
@@ -342,7 +351,7 @@ pub fn hash(gpa: std.mem.Allocator, value: Value) std.mem.Allocator.Error!u64 {
 /// because `1 == 1.0` and equal values must hash alike.
 const HashTag = enum(u8) { nothing, bool, number, string, range, tuple, struct_value, unhashable };
 
-fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.mem.Allocator.Error!void {
+fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash, hashable: anytype) DispatchedError!void {
     const tag: HashTag = switch (value.data) {
         .nothing => .nothing,
         .bool => .bool,
@@ -384,11 +393,17 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash) std.
             hasher.update(&.{@intFromBool(range.descending)});
             hasher.update(&.{@intFromBool(range.is_empty)});
         },
-        .tuple => |tuple| for (tuple.items) |item| try hashInto(gpa, item, hasher),
+        .tuple => |tuple| for (tuple.items) |item| try hashInto(gpa, item, hasher, hashable),
         .struct_value => |instance| {
+            if (@TypeOf(hashable) != void) {
+                if (try hashable.customHash(value)) |custom| {
+                    hasher.update(std.mem.asBytes(&custom));
+                    return;
+                }
+            }
             hasher.update(instance.descriptor.name);
             hasher.update(std.mem.asBytes(&instance.variant));
-            for (instance.fields) |field| try hashInto(gpa, field, hasher);
+            for (instance.fields) |field| try hashInto(gpa, field, hasher, hashable);
         },
         // The checker rejects these as keys (8.3), so this is a safety net.
         .list, .map, .closure => {},
@@ -420,6 +435,21 @@ fn writeQuoted(bytes: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!vo
     try writer.writeAll("\"");
 }
 
+/// What running a value's own `equals()`/`hash()` can raise, the same small,
+/// stable vocabulary `Interpreter.Error` names for any nested call: `Raised`
+/// (the method itself raised, or something it calls did), the four other
+/// non-local control-flow tags a method body could in principle unwind
+/// through, and ordinary allocation/write failure. Declared independently
+/// here rather than imported from `Interpreter.zig`, to keep this file free
+/// of that dependency — Zig unifies error tags by name rather than by which
+/// file declared them, so this coerces to and from `Interpreter.Error`
+/// without either file needing to import the other. It also breaks the
+/// mutual inferred-error-set cycle `equals` and `Heap.lookupIn` would
+/// otherwise form by calling each other: one side of a cycle like that needs
+/// an explicit return type, and this is it.
+pub const DispatchedError = error{ Raised, Returned, Broke, Continued, Exited, StepLimit } ||
+    std.mem.Allocator.Error || std.Io.Writer.Error;
+
 /// Emerald's `==`. Numbers compare by mathematical value, as `order` does, so
 /// a NaN equals nothing, itself included. Strings are equal when they are
 /// canonically equivalent (9.2), which can need normalizing, hence the
@@ -428,7 +458,17 @@ fn writeQuoted(bytes: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!vo
 /// the same function: there is no way to compare what code does. Values of
 /// different kinds are never equal; the checker rejects comparing them, so that
 /// answer is a safety net.
-pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocator.Error!bool {
+///
+/// `equatable` resolves section 8.4's `Equatable`: either `{}`, which compares
+/// every struct or class through the default (structural for a struct, identity
+/// for a class), or a context with a `customEquals` method that runs a type
+/// adopting the trait through its own `equals()` and answers `null` when the
+/// type does not adopt it, so the default still applies. Threaded through
+/// every recursive comparison (list elements, dictionary values, struct
+/// fields) so an adopting type compares the same nested inside a collection
+/// as it does alone — the same shape `writeThrough`'s `textual` context uses
+/// for `Textual`.
+pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value, equatable: anytype) DispatchedError!bool {
     return switch (left.data) {
         .nothing => right.data == .nothing,
         .bool => |a| switch (right.data) {
@@ -449,7 +489,7 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
             else => false,
         },
         .list => |a| switch (right.data) {
-            .list => |b| equalsSequence(gpa, a.items.items, b.items.items),
+            .list => |b| equalsSequence(gpa, a.items.items, b.items.items, equatable),
             else => false,
         },
         // Section 8.4: a set compares by membership and a dictionary by its
@@ -458,9 +498,9 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
             .map => |b| blk: {
                 if (a.entries.items.len != b.entries.items.len) break :blk false;
                 for (a.entries.items) |entry| {
-                    const found = try Heap.lookupIn(gpa, b, entry.hash, entry.key) orelse break :blk false;
+                    const found = try Heap.lookupIn(gpa, b, entry.hash, entry.key, equatable) orelse break :blk false;
                     if (a.is_set) continue;
-                    if (!try equals(gpa, entry.value, found.value)) break :blk false;
+                    if (!try equals(gpa, entry.value, found.value, equatable)) break :blk false;
                 }
                 break :blk true;
             },
@@ -469,16 +509,19 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
         // Section 8.4: tuples compare their values position by position. The
         // checker has already proved the arities match.
         .tuple => |a| switch (right.data) {
-            .tuple => |b| equalsSequence(gpa, a.items, b.items),
+            .tuple => |b| equalsSequence(gpa, a.items, b.items, equatable),
             else => false,
         },
         .struct_value => |a| switch (right.data) {
             .struct_value => |b| blk: {
                 if (a.descriptor != b.descriptor) break :blk false;
+                if (@TypeOf(equatable) != void) {
+                    if (try equatable.customEquals(left, right)) |result| break :blk result;
+                }
                 // Section 10.1: classes compare by identity.
                 if (a.descriptor.class) break :blk a == b;
                 if (a.variant != b.variant) break :blk false;
-                break :blk try equalsSequence(gpa, a.fields, b.fields);
+                break :blk try equalsSequence(gpa, a.fields, b.fields, equatable);
             },
             else => false,
         },
@@ -487,10 +530,10 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value) std.mem.Allocat
 
 /// Equality for the ordered value storage shared by lists, tuples, and value
 /// structs. Their outer identities have already been checked by their caller.
-fn equalsSequence(gpa: std.mem.Allocator, left: []const Value, right: []const Value) std.mem.Allocator.Error!bool {
+fn equalsSequence(gpa: std.mem.Allocator, left: []const Value, right: []const Value, equatable: anytype) DispatchedError!bool {
     if (left.len != right.len) return false;
     for (left, right) |a, b| {
-        if (!try equals(gpa, a, b)) return false;
+        if (!try equals(gpa, a, b, equatable)) return false;
     }
     return true;
 }
@@ -716,21 +759,21 @@ test "a Bool is not ordered against a number" {
 test "a hash agrees with equality for numbers" {
     const gpa = testing.allocator;
     // `1 == 1.0`, so the two must hash alike or a dictionary could hold both.
-    try testing.expectEqual(try hash(gpa, .initInt(1)), try hash(gpa, .initFloat(1.0)));
-    try testing.expectEqual(try hash(gpa, .initFloat(-0.0)), try hash(gpa, .initFloat(0.0)));
-    try testing.expectEqual(try hash(gpa, .initInt(0)), try hash(gpa, .initFloat(-0.0)));
-    try testing.expect(try hash(gpa, .initInt(1)) != try hash(gpa, .initInt(2)));
+    try testing.expectEqual(try hash(gpa, .initInt(1), {}), try hash(gpa, .initFloat(1.0), {}));
+    try testing.expectEqual(try hash(gpa, .initFloat(-0.0), {}), try hash(gpa, .initFloat(0.0), {}));
+    try testing.expectEqual(try hash(gpa, .initInt(0), {}), try hash(gpa, .initFloat(-0.0), {}));
+    try testing.expect(try hash(gpa, .initInt(1), {}) != try hash(gpa, .initInt(2), {}));
     // A fraction is not a whole number, so it hashes as itself.
-    try testing.expect(try hash(gpa, .initFloat(1.5)) != try hash(gpa, .initInt(1)));
+    try testing.expect(try hash(gpa, .initFloat(1.5), {}) != try hash(gpa, .initInt(1), {}));
     // A value out of `Int`'s range stays a `Float`, and must not be truncated.
-    try testing.expect(try hash(gpa, .initFloat(1e300)) != try hash(gpa, .initInt(0)));
+    try testing.expect(try hash(gpa, .initFloat(1e300), {}) != try hash(gpa, .initInt(0), {}));
 }
 
 test "a hash distinguishes values of different types" {
     const gpa = testing.allocator;
-    try testing.expect(try hash(gpa, .initBool(false)) != try hash(gpa, .initInt(0)));
-    try testing.expect(try hash(gpa, .initBool(true)) != try hash(gpa, .initInt(1)));
-    try testing.expect(try hash(gpa, nothing) != try hash(gpa, .initInt(0)));
+    try testing.expect(try hash(gpa, .initBool(false), {}) != try hash(gpa, .initInt(0), {}));
+    try testing.expect(try hash(gpa, .initBool(true), {}) != try hash(gpa, .initInt(1), {}));
+    try testing.expect(try hash(gpa, nothing, {}) != try hash(gpa, .initInt(0), {}));
 }
 
 test "a hash agrees with equality for strings, which normalize first" {
@@ -741,9 +784,9 @@ test "a hash agrees with equality for strings, which normalize first" {
     // The same text composed, and as `e` plus a combining acute accent.
     const composed = try heap.copyText("café");
     const decomposed = try heap.copyText("cafe\u{301}");
-    try testing.expect(try equals(gpa, composed, decomposed));
-    try testing.expectEqual(try hash(gpa, composed), try hash(gpa, decomposed));
+    try testing.expect(try equals(gpa, composed, decomposed, {}));
+    try testing.expectEqual(try hash(gpa, composed, {}), try hash(gpa, decomposed, {}));
 
     const other = try heap.copyText("cafe");
-    try testing.expect(try hash(gpa, composed) != try hash(gpa, other));
+    try testing.expect(try hash(gpa, composed, {}) != try hash(gpa, other, {}));
 }

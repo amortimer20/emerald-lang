@@ -1,0 +1,12 @@
+diagnostics/equatable-without-hashable-key.em:15:18: Weird adopts `Equatable` but not `Hashable`, so it cannot be a dictionary key
+  const dict: Dict[Weird, Int] = [Weird(1, 100): 1]
+                   ^^^^^
+Its default hash could then disagree with its custom `equals`. Add `with Hashable` and a matching `hash()`.
+diagnostics/equatable-without-hashable-key.em:15:32: Weird adopts `Equatable` but not `Hashable`, so it cannot be a dictionary key
+  const dict: Dict[Weird, Int] = [Weird(1, 100): 1]
+                                 ^^^^^^^^^^^^^^^^^^
+Its default hash could then disagree with its custom `equals`. Add `with Hashable` and a matching `hash()`.
+diagnostics/equatable-without-hashable-key.em:16:12: Weird adopts `Equatable` but not `Hashable`, so a set cannot hold it
+  const set: Set[Weird] = [Weird(1, 100), Weird(1, 200)]
+             ^^^^^^^^^^
+Its default hash could then disagree with its custom `equals`. Add `with Hashable` and a matching `hash()`.

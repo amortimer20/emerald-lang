@@ -5,9 +5,11 @@ declaration of the same name replaces the prelude's for that file (15.2). This p
 `print`, `write`, `input`, `input_maybe`, `random`, and `exit`. `assert` is documented with
 errors and tests, since its behavior belongs beside `raise`/`catch` rather than beside these
 six; the prelude's operator traits (`Addable`, `Subtractable`, `Multipliable`, `Divisible`,
-`Ordered`) and its display trait ([`Textual`](../language/objects-and-traits.md#display))
-belong with traits in the language guide, since they are adopted by user types rather than
-called directly.
+`Ordered`), its equality traits
+([`Equatable`/`Hashable`](../language/objects-and-traits.md#custom-equality-and-hashing)),
+and its display trait ([`Textual`](../language/objects-and-traits.md#display)) belong with
+traits in the language guide, since they are adopted by user types rather than called
+directly.
 
 ## print(...values) -> Nothing
 

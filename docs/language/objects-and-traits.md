@@ -263,6 +263,63 @@ uses. Diagnostics deliberately stay on the field-by-field form — an assertion 
 `Point(x: 1)`, never a program's own rendering — so that building a failure message never
 runs the program's code. Run [`examples/textual.em`](../../examples/textual.em).
 
+### Custom equality and hashing
+
+A struct compares `==` field by field, and a class compares by identity, by default. Adopt
+`Equatable` to replace either with your own rule:
+
+```emerald
+class Money with Equatable {
+    var cents: Int
+
+    constructor(cents: Int) {
+        self.cents = cents
+    }
+
+    @override
+    func equals(other: Money): Bool {
+        return self.cents == other.cents
+    }
+}
+
+print(Money(500) == Money(500))   # true, not the default identity compare
+```
+
+`!=` always follows as `not equals(other)` — there is no separate method to override for it.
+Adoption is explicit, exactly as for `to_string`/`Textual` above: declaring `equals` without
+`with Equatable` is a warning, and `==` keeps comparing the default way.
+
+A struct that also needs to be a dictionary or set key with this same notion of equality
+adopts `Hashable` too, which requires `Equatable` (a trait may build on another, as `Pretty
+with Textual` does above) and adds `hash(): Int`:
+
+```emerald
+struct CaseInsensitive with Hashable {
+    var text: String
+
+    @override
+    func equals(other: CaseInsensitive): Bool {
+        return self.text.lower() == other.text.lower()
+    }
+
+    @override
+    func hash(): Int {
+        return self.text.lower().count
+    }
+}
+
+const seen: Set[CaseInsensitive] = [CaseInsensitive("Ada"), CaseInsensitive("ADA")]
+print(seen.count)   # 1 — the two collapse under case-insensitive equality
+```
+
+Adopting `Equatable` alone does not make a type a key: its default structural hash could
+then disagree with a custom `equals`, which is exactly the mismatch that would let a set
+hold two "equal" elements as if they were different, so the checker refuses it rather than
+silently keeping the old hash. A class stays outside key eligibility either way — adopting
+`Hashable` changes what `==` and hashing mean for it, not whether its fields can still
+change while it is stored as a key, which is the actual reason classes are excluded (8.3).
+Run [`conformance/run/equatable-and-hashable.em`](../../conformance/run/equatable-and-hashable.em).
+
 ## Enums
 
 An enum is a closed set of named values, listed first in the declaration, one per line or

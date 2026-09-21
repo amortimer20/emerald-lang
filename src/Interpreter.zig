@@ -922,7 +922,7 @@ fn executeAssert(self: *Interpreter, assertion: Ast.Assert) Error!void {
         defer self.heap.release(left);
         const right = try self.evaluate(comparison.operands[1]);
         defer self.heap.release(right);
-        const equal = try Value.equals(self.gpa, left, right);
+        const equal = try Value.equals(self.gpa, left, right, self.equatable(assertion.condition.span));
         const result = equal == (comparison.operators[0] == .equal);
         if (!result) {
             const left_text = try self.displayAlloc(left);
@@ -1306,7 +1306,7 @@ fn elementValue(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
                 const key = widen(Heap.retain(index.value), map.key_kind);
                 defer self.heap.release(key);
                 const hash = try self.hashKey(index.span, key);
-                const entry = try Heap.lookupIn(self.gpa, map, hash, key) orelse
+                const entry = try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(index.span)) orelse
                     return self.raiseMissingKey(index.span, key);
                 at = entry.value;
                 continue;
@@ -1354,10 +1354,13 @@ fn storeElement(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
                     defer self.heap.release(key);
                     const hash = try self.hashKey(index.span, key);
                     if (last) {
-                        // Section 8.3: this inserts or replaces, and never fails.
-                        return self.heap.put(map, hash, Heap.retain(key), widen(value, map.value_kind));
+                        // Section 8.3: this inserts or replaces. It can now
+                        // fail where it could not before this key's type
+                        // adopted `Hashable`: a custom `equals()` that raises
+                        // reports through the same `equatable` context.
+                        return self.heap.put(map, hash, Heap.retain(key), widen(value, map.value_kind), self.equatable(index.span));
                     }
-                    const found = switch (try self.heap.locate(map, hash, key)) {
+                    const found = switch (try self.heap.locate(map, hash, key, self.equatable(index.span))) {
                         .entry => |found| found,
                         .vacancy => return self.raiseMissingKey(index.span, key),
                     };
@@ -1415,7 +1418,7 @@ fn containerSlot(self: *Interpreter, span: Source.Span, root: *Value, steps: []c
                 const key = widen(Heap.retain(index.value), map.key_kind);
                 defer self.heap.release(key);
                 const hash = try self.hashKey(index.span, key);
-                const found = switch (try self.heap.locate(map, hash, key)) {
+                const found = switch (try self.heap.locate(map, hash, key, self.equatable(index.span))) {
                     .entry => |at| at,
                     .vacancy => return self.raiseMissingKey(index.span, key),
                 };
@@ -1605,7 +1608,7 @@ fn chooseArm(self: *Interpreter, case: *const Ast.Case) Error!?Ast.Case.Body {
             const matched = if (subject) |value| blk: {
                 const candidate = try self.evaluate(alternative);
                 defer self.heap.release(candidate);
-                break :blk try Value.equals(self.gpa, value, candidate);
+                break :blk try Value.equals(self.gpa, value, candidate, self.equatable(alternative.span));
             } else try self.condition(alternative);
             if (matched) return arm.body;
         }
@@ -2266,6 +2269,53 @@ fn callTextual(self: *Interpreter, span: Source.Span, value: Value) Error!Value 
     return self.invoke(span, callable, &.{});
 }
 
+/// Section 8.4's `Equatable`/`Hashable`, in the shape `Value.equals` and
+/// `Value.hash` consume: the context that compares or hashes a value
+/// adopting either trait through its own `equals()`/`hash()`. Unlike
+/// `TextualDisplay` above, every place `Value.equals`/`Value.hash` is
+/// reached from supplies one — comparing or hashing a value is the
+/// operation being asked for, not an aside a diagnostic should skip.
+const EquatableDispatch = struct {
+    interpreter: *Interpreter,
+    /// Where the comparison or hash was asked for, which is where an
+    /// `equals()`/`hash()` that raises reports.
+    span: Source.Span,
+
+    /// `left.equals(right)`, or null when `left`'s type does not adopt
+    /// `Equatable` and the default (structural for a struct, identity for a
+    /// class) belongs there instead. Both operands already share one
+    /// descriptor by the time `Value.equals` calls this.
+    pub fn customEquals(self: EquatableDispatch, left: Value, right: Value) Error!?bool {
+        if (!left.data.struct_value.descriptor.isOrExtends(Resolver.preludeKey("Equatable"))) return null;
+        const result = try self.interpreter.callOperator(self.span, "equals", left, right);
+        return result.data.bool;
+    }
+
+    /// `value.hash()`, or null when its type does not adopt `Hashable` and
+    /// the default structural hash belongs there instead.
+    pub fn customHash(self: EquatableDispatch, value: Value) Error!?u64 {
+        if (!value.data.struct_value.descriptor.isOrExtends(Resolver.preludeKey("Hashable"))) return null;
+        const result = try self.interpreter.callHash(self.span, value);
+        return @bitCast(result.data.int);
+    }
+};
+
+/// The `EquatableDispatch` for `span`, built fresh at each call site rather
+/// than threaded as a field: every place `Value.equals`/`Value.hash` is
+/// reached from already has its own most-relevant span in scope.
+fn equatable(self: *Interpreter, span: Source.Span) EquatableDispatch {
+    return .{ .interpreter = self, .span = span };
+}
+
+/// Runs a `Hashable` value's own `hash()`, the same shape as `callTextual`.
+fn callHash(self: *Interpreter, span: Source.Span, value: Value) Error!Value {
+    const method = value.data.struct_value.descriptor.methods.?.get("hash").?;
+    try self.requireVersionBuilt(span, value, method.key, method);
+    var callable = self.namedCallable(method.key);
+    callable.self_value = Heap.retain(value);
+    return self.invoke(span, callable, &.{});
+}
+
 /// Section 5.1: each interpolated value appears as `print` would display it.
 fn evaluateInterpolation(self: *Interpreter, parts: []const Ast.Expression.Part) Error!Value {
     var built: std.Io.Writer.Allocating = .init(self.gpa);
@@ -2306,7 +2356,7 @@ fn evaluateDictionary(
         const key = widen(try self.evaluate(entry.key), key_kind);
         const hash = try self.hashKey(entry.key.span, key);
         const value = widen(try self.evaluate(entry.value), value_kind);
-        try self.heap.put(map, hash, key, value);
+        try self.heap.put(map, hash, key, value, self.equatable(entry.key.span));
     }
     return result;
 }
@@ -2319,7 +2369,7 @@ fn hashKey(self: *Interpreter, span: Source.Span, key: Value) Error!u64 {
         "a not-a-number value cannot be a key",
         "`nan?` is never equal to anything, including itself, so nothing stored under it could be found again.",
     );
-    return Value.hash(self.gpa, key);
+    return Value.hash(self.gpa, key, self.equatable(span));
 }
 
 fn holdsNan(value: Value) bool {
@@ -2410,7 +2460,7 @@ fn evaluateSet(
     for (elements) |element| {
         const member = widen(try self.evaluate(element), member_kind);
         const hash = try self.hashKey(element.span, member);
-        try self.heap.put(map, hash, member, Value.nothing);
+        try self.heap.put(map, hash, member, Value.nothing, self.equatable(element.span));
     }
     return result;
 }
@@ -2426,7 +2476,7 @@ fn evaluateIndex(self: *Interpreter, expression: *const Ast.Expression, index: A
         const key = widen(try self.evaluate(index.index), map.key_kind);
         defer self.heap.release(key);
         const hash = try self.hashKey(index.index.span, key);
-        const entry = try Heap.lookupIn(self.gpa, map, hash, key) orelse return Value.nothing;
+        const entry = try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(index.index.span)) orelse return Value.nothing;
         return Heap.retain(entry.value);
     }
 
@@ -2558,7 +2608,7 @@ fn evaluateComparison(
         const right = try self.evaluate(operand_node);
 
         const holds = if (operator.isEquality())
-            (try Value.equals(self.gpa, left, right)) == (operator == .equal)
+            (try Value.equals(self.gpa, left, right, self.equatable(expression.span))) == (operator == .equal)
         else if (left.data == .struct_value) ordered: {
             // Section 11.5: `a < b` is `a.compare(b) < 0`.
             const result = try self.callOperator(expression.span, Ast.OperatorContract.ordered.method, left, right);
@@ -4030,12 +4080,12 @@ fn readMap(
                 for (map.entries.items) |entry| {
                     const key = Heap.retain(entry.key);
                     const hash = try self.hashKey(call.arguments[0].span, key);
-                    try self.heap.put(result, hash, key, Value.nothing);
+                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
                 }
                 for (other.data.map.entries.items) |entry| {
                     const key = Heap.retain(entry.key);
                     const hash = try self.hashKey(call.arguments[0].span, key);
-                    try self.heap.put(result, hash, key, Value.nothing);
+                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
                 }
                 return value;
             }
@@ -4043,8 +4093,8 @@ fn readMap(
                 for (map.entries.items) |entry| {
                     const key = Heap.retain(entry.key);
                     const hash = try self.hashKey(call.arguments[0].span, key);
-                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key) == null) continue;
-                    try self.heap.put(result, hash, key, Value.nothing);
+                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key, self.equatable(call.arguments[0].span)) == null) continue;
+                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
                 }
                 return value;
             }
@@ -4052,23 +4102,23 @@ fn readMap(
                 for (map.entries.items) |entry| {
                     const key = Heap.retain(entry.key);
                     const hash = try self.hashKey(call.arguments[0].span, key);
-                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key) != null) continue;
-                    try self.heap.put(result, hash, key, Value.nothing);
+                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key, self.equatable(call.arguments[0].span)) != null) continue;
+                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
                 }
                 return value;
             }
             for (map.entries.items) |entry| {
                 const key = Heap.retain(entry.key);
                 const hash = try self.hashKey(call.arguments[0].span, key);
-                if (try Heap.lookupIn(self.gpa, other.data.map, hash, key) == null) {
-                    try self.heap.put(result, hash, key, Value.nothing);
+                if (try Heap.lookupIn(self.gpa, other.data.map, hash, key, self.equatable(call.arguments[0].span)) == null) {
+                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
                 }
             }
             for (other.data.map.entries.items) |entry| {
                 const key = Heap.retain(entry.key);
                 const hash = try self.hashKey(call.arguments[0].span, key);
-                if (try Heap.lookupIn(self.gpa, map, hash, key) == null) {
-                    try self.heap.put(result, hash, key, Value.nothing);
+                if (try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(call.arguments[0].span)) == null) {
+                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
                 }
             }
             return value;
@@ -4087,20 +4137,20 @@ fn readMap(
             if (std.mem.eql(u8, name, "subset?")) {
                 for (map.entries.items) |entry| {
                     const hash = try self.hashKey(call.arguments[0].span, entry.key);
-                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key) == null) return .initBool(false);
+                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key, self.equatable(call.arguments[0].span)) == null) return .initBool(false);
                 }
                 return .initBool(true);
             }
             if (std.mem.eql(u8, name, "superset?")) {
                 for (other.data.map.entries.items) |entry| {
                     const hash = try self.hashKey(call.arguments[0].span, entry.key);
-                    if (try Heap.lookupIn(self.gpa, map, hash, entry.key) == null) return .initBool(false);
+                    if (try Heap.lookupIn(self.gpa, map, hash, entry.key, self.equatable(call.arguments[0].span)) == null) return .initBool(false);
                 }
                 return .initBool(true);
             }
             for (map.entries.items) |entry| {
                 const hash = try self.hashKey(call.arguments[0].span, entry.key);
-                if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key) != null) return .initBool(false);
+                if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key, self.equatable(call.arguments[0].span)) != null) return .initBool(false);
             }
             return .initBool(true);
         }
@@ -4110,12 +4160,12 @@ fn readMap(
         const key = widen(Heap.retain(arguments[0]), map.key_kind);
         defer self.heap.release(key);
         const hash = try self.hashKey(call.arguments[0].span, key);
-        return .initBool(try Heap.lookupIn(self.gpa, map, hash, key) != null);
+        return .initBool(try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(call.arguments[0].span)) != null);
     }
 
     if (std.mem.eql(u8, name, "contains_value?")) {
         for (map.entries.items) |entry| {
-            if (try Value.equals(self.gpa, entry.value, arguments[0])) return .initBool(true);
+            if (try Value.equals(self.gpa, entry.value, arguments[0], self.equatable(call.arguments[0].span))) return .initBool(true);
         }
         return .initBool(false);
     }
@@ -4145,7 +4195,7 @@ fn changeMap(
     if (std.mem.eql(u8, name, "add")) {
         const held = widen(Heap.retain(arguments[0]), map.key_kind);
         const hash = try self.hashKey(call.arguments[0].span, held);
-        try self.heap.put(map, hash, held, Value.nothing);
+        try self.heap.put(map, hash, held, Value.nothing, self.equatable(call.arguments[0].span));
         return Value.nothing;
     }
 
@@ -4153,7 +4203,7 @@ fn changeMap(
         const key = widen(Heap.retain(arguments[0]), map.key_kind);
         defer self.heap.release(key);
         const hash = try self.hashKey(call.arguments[0].span, key);
-        const removed = try self.heap.removeKey(map, hash, key);
+        const removed = try self.heap.removeKey(map, hash, key, self.equatable(call.arguments[0].span));
         // A set reports nothing; a dictionary answers with what was there, and
         // absence when the key was not (4.5).
         if (map.is_set) {
@@ -4174,6 +4224,7 @@ fn changeMap(
             entry.hash,
             Heap.retain(entry.key),
             widen(Heap.retain(entry.value), map.value_kind),
+            self.equatable(call.arguments[0].span),
         );
     }
     return Value.nothing;
@@ -4257,13 +4308,13 @@ fn callHigherOrder(
             if ((kind == .filter and accepted) or (kind == .reject and !accepted)) {
                 if (map.is_set) {
                     const hash = try self.hashKey(expression.span, item);
-                    try self.heap.put(result, hash, Heap.retain(item), Value.nothing);
+                    try self.heap.put(result, hash, Heap.retain(item), Value.nothing, self.equatable(expression.span));
                 } else {
                     const tuple = item.data.tuple;
                     const key = tuple.items[0];
                     const value_for_key = tuple.items[1];
                     const hash = try self.hashKey(expression.span, key);
-                    try self.heap.put(result, hash, Heap.retain(key), Heap.retain(value_for_key));
+                    try self.heap.put(result, hash, Heap.retain(key), Heap.retain(value_for_key), self.equatable(expression.span));
                 }
             }
         }
@@ -4531,7 +4582,7 @@ fn callGroupBy(
         const argument = [_]Value{Heap.retain(item)};
         const key = try self.invokeClosure(expression.span, closure, callable, &argument);
         const hash = try self.hashKey(expression.span, key);
-        switch (try self.heap.locate(groups, hash, key)) {
+        switch (try self.heap.locate(groups, hash, key, self.equatable(expression.span))) {
             .entry => |index| {
                 const group = groups.entries.items[index].value.data.list;
                 group.items.appendAssumeCapacity(Heap.retain(item));
@@ -4539,7 +4590,7 @@ fn callGroupBy(
             },
             .vacancy => {
                 const group = try self.heap.createList(list.element, 1);
-                try self.heap.put(groups, hash, key, .{ .data = .{ .list = group } });
+                try self.heap.put(groups, hash, key, .{ .data = .{ .list = group } }, self.equatable(expression.span));
                 group.items.appendAssumeCapacity(Heap.retain(item));
             },
         }
@@ -4563,13 +4614,13 @@ fn callFrequencies(
 
     for (list.items.items) |item| {
         const hash = try self.hashKey(expression.span, item);
-        switch (try self.heap.locate(counts, hash, item)) {
+        switch (try self.heap.locate(counts, hash, item, self.equatable(expression.span))) {
             .entry => |index| {
                 const current = counts.entries.items[index].value.data.int;
                 counts.entries.items[index].value = .initInt(current + 1);
             },
             .vacancy => {
-                try self.heap.put(counts, hash, Heap.retain(item), .initInt(1));
+                try self.heap.put(counts, hash, Heap.retain(item), .initInt(1), self.equatable(expression.span));
             },
         }
     }
@@ -4704,10 +4755,10 @@ fn callUniqueBy(
         const argument = [_]Value{Heap.retain(item)};
         const key = try self.invokeClosure(expression.span, closure, callable, &argument);
         const hash = try self.hashKey(expression.span, key);
-        switch (try self.heap.locate(seen, hash, key)) {
+        switch (try self.heap.locate(seen, hash, key, self.equatable(expression.span))) {
             .entry => self.heap.release(key),
             .vacancy => {
-                try self.heap.put(seen, hash, key, Value.nothing);
+                try self.heap.put(seen, hash, key, Value.nothing, self.equatable(expression.span));
                 result.items.appendAssumeCapacity(Heap.retain(item));
             },
         }
@@ -4750,14 +4801,14 @@ fn callAssociate(
         if (by_key_only) {
             const key = widen(produced_value, key_kind);
             const hash = try self.hashKey(expression.span, key);
-            try self.heap.put(map, hash, key, Heap.retain(item));
+            try self.heap.put(map, hash, key, Heap.retain(item), self.equatable(expression.span));
         } else {
             defer self.heap.release(produced_value);
             const tuple = produced_value.data.tuple;
             const key = widen(Heap.retain(tuple.items[0]), key_kind);
             const value = widen(Heap.retain(tuple.items[1]), value_kind);
             const hash = try self.hashKey(expression.span, key);
-            try self.heap.put(map, hash, key, value);
+            try self.heap.put(map, hash, key, value, self.equatable(expression.span));
         }
     }
     return result;
@@ -4784,7 +4835,7 @@ fn callToDictionary(self: *Interpreter, expression: *const Ast.Expression, membe
         const key = widen(Heap.retain(tuple.items[0]), key_kind);
         const value = widen(Heap.retain(tuple.items[1]), value_kind);
         const hash = try self.hashKey(expression.span, key);
-        try self.heap.put(map, hash, key, value);
+        try self.heap.put(map, hash, key, value, self.equatable(expression.span));
     }
     return result;
 }
@@ -5026,7 +5077,7 @@ fn callMapTransform(
         const key = if (changing) widen(produced, key_kind) else widen(Heap.retain(entry.key), key_kind);
         const value = if (changing) widen(Heap.retain(entry.value), value_kind) else widen(produced, value_kind);
         const hash = try self.hashKey(member.name_span, key);
-        try self.heap.put(result, hash, key, value);
+        try self.heap.put(result, hash, key, value, self.equatable(member.name_span));
     }
     return .{ .data = .{ .map = result } };
 }
@@ -5041,7 +5092,7 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
             for (items) |item| {
-                if (try Value.equals(self.gpa, item, arguments[0])) break :blk .initBool(true);
+                if (try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) break :blk .initBool(true);
             }
             break :blk .initBool(false);
         },
@@ -5149,7 +5200,7 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
             errdefer self.heap.release(value);
             outer: for (items) |item| {
                 for (result.items.items) |previous| {
-                    if (try Value.equals(self.gpa, item, previous)) continue :outer;
+                    if (try Value.equals(self.gpa, item, previous, self.equatable(span))) continue :outer;
                 }
                 result.items.appendAssumeCapacity(Heap.retain(item));
             }
@@ -5704,7 +5755,7 @@ fn callToSet(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
 
     for (items) |item| {
         const hash = try self.hashKey(member.base.span, item);
-        try self.heap.put(map, hash, Heap.retain(item), Value.nothing);
+        try self.heap.put(map, hash, Heap.retain(item), Value.nothing, self.equatable(member.base.span));
     }
     return result;
 }
@@ -6583,7 +6634,7 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
         .remove => {
             defer self.heap.release(arguments[0]);
             for (items.items, 0..) |item, position| {
-                if (!try Value.equals(self.gpa, item, arguments[0])) continue;
+                if (!try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) continue;
                 self.heap.release(items.orderedRemove(position));
                 break;
             }
@@ -6592,7 +6643,7 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
             defer self.heap.release(arguments[0]);
             var kept: usize = 0;
             for (items.items) |item| {
-                if (try Value.equals(self.gpa, item, arguments[0])) {
+                if (try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) {
                     self.heap.release(item);
                 } else {
                     items.items[kept] = item;
@@ -6622,7 +6673,7 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
             var kept: usize = 0;
             outer: for (items.items) |item| {
                 for (items.items[0..kept]) |previous| {
-                    if (try Value.equals(self.gpa, item, previous)) {
+                    if (try Value.equals(self.gpa, item, previous, self.equatable(span))) {
                         self.heap.release(item);
                         continue :outer;
                     }
