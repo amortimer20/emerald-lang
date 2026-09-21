@@ -16,11 +16,11 @@ gaps listed under "Active rough edges" below. Brace style (3.4) is a per-project
 from `emerald.toml`; see below for what changed and why.
 
 The standard library's filesystem area is complete for UTF-8 text. `File`, `Directory`, and
-`Path` provide whole-file and streamed reads, recursive/idempotent directory creation,
+`Path` provide whole-file and streamed text reads and writes, recursive/idempotent directory creation,
 empty-only and recursive/idempotent directory deletion, listing, and lexical path helpers.
-`File.open` returns a read-only `FileHandle`; `File.with_open` guarantees closure through a
-block's normal or error exit. Filesystem failures use `FileError`. Binary/raw-byte I/O and
-streaming writes remain deferred.
+`File.open` returns a read-only `FileHandle`, and `File.create` returns a write-only
+`FileWriter`; `File.with_open` and `File.with_writer` guarantee closure through a block's
+normal or error exit. Filesystem failures use `FileError`. Binary/raw-byte I/O remains deferred.
 
 Release hardening is in place: CI runs Debug and ReleaseSafe tests on Ubuntu, macOS, and
 Windows; the fuzz runner checks, formats, and boundedly executes generated clean programs;

@@ -22,6 +22,10 @@ perform their named whole-file operation.
 block: func(FileHandle)) -> Nothing` gives its block an open handle and closes it after normal
 completion, return, or an error.
 
+`create(path: String) -> FileWriter` creates or truncates a UTF-8 text file for streaming
+writes. `with_writer(path: String, block: func(FileWriter)) -> Nothing` gives its block a
+writer and closes it after normal completion, return, or an error.
+
 ### FileHandle
 
 `read() -> String` returns all text remaining after the current position. `read_line() ->
@@ -29,6 +33,12 @@ String?` returns the next line without its newline, or `nothing` at end of file.
 `read_lines`, it does not add an empty final line for a trailing newline, but does return an
 unterminated final line. `close() -> Nothing` is idempotent. Handles are read-only; use
 `File.write` or `File.append` for whole-file writes.
+
+### FileWriter
+
+`write(text: String) -> Nothing` writes UTF-8 text at the current position. `close() ->
+Nothing` is idempotent. Writers are write-only and `File.create` always truncates an existing
+file; use `File.append` for a whole-file append.
 
 ## Directory
 
@@ -50,8 +60,8 @@ existing path to an absolute path.
 ## Raises
 
 Every non-predicate operation raises `FileError` for a missing path, denied access, invalid
-UTF-8 text, or a failed write. `FileHandle.read` and `read_line` also raise it when called
-after `close`. `Directory.create` and `Directory.delete_recursive` are idempotent when a
+UTF-8 text, or a failed write. `FileHandle.read` and `read_line`, and `FileWriter.write`, also
+raise it when called after `close`. `Directory.create` and `Directory.delete_recursive` are idempotent when a
 missing path is the point; `Directory.delete` reports a non-empty directory rather than
 deleting its contents. `FileError` extends `RuntimeError`, so a program can catch filesystem
 failures without catching unrelated runtime failures.

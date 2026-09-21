@@ -2423,8 +2423,8 @@ diagnostics.
 
 Garbage collection manages memory, not timely release of files, sockets, locks, or similar
 resources. Whole-file `File` operations need no explicit resource management (15.3), while a
-streamed `FileHandle` can be closed explicitly. `read()` returns all remaining UTF-8 text and
-`read_line()` returns one line at a time, or `nothing` at end of file:
+streamed `FileHandle` or `FileWriter` can be closed explicitly. `read()` returns all remaining
+UTF-8 text and `read_line()` returns one line at a time, or `nothing` at end of file:
 
 ```emerald
 var file = File.open("scores.txt")
@@ -2444,11 +2444,15 @@ streaming case safe without adding a language keyword:
 File.with_open("scores.txt") { file =>
     print(file.read())
 }
+
+File.with_writer("scores.txt") { writer =>
+    writer.write("updated scores\\n")
+}
 ```
 
-`with_open` guarantees closure after normal completion, return, or error. A GC fallback
-may close a forgotten handle eventually, but correctness must not depend on when that
-happens. There is no user-visible object destructor in the initial language.
+`with_open` and `with_writer` guarantee closure after normal completion, return, or error. A
+GC fallback may close a forgotten handle eventually, but correctness must not depend on when
+that happens. There is no user-visible object destructor in the initial language.
 
 ## 14. Program and project structure
 
@@ -2664,6 +2668,8 @@ and lexical path manipulation:
 File.read(path)
 File.open(path)
 File.with_open(path, block)
+File.create(path)
+File.with_writer(path, block)
 File.write(path, contents)
 File.append(path, contents)
 File.read_lines(path)
@@ -2697,17 +2703,18 @@ returns unsorted full paths for files and subdirectories together. `Path.join` a
 
 Whole-file helpers close their handles automatically. `File.open` returns a read-only
 `FileHandle`; its `read()` returns the remaining text, `read_line()` returns the next line as
-`String?`, and `close()` is idempotent. `read_line()` follows `read_lines` exactly: a trailing
-newline produces no extra line, while a final unterminated line is still returned. `with_open`
-closes its handle after normal completion, return, or error. `read`, `read_lines`, `write`,
-`write_lines`, `append`, and FileHandle reads are UTF-8 text only; `write_lines` writes a
+`String?`, and `close()` is idempotent. `File.create` returns a write-only `FileWriter`,
+truncating or creating its path; `write(text)` streams UTF-8 text and `close()` is idempotent.
+`read_line()` follows `read_lines` exactly: a trailing newline produces no extra line, while a
+final unterminated line is still returned. `with_open` and `with_writer` close their resource
+after normal completion, return, or error. `read`, `read_lines`, `write`, `write_lines`,
+`append`, FileHandle reads, and FileWriter writes are UTF-8 text only; `write_lines` writes a
 newline after every line. `Path.absolute` is the one Path operation that consults the
 filesystem.
 
 Every operation other than the two predicates raises `FileError` for missing paths, access
 failures, invalid UTF-8, and failed writes; reading a closed FileHandle also raises
-`FileError`. Binary/raw-byte I/O, streaming writes, and more-specific filesystem error
-subclasses remain deferred.
+`FileError`. Binary/raw-byte I/O and more-specific filesystem error subclasses remain deferred.
 
 ### 15.4 Regular expressions
 

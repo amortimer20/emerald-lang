@@ -29,6 +29,8 @@ class FileError extends RuntimeError {
 class File {
     func File.open(path: String): FileHandle { return FileHandle() }
     func File.with_open(path: String, block: func(FileHandle)) {}
+    func File.create(path: String): FileWriter { return FileWriter() }
+    func File.with_writer(path: String, block: func(FileWriter)) {}
     func File.read(path: String): String { return "" }
     func File.write(path: String, contents: String) {}
     func File.append(path: String, contents: String) {}
@@ -47,6 +49,15 @@ class FileHandle {
 
     func read(): String { return "" }
     func read_line(): String? { return nothing }
+    func close() {}
+}
+
+# A live, write-only text stream. As with FileHandle, `_id` is private
+# interpreter-managed state and `close` is safe to call more than once.
+class FileWriter {
+    var _id: Int = Program.arguments.count
+
+    func write(text: String) {}
     func close() {}
 }
 

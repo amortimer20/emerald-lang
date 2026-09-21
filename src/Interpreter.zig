@@ -53,6 +53,15 @@ const FileHandleState = struct {
     path: []const u8,
 };
 
+/// The host state behind one write-only FileWriter. A zero-length streaming
+/// buffer deliberately sends every `write` to the OS immediately, so the
+/// operation that accepts text is also where a failed write is reported.
+const FileWriterState = struct {
+    file: std.Io.File,
+    writer: std.Io.File.Writer,
+    path: []const u8,
+};
+
 /// What running a program produced. An unhandled Emerald error stops an ordinary
 /// run; test mode collects one failure per test and continues discovery order.
 pub const Outcome = struct {
@@ -175,6 +184,9 @@ random_engine: ?std.Random.DefaultPrng = null,
 /// teardown closes anything a program forgot.
 file_handles: std.AutoHashMapUnmanaged(i64, *FileHandleState) = .empty,
 next_file_handle: i64 = 1,
+/// Open FileWriters, following FileHandle's explicit-close and teardown rules.
+file_writers: std.AutoHashMapUnmanaged(i64, *FileWriterState) = .empty,
+next_file_writer: i64 = 1,
 
 /// Top-level bindings, from `arena`. A function sees these, and it sees them
 /// as they are when it runs; the checker has already proved that everything a
@@ -318,6 +330,7 @@ pub fn run(
     defer interpreter.heap.deinit();
     defer interpreter.literal_texts.deinit(gpa);
     defer interpreter.deinitFileHandles();
+    defer interpreter.deinitFileWriters();
 
     // Hoisted, matching the resolver and checker. Every file's functions are
     // in place before anything runs, so a call into another file never depends
@@ -2960,6 +2973,10 @@ fn isFileHandleKey(key: []const u8) bool {
     return std.mem.startsWith(u8, key, "emerald.FileHandle::");
 }
 
+fn isFileWriterKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, "emerald.FileWriter::");
+}
+
 /// Section 15.3's deliberately small whole-file surface. The prelude declares
 /// ordinary type-level signatures; this dispatch is their native body.
 fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: Ast.Expression.Call) Error!Value {
@@ -2978,6 +2995,16 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         defer self.closeFileHandle(id);
         const closure = values[1].data.closure;
         const result = try self.invokeClosure(span, closure, self.closureCallable(closure), &.{handle});
+        self.heap.release(result);
+        return Value.nothing;
+    }
+    if (std.mem.eql(u8, suffix, "File::create")) return self.createFileWriter(span, cwd, io, values[0].data.string.bytes);
+    if (std.mem.eql(u8, suffix, "File::with_writer")) {
+        const writer = try self.createFileWriter(span, cwd, io, values[0].data.string.bytes);
+        const id = writer.data.struct_value.fields[0].data.int;
+        defer self.closeFileWriter(id);
+        const closure = values[1].data.closure;
+        const result = try self.invokeClosure(span, closure, self.closureCallable(closure), &.{writer});
         self.heap.release(result);
         return Value.nothing;
     }
@@ -3127,6 +3154,44 @@ fn openFileHandle(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: st
     return .{ .data = .{ .struct_value = instance } };
 }
 
+fn createFileWriter(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: std.Io, path: []const u8) Error!Value {
+    const file = cwd.createFile(io, path, .{}) catch return self.raiseFilePath(span, path, "create");
+    const copied_path = self.gpa.dupe(u8, path) catch |err| {
+        file.close(io);
+        return err;
+    };
+    const state = self.gpa.create(FileWriterState) catch |err| {
+        self.gpa.free(copied_path);
+        file.close(io);
+        return err;
+    };
+    state.* = .{
+        .file = file,
+        .writer = file.writerStreaming(io, &.{}),
+        .path = copied_path,
+    };
+    const id = self.next_file_writer;
+    if (id == std.math.maxInt(i64)) {
+        self.destroyFileWriter(state);
+        return error.OutOfMemory;
+    }
+    self.next_file_writer += 1;
+    self.file_writers.put(self.gpa, id, state) catch |err| {
+        self.destroyFileWriter(state);
+        return err;
+    };
+    const fields = self.gpa.alloc(Value, 1) catch |err| {
+        self.closeFileWriter(id);
+        return err;
+    };
+    fields[0] = .initInt(id);
+    const instance = self.heap.createStruct(self.structs.get(Resolver.preludeKey("FileWriter")).?, fields) catch |err| {
+        self.closeFileWriter(id);
+        return err;
+    };
+    return .{ .data = .{ .struct_value = instance } };
+}
+
 fn callFileHandle(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member) Error!Value {
     const receiver = try self.evaluate(member.base);
     defer self.heap.release(receiver);
@@ -3167,6 +3232,22 @@ fn callFileHandle(self: *Interpreter, span: Source.Span, key: []const u8, member
     return .{ .data = .{ .string = try self.heap.createText(bytes) } };
 }
 
+fn callFileWriter(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member, call: Ast.Expression.Call) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const id = receiver.data.struct_value.fields[0].data.int;
+    const suffix = key["emerald.FileWriter::".len..];
+    if (std.mem.eql(u8, suffix, "close")) {
+        self.closeFileWriter(id);
+        return Value.nothing;
+    }
+    const state = self.file_writers.get(id) orelse return self.raiseFileMessage(span, "cannot write to a closed file");
+    const value = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(value);
+    state.writer.interface.writeAll(value.data.string.bytes) catch return self.raiseFilePath(span, state.path, "write");
+    return Value.nothing;
+}
+
 fn closeFileHandle(self: *Interpreter, id: i64) void {
     const removed = self.file_handles.fetchRemove(id) orelse return;
     self.destroyFileHandle(removed.value);
@@ -3182,6 +3263,23 @@ fn deinitFileHandles(self: *Interpreter) void {
     var states = self.file_handles.valueIterator();
     while (states.next()) |state| self.destroyFileHandle(state.*);
     self.file_handles.deinit(self.gpa);
+}
+
+fn closeFileWriter(self: *Interpreter, id: i64) void {
+    const removed = self.file_writers.fetchRemove(id) orelse return;
+    self.destroyFileWriter(removed.value);
+}
+
+fn destroyFileWriter(self: *Interpreter, state: *FileWriterState) void {
+    state.file.close(std.Io.Threaded.global_single_threaded.io());
+    self.gpa.free(state.path);
+    self.gpa.destroy(state);
+}
+
+fn deinitFileWriters(self: *Interpreter) void {
+    var states = self.file_writers.valueIterator();
+    while (states.next()) |state| self.destroyFileWriter(state.*);
+    self.file_writers.deinit(self.gpa);
 }
 
 fn fileLines(self: *Interpreter, bytes: []const u8) Error!Value {
@@ -4992,6 +5090,7 @@ fn callMethod(
 ) Error!Value {
     if (self.method_calls.get(call.callee)) |key| {
         if (isFileHandleKey(key)) return self.callFileHandle(expression.span, key, member);
+        if (isFileWriterKey(key)) return self.callFileWriter(expression.span, key, member, call);
     }
     if (std.mem.eql(u8, member.name, "next") or std.mem.eql(u8, member.name, "choose") or
         (std.mem.eql(u8, member.name, "shuffle!") and call.arguments.len == 1))

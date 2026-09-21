@@ -1,0 +1,4 @@
+runtime-errors/file-writer-streaming-closed.em:4:1: FileError: cannot write to a closed file
+  writer.write("no")
+  ^^^^^^^^^^^^^^^^^^
+Check that the path exists and that this program may access it.

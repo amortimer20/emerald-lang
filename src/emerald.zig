@@ -849,6 +849,52 @@ test "FileHandle streams text, rejects invalid UTF-8, and rejects reads after cl
     try expectFailure(invalid, expected);
 }
 
+test "FileWriter streams text, closes idempotently, and with_writer closes on every exit" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const relative = try std.fmt.allocPrint(testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer testing.allocator.free(relative);
+    const absolute = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, relative, testing.allocator);
+    defer testing.allocator.free(absolute);
+    const path = try std.fs.path.join(testing.allocator, &.{ absolute, "written.txt" });
+    defer testing.allocator.free(path);
+    const literal = try escapeAsEmeraldStringLiteral(testing.allocator, path);
+    defer testing.allocator.free(literal);
+
+    const streamed = try std.fmt.allocPrint(testing.allocator,
+        \\const writer = File.create("{s}")
+        \\writer.write("one")
+        \\writer.write(" two")
+        \\writer.close()
+        \\writer.close()
+        \\print(File.read("{s}"))
+        \\File.with_writer("{s}") {{ opened =>
+        \\    opened.write("three")
+        \\}}
+        \\print(File.read("{s}"))
+        \\try {{
+        \\    File.with_writer("{s}") {{ opened =>
+        \\        opened.write("four")
+        \\        raise AssertionError("stop here")
+        \\    }}
+        \\}}
+        \\catch error {{
+        \\    print(error.message)
+        \\}}
+        \\print(File.read("{s}"))
+    , .{ literal, literal, literal, literal, literal, literal });
+    defer testing.allocator.free(streamed);
+    try expectOutput(streamed, "one two\nthree\nstop here\nfour\n");
+
+    const closed = try std.fmt.allocPrint(testing.allocator,
+        \\const writer = File.create("{s}")
+        \\writer.close()
+        \\writer.write("no")
+    , .{literal});
+    defer testing.allocator.free(closed);
+    try expectFailure(closed, "FileError: cannot write to a closed file");
+}
+
 test "Directory.delete_recursive removes a populated tree and is idempotent on an already-gone path" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
