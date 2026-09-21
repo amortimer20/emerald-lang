@@ -839,13 +839,9 @@ fn expressionAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?Foun
 // Go to definition.
 //
 // `findAssignmentInStatement`, `findTypeInStatement`, and `findDeclNameInStatement`
-// below walk the statement tree, descending into every block a statement owns
-// (loop bodies, `try`/`catch`/`finally`, a `case` arm's block form) — the same
-// set `Resolver`'s own fact-gathering walks. They do not descend into an
-// expression looking for a lambda literal's own block body, so a declaration,
-// assignment, or type annotation written inside a lambda stays unreachable by
-// go to definition for now, same as several other conservative spots in the
-// capture/definite-assignment analysis (see `docs/handoff.md`'s rough edges).
+// below mirror Resolver's complete statement-and-expression walk. In particular,
+// a lambda is an expression but can own a block, declarations, assignments, and
+// parameter annotations of its own; each point-query walker descends through it.
 
 fn onDefinition(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, id: std.json.Value, out: *std.Io.Writer) !void {
     const document = server.documents.get(uri) orelse {
@@ -1014,10 +1010,16 @@ fn findAssignmentInStatements(statements: []const Ast.Statement, file: u32, offs
 
 fn findAssignmentInStatement(statement: Ast.Statement, file: u32, offset: u32, targets: *const std.AutoHashMapUnmanaged(Resolver.Site, Resolver.Target)) ?Resolver.Target {
     switch (statement.data) {
+        .expression => |e| return findAssignmentInExpression(e, file, offset, targets),
+        .declaration => |d| if (d.initializer) |e| return findAssignmentInExpression(e, file, offset, targets),
         .assignment => |a| {
             if (offset >= a.name_span.start and offset <= a.name_span.end) {
                 return targets.get(.{ .file = file, .start = a.name_span.start });
             }
+            for (a.steps) |step| if (step == .index) {
+                if (findAssignmentInExpression(step.index, file, offset, targets)) |target| return target;
+            };
+            return findAssignmentInExpression(a.value, file, offset, targets);
         },
         .destructuring_assignment => |da| {
             for (da.pattern.names) |name| {
@@ -1025,8 +1027,10 @@ fn findAssignmentInStatement(statement: Ast.Statement, file: u32, offset: u32, t
                     return targets.get(.{ .file = file, .start = name.span.start });
                 }
             }
+            return findAssignmentInExpression(da.value, file, offset, targets);
         },
         .conditional => |c| {
+            if (findAssignmentInExpression(c.condition, file, offset, targets)) |target| return target;
             if (findAssignmentInStatements(c.then_block.statements, file, offset, targets)) |target| return target;
             if (c.otherwise) |other| switch (other) {
                 .block => |b| if (findAssignmentInStatements(b.statements, file, offset, targets)) |target| return target,
@@ -1034,53 +1038,135 @@ fn findAssignmentInStatement(statement: Ast.Statement, file: u32, offset: u32, t
             };
         },
         .while_loop => |w| {
+            if (findAssignmentInExpression(w.condition, file, offset, targets)) |target| return target;
             if (findAssignmentInStatements(w.body.statements, file, offset, targets)) |target| return target;
         },
         .for_loop => |f| {
+            if (findAssignmentInExpression(f.iterable, file, offset, targets)) |target| return target;
             if (findAssignmentInStatements(f.body.statements, file, offset, targets)) |target| return target;
         },
         .case_statement => |case| {
+            if (case.subject) |subject| if (findAssignmentInExpression(subject, file, offset, targets)) |target| return target;
             for (case.arms) |arm| {
+                for (arm.alternatives) |alternative| if (findAssignmentInExpression(alternative, file, offset, targets)) |target| return target;
                 if (arm.body == .block) {
                     if (findAssignmentInStatements(arm.body.block.statements, file, offset, targets)) |target| return target;
-                }
+                } else if (findAssignmentInExpression(arm.body.value, file, offset, targets)) |target| return target;
             }
             if (case.otherwise) |otherwise| {
                 if (otherwise == .block) {
                     if (findAssignmentInStatements(otherwise.block.statements, file, offset, targets)) |target| return target;
-                }
+                } else if (findAssignmentInExpression(otherwise.value, file, offset, targets)) |target| return target;
             }
         },
-        .try_statement => |t| {
-            if (findAssignmentInStatements(t.body.statements, file, offset, targets)) |target| return target;
-            for (t.catches) |c| {
-                if (findAssignmentInStatements(c.body.statements, file, offset, targets)) |target| return target;
-            }
-            if (t.finally_block) |fb| {
-                if (findAssignmentInStatements(fb.statements, file, offset, targets)) |target| return target;
-            }
+        .return_statement => |r| if (r.value) |value| return findAssignmentInExpression(value, file, offset, targets),
+        .raise_statement => |r| if (r.value) |value| return findAssignmentInExpression(value, file, offset, targets),
+        .assert_statement => |a| {
+            if (findAssignmentInExpression(a.condition, file, offset, targets)) |target| return target;
+            if (a.message) |message| return findAssignmentInExpression(message, file, offset, targets);
         },
+        .destructuring => |d| return findAssignmentInExpression(d.initializer, file, offset, targets),
         .function_declaration => |f| {
+            for (f.parameters) |parameter| if (parameter.default) |value| {
+                if (findAssignmentInExpression(value, file, offset, targets)) |target| return target;
+            };
             if (findAssignmentInStatements(f.body.statements, file, offset, targets)) |target| return target;
         },
         .struct_declaration => |s| {
-            if (s.constructor) |c| {
-                if (findAssignmentInStatements(c.body.statements, file, offset, targets)) |target| return target;
+            for (s.fields) |field| if (field.default) |value| {
+                if (findAssignmentInExpression(value, file, offset, targets)) |target| return target;
+            };
+            for (s.type_fields) |field| if (findAssignmentInExpression(field.initializer, file, offset, targets)) |target| return target;
+            if (s.constructor) |constructor| {
+                for (constructor.parameters) |parameter| if (parameter.default) |value| {
+                    if (findAssignmentInExpression(value, file, offset, targets)) |target| return target;
+                };
             }
-            for (s.methods) |m| {
-                if (findAssignmentInStatements(m.body.statements, file, offset, targets)) |target| return target;
+            for (s.methods) |method| {
+                for (method.parameters) |parameter| if (parameter.default) |value| {
+                    if (findAssignmentInExpression(value, file, offset, targets)) |target| return target;
+                };
             }
-            for (s.properties) |p| {
-                if (findAssignmentInStatements(p.getter.body.statements, file, offset, targets)) |target| return target;
-                if (p.setter) |setter| {
-                    if (findAssignmentInStatements(setter.body.statements, file, offset, targets)) |target| return target;
+            for (s.type_functions) |function| {
+                for (function.declaration.parameters) |parameter| if (parameter.default) |value| {
+                    if (findAssignmentInExpression(value, file, offset, targets)) |target| return target;
+                };
+            }
+            if (s.constructor) |constructor| if (findAssignmentInStatements(constructor.body.statements, file, offset, targets)) |target| return target;
+            for (s.methods) |method| if (findAssignmentInStatements(method.body.statements, file, offset, targets)) |target| return target;
+            for (s.properties) |property| {
+                if (findAssignmentInStatements(property.getter.body.statements, file, offset, targets)) |target| return target;
+                if (property.setter) |setter| if (findAssignmentInStatements(setter.body.statements, file, offset, targets)) |target| return target;
+            }
+            for (s.type_functions) |function| if (findAssignmentInStatements(function.declaration.body.statements, file, offset, targets)) |target| return target;
+        },
+        .try_statement => |t| {
+            if (findAssignmentInStatements(t.body.statements, file, offset, targets)) |target| return target;
+            for (t.catches) |c| if (findAssignmentInStatements(c.body.statements, file, offset, targets)) |target| return target;
+            if (t.finally_block) |fb| if (findAssignmentInStatements(fb.statements, file, offset, targets)) |target| return target;
+        },
+        .break_statement, .continue_statement => {},
+    }
+    return null;
+}
+
+fn findAssignmentInExpression(expression: *const Ast.Expression, file: u32, offset: u32, targets: *const std.AutoHashMapUnmanaged(Resolver.Site, Resolver.Target)) ?Resolver.Target {
+    if (offset < expression.span.start or offset > expression.span.end) return null;
+    switch (expression.data) {
+        .unary => |value| return findAssignmentInExpression(value.operand, file, offset, targets),
+        .binary => |value| {
+            if (findAssignmentInExpression(value.left, file, offset, targets)) |target| return target;
+            return findAssignmentInExpression(value.right, file, offset, targets);
+        },
+        .logical => |value| {
+            if (findAssignmentInExpression(value.left, file, offset, targets)) |target| return target;
+            return findAssignmentInExpression(value.right, file, offset, targets);
+        },
+        .comparison => |value| for (value.operands) |operand| if (findAssignmentInExpression(operand, file, offset, targets)) |target| return target,
+        .call => |value| {
+            if (findAssignmentInExpression(value.callee, file, offset, targets)) |target| return target;
+            for (value.arguments) |argument| if (findAssignmentInExpression(argument, file, offset, targets)) |target| return target;
+        },
+        .range => |value| {
+            if (findAssignmentInExpression(value.start, file, offset, targets)) |target| return target;
+            return findAssignmentInExpression(value.end, file, offset, targets);
+        },
+        .interpolation => |parts| for (parts) |part| if (part == .expression) if (findAssignmentInExpression(part.expression, file, offset, targets)) |target| return target,
+        .list_literal, .tuple_literal => |items| for (items) |item| if (findAssignmentInExpression(item, file, offset, targets)) |target| return target,
+        .dictionary_literal => |entries| for (entries) |entry| {
+            if (findAssignmentInExpression(entry.key, file, offset, targets)) |target| return target;
+            if (findAssignmentInExpression(entry.value, file, offset, targets)) |target| return target;
+        },
+        .index => |value| {
+            if (findAssignmentInExpression(value.base, file, offset, targets)) |target| return target;
+            return findAssignmentInExpression(value.index, file, offset, targets);
+        },
+        .slice => |value| {
+            if (findAssignmentInExpression(value.base, file, offset, targets)) |target| return target;
+            if (value.start) |start| if (findAssignmentInExpression(start, file, offset, targets)) |target| return target;
+            if (value.end) |end| return findAssignmentInExpression(end, file, offset, targets);
+        },
+        .member => |value| return findAssignmentInExpression(value.base, file, offset, targets),
+        .lambda => |lambda| switch (lambda.body) {
+            .expression => |body| return findAssignmentInExpression(body, file, offset, targets),
+            .block => |body| return findAssignmentInStatements(body.statements, file, offset, targets),
+        },
+        .case_expression => |case| {
+            if (case.subject) |subject| if (findAssignmentInExpression(subject, file, offset, targets)) |target| return target;
+            for (case.arms) |arm| {
+                for (arm.alternatives) |alternative| if (findAssignmentInExpression(alternative, file, offset, targets)) |target| return target;
+                switch (arm.body) {
+                    .block => |body| if (findAssignmentInStatements(body.statements, file, offset, targets)) |target| return target,
+                    .value => |body| if (findAssignmentInExpression(body, file, offset, targets)) |target| return target,
                 }
             }
-            for (s.type_functions) |tf| {
-                if (findAssignmentInStatements(tf.declaration.body.statements, file, offset, targets)) |target| return target;
-            }
+            if (case.otherwise) |otherwise| switch (otherwise) {
+                .block => |body| return findAssignmentInStatements(body.statements, file, offset, targets),
+                .value => |body| return findAssignmentInExpression(body, file, offset, targets),
+            };
         },
-        else => {},
+        .type_test => |value| return findAssignmentInExpression(value.value, file, offset, targets),
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .enum_value, .string_literal => {},
     }
     return null;
 }
@@ -1132,8 +1218,10 @@ fn findTypeInStatements(statements: []const Ast.Statement, file: u32, offset: u3
 
 fn findTypeInStatement(statement: Ast.Statement, file: u32, offset: u32, analysis: *const emerald.Analysis) ?Resolver.Target {
     switch (statement.data) {
+        .expression => |expression| return findTypeInExpression(expression, file, offset, analysis),
         .declaration => |d| {
             if (d.annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
+            if (d.initializer) |initializer| return findTypeInExpression(initializer, file, offset, analysis);
         },
         .destructuring => |d| {
             if (d.annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
@@ -1206,6 +1294,73 @@ fn findTypeInStatement(statement: Ast.Statement, file: u32, offset: u32, analysi
     return null;
 }
 
+fn findTypeInExpression(expression: *const Ast.Expression, file: u32, offset: u32, analysis: *const emerald.Analysis) ?Resolver.Target {
+    if (offset < expression.span.start or offset > expression.span.end) return null;
+    switch (expression.data) {
+        .unary => |value| return findTypeInExpression(value.operand, file, offset, analysis),
+        .binary => |value| {
+            if (findTypeInExpression(value.left, file, offset, analysis)) |target| return target;
+            return findTypeInExpression(value.right, file, offset, analysis);
+        },
+        .logical => |value| {
+            if (findTypeInExpression(value.left, file, offset, analysis)) |target| return target;
+            return findTypeInExpression(value.right, file, offset, analysis);
+        },
+        .comparison => |value| for (value.operands) |operand| if (findTypeInExpression(operand, file, offset, analysis)) |target| return target,
+        .call => |value| {
+            if (findTypeInExpression(value.callee, file, offset, analysis)) |target| return target;
+            for (value.arguments) |argument| if (findTypeInExpression(argument, file, offset, analysis)) |target| return target;
+        },
+        .range => |value| {
+            if (findTypeInExpression(value.start, file, offset, analysis)) |target| return target;
+            return findTypeInExpression(value.end, file, offset, analysis);
+        },
+        .interpolation => |parts| for (parts) |part| if (part == .expression) if (findTypeInExpression(part.expression, file, offset, analysis)) |target| return target,
+        .list_literal, .tuple_literal => |items| for (items) |item| if (findTypeInExpression(item, file, offset, analysis)) |target| return target,
+        .dictionary_literal => |entries| for (entries) |entry| {
+            if (findTypeInExpression(entry.key, file, offset, analysis)) |target| return target;
+            if (findTypeInExpression(entry.value, file, offset, analysis)) |target| return target;
+        },
+        .index => |value| {
+            if (findTypeInExpression(value.base, file, offset, analysis)) |target| return target;
+            return findTypeInExpression(value.index, file, offset, analysis);
+        },
+        .slice => |value| {
+            if (findTypeInExpression(value.base, file, offset, analysis)) |target| return target;
+            if (value.start) |start| if (findTypeInExpression(start, file, offset, analysis)) |target| return target;
+            if (value.end) |end| return findTypeInExpression(end, file, offset, analysis);
+        },
+        .member => |value| return findTypeInExpression(value.base, file, offset, analysis),
+        .lambda => |lambda| {
+            for (lambda.parameters) |parameter| if (parameter.annotation) |annotation| if (checkTypeExpr(annotation, file, offset, analysis)) |target| return target;
+            return switch (lambda.body) {
+                .expression => |body| findTypeInExpression(body, file, offset, analysis),
+                .block => |body| findTypeInStatements(body.statements, file, offset, analysis),
+            };
+        },
+        .case_expression => |case| {
+            if (case.subject) |subject| if (findTypeInExpression(subject, file, offset, analysis)) |target| return target;
+            for (case.arms) |arm| {
+                for (arm.alternatives) |alternative| if (findTypeInExpression(alternative, file, offset, analysis)) |target| return target;
+                switch (arm.body) {
+                    .block => |body| if (findTypeInStatements(body.statements, file, offset, analysis)) |target| return target,
+                    .value => |body| if (findTypeInExpression(body, file, offset, analysis)) |target| return target,
+                }
+            }
+            if (case.otherwise) |otherwise| switch (otherwise) {
+                .block => |body| return findTypeInStatements(body.statements, file, offset, analysis),
+                .value => |body| return findTypeInExpression(body, file, offset, analysis),
+            };
+        },
+        .type_test => |value| {
+            if (findTypeInExpression(value.value, file, offset, analysis)) |target| return target;
+            return checkTypeExpr(value.target, file, offset, analysis);
+        },
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .enum_value, .string_literal => {},
+    }
+    return null;
+}
+
 fn declarationNameAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?Resolver.Target {
     if (file >= analysis.parsed.len) return null;
     return findDeclNameInStatements(analysis.parsed[file].program.statements, file, offset);
@@ -1220,8 +1375,10 @@ fn findDeclNameInStatements(statements: []const Ast.Statement, file: u32, offset
 
 fn findDeclNameInStatement(statement: Ast.Statement, file: u32, offset: u32) ?Resolver.Target {
     switch (statement.data) {
+        .expression => |expression| return findDeclNameInExpression(expression, file, offset),
         .declaration => |d| {
             if (offset >= d.name_span.start and offset <= d.name_span.end) return .{ .file = file, .span = d.name_span };
+            if (d.initializer) |initializer| return findDeclNameInExpression(initializer, file, offset);
         },
         .destructuring => |d| {
             for (d.pattern.names) |name| {
@@ -1318,6 +1475,75 @@ fn findDeclNameInStatement(statement: Ast.Statement, file: u32, offset: u32) ?Re
     return null;
 }
 
+fn findDeclNameInExpression(expression: *const Ast.Expression, file: u32, offset: u32) ?Resolver.Target {
+    if (offset < expression.span.start or offset > expression.span.end) return null;
+    switch (expression.data) {
+        .unary => |value| return findDeclNameInExpression(value.operand, file, offset),
+        .binary => |value| {
+            if (findDeclNameInExpression(value.left, file, offset)) |target| return target;
+            return findDeclNameInExpression(value.right, file, offset);
+        },
+        .logical => |value| {
+            if (findDeclNameInExpression(value.left, file, offset)) |target| return target;
+            return findDeclNameInExpression(value.right, file, offset);
+        },
+        .comparison => |value| for (value.operands) |operand| if (findDeclNameInExpression(operand, file, offset)) |target| return target,
+        .call => |value| {
+            if (findDeclNameInExpression(value.callee, file, offset)) |target| return target;
+            for (value.arguments) |argument| if (findDeclNameInExpression(argument, file, offset)) |target| return target;
+        },
+        .range => |value| {
+            if (findDeclNameInExpression(value.start, file, offset)) |target| return target;
+            return findDeclNameInExpression(value.end, file, offset);
+        },
+        .interpolation => |parts| for (parts) |part| if (part == .expression) if (findDeclNameInExpression(part.expression, file, offset)) |target| return target,
+        .list_literal, .tuple_literal => |items| for (items) |item| if (findDeclNameInExpression(item, file, offset)) |target| return target,
+        .dictionary_literal => |entries| for (entries) |entry| {
+            if (findDeclNameInExpression(entry.key, file, offset)) |target| return target;
+            if (findDeclNameInExpression(entry.value, file, offset)) |target| return target;
+        },
+        .index => |value| {
+            if (findDeclNameInExpression(value.base, file, offset)) |target| return target;
+            return findDeclNameInExpression(value.index, file, offset);
+        },
+        .slice => |value| {
+            if (findDeclNameInExpression(value.base, file, offset)) |target| return target;
+            if (value.start) |start| if (findDeclNameInExpression(start, file, offset)) |target| return target;
+            if (value.end) |end| return findDeclNameInExpression(end, file, offset);
+        },
+        .member => |value| return findDeclNameInExpression(value.base, file, offset),
+        .lambda => |lambda| {
+            for (lambda.parameters) |parameter| {
+                if (offset >= parameter.name_span.start and offset <= parameter.name_span.end) return .{ .file = file, .span = parameter.name_span };
+                if (parameter.pattern) |pattern| for (pattern.names) |name| {
+                    if (offset >= name.span.start and offset <= name.span.end) return .{ .file = file, .span = name.span };
+                };
+            }
+            return switch (lambda.body) {
+                .expression => |body| findDeclNameInExpression(body, file, offset),
+                .block => |body| findDeclNameInStatements(body.statements, file, offset),
+            };
+        },
+        .case_expression => |case| {
+            if (case.subject) |subject| if (findDeclNameInExpression(subject, file, offset)) |target| return target;
+            for (case.arms) |arm| {
+                for (arm.alternatives) |alternative| if (findDeclNameInExpression(alternative, file, offset)) |target| return target;
+                switch (arm.body) {
+                    .block => |body| if (findDeclNameInStatements(body.statements, file, offset)) |target| return target,
+                    .value => |body| if (findDeclNameInExpression(body, file, offset)) |target| return target,
+                }
+            }
+            if (case.otherwise) |otherwise| switch (otherwise) {
+                .block => |body| return findDeclNameInStatements(body.statements, file, offset),
+                .value => |body| return findDeclNameInExpression(body, file, offset),
+            };
+        },
+        .type_test => |value| return findDeclNameInExpression(value.value, file, offset),
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .enum_value, .string_literal => {},
+    }
+    return null;
+}
+
 // Find references.
 //
 // `definitionAt` above answers "what does the cursor point to?" with a single
@@ -1329,9 +1555,9 @@ fn findDeclNameInStatement(statement: Ast.Statement, file: u32, offset: u32) ?Re
 // same site. Unlike `definitionAt`'s handful of narrow, point-query walkers
 // (built to stop at the first match nearest one offset), this needs every
 // match anywhere, so it is one ordinary recursive descent through the whole
-// statement and expression tree — which, as a side effect, reaches into a
-// lambda's own block body, the one place `definitionAt`'s narrower walkers
-// still cannot (see this file's other rough edges).
+// statement and expression tree, including lambda bodies. A prelude target is
+// an embedded declaration with no editor-visible file, but its project uses
+// still have ordinary locations and are therefore returned too.
 
 fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, include_declaration: bool, id: std.json.Value, out: *std.Io.Writer) !void {
     const document = server.documents.get(uri) orelse {
@@ -1354,16 +1580,12 @@ fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
         try respond(gpa, out, id, null);
         return;
     };
-    // Prelude declarations are embedded in the binary and have no file on
-    // disk, exactly `onDefinition`'s own reason for the same check.
-    if (target.file >= loaded.project.files.len) {
-        try respond(gpa, out, id, null);
-        return;
-    }
-
     var sites: std.ArrayList(Resolver.Target) = .empty;
     defer sites.deinit(gpa);
-    if (include_declaration) try sites.append(gpa, target);
+    // `includeDeclaration` can add a project declaration. The embedded
+    // prelude has no URI an editor can open, so its declaration itself cannot
+    // become a Location; its references below still can.
+    if (include_declaration and target.file < loaded.project.files.len) try sites.append(gpa, target);
     for (analysis.parsed, 0..) |parsed, file_index| {
         try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
     }
@@ -2650,6 +2872,37 @@ test "definitionAt reaches an assignment inside a case arm's block" {
     try testing.expectEqual(decl_offset, target.span.start);
 }
 
+test "definitionAt reaches declarations, writes, and annotations inside a lambda block" {
+    const gpa = testing.allocator;
+    const text =
+        "struct Token {}\n" ++
+        "const action: func(Token): Nothing = { token: Token =>\n" ++
+        "    var local = token\n" ++
+        "    local = token\n" ++
+        "    print(local)\n" ++
+        "}\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const struct_offset: u32 = @intCast(std.mem.indexOf(u8, text, "struct Token").? + "struct ".len);
+    const local_declaration: u32 = @intCast(std.mem.indexOf(u8, text, "local = token").?);
+
+    // The parameter's explicit type is inside an expression, not a statement
+    // header, and should still lead to the declared type.
+    const parameter_type: u32 = @intCast(std.mem.indexOf(u8, text, "token: Token =>").? + "token: ".len);
+    try testing.expectEqual(struct_offset, (try definitionAt(gpa, &analysis, 0, parameter_type)).?.span.start);
+
+    // The declaration itself and a write both live in the lambda's block.
+    try testing.expectEqual(local_declaration, (try definitionAt(gpa, &analysis, 0, local_declaration)).?.span.start);
+    const local_write: u32 = @intCast(std.mem.indexOf(u8, text, "local = token\n    local").? + "local = token\n    ".len);
+    try testing.expectEqual(local_declaration, (try definitionAt(gpa, &analysis, 0, local_write)).?.span.start);
+}
+
 test "definitionAt jumps from a constructor call's own name to its struct" {
     // Regression test: the checker resolves a call's callee through
     // `referenceOf`, never `typeOf` (Checker.typeOfCall), so `expressionAt`
@@ -2753,6 +3006,30 @@ test "collectReferencesInStatements finds a struct's use in a sibling file of th
     try testing.expectEqual(@as(u32, 0), sites.items[0].file);
     const use_offset: u32 = @intCast(std.mem.indexOf(u8, main_text, "Circle(2.0)").?);
     try testing.expectEqual(use_offset, sites.items[0].span.start);
+}
+
+test "references returns project uses of an embedded prelude declaration" {
+    const gpa = testing.allocator;
+    var server: Server = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+    const uri = "untitled:prelude-references.em";
+    try server.store(uri, "const note: String = \"hello\"\nprint(note)\n");
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    // `String` is an embedded prelude declaration. Its declaration has no
+    // disk URI, but this written type use does.
+    try onReferences(&server, gpa, uri, .{ .line = 0, .character = 12 }, true, .{ .integer = 1 }, &out.writer);
+
+    var reader: std.Io.Reader = .fixed(out.written());
+    var response = (try readMessage(gpa, &reader)).?;
+    defer response.deinit();
+    const locations = response.value.object.get("result").?.array.items;
+    try testing.expectEqual(@as(usize, 1), locations.len);
+    try testing.expectEqualStrings(uri, locations[0].object.get("uri").?.string);
+    const start = locations[0].object.get("range").?.object.get("start").?.object;
+    try testing.expectEqual(@as(i64, 0), start.get("line").?.integer);
+    try testing.expectEqual(@as(i64, 12), start.get("character").?.integer);
 }
 
 test "isValidIdentifier accepts an ordinary name, a predicate name, and an accented one" {

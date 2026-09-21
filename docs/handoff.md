@@ -119,10 +119,8 @@ function or constructor call's own name (`Point(1, 2)`, `Shapes.area(3)`) could 
 to at all, because `Checker.typeOfCall` resolves a call's callee through `referenceOf` without
 ever calling `typeOf` on it, so the callee has no entry in `expression_types` for
 `expressionAt` (hover's lookup, reused here) to find — only the call as a whole does.
-Still missing, matching this file's other conservative capture-analysis entries: a
-declaration, assignment, or type annotation written inside a lambda's own block body is
-unreachable, since the statement-tree walkers descend into every block a statement owns but
-not into an expression looking for one.
+The point-query walkers now mirror that complete traversal too: a declaration, assignment,
+or type annotation inside a lambda's own block body is reachable by go to definition.
 
 Find references is implemented, the same three facts read the other way: given a
 declaration's site (found by reusing `definitionAt` itself — the cursor can sit on a read, a
@@ -131,8 +129,8 @@ statement and expression tree collects every site whose own resolved target matc
 `definitionAt`'s narrow, stop-at-the-first-match walkers, this one visits every sub-expression
 of every statement (loop conditions, call arguments, list/dict literals, binary and logical
 operands, and so on) and every written type annotation, since finding every reference needs
-full coverage rather than a point query — and, as a side effect, it reaches into a lambda's own
-block body, the one place `definitionAt` still cannot (the gap above). `textDocument/references`
+full coverage rather than a point query — including lambda bodies, as go to definition now also
+does. `textDocument/references`
 respects `context.includeDeclaration`, defaulted to false rather than required, since an absent
 or malformed one is a missing preference, not a malformed request. A reference to a
 prelude-declared symbol (`RuntimeError` and the rest) is not found at all, for the same reason
@@ -336,11 +334,6 @@ this session's changes where that mattered):
 - A few bounded implementation limits are intentional for now: display and recursive
   dictionary-key checks use a 256-type/object path; character indexing is linear; repeated
   dictionary or set deletion is quadratic.
-- Go to definition does not reach a declaration, assignment, or type annotation written inside
-  a lambda's own block body — the statement-tree walkers behind it descend into every block a
-  *statement* owns, not into an *expression* looking for one. Find references does not have
-  this gap (it visits every expression, lambda bodies included), so the two can disagree on a
-  lambda-local symbol: references finds it, definition-from-inside-the-lambda cannot.
 - Find references does not find a reference to a prelude-declared symbol (`RuntimeError` and
   the rest), matching go to definition's own reason for declining one: a prelude declaration
   has no file on disk to report a location in. Rename declines the same symbols for the same
