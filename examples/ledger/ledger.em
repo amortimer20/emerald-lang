@@ -4,7 +4,7 @@
 class LedgerError extends Error {
 }
 
-struct Entry with Textual {
+struct Entry with Textual, Hashable {
     const date: String
     const category: String
     const amount: Float
@@ -13,6 +13,16 @@ struct Entry with Textual {
     @override
     func to_string(): String {
         return "#{self.date}  #{self.category.pad_end(14)}  #{self.amount.format(decimal_places: 2, group_digits: true)}  #{self.note}"
+    }
+
+    @override
+    func equals(other: Entry): Bool {
+        return self.date == other.date and self.category == other.category and self.amount == other.amount
+    }
+
+    @override
+    func hash(): Int {
+        return self.date.count * 31 + self.category.count * 17 + self.amount.format(decimal_places: 2).count
     }
 }
 
@@ -73,10 +83,45 @@ func load_entries(): List[Entry] {
     if not File.exists?(store_path) {
         return entries
     }
-    File.read_lines(store_path).each_with_index { line, index =>
-        entries.append(parse_entry(line, index + 1))
+    File.with_open(store_path) { file =>
+        var number = 1
+        while true {
+            const line = file.read_line()
+            if line == nothing {
+                break
+            }
+            entries.append(parse_entry(line, number))
+            number += 1
+        }
     }
     return entries
+}
+
+func import_entries(path: String): (Int, Int) {
+    if not File.exists?(path) {
+        raise LedgerError("`#{path}` does not exist")
+    }
+    var seen: Set[Entry] = load_entries().to_set()
+    var imported = 0
+    var total = 0
+    File.with_open(path) { file =>
+        var number = 1
+        while true {
+            const line = file.read_line()
+            if line == nothing {
+                break
+            }
+            const candidate = parse_entry(line, number)
+            total += 1
+            if not seen.contains?(candidate) {
+                append_entry(candidate)
+                seen.add(candidate)
+                imported += 1
+            }
+            number += 1
+        }
+    }
+    return (imported, total)
 }
 
 func append_entry(entry: Entry) {

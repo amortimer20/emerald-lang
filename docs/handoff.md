@@ -67,6 +67,11 @@ collection transforms, numeric formatting, and typed input/store errors. Its end
 workflow found no language defect; it did catch an ordinary API spelling mistake while being
 written (`starts_with?`, not `starts_with`).
 
+The ledger now streams its store rather than loading every line, and its `import` command uses
+`Entry`'s real `Hashable`/`Equatable` identity (date, category, amount; never its free-text
+note) to skip duplicates both already stored and repeated inside one import. This shakedown
+found no language or library defect.
+
 The LSP's second phase has begun: inferred-type hover is implemented. It needed two things
 the first slice's file-scoped features (diagnostics, document symbols, format on save) never
 did — `Checker.zig`'s `expression_types` (every expression's type, by expression, via a new

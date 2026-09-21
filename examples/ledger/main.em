@@ -10,6 +10,7 @@ func usage() {
     print("  list [YYYY-MM]")
     print("  summary [YYYY-MM]")
     print("  category NAME")
+    print("  import FILE")
 }
 
 func add(arguments: List[String]) {
@@ -121,6 +122,14 @@ case arguments[0] {
             exit(64)
         }
         show_category(arguments[1])
+    }
+    when "import" {
+        if arguments.count != 2 {
+            usage()
+            exit(64)
+        }
+        const (imported, total) = import_entries(arguments[1])
+        print("Imported #{imported} of #{total} entries (#{total - imported} skipped as duplicates).")
     }
     else {
         usage()
