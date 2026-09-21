@@ -1,0 +1,9 @@
+Bytes[3: 41 00 ff]
+3
+255
+AB
+true
+Bytes[2: 41 00]
+Bytes[1: ff]
+true
+OK

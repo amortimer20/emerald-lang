@@ -2666,11 +2666,13 @@ and lexical path manipulation:
 
 ```emerald
 File.read(path)
+File.read_binary(path)
 File.open(path)
 File.with_open(path, block)
 File.create(path)
 File.with_writer(path, block)
 File.write(path, contents)
+File.write_binary(path, bytes)
 File.append(path, contents)
 File.read_lines(path)
 File.write_lines(path, lines)
@@ -2714,7 +2716,12 @@ filesystem.
 
 Every operation other than the two predicates raises `FileError` for missing paths, access
 failures, invalid UTF-8, and failed writes; reading a closed FileHandle also raises
-`FileError`. Binary/raw-byte I/O and more-specific filesystem error subclasses remain deferred.
+`FileError`. `Bytes` is immutable raw binary data: `Bytes.from_list(List[Int])` builds values
+from 0 through 255, `String.to_bytes()` converts valid text, and `Bytes.to_string()`/`to_string_maybe()`
+convert only valid UTF-8. Bytes supports `count`, byte indexing, slicing, equality, concatenation,
+and dictionary/set keys. FileHandle also offers `read_bytes(count): Bytes?` and
+`read_all_bytes(): Bytes`; FileWriter offers `write_bytes(bytes)`. More-specific filesystem error
+subclasses remain deferred.
 
 ### 15.4 Regular expressions
 
@@ -3506,6 +3513,7 @@ recorded in their normative sections:
 | Custom equality and hashing, undeferred (8.3, 8.4, 11.5) | `Equatable.equals(other: Self): Bool` and `Hashable.hash(): Int` (which requires `Equatable`), the same shape as `Ordered`/`Addable`; `Hashable` alone lifts a struct's dictionary/set-key eligibility past the structural default, and adopting `Equatable` without `Hashable` is refused as a key rather than silently kept on the old structural hash | The gap was explicit ("custom equality, hashing... are deferred") once `Textual` gave the value-protocol family a visible hole: a type could control display, ordering, and arithmetic, but not `==` or its own key behavior. `Value.equals`/`Value.hash` had no way to call a user method at all — both were plain functions with no interpreter context — so this reused `Textual`'s own answer to that exact problem: `Value.writeThrough`'s `textual: anytype` context, generalized into `equatable`/`hashable` parameters threaded through every recursive comparison and hash (list elements, dictionary values, struct fields, and `Heap.zig`'s own key lookup, which calls `Value.equals` to resolve collisions). Classes stay excluded from key eligibility regardless of `Hashable`: the exclusion was never about missing equality, only that a class's fields can change while it is stored as a key, which `Hashable` does not address. A future pass could lift that specific case for a class made entirely of `const` fields, which cannot change after construction — floated, not designed, in the roadmap (24). |
 | A mixed sibling-class literal infers its base, undeferred (4.4, 10.7) | A list, dictionary, or value-producing `case` whose elements are different but related classes infers their nearest shared base (`Type.User.commonBase`, a plain walk up 10.7's single-inheritance chain), rather than reporting a mismatch that an explicit `List[Animal]` annotation was already accepted under | `[Dog(), Cat()]` failing to type-check when `const pets: List[Animal] = [Dog(), Cat()]` already worked was exactly the surprise 4.4's own widening principle argues against: `[1, 2.5]` already infers `List[Float]` rather than demanding an annotation, and a heterogeneous collection under a shared base is one of the most ordinary patterns an OOP-capable language has. Scoped to a shared class only, not a shared trait: inferring across a trait would expose only the trait's own contract on the result (11.2), a real loss of what the elements' own type already offered, unlike widening to a base class the elements already were. Guarded against either side being optional, since `Type.structOf` has no way to carry a `?` its caller did not already have on hand — left to the ordinary mismatch report rather than risk silently dropping one. |
 | `File.with_open` implementation (13.3, 15.3) | Native dispatch invokes the block and defers `close` | `File` type-level functions already dispatch natively as a namespace, so a prelude implementation would require a special exception to that routing. Keeping cleanup beside the native handle state makes closure on both normal and error unwinding direct and testable. |
+| `Bytes` storage (15.3) | Reuse `Heap.Text`'s immutable ref-counted byte buffer under a distinct `Value.Kind.bytes` tag | Text and raw bytes have the same ownership, collector, and copying needs; duplicating that machinery would add a second lifetime path with no benefit. The tag keeps their contracts separate: only String is Unicode-aware and only Bytes permits invalid UTF-8. |
 
 ## 23. Consistency rules for future work
 

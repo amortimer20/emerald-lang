@@ -1494,6 +1494,13 @@ fn checkIndex(self: *Interpreter, list: *const Heap.List, index: i64, span: Sour
     );
 }
 
+fn checkIndexCount(self: *Interpreter, count: usize, index: i64, span: Source.Span) Error!usize {
+    if (index >= 0 and index < count) return @intCast(index);
+    if (count == 0) return self.raiseFmt(span, "index {d} is outside this Bytes value, which is empty", .{index}, "Check `.count` before indexing, or add bytes first.");
+    const help = try std.fmt.allocPrint(self.arena, "Valid indices are 0 through {d}.", .{count - 1});
+    return self.raiseFmt(span, "index {d} is outside this Bytes value, which has {d} byte{s}", .{ index, count, if (count == 1) "" else "s" }, help);
+}
+
 /// Section 6.4. Each pass through the body is a block of its own, so its locals
 /// are fresh every time.
 fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
@@ -1703,6 +1710,7 @@ fn kindOf(checked: Type) Value.Kind {
         .int => .int,
         .float => .float,
         .string => .string,
+        .bytes => .bytes,
         .range => .range,
         .list => .list,
         .tuple => .tuple,
@@ -2235,6 +2243,7 @@ fn evaluateProperty(self: *Interpreter, expression: *const Ast.Expression, membe
         // Section 9.2: a string's count is its characters, not its bytes.
         return .initInt(@intCast(unicode.graphemeCount(base.data.string.bytes)));
     }
+    if (base.data == .bytes) return .initInt(@intCast(base.data.bytes.bytes.len));
 
     // Section 8.5: `count` is the only property a dictionary or set has.
     if (base.data == .map) return .initInt(@intCast(base.data.map.count()));
@@ -2512,6 +2521,11 @@ fn evaluateIndex(self: *Interpreter, expression: *const Ast.Expression, index: A
 
     const position = (try self.evaluate(index.index)).data.int;
     if (base.data == .string) return self.characterAt(expression.span, base.data.string.bytes, position);
+    if (base.data == .bytes) {
+        const bytes = base.data.bytes.bytes;
+        const at = try self.checkIndexCount(@intCast(bytes.len), position, expression.span);
+        return .initInt(bytes[at]);
+    }
     const list = base.data.list;
     const at = try self.checkIndex(list, position, expression.span);
     return Heap.retain(list.items.items[at]);
@@ -2535,6 +2549,10 @@ fn evaluateSlice(self: *Interpreter, expression: *const Ast.Expression, slice: A
             const count: i64 = @intCast(unicode.graphemeCount(text.bytes));
             const bounds = try self.sliceBounds(expression.span, "String", count, start, end, slice.inclusive);
             break :blk self.heap.copyText(strings.substring(text.bytes, @intCast(bounds.start), @intCast(bounds.end - bounds.start)) catch unreachable);
+        },
+        .bytes => |bytes| blk: {
+            const bounds = try self.sliceBounds(expression.span, "Bytes", @intCast(bytes.bytes.len), start, end, slice.inclusive);
+            break :blk self.heap.copyBytes(bytes.bytes[bounds.start..bounds.end]);
         },
         else => unreachable, // The checker permits only the two cases above.
     };
@@ -2689,7 +2707,7 @@ fn evaluateUnary(
                 return .initInt(result[0]);
             },
             .float => |value| return .initFloat(-value),
-            .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => return self.raiseFmt(
+            .nothing, .bool, .string, .bytes, .range, .list, .tuple, .map, .closure, .struct_value => return self.raiseFmt(
                 expression.span,
                 "`-` needs a number, but this is {s}",
                 .{operand.typeName()},
@@ -2735,6 +2753,10 @@ fn applyBinary(
     if (left.data == .string and right.data == .string) {
         const joined = try std.mem.concat(self.gpa, u8, &.{ left.data.string.bytes, right.data.string.bytes });
         return .{ .data = .{ .string = try self.heap.createText(joined) } };
+    }
+    if (left.data == .bytes and right.data == .bytes) {
+        const joined = try std.mem.concat(self.gpa, u8, &.{ left.data.bytes.bytes, right.data.bytes.bytes });
+        return .{ .data = .{ .bytes = try self.heap.createText(joined) } };
     }
     if (left.data == .struct_value) {
         if (operator.contract()) |contract| return self.callOperator(span, contract.method, left, right);
@@ -2966,7 +2988,8 @@ fn joinPathParts(gpa: std.mem.Allocator, parts: []const []const u8) std.mem.Allo
 fn isFilesystemKey(key: []const u8) bool {
     return std.mem.startsWith(u8, key, "emerald.File::") or
         std.mem.startsWith(u8, key, "emerald.Directory::") or
-        std.mem.startsWith(u8, key, "emerald.Path::");
+        std.mem.startsWith(u8, key, "emerald.Path::") or
+        std.mem.startsWith(u8, key, "emerald.Bytes::");
 }
 
 fn isFileHandleKey(key: []const u8) bool {
@@ -2988,6 +3011,19 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
     const io = std.Io.Threaded.global_single_threaded.io();
     const cwd = std.Io.Dir.cwd();
     const suffix = key["emerald.".len..];
+    if (std.mem.eql(u8, suffix, "Bytes::from_list")) {
+        const list = values[0].data.list;
+        const bytes = try self.gpa.alloc(u8, list.items.items.len);
+        for (list.items.items, 0..) |value, index| {
+            const number = value.data.int;
+            if (number < 0 or number > 255) {
+                self.gpa.free(bytes);
+                return self.raiseFmt(span, "a byte must be from 0 to 255, but this is {d}", .{number}, "Pass whole numbers from 0 through 255.");
+            }
+            bytes[index] = @intCast(number);
+        }
+        return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
+    }
     if (std.mem.eql(u8, suffix, "File::open")) return self.openFileHandle(span, cwd, io, values[0].data.string.bytes);
     if (std.mem.eql(u8, suffix, "File::with_open")) {
         const handle = try self.openFileHandle(span, cwd, io, values[0].data.string.bytes);
@@ -3031,6 +3067,16 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         defer self.gpa.free(resolved);
         const absolute = try self.gpa.dupe(u8, resolved);
         return .{ .data = .{ .string = try self.heap.createText(absolute) } };
+    }
+    if (std.mem.eql(u8, suffix, "File::read_binary")) {
+        const path = values[0].data.string.bytes;
+        const bytes = cwd.readFileAlloc(io, path, self.gpa, .unlimited) catch return self.raiseFilePath(span, path, "read");
+        return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
+    }
+    if (std.mem.eql(u8, suffix, "File::write_binary")) {
+        const path = values[0].data.string.bytes;
+        cwd.writeFile(io, .{ .sub_path = path, .data = values[1].data.bytes.bytes }) catch return self.raiseFilePath(span, path, "write");
+        return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "File::read") or std.mem.eql(u8, suffix, "File::read_lines")) {
         const path = values[0].data.string.bytes;
@@ -3192,7 +3238,7 @@ fn createFileWriter(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: 
     return .{ .data = .{ .struct_value = instance } };
 }
 
-fn callFileHandle(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member) Error!Value {
+fn callFileHandle(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member, call: Ast.Expression.Call) Error!Value {
     const receiver = try self.evaluate(member.base);
     defer self.heap.release(receiver);
     const id = receiver.data.struct_value.fields[0].data.int;
@@ -3202,6 +3248,27 @@ fn callFileHandle(self: *Interpreter, span: Source.Span, key: []const u8, member
         return Value.nothing;
     }
     const state = self.file_handles.get(id) orelse return self.raiseFileMessage(span, "cannot read from a closed file");
+    if (std.mem.eql(u8, suffix, "read_all_bytes")) {
+        const bytes = state.reader.interface.allocRemaining(self.gpa, .unlimited) catch return self.raiseFilePath(span, state.path, "read");
+        return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
+    }
+    if (std.mem.eql(u8, suffix, "read_bytes")) {
+        const count_value = try self.evaluate(call.arguments[0]);
+        defer self.heap.release(count_value);
+        const count = count_value.data.int;
+        if (count < 0) return self.raiseFmt(span, "a byte count cannot be negative, but this is {d}", .{count}, "Pass 0 or a larger count.");
+        var bytes: std.ArrayList(u8) = .empty;
+        errdefer bytes.deinit(self.gpa);
+        read_loop: for (0..@as(usize, @intCast(count))) |_| {
+            const byte = state.reader.interface.takeByte() catch |err| switch (err) {
+                error.EndOfStream => break :read_loop,
+                else => return self.raiseFilePath(span, state.path, "read"),
+            };
+            try bytes.append(self.gpa, byte);
+        }
+        if (bytes.items.len == 0 and count > 0) return Value.nothing;
+        return .{ .data = .{ .bytes = try self.heap.createText(try bytes.toOwnedSlice(self.gpa)) } };
+    }
     if (std.mem.eql(u8, suffix, "read")) {
         const bytes = state.reader.interface.allocRemaining(self.gpa, .unlimited) catch return self.raiseFilePath(span, state.path, "read");
         if (!std.unicode.utf8ValidateSlice(bytes)) {
@@ -3244,7 +3311,8 @@ fn callFileWriter(self: *Interpreter, span: Source.Span, key: []const u8, member
     const state = self.file_writers.get(id) orelse return self.raiseFileMessage(span, "cannot write to a closed file");
     const value = try self.evaluate(call.arguments[0]);
     defer self.heap.release(value);
-    state.writer.interface.writeAll(value.data.string.bytes) catch return self.raiseFilePath(span, state.path, "write");
+    const bytes = if (std.mem.eql(u8, suffix, "write_bytes")) value.data.bytes.bytes else value.data.string.bytes;
+    state.writer.interface.writeAll(bytes) catch return self.raiseFilePath(span, state.path, "write");
     return Value.nothing;
 }
 
@@ -5089,7 +5157,7 @@ fn callMethod(
     member: Ast.Expression.Member,
 ) Error!Value {
     if (self.method_calls.get(call.callee)) |key| {
-        if (isFileHandleKey(key)) return self.callFileHandle(expression.span, key, member);
+        if (isFileHandleKey(key)) return self.callFileHandle(expression.span, key, member, call);
         if (isFileWriterKey(key)) return self.callFileWriter(expression.span, key, member, call);
     }
     if (std.mem.eql(u8, member.name, "next") or std.mem.eql(u8, member.name, "choose") or
@@ -6023,6 +6091,7 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
 
     if (receiver.data == .range) return self.rangeMethod(span, receiver.data.range, member.name, arguments);
     if (receiver.data == .string) return self.stringMethod(span, receiver.data.string.bytes, member.name, arguments);
+    if (receiver.data == .bytes) return self.bytesMethod(span, receiver.data.bytes.bytes, member.name);
     if (receiver.data == .int and !std.mem.eql(u8, member.name, "to_string")) {
         return self.intMethod(span, receiver.data.int, member.name, arguments);
     }
@@ -6569,6 +6638,7 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
         to_float_maybe,
     };
     const gpa = self.gpa;
+    if (std.mem.eql(u8, name, "to_bytes")) return self.heap.copyBytes(bytes);
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(bytes.len == 0),
         .@"blank?" => .initBool(strings.isBlank(bytes)),
@@ -6705,6 +6775,14 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
             break :blk if (parsed == .value) Value.initFloat(parsed.value) else Value.nothing;
         },
     };
+}
+
+fn bytesMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: []const u8) Error!Value {
+    if (std.mem.eql(u8, name, "to_string_maybe")) {
+        return if (std.unicode.utf8ValidateSlice(bytes)) self.heap.copyText(bytes) else Value.nothing;
+    }
+    if (!std.unicode.utf8ValidateSlice(bytes)) return self.raiseFileMessage(span, "these Bytes are not valid UTF-8 text");
+    return self.heap.copyText(bytes);
 }
 
 /// Section 9.1's advanced conversions. A String is always valid UTF-8, so
@@ -7034,7 +7112,7 @@ fn toFloat(value: Value) f64 {
         .int => |number| @floatFromInt(number),
         .float => |number| number,
         .range => unreachable,
-        .nothing, .bool, .string, .list, .tuple, .map, .closure, .struct_value => unreachable,
+        .nothing, .bool, .string, .bytes, .list, .tuple, .map, .closure, .struct_value => unreachable,
     };
 }
 

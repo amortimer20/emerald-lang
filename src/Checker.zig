@@ -3394,7 +3394,7 @@ fn replaceSelf(self: *Checker, t: Type, receiver: Type) Error!Type {
             replaced.signature = signature;
             return replaced;
         },
-        .nothing, .bool, .int, .float, .string, .range, .invalid => return t,
+        .nothing, .bool, .int, .float, .string, .bytes, .range, .invalid => return t,
     }
 }
 
@@ -5766,6 +5766,7 @@ fn typeOfIndex(self: *Checker, index: Ast.Expression.Index) Error!Type {
     if (!try self.requirePresent(base, index.base, null)) return .invalid;
     // Section 9.1: a string's index counts characters, and each is a String.
     if (base.kind == .string) return .string;
+    if (base.kind == .bytes) return .int;
     if (base.kind == .set) {
         try self.report(
             index.base.span,
@@ -5796,6 +5797,7 @@ fn typeOfSlice(self: *Checker, slice: Ast.Expression.Slice) Error!Type {
     if (base.kind == .invalid) return .invalid;
     if (!try self.requirePresent(base, slice.base, null)) return .invalid;
     if (base.kind == .string) return .string;
+    if (base.kind == .bytes) return .bytes;
     if (base.kind == .list) return base;
     try self.report(
         slice.base.span,
@@ -6066,7 +6068,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
         return .invalid;
     }
 
-    if (base.kind == .list or base.kind == .string) {
+    if (base.kind == .list or base.kind == .string or base.kind == .bytes) {
         if (std.mem.eql(u8, member.name, "count")) return .int;
         // Section 8.5: `first` and `last` are properties, and may be absent
         // because the list may be empty. Their companion is `empty?`, which
@@ -6245,6 +6247,7 @@ fn typeOfMethodCall(
     if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base);
     if (base.kind == .range) return self.typeOfRangeMethod(call, member);
     if (base.kind == .string) return self.typeOfStringMethod(call, member);
+    if (base.kind == .bytes) return self.typeOfBytesMethod(call, member);
     if (base.kind == .int) return self.typeOfIntMethod(call, member);
     if (base.kind == .float) return self.typeOfFloatMethod(call, member);
     if (base.kind == .bool and std.mem.eql(u8, member.name, "to_string")) {
@@ -7602,6 +7605,10 @@ fn typeOfRangeMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expr
 
 /// Section 9.2's string methods. None changes the string, which is immutable.
 fn typeOfStringMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    if (std.mem.eql(u8, member.name, "to_bytes")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return .bytes;
+    }
     if (std.mem.eql(u8, member.name, "count")) {
         try self.report(
             member.name_span,
@@ -7647,6 +7654,16 @@ fn typeOfStringMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Exp
         .string_parts => try Type.tupleOf(self.arena, &.{ .string, .string, .string }),
     };
     return if (method.maybe) result.optionalOf() else result;
+}
+
+fn typeOfBytesMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
+    if (std.mem.eql(u8, member.name, "to_string") or std.mem.eql(u8, member.name, "to_string_maybe")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return if (std.mem.eql(u8, member.name, "to_string_maybe")) Type.string.optionalOf() else .string;
+    }
+    try self.reportUnknownMember(.bytes, member, "method");
+    try self.typeArguments(call.arguments);
+    return .invalid;
 }
 
 /// Section 9.3's integer methods. Their arguments are deliberately all `Int`:
@@ -8066,6 +8083,12 @@ fn arithmetic(
 ) Error!Type {
     // `+` joins two Strings; nothing else mixes text and arithmetic. A String
     // that may be absent is not one until it is proved present (4.5).
+    if (left.kind == .bytes or right.kind == .bytes) {
+        if (left.kind == .invalid or right.kind == .invalid) return .invalid;
+        if (operator == .add and left.kind == .bytes and right.kind == .bytes and !left.optional and !right.optional) return .bytes;
+        try self.report(span, "`+` joins two Bytes, but this is {f} and {f}", .{ left, right }, "Convert text with `to_bytes()`, or join two Bytes values.");
+        return .invalid;
+    }
     if (left.kind == .string or right.kind == .string) {
         if (left.kind == .invalid or right.kind == .invalid) return .invalid;
         if (operator == .add and left.kind == .string and right.kind == .string and

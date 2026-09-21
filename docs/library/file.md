@@ -18,6 +18,9 @@ newline, including the last. `exists?(path: String) -> Bool` tests for a file.
 `move(source: String, destination: String) -> Nothing`, and `delete(path: String) -> Nothing`
 perform their named whole-file operation.
 
+`read_binary(path: String) -> Bytes` and `write_binary(path: String, bytes: Bytes) -> Nothing`
+read or replace raw bytes without UTF-8 validation.
+
 `open(path: String) -> FileHandle` opens read-only UTF-8 text. `with_open(path: String,
 block: func(FileHandle)) -> Nothing` gives its block an open handle and closes it after normal
 completion, return, or an error.
@@ -34,11 +37,16 @@ String?` returns the next line without its newline, or `nothing` at end of file.
 unterminated final line. `close() -> Nothing` is idempotent. Handles are read-only; use
 `File.write` or `File.append` for whole-file writes.
 
+`read_bytes(count: Int) -> Bytes?` returns up to `count` remaining bytes, or `nothing` when
+called at end of file. `read_all_bytes() -> Bytes` returns every remaining byte.
+
 ### FileWriter
 
 `write(text: String) -> Nothing` writes UTF-8 text at the current position. `close() ->
 Nothing` is idempotent. Writers are write-only and `File.create` always truncates an existing
 file; use `File.append` for a whole-file append.
+
+`write_bytes(bytes: Bytes) -> Nothing` writes raw bytes at the current position.
 
 ## Directory
 

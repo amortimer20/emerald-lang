@@ -20,7 +20,8 @@ The standard library's filesystem area is complete for UTF-8 text. `File`, `Dire
 empty-only and recursive/idempotent directory deletion, listing, and lexical path helpers.
 `File.open` returns a read-only `FileHandle`, and `File.create` returns a write-only
 `FileWriter`; `File.with_open` and `File.with_writer` guarantee closure through a block's
-normal or error exit. Filesystem failures use `FileError`. Binary/raw-byte I/O remains deferred.
+normal or error exit. `Bytes` provides immutable raw data, binary whole-file operations, and
+binary reads/writes on those handles. Filesystem failures use `FileError`.
 
 Release hardening is in place: CI runs Debug and ReleaseSafe tests on Ubuntu, macOS, and
 Windows; the fuzz runner checks, formats, and boundedly executes generated clean programs;

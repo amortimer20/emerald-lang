@@ -16,7 +16,7 @@ const unicode = @import("unicode.zig");
 
 const Value = @This();
 
-pub const Kind = enum { nothing, bool, int, float, string, range, list, tuple, map, closure, struct_value };
+pub const Kind = enum { nothing, bool, int, float, string, bytes, range, list, tuple, map, closure, struct_value };
 
 data: Data,
 
@@ -27,6 +27,7 @@ pub const Data = union(Kind) {
     int: i64,
     float: f64,
     string: *Heap.Text,
+    bytes: *Heap.Text,
     /// Section 6.4's immutable integer range value.
     range: Range,
     list: *Heap.List,
@@ -162,6 +163,7 @@ pub fn typeName(self: Value) []const u8 {
         .int => "Int",
         .float => "Float",
         .string => "String",
+        .bytes => "Bytes",
         .range => "Range",
         .list => "a list",
         .tuple => "a tuple",
@@ -174,7 +176,7 @@ pub fn typeName(self: Value) []const u8 {
 /// Whether two values are numbers, which is what arithmetic and ordering need.
 pub fn isNumber(self: Value) bool {
     return switch (self.data) {
-        .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => false,
+        .nothing, .bool, .string, .bytes, .range, .list, .tuple, .map, .closure, .struct_value => false,
         .int, .float => true,
     };
 }
@@ -214,6 +216,7 @@ pub fn writeThrough(self: Value, writer: *std.Io.Writer, quoted: bool, textual: 
         .int => |value| try writer.print("{d}", .{value}),
         .float => |value| try displayFloat(value, writer),
         .string => |text| if (quoted) try writeQuoted(text.bytes, writer) else try writer.writeAll(text.bytes),
+        .bytes => |bytes| try writeBytes(bytes.bytes, writer),
         .range => |range| {
             if (range.is_empty) {
                 try writer.writeAll("[]");
@@ -349,7 +352,7 @@ pub fn hash(gpa: std.mem.Allocator, value: Value, hashable: anytype) DispatchedE
 /// A tag per kind, mixed in so that a tuple of two values cannot collide with
 /// something else built from the same parts. `Int` and `Float` share one,
 /// because `1 == 1.0` and equal values must hash alike.
-const HashTag = enum(u8) { nothing, bool, number, string, range, tuple, struct_value, unhashable };
+const HashTag = enum(u8) { nothing, bool, number, string, bytes, range, tuple, struct_value, unhashable };
 
 fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash, hashable: anytype) DispatchedError!void {
     const tag: HashTag = switch (value.data) {
@@ -357,6 +360,7 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash, hash
         .bool => .bool,
         .int, .float => .number,
         .string => .string,
+        .bytes => .bytes,
         .range => .range,
         .tuple => .tuple,
         .struct_value => .struct_value,
@@ -386,6 +390,7 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash, hash
                 hasher.update(normalized);
             }
         },
+        .bytes => |bytes| hasher.update(bytes.bytes),
         .range => |range| {
             hasher.update(std.mem.asBytes(&range.first));
             hasher.update(std.mem.asBytes(&range.last));
@@ -435,6 +440,14 @@ fn writeQuoted(bytes: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!vo
     try writer.writeAll("\"");
 }
 
+/// Raw octets never go directly to a terminal. A compact hexadecimal spelling
+/// makes arbitrary data safe to inspect and keeps it distinct from text.
+fn writeBytes(bytes: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    try writer.print("Bytes[{d}:", .{bytes.len});
+    for (bytes) |byte| try writer.print(" {x:0>2}", .{byte});
+    try writer.writeAll("]");
+}
+
 /// What running a value's own `equals()`/`hash()` can raise, the same small,
 /// stable vocabulary `Interpreter.Error` names for any nested call: `Raised`
 /// (the method itself raised, or something it calls did), the four other
@@ -478,6 +491,10 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value, equatable: anyt
         .int, .float => order(left, right) == .eq,
         .string => |a| switch (right.data) {
             .string => |b| unicode.equal(gpa, a.bytes, b.bytes),
+            else => false,
+        },
+        .bytes => |a| switch (right.data) {
+            .bytes => |b| std.mem.eql(u8, a.bytes, b.bytes),
             else => false,
         },
         .range => |a| switch (right.data) {
@@ -566,7 +583,7 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
         .int => |a| switch (right.data) {
             .int => |b| std.math.order(a, b),
             .float => |b| orderIntFloat(a, b),
-            .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => null,
+            .nothing, .bool, .string, .bytes, .range, .list, .tuple, .map, .closure, .struct_value => null,
         },
         .float => |a| switch (right.data) {
             .int => |b| if (orderIntFloat(b, a)) |result| result.invert() else null,
@@ -574,9 +591,9 @@ pub fn order(left: Value, right: Value) ?std.math.Order {
                 null
             else
                 std.math.order(a, b),
-            .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => null,
+            .nothing, .bool, .string, .bytes, .range, .list, .tuple, .map, .closure, .struct_value => null,
         },
-        .nothing, .bool, .string, .range, .list, .tuple, .map, .closure, .struct_value => null,
+        .nothing, .bool, .string, .bytes, .range, .list, .tuple, .map, .closure, .struct_value => null,
     };
 }
 

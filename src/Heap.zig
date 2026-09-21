@@ -432,6 +432,13 @@ pub fn copyText(self: *Heap, bytes: []const u8) std.mem.Allocator.Error!Value {
     return .{ .data = .{ .string = try self.createText(owned) } };
 }
 
+/// Immutable raw bytes reuse Text's counted, GC-tracked buffer. The runtime
+/// tag, not the allocation, decides whether Unicode operations are permitted.
+pub fn copyBytes(self: *Heap, bytes: []const u8) std.mem.Allocator.Error!Value {
+    const owned = try self.gpa.dupe(u8, bytes);
+    return .{ .data = .{ .bytes = try self.createText(owned) } };
+}
+
 fn linkText(self: *Heap, text: *Text) void {
     self.live_objects += 1;
     text.next = self.live_texts;
@@ -749,6 +756,7 @@ pub fn retain(value: Value) Value {
         .string => |text| if (!text.literal) {
             text.references += 1;
         },
+        .bytes => |text| text.references += 1,
         else => {},
     }
     return value;
@@ -757,9 +765,9 @@ pub fn retain(value: Value) Value {
 /// Records that one holder of `value` is gone, freeing the buffer, and what it
 /// holds in turn, when it was the last.
 pub fn release(self: *Heap, value: Value) void {
-    if (value.data == .string) {
-        const text = value.data.string;
-        if (text.literal) return;
+    if (value.data == .string or value.data == .bytes) {
+        const text = if (value.data == .string) value.data.string else value.data.bytes;
+        if (value.data == .string and text.literal) return;
         text.references -= 1;
         if (text.references > 0) return;
         if (text.previous) |previous| previous.next = text.next else self.live_texts = text.next;
@@ -890,6 +898,7 @@ const Object = union(enum) {
             .tuple => |tuple| .{ .tuple = tuple },
             .map => |map| .{ .map = map },
             .string => |text| .{ .text = text },
+            .bytes => |text| .{ .text = text },
             .closure => |closure| .{ .closure = closure },
             .struct_value => |instance| .{ .struct_value = instance },
             .nothing, .bool, .int, .float, .range => null,

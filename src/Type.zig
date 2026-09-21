@@ -19,6 +19,8 @@ pub const Kind = enum {
     float,
     /// Section 9's immutable, Unicode-aware text.
     string,
+    /// Immutable raw octets, with no UTF-8 guarantee.
+    bytes,
     /// Section 6.4's immutable integer count.
     range,
     /// Section 8.2's `List[T]`. `element` holds `T`.
@@ -187,6 +189,7 @@ pub const @"bool": Type = .{ .kind = .bool };
 pub const int: Type = .{ .kind = .int };
 pub const float: Type = .{ .kind = .float };
 pub const string: Type = .{ .kind = .string };
+pub const bytes: Type = .{ .kind = .bytes };
 pub const range: Type = .{ .kind = .range };
 pub const invalid: Type = .{ .kind = .invalid };
 
@@ -215,7 +218,7 @@ pub fn mentionsSelf(self: Type) bool {
             }
             break :blk signature.return_type.mentionsSelf();
         },
-        .nothing, .bool, .int, .float, .string, .range, .invalid => false,
+        .nothing, .bool, .int, .float, .string, .bytes, .range, .invalid => false,
     };
 }
 
@@ -267,7 +270,7 @@ pub fn eligibleKey(self: Type, equatable: ?*const User, hashable: ?*const User) 
 fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize, equatable: ?*const User, hashable: ?*const User) bool {
     if (self.optional) return false;
     return switch (self.kind) {
-        .bool, .int, .float, .string => true,
+        .bool, .int, .float, .string, .bytes => true,
         .tuple => blk: {
             for (self.elements) |element| {
                 if (!element.eligibleKeyInner(seen, depth, equatable, hashable)) break :blk false;
@@ -344,6 +347,7 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         .int => try writer.writeAll("Int"),
         .float => try writer.writeAll("Float"),
         .string => try writer.writeAll("String"),
+        .bytes => try writer.writeAll("Bytes"),
         .range => try writer.writeAll("Range"),
         .list => try writer.print("List[{f}]", .{self.element.?.*}),
         .dictionary => try writer.print("Dict[{f}, {f}]", .{ self.key.?.*, self.element.?.* }),
@@ -381,6 +385,7 @@ pub fn fromName(text: []const u8) ?Type {
     if (std.mem.eql(u8, text, "Int")) return int;
     if (std.mem.eql(u8, text, "Float")) return float;
     if (std.mem.eql(u8, text, "String")) return string;
+    if (std.mem.eql(u8, text, "Bytes")) return bytes;
     if (std.mem.eql(u8, text, "Range")) return range;
     return null;
 }
@@ -391,7 +396,7 @@ pub fn isNumber(self: Type) bool {
     if (self.optional) return false;
     return switch (self.kind) {
         .int, .float => true,
-        .nothing, .bool, .string, .range, .list, .tuple, .dictionary, .set, .function, .struct_value, .invalid => false,
+        .nothing, .bool, .string, .bytes, .range, .list, .tuple, .dictionary, .set, .function, .struct_value, .invalid => false,
     };
 }
 

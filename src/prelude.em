@@ -32,7 +32,9 @@ class File {
     func File.create(path: String): FileWriter { return FileWriter() }
     func File.with_writer(path: String, block: func(FileWriter)) {}
     func File.read(path: String): String { return "" }
+    func File.read_binary(path: String): Bytes { return Bytes.from_list([]) }
     func File.write(path: String, contents: String) {}
+    func File.write_binary(path: String, bytes: Bytes) {}
     func File.append(path: String, contents: String) {}
     func File.read_lines(path: String): List[String] { return [] }
     func File.write_lines(path: String, lines: List[String]) {}
@@ -49,6 +51,8 @@ class FileHandle {
 
     func read(): String { return "" }
     func read_line(): String? { return nothing }
+    func read_bytes(count: Int): Bytes? { return nothing }
+    func read_all_bytes(): Bytes { return Bytes.from_list([]) }
     func close() {}
 }
 
@@ -58,7 +62,14 @@ class FileWriter {
     var _id: Int = Program.arguments.count
 
     func write(text: String) {}
+    func write_bytes(bytes: Bytes) {}
     func close() {}
+}
+
+# Raw immutable octets. The native runtime supplies construction and instance
+# methods; this class only gives its type-level constructor a resolver key.
+class Bytes {
+    func Bytes.from_list(numbers: List[Int]): Bytes { return Bytes.from_list([]) }
 }
 
 class Directory {
