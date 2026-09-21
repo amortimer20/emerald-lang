@@ -132,11 +132,11 @@ operands, and so on) and every written type annotation, since finding every refe
 full coverage rather than a point query — including lambda bodies, as go to definition now also
 does. `textDocument/references`
 respects `context.includeDeclaration`, defaulted to false rather than required, since an absent
-or malformed one is a missing preference, not a malformed request. A reference to a
-prelude-declared symbol (`RuntimeError` and the rest) is not found at all, for the same reason
-`onDefinition` already declines it: a prelude declaration has no file on disk to report a
-location in. Verified end to end over JSON-RPC, including a two-file project, both with and
-without `includeDeclaration`.
+or malformed one is a missing preference, not a malformed request. A prelude declaration has
+no file location to include, but its project uses are still returned; this lets references work
+for `RuntimeError` and the rest without inventing an editor-visible prelude document. Verified
+end to end over JSON-RPC, including a two-file project, both with and without
+`includeDeclaration`.
 
 Rename is implemented, directly on find references: the declaration plus every site find
 references collects, each site's span replaced by the new name and grouped into one
@@ -148,7 +148,7 @@ so a rename cannot write a name the parser would immediately reject. `textDocume
 returns a JSON-RPC error (`-32602`, reusing "invalid params" since LSP defines no
 rename-specific code) rather than an edit for an invalid name, a closed document, a project
 that fails to check, a position that resolves to nothing, or a prelude-declared symbol — the
-last for the same reason go to definition and find references already decline one. Verified
+last because its embedded declaration cannot be edited. Verified
 end to end over JSON-RPC: a cross-file rename correctly grouped into two files' edits, and an
 invalid new name correctly rejected rather than crashing or silently corrupting the source.
 
@@ -364,10 +364,6 @@ this session's changes where that mattered):
 - A few bounded implementation limits are intentional for now: display and recursive
   dictionary-key checks use a 256-type/object path; character indexing is linear; repeated
   dictionary or set deletion is quadratic.
-- Find references does not find a reference to a prelude-declared symbol (`RuntimeError` and
-  the rest), matching go to definition's own reason for declining one: a prelude declaration
-  has no file on disk to report a location in. Rename declines the same symbols for the same
-  reason.
 - `emerald.toml`'s `brace_style` is read by a hand-rolled single-key line scanner, not a real
   TOML parser (24 is still unimplemented beyond this one key): a missing file, an unknown key,
   a malformed line, or a value other than `"allman"` all silently fall back to the

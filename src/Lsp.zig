@@ -1586,7 +1586,10 @@ fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // prelude has no URI an editor can open, so its declaration itself cannot
     // become a Location; its references below still can.
     if (include_declaration and target.file < loaded.project.files.len) try sites.append(gpa, target);
-    for (analysis.parsed, 0..) |parsed, file_index| {
+    // `analysis.parsed` ends with the embedded prelude. It participates in
+    // resolution, but it has no project URI, so references report only the
+    // project's real source files.
+    for (analysis.parsed[0..loaded.project.files.len], 0..) |parsed, file_index| {
         try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
     }
 
@@ -1895,8 +1898,8 @@ fn onPrepareRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
         try respond(gpa, out, id, null);
         return;
     };
-    // Prelude declarations have no file on disk to rename, same reason
-    // `onRename` below declines them.
+    // Prelude declarations have no file on disk to rename, so `onRename`
+    // below declines them even though find references can report their uses.
     if (target.file >= loaded.project.files.len) {
         try respond(gpa, out, id, null);
         return;
@@ -1951,7 +1954,8 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
         return;
     };
     // Prelude declarations are embedded in the binary: no file on disk to
-    // write a rename into, same reason `onDefinition`/`onReferences` decline.
+    // write a rename into. Find references can still report their uses, but
+    // rename cannot edit the declaration or present a complete edit set.
     if (target.file >= loaded.project.files.len) {
         try respondError(gpa, out, id, invalid_params_code, "a built-in name cannot be renamed");
         return;
@@ -3013,23 +3017,24 @@ test "references returns project uses of an embedded prelude declaration" {
     var server: Server = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io() };
     defer server.deinit();
     const uri = "untitled:prelude-references.em";
-    try server.store(uri, "const note: String = \"hello\"\nprint(note)\n");
+    try server.store(uri, "const problem: RuntimeError = RuntimeError(\"hello\")\nprint(problem)\n");
 
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
-    // `String` is an embedded prelude declaration. Its declaration has no
+    // `RuntimeError` is an embedded prelude declaration. Its declaration has no
     // disk URI, but this written type use does.
-    try onReferences(&server, gpa, uri, .{ .line = 0, .character = 12 }, true, .{ .integer = 1 }, &out.writer);
+    try onReferences(&server, gpa, uri, .{ .line = 0, .character = 15 }, true, .{ .integer = 1 }, &out.writer);
 
     var reader: std.Io.Reader = .fixed(out.written());
     var response = (try readMessage(gpa, &reader)).?;
     defer response.deinit();
     const locations = response.value.object.get("result").?.array.items;
-    try testing.expectEqual(@as(usize, 1), locations.len);
+    // The written type and the constructor call are both real project uses.
+    try testing.expectEqual(@as(usize, 2), locations.len);
     try testing.expectEqualStrings(uri, locations[0].object.get("uri").?.string);
     const start = locations[0].object.get("range").?.object.get("start").?.object;
     try testing.expectEqual(@as(i64, 0), start.get("line").?.integer);
-    try testing.expectEqual(@as(i64, 12), start.get("character").?.integer);
+    try testing.expectEqual(@as(i64, 15), start.get("character").?.integer);
 }
 
 test "isValidIdentifier accepts an ordinary name, a predicate name, and an accented one" {
