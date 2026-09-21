@@ -3478,9 +3478,19 @@ for working Emerald programs, implementation measurements, or a dedicated design
   arguments, and named factory functions are genuinely insufficient;
 - immutable collection views, covariance, `Any`, user generics, and user `Iterable`;
 - stable C ABI declarations and ownership rules based on an actual library binding;
-- what `emerald.toml` holds and how it interacts with `main.em`. The rest of the project
-  rules were settled with the project slice and are recorded in 14.1, 14.2, and the
-  decision table in 22;
+- what else `emerald.toml` holds and how it interacts with `main.em`. The rest of the
+  project rules were settled with the project slice and are recorded in 14.1, 14.2, and the
+  decision table in 22. `brace_style` (3.4) is the one settled key so far. Floated for a
+  future pass, not yet designed: more formatting-convention keys beyond brace style, and a
+  configurable warning level for formatting-adjacent diagnostics (such as 17.2's
+  indentation-suggests-a-different-scope warning). Both would cut against 18.3's "one
+  canonical output" formatter contract and 3.3's precedent of a style choice being a fixed
+  warning rather than a configurable severity, so the design question is not merely which
+  keys to add but whether `emerald.toml` is meant to grow into a lint-style
+  per-rule-severity config (à la ESLint/Rubocop) or stay closer to a formatter with a
+  small, closed set of style axes (à la rustfmt/gofmt) — those are different tools with
+  different guarantees, and the answer changes what "sensible defaults, but developer
+  control" is allowed to mean here;
 - project templates and the eventual build, distribution, and package commands;
 - generated documentation and its searchable reference interface;
 - serialization, filesystem encoding policy, clocks, dates, time zones, and networking;

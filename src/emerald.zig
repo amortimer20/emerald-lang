@@ -800,6 +800,36 @@ test "File read methods reject invalid UTF-8 as FileError" {
     }
 }
 
+test "Directory.delete_recursive removes a populated tree and is idempotent on an already-gone path" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "tree/nested");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tree/nested/leaf.txt", .data = "hi" });
+
+    const relative = try std.fmt.allocPrint(testing.allocator, ".zig-cache/tmp/{s}/tree", .{tmp.sub_path});
+    defer testing.allocator.free(relative);
+    const absolute = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, relative, testing.allocator);
+    defer testing.allocator.free(absolute);
+
+    // Same reason as the UTF-8 test above: a real path may contain `\`,
+    // which the lexer would otherwise read as an escape introducer.
+    const literal = try escapeAsEmeraldStringLiteral(testing.allocator, absolute);
+    defer testing.allocator.free(literal);
+
+    const program = try std.fmt.allocPrint(
+        testing.allocator,
+        "print(Directory.exists?(\"{s}\"))\nDirectory.delete_recursive(\"{s}\")\nprint(Directory.exists?(\"{s}\"))\nDirectory.delete_recursive(\"{s}\")\nprint(\"still ok\")\n",
+        .{ literal, literal, literal, literal },
+    );
+    defer testing.allocator.free(program);
+
+    try expectOutput(program, "true\nfalse\nstill ok\n");
+
+    // Independently confirms the whole tree is gone, not just what the
+    // program's own `Directory.exists?` happened to report.
+    try testing.expectError(error.FileNotFound, tmp.dir.access(testing.io, "tree/nested/leaf.txt", .{}));
+}
+
 fn escapeAsEmeraldStringLiteral(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
     var escaped: std.ArrayList(u8) = .empty;
     errdefer escaped.deinit(gpa);

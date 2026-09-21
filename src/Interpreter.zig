@@ -2982,6 +2982,13 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         };
         return Value.nothing;
     }
+    if (std.mem.eql(u8, suffix, "Directory::delete_recursive")) {
+        // Mirrors `Directory.create`'s idempotence: removing an
+        // already-gone path is not a mistake worth raising over, and
+        // `deleteTree` already treats a missing path this way.
+        cwd.deleteTree(io, values[0].data.string.bytes) catch return self.raiseFilePath(span, values[0].data.string.bytes, "delete");
+        return Value.nothing;
+    }
     if (std.mem.eql(u8, suffix, "Directory::list")) return self.listDirectory(span, cwd, io, values[0].data.string.bytes);
     unreachable;
 }

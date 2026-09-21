@@ -42,6 +42,7 @@ class Directory {
     func Directory.exists?(path: String): Bool { return false }
     func Directory.create(path: String) {}
     func Directory.delete(path: String) {}
+    func Directory.delete_recursive(path: String) {}
     func Directory.list(path: String): List[String] { return [] }
 }
 

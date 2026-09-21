@@ -23,9 +23,5 @@ print(Path.name(first) + "|" + Path.stem(first) + "|" + Path.extension(first) + 
 print(Path.absolute?(first), Path.absolute(first).ends_with?("notes.txt"))
 assert Directory.list(nested).count == 3
 
-File.delete(first)
-File.delete(lines)
-File.delete(moved)
-Directory.delete(nested)
-Directory.delete(Path.parent(nested))
-Directory.delete(root)
+Directory.delete_recursive(root)
+Directory.delete_recursive(root)

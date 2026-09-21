@@ -21,8 +21,10 @@ perform their named whole-file operation.
 
 `exists?(path: String) -> Bool` tests for a directory. `create(path: String) -> Nothing`
 creates all missing parents and is idempotent. `delete(path: String) -> Nothing` removes only
-an empty directory. `list(path: String) -> List[String]` returns full paths for its direct
-files and subdirectories; their order is unspecified.
+an empty directory; `delete_recursive(path: String) -> Nothing` removes a directory and
+everything inside it, and is idempotent — deleting an already-gone path is not an error, the
+same as `create`. `list(path: String) -> List[String]` returns full paths for its direct files
+and subdirectories; their order is unspecified.
 
 ## Path
 
@@ -35,6 +37,7 @@ existing path to an absolute path.
 ## Raises
 
 Every non-predicate operation raises `FileError` for a missing path, denied access, invalid
-UTF-8 text, or a failed write. `Directory.delete` reports a non-empty directory rather than
-deleting its contents. `FileError` extends `RuntimeError`, so a program can catch filesystem
-failures without catching unrelated runtime failures.
+UTF-8 text, or a failed write, except where a missing path is the point: `Directory.create`
+and `Directory.delete_recursive` are both idempotent. `Directory.delete` reports a non-empty
+directory rather than deleting its contents. `FileError` extends `RuntimeError`, so a program
+can catch filesystem failures without catching unrelated runtime failures.

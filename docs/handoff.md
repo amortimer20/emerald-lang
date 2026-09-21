@@ -16,9 +16,9 @@ gaps listed under "Active rough edges" below. Brace style (3.4) is a per-project
 from `emerald.toml`; see below for what changed and why.
 
 The standard library's whole-file filesystem area is complete. `File`, `Directory`, and
-`Path` provide UTF-8 text I/O, recursive/idempotent directory creation, empty-only directory
-deletion, listing, and lexical path helpers. Filesystem failures use `FileError`. Streaming,
-binary I/O, and recursive deletion remain deferred.
+`Path` provide UTF-8 text I/O, recursive/idempotent directory creation, empty-only and
+recursive/idempotent directory deletion, listing, and lexical path helpers. Filesystem
+failures use `FileError`. Streaming and binary I/O remain deferred.
 
 Release hardening is in place: CI runs Debug and ReleaseSafe tests on Ubuntu, macOS, and
 Windows; the fuzz runner checks, formats, and boundedly executes generated clean programs;
@@ -188,6 +188,15 @@ through, so `emerald format`/format-on-save always normalize to the project's ch
 regardless of which one a file was actually written in. A lone file outside any project (no
 `main.em` to root a manifest search from) always defaults to Stroustrup.
 
+`Directory.delete_recursive(path)` is implemented, closing half of the "streaming/binary I/O
+and recursive directory delete" backlog bullet (the other half is unchanged and still needs
+its own design pass — see "Next step"). It mirrors `Directory.create`'s idempotence in the
+other direction: `create` treats an already-existing path as success, `delete_recursive`
+treats an already-gone one the same way, both via `std.Io.Dir`'s own native support
+(`createDirPath`/`deleteTree`) rather than hand-rolled recursion. `conformance/run/file-directory-path.em`'s
+teardown now uses it (called twice, proving the idempotence) in place of the six manual
+`File.delete`/`Directory.delete` calls an empty-only `Directory.delete` used to require.
+
 ## Next step
 
 The LSP's second phase is complete: hover, go to definition, find references, rename, and
@@ -202,9 +211,14 @@ with it but were not done, and were not promoted to a named next step; nothing c
 motivates either).
 
 Named but unordered: `emerald explain`/diagnostic polish; a custom equality/hashing design
-pass, the natural sibling to `Textual`/`Ordered`; streaming/binary file I/O and recursive
-directory delete (deferred out of the filesystem slice; recursive delete has no design
-blocker, streaming/binary I/O needs its own design pass first). The big deferred-features
+pass, the natural sibling to `Textual`/`Ordered`; streaming/binary file I/O (still needs its
+own design pass — recursive directory deletion, the other half of this bullet, no longer
+does; it shipped, see below); expanding `emerald.toml`
+beyond `brace_style` with more formatting-convention keys and a configurable warning level
+for formatting-adjacent diagnostics — explicitly not ready to start (user said so), and
+needs its own design pass first: whether the manifest grows into per-rule severity (an
+ESLint/Rubocop shape) or stays a small, closed set of style axes (a rustfmt/gofmt shape) is
+still open; see roadmap item 24 in `rewrite-context.md`. The big deferred-features
 list (generics, enum payloads, wider operator overloading, package manager, concurrency)
 stays last by design — those are large design commitments, not implementation backlog. This
 is context, not authorization: follow the user's active request rather than starting any of
@@ -267,10 +281,11 @@ this session's changes where that mattered):
 
 The latest completed slices, including the program entry point, the ledger shakedown, the
 trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
-definition, find references, rename, completion, and the per-project brace style, passed
-`bash tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe (382/382 tests),
-`bash tools/check-doc-examples.sh` after `zig build`, and `git diff --check` with pinned Zig
-0.16.0. Go to definition, find references, rename, and completion were each also checked end
+definition, find references, rename, completion, the per-project brace style, and recursive
+directory deletion, passed `bash tools/check-toolchain.sh`, `zig build test` in Debug and
+ReleaseSafe (383/383 tests), `bash tools/check-doc-examples.sh` after `zig build`, and
+`git diff --check` with pinned Zig 0.16.0. Go to definition, find references, rename, and
+completion were each also checked end
 to end against the real LSP server over JSON-RPC (single-file member access and constructor
 calls; a two-file project crossing into a sibling file, both with and without
 `includeDeclaration`; a cross-file rename's grouped edits; an invalid new name's rejection;
@@ -282,9 +297,14 @@ CLI (`emerald format` normalizing a hand-written mix of both styles to whichever
 `emerald.toml` asked for, in both directions, and idempotently on a second pass) and the LSP
 (`textDocument/formatting` over real JSON-RPC against a real two-file project with an
 `emerald.toml`, and separately against a lone file outside any project, confirming the
-Stroustrup default). The Windows path/lexer fix's Windows-specific half could not be verified
-locally and was confirmed by CI instead. The working tree was clean after commit `e975670`
-(`Implement LSP rename`) before this pass.
+Stroustrup default). Recursive directory deletion was checked the same way, beyond its Zig
+unit test: a manual `emerald run` against a real nested directory tree, printing
+`Directory.exists?` before and after, confirming the deletion was idempotent on a second
+call, and independently confirming with `ls` on the host filesystem that the whole tree —
+not just the top-level path — was actually gone. The Windows path/lexer fix's
+Windows-specific half could not be verified locally and was confirmed by CI instead. The
+working tree was clean after commit `0dd083b` (`Make brace style a per-project choice
+instead of hardcoded Stroustrup`) before this pass.
 
 When a change affects behavior, prefer end-to-end conformance coverage. Before handoff, run
 the checks appropriate to the change and update this file's status rather than adding a
