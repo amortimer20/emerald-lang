@@ -2422,9 +2422,9 @@ diagnostics.
 ### 13.3 Resources
 
 Garbage collection manages memory, not timely release of files, sockets, locks, or similar
-resources. Whole-file `File` operations need no explicit resource management (15.3); the
-streaming design below remains deferred until a real program needs it. A developer may close a
-resource explicitly:
+resources. Whole-file `File` operations need no explicit resource management (15.3), while a
+streamed `FileHandle` can be closed explicitly. `read()` returns all remaining UTF-8 text and
+`read_line()` returns one line at a time, or `nothing` at end of file:
 
 ```emerald
 var file = File.open("scores.txt")
@@ -2662,6 +2662,8 @@ and lexical path manipulation:
 
 ```emerald
 File.read(path)
+File.open(path)
+File.with_open(path, block)
 File.write(path, contents)
 File.append(path, contents)
 File.read_lines(path)
@@ -2692,13 +2694,19 @@ when the directory already exists. `Directory.delete` removes only empty directo
 returns unsorted full paths for files and subdirectories together. `Path.join` accepts a
 `List[String]`; `extension` omits its dot and `parent` returns `""` when there is none.
 
-Whole-file helpers close their handles automatically. `read`, `read_lines`, `write`,
-`write_lines`, and `append` are UTF-8 text only; `write_lines` writes a newline after every
-line. `Path.absolute` is the one Path operation that consults the filesystem.
+Whole-file helpers close their handles automatically. `File.open` returns a read-only
+`FileHandle`; its `read()` returns the remaining text, `read_line()` returns the next line as
+`String?`, and `close()` is idempotent. `read_line()` follows `read_lines` exactly: a trailing
+newline produces no extra line, while a final unterminated line is still returned. `with_open`
+closes its handle after normal completion, return, or error. `read`, `read_lines`, `write`,
+`write_lines`, `append`, and FileHandle reads are UTF-8 text only; `write_lines` writes a
+newline after every line. `Path.absolute` is the one Path operation that consults the
+filesystem.
 
 Every operation other than the two predicates raises `FileError` for missing paths, access
-failures, invalid UTF-8, and failed writes. Streaming, binary I/O, recursive deletion, and
-more-specific filesystem error subclasses remain deferred.
+failures, invalid UTF-8, and failed writes; reading a closed FileHandle also raises
+`FileError`. Binary/raw-byte I/O, streaming writes, and more-specific filesystem error
+subclasses remain deferred.
 
 ### 15.4 Regular expressions
 
@@ -3364,6 +3372,7 @@ they are collected here with the reasoning that produced them.
 | Type body syntax (10.6) | Braced only | The block-free form contradicted the single canonical formatter output promised in 18.3, and cost a second parsing and recovery mode. |
 | Struct method capture (7.5) | Semantics kept, framing added | The behavior is ordinary value semantics; it needed a teaching equivalence rather than a different rule. |
 | String normalization (9.2) | Compare normalized, store original bytes | Keeps canonical equivalence for equality while guaranteeing that file contents round-trip unchanged. |
+| `File.with_open` implementation (13.3, 15.3) | Native dispatch invokes the block and defers `close` | `File` type-level functions already dispatch natively as a namespace, so a prelude implementation would require a special exception to that routing. Keeping cleanup beside the native handle state makes closure on both normal and error unwinding direct and testable. |
 
 These supersede conflicting statements elsewhere in this document. The optional spelling and
 `Int` width were previously listed as open roadmap items in section 24 and have been removed

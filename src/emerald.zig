@@ -800,6 +800,55 @@ test "File read methods reject invalid UTF-8 as FileError" {
     }
 }
 
+test "FileHandle streams text, rejects invalid UTF-8, and rejects reads after close" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "lines.txt", .data = "one\ntwo\nthree\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "invalid.bin", .data = "\xff" });
+
+    const relative = try std.fmt.allocPrint(testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer testing.allocator.free(relative);
+    const absolute = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, relative, testing.allocator);
+    defer testing.allocator.free(absolute);
+    const lines_path = try std.fs.path.join(testing.allocator, &.{ absolute, "lines.txt" });
+    defer testing.allocator.free(lines_path);
+    const invalid_path = try std.fs.path.join(testing.allocator, &.{ absolute, "invalid.bin" });
+    defer testing.allocator.free(invalid_path);
+    const lines_literal = try escapeAsEmeraldStringLiteral(testing.allocator, lines_path);
+    defer testing.allocator.free(lines_literal);
+    const invalid_literal = try escapeAsEmeraldStringLiteral(testing.allocator, invalid_path);
+    defer testing.allocator.free(invalid_literal);
+
+    const streamed = try std.fmt.allocPrint(testing.allocator,
+        \\const file = File.open("{s}")
+        \\while true {{
+        \\    const line = file.read_line()
+        \\    if line == nothing {{
+        \\        break
+        \\    }}
+        \\    print(line)
+        \\}}
+        \\file.close()
+        \\file.close()
+    , .{lines_literal});
+    defer testing.allocator.free(streamed);
+    try expectOutput(streamed, "one\ntwo\nthree\n");
+
+    const closed = try std.fmt.allocPrint(testing.allocator,
+        \\const file = File.open("{s}")
+        \\file.close()
+        \\file.read()
+    , .{lines_literal});
+    defer testing.allocator.free(closed);
+    try expectFailure(closed, "FileError: cannot read from a closed file");
+
+    const invalid = try std.fmt.allocPrint(testing.allocator, "File.open(\"{s}\").read_line()", .{invalid_literal});
+    defer testing.allocator.free(invalid);
+    const expected = try std.fmt.allocPrint(testing.allocator, "FileError: could not read as UTF-8 text `{s}`", .{invalid_path});
+    defer testing.allocator.free(expected);
+    try expectFailure(invalid, expected);
+}
+
 test "Directory.delete_recursive removes a populated tree and is idempotent on an already-gone path" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-20. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-21. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -15,10 +15,12 @@ definition, find references, rename, and completion) are complete, with each pha
 gaps listed under "Active rough edges" below. Brace style (3.4) is a per-project choice, read
 from `emerald.toml`; see below for what changed and why.
 
-The standard library's whole-file filesystem area is complete. `File`, `Directory`, and
-`Path` provide UTF-8 text I/O, recursive/idempotent directory creation, empty-only and
-recursive/idempotent directory deletion, listing, and lexical path helpers. Filesystem
-failures use `FileError`. Streaming and binary I/O remain deferred.
+The standard library's filesystem area is complete for UTF-8 text. `File`, `Directory`, and
+`Path` provide whole-file and streamed reads, recursive/idempotent directory creation,
+empty-only and recursive/idempotent directory deletion, listing, and lexical path helpers.
+`File.open` returns a read-only `FileHandle`; `File.with_open` guarantees closure through a
+block's normal or error exit. Filesystem failures use `FileError`. Binary/raw-byte I/O and
+streaming writes remain deferred.
 
 Release hardening is in place: CI runs Debug and ReleaseSafe tests on Ubuntu, macOS, and
 Windows; the fuzz runner checks, formats, and boundedly executes generated clean programs;
@@ -276,14 +278,12 @@ named-but-unordered below, and nothing is yet authorized as the next thing to bu
 no longer live from that review: per-family runnable examples, `!`/optional/callback/raise
 labeling, conformance-programs-as-executable-examples, the filesystem design, the five
 maintainability findings (retired in `6a6a718`), the program entry point, and the opportunistic
-trait `is` analysis (streaming I/O and the bounded implementation limits below were bundled
-with it but were not done, and were not promoted to a named next step; nothing currently
-motivates either).
+trait `is` analysis and streaming text reads (the bounded implementation limits remain
+intentional; nothing currently motivates changing them).
 
-Named but unordered: `emerald explain`/diagnostic polish; streaming/binary file I/O (still
-needs its own design pass — recursive directory deletion, the other half of this bullet,
-and custom equality/hashing, the natural sibling to `Textual`/`Ordered` this bullet also
-once named, no longer do; both shipped, see below); expanding `emerald.toml`
+Named but unordered: `emerald explain`/diagnostic polish; binary/raw-byte file I/O and
+streaming writes (both still need their own design pass — recursive directory deletion and
+custom equality/hashing, the other items this bullet once named, have shipped); expanding `emerald.toml`
 beyond `brace_style` with more formatting-convention keys and a configurable warning level
 for formatting-adjacent diagnostics — explicitly not ready to start (user said so), and
 needs its own design pass first: whether the manifest grows into per-rule severity (an
@@ -348,11 +348,9 @@ The latest completed slices, including the program entry point, the ledger shake
 trait-aware impossible-type-test warning, LSP hover, the Windows path/lexer fix, go to
 definition, find references, rename (`prepareRename` included), completion, the per-project
 brace style, recursive directory deletion, the missing-input exit status, custom equality
-and hashing, and sibling-class literal inference, passed `bash tools/check-toolchain.sh`,
-`zig build test` in Debug and ReleaseSafe (384/384 tests — the one new count is
-`Type.zig`'s `commonBase` test; the rest of this work's coverage is conformance-suite
-cases, run as one meta-test rather than counted individually), `bash
-tools/check-doc-examples.sh` after `zig build` (90 linked files), and `git diff --check`
+and hashing, sibling-class literal inference, and FileHandle streaming reads, passed `bash
+tools/check-toolchain.sh`, `zig build test` in Debug and ReleaseSafe, `bash
+tools/check-doc-examples.sh` after `zig build` (91 linked files), and `git diff --check`
 with pinned Zig 0.16.0, plus two separate 500-case fuzz runs (after the
 `Value.zig`/`Heap.zig` error-set changes, and again after the list/dict/`case`
 widening changes). Go to definition, find

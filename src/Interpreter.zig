@@ -43,6 +43,16 @@ const call_arguments = @import("arguments.zig");
 
 const Interpreter = @This();
 
+/// The host state behind one section 13.3 FileHandle. The Emerald object keeps
+/// only an opaque ID, so this remains a class with ordinary single-owner
+/// identity rather than adding a host resource to every Value.
+const FileHandleState = struct {
+    file: std.Io.File,
+    reader: std.Io.File.Reader,
+    buffer: [4096]u8 = undefined,
+    path: []const u8,
+};
+
 /// What running a program produced. An unhandled Emerald error stops an ordinary
 /// run; test mode collects one failure per test and continues discovery order.
 pub const Outcome = struct {
@@ -159,6 +169,12 @@ arguments: []const []const u8 = &.{},
 /// allocate.
 literal_texts: std.AutoHashMapUnmanaged(*const Ast.Expression, *Heap.Text) = .empty,
 random_engine: ?std.Random.DefaultPrng = null,
+/// Open FileHandles, keyed by the private ID stored in their class instance.
+/// States are deliberately separate from the GC heap: an explicit `close`
+/// releases the operating-system resource immediately, and interpreter
+/// teardown closes anything a program forgot.
+file_handles: std.AutoHashMapUnmanaged(i64, *FileHandleState) = .empty,
+next_file_handle: i64 = 1,
 
 /// Top-level bindings, from `arena`. A function sees these, and it sees them
 /// as they are when it runs; the checker has already proved that everything a
@@ -301,6 +317,7 @@ pub fn run(
     // module bindings and anything an error skipped releasing.
     defer interpreter.heap.deinit();
     defer interpreter.literal_texts.deinit(gpa);
+    defer interpreter.deinitFileHandles();
 
     // Hoisted, matching the resolver and checker. Every file's functions are
     // in place before anything runs, so a call into another file never depends
@@ -2939,6 +2956,10 @@ fn isFilesystemKey(key: []const u8) bool {
         std.mem.startsWith(u8, key, "emerald.Path::");
 }
 
+fn isFileHandleKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, "emerald.FileHandle::");
+}
+
 /// Section 15.3's deliberately small whole-file surface. The prelude declares
 /// ordinary type-level signatures; this dispatch is their native body.
 fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: Ast.Expression.Call) Error!Value {
@@ -2950,6 +2971,16 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
     const io = std.Io.Threaded.global_single_threaded.io();
     const cwd = std.Io.Dir.cwd();
     const suffix = key["emerald.".len..];
+    if (std.mem.eql(u8, suffix, "File::open")) return self.openFileHandle(span, cwd, io, values[0].data.string.bytes);
+    if (std.mem.eql(u8, suffix, "File::with_open")) {
+        const handle = try self.openFileHandle(span, cwd, io, values[0].data.string.bytes);
+        const id = handle.data.struct_value.fields[0].data.int;
+        defer self.closeFileHandle(id);
+        const closure = values[1].data.closure;
+        const result = try self.invokeClosure(span, closure, self.closureCallable(closure), &.{handle});
+        self.heap.release(result);
+        return Value.nothing;
+    }
     if (std.mem.eql(u8, suffix, "File::exists?")) return .{ .data = .{ .bool = fileKind(cwd, io, values[0].data.string.bytes, .file) } };
     if (std.mem.eql(u8, suffix, "Directory::exists?")) return .{ .data = .{ .bool = fileKind(cwd, io, values[0].data.string.bytes, .directory) } };
     if (std.mem.eql(u8, suffix, "Path::absolute?")) return .{ .data = .{ .bool = std.fs.path.isAbsolute(values[0].data.string.bytes) } };
@@ -3046,6 +3077,111 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
 fn fileKind(cwd: std.Io.Dir, io: std.Io, path: []const u8, kind: std.Io.File.Kind) bool {
     const stat = cwd.statFile(io, path, .{}) catch return false;
     return stat.kind == kind;
+}
+
+fn openFileHandle(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: std.Io, path: []const u8) Error!Value {
+    const file = cwd.openFile(io, path, .{ .allow_directory = false }) catch {
+        const stat = cwd.statFile(io, path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return self.raiseFileMessage(span, try std.fmt.allocPrint(self.arena, "the file `{s}` does not exist", .{path})),
+            else => return self.raiseFilePath(span, path, "open"),
+        };
+        if (stat.kind != .file) return self.raiseFilePath(span, path, "open");
+        return self.raiseFilePath(span, path, "open");
+    };
+    const copied_path = self.gpa.dupe(u8, path) catch |err| {
+        file.close(io);
+        return err;
+    };
+    const state = self.gpa.create(FileHandleState) catch |err| {
+        self.gpa.free(copied_path);
+        file.close(io);
+        return err;
+    };
+    state.* = .{
+        .file = file,
+        .reader = undefined,
+        .path = copied_path,
+    };
+    state.reader = file.readerStreaming(io, &state.buffer);
+
+    const id = self.next_file_handle;
+    if (id == std.math.maxInt(i64)) {
+        self.destroyFileHandle(state);
+        return error.OutOfMemory;
+    }
+    self.next_file_handle += 1;
+    self.file_handles.put(self.gpa, id, state) catch |err| {
+        self.destroyFileHandle(state);
+        return err;
+    };
+
+    const fields = self.gpa.alloc(Value, 1) catch |err| {
+        self.closeFileHandle(id);
+        return err;
+    };
+    fields[0] = .initInt(id);
+    const instance = self.heap.createStruct(self.structs.get(Resolver.preludeKey("FileHandle")).?, fields) catch |err| {
+        self.closeFileHandle(id);
+        return err;
+    };
+    return .{ .data = .{ .struct_value = instance } };
+}
+
+fn callFileHandle(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const id = receiver.data.struct_value.fields[0].data.int;
+    const suffix = key["emerald.FileHandle::".len..];
+    if (std.mem.eql(u8, suffix, "close")) {
+        self.closeFileHandle(id);
+        return Value.nothing;
+    }
+    const state = self.file_handles.get(id) orelse return self.raiseFileMessage(span, "cannot read from a closed file");
+    if (std.mem.eql(u8, suffix, "read")) {
+        const bytes = state.reader.interface.allocRemaining(self.gpa, .unlimited) catch return self.raiseFilePath(span, state.path, "read");
+        if (!std.unicode.utf8ValidateSlice(bytes)) {
+            self.gpa.free(bytes);
+            return self.raiseFilePath(span, state.path, "read as UTF-8 text");
+        }
+        return .{ .data = .{ .string = try self.heap.createText(bytes) } };
+    }
+
+    var line: std.ArrayList(u8) = .empty;
+    errdefer line.deinit(self.gpa);
+    var read_any = false;
+    while (true) {
+        const byte = state.reader.interface.takeByte() catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return self.raiseFilePath(span, state.path, "read"),
+        };
+        read_any = true;
+        if (byte == '\n') break;
+        try line.append(self.gpa, byte);
+    }
+    if (!read_any) return Value.nothing;
+    const bytes = try line.toOwnedSlice(self.gpa);
+    if (!std.unicode.utf8ValidateSlice(bytes)) {
+        self.gpa.free(bytes);
+        return self.raiseFilePath(span, state.path, "read as UTF-8 text");
+    }
+    return .{ .data = .{ .string = try self.heap.createText(bytes) } };
+}
+
+fn closeFileHandle(self: *Interpreter, id: i64) void {
+    const removed = self.file_handles.fetchRemove(id) orelse return;
+    self.destroyFileHandle(removed.value);
+}
+
+fn destroyFileHandle(self: *Interpreter, state: *FileHandleState) void {
+    state.file.close(std.Io.Threaded.global_single_threaded.io());
+    self.gpa.free(state.path);
+    self.gpa.destroy(state);
+}
+
+fn deinitFileHandles(self: *Interpreter) void {
+    var states = self.file_handles.valueIterator();
+    while (states.next()) |state| self.destroyFileHandle(state.*);
+    self.file_handles.deinit(self.gpa);
 }
 
 fn fileLines(self: *Interpreter, bytes: []const u8) Error!Value {
@@ -4854,6 +4990,9 @@ fn callMethod(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
+    if (self.method_calls.get(call.callee)) |key| {
+        if (isFileHandleKey(key)) return self.callFileHandle(expression.span, key, member);
+    }
     if (std.mem.eql(u8, member.name, "next") or std.mem.eql(u8, member.name, "choose") or
         (std.mem.eql(u8, member.name, "shuffle!") and call.arguments.len == 1))
     {

@@ -1,8 +1,9 @@
 # File, Directory, and Path
 
-`File`, `Directory`, and `Path` are the standard library's whole-file, directory, and path
+`File`, `Directory`, and `Path` are the standard library's text-file, directory, and path
 namespaces. Run [`conformance/run/file-directory-path.em`](../../conformance/run/file-directory-path.em)
-for the normal workflow and [`conformance/runtime-errors/file-missing.em`](../../conformance/runtime-errors/file-missing.em)
+for whole-file and path work, [`conformance/run/file-streaming.em`](../../conformance/run/file-streaming.em)
+for streamed reads, and [`conformance/runtime-errors/file-streaming-closed.em`](../../conformance/runtime-errors/file-streaming-closed.em)
 for a typed failure.
 
 ## File
@@ -16,6 +17,18 @@ newline, including the last. `exists?(path: String) -> Bool` tests for a file.
 `copy(source: String, destination: String) -> Nothing`,
 `move(source: String, destination: String) -> Nothing`, and `delete(path: String) -> Nothing`
 perform their named whole-file operation.
+
+`open(path: String) -> FileHandle` opens read-only UTF-8 text. `with_open(path: String,
+block: func(FileHandle)) -> Nothing` gives its block an open handle and closes it after normal
+completion, return, or an error.
+
+### FileHandle
+
+`read() -> String` returns all text remaining after the current position. `read_line() ->
+String?` returns the next line without its newline, or `nothing` at end of file. Like
+`read_lines`, it does not add an empty final line for a trailing newline, but does return an
+unterminated final line. `close() -> Nothing` is idempotent. Handles are read-only; use
+`File.write` or `File.append` for whole-file writes.
 
 ## Directory
 
@@ -37,7 +50,8 @@ existing path to an absolute path.
 ## Raises
 
 Every non-predicate operation raises `FileError` for a missing path, denied access, invalid
-UTF-8 text, or a failed write, except where a missing path is the point: `Directory.create`
-and `Directory.delete_recursive` are both idempotent. `Directory.delete` reports a non-empty
-directory rather than deleting its contents. `FileError` extends `RuntimeError`, so a program
-can catch filesystem failures without catching unrelated runtime failures.
+UTF-8 text, or a failed write. `FileHandle.read` and `read_line` also raise it when called
+after `close`. `Directory.create` and `Directory.delete_recursive` are idempotent when a
+missing path is the point; `Directory.delete` reports a non-empty directory rather than
+deleting its contents. `FileError` extends `RuntimeError`, so a program can catch filesystem
+failures without catching unrelated runtime failures.

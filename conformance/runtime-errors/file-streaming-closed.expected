@@ -1,0 +1,4 @@
+runtime-errors/file-streaming-closed.em:4:1: FileError: cannot read from a closed file
+  file.read_line()
+  ^^^^^^^^^^^^^^^^
+Check that the path exists and that this program may access it.

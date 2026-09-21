@@ -27,6 +27,8 @@ class FileError extends RuntimeError {
 # Whole-file filesystem namespaces. Their bodies establish the ordinary
 # type-level signatures; the interpreter supplies the native operation.
 class File {
+    func File.open(path: String): FileHandle { return FileHandle() }
+    func File.with_open(path: String, block: func(FileHandle)) {}
     func File.read(path: String): String { return "" }
     func File.write(path: String, contents: String) {}
     func File.append(path: String, contents: String) {}
@@ -36,6 +38,16 @@ class File {
     func File.copy(source: String, destination: String) {}
     func File.move(source: String, destination: String) {}
     func File.delete(path: String) {}
+}
+
+# A live, read-only text stream. `_id` is interpreter-managed state: programs
+# obtain usable handles from `File.open`, then read or close them.
+class FileHandle {
+    var _id: Int = Program.arguments.count
+
+    func read(): String { return "" }
+    func read_line(): String? { return nothing }
+    func close() {}
 }
 
 class Directory {

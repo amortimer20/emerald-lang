@@ -27,7 +27,7 @@
 | [Tuples](tuples.md) | Positions, unpacking, equality | `examples/tuples.em` |
 | [`Range`](range.md) | Iteration, `count`, `empty?()`, `step`, `reverse`, `to_list` | `conformance/run/range-values.em` |
 | [`Random`](random.md) | Seeded range selection, choosing, and shuffling | `conformance/run/randomness.em` |
-| [`File`, `Directory`, `Path`](file.md) | Whole-file UTF-8 text, directories, lexical paths | `conformance/run/file-directory-path.em` |
+| [`File`, `Directory`, `Path`](file.md) | Whole-file and streamed UTF-8 text, directories, lexical paths | `conformance/run/file-streaming.em` |
 | [`Program`](program.md) | The running program's own CLI arguments | `conformance/run/program-arguments.em` |
 
 ## Errors and tests
