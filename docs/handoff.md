@@ -277,28 +277,33 @@ itself, a deeper subclass finding the same base as its sibling, dictionary value
 
 ## Next step
 
-The LSP's second phase is complete: hover, go to definition, find references, rename, and
-completion. A 2026-09-20 roadmap review had triaged prior "what's next" suggestions from both
-agents against the binary at the time; everything from that review is now either closed or
-named-but-unordered below, and nothing is yet authorized as the next thing to build. Closed and
-no longer live from that review: per-family runnable examples, `!`/optional/callback/raise
-labeling, conformance-programs-as-executable-examples, the filesystem design, the five
-maintainability findings (retired in `6a6a718`), the program entry point, and the opportunistic
-trait `is` analysis and streaming text reads (the bounded implementation limits remain
-intentional; nothing currently motivates changing them).
+The LSP's second phase is complete (hover, go to definition, find references, rename,
+completion — including completion's own type-qualified-base, namespace, and bare-identifier
+cases, closed after the phase first shipped), and the filesystem area is complete for both
+text and binary (whole-file and streamed reads and writes, `Bytes`). A 2026-09-20 roadmap
+review had triaged prior "what's next" suggestions from both agents against the binary at
+the time; that review, and everything named-but-unordered below at various points since, is
+now closed except what this section still names. Closed and no longer live: per-family
+runnable examples, `!`/optional/callback/raise labeling, conformance-programs-as-executable-
+examples, the filesystem design (entirely, now — streaming reads, streaming writes, and
+`Bytes` all shipped), the five maintainability findings (retired in `6a6a718`), the program
+entry point, the opportunistic trait `is` analysis, and the sibling-class literal inference
+and equality/hashing gaps found along the way.
 
-Named but unordered: `emerald explain`/diagnostic polish; binary/raw-byte file I/O and
-streaming writes (both still need their own design pass — recursive directory deletion and
-custom equality/hashing, the other items this bullet once named, have shipped); expanding `emerald.toml`
-beyond `brace_style` with more formatting-convention keys and a configurable warning level
-for formatting-adjacent diagnostics — explicitly not ready to start (user said so), and
-needs its own design pass first: whether the manifest grows into per-rule severity (an
-ESLint/Rubocop shape) or stays a small, closed set of style axes (a rustfmt/gofmt shape) is
-still open; see roadmap item 24 in `rewrite-context.md`. The big deferred-features
-list (generics, enum payloads, wider operator overloading, package manager, concurrency)
-stays last by design — those are large design commitments, not implementation backlog. This
-is context, not authorization: follow the user's active request rather than starting any of
-it unprompted.
+Named but unordered, and nothing here is authorized to start on its own: `emerald explain`/
+diagnostic polish — real candidates exist (§17's diagnostic-quality bar, the messages this
+session's own work produced) but picking among them without a specific complaint to chase is
+guessing; expanding `emerald.toml` beyond `brace_style` with more formatting-convention keys
+and a configurable warning level for formatting-adjacent diagnostics — explicitly not ready
+to start (user said so), and needs its own design pass first: whether the manifest grows
+into per-rule severity (an ESLint/Rubocop shape) or stays a small, closed set of style axes
+(a rustfmt/gofmt shape) is still open; see roadmap item 24 in `rewrite-context.md`. The
+bounded implementation limits remain intentional; nothing currently motivates changing them.
+The big deferred-features list (generics, enum payloads, wider operator overloading, package
+manager, concurrency, networking) stays last by design — those are large design commitments
+of their own, not implementation backlog, each needing a dedicated design pass before any of
+them are schedulable at all. This is context, not authorization: follow the user's active
+request rather than starting any of it unprompted.
 
 ## Deferred
 
