@@ -21,6 +21,7 @@
 | [`Float`](float.md) | Rounding, classification, conversion, angles, square root | `conformance/run/float-methods.em` |
 | [`Math`](math.md) | Constants, trigonometry, logarithms, powers | `conformance/run/math.em` |
 | [`String`](string.md) | Unicode-aware queries, editing, splitting, conversion | `conformance/run/string-methods.em` |
+| [`Bytes`](bytes.md) | Raw binary construction, conversion, indexing, slicing | `conformance/run/bytes-binary-file.em` |
 | [`List[T]`](list.md) | Properties, reading, changing, higher-order, and shape methods | `conformance/run/lists.em` |
 | [`Dict[K, V]`](dict.md) | Lookup, entries, keys/values, set-like operations, callbacks | `examples/dictionaries.em` |
 | [`Set[T]`](set.md) | Membership, set algebra, callbacks | `conformance/run/set-operations.em` |
