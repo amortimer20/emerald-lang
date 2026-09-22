@@ -2968,10 +2968,11 @@ fn parseAdditive(self: *Parser) Error!*const Ast.Expression {
             .minus => .subtract,
             else => return left,
         };
-        _ = self.advance();
+        const operator_token = self.advance();
         const right = try self.parseMultiplicative();
         left = try self.node(spanning(left.span, right.span), .{ .binary = .{
             .operator = operator,
+            .operator_span = operator_token.span,
             .left = left,
             .right = right,
         } });
@@ -2988,10 +2989,11 @@ fn parseMultiplicative(self: *Parser) Error!*const Ast.Expression {
             .percent => .remainder,
             else => return left,
         };
-        _ = self.advance();
+        const operator_token = self.advance();
         const right = try self.parseUnary();
         left = try self.node(spanning(left.span, right.span), .{ .binary = .{
             .operator = operator,
+            .operator_span = operator_token.span,
             .left = left,
             .right = right,
         } });
@@ -3026,6 +3028,7 @@ fn parsePower(self: *Parser) Error!*const Ast.Expression {
     const right = try self.parseUnary();
     return self.node(spanning(left.span, right.span), .{ .binary = .{
         .operator = .power,
+        .operator_span = operator.span,
         .left = left,
         .right = right,
     } });

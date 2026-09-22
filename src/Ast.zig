@@ -588,6 +588,9 @@ pub const Expression = struct {
 
     pub const Binary = struct {
         operator: BinaryOperator,
+        /// The source token for editor features that act on the operator
+        /// itself rather than on either operand.
+        operator_span: Source.Span,
         left: *const Expression,
         right: *const Expression,
     };

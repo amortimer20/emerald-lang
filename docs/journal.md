@@ -20,6 +20,12 @@ comparison contract. Commits `d73ede4` and `f2dfac2` delivered the parser/runtim
 selection/compound-assignment slices respectively. The retirement and migration slice follows
 in the next commit.
 
+The follow-up LSP slice made arithmetic symbols themselves navigable. `Ast.Expression.Binary`
+now stores the source span of its operator token; the checker already records the selected
+annotated method key, so `textDocument/definition` can map a cursor on the token directly to
+that method without rerunning or dynamically reselecting dispatch. This intentionally does
+not make symbols renameable: the method name remains the declaration programmers rename.
+
 ## Pre-implementation decision pass
 
 The user asked for a judgment call on the remaining open design questions, prioritizing

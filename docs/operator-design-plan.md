@@ -210,10 +210,10 @@ library references, and the decision table use annotations instead. The fuzz gen
 emit the retired syntax: its valid programs are built-in-only, and its malformed-token stream
 does not encode trait declarations, so no generator migration was needed. LSP navigation,
 rename, and references continue to target the registered method when that method's name is
-used normally. Go-to-definition from an arithmetic symbol itself is intentionally deferred as
-a separate tooling feature: binary AST nodes currently retain no operator-token span, so it
-cannot distinguish a cursor on `*` from one on the enclosing expression without a focused AST
-and LSP change.
+used normally. Operator-token go-to-definition is also implemented: binary AST nodes retain
+the operator token's span, and the LSP uses the checker's statically selected method key to
+resolve a cursor on `+`, `-`, `*`, or `/`. Renaming remains method-name based; an operator
+symbol is not an identifier and is therefore not itself renameable.
 
 ## Tests and completion criteria
 

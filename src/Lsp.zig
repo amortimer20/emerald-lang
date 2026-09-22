@@ -898,6 +898,13 @@ fn definitionAt(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file:
             if (offset >= member.name_span.start and offset <= member.name_span.end) {
                 if (try memberDefinition(gpa, analysis, file, expr)) |target| return target;
             }
+        } else if (expr.data == .binary) {
+            const binary = expr.data.binary;
+            if (offset >= binary.operator_span.start and offset <= binary.operator_span.end) {
+                if (analysis.checked.operator_calls.get(expr)) |key| {
+                    if (analysis.resolved.facts.declarations.get(key)) |target| return target;
+                }
+            }
         } else if (expr.data == .call) {
             // `Checker.typeOfCall` resolves a call's callee through
             // `referenceOf`/`self.find`, never through `typeOf`, so the callee
@@ -2820,6 +2827,35 @@ test "definitionAt jumps from a variable's read to its declaration" {
     try testing.expectEqual(@as(u32, 0), target.file);
     const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "total =").?);
     try testing.expectEqual(decl_offset, target.span.start);
+}
+
+test "definitionAt jumps from an annotated arithmetic operator to its method" {
+    const gpa = testing.allocator;
+    const text =
+        "struct Money {\n" ++
+        "    const cents: Int\n" ++
+        "\n" ++
+        "    @operator(\"*\")\n" ++
+        "    func times(quantity: Int): Money {\n" ++
+        "        return Money(self.cents * quantity)\n" ++
+        "    }\n" ++
+        "}\n" ++
+        "\n" ++
+        "const price = Money(125)\n" ++
+        "print(price * 3)\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const operator_offset: u32 = @intCast(std.mem.indexOf(u8, text, "price * 3").? + "price ".len);
+    const target = (try definitionAt(gpa, &analysis, 0, operator_offset)).?;
+    const declaration_offset: u32 = @intCast(std.mem.indexOf(u8, text, "func times").? + "func ".len);
+    try testing.expectEqual(@as(u32, 0), target.file);
+    try testing.expectEqual(declaration_offset, target.span.start);
 }
 
 test "definitionAt jumps from a member access to the field it names" {
