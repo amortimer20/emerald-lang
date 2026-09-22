@@ -228,6 +228,9 @@ method_calls: *const Checker.MethodCalls,
 /// interpreter passes the recorded method key through normal virtual
 /// dispatch; it never selects from runtime operand types.
 operator_calls: *const Checker.OperatorCalls,
+/// Annotated arithmetic methods selected for compound assignments, keyed by
+/// the assignment site that reaches them at runtime.
+operator_assignments: *const Checker.OperatorAssignments,
 /// Every `super.name` that reaches a base class's property (10.7).
 super_members: *const Checker.MethodCalls,
 /// Section 4.4's type tests and `type_name` reads, with the static types they
@@ -274,6 +277,7 @@ pub fn run(
     changing_methods: *const Resolver.NameSet,
     method_calls: *const Checker.MethodCalls,
     operator_calls: *const Checker.OperatorCalls,
+    operator_assignments: *const Checker.OperatorAssignments,
     super_members: *const Checker.MethodCalls,
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
@@ -320,6 +324,7 @@ pub fn run(
         .changing_methods = changing_methods,
         .method_calls = method_calls,
         .operator_calls = operator_calls,
+        .operator_assignments = operator_assignments,
         .super_members = super_members,
         .type_tests = type_tests,
         .type_names = type_names,
@@ -899,7 +904,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
                 defer self.heap.release(current);
                 const right = try self.evaluate(assignment.value);
                 defer self.heap.release(right);
-                break :blk try self.applyBinary(statement.span, operation, current, right, null);
+                break :blk try self.applyBinary(statement.span, operation, current, right, self.operatorAssignment(assignment));
             } else try self.evaluate(assignment.value);
 
             const slot = if (self.module.count() == module_size) found else self.placeBinding(assignment.name, assignment.name_span) catch |err| {
@@ -1118,7 +1123,7 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
         defer self.heap.release(current);
         const right = try self.evaluate(assignment.value);
         defer self.heap.release(right);
-        break :blk try self.applyBinary(assignment.target_span, operation, current, right, null);
+        break :blk try self.applyBinary(assignment.target_span, operation, current, right, self.operatorAssignment(assignment));
     } else try self.evaluate(assignment.value);
 
     // Found only now, after everything above has run: reading a getter or
@@ -1159,7 +1164,7 @@ fn assignThroughSuper(self: *Interpreter, assignment: Ast.Assignment, setter: []
         defer self.heap.release(current);
         const right = try self.evaluate(assignment.value);
         defer self.heap.release(right);
-        break :blk try self.applyBinary(assignment.target_span, operation, current, right, null);
+        break :blk try self.applyBinary(assignment.target_span, operation, current, right, self.operatorAssignment(assignment));
     } else try self.evaluate(assignment.value);
     var callable = self.namedCallable(setter);
     callable.self_value = Heap.retain(object);
@@ -2743,6 +2748,10 @@ fn evaluateBinary(
     const right = try self.evaluate(binary.right);
     defer self.heap.release(right);
     return self.applyBinary(expression.span, binary.operator, left, right, self.operator_calls.get(expression));
+}
+
+fn operatorAssignment(self: *Interpreter, assignment: Ast.Assignment) ?[]const u8 {
+    return self.operator_assignments.get(.{ .file = self.file, .target_span = assignment.target_span });
 }
 
 /// Shared by binary expressions and compound assignment, which section 5.3

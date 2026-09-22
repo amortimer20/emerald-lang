@@ -2316,8 +2316,8 @@ flow are not overloadable. Custom indexing is deferred. The existing homogeneous
 contracts use `Self` for both operands and their result; an annotated arithmetic method may
 state a different right-operand or result type.
 
-The first implementation slice introduces an explicit registration on one directly declared
-public instance method of a struct or class:
+Annotated arithmetic is an explicit registration on public instance methods of structs and
+classes:
 
 ```emerald
 struct Money {
@@ -2334,10 +2334,20 @@ Money(125) * 3      # the same as Money(125).times(3)
 
 The annotation takes one of those four literal symbols. Its method takes one required
 parameter, has an explicit result type, and is selected using ordinary argument compatibility
-(including `Int`-to-`Float` widening). The current slice permits one registration per symbol
-on the declaring type; disjoint multi-registration selection, inherited registration metadata,
-and annotated compound assignment are the next implementation slice. It does not introduce
-general function or method overloading.
+(including `Int`-to-`Float` widening). A type may register several methods for one symbol only
+when their parameter types are disjoint: identical types, `Int` with `Float`, and a class with
+one of its subclasses overlap and are rejected at the declaration. The supported parameter
+domain is nonoptional scalar types and nominal structs, enums, and classes; trait, optional,
+collection, tuple, and function parameters remain deferred. This is selection among annotated
+operator registrations only, not general function or method overloading.
+
+Registrations inherit with classes. Selection sees the static type on the left: a value held as
+`Animal` selects from `Animal`'s registrations even if its runtime value is a `Dog`; ordinary
+virtual dispatch then runs a `Dog` override of the selected method. A subclass may add a
+disjoint registration, but an `@override` inherits its base method's registration and never
+repeats `@operator`. Return types do not participate in selection, so `Matrix * Vector` may
+give `Vector`. `a op= b` uses the same selected operation and evaluates its destination once;
+its result must be assignable back to that destination.
 
 For a same-type operation returning the enclosing type, the method name is mandatory:
 `add(other: Self): Self`, `subtract(other: Self): Self`, `multiply(other: Self): Self`, or
@@ -2357,8 +2367,8 @@ method gives, not always a `Float`. `%`, `//`, `**`, and unary `-` are not overl
 left operand's type decides, and it may not be optional. Every ordering comparison in a chain
 runs `compare`. An operator never changes a struct operand, so a struct method that changes
 `self` cannot back one; on an object it follows the object's class, like any call. An operator
-on `self` is a call through `self` under 10.2's construction rules; annotated `a += b` awaits
-the next slice, while existing trait-based `a += b` remains `a = a + b`.
+on `self` is a call through `self` under 10.2's construction rules; `a += b` is `a = a + b`
+for both annotated and temporarily trait-based arithmetic.
 
 ## 12. Enums and branching
 
@@ -3505,7 +3515,7 @@ recorded in their normative sections:
 | Braces inside parentheses (3.1) | A `{` restores newline termination until its `}` | 3.1 suppresses newlines inside parentheses so arguments can wrap, but a `case` or a block passed as an argument has lines of its own, which could not be separated at all before. |
 | What `Self` is on a class (11.4) | The first class along the base chain to adopt the trait | A subclass inherits its base class's methods with their types unchanged, so taking `Self` as the subclass would make every inherited implementation stop conforming. Swift needs `final` or `Self`-returning initializers to square this; fixing `Self` where the trait is adopted keeps it sound with nothing new to learn. |
 | `Self` through a value seen as a trait (11.4) | A `Self` result is the trait; a member taking `Self` cannot be called | The value could be of any adopting type, so nothing can be checked to match its `Self`. Inside the trait's own defaults `self` is an opaque `Self`, which is what makes defaults that combine values of the same type possible without generics. |
-| Operator traits (11.5) | Prelude traits `Addable`, `Subtractable`, `Multipliable`, `Divisible`, and `Ordered`, one per operator, written in Emerald in `src/prelude.em` | The spec names `Ordered.compare` and lowers `a + b` to `a.add(b)`. One trait per operator lets a vector add without multiplying, and names like `Addable` read as what the type can do. Declaring them in Emerald puts them through the same checks as user traits. A program's own declaration of one of these names takes its place, like a prelude function, so adding a prelude trait never breaks a program. |
+| Annotated arithmetic operators (11.5) | `@operator("+")`/`-`/`*`/`/` registers public struct/class methods; selection uses the left static type, ordinary parameter compatibility, and pairwise-disjoint operand domains, then invokes the selected key through ordinary virtual dispatch | Mixed results such as `Matrix * Vector -> Vector` cannot be expressed by conversion-based designs, while general overloading would rewrite member lookup, constructors, diagnostics, and tooling. The annotation keeps arithmetic selection narrow, preserves `Int`-to-`Float` widening, and leaves ordinary method names unique. The four prelude arithmetic traits coexist only during migration; `Ordered` remains a trait contract. |
 | Operators and change (4.3, 11.5) | A struct method that changes `self` cannot back an operator | `a + b` reads as a value, and every other operator leaves its operands alone; a change to the left operand's copy would be silently lost. |
 | Where trait conflicts are reported (11.2) | At the declaration that first brings the conflicting traits together | Reporting at every subclass and every trait built on top would repeat one mistake many times, far from where it can be fixed. |
 | Where `is` binds (4.4) | With the comparisons, without chaining; `is not` is rejected with a correction | Like Kotlin and Swift, a test reads as one condition that `not`, `and`, and `or` combine. A second spelling for the negated test would be the kind of duplicate 5.2 declines for `!`. |

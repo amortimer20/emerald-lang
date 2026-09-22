@@ -557,6 +557,7 @@ fn analyze(
         &checked.changing_methods,
         &checked.method_calls,
         &checked.operator_calls,
+        &checked.operator_assignments,
         &checked.super_members,
         &checked.type_tests,
         &checked.type_names,

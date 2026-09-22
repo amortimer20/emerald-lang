@@ -71,6 +71,9 @@ pub const Checked = struct {
     /// the key for the existing virtual method dispatch; it never reselects an
     /// overload from runtime values.
     operator_calls: OperatorCalls,
+    /// Every compound assignment that selected an annotated arithmetic method,
+    /// keyed by the source location its interpreter execution reaches.
+    operator_assignments: OperatorAssignments,
     /// Every `super.name` that reads or sets a base class's property (10.7):
     /// a read by its member expression, mapped to the getter's key, and an
     /// assignment by its value, mapped to the setter's. Unlike `value.name`, which runs whatever
@@ -134,6 +137,8 @@ pub const ExpressionTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, Expr
 pub const Structs = std.StringHashMapUnmanaged(Type);
 pub const MethodCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
 pub const OperatorCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
+pub const OperatorAssignment = struct { file: u32, target_span: Source.Span };
+pub const OperatorAssignments = std.AutoHashMapUnmanaged(OperatorAssignment, []const u8);
 pub const TypeTest = struct { value: Type, target: Type };
 pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
 
@@ -184,6 +189,7 @@ changes: std.StringHashMapUnmanaged(bool) = .empty,
 changes_in_progress: Resolver.NameSet = .empty,
 method_calls: MethodCalls = .empty,
 operator_calls: OperatorCalls = .empty,
+operator_assignments: OperatorAssignments = .empty,
 super_members: MethodCalls = .empty,
 type_tests: TypeTests = .empty,
 type_names: LiteralTypes = .empty,
@@ -598,6 +604,7 @@ pub fn check(
         .changing_methods = changing,
         .method_calls = checker.method_calls,
         .operator_calls = checker.operator_calls,
+        .operator_assignments = checker.operator_assignments,
         .super_members = checker.super_members,
         .type_tests = checker.type_tests,
         .type_names = checker.type_names,
@@ -1001,34 +1008,27 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
     try self.checkOperatorMethods(declaration, user);
 }
 
-/// The first annotated-operator slice accepts one public instance method per
-/// arithmetic symbol on a directly declared struct or class. The later
-/// selection slice expands this to several provably-disjoint registrations and
-/// inherited registration tables; keeping the basic declaration contract here
-/// makes the small executable slice useful without treating annotations as
-/// unchecked parser-only metadata.
+/// Section 11.5's declared arithmetic registrations. A registration belongs
+/// to the method that declares it, so an overriding method inherits the base
+/// registration rather than repeating the annotation.
+const OperatorRegistration = struct {
+    operator: Ast.BinaryOperator,
+    owner: *const Type.User,
+    method: Ast.FunctionDeclaration,
+    key: []const u8,
+    signature: Signature,
+};
+
+/// Check a type's own registrations against the ones it inherits and against
+/// one another. Distinct methods may supply the same symbol, but their right
+/// operand domains must be disjoint so every call has one static answer.
 fn checkOperatorMethods(self: *Checker, declaration: Ast.StructDeclaration, user: *const Type.User) Error!void {
-    var seen: [4]?Ast.OperatorAnnotation = .{ null, null, null, null };
+    var registrations: std.ArrayList(OperatorRegistration) = .empty;
+    if (user.base) |base| try self.appendOperatorRegistrations(&registrations, base);
+
     const own_type = Type.structOf(user);
     for (declaration.methods) |method| {
         const annotation = method.operator orelse continue;
-        const slot: usize = switch (annotation.operator) {
-            .add => 0,
-            .subtract => 1,
-            .multiply => 2,
-            .divide => 3,
-            else => unreachable,
-        };
-        if (seen[slot] != null) {
-            try self.reportWithHelp(
-                annotation.span,
-                "`@operator(\"{s}\")` is already used by another method of `{s}`",
-                .{ annotation.operator.lexeme(), declaration.name },
-                "This first slice gives each arithmetic symbol one unambiguous method. Put the other operation on a different type, or give it a named method.",
-                .{},
-            );
-        } else seen[slot] = annotation;
-
         if (user.trait or user.enumeration) {
             try self.report(
                 annotation.span,
@@ -1101,7 +1101,62 @@ fn checkOperatorMethods(self: *Checker, declaration: Ast.StructDeclaration, user
             "Use another name for an operator whose parameter or result has a different type.",
             .{},
         );
+
+        const registration = try self.operatorRegistration(user, method) orelse continue;
+        for (registrations.items) |earlier| {
+            if (registration.operator != earlier.operator or !operatorOperandsOverlap(registration.signature.parameters[0], earlier.signature.parameters[0])) continue;
+            try self.reportWithHelp(
+                annotation.span,
+                "`@operator(\"{s}\")` accepts {f}, which overlaps `{s}` accepting {f}",
+                .{ annotation.operator.lexeme(), registration.signature.parameters[0], earlier.method.name, earlier.signature.parameters[0] },
+                "One right-hand value could choose either method. Give this operator disjoint parameter types.",
+                .{},
+            );
+        }
+        try registrations.append(self.arena, registration);
     }
+}
+
+/// Append `user`'s inherited registrations nearest last, so the caller can
+/// give a helpful name for the earlier method without selecting by order.
+fn appendOperatorRegistrations(self: *Checker, registrations: *std.ArrayList(OperatorRegistration), user: *const Type.User) Error!void {
+    if (user.base) |base| try self.appendOperatorRegistrations(registrations, base);
+    const declaration = self.struct_declarations.get(user.name) orelse return;
+    for (declaration.methods) |method| {
+        const registration = try self.operatorRegistration(user, method) orelse continue;
+        try registrations.append(self.arena, registration);
+    }
+}
+
+/// An invalid annotation is diagnosed where it is declared. Keeping it out of
+/// selection prevents a second, less helpful trait or arithmetic error at a
+/// call site in the same invalid program.
+fn operatorRegistration(self: *Checker, user: *const Type.User, method: Ast.FunctionDeclaration) Error!?OperatorRegistration {
+    const annotation = method.operator orelse return null;
+    if (user.trait or user.enumeration or Resolver.isPrivate(method.name) or method.override_span != null or
+        method.return_annotation == null or method.parameters.len != 1 or method.parameters[0].default != null) return null;
+    const key = try Resolver.methodKey(self.arena, user.name, method.name);
+    const signature = try self.signatureFor(key);
+    const operand = signature.parameters[0];
+    const own_type = Type.structOf(user);
+    const exact_self = operand.same(own_type) and signature.return_type.same(own_type);
+    if (!supportedOperatorOperand(operand) or
+        (exact_self and !std.mem.eql(u8, method.name, canonicalOperatorName(annotation.operator))) or
+        (std.mem.eql(u8, method.name, canonicalOperatorName(annotation.operator)) and !exact_self)) return null;
+    return .{
+        .operator = annotation.operator,
+        .owner = user,
+        .method = method,
+        .key = key,
+        .signature = signature,
+    };
+}
+
+/// This is pairwise assignability over the deliberately small declaration
+/// domain: numeric widening catches Int/Float, and nominal class assignability
+/// catches a base class paired with one of its subclasses.
+fn operatorOperandsOverlap(a: Type, b: Type) bool {
+    return a.assignableTo(b) or b.assignableTo(a);
 }
 
 fn canonicalOperatorName(operator: Ast.BinaryOperator) []const u8 {
@@ -2673,7 +2728,10 @@ fn checkAssignmentTo(self: *Checker, assignment: Ast.Assignment) Error!void {
         // Section 5.3 lowers a compound assignment through the same operation,
         // so its result type is the operation's, not the right-hand side's.
         if (!binding.assigned) try self.reportUnassigned(assignment.name_span, assignment.name, binding.*);
-        const result = try self.arithmetic(assignment.name_span, operation, binding.type, value);
+        const result = if (try self.typeOfAnnotatedOperatorAssignment(assignment, operation, binding.type, value)) |selected|
+            selected
+        else
+            try self.arithmetic(assignment.name_span, operation, binding.type, value);
 
         if (!result.assignableTo(binding.type)) {
             // Worth explaining rather than only reporting. `/` always produces a
@@ -2945,7 +3003,10 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
 
     if (assignment.operation) |operation| {
         const value = try self.typeOf(assignment.value);
-        const result = try self.arithmetic(assignment.target_span, operation, element, value);
+        const result = if (try self.typeOfAnnotatedOperatorAssignment(assignment, operation, element, value)) |selected|
+            selected
+        else
+            try self.arithmetic(assignment.target_span, operation, element, value);
         if (!result.assignableTo(element)) {
             try self.report(
                 assignment.target_span,
@@ -3066,7 +3127,10 @@ fn checkSuperAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
 
     if (assignment.operation) |operation| {
         const value = try self.typeOf(assignment.value);
-        const result = try self.arithmetic(assignment.target_span, operation, element, value);
+        const result = if (try self.typeOfAnnotatedOperatorAssignment(assignment, operation, element, value)) |selected|
+            selected
+        else
+            try self.arithmetic(assignment.target_span, operation, element, value);
         if (!result.assignableTo(element)) {
             try self.report(
                 assignment.target_span,
@@ -8242,12 +8306,110 @@ fn typeOfBinary(
     return self.arithmetic(expression.span, binary.operator, left, right);
 }
 
-/// The executable half of the first annotation slice.  It deliberately looks
-/// only at methods declared by the left type itself: disjoint multiple
-/// registrations and inherited registration metadata arrive in the following
-/// selection slice.  The selected ordinary method name is recorded so the
-/// interpreter can use its usual virtual dispatch without inspecting runtime
-/// values to choose an operation.
+const AnnotatedOperatorSelection = struct {
+    /// True when this operator has an annotation on this type or one of its
+    /// bases, even if that declaration is itself invalid.
+    registered: bool,
+    selected: ?OperatorRegistration = null,
+};
+
+/// Select an annotated operator entirely from static types. The interpreter
+/// receives the selected key and uses ordinary virtual dispatch only to choose
+/// an override of that same method; it never chooses among operand types at
+/// runtime.
+fn selectAnnotatedOperator(
+    self: *Checker,
+    span: Source.Span,
+    operator: Ast.BinaryOperator,
+    left_node: ?*const Ast.Expression,
+    left: Type,
+    right: Type,
+) Error!AnnotatedOperatorSelection {
+    if (left.kind != .struct_value or left.optional) return .{ .registered = false };
+    const user = left.user.?;
+    const registered = self.hasOperatorAnnotation(user, operator);
+    if (!registered) return .{ .registered = false };
+
+    var registrations: std.ArrayList(OperatorRegistration) = .empty;
+    try self.appendOperatorRegistrations(&registrations, user);
+    var first: ?OperatorRegistration = null;
+    var candidates: usize = 0;
+    var example: ?OperatorRegistration = null;
+    for (registrations.items) |registration| {
+        if (registration.operator != operator) continue;
+        candidates += 1;
+        if (example == null) example = registration;
+        if (right.assignableTo(registration.signature.parameters[0]) and first == null) first = registration;
+    }
+    const selected = first orelse {
+        // A declaration error has already described an unusable registration.
+        // Only add a call-site error when there are valid registrations but
+        // none accept this right operand.
+        if (example) |only_or_first| {
+            if (candidates == 1) {
+                const operand = only_or_first.signature.parameters[0];
+                if (right.optional and right.payload().assignableTo(operand)) {
+                    try self.reportWithHelp(
+                        span,
+                        "`{s}` on {f} needs {f} on the right, but this is {f}",
+                        .{ operator.lexeme(), left, operand, right },
+                        "`{s}` runs `{s}({s}: {f})`, and the right side may be absent. Check it against `nothing` first, or give it a fallback with `.or(...)`.",
+                        .{ operator.lexeme(), only_or_first.method.name, only_or_first.signature.parameter_names[0], operand },
+                    );
+                } else {
+                    try self.reportWithHelp(
+                        span,
+                        "`{s}` on {f} needs {f} on the right, but this is {f}",
+                        .{ operator.lexeme(), left, operand, right },
+                        "`{s}` runs `{s}({s}: {f})`. Pass a value of that type on the right, or call a different named method.",
+                        .{ operator.lexeme(), only_or_first.method.name, only_or_first.signature.parameter_names[0], operand },
+                    );
+                }
+            } else {
+                try self.reportWithHelp(
+                    span,
+                    "`{s}` on {f} has no registration that accepts {f}",
+                    .{ operator.lexeme(), left, right },
+                    "{f} has {d} registered methods for this operator. Pass a type one of them accepts, or call a named method.",
+                    .{ left, candidates },
+                );
+            }
+        }
+        return .{ .registered = true };
+    };
+
+    // Section 10.2: an annotated operator is still a public method call and
+    // can be overridden by a subclass, so it has the same construction rule.
+    if (left_node) |node| if (isSelf(node) and try self.reportOverridable(selected.method.name, span, "call")) return .{ .registered = true };
+    // Struct operators retain value semantics. Classes already have reference
+    // semantics, so their normal mutating methods remain usable here.
+    if (!isClass(left) and try self.methodChanges(selected.key)) {
+        try self.reportWithHelp(
+            span,
+            "`{s}` cannot run `{s}`, because `{s}` changes the value it runs on",
+            .{ operator.lexeme(), selected.method.name, selected.method.name },
+            "An operator leaves struct operands as they are. Have `{s}` build and return a new value instead of changing `self`.",
+            .{selected.method.name},
+        );
+        return .{ .registered = true };
+    }
+    if (!self.in_function) try self.checkCaptures(span, selected.key, selected.method.name);
+    return .{ .registered = true, .selected = selected };
+}
+
+fn hasOperatorAnnotation(self: *Checker, user: *const Type.User, operator: Ast.BinaryOperator) bool {
+    if (user.base) |base| if (self.hasOperatorAnnotation(base, operator)) return true;
+    const declaration = self.struct_declarations.get(user.name) orelse return false;
+    for (declaration.methods) |method| {
+        const annotation = method.operator orelse continue;
+        if (annotation.operator == operator) return true;
+    }
+    return false;
+}
+
+/// A binary expression records the statically selected method key for the
+/// interpreter. A compound assignment uses the sibling helper below because
+/// its operation is represented by an assignment node instead.
 fn typeOfAnnotatedOperatorCall(
     self: *Checker,
     expression: *const Ast.Expression,
@@ -8255,65 +8417,25 @@ fn typeOfAnnotatedOperatorCall(
     left: Type,
     right: Type,
 ) Error!?Type {
-    const user = left.user.?;
-    const declaration = self.struct_declarations.get(user.name) orelse return null;
-    const method = for (declaration.methods) |candidate| {
-        const annotation = candidate.operator orelse continue;
-        if (annotation.operator == binary.operator) break candidate;
-    } else return null;
+    const selection = try self.selectAnnotatedOperator(expression.span, binary.operator, binary.left, left, right);
+    if (!selection.registered) return null;
+    const selected = selection.selected orelse return .invalid;
+    try self.operator_calls.put(self.arena, expression, selected.key);
+    return selected.signature.return_type;
+}
 
-    // The declaration checks report the reason an unusable registration is
-    // invalid.  Do not fall through to the old trait dispatch after one was
-    // written: the source clearly chose the new spelling, and a second error
-    // about a missing trait would obscure the useful correction.
-    if (method.parameters.len != 1 or method.return_annotation == null or method.parameters[0].default != null or Resolver.isPrivate(method.name)) return .invalid;
-    const key = try Resolver.methodKey(self.arena, user.name, method.name);
-    const declared = try self.signatureFor(key);
-    const operand = declared.parameters[0];
-    const receiver = Type.structOf(user);
-    const exact_self = operand.same(receiver) and declared.return_type.same(receiver);
-    if (!supportedOperatorOperand(operand) or
-        (exact_self and !std.mem.eql(u8, method.name, canonicalOperatorName(binary.operator))) or
-        (std.mem.eql(u8, method.name, canonicalOperatorName(binary.operator)) and !exact_self)) return .invalid;
-
-    // Section 10.2: an annotated operator is still a public method call and
-    // can be overridden by a subclass, so it has the same construction rule.
-    if (isSelf(binary.left) and try self.reportOverridable(method.name, expression.span, "call")) return .invalid;
-    if (!right.assignableTo(operand)) {
-        if (right.optional and right.payload().assignableTo(operand)) {
-            try self.reportWithHelp(
-                expression.span,
-                "`{s}` on {f} needs {f} on the right, but this is {f}",
-                .{ binary.operator.lexeme(), left, operand, right },
-                "`{s}` runs `{s}({s}: {f})`, and the right side may be absent. Check it against `nothing` first, or give it a fallback with `.or(...)`.",
-                .{ binary.operator.lexeme(), method.name, declared.parameter_names[0], operand },
-            );
-        } else {
-            try self.reportWithHelp(
-                expression.span,
-                "`{s}` on {f} needs {f} on the right, but this is {f}",
-                .{ binary.operator.lexeme(), left, operand, right },
-                "`{s}` runs `{s}({s}: {f})`. Pass a value of that type on the right, or call a different named method.",
-                .{ binary.operator.lexeme(), method.name, declared.parameter_names[0], operand },
-            );
-        }
-        return .invalid;
-    }
-    // Struct operators retain value semantics. Classes already have reference
-    // semantics, so their normal mutating methods remain usable here.
-    if (!isClass(left) and try self.methodChanges(key)) {
-        try self.reportWithHelp(
-            expression.span,
-            "`{s}` cannot run `{s}`, because `{s}` changes the value it runs on",
-            .{ binary.operator.lexeme(), method.name, method.name },
-            "An operator leaves struct operands as they are. Have `{s}` build and return a new value instead of changing `self`.",
-            .{method.name},
-        );
-        return .invalid;
-    }
-    if (!self.in_function) try self.checkCaptures(expression.span, key, method.name);
-    try self.operator_calls.put(self.arena, expression, key);
-    return declared.return_type;
+fn typeOfAnnotatedOperatorAssignment(
+    self: *Checker,
+    assignment: Ast.Assignment,
+    operator: Ast.BinaryOperator,
+    left: Type,
+    right: Type,
+) Error!?Type {
+    const selection = try self.selectAnnotatedOperator(assignment.target_span, operator, null, left, right);
+    if (!selection.registered) return null;
+    const selected = selection.selected orelse return .invalid;
+    try self.operator_assignments.put(self.arena, .{ .file = self.file, .target_span = assignment.target_span }, selected.key);
+    return selected.signature.return_type;
 }
 
 fn arithmetic(

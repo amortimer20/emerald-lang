@@ -291,15 +291,15 @@ enum/class operand types), inheritance (registrations inherited, selected by the
 operand's static type, no repeated `@operator` on an `@override`), trait placement
 (struct/class instance methods only for this slice), placement/multiplicity, mutation/
 construction, and compound assignment (once-only evaluation, assignability not identity).
-The user approved those decisions. Slice 1 is implemented locally and uncommitted: one
-directly declared registration for each arithmetic symbol parses, formats, type-checks, and
-runs through ordinary method dispatch; `Money * Int` and `Money.times(Int)` are equivalent.
-It includes declaration-time canonical-name checks, malformed-annotation and placement
-diagnostics, and preserves trait-based arithmetic for unannotated types. It deliberately does
-not yet select among several registrations, inherit registration metadata, support annotated
-compound assignment, or retire the four arithmetic traits. The next authorized slice should
-implement that selection and semantic work, starting from the current design plan rather than
-presenting this temporary coexistence as the final language surface.
+The user approved those decisions. Slices 1 and 2 are implemented locally and uncommitted:
+annotations parse, format, and execute through ordinary method dispatch; `Money * Int` and
+`Money.times(Int)` are equivalent; several disjoint registrations select by ordinary argument
+compatibility; classes inherit registrations with static selection and virtual overrides; and
+annotated compound assignment evaluates its destination once and requires an assignable result.
+It includes canonical-name, malformed-annotation, placement, overlap, capture, and
+nonassignable-compound-result diagnostics. Trait-based arithmetic still serves unannotated
+types. The next authorized slice is retirement and migration: remove the four arithmetic
+traits, migrate their examples and diagnostics, and eliminate the temporary coexistence.
 Validated: `bash tools/check-toolchain.sh`; Debug and ReleaseSafe `zig build test`; `zig build`;
 `bash tools/check-doc-examples.sh`; and `git diff --check`.
 

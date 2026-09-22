@@ -1,0 +1,4 @@
+diagnostics/operator-annotation-capture.em:6:23: `later` is not declared until later in the file
+          return Amount(later)
+                        ^^^^^
+A variable can only be used below its declaration. Move the declaration above this line.

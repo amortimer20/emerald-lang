@@ -1,0 +1,8 @@
+diagnostics/operator-annotation-overlap.em:18:5: `@operator("*")` accepts Float, which overlaps `scale_int` accepting Int
+      @operator("*")
+      ^^^^^^^^^^^^^^
+One right-hand value could choose either method. Give this operator disjoint parameter types.
+diagnostics/operator-annotation-overlap.em:28:5: `@operator("+")` accepts Dog, which overlaps `add_animal` accepting Animal
+      @operator("+")
+      ^^^^^^^^^^^^^^
+One right-hand value could choose either method. Give this operator disjoint parameter types.

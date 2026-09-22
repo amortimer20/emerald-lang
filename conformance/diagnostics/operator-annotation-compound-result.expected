@@ -1,0 +1,4 @@
+diagnostics/operator-annotation-compound-result.em:13:1: `*` produces Vector, which `matrix` cannot hold because it is Matrix
+  matrix *= Vector(1.0)
+  ^^^^^^
+Declare the name with a type that can hold the result.
