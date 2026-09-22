@@ -66,6 +66,11 @@ pub const Checked = struct {
     /// struct from the list method of the same name. A method captured as a
     /// value (7.5) is keyed by its member expression the same way.
     method_calls: MethodCalls,
+    /// Every binary expression that the checker selected an annotated arithmetic
+    /// method for, mapped to that method's resolved key. The interpreter uses
+    /// the key for the existing virtual method dispatch; it never reselects an
+    /// overload from runtime values.
+    operator_calls: OperatorCalls,
     /// Every `super.name` that reads or sets a base class's property (10.7):
     /// a read by its member expression, mapped to the getter's key, and an
     /// assignment by its value, mapped to the setter's. Unlike `value.name`, which runs whatever
@@ -128,6 +133,7 @@ pub const ExpressionType = struct { file: u32, type: Type };
 pub const ExpressionTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, ExpressionType);
 pub const Structs = std.StringHashMapUnmanaged(Type);
 pub const MethodCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
+pub const OperatorCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
 pub const TypeTest = struct { value: Type, target: Type };
 pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
 
@@ -177,6 +183,7 @@ changes: std.StringHashMapUnmanaged(bool) = .empty,
 /// Methods `methodChanges` is working out, so a cycle of calls ends.
 changes_in_progress: Resolver.NameSet = .empty,
 method_calls: MethodCalls = .empty,
+operator_calls: OperatorCalls = .empty,
 super_members: MethodCalls = .empty,
 type_tests: TypeTests = .empty,
 type_names: LiteralTypes = .empty,
@@ -590,6 +597,7 @@ pub fn check(
         .structs = checker.structs,
         .changing_methods = changing,
         .method_calls = checker.method_calls,
+        .operator_calls = checker.operator_calls,
         .super_members = checker.super_members,
         .type_tests = checker.type_tests,
         .type_names = checker.type_names,
@@ -989,6 +997,130 @@ fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Er
             );
         }
     }
+
+    try self.checkOperatorMethods(declaration, user);
+}
+
+/// The first annotated-operator slice accepts one public instance method per
+/// arithmetic symbol on a directly declared struct or class. The later
+/// selection slice expands this to several provably-disjoint registrations and
+/// inherited registration tables; keeping the basic declaration contract here
+/// makes the small executable slice useful without treating annotations as
+/// unchecked parser-only metadata.
+fn checkOperatorMethods(self: *Checker, declaration: Ast.StructDeclaration, user: *const Type.User) Error!void {
+    var seen: [4]?Ast.OperatorAnnotation = .{ null, null, null, null };
+    const own_type = Type.structOf(user);
+    for (declaration.methods) |method| {
+        const annotation = method.operator orelse continue;
+        const slot: usize = switch (annotation.operator) {
+            .add => 0,
+            .subtract => 1,
+            .multiply => 2,
+            .divide => 3,
+            else => unreachable,
+        };
+        if (seen[slot] != null) {
+            try self.reportWithHelp(
+                annotation.span,
+                "`@operator(\"{s}\")` is already used by another method of `{s}`",
+                .{ annotation.operator.lexeme(), declaration.name },
+                "This first slice gives each arithmetic symbol one unambiguous method. Put the other operation on a different type, or give it a named method.",
+                .{},
+            );
+        } else seen[slot] = annotation;
+
+        if (user.trait or user.enumeration) {
+            try self.report(
+                annotation.span,
+                "`@operator` belongs on a struct or class method",
+                .{},
+                "Give this type a named method instead.",
+            );
+            continue;
+        }
+        if (Resolver.isPrivate(method.name)) try self.reportWithHelp(
+            method.name_span,
+            "`{s}` is private, so it cannot be an operator method",
+            .{method.name},
+            "Operators are public syntax. Remove the leading `_`, or keep this as an ordinary private helper.",
+            .{},
+        );
+        if (method.override_span != null) try self.report(
+            annotation.span,
+            "an overriding method inherits its operator registration",
+            .{},
+            "Remove `@operator`; `@override` replaces the inherited implementation without declaring a second registration.",
+        );
+        if (method.return_annotation == null) try self.report(
+            method.name_span,
+            "an operator method needs an explicit result type",
+            .{},
+            "Write the result after `:`, as in `func times(quantity: Int): Money`.",
+        );
+        if (method.parameters.len != 1) {
+            try self.reportWithHelp(
+                method.name_span,
+                "an operator method takes exactly one parameter",
+                .{},
+                "The parameter is the value on the right of `{s}`.",
+                .{annotation.operator.lexeme()},
+            );
+            continue;
+        }
+        if (method.parameters[0].default != null) try self.report(
+            method.parameters[0].name_span,
+            "an operator parameter cannot have a default",
+            .{},
+            "An operator always receives its right operand explicitly. Remove the default.",
+        );
+
+        const key = try Resolver.methodKey(self.arena, user.name, method.name);
+        const signature = try self.signatureFor(key);
+        const operand = signature.parameters[0];
+        if (!supportedOperatorOperand(operand)) try self.reportWithHelp(
+            method.parameters[0].annotation.span,
+            "{f} cannot be the right operand of an operator registration yet",
+            .{operand},
+            "Use a nonoptional scalar, struct, enum, or class type. Trait, optional, collection, tuple, and function operands are deferred.",
+            .{},
+        );
+
+        const canonical = canonicalOperatorName(annotation.operator);
+        const exact_self = operand.same(own_type) and signature.return_type.same(own_type);
+        if (exact_self and !std.mem.eql(u8, method.name, canonical)) try self.reportWithHelp(
+            method.name_span,
+            "`{s}` takes and returns `{s}`, so `{s}` must be named `{s}`",
+            .{ method.name, declaration.name, annotation.operator.lexeme(), canonical },
+            "Same-type arithmetic keeps its conventional method name so `{s}` remains discoverable.",
+            .{annotation.operator.lexeme()},
+        );
+        if (std.mem.eql(u8, method.name, canonical) and !exact_self) try self.reportWithHelp(
+            method.name_span,
+            "`{s}` is reserved for `{s}` with `{s}` on both sides",
+            .{ canonical, annotation.operator.lexeme(), declaration.name },
+            "Use another name for an operator whose parameter or result has a different type.",
+            .{},
+        );
+    }
+}
+
+fn canonicalOperatorName(operator: Ast.BinaryOperator) []const u8 {
+    return switch (operator) {
+        .add => "add",
+        .subtract => "subtract",
+        .multiply => "multiply",
+        .divide => "divide",
+        else => unreachable,
+    };
+}
+
+fn supportedOperatorOperand(operand: Type) bool {
+    if (operand.optional) return false;
+    return switch (operand.kind) {
+        .int, .float, .bool, .string, .bytes => true,
+        .struct_value => !operand.user.?.trait,
+        else => false,
+    };
 }
 
 /// A member of a class's base classes, the nearest one first.
@@ -8102,11 +8234,86 @@ fn typeOfBinary(
     const left = try self.typeOf(binary.left);
     const right = try self.typeOf(binary.right);
     if (left.kind == .struct_value and !left.optional) {
+        if (try self.typeOfAnnotatedOperatorCall(expression, binary, left, right)) |result| return result;
         if (binary.operator.contract()) |contract| {
             return self.typeOfOperatorCall(expression.span, binary.operator.lexeme(), contract, binary.left, left, right);
         }
     }
     return self.arithmetic(expression.span, binary.operator, left, right);
+}
+
+/// The executable half of the first annotation slice.  It deliberately looks
+/// only at methods declared by the left type itself: disjoint multiple
+/// registrations and inherited registration metadata arrive in the following
+/// selection slice.  The selected ordinary method name is recorded so the
+/// interpreter can use its usual virtual dispatch without inspecting runtime
+/// values to choose an operation.
+fn typeOfAnnotatedOperatorCall(
+    self: *Checker,
+    expression: *const Ast.Expression,
+    binary: Ast.Expression.Binary,
+    left: Type,
+    right: Type,
+) Error!?Type {
+    const user = left.user.?;
+    const declaration = self.struct_declarations.get(user.name) orelse return null;
+    const method = for (declaration.methods) |candidate| {
+        const annotation = candidate.operator orelse continue;
+        if (annotation.operator == binary.operator) break candidate;
+    } else return null;
+
+    // The declaration checks report the reason an unusable registration is
+    // invalid.  Do not fall through to the old trait dispatch after one was
+    // written: the source clearly chose the new spelling, and a second error
+    // about a missing trait would obscure the useful correction.
+    if (method.parameters.len != 1 or method.return_annotation == null or method.parameters[0].default != null or Resolver.isPrivate(method.name)) return .invalid;
+    const key = try Resolver.methodKey(self.arena, user.name, method.name);
+    const declared = try self.signatureFor(key);
+    const operand = declared.parameters[0];
+    const receiver = Type.structOf(user);
+    const exact_self = operand.same(receiver) and declared.return_type.same(receiver);
+    if (!supportedOperatorOperand(operand) or
+        (exact_self and !std.mem.eql(u8, method.name, canonicalOperatorName(binary.operator))) or
+        (std.mem.eql(u8, method.name, canonicalOperatorName(binary.operator)) and !exact_self)) return .invalid;
+
+    // Section 10.2: an annotated operator is still a public method call and
+    // can be overridden by a subclass, so it has the same construction rule.
+    if (isSelf(binary.left) and try self.reportOverridable(method.name, expression.span, "call")) return .invalid;
+    if (!right.assignableTo(operand)) {
+        if (right.optional and right.payload().assignableTo(operand)) {
+            try self.reportWithHelp(
+                expression.span,
+                "`{s}` on {f} needs {f} on the right, but this is {f}",
+                .{ binary.operator.lexeme(), left, operand, right },
+                "`{s}` runs `{s}({s}: {f})`, and the right side may be absent. Check it against `nothing` first, or give it a fallback with `.or(...)`.",
+                .{ binary.operator.lexeme(), method.name, declared.parameter_names[0], operand },
+            );
+        } else {
+            try self.reportWithHelp(
+                expression.span,
+                "`{s}` on {f} needs {f} on the right, but this is {f}",
+                .{ binary.operator.lexeme(), left, operand, right },
+                "`{s}` runs `{s}({s}: {f})`. Pass a value of that type on the right, or call a different named method.",
+                .{ binary.operator.lexeme(), method.name, declared.parameter_names[0], operand },
+            );
+        }
+        return .invalid;
+    }
+    // Struct operators retain value semantics. Classes already have reference
+    // semantics, so their normal mutating methods remain usable here.
+    if (!isClass(left) and try self.methodChanges(key)) {
+        try self.reportWithHelp(
+            expression.span,
+            "`{s}` cannot run `{s}`, because `{s}` changes the value it runs on",
+            .{ binary.operator.lexeme(), method.name, method.name },
+            "An operator leaves struct operands as they are. Have `{s}` build and return a new value instead of changing `self`.",
+            .{method.name},
+        );
+        return .invalid;
+    }
+    if (!self.in_function) try self.checkCaptures(expression.span, key, method.name);
+    try self.operator_calls.put(self.arena, expression, key);
+    return declared.return_type;
 }
 
 fn arithmetic(

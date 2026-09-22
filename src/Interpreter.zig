@@ -224,6 +224,10 @@ signatures: *const Type.Signatures,
 /// Instance methods that change `self`, and which method each call reaches.
 changing_methods: *const Resolver.NameSet,
 method_calls: *const Checker.MethodCalls,
+/// Annotated arithmetic methods selected statically by the checker. The
+/// interpreter passes the recorded method key through normal virtual
+/// dispatch; it never selects from runtime operand types.
+operator_calls: *const Checker.OperatorCalls,
 /// Every `super.name` that reaches a base class's property (10.7).
 super_members: *const Checker.MethodCalls,
 /// Section 4.4's type tests and `type_name` reads, with the static types they
@@ -269,6 +273,7 @@ pub fn run(
     checked_structs: *const Checker.Structs,
     changing_methods: *const Resolver.NameSet,
     method_calls: *const Checker.MethodCalls,
+    operator_calls: *const Checker.OperatorCalls,
     super_members: *const Checker.MethodCalls,
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
@@ -314,6 +319,7 @@ pub fn run(
         .signatures = signatures,
         .changing_methods = changing_methods,
         .method_calls = method_calls,
+        .operator_calls = operator_calls,
         .super_members = super_members,
         .type_tests = type_tests,
         .type_names = type_names,
@@ -893,7 +899,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
                 defer self.heap.release(current);
                 const right = try self.evaluate(assignment.value);
                 defer self.heap.release(right);
-                break :blk try self.applyBinary(statement.span, operation, current, right);
+                break :blk try self.applyBinary(statement.span, operation, current, right, null);
             } else try self.evaluate(assignment.value);
 
             const slot = if (self.module.count() == module_size) found else self.placeBinding(assignment.name, assignment.name_span) catch |err| {
@@ -1112,7 +1118,7 @@ fn assignElement(self: *Interpreter, assignment: Ast.Assignment) Error!void {
         defer self.heap.release(current);
         const right = try self.evaluate(assignment.value);
         defer self.heap.release(right);
-        break :blk try self.applyBinary(assignment.target_span, operation, current, right);
+        break :blk try self.applyBinary(assignment.target_span, operation, current, right, null);
     } else try self.evaluate(assignment.value);
 
     // Found only now, after everything above has run: reading a getter or
@@ -1153,7 +1159,7 @@ fn assignThroughSuper(self: *Interpreter, assignment: Ast.Assignment, setter: []
         defer self.heap.release(current);
         const right = try self.evaluate(assignment.value);
         defer self.heap.release(right);
-        break :blk try self.applyBinary(assignment.target_span, operation, current, right);
+        break :blk try self.applyBinary(assignment.target_span, operation, current, right, null);
     } else try self.evaluate(assignment.value);
     var callable = self.namedCallable(setter);
     callable.self_value = Heap.retain(object);
@@ -2736,7 +2742,7 @@ fn evaluateBinary(
     defer self.heap.release(left);
     const right = try self.evaluate(binary.right);
     defer self.heap.release(right);
-    return self.applyBinary(expression.span, binary.operator, left, right);
+    return self.applyBinary(expression.span, binary.operator, left, right, self.operator_calls.get(expression));
 }
 
 /// Shared by binary expressions and compound assignment, which section 5.3
@@ -2747,6 +2753,7 @@ fn applyBinary(
     operator: Ast.BinaryOperator,
     left: Value,
     right: Value,
+    annotated_method: ?[]const u8,
 ) Error!Value {
     // `+` joins two strings into a new one. The operands stay the caller's to
     // release: compound assignment passes a binding's value without retaining.
@@ -2758,6 +2765,7 @@ fn applyBinary(
         const joined = try std.mem.concat(self.gpa, u8, &.{ left.data.bytes.bytes, right.data.bytes.bytes });
         return .{ .data = .{ .bytes = try self.heap.createText(joined) } };
     }
+    if (annotated_method) |key| return self.callAnnotatedOperator(span, key, left, right);
     if (left.data == .struct_value) {
         if (operator.contract()) |contract| return self.callOperator(span, contract.method, left, right);
     }
@@ -2779,6 +2787,17 @@ fn applyBinary(
     if (!both_int) return self.evaluateFloatBinary(span, operator, toFloat(left), toFloat(right));
 
     return self.evaluateIntBinary(span, operator, left.data.int, right.data.int);
+}
+
+/// Runs an annotated arithmetic method selected by the checker. Structs use
+/// their declared method directly; classes pass through the same virtual
+/// dispatch that an ordinary `value.method()` call uses.
+fn callAnnotatedOperator(self: *Interpreter, span: Source.Span, key: []const u8, left: Value, right: Value) Error!Value {
+    var callable = self.namedCallable(key);
+    const version = try self.dispatch(span, left, key);
+    if (version.ptr != key.ptr) callable = self.namedCallable(version);
+    callable.self_value = Heap.retain(left);
+    return self.invoke(span, callable, &.{Heap.retain(right)});
 }
 
 /// Section 11.5: an operator on a value of a user type runs the method its

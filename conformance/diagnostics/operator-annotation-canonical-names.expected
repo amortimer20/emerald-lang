@@ -1,0 +1,8 @@
+diagnostics/operator-annotation-canonical-names.em:5:10: `plus` takes and returns `Distance`, so `+` must be named `add`
+      func plus(other: Self): Self {
+           ^^^^
+Same-type arithmetic keeps its conventional method name so `+` remains discoverable.
+diagnostics/operator-annotation-canonical-names.em:10:10: `multiply` is reserved for `*` with `Distance` on both sides
+      func multiply(other: Self): Int {
+           ^^^^^^^^
+Use another name for an operator whose parameter or result has a different type.

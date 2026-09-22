@@ -5,7 +5,7 @@ Did you mean `@override`?
 diagnostics/inheritance-syntax.em:4:5: `@banana` is not an annotation
       @banana
       ^^^^^^^
-Emerald's annotations are `@override`, `@abstract`, and `@test`.
+Emerald's annotations are `@override`, `@abstract`, `@test`, and `@operator("*")`.
 diagnostics/inheritance-syntax.em:7:5: a test must be a top-level function
       @test
       ^^^^^

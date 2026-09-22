@@ -519,9 +519,10 @@ const Annotations = struct {
     override: ?Source.Span = null,
     abstract: ?Source.Span = null,
     test_annotation: ?Source.Span = null,
+    operator: ?Ast.OperatorAnnotation = null,
 };
 
-const known_annotations = [_][]const u8{ "override", "abstract", "test" };
+const known_annotations = [_][]const u8{ "override", "abstract", "test", "operator" };
 
 fn parseAnnotations(self: *Parser) Error!Annotations {
     var found: Annotations = .{};
@@ -538,7 +539,38 @@ fn parseAnnotations(self: *Parser) Error!Annotations {
         _ = self.advance();
         const span = spanning(at.span, name.span);
         const word = self.text(name);
-        if (std.mem.eql(u8, word, "override") or std.mem.eql(u8, word, "abstract") or std.mem.eql(u8, word, "test")) {
+        if (std.mem.eql(u8, word, "operator")) {
+            const opening = self.peek();
+            if (opening.kind != .left_paren) return self.report(
+                span,
+                "`@operator` needs an operator symbol in parentheses",
+                "Write an arithmetic symbol as a string, such as `@operator(\"*\")`.",
+            );
+            _ = self.advance();
+            const symbol = self.peek();
+            if (symbol.kind != .string_literal) return self.report(
+                symbol.span,
+                "`@operator` needs a string literal",
+                "Write `@operator(\"*\")`; the symbol is written as text so an annotation argument stays a literal.",
+            );
+            _ = self.advance();
+            const closing = self.peek();
+            if (closing.kind != .right_paren) return self.report(
+                closing.span,
+                "expected `)` after the operator symbol",
+                "Close the annotation, as in `@operator(\"*\")`.",
+            );
+            _ = self.advance();
+            const operator = operatorFromLiteral(try self.cookLiteral(symbol)) orelse return self.report(
+                symbol.span,
+                "this is not an arithmetic operator annotation",
+                "Use one of `@operator(\"+\")`, `@operator(\"-\")`, `@operator(\"*\")`, or `@operator(\"/\")`.",
+            );
+            const annotation: Ast.OperatorAnnotation = .{ .operator = operator, .span = spanning(at.span, closing.span) };
+            if (found.operator != null) {
+                try self.note(annotation.span, "`@operator` is already written on this declaration", "A method supplies one operator. Give the other operator its own method.");
+            } else found.operator = annotation;
+        } else if (std.mem.eql(u8, word, "override") or std.mem.eql(u8, word, "abstract") or std.mem.eql(u8, word, "test")) {
             const slot = if (std.mem.eql(u8, word, "override")) &found.override else if (std.mem.eql(u8, word, "abstract")) &found.abstract else &found.test_annotation;
             if (slot.* != null) {
                 try self.reportFmtNote(span, "`@{s}` is already written on this declaration", .{word}, "Write each annotation once.");
@@ -556,12 +588,20 @@ fn parseAnnotations(self: *Parser) Error!Annotations {
                 span,
                 "`@{s}` is not an annotation",
                 .{word},
-                "Emerald's annotations are `@override`, `@abstract`, and `@test`.",
+                "Emerald's annotations are `@override`, `@abstract`, `@test`, and `@operator(\"*\")`.",
             );
         }
         self.skipSeparators();
     }
     return found;
+}
+
+fn operatorFromLiteral(literal: []const u8) ?Ast.BinaryOperator {
+    if (std.mem.eql(u8, literal, "+")) return .add;
+    if (std.mem.eql(u8, literal, "-")) return .subtract;
+    if (std.mem.eql(u8, literal, "*")) return .multiply;
+    if (std.mem.eql(u8, literal, "/")) return .divide;
+    return null;
 }
 
 /// The known annotation a misspelling was probably meant to be: one at most
@@ -611,6 +651,11 @@ fn parseAnnotatedStatement(self: *Parser) Error!Ast.Statement {
             "Only a member of a class that extends another can replace one of its base class's members. Remove `@override` here.",
         );
     }
+    if (annotations.operator) |annotation| try self.note(
+        annotation.span,
+        "`@operator` belongs on an instance method",
+        "Write it immediately before a method inside a struct or class, such as `@operator(\"*\") func times(count: Int): Money { ... }`.",
+    );
     if (next.kind == .keyword_class) {
         if (annotations.test_annotation) |span| try self.note(span, "`@test` belongs on a function", "Move `@test` to a top-level function with no parameters and no result.");
         var statement = try self.parseStatement();
@@ -870,6 +915,27 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
         annotations.test_annotation = null;
     }
     const marker = self.peek();
+    if (annotations.operator) |annotation| {
+        if (self.in_trait) {
+            try self.note(annotation.span, "a trait cannot declare an operator registration", "Put `@operator` on a concrete struct or class method instead.");
+            annotations.operator = null;
+        } else if (self.in_enum) {
+            try self.note(annotation.span, "an enum cannot declare an operator registration", "Give the enum a named method instead.");
+            annotations.operator = null;
+        } else if (marker.kind == .keyword_constructor) {
+            try self.note(annotation.span, "`@operator` cannot mark a constructor", "Put it on an instance method with one parameter instead.");
+            annotations.operator = null;
+        } else if (marker.kind == .keyword_func and self.startsTypeMember()) {
+            try self.note(annotation.span, "`@operator` cannot mark a type-level function", "Put it on an instance method, reached through a value on the left of the operator.");
+            annotations.operator = null;
+        } else if (marker.kind != .keyword_func) {
+            try self.note(annotation.span, "`@operator` belongs on an instance method", "Put it immediately before `func` inside a struct or class.");
+            annotations.operator = null;
+        } else if (annotations.override != null) {
+            try self.note(annotation.span, "an overriding method inherits its operator registration", "Remove `@operator`; `@override` replaces the inherited implementation without declaring a second registration.");
+            annotations.operator = null;
+        }
+    }
     if (self.in_enum and self.startsEnumValue()) {
         _ = self.advance();
         return self.reportFmt(
@@ -946,7 +1012,8 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
         const saved_self = self.self_allowed;
         self.self_allowed = self.memberContext();
         defer self.self_allowed = saved_self;
-        const method = try self.parseMethod(annotations);
+        var method = try self.parseMethod(annotations);
+        method.operator = annotations.operator;
         try self.expectStatementEnd();
         try members.methods.append(self.arena, method);
         return;

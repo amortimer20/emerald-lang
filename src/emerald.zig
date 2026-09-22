@@ -556,6 +556,7 @@ fn analyze(
         &checked.structs,
         &checked.changing_methods,
         &checked.method_calls,
+        &checked.operator_calls,
         &checked.super_members,
         &checked.type_tests,
         &checked.type_names,
@@ -1792,6 +1793,25 @@ test "comparisons produce a Bool" {
     try expectOutput("print(2 == 2)\n", "true\n");
     try expectOutput("print(2 != 2)\n", "false\n");
     try expectOutput("print(2 <= 2, 2 >= 3)\n", "true false\n");
+}
+
+test "an annotated arithmetic method runs by its ordinary name" {
+    const program =
+        \\struct Money {
+        \\    const cents: Int
+        \\
+        \\    @operator("*")
+        \\    func times(quantity: Int): Money {
+        \\        return Money(self.cents * quantity)
+        \\    }
+        \\}
+        \\
+        \\const price = Money(125)
+        \\print((price * 3).cents, price.times(3).cents)
+        \\
+    ;
+    try expectOutput(program, "375 375\n");
+    try expectFailure(program ++ "print(price * \"three\")\n", "`*` on Money needs Int on the right, but this is String");
 }
 
 test "a chained comparison reads as the conjunction of its links" {

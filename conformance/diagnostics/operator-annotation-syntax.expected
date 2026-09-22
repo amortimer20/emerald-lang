@@ -1,0 +1,4 @@
+diagnostics/operator-annotation-syntax.em:2:15: this is not an arithmetic operator annotation
+      @operator("%")
+                ^^^
+Use one of `@operator("+")`, `@operator("-")`, `@operator("*")`, or `@operator("/")`.

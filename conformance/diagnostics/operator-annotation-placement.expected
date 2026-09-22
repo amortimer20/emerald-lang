@@ -1,0 +1,4 @@
+diagnostics/operator-annotation-placement.em:1:1: `@operator` belongs on an instance method
+  @operator("*")
+  ^^^^^^^^^^^^^^
+Write it immediately before a method inside a struct or class, such as `@operator("*") func times(count: Int): Money { ... }`.

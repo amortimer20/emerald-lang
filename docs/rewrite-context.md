@@ -2269,8 +2269,9 @@ that the simple trait model cannot express.
 
 ### 11.4 `Self`
 
-`Self` has a narrow meaning: the concrete type implementing the trait. It exists for
-contracts where another operand or result must be that same concrete type.
+`Self` has a narrow, type-relative meaning: in a struct or class member it is that declaring
+type, and in a trait member it is the concrete type implementing the trait. It expresses a
+parameter or result that must be that same type.
 
 ```emerald
 trait Addable {
@@ -2278,8 +2279,7 @@ trait Addable {
 }
 ```
 
-It does not introduce F-bounded polymorphism or an unrestricted metatype system. Uses
-outside trait and type-member contracts require a demonstrated need.
+It does not introduce F-bounded polymorphism or an unrestricted metatype system.
 
 `Self` is written only in the parameter and result types of methods and type-level
 functions, in any shape such as `List[Self]` or `Self?`; a field, a property, a local, or a
@@ -2296,14 +2296,14 @@ adopting type. `Trait.method(value)` cannot yet run a default whose signature me
 
 ### 11.5 Operator overloading
 
-Operators lower to ordinary named trait methods so behavior remains discoverable:
+Operators lower to ordinary named methods so behavior remains discoverable:
 
 ```emerald
 a + b       # a.add(b)
 a < b       # a.compare(b) < 0
 ```
 
-The initial overloadable set is narrow:
+The overloadable set is narrow:
 
 - arithmetic: addition, subtraction, multiplication, and division;
 - ordering through one `Ordered.compare(other: Self): Int` contract;
@@ -2312,29 +2312,53 @@ The initial overloadable set is narrow:
   key with its own notion of equality.
 
 Assignment, boolean short-circuit operators, member access, calls, and language control
-flow are not overloadable. Custom indexing is deferred. Operators use `Self` for both
-operands and the result.
+flow are not overloadable. Custom indexing is deferred. The existing homogeneous trait
+contracts use `Self` for both operands and their result; an annotated arithmetic method may
+state a different right-operand or result type.
 
-Mixed-type operators are deferred. Because a type declares one `add`, a user type cannot
-currently accept both `Vector2 + Vector2` and `Vector2 + Float`; the second is written as a
-named method such as `scaled_by`. This is a consequence of deferring overloading in 7.3 and
-is the intended initial limit, not an oversight. Built-in `Int`-to-`Float` widening is
-unaffected because it is language arithmetic rather than a user contract. `Ordered` does not
-redefine equality — it is `Equatable`'s own job, a separate contract entirely.
+The first implementation slice introduces an explicit registration on one directly declared
+public instance method of a struct or class:
 
-The contracts are prelude traits, one per operator so a type takes only the operators that
-mean something for it: `Addable.add`, `Subtractable.subtract`, `Multipliable.multiply`,
-`Divisible.divide`, `Ordered.compare`, and `Equatable.equals`, each taking `other: Self`;
-`Hashable.hash` takes nothing, since a hash is not a comparison. Adoption is explicit,
-as for any trait (11.2): a method named `add` alone does not make `+` work, and a method
-named `equals` or `hash` alone does not change how `==` or a dictionary/set behaves —
-declaring one without adopting the matching trait is a warning, the same as `to_string`
-without `Textual` (15.1). `/` gives what `divide` gives, not always a `Float`. `%`, `//`,
-`**`, and unary `-` are not overloadable. The left operand's type decides, and it may not be
-optional; `2 * vector` is rejected. Every ordering comparison in a chain runs `compare`. An
-operator never changes its operands, so a struct's method that changes `self` cannot back
-one; on an object it follows the object's class, like any call. An operator on `self` is a
-call through `self` under 10.2's construction rules, and `a += b` is `a = a + b`.
+```emerald
+struct Money {
+    const cents: Int
+
+    @operator("*")
+    func times(quantity: Int): Money {
+        return Money(self.cents * quantity)
+    }
+}
+
+Money(125) * 3      # the same as Money(125).times(3)
+```
+
+The annotation takes one of those four literal symbols. Its method takes one required
+parameter, has an explicit result type, and is selected using ordinary argument compatibility
+(including `Int`-to-`Float` widening). The current slice permits one registration per symbol
+on the declaring type; disjoint multi-registration selection, inherited registration metadata,
+and annotated compound assignment are the next implementation slice. It does not introduce
+general function or method overloading.
+
+For a same-type operation returning the enclosing type, the method name is mandatory:
+`add(other: Self): Self`, `subtract(other: Self): Self`, `multiply(other: Self): Self`, or
+`divide(other: Self): Self`, matching its symbol. Conversely, each of those four names is
+reserved for that exact `Self -> Self` shape when annotated. A same-type operation with a
+different result, such as `Distance / Distance -> Float`, uses another name. Mixed operations
+such as `Money * Int` are supported by the annotation; the left operand owns the operation and
+there is no reversal, so `Int * Money` remains invalid. `Ordered` does not redefine equality —
+it is `Equatable`'s own job, a separate contract entirely.
+
+The prelude traits remain temporarily for unannotated arithmetic: `Addable.add`,
+`Subtractable.subtract`, `Multipliable.multiply`, and `Divisible.divide`. An annotated method
+takes precedence when present; the transition's later retirement slice removes those four
+authorization traits. `Ordered.compare` and `Equatable.equals` remain trait contracts;
+`Hashable.hash` takes nothing, since a hash is not a comparison. `/` gives what its selected
+method gives, not always a `Float`. `%`, `//`, `**`, and unary `-` are not overloadable. The
+left operand's type decides, and it may not be optional. Every ordering comparison in a chain
+runs `compare`. An operator never changes a struct operand, so a struct method that changes
+`self` cannot back one; on an object it follows the object's class, like any call. An operator
+on `self` is a call through `self` under 10.2's construction rules; annotated `a += b` awaits
+the next slice, while existing trait-based `a += b` remains `a = a + b`.
 
 ## 12. Enums and branching
 
@@ -2791,6 +2815,9 @@ The clean initial set is intentionally small:
 - `@override` confirms an inherited override;
 - `@abstract` marks an abstract class or a bodyless abstract class method. Trait
   requirements are already identified by their missing bodies and do not use it.
+- `@operator("+")`, `@operator("-")`, `@operator("*")`, or `@operator("/")`
+  registers a public instance method of a struct or class for that arithmetic symbol
+  (11.5).
 
 Interop-specific annotations such as the former `.NET`-oriented `@export`, `@mirrors`,
 and emitted-name controls are not carried forward automatically. Add a portable annotation

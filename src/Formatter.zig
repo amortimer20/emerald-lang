@@ -785,6 +785,12 @@ const Printer = struct {
             try self.write("@test\n");
             try self.writeIndent();
         }
+        if (f.operator) |operator| {
+            try self.write("@operator(\"");
+            try self.write(operator.operator.lexeme());
+            try self.write("\")\n");
+            try self.writeIndent();
+        }
         if (f.override_span != null) {
             try self.write("@override\n");
             try self.writeIndent();

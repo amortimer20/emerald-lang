@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-21. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-22. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -279,6 +279,29 @@ itself, a deeper subclass finding the same base as its sibling, dictionary value
 (two classes with no common base still report the mismatch).
 
 ## Next step
+
+Arithmetic operator annotations are now in design, at the user's request. The handoff plan
+is [operator-design-plan.md](operator-design-plan.md). Accepted direction: replace the four
+arithmetic traits with annotated named methods; canonical names (`add`/`subtract`/
+`multiply`/`divide`) are mandatory, not conventions, but only for the `Self -> Self` shape —
+bidirectionally, so a same-type-returning-same-type registration must use the canonical
+name, and a canonically named registration must have that exact shape. Phase 0 is complete:
+a decision table answers overlap (assignability-based, limited to concrete scalar/struct/
+enum/class operand types), inheritance (registrations inherited, selected by the left
+operand's static type, no repeated `@operator` on an `@override`), trait placement
+(struct/class instance methods only for this slice), placement/multiplicity, mutation/
+construction, and compound assignment (once-only evaluation, assignability not identity).
+The user approved those decisions. Slice 1 is implemented locally and uncommitted: one
+directly declared registration for each arithmetic symbol parses, formats, type-checks, and
+runs through ordinary method dispatch; `Money * Int` and `Money.times(Int)` are equivalent.
+It includes declaration-time canonical-name checks, malformed-annotation and placement
+diagnostics, and preserves trait-based arithmetic for unannotated types. It deliberately does
+not yet select among several registrations, inherit registration metadata, support annotated
+compound assignment, or retire the four arithmetic traits. The next authorized slice should
+implement that selection and semantic work, starting from the current design plan rather than
+presenting this temporary coexistence as the final language surface.
+Validated: `bash tools/check-toolchain.sh`; Debug and ReleaseSafe `zig build test`; `zig build`;
+`bash tools/check-doc-examples.sh`; and `git diff --check`.
 
 The LSP's second phase is complete (hover, go to definition, find references, rename,
 completion — including completion's own type-qualified-base, namespace, and bare-identifier

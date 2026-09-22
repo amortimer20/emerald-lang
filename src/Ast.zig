@@ -289,6 +289,18 @@ pub const FunctionDeclaration = struct {
     abstract_span: ?Source.Span = null,
     /// Section 16.1's test discovery marker. Tests remain ordinary functions.
     test_span: ?Source.Span = null,
+    /// The arithmetic symbol this instance method supplies. The parser keeps
+    /// the spelling's span for a declaration-time diagnostic; the checker
+    /// decides whether the method has a usable operator signature.
+    operator: ?OperatorAnnotation = null,
+};
+
+/// Section 11.5's registration of one named instance method for an arithmetic
+/// operator. This is deliberately metadata, not an expression the program
+/// evaluates.
+pub const OperatorAnnotation = struct {
+    operator: BinaryOperator,
+    span: Source.Span,
 };
 
 pub const Parameter = struct {
