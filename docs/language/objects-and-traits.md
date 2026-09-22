@@ -194,8 +194,8 @@ from outside — each with its exact message.
 type-level function's own parameter and result types:
 
 ```emerald
-trait Addable {
-    func add(other: Self): Self
+trait Combines {
+    func combine(other: Self): Self
 }
 ```
 
@@ -208,22 +208,35 @@ concrete one.
 
 ### Operators
 
-Operators lower to ordinary trait methods, kept discoverable rather than magic:
+`+`, `-`, `*`, and `/` on a user type run a method registered on its left
+operand with `@operator`:
 
 ```emerald
-a + b       # a.add(b), via Addable
+struct Money {
+    const cents: Int
+
+    @operator("+")
+    func add(other: Self): Self {
+        return Money(self.cents + other.cents)
+    }
+}
+
+a + b       # runs a.add(b)
 a < b       # a.compare(b) < 0, via Ordered
 ```
 
-The overloadable set is narrow on purpose: `+`/`-`/`*`/`/` through `Addable`/`Subtractable`/
-`Multipliable`/`Divisible`, and every ordering comparison through one
-`Ordered.compare(other: Self): Int` (negative means `self` comes first). `%`, `//`, `**`,
-unary `-`, assignment, and boolean short-circuiting are not overloadable, and a type declares
-only one `add` — there's no way to separately support `Vector2 + Vector2` and
-`Vector2 + Float`; a named method such as `scaled_by` covers the second case. `a += b` lowers
-to `a = a + b`. Run [`examples/operators.em`](../../examples/operators.em) for a struct
-adopting `Addable`/`Ordered` directly and a trait (`Doubling`) whose own default combines
-`Self` values through `+` without knowing the concrete type.
+One type may register disjoint right-hand operand types for a symbol. The static type on the
+left chooses the registration; an overriding method on the runtime class still runs normally.
+For the same-type, same-result shape, the conventional names are required:
+`add(other: Self): Self`, `subtract(other: Self): Self`, `multiply(other: Self): Self`, and
+`divide(other: Self): Self`. Mixed operations can use a name that says what they mean, such as
+`scaled_by(other: Float): Vector2`.
+
+Every ordering comparison runs `Ordered.compare(other: Self): Int` (negative means `self`
+comes first). `%`, `//`, `**`, unary `-`, assignment, and boolean short-circuiting are not
+overloadable. `a += b` lowers to `a = a + b`, so the selected method's result must fit back
+into `a`. Run [`examples/operators.em`](../../examples/operators.em) for registered arithmetic
+and `Ordered` together.
 
 ### Display
 
@@ -249,7 +262,7 @@ field-by-field form (`Reading(sensor: "north", value: 21.5)`), which is the more
 while you are still inspecting a value. Enums adopt it the same way, in place of their
 `Enum.value` default.
 
-Adoption is explicit, exactly as for `Addable` or `Ordered`: declaring a method named
+Adoption is explicit, exactly as for `Ordered`: declaring a method named
 `to_string` without `with Textual` leaves the display alone, and the checker warns that it
 did. Calling `to_string()` yourself works either way, so `print(x)` and `x.to_string()`
 always agree for a type that has the method — the same relationship `Int` and `Float`

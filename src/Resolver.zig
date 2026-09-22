@@ -1485,10 +1485,6 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
         },
 
         .assignment => |assignment| {
-            // `total += price` may run `add` (11.5).
-            if (assignment.operation) |operation| if (operation.contract()) |contract| {
-                try self.noteMemberCall(contract.method);
-            };
             if (try self.typeFieldTarget(assignment)) |target| {
                 return self.walkTypeFieldAssignment(assignment, target);
             }
@@ -2334,8 +2330,6 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
         .binary => |binary| {
             try self.walkExpression(binary.left);
             try self.walkExpression(binary.right);
-            // On a user type, an operator runs a method (11.5).
-            if (binary.operator.contract()) |contract| try self.noteMemberCall(contract.method);
         },
         .logical => |logical| {
             try self.walkExpression(logical.left);

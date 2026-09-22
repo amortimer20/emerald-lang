@@ -1,52 +1,48 @@
-diagnostics/operators.em:29:16: `+` needs a type that adopts `Addable`, but this is Self
-          return self + self
-                 ^^^^^^^^^^^
-`Self` in `Doubling` promises only what `Doubling` declares. Add `with Addable` to `Doubling`.
-diagnostics/operators.em:34:11: `+` cannot be used on values seen as `Addable`
-      print(a + b)
-            ^^^^^
-It runs `add`, which takes `Self`: both sides have to be the same type, and a value seen through a trait could be any type that adopts it. Use values whose type is known.
-diagnostics/operators.em:37:7: `+` needs Point to adopt `Addable`
+diagnostics/operators.em:27:7: addition needs numbers, but this is Point and Point
   print(Point(1) + Point(2))
         ^^^^^^^^^^^^^^^^^^^
-Add `with Addable` to `Point`, and give it `@override func add(other: Point): Point`.
-diagnostics/operators.em:38:7: `<` needs Point to adopt `Ordered`
+Register `+`, `-`, `*`, or `/` on this type with `@operator("...")`, or write a named method instead.
+diagnostics/operators.em:28:7: `<` needs Point to adopt `Ordered`
   print(Point(1) < Point(2))
         ^^^^^^^^^^^^^^^^^^^
 Add `with Ordered` to `Point`, and give it `@override func compare(other: Point): Int`.
-diagnostics/operators.em:39:7: `+` on Vector needs Vector on the right, but this is Float
+diagnostics/operators.em:29:7: `+` on Vector needs Vector on the right, but this is Float
   print(Vector(1) + 2.0)
         ^^^^^^^^^^^^^^^
-`+` runs `add(other: Vector)`, so both sides are the same type. For anything else, write a method with a name of its own, such as `scaled_by`.
-diagnostics/operators.em:40:7: multiplication needs numbers, but this is Int and Vector
+`+` runs `add(other: Vector)`. Pass a value of that type on the right, or call a different named method.
+diagnostics/operators.em:30:7: multiplication needs numbers, but this is Int and Vector
   print(2 * Vector(1))
         ^^^^^^^^^^^^^
-An operator on a value of a user type runs that type's method, so the value goes on the left, with one of the same type on the right. For anything else, write a method with a name of its own, such as `scaled_by`.
-diagnostics/operators.em:41:7: remainder needs numbers, but this is Vector and Vector
+An annotated operator belongs to the type on the left. Put the user value on the left, or call a named method instead.
+diagnostics/operators.em:31:7: remainder needs numbers, but this is Vector and Vector
   print(Vector(1) % Vector(2))
         ^^^^^^^^^^^^^^^^^^^^^
-Only `+`, `-`, `*`, `/`, and ordering can be given a meaning for a user type, through the prelude's traits. Write a method for this instead.
-diagnostics/operators.em:42:7: `+` cannot run `add`, because `add` changes the value it runs on
+Register `+`, `-`, `*`, or `/` on this type with `@operator("...")`, or write a named method instead.
+diagnostics/operators.em:32:7: `+` cannot run `add`, because `add` changes the value it runs on
   print(Tally(1) + Tally(2))
         ^^^^^^^^^^^^^^^^^^^
-An operator leaves its operands as they are. Have `add` build and return a new value instead of changing `self`.
-diagnostics/operators.em:45:1: `+` on Vector needs Vector on the right, but this is Int
+An operator leaves struct operands as they are. Have `add` build and return a new value instead of changing `self`.
+diagnostics/operators.em:35:1: `+` on Vector needs Vector on the right, but this is Int
   total += 1
   ^^^^^
-`+` runs `add(other: Vector)`, so both sides are the same type. For anything else, write a method with a name of its own, such as `scaled_by`.
-diagnostics/operators.em:55:15: `self` cannot be used as a whole until every field is set
+`+` runs `add(other: Vector)`. Pass a value of that type on the right, or call a different named method.
+diagnostics/operators.em:45:15: `self` cannot be used as a whole until every field is set
           print(self < Pair(0, 0))
                 ^^^^
 Set `self.high` first. Until every field is set, only fields that are already set can be read.
-diagnostics/operators.em:70:15: a subclass could override `compare`, so construction cannot call it through `self`
+diagnostics/operators.em:60:15: a subclass could override `compare`, so construction cannot call it through `self`
           print(self > Level(0))
                 ^^^^^^^^^^^^^^^
 A subclass's version would run before that subclass has set its own fields. Move what it does into a private method, such as `_compare`, and use that instead.
-diagnostics/operators.em:90:7: `+` on Length needs Length on the right, but this is Length?
+diagnostics/operators.em:80:7: `+` on Length needs Length on the right, but this is Length?
   print(Length(1) + maybe_length)
         ^^^^^^^^^^^^^^^^^^^^^^^^
 `+` runs `add(other: Length)`, and the right side may be absent. Check it against `nothing` first, or give it a fallback with `.or(...)`.
-diagnostics/operators.em:95:20: `Addible` is not a trait
+diagnostics/operators.em:85:20: `Addible` is not a trait
   struct Weight with Addible {
                      ^^^^^^^
 Check the spelling, or declare `trait Addible` in this project.
+diagnostics/operators.em:88:7: addition needs numbers, but this is Weight and Weight
+  print(Weight(1) + Weight(2))
+        ^^^^^^^^^^^^^^^^^^^^^
+Register `+`, `-`, `*`, or `/` on this type with `@operator("...")`, or write a named method instead.

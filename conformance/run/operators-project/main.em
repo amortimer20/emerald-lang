@@ -1,5 +1,5 @@
-# Section 11.5 across a project: a type in `shop/` adopts `Ordered` and
-# `Addable`, and the entry file uses its operators through `using`.
+# Section 11.5 across a project: a type in `shop/` registers arithmetic and
+# adopts `Ordered`, and the entry file uses its operators through `using`.
 
 using Shop
 

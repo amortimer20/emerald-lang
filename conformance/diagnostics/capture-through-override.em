@@ -48,10 +48,10 @@ suffix = "!"
 # The same through an operator, which runs a method of the left operand.
 var offset: Int
 
-struct Step with Addable, Ordered {
+struct Step with Ordered {
     const n: Int
 
-    @override
+    @operator("+")
     func add(other: Self): Self {
         return Step(self.n + other.n + offset)
     }

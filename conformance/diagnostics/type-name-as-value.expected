@@ -10,7 +10,7 @@ diagnostics/type-name-as-value.em:18:14: `Suit` is an enum, not a value
   const suit = Suit
                ^^^^
 Write one of the values it lists, such as `Suit.hearts`.
-diagnostics/type-name-as-value.em:19:27: `Addable` is a trait, not a value
-  const operator_contract = Addable
+diagnostics/type-name-as-value.em:19:27: `Ordered` is a trait, not a value
+  const ordering_contract = Ordered
                             ^^^^^^^
-A trait is a contract with no values of its own. Use a value of a struct or class that adopts `Addable`.
+A trait is a contract with no values of its own. Use a value of a struct or class that adopts `Ordered`.

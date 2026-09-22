@@ -831,17 +831,17 @@ test "commonBase finds the nearest shared ancestor, or none for unrelated classe
 }
 
 test "Self is a value of its trait, but only Self is Self" {
-    const addable: User = .{ .name = "Addable", .display_name = "Addable", .trait = true };
-    const traits = [_]*const User{&addable};
+    const composable: User = .{ .name = "Composable", .display_name = "Composable", .trait = true };
+    const traits = [_]*const User{&composable};
     const numeric: User = .{ .name = "Numeric", .display_name = "Numeric", .trait = true, .traits = &traits };
     const vector: User = .{ .name = "Vector", .display_name = "Vector", .traits = &.{&numeric} };
     const self_type = selfOf(&numeric);
     try testing.expect(self_type.assignableTo(self_type));
     try testing.expect(self_type.assignableTo(structOf(&numeric)));
-    try testing.expect(self_type.assignableTo(structOf(&addable).optionalOf()));
+    try testing.expect(self_type.assignableTo(structOf(&composable).optionalOf()));
     try testing.expect(!structOf(&numeric).assignableTo(self_type));
     try testing.expect(!structOf(&vector).assignableTo(self_type));
-    try testing.expect(!self_type.assignableTo(selfOf(&addable)));
+    try testing.expect(!self_type.assignableTo(selfOf(&composable)));
     try testing.expect(!self_type.same(structOf(&numeric)));
 
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);

@@ -16,4 +16,4 @@ enum Suit {
 print(Point)
 const contract = Named
 const suit = Suit
-const operator_contract = Addable
+const ordering_contract = Ordered

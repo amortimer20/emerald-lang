@@ -713,19 +713,6 @@ pub const BinaryOperator = enum {
             .power => "exponentiation",
         };
     }
-
-    /// Section 11.5: the prelude trait a user type adopts to give this
-    /// operator a meaning, and the method the operator runs. Null for the
-    /// operators that only numbers have.
-    pub fn contract(self: BinaryOperator) ?OperatorContract {
-        return switch (self) {
-            .add => .{ .trait = "Addable", .method = "add" },
-            .subtract => .{ .trait = "Subtractable", .method = "subtract" },
-            .multiply => .{ .trait = "Multipliable", .method = "multiply" },
-            .divide => .{ .trait = "Divisible", .method = "divide" },
-            .floor_divide, .remainder, .power => null,
-        };
-    }
 };
 
 /// A prelude trait and the method of it that an operator runs (11.5).

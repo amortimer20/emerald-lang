@@ -1,11 +1,11 @@
 # Operators
 
-## A type gives `+` a meaning by adopting the prelude's `Addable` and supplying
-## `add`. `Self` stands for the type itself, so both sides are the same type.
-struct Money with Addable, Ordered {
+## A type gives `+` a meaning by registering its `add` method. `Self` stands
+## for the type itself, so both sides are the same type.
+struct Money with Ordered {
     const cents: Int
 
-    @override
+    @operator("+")
     func add(other: Self): Self {
         return Money(self.cents + other.cents)
     }
@@ -41,20 +41,17 @@ for price in prices {
 print("Total: #{total.text}")
 print("Dearest: #{dearest.text}")
 
-## Inside a trait, `Self` is whichever type adopts it, so a default can combine
-## values of that type without knowing what it is.
-trait Doubling with Addable {
-    func doubled(): Self {
-        return self + self
-    }
+## A trait can still express its own ordinary requirement using `Self`.
+trait Doubling {
+    func doubled(): Self
 }
 
 struct Minutes with Doubling {
     const count: Int
 
     @override
-    func add(other: Self): Self {
-        return Minutes(self.count + other.count)
+    func doubled(): Self {
+        return Minutes(self.count * 2)
     }
 }
 

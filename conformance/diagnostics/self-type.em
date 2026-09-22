@@ -20,7 +20,11 @@ func helper(): Self {
     return 1
 }
 
-struct Wrong with Addable {
+trait Combines {
+    func add(other: Self): Self
+}
+
+struct Wrong with Combines {
     const n: Int
 
     @override
@@ -37,19 +41,19 @@ class Shape {
     }
 }
 
-class Circle extends Shape with Addable {
+class Circle extends Shape with Combines {
 }
 
 # Through a value seen as a trait, a member that takes `Self` cannot be
 # given anything, since the value could be of any type adopting the trait.
-func combine(a: Addable, b: Addable) {
+func combine(a: Combines, b: Combines) {
     print(a.add(b))
     const adding = a.add
 }
 
-trait Doubling with Addable {
+trait Doubling with Combines {
     func doubled(): Self {
-        return self + self
+        return self.add(self)
     }
 }
 

@@ -10,6 +10,16 @@ entry below may explain *why* a decision was made, but the decision itself is re
 
 Sections are in roughly the order the work happened, oldest first.
 
+## Operator-annotation design and implementation
+
+The extended operator-design discussion was retired from the live handoff once implementation
+began. Its accepted outcome is recorded normatively in rewrite-context §11.5 and §22:
+annotation-registered user arithmetic replaces the former `Addable`, `Subtractable`,
+`Multipliable`, and `Divisible` authorization traits; `Ordered` remains the trait-backed
+comparison contract. Commits `d73ede4` and `f2dfac2` delivered the parser/runtime and
+selection/compound-assignment slices respectively. The retirement and migration slice follows
+in the next commit.
+
 ## Pre-implementation decision pass
 
 The user asked for a judgment call on the remaining open design questions, prioritizing

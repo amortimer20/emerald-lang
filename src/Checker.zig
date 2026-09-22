@@ -6615,7 +6615,7 @@ fn typeOfMethodCall(
     const element = base.element.?.*;
 
     // `sum` is deliberately the first narrow aggregation method: keeping it
-    // numeric avoids an implicit `Addable` protocol or a generic identity
+    // numeric avoids an implicit arithmetic protocol or a generic identity
     // element before either belongs in Emerald's public surface.
     if (std.mem.eql(u8, member.name, "sum")) {
         if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
@@ -8299,9 +8299,6 @@ fn typeOfBinary(
     const right = try self.typeOf(binary.right);
     if (left.kind == .struct_value and !left.optional) {
         if (try self.typeOfAnnotatedOperatorCall(expression, binary, left, right)) |result| return result;
-        if (binary.operator.contract()) |contract| {
-            return self.typeOfOperatorCall(expression.span, binary.operator.lexeme(), contract, binary.left, left, right);
-        }
     }
     return self.arithmetic(expression.span, binary.operator, left, right);
 }
@@ -8478,10 +8475,6 @@ fn arithmetic(
         return .invalid;
     }
 
-    if (left.kind == .struct_value and !left.optional) {
-        if (operator.contract()) |contract| return self.typeOfOperatorCall(span, operator.lexeme(), contract, null, left, right);
-    }
-
     // Section 5.3: `/` always produces a Float.
     return Type.arithmeticResult(left, right, operator == .divide) orelse {
         try self.report(
@@ -8493,9 +8486,12 @@ fn arithmetic(
             if ((left.optional and left.payload().isNumber()) or (right.optional and right.payload().isNumber()))
                 "One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first."
             else if (left.kind == .struct_value and !left.optional)
-                "Only `+`, `-`, `*`, `/`, and ordering can be given a meaning for a user type, through the prelude's traits. Write a method for this instead."
-            else if (right.kind == .struct_value and !right.optional and operator.contract() != null)
-                "An operator on a value of a user type runs that type's method, so the value goes on the left, with one of the same type on the right. For anything else, write a method with a name of its own, such as `scaled_by`."
+                "Register `+`, `-`, `*`, or `/` on this type with `@operator(\"...\")`, or write a named method instead."
+            else if (right.kind == .struct_value and !right.optional and switch (operator) {
+                .add, .subtract, .multiply, .divide => true,
+                else => false,
+            })
+                "An annotated operator belongs to the type on the left. Put the user value on the left, or call a named method instead."
             else
                 "Arithmetic works on Int and Float.",
         );
@@ -8503,9 +8499,8 @@ fn arithmetic(
     };
 }
 
-/// Section 11.5: an operator on a value of a user type runs a method of a
-/// prelude trait the type adopts, with the right operand as its argument, and
-/// gives what the method gives.
+/// Section 11.5: an ordering operation on a user type runs its `Ordered`
+/// comparison method and gives what that method gives.
 fn typeOfOperatorCall(
     self: *Checker,
     span: Source.Span,

@@ -1,6 +1,6 @@
-# The prelude's traits are visible in every directory, not only at the root.
+# `Ordered` is visible in every directory, not only at the root.
 
-struct Price with Ordered, Addable {
+struct Price with Ordered {
     const cents: Int
 
     @override
@@ -8,7 +8,7 @@ struct Price with Ordered, Addable {
         return self.cents - other.cents
     }
 
-    @override
+    @operator("+")
     func add(other: Self): Self {
         return Price(self.cents + other.cents)
     }

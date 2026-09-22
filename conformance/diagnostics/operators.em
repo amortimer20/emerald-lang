@@ -1,37 +1,27 @@
-# Section 11.5: an operator on a user type needs the prelude trait for it,
-# the same type on both sides, and a method that leaves its operands alone.
+# Section 11.5: an operator on a user type needs an annotated method that
+# leaves its operands alone.
 
 struct Point {
     const x: Int
 }
 
-struct Vector with Addable {
+struct Vector {
     const x: Float
 
-    @override
+    @operator("+")
     func add(other: Self): Self {
         return Vector(self.x + other.x)
     }
 }
 
-struct Tally with Addable {
+struct Tally {
     var n: Int
 
-    @override
+    @operator("+")
     func add(other: Self): Self {
         self.n += other.n
         return self
     }
-}
-
-trait Doubling {
-    func doubled(): Self {
-        return self + self
-    }
-}
-
-func combine(a: Addable, b: Addable) {
-    print(a + b)
 }
 
 print(Point(1) + Point(2))
@@ -78,10 +68,10 @@ class Level with Ordered {
 
 # The right operand may be absent, which needs a check of its own before it
 # can be compared with the left one.
-struct Length with Addable {
+struct Length {
     const metres: Int
 
-    @override
+    @operator("+")
     func add(other: Self): Self {
         return Length(self.metres + other.metres)
     }

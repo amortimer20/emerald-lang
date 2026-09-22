@@ -2775,9 +2775,6 @@ fn applyBinary(
         return .{ .data = .{ .bytes = try self.heap.createText(joined) } };
     }
     if (annotated_method) |key| return self.callAnnotatedOperator(span, key, left, right);
-    if (left.data == .struct_value) {
-        if (operator.contract()) |contract| return self.callOperator(span, contract.method, left, right);
-    }
     if (!left.isNumber() or !right.isNumber()) return self.raiseFmt(
         span,
         "{s} needs numbers, but this is {s} and {s}",

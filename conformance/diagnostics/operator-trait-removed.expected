@@ -1,0 +1,4 @@
+diagnostics/operator-trait-removed.em:2:25: `Addable` is not a trait
+  struct LegacyTotal with Addable {
+                          ^^^^^^^
+Check the spelling, or declare `trait Addable` in this project.

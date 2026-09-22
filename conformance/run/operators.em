@@ -1,9 +1,9 @@
-# Section 11.5: arithmetic and ordering on a user type run named methods of
-# the prelude traits it adopts. Section 11.4's `Self` is the adopting type.
+# Section 11.5: annotated arithmetic and ordering on a user type run named
+# methods. Section 11.4's `Self` is the type a method belongs to.
 
 # Every arithmetic operator, on a struct. `Self` and the type's own name mean
 # the same thing inside it.
-struct Vector with Addable, Subtractable, Multipliable, Divisible {
+struct Vector {
     const x: Float
     const y: Float
 
@@ -11,22 +11,22 @@ struct Vector with Addable, Subtractable, Multipliable, Divisible {
         return Vector(0, 0)
     }
 
-    @override
+    @operator("+")
     func add(other: Self): Self {
         return Vector(self.x + other.x, self.y + other.y)
     }
 
-    @override
+    @operator("-")
     func subtract(other: Vector): Vector {
         return Vector(self.x - other.x, self.y - other.y)
     }
 
-    @override
+    @operator("*")
     func multiply(other: Self): Self {
         return Vector(self.x * other.x, self.y * other.y)
     }
 
-    @override
+    @operator("/")
     func divide(other: Self): Self {
         return Vector(self.x / other.x, self.y / other.y)
     }
@@ -46,7 +46,7 @@ print(Vector(1, 1) + Vector(2, 2) * Vector(3, 3))
 
 # Ordering, on a class. Every ordering comparison runs `compare`, chains
 # included, and `==` is still identity.
-class Money with Ordered, Addable {
+class Money with Ordered {
     const cents: Int
 
     constructor(cents: Int) {
@@ -58,7 +58,7 @@ class Money with Ordered, Addable {
         return self.cents - other.cents
     }
 
-    @override
+    @operator("+")
     func add(other: Self): Self {
         return Money(self.cents + other.cents)
     }
@@ -89,13 +89,10 @@ print(Coins(5) < Money(10))
 const total: Money = Coins(5) + Coins(6)
 print(total.cents)
 
-# Inside a trait, `Self` is whichever type adopts it: a trait's default can
-# use the operators of the traits it builds on, give back `Self`, and compare
-# two values of `Self` with `==`.
-trait Doubling with Addable {
-    func doubled(): Self {
-        return self + self
-    }
+# Inside a trait, `Self` is whichever type adopts it. A default can call an
+# ordinary `Self` requirement without knowing the concrete type.
+trait Doubling {
+    func doubled(): Self
 
     func twice_is?(other: Self): Bool {
         return self.doubled() == other
@@ -106,8 +103,8 @@ struct Count with Doubling {
     const n: Int
 
     @override
-    func add(other: Self): Self {
-        return Count(self.n + other.n)
+    func doubled(): Self {
+        return Count(self.n * 2)
     }
 }
 
@@ -144,13 +141,17 @@ func describe(value: Doubling) {
 
 describe(Count(1))
 
-# An abstract class may adopt an operator's trait and leave the method to its
-# subclasses, which take the abstract class's type where the trait has `Self`.
+# An abstract class may register an operator and leave the method to its
+# subclasses, which take the abstract class's type where the method has `Self`.
 @abstract
-class Shape with Addable {
+class Shape {
     func area(): Float {
         return 0
     }
+
+    @operator("+")
+    @abstract
+    func add(other: Shape): Shape
 }
 
 class Square extends Shape {
