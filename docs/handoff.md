@@ -22,18 +22,20 @@ Release hardening is in place: CI runs Debug and ReleaseSafe tests on Ubuntu, ma
 Windows; the fuzz runner checks, formats, and boundedly executes generated clean programs;
 and allocator-failure coverage reaches the frontend pipeline and interpreter.
 
-Arithmetic operator annotations are complete through their first two committed slices:
+Arithmetic operator annotations are complete:
 `d73ede4` adds `@operator("+")`/`-`/`*`/`/` parsing, checking, formatting, and execution;
 `f2dfac2` adds disjoint registrations, inheritance-aware static selection with normal virtual
-dispatch, and compound assignment. The current, uncommitted retirement slice removes the four
-prelude arithmetic authorization traits, leaving annotation registration as the only user-type
-arithmetic mechanism; `Ordered` remains the comparison trait. Its behavior, canonical-name
-rule, inheritance semantics, and limitations are recorded in §11.5 and §22 of the rewrite
-context.
+dispatch, and compound assignment; `2a9676a` retires the four prelude arithmetic authorization
+traits. Annotation registration is the only user-type arithmetic mechanism; `Ordered` remains
+the comparison trait. Its behavior, canonical-name rule, inheritance semantics, and
+limitations are recorded in §11.5 and §22 of the rewrite context.
 
 ## Next step
 
-Review and commit the completed arithmetic-trait retirement slice when the user authorizes it.
+No implementation slice is active. Choose the next task from the deferred/features backlog
+only with user authorization. Operator-token go-to-definition is a separate LSP feature: it
+needs binary AST operator spans before a cursor on `+`/`-`/`*`/`/` can resolve to the selected
+method.
 
 ## Deferred
 
@@ -50,13 +52,16 @@ Review and commit the completed arithmetic-trait retirement slice when the user 
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
   remain unsupported.
+- Operator-token go-to-definition is not implemented; named method navigation is unaffected.
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
 
-The retirement slice passed Debug and ReleaseSafe `zig build test`, `zig build`, `bash
-tools/check-doc-examples.sh` (92 linked files), and `git diff --check` using pinned Zig 0.16.0.
+The operator-annotation feature passed Debug and ReleaseSafe `zig build test`, `zig build`,
+`bash tools/check-doc-examples.sh` (92 linked files), and `git diff --check` using pinned Zig
+0.16.0. Its final integration audit found no old syntax in the fuzz generator and no LSP
+regression for named methods.
 Preserve the unrelated untracked
 `emerald-file-writer-streaming-closed.txt` artifact.

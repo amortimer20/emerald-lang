@@ -1,9 +1,8 @@
 # Arithmetic operator annotations: design and implementation plan
 
-Status: design handoff, 2026-09-22. Intended for GPT-5.6 Sol or the next repository agent.
-This records the user's direction and a proposed implementation sequence. It does not
-authorize implementation, commits, or pushes by itself. Read AGENTS.md and the current
-handoff before acting; repository state takes precedence over remembered conversations.
+Status: completed, 2026-09-22. This records the design and implementation sequence that
+landed in `d73ede4`, `f2dfac2`, and `2a9676a`. Read AGENTS.md and the current handoff before
+starting later related work; repository state takes precedence over remembered conversations.
 At the start of Phase 0 and each resumed implementation slice, reread `git status`, the
 recent `git log`, relevant diffs, and docs/handoff.md. Other agent work may have landed
 since this plan was written. Preserve that work and reconcile it before editing.
@@ -203,6 +202,18 @@ keep alternatives here rather than presenting them as shipped behavior in the ba
    emits the old syntax. Review LSP behavior and all remaining arithmetic-trait references.
 
 Keep each slice runnable; commit only when authorized. Do not push without authorization.
+
+## Completion audit
+
+The four arithmetic authorization traits are retired and maintained examples, diagnostics,
+library references, and the decision table use annotations instead. The fuzz generator did not
+emit the retired syntax: its valid programs are built-in-only, and its malformed-token stream
+does not encode trait declarations, so no generator migration was needed. LSP navigation,
+rename, and references continue to target the registered method when that method's name is
+used normally. Go-to-definition from an arithmetic symbol itself is intentionally deferred as
+a separate tooling feature: binary AST nodes currently retain no operator-token span, so it
+cannot distinguish a cursor on `*` from one on the enclosing expression without a focused AST
+and LSP change.
 
 ## Tests and completion criteria
 
