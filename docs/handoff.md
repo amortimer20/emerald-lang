@@ -30,6 +30,8 @@ traits. Annotation registration is the only user-type arithmetic mechanism; `Ord
 the comparison trait. Operator-token go-to-definition and find references follow the same
 static selection and reach the registered method. Its behavior, canonical-name rule,
 inheritance semantics, and limitations are recorded in §11.5 and §22 of the rewrite context.
+Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
+method changes only ordinary identifier uses.
 
 ## Next step
 
@@ -61,5 +63,7 @@ The operator-annotation feature passed Debug and ReleaseSafe `zig build test`, `
 `bash tools/check-doc-examples.sh` (92 linked files), and `git diff --check` using pinned Zig
 0.16.0. Its final integration audit found no old syntax in the fuzz generator; the LSP has
 named-method, operator-token go-to-definition, and operator-token reference coverage.
+Rename rejects an operator-token cursor and excludes operator-token locations from method
+rename edits.
 Preserve the unrelated untracked
 `emerald-file-writer-streaming-closed.txt` artifact.

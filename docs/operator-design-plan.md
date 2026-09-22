@@ -214,7 +214,9 @@ used normally. Operator-token go-to-definition and find-references are also impl
 binary AST nodes retain the operator token's span, and the LSP uses the checker's statically
 selected method key to resolve a cursor on `+`, `-`, `*`, or `/` and to include that token in
 the method's references. Renaming remains method-name based; an operator symbol is not an
-identifier and is therefore not itself renameable.
+identifier and is therefore not itself renameable. A method rename deliberately omits its
+operator-token references from the edits, since replacing `*` with a method name would not be
+valid source.
 
 ## Tests and completion criteria
 

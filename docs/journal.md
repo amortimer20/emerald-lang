@@ -27,6 +27,8 @@ that method without rerunning or dynamically reselecting dispatch. This intentio
 not make symbols renameable: the method name remains the declaration programmers rename.
 The same key now makes a method's find-references result include the operator token as well as
 ordinary named calls.
+Rename keeps its identifier contract: it rejects a cursor on an operator token and omits such
+reference locations when renaming the registered method.
 
 ## Pre-implementation decision pass
 

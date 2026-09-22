@@ -938,6 +938,26 @@ fn definitionAt(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file:
     return null;
 }
 
+/// True only for an arithmetic symbol whose binary expression selected an
+/// annotated method. The symbol is useful navigation syntax, not an
+/// identifier a rename can replace.
+fn isAnnotatedOperatorAt(analysis: *const emerald.Analysis, file: u32, offset: u32) bool {
+    const found = expressionAt(analysis, file, offset) orelse return false;
+    if (found.expression.data != .binary) return false;
+    const binary = found.expression.data.binary;
+    return offset >= binary.operator_span.start and offset <= binary.operator_span.end and analysis.checked.operator_calls.contains(found.expression);
+}
+
+fn isOperatorTokenSpan(source: *const Source, span: Source.Span) bool {
+    const start: usize = @intCast(span.start);
+    const end: usize = @intCast(span.end);
+    const text = source.text[start..end];
+    return text.len == 1 and switch (text[0]) {
+        '+', '-', '*', '/' => true,
+        else => false,
+    };
+}
+
 fn memberDefinition(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, expr: *const Ast.Expression) !?Resolver.Target {
     const member = expr.data.member;
 
@@ -1916,6 +1936,10 @@ fn onPrepareRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
         try respond(gpa, out, id, null);
         return;
     }
+    if (isAnnotatedOperatorAt(&analysis, loaded.index, offset)) {
+        try respond(gpa, out, id, null);
+        return;
+    }
 
     // The same set `onRename` would edit, reused rather than re-derived, so
     // the range this offers is always exactly what a rename from here would
@@ -1972,6 +1996,10 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
         try respondError(gpa, out, id, invalid_params_code, "a built-in name cannot be renamed");
         return;
     }
+    if (isAnnotatedOperatorAt(&analysis, loaded.index, offset)) {
+        try respondError(gpa, out, id, invalid_params_code, "an operator symbol cannot be renamed; rename its method name instead");
+        return;
+    }
 
     var sites: std.ArrayList(Resolver.Target) = .empty;
     defer sites.deinit(gpa);
@@ -1989,6 +2017,7 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
         const gop = try by_file.getOrPut(gpa, site.file);
         if (!gop.found_existing) gop.value_ptr.* = .empty;
         const site_source = &loaded.project.files[site.file].source;
+        if (isOperatorTokenSpan(site_source, site.span)) continue;
         try gop.value_ptr.append(gpa, .{ .range = lspRange(site_source, site.span), .newText = new_name });
     }
 
@@ -2861,6 +2890,8 @@ test "definitionAt jumps from an annotated arithmetic operator to its method" {
     const declaration_offset: u32 = @intCast(std.mem.indexOf(u8, text, "func times").? + "func ".len);
     try testing.expectEqual(@as(u32, 0), target.file);
     try testing.expectEqual(declaration_offset, target.span.start);
+    try testing.expect(isAnnotatedOperatorAt(&analysis, 0, operator_offset));
+    try testing.expect(!isAnnotatedOperatorAt(&analysis, 0, declaration_offset));
 }
 
 test "definitionAt jumps from a member access to the field it names" {
