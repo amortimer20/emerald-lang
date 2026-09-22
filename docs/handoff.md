@@ -338,6 +338,88 @@ mistake than an interpreter is, so proving concurrency's semantics cheaply here 
 more, not less, given where this is ultimately headed. User wants to research further before
 deciding the model — **not authorized to start** design or implementation yet.
 
+Mixed-type arithmetic operators (21's "mixed-type operator contracts such as `Vector2 +
+Float`") had a long three-way design conversation — Claude, Codex, and GPT-6 — that
+converged without authorizing anything. Recorded so a fourth round does not re-derive it.
+Three shapes were ruled out. A conversion or widening trait (`WidensFromFloat`, supplying
+`from_float(value: Float): Self` for the checker to insert before the operator call) fails on
+a capability gap, not on taste: a conversion coerces the right operand *into* `Self` and
+yields `Self`, so `Matrix * Vector2 -> Vector2` is unrepresentable in that shape. It also
+mislabels the operation — `2.0` becoming `Vector2(2.0, 2.0)` is a domain-specific broadcast,
+not 4.4's lossless-ish numeric widening, and one shared conversion cannot say whether `*`
+should broadcast the way `+` does. Union-typed operands (`add(other: Self | Float)`) work but
+require inventing sum types, which exist nowhere else in the language, to solve a narrow
+numeric problem, and force a `case`/`is` block into every mixed operator body. General method
+overloading solves *selection* but leaves *authorization* untouched, which is the decisive
+objection: a `Money` declaring `multiply(quantity: Int): Money` still does not satisfy
+`Multipliable`'s `multiply(other: Self): Self`, and 11.5 makes a bare `multiply` without
+adoption a warning, so `*` stays unauthorized no matter how many overloads exist. It would
+also reverse three settled decisions (22's one-name-per-member rule; `self(...)` delegation,
+which 21 says arrives together with overloading; and the interaction with named/defaulted
+arguments, already shipped on `Int.to_string(base:)` and `Float.format(decimal_places:)`,
+which is where overload resolution's real cost lives), and would force rework in the LSP,
+where `definitionAt` returns a single `Resolver.Target`.
+
+The converged shape is an `@operator("*")` annotation on an ordinary, uniquely named method
+(`price * 3` and `price.times(3)` both reach it), with selection rules kept deliberately
+small: exactly one required argument and a declared result type, no defaults; the left
+operand owns the operation, so `2.0 * vector` stays rejected as 11.5 already specifies, and
+deserves a diagnostic naming the supported order; ordinary argument compatibility including
+`Int` -> `Float` widening, which 4.4 requires rather than permits ("wherever a `Float` is
+expected, not only in arithmetic"); overlapping registrations rejected at their declarations
+instead of a most-specific ranking; any declared result type, which is what buys `Matrix *
+Vector2` and `Distance / Distance -> Float`; compound assignment allowed when the result is
+assignable back to the destination, not only when types match; and 11.5's existing bar on an
+operator changing its operands preserved. Arithmetic only (`+`, `-`, `*`, `/`) — equality and
+ordering keep their trait contracts, since mixed equality raises symmetry and hashing
+questions arithmetic does not have. Note that `@operator(+)` with a bare token does not fit
+16.1's own rule that annotation arguments "must be compile-time literals"; the string
+spelling does. Argument-bearing annotations are not implemented at all today: `Parser.zig`'s
+`known_annotations` is a hardcoded `override`/`abstract`/`test` set parsed as `@` plus an
+identifier, and its "not an annotation" diagnostic names those three inline. The furthest
+version, if breaking changes are acceptable, retires `Addable`/`Subtractable`/`Multipliable`/
+`Divisible` outright so arithmetic has one mechanism instead of two plus collision rules
+between them. The evidence for that is checkable and held up: nothing consumes the arithmetic
+traits (`List.sum()` is documented `Int`/`Float` only, so a struct adopting `Addable` cannot
+be summed), while every trait that would be kept has dependent code — `sort`/`min`/`max`
+require `Ordered`, dictionary and set keys require `Hashable`/`Equatable`, and
+`print`/`write`/interpolation consume `Textual`. The four arithmetic traits are pure
+authorization tokens. Paired with that retirement: a registration whose operand type is
+`Self` should be required to use the canonical name (`add`, `subtract`, `multiply`,
+`divide`), so `a + b` stays guessable rather than dispatching to a per-type name, and so a
+future generics design can reintroduce `Addable` as a real constraint by adding one word to a
+`with` list instead of pulling arithmetic toward structural constraints while everything else
+stays nominal.
+
+Still open if this is ever built: inheritance is entirely unspecified (whether a subclass
+inherits registrations, whether it may add or override one, whether that stacks as `@override
+@operator("*")`, and the hybrid where left-operand dispatch is dynamic per 11.5 but operand
+selection is static, so a statically-`Animal` receiver selects from `Animal`'s table and
+dispatches into `Dog`'s body); 11.5's warning for declaring `add`/`multiply` without adopting
+the matching trait would misfire on an annotated method and needs a carve-out; trait-typed
+operands make overlap an open-world problem, since a class adopting two separately-registered
+traits can be declared in another file (and, later, another package), so a first slice
+restricted to concrete class operands keeps overlap decidable on 10.7's single-inheritance
+tree; and whether `Int` and `Float` registrations may coexist is unsettled — strict
+non-overlap forbids it because `Int` widens to `Float`, which costs the case where exact
+integer scaling and float scaling genuinely differ, while exact-match-before-widening allows
+both and is narrower than a general ranking rule. The standing recommendation is **not to
+build it**, and not because the design is weak: nothing in the language is broken,
+`money.times(3)` and `vector.scaled_by(2.0)` work today, and the gap is aesthetic. Every
+motivating type — `Matrix`, `Distance`, `Money` — is hypothetical; no Emerald program has
+wanted this yet. That matters because this project's actual pattern is that real programs
+surface real gaps: `Textual` exposed the hole that un-deferred `Equatable`/`Hashable`, and
+the ledger shakedown found a real API mistake. The trigger to revisit is writing a shakedown
+with a genuine money or units type and finding that the named-method workaround is wrong
+rather than merely less elegant — which would also produce the examples the rules need to be
+tested against (`Money * Int`, `Vector * Float`, `Matrix * Vector`, `Distance / Distance`,
+plus reversed operands, compound assignment, and the negative cases `Money * Money` and `2.0
+* vector`, each of which needs a specific diagnostic). One caution for whoever picks this up:
+across the conversation the scope ratcheted from "add a conversion trait" to "delete four
+shipped prelude traits, add argument-bearing annotations to the parser, and add operator
+selection machinery to the checker," and the design improving is not the same thing as the
+justification improving. **Not authorized to start.**
+
 ## Deferred
 
 Language behavior not yet built, confirmed still true against the current binary (not
