@@ -1832,6 +1832,11 @@ fn collectReferencesInExpression(
         },
         .unary => |u| try collectReferencesInExpression(gpa, analysis, target, file, u.operand, out),
         .binary => |b| {
+            if (analysis.checked.operator_calls.get(expr)) |key| {
+                if (analysis.resolved.facts.declarations.get(key)) |found| {
+                    if (targetEql(found, target)) try out.append(gpa, .{ .file = file, .span = b.operator_span });
+                }
+            }
             try collectReferencesInExpression(gpa, analysis, target, file, b.left, out);
             try collectReferencesInExpression(gpa, analysis, target, file, b.right, out);
         },
@@ -2988,6 +2993,43 @@ test "collectReferencesInStatements finds every read of a variable, but not its 
     const second_use: u32 = @intCast(std.mem.indexOf(u8, text, "total + 1").?);
     try testing.expectEqual(first_use, sites.items[0].span.start);
     try testing.expectEqual(second_use, sites.items[1].span.start);
+}
+
+test "collectReferencesInStatements finds named and operator uses of an annotated method" {
+    const gpa = testing.allocator;
+    const text =
+        "struct Money {\n" ++
+        "    const cents: Int\n" ++
+        "\n" ++
+        "    @operator(\"*\")\n" ++
+        "    func times(quantity: Int): Money {\n" ++
+        "        return Money(self.cents * quantity)\n" ++
+        "    }\n" ++
+        "}\n" ++
+        "\n" ++
+        "const price = Money(125)\n" ++
+        "print(price.times(3))\n" ++
+        "print(price * 3)\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const declaration_offset: u32 = @intCast(std.mem.indexOf(u8, text, "func times").? + "func ".len);
+    const target = (try definitionAt(gpa, &analysis, 0, declaration_offset)).?;
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    try collectReferencesInStatements(gpa, &analysis, target, 0, analysis.parsed[0].program.statements, &sites);
+
+    try testing.expectEqual(@as(usize, 2), sites.items.len);
+    const named_offset: u32 = @intCast(std.mem.indexOf(u8, text, "times(3)").?);
+    const operator_offset: u32 = @intCast(std.mem.indexOf(u8, text, "price * 3").? + "price ".len);
+    try testing.expectEqual(named_offset, sites.items[0].span.start);
+    try testing.expectEqual(operator_offset, sites.items[1].span.start);
+    try testing.expectEqual(@as(u32, 1), sites.items[1].span.len());
 }
 
 test "collectReferencesInStatements finds both a struct's constructor call and its type annotation" {

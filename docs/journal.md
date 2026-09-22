@@ -25,6 +25,8 @@ now stores the source span of its operator token; the checker already records th
 annotated method key, so `textDocument/definition` can map a cursor on the token directly to
 that method without rerunning or dynamically reselecting dispatch. This intentionally does
 not make symbols renameable: the method name remains the declaration programmers rename.
+The same key now makes a method's find-references result include the operator token as well as
+ordinary named calls.
 
 ## Pre-implementation decision pass
 
