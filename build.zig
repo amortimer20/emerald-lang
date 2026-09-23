@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     // Development builds identify the coming release without claiming it has
     // shipped. Release automation overrides this from its vX.Y.Z tag.
-    const version = b.option([]const u8, "version", "Version string printed by `emerald --version`") orelse "0.4.0-dev";
+    const version = b.option([]const u8, "version", "Version string printed by `emerald --version`") orelse "0.5.0-dev";
 
     const emerald_module = b.createModule(.{
         .root_source_file = b.path("src/emerald.zig"),
@@ -252,7 +252,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
 
     const version_output = b.addRunArtifact(exe);
     version_output.addArg("--version");
-    version_output.expectStdOutEqual("Emerald 0.4.0-dev\n");
+    version_output.expectStdOutEqual("Emerald 0.5.0-dev\n");
     version_output.expectExitCode(0);
     test_step.dependOn(&version_output.step);
 

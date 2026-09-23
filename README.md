@@ -126,7 +126,7 @@ Build, test, and run:
 ```bash
 zig build                              # build zig-out/bin/emerald
 zig build test                         # unit tests and command-line contract tests
-zig build run -- --version             # prints Emerald 0.4.0-dev
+zig build run -- --version             # prints Emerald 0.5.0-dev
 zig build run -- run examples/greeter.em
 zig build run -- test path/to/project
 ```

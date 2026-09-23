@@ -2164,3 +2164,10 @@ blocking forever on a second message that was never coming), and this sandbox's 
 silently aborts the rest of a compound Bash command on its own nonzero exit even under
 `|| true`, which had been masking cleanup and producing misleading "no output at all"
 results. Neither should be mistaken for a server-side defect if seen again.
+
+## Emerald 0.4.0 release, 2026-09-23
+
+`v0.4.0` was published from `5447b55` after Debug and ReleaseSafe tests, normal build,
+documentation-example validation, whitespace checks, and a local baseline-CPU release-archive
+smoke. GitHub Actions then built and package-smoked Linux x86_64, macOS ARM64, and Windows x86_64
+archives before publishing them with `SHA256SUMS`. Development resumed at `0.5.0-dev`.
