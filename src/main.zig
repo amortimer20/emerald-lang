@@ -38,13 +38,14 @@ const global_help =
     \\  test      run tests
     \\  format    format a file or project
     \\  repl      start an interactive session
+    \\  explain   learn about a diagnostic
     \\  help      show help for a command
     \\
     \\Run `emerald help <command>` for command-specific help.
     \\
 ;
 
-const Command = enum { check, run, @"test", format, repl, lsp, help };
+const Command = enum { check, run, @"test", format, repl, lsp, explain, help };
 
 /// The allocator a program's runtime work goes through. Zig's default for a
 /// ReleaseSafe build without libc is its leak-checking debug allocator, which
@@ -70,6 +71,10 @@ pub fn main(init: std.process.Init) !u8 {
     if (command == .help) {
         if (args.len == 3 and std.mem.eql(u8, args[2], "--help")) return printCommandHelp(io, command);
         return executeHelp(io, args[2..]);
+    }
+    if (command == .explain) {
+        if (args.len == 3 and std.mem.eql(u8, args[2], "--help")) return printCommandHelp(io, command);
+        return executeExplain(io, args[2..]);
     }
     if (args.len == 3 and std.mem.eql(u8, args[2], "--help")) return printCommandHelp(io, command);
 
@@ -172,6 +177,13 @@ fn printCommandHelp(io: std.Io, command: Command) !u8 {
         \\editor integration.
         \\
         ,
+        .explain =>
+        \\Usage: emerald explain <diagnostic-code>
+        \\
+        \\Show a worked explanation for a diagnostic code, such as E1001.
+        \\Codes appear in square brackets in explained CLI diagnostics.
+        \\
+        ,
         .help =>
         \\Usage: emerald help [command]
         \\
@@ -181,6 +193,31 @@ fn printCommandHelp(io: std.Io, command: Command) !u8 {
     };
     try writeAll(io, .stdout, text);
     return @intFromEnum(ExitCode.success);
+}
+
+fn executeExplain(io: std.Io, arguments: []const []const u8) !u8 {
+    if (arguments.len != 1) return commandMisuse(io, .explain, "expects a diagnostic code such as E1001");
+    const code = emerald.Diagnostic.Code.fromText(arguments[0]) orelse return unknownExplanation(io, arguments[0]);
+    const explanation = code.explanation();
+    var buffer: [4096]u8 = undefined;
+    const text = std.fmt.bufPrint(
+        &buffer,
+        "{s}: {s}\n\nProblem:\n{s}\nTry this:\n{s}",
+        .{ code.text(), explanation.title, explanation.example, explanation.correction },
+    ) catch "Emerald could not prepare this explanation.\n";
+    try writeAll(io, .stdout, text);
+    return @intFromEnum(ExitCode.success);
+}
+
+fn unknownExplanation(io: std.Io, code: []const u8) !u8 {
+    var buffer: [512]u8 = undefined;
+    const message = std.fmt.bufPrint(
+        &buffer,
+        "emerald: `{s}` is not an explained diagnostic code\nTry `emerald help explain` to see how explained codes work.\n",
+        .{code},
+    ) catch "emerald: this is not an explained diagnostic code\nRun `emerald help explain` for usage.\n";
+    try writeAll(io, .stderr, message);
+    return @intFromEnum(ExitCode.invalid_usage);
 }
 
 fn unknownCommand(io: std.Io, name: []const u8) !u8 {
@@ -233,7 +270,7 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
         .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .arguments = program_arguments }),
         // `main` routes `format`, `repl`, `lsp`, and `help` to their own functions
         // before this is reached.
-        .format, .repl, .lsp, .help => unreachable,
+        .format, .repl, .lsp, .explain, .help => unreachable,
     };
     var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();
@@ -411,9 +448,10 @@ fn writeDiagnostics(
     diagnostics: []const emerald.Diagnostic,
 ) !void {
     for (diagnostics) |diagnostic| {
-        const rendered = try diagnostic.renderAlloc(gpa, sources);
-        defer gpa.free(rendered);
-        try writeAll(io, .stderr, rendered);
+        var rendered: std.Io.Writer.Allocating = .init(gpa);
+        defer rendered.deinit();
+        try diagnostic.renderWithCode(sources, &rendered.writer, true);
+        try writeAll(io, .stderr, rendered.written());
     }
 }
 

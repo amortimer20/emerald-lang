@@ -30,6 +30,16 @@ ordinary named calls.
 Rename keeps its identifier contract: it rejects a cursor on an operator token and omits such
 reference locations when renaming the registered method.
 
+## First diagnostic explainer
+
+`emerald explain <code>` now turns four common checking problems into a short,
+before-and-after teaching example. The command owns no persistent history: each CLI invocation
+is independent, so bare `emerald explain` stays deferred instead of guessing at a
+previous terminal session. The normal CLI renderer labels only the curated diagnostics with
+their stable codes—undefined name, declaration type mismatch, const reassignment, and unknown
+member—while the conformance and editor renderers retain their existing prose-only shape until
+they deliberately adopt diagnostic codes themselves.
+
 ## Command-contract QA and interaction polish
 
 The CLI suite gained direct tests for the boundary between `check` and `run`: checking a valid

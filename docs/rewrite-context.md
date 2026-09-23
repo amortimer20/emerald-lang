@@ -2920,9 +2920,17 @@ nested beneath a statement that opened no block. The warning explains the scope 
 actually used and offers the formatter's indentation. Ordinary personal spacing does not
 produce semantic warnings.
 
-`emerald explain` expands a diagnostic into a short worked example. Bare invocation may
-explain the most recent diagnostic; an explicit diagnostic identifier should work in CI,
-documentation, and shared troubleshooting.
+`emerald explain <diagnostic-code>` expands a diagnostic into a short worked example. The
+initial catalog is intentionally small: only diagnostics with a stable code in their CLI
+rendering have an explanation, so a code is a maintained teaching promise rather than noise
+on every problem. Bare `emerald explain` is deferred: a one-shot command has no trustworthy
+"most recent diagnostic" without a separately designed persistence model. An explicit code
+works in CI, documentation, and shared troubleshooting.
+
+If the catalog grows beyond a small hand-maintained set, its code, title, explanation, and
+example move into one typed registry that drives both the command and generated reference
+documentation. That synchronization work is deferred until the catalog supplies a concrete
+reason to build it.
 
 An eventual `emerald.toml` may adjust warning levels. Defaults remain simple and
 instructional.
@@ -2941,6 +2949,7 @@ emerald check
 emerald test
 emerald format
 emerald repl
+emerald explain
 emerald help
 ```
 
@@ -2948,9 +2957,8 @@ emerald help
 it is a standard-input/output protocol endpoint for editors, not an interactive terminal
 workflow. `emerald help lsp` documents its optional `--stdio` spelling.
 
-`emerald new` and `emerald explain` are not implemented; running either reports an unknown
-command and exits `64`. They belong with `build`, `debug`, and package `add` (18.1.1) as
-later tooling, not the settled command set.
+`emerald new` is not implemented; it reports an unknown command and exits `64`. It belongs with
+`build`, `debug`, and package `add` (18.1.1) as later tooling, not the settled command set.
 
 There is no `fmt` alias. `run` checks the complete project before executing; `check`
 performs the same analysis without initializing modules or executing user code. This is

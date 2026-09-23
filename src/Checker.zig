@@ -1921,6 +1921,23 @@ fn report(
     });
 }
 
+fn reportCoded(
+    self: *Checker,
+    span: Source.Span,
+    code: Diagnostic.Code,
+    comptime message_format: []const u8,
+    message_args: anytype,
+    help: []const u8,
+) Error!void {
+    try self.diagnostics.append(self.arena, .{
+        .message = try std.fmt.allocPrint(self.arena, message_format, message_args),
+        .span = span,
+        .help = help,
+        .code = code,
+        .file = self.file,
+    });
+}
+
 /// Like `report`, but for a correction that names something from the program.
 fn reportWithHelp(
     self: *Checker,
@@ -1934,6 +1951,24 @@ fn reportWithHelp(
         .message = try std.fmt.allocPrint(self.arena, message_format, message_args),
         .span = span,
         .help = try std.fmt.allocPrint(self.arena, help_format, help_args),
+        .file = self.file,
+    });
+}
+
+fn reportWithHelpCoded(
+    self: *Checker,
+    span: Source.Span,
+    code: Diagnostic.Code,
+    comptime message_format: []const u8,
+    message_args: anytype,
+    comptime help_format: []const u8,
+    help_args: anytype,
+) Error!void {
+    try self.diagnostics.append(self.arena, .{
+        .message = try std.fmt.allocPrint(self.arena, message_format, message_args),
+        .span = span,
+        .help = try std.fmt.allocPrint(self.arena, help_format, help_args),
+        .code = code,
         .file = self.file,
     });
 }
@@ -2643,8 +2678,9 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
         const actual = try self.typeOfExpected(initializer, expected);
         if (declaration.annotation != null) {
             if (!actual.assignableTo(declared)) {
-                try self.report(
+                try self.reportCoded(
                     initializer.span,
+                    .type_mismatch,
                     "this is {f}, but `{s}` was declared as {f}",
                     .{ actual, declaration.name, declared },
                     mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
@@ -3201,8 +3237,9 @@ fn mismatchHelp(actual: Type, expected: Type, general: []const u8) []const u8 {
 fn requireMutable(self: *Checker, name: []const u8, span: Source.Span, binding: Binding) Error!void {
     switch (binding.mutability) {
         .variable => {},
-        .constant => try self.reportWithHelp(
+        .constant => try self.reportWithHelpCoded(
             span,
+            .immutable_binding,
             "`{s}` is a `const`, so its contents cannot change",
             .{name},
             "Declare `{s}` with `var` if it needs to change.",
@@ -8057,16 +8094,18 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         else => null,
     };
     if (suggestion) |name| {
-        return self.reportWithHelp(
+        return self.reportWithHelpCoded(
             member.name_span,
+            .unknown_member,
             "{f} has no " ++ what ++ " `{s}`",
             .{ base, member.name },
             "Emerald calls this `{s}`.",
             .{name},
         );
     }
-    try self.report(
+    try self.reportCoded(
         member.name_span,
+        .unknown_member,
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
         switch (base.kind) {

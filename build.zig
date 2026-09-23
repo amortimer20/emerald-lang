@@ -192,6 +192,38 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     reports_lexical.addCheck(.{ .expect_stderr_match = "Emerald writes numbers in decimal only" });
     test_step.dependOn(&reports_lexical.step);
 
+    const unknown_name = fixtures.add("unknown-name.em", "print(total)\n");
+    const reports_unknown_name = b.addRunArtifact(exe);
+    reports_unknown_name.addArg("check");
+    reports_unknown_name.addFileArg(unknown_name);
+    reports_unknown_name.expectExitCode(1);
+    reports_unknown_name.addCheck(.{ .expect_stderr_match = "[E1001] `total` is not defined" });
+    test_step.dependOn(&reports_unknown_name.step);
+
+    const mismatched_type = fixtures.add("mismatched-type.em", "var count: Int = \"three\"\n");
+    const reports_mismatched_type = b.addRunArtifact(exe);
+    reports_mismatched_type.addArg("check");
+    reports_mismatched_type.addFileArg(mismatched_type);
+    reports_mismatched_type.expectExitCode(1);
+    reports_mismatched_type.addCheck(.{ .expect_stderr_match = "[E2001] this is String, but `count` was declared as Int" });
+    test_step.dependOn(&reports_mismatched_type.step);
+
+    const constant_changed = fixtures.add("constant-changed.em", "const score = 10\nscore = 11\n");
+    const reports_constant_changed = b.addRunArtifact(exe);
+    reports_constant_changed.addArg("check");
+    reports_constant_changed.addFileArg(constant_changed);
+    reports_constant_changed.expectExitCode(1);
+    reports_constant_changed.addCheck(.{ .expect_stderr_match = "[E3001] `score` cannot be reassigned" });
+    test_step.dependOn(&reports_constant_changed.step);
+
+    const unknown_member = fixtures.add("unknown-member.em", "var names = [\"Ava\"]\nnames.push(\"Leo\")\n");
+    const reports_unknown_member = b.addRunArtifact(exe);
+    reports_unknown_member.addArg("check");
+    reports_unknown_member.addFileArg(unknown_member);
+    reports_unknown_member.expectExitCode(1);
+    reports_unknown_member.addCheck(.{ .expect_stderr_match = "[E4001] List[String] has no method `push`" });
+    test_step.dependOn(&reports_unknown_member.step);
+
     // Every diagnostic must reach the stream, not just the last one. This caught
     // a real defect: the standard streams were opened in positional mode, so each
     // write restarted at offset zero and clobbered the one before it.
@@ -217,6 +249,25 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     run_help.expectExitCode(0);
     run_help.addCheck(.{ .expect_stdout_match = "Usage: emerald run <file.em> [-- <program-argument>...]" });
     test_step.dependOn(&run_help.step);
+
+    const explain_help = b.addRunArtifact(exe);
+    explain_help.addArgs(&.{ "help", "explain" });
+    explain_help.expectExitCode(0);
+    explain_help.addCheck(.{ .expect_stdout_match = "Usage: emerald explain <diagnostic-code>" });
+    test_step.dependOn(&explain_help.step);
+
+    const explains_unknown_name = b.addRunArtifact(exe);
+    explains_unknown_name.addArgs(&.{ "explain", "E1001" });
+    explains_unknown_name.expectExitCode(0);
+    explains_unknown_name.addCheck(.{ .expect_stdout_match = "E1001: A name must be declared before Emerald can use it." });
+    explains_unknown_name.addCheck(.{ .expect_stdout_match = "var total = 0" });
+    test_step.dependOn(&explains_unknown_name.step);
+
+    const rejects_unknown_explanation = b.addRunArtifact(exe);
+    rejects_unknown_explanation.addArgs(&.{ "explain", "E9999" });
+    rejects_unknown_explanation.expectExitCode(64);
+    rejects_unknown_explanation.addCheck(.{ .expect_stderr_match = "`E9999` is not an explained diagnostic code" });
+    test_step.dependOn(&rejects_unknown_explanation.step);
 
     const unknown_command = b.addRunArtifact(exe);
     unknown_command.addArg("rn");

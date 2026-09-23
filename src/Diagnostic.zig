@@ -49,6 +49,97 @@ pub const Frame = struct {
 /// diagnostics are, and should stay, errors.
 pub const Severity = enum { err, warning };
 
+/// A stable identifier for a diagnostic that has a longer explanation in the
+/// command-line explainer. Most diagnostics deliberately remain uncoded until
+/// a real explanation earns its place; an identifier is a promise to keep that
+/// explanation useful, not a label pasted onto every sentence.
+pub const Code = enum {
+    unknown_name,
+    type_mismatch,
+    immutable_binding,
+    unknown_member,
+
+    pub fn text(self: Code) []const u8 {
+        return switch (self) {
+            .unknown_name => "E1001",
+            .type_mismatch => "E2001",
+            .immutable_binding => "E3001",
+            .unknown_member => "E4001",
+        };
+    }
+
+    pub fn fromText(written: []const u8) ?Code {
+        const codes = std.StaticStringMap(Code).initComptime(.{
+            .{ "E1001", .unknown_name },
+            .{ "E2001", .type_mismatch },
+            .{ "E3001", .immutable_binding },
+            .{ "E4001", .unknown_member },
+        });
+        return codes.get(written);
+    }
+
+    pub fn explanation(self: Code) Explanation {
+        return switch (self) {
+            .unknown_name => .{
+                .title = "A name must be declared before Emerald can use it.",
+                .example =
+                    \\print(total)
+                    \\var total = 0
+                    \\
+                ,
+                .correction =
+                    \\var total = 0
+                    \\print(total)
+                    \\
+                ,
+            },
+            .type_mismatch => .{
+                .title = "A declaration's type and its value must agree.",
+                .example =
+                    \\var count: Int = "three"
+                    \\
+                ,
+                .correction =
+                    \\var count: Int = 3
+                    \\
+                ,
+            },
+            .immutable_binding => .{
+                .title = "A const keeps the value it was given.",
+                .example =
+                    \\const score = 10
+                    \\score = 11
+                    \\
+                ,
+                .correction =
+                    \\var score = 10
+                    \\score = 11
+                    \\
+                ,
+            },
+            .unknown_member => .{
+                .title = "A value can use only the members its type provides.",
+                .example =
+                    \\var names = ["Ava"]
+                    \\names.push("Leo")
+                    \\
+                ,
+                .correction =
+                    \\var names = ["Ava"]
+                    \\names.append("Leo")
+                    \\
+                ,
+            },
+        };
+    }
+};
+
+pub const Explanation = struct {
+    title: []const u8,
+    example: []const u8,
+    correction: []const u8,
+};
+
 /// What is wrong, in the user's vocabulary. Never names an implementation detail.
 message: []const u8,
 /// The source range to underline.
@@ -56,6 +147,8 @@ span: Source.Span,
 /// The concrete correction to suggest.
 help: []const u8,
 severity: Severity = .err,
+/// Present only when code has a curated command-line explanation.
+code: ?Code = null,
 /// The calls active when a runtime error was raised, innermost first. Empty for
 /// every diagnostic reported before a program runs.
 trace: []const Frame = &.{},
@@ -72,14 +165,28 @@ const gutter = "  ";
 /// `sources` holds the program's files in the order diagnostics index them, so
 /// a project reports each problem against the file it is actually in.
 pub fn render(self: Diagnostic, sources: []const Source, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    return self.renderWithCode(sources, writer, false);
+}
+
+/// The CLI includes an identifier immediately before an explained problem's
+/// ordinary message. Other consumers retain render's established prose-only
+/// shape until they deliberately adopt codes too.
+pub fn renderWithCode(self: Diagnostic, sources: []const Source, writer: *std.Io.Writer, include_code: bool) std.Io.Writer.Error!void {
     const source = sources[self.file];
     const start = source.location(self.span.start);
     if (self.severity == .warning) {
-        try writer.print("{s}:{d}:{d}: warning: {s}\n", .{
-            source.path,
-            start.line,
-            start.column,
-            self.message,
+        if (include_code and self.code != null) {
+            try writer.print("{s}:{d}:{d}: warning [{s}]: {s}\n", .{
+                source.path, start.line, start.column, self.code.?.text(), self.message,
+            });
+        } else {
+            try writer.print("{s}:{d}:{d}: warning: {s}\n", .{
+                source.path, start.line, start.column, self.message,
+            });
+        }
+    } else if (include_code and self.code != null) {
+        try writer.print("{s}:{d}:{d}: [{s}] {s}\n", .{
+            source.path, start.line, start.column, self.code.?.text(), self.message,
         });
     } else {
         try writer.print("{s}:{d}:{d}: {s}\n", .{
@@ -127,7 +234,7 @@ pub fn render(self: Diagnostic, sources: []const Source, writer: *std.Io.Writer)
     }
     if (self.related) |earlier| {
         try writer.writeAll("while handling this earlier error:\n");
-        try earlier.render(sources, writer);
+        try earlier.renderWithCode(sources, writer, include_code);
     }
 }
 

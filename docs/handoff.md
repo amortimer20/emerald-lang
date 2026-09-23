@@ -31,6 +31,14 @@ bad invocations, formatter change reporting, and REPL `:help`/`:quit`; `lsp` rem
 through its dedicated help but is intentionally absent from the interactive command list.
 Their substantive REPL and LSP protocol behavior remains covered in their own Zig modules.
 
+The first diagnostic-explainer slice is complete. CLI diagnostics label four common,
+curated problems with stable codes: undefined names, declaration type mismatches, const
+reassignment, and unknown members. `emerald explain <code>` prints a short worked
+example for each. Bare `emerald explain` remains deferred rather than guessing at a
+"most recent" diagnostic across independent command invocations; editor/LSP diagnostic codes
+and a broader catalog remain later work. If that catalog grows, one typed code registry and
+generated reference page replace the current small hand-maintained catalog.
+
 Arithmetic operator annotations are complete:
 `d73ede4` adds `@operator("+")`/`-`/`*`/`/` parsing, checking, formatting, and execution;
 `f2dfac2` adds disjoint registrations, inheritance-aware static selection with normal virtual
@@ -52,9 +60,11 @@ only with user authorization.
 - Taking `Trait.method` as a value remains rejected.
 - Capturing a built-in function or method as a value, and variadic functions generally, remain
   rejected because no written function type describes them yet.
-- Diagnostics/`emerald explain`, expanded `emerald.toml`, bounded implementation limits,
+- Expanded `emerald.toml`, bounded implementation limits,
   networking, concurrency, generics, enum payloads, wider general overloading, and package
   management each need a separate design pass or a concrete program that motivates them.
+- A generated diagnostic-code registry and reference page wait until the explainer catalog is
+  large enough to justify their extra machinery.
 
 ## Active rough edges
 
@@ -78,5 +88,7 @@ The command-contract QA and interactive-polish slice passed Debug and ReleaseSaf
 test`, `zig build`, `bash tools/check-doc-examples.sh` (92 linked files), and `git diff --check`
 with pinned Zig 0.16.0. The formatter's changed-file output and rewrite summary were also
 checked directly against a fresh temporary source file.
-Preserve the unrelated untracked
-`emerald-file-writer-streaming-closed.txt` artifact.
+The diagnostic explainer passed Debug and ReleaseSafe `zig build test`, `zig build`,
+`bash tools/check-doc-examples.sh` (92 linked files), and `git diff --check` with pinned Zig 0.16.0.
+The closed-FileWriter conformance case now cleans up its own temporary file in `finally`, so
+the suite leaves no generated artifact in the repository root.

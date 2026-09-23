@@ -11,6 +11,7 @@ them.
 | [Collections and ranges](collections-and-ranges.md) | Literals, iteration, and collection value semantics | Drafted |
 | [Objects and traits](objects-and-traits.md) | Structs, classes, enums, properties, and traits | Drafted |
 | [Errors, tests, and projects](errors-tests-and-projects.md) | `try`, `@test`, modules, and command-line workflow | Drafted |
+| [Diagnostics](diagnostics.md) | Reading compiler problems and using `emerald explain` | Drafted |
 
 The [standard-library reference](../library/) is complementary: use this guide to learn the
 ideas, then use the reference to look up exact operations.

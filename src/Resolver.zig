@@ -774,8 +774,9 @@ fn declaredAbove(self: *Resolver, found: Found, span: Source.Span) Error!bool {
         );
     } else {
         // Inside its own declaration, as in `var x = x`.
-        try self.report(
+        try self.reportCoded(
             span,
+            .unknown_name,
             "`{s}` is not defined",
             .{nameOf(found.key)},
             "Check the spelling, or declare it before this line.",
@@ -1106,6 +1107,23 @@ fn report(
     });
 }
 
+fn reportCoded(
+    self: *Resolver,
+    span: Source.Span,
+    code: Diagnostic.Code,
+    comptime message_format: []const u8,
+    message_args: anytype,
+    help: []const u8,
+) !void {
+    try self.diagnostics.append(self.arena, .{
+        .message = try std.fmt.allocPrint(self.arena, message_format, message_args),
+        .span = span,
+        .help = help,
+        .code = code,
+        .file = self.file,
+    });
+}
+
 /// A name that resolves to nothing. When a top-level variable of that name is
 /// declared further down, the reader has most likely run into section 7.1's
 /// "variables are visible only from their declarations", so that is what the
@@ -1203,8 +1221,9 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
             ""
         else
             try std.fmt.allocPrint(self.arena, "{s}/", .{enclosing});
-        return self.report(
+        return self.reportCoded(
             span,
+            .unknown_name,
             "`{s}` is not defined",
             .{name},
             try std.fmt.allocPrint(
@@ -1215,7 +1234,7 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
         );
     }
 
-    try self.report(span, "`{s}` is not defined", .{name}, help);
+    try self.reportCoded(span, .unknown_name, "`{s}` is not defined", .{name}, help);
 }
 
 const EnclosingType = struct { type_key: []const u8, has_self: bool };
@@ -1786,8 +1805,9 @@ fn reportReadOnly(
     binding_kind: BindingKind,
 ) Error!void {
     switch (binding_kind) {
-        .variable => try self.report(
+        .variable => try self.reportCoded(
             span,
+            .immutable_binding,
             "`{s}` cannot be reassigned",
             .{name},
             "It was declared with `const`. Use `var` if the value needs to change.",
