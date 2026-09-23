@@ -32,6 +32,10 @@ through its dedicated help but is intentionally absent from the interactive comm
 Their substantive REPL and LSP protocol behavior remains covered in their own Zig modules.
 Development binaries now identify themselves as `Emerald 0.4.0-dev`; release automation passes
 the pushed `vX.Y.Z` tag through the build so a distributed binary reports that exact version.
+Release preparation now also packages and smokes the binary's version, `help`, `check`, `run`,
+`test`, `format --check`, `explain`, and clean REPL exit on every release platform. A manual
+release-workflow dispatch builds and verifies artifacts but cannot publish them; publishing
+requires a `vX.Y.Z` tag.
 
 The first diagnostic-explainer slice is complete. CLI diagnostics label four common,
 curated problems with stable codes: undefined names, declaration type mismatches, const
@@ -54,8 +58,9 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-No implementation slice is active. Choose the next task from the deferred/features backlog
-only with user authorization.
+Review and commit the pending 0.4 release-readiness changes. Once they are on `main`, create
+and push `v0.4.0` only with explicit user authorization; GitHub Actions will build, package,
+smoke-test, checksum, and publish the tagged artifacts.
 
 ## Deferred
 
@@ -96,3 +101,8 @@ The closed-FileWriter conformance case now cleans up its own temporary file in `
 the suite leaves no generated artifact in the repository root.
 The version command passed Debug and ReleaseSafe `zig build test`, `zig build`,
 `bash tools/check-doc-examples.sh` (92 linked files), and `git diff --check` with pinned Zig 0.16.0.
+The pending 0.4 release-readiness changes passed Debug and ReleaseSafe `zig build test`,
+`zig build`, `bash tools/check-doc-examples.sh` (92 linked files), and `git diff --check` with
+pinned Zig 0.16.0. A locally built `ReleaseSafe`, baseline-CPU `Emerald 0.4.0` tar archive was
+unpacked and successfully exercised through every release smoke command, including a passing
+`@test` function.
