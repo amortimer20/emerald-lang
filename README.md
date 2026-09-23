@@ -115,7 +115,7 @@ mise use -g "github:amortimer20/emerald-lang@latest"
 Or for a specific version:
 
 ```bash
-mise use -g "github:amortimer20/emerald-lang@v0.2.0"
+mise use -g "github:amortimer20/emerald-lang@v0.3.0"
 ```
 
 If `@latest` fails to resolve (older Mise versions can mishandle GitHub's release
@@ -126,6 +126,7 @@ Build, test, and run:
 ```bash
 zig build                              # build zig-out/bin/emerald
 zig build test                         # unit tests and command-line contract tests
+zig build run -- --version             # prints Emerald 0.4.0-dev
 zig build run -- run examples/greeter.em
 zig build run -- test path/to/project
 ```

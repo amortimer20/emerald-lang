@@ -3,6 +3,9 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    // Development builds identify the coming release without claiming it has
+    // shipped. Release automation overrides this from its vX.Y.Z tag.
+    const version = b.option([]const u8, "version", "Version string printed by `emerald --version`") orelse "0.4.0-dev";
 
     const emerald_module = b.createModule(.{
         .root_source_file = b.path("src/emerald.zig"),
@@ -29,6 +32,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{.{ .name = "emerald", .module = emerald_module }},
     });
+    const version_options = b.addOptions();
+    version_options.addOption([]const u8, "version", version);
+    exe_module.addOptions("version_options", version_options);
 
     const exe = b.addExecutable(.{
         .name = "emerald",
@@ -243,6 +249,12 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     global_help.addCheck(.{ .expect_stdout_match = "Usage: emerald <command> [arguments]" });
     global_help.addCheck(.{ .expect_stdout_match = "Run `emerald help <command>`" });
     test_step.dependOn(&global_help.step);
+
+    const version_output = b.addRunArtifact(exe);
+    version_output.addArg("--version");
+    version_output.expectStdOutEqual("Emerald 0.4.0-dev\n");
+    version_output.expectExitCode(0);
+    test_step.dependOn(&version_output.step);
 
     const run_help = b.addRunArtifact(exe);
     run_help.addArgs(&.{ "help", "run" });

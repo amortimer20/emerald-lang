@@ -7,6 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const emerald = @import("emerald");
+const version_options = @import("version_options");
 const Repl = @import("Repl.zig");
 const Lsp = @import("Lsp.zig");
 
@@ -61,6 +62,10 @@ pub fn main(init: std.process.Init) !u8 {
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len < 2) return printGlobalHelp(io);
+    if (std.mem.eql(u8, args[1], "--version")) {
+        if (args.len == 2) return printVersion(io);
+        return commandMisuse(io, null, "`--version` must be used on its own");
+    }
     if (std.mem.eql(u8, args[1], "--help")) {
         if (args.len == 2) return printGlobalHelp(io);
         return commandMisuse(io, null, "`--help` must be used on its own");
@@ -123,6 +128,13 @@ pub fn main(init: std.process.Init) !u8 {
 
 fn printGlobalHelp(io: std.Io) !u8 {
     try writeAll(io, .stdout, global_help);
+    return @intFromEnum(ExitCode.success);
+}
+
+fn printVersion(io: std.Io) !u8 {
+    var buffer: [128]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, "Emerald {s}\n", .{version_options.version}) catch "Emerald\n";
+    try writeAll(io, .stdout, text);
     return @intFromEnum(ExitCode.success);
 }
 

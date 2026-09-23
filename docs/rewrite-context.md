@@ -2960,6 +2960,10 @@ workflow. `emerald help lsp` documents its optional `--stdio` spelling.
 `emerald new` is not implemented; it reports an unknown command and exits `64`. It belongs with
 `build`, `debug`, and package `add` (18.1.1) as later tooling, not the settled command set.
 
+`emerald --version` prints the version embedded in the binary. Development builds currently
+print `Emerald 0.4.0-dev`; release automation derives a release build's value from its `vX.Y.Z`
+tag, so the tagged `v0.4.0` binary prints `Emerald 0.4.0`.
+
 There is no `fmt` alias. `run` checks the complete project before executing; `check`
 performs the same analysis without initializing modules or executing user code. This is
 useful when a program would prompt, open a window, modify files, or run indefinitely.

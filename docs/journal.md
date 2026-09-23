@@ -30,6 +30,13 @@ ordinary named calls.
 Rename keeps its identifier contract: it rejects a cursor on an operator token and omits such
 reference locations when renaming the registered method.
 
+## Versioned binaries
+
+Development builds now embed and report `Emerald 0.4.0-dev` through `emerald --version`. The
+release workflow derives a distributed binary's value from the pushed `vX.Y.Z` tag, passes
+it as a build option, and smoke-tests the packaged executable's exact output. The normal help
+banner stays version-free so discovery remains about what a command can do.
+
 ## First diagnostic explainer
 
 `emerald explain <code>` now turns four common checking problems into a short,

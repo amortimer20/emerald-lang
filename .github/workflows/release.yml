@@ -62,7 +62,12 @@ jobs:
         # targets the CPU of the GitHub Actions runner that happens to build
         # it, which can include instruction sets (AVX-512, etc.) that are
         # absent on a user's machine and crash with "Illegal instruction".
-        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
+        run: |
+          version="0.4.0-dev"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          zig build -Doptimize=ReleaseSafe -Dcpu=baseline -Dversion="$version"
 
       - name: Package and smoke-test binary
         shell: bash
@@ -75,6 +80,11 @@ jobs:
             powershell -NoProfile -Command "Compress-Archive -Path '${{ matrix.binary }}' -DestinationPath 'dist/${{ matrix.asset }}' -Force"
             powershell -NoProfile -Command "Expand-Archive -Path 'dist/${{ matrix.asset }}' -DestinationPath 'smoke' -Force"
           fi
+          version="0.4.0-dev"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          test "$("./smoke/${{ matrix.binary_name }}" --version)" = "Emerald $version"
           "./smoke/${{ matrix.binary_name }}" check examples/arithmetic.em
           (
             cd dist
