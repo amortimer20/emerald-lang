@@ -138,6 +138,45 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     accepts.expectExitCode(0);
     test_step.dependOn(&accepts.step);
 
+    // `check` shares `run`'s frontend but never evaluates entry statements.
+    // Its output is therefore the successful analysis acknowledgement, not
+    // anything the valid program would print.
+    const checks_without_running = fixtures.add("checks-without-running.em", "print(\"this must not run\")\n");
+    const check_does_not_execute = b.addRunArtifact(exe);
+    check_does_not_execute.addArg("check");
+    check_does_not_execute.addFileArg(checks_without_running);
+    check_does_not_execute.expectStdOutEqual("No problems found.\n");
+    check_does_not_execute.expectExitCode(0);
+    test_step.dependOn(&check_does_not_execute.step);
+
+    // Conversely, `run` must stop before entry execution when the shared
+    // frontend finds a source error.
+    const invalid_before_run = fixtures.add("invalid-before-run.em", "print(\"this must not run\")\nconst count: Int = \"one\"\n");
+    const run_stops_on_source_error = b.addRunArtifact(exe);
+    run_stops_on_source_error.addArg("run");
+    run_stops_on_source_error.addFileArg(invalid_before_run);
+    run_stops_on_source_error.expectExitCode(1);
+    run_stops_on_source_error.addCheck(.{ .expect_stderr_match = "this is String, but `count` was declared as Int" });
+    test_step.dependOn(&run_stops_on_source_error.step);
+
+    // A warning is visible to every analysis command and keeps status 1, but
+    // it does not suppress a valid run.
+    const warned_program = fixtures.add("warned.em", "var score: Int = 5\nif score is Int {\n    print(\"still ran\")\n}\n");
+    const check_reports_warning = b.addRunArtifact(exe);
+    check_reports_warning.addArg("check");
+    check_reports_warning.addFileArg(warned_program);
+    check_reports_warning.expectExitCode(1);
+    check_reports_warning.addCheck(.{ .expect_stderr_match = "warning: this `is` test always answers `true`" });
+    test_step.dependOn(&check_reports_warning.step);
+
+    const run_reports_warning_and_executes = b.addRunArtifact(exe);
+    run_reports_warning_and_executes.addArg("run");
+    run_reports_warning_and_executes.addFileArg(warned_program);
+    run_reports_warning_and_executes.expectExitCode(1);
+    run_reports_warning_and_executes.addCheck(.{ .expect_stdout_match = "still ran" });
+    run_reports_warning_and_executes.addCheck(.{ .expect_stderr_match = "warning: this `is` test always answers `true`" });
+    test_step.dependOn(&run_reports_warning_and_executes.step);
+
     const rejects = b.addRunArtifact(exe);
     rejects.addArg("check");
     rejects.addFileArg(malformed);
@@ -165,10 +204,39 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     reports_both.addCheck(.{ .expect_stderr_match = "this is not a valid number" });
     test_step.dependOn(&reports_both.step);
 
-    const misused = b.addRunArtifact(exe);
-    misused.expectExitCode(64);
-    misused.addCheck(.{ .expect_stderr_match = "usage: emerald" });
-    test_step.dependOn(&misused.step);
+    // Bare invocation is the discovery path, not an error. Help can then be
+    // narrowed to one command without making a user run a program first.
+    const global_help = b.addRunArtifact(exe);
+    global_help.expectExitCode(0);
+    global_help.addCheck(.{ .expect_stdout_match = "Usage: emerald <command> [arguments]" });
+    global_help.addCheck(.{ .expect_stdout_match = "Run `emerald help <command>`" });
+    test_step.dependOn(&global_help.step);
+
+    const run_help = b.addRunArtifact(exe);
+    run_help.addArgs(&.{ "help", "run" });
+    run_help.expectExitCode(0);
+    run_help.addCheck(.{ .expect_stdout_match = "Usage: emerald run <file.em> [-- <program-argument>...]" });
+    test_step.dependOn(&run_help.step);
+
+    const unknown_command = b.addRunArtifact(exe);
+    unknown_command.addArg("rn");
+    unknown_command.expectExitCode(64);
+    unknown_command.addCheck(.{ .expect_stderr_match = "unknown command `rn`" });
+    unknown_command.addCheck(.{ .expect_stderr_match = "Run `emerald help`" });
+    test_step.dependOn(&unknown_command.step);
+
+    const repl_misused = b.addRunArtifact(exe);
+    repl_misused.addArgs(&.{ "repl", "unexpected.em" });
+    repl_misused.expectExitCode(64);
+    repl_misused.addCheck(.{ .expect_stderr_match = "repl does not take arguments" });
+    repl_misused.addCheck(.{ .expect_stderr_match = "emerald help repl" });
+    test_step.dependOn(&repl_misused.step);
+
+    const lsp_misused = b.addRunArtifact(exe);
+    lsp_misused.addArgs(&.{ "lsp", "unexpected" });
+    lsp_misused.expectExitCode(64);
+    lsp_misused.addCheck(.{ .expect_stderr_match = "lsp accepts only an optional `--stdio`" });
+    test_step.dependOn(&lsp_misused.step);
 
     // A missing file is a different problem from a malformed command line
     // (64): the invocation itself was fine, so it gets its own status (66,
@@ -196,6 +264,8 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     format_check_messy.addArgs(&.{ "format", "--check" });
     format_check_messy.addFileArg(messy_checked_only);
     format_check_messy.expectExitCode(1);
+    format_check_messy.addCheck(.{ .expect_stdout_match = "Would format " });
+    format_check_messy.addCheck(.{ .expect_stdout_match = "Run `emerald format " });
     test_step.dependOn(&format_check_messy.step);
 
     // A separate fixture from the `--check` case above: both run against the
@@ -218,7 +288,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     const format_misused = b.addRunArtifact(exe);
     format_misused.addArgs(&.{ "format", "a", "b" });
     format_misused.expectExitCode(64);
-    format_misused.addCheck(.{ .expect_stderr_match = "usage: emerald" });
+    format_misused.addCheck(.{ .expect_stderr_match = "format expects `<file.em>` or `--check <file.em>`" });
     test_step.dependOn(&format_misused.step);
 
     // `run` executes and prints; a runtime error exits 2 rather than 1.
@@ -228,6 +298,23 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     runs.expectStdOutEqual("14\n2\ntrue\n20\n");
     runs.expectExitCode(0);
     test_step.dependOn(&runs.step);
+
+    const receives_arguments = fixtures.add("receives-arguments.em", "print(Program.arguments)\n");
+    const run_receives_arguments = b.addRunArtifact(exe);
+    run_receives_arguments.addArgs(&.{ "run" });
+    run_receives_arguments.addFileArg(receives_arguments);
+    run_receives_arguments.addArgs(&.{ "--", "Ada", "two words" });
+    run_receives_arguments.expectStdOutEqual("[\"Ada\", \"two words\"]\n");
+    run_receives_arguments.expectExitCode(0);
+    test_step.dependOn(&run_receives_arguments.step);
+
+    const check_rejects_arguments = b.addRunArtifact(exe);
+    check_rejects_arguments.addArgs(&.{ "check" });
+    check_rejects_arguments.addFileArg(receives_arguments);
+    check_rejects_arguments.addArgs(&.{ "--", "Ada" });
+    check_rejects_arguments.expectExitCode(64);
+    check_rejects_arguments.addCheck(.{ .expect_stderr_match = "check does not run a program" });
+    test_step.dependOn(&check_rejects_arguments.step);
 
     const overflows = fixtures.add("overflow.em", "print(9223372036854775807 + 1)\n");
     const reports_runtime = b.addRunArtifact(exe);
@@ -252,6 +339,15 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     single_test_passes.expectStdOutEqual("1 test passed.\n");
     single_test_passes.expectExitCode(0);
     test_step.dependOn(&single_test_passes.step);
+
+    const tests_receive_arguments = fixtures.add("tests-receive-arguments.em", "@test\nfunc arguments_are_available() {\n    print(Program.arguments)\n}\n");
+    const test_receives_arguments = b.addRunArtifact(exe);
+    test_receives_arguments.addArgs(&.{ "test" });
+    test_receives_arguments.addFileArg(tests_receive_arguments);
+    test_receives_arguments.addArgs(&.{ "--", "seed" });
+    test_receives_arguments.expectStdOutEqual("[\"seed\"]\n1 test passed.\n");
+    test_receives_arguments.expectExitCode(0);
+    test_step.dependOn(&test_receives_arguments.step);
 
     const failing_tests = fixtures.add("failing-tests.em", "@test\nfunc fails() {\n    assert 1 == 2\n}\n\n@test\nfunc still_runs() {\n    print(\"still ran\")\n}\n");
     const tests_fail = b.addRunArtifact(exe);

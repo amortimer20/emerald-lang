@@ -2931,8 +2931,9 @@ instructional.
 
 ### 18.1 Initial CLI
 
-One `emerald` executable provides full-word commands. Implemented today (`src/main.zig`'s
-`Command` enum):
+One `emerald` executable provides full-word commands. Bare `emerald` and `emerald --help`
+print a short discovery banner; `emerald help <command>` and `emerald <command> --help` give
+the command's own usage. Implemented user-facing commands (`src/main.zig`'s `Command` enum):
 
 ```text
 emerald run
@@ -2940,21 +2941,26 @@ emerald check
 emerald test
 emerald format
 emerald repl
-emerald lsp
+emerald help
 ```
 
-`emerald new`, `emerald explain`, and `emerald help` are not implemented; running any of
-them prints the usage banner and exits `64` like any invalid usage. They belong with
-`build`, `debug`, and package `add` (18.1.1) as later tooling, not the settled command set.
+`emerald lsp` is also implemented, but is intentionally absent from that discovery banner:
+it is a standard-input/output protocol endpoint for editors, not an interactive terminal
+workflow. `emerald help lsp` documents its optional `--stdio` spelling.
+
+`emerald new` and `emerald explain` are not implemented; running either reports an unknown
+command and exits `64`. They belong with `build`, `debug`, and package `add` (18.1.1) as
+later tooling, not the settled command set.
 
 There is no `fmt` alias. `run` checks the complete project before executing; `check`
 performs the same analysis without initializing modules or executing user code. This is
 useful when a program would prompt, open a window, modify files, or run indefinitely.
 
-`emerald <command> <file.em> -- <program-argument>...` hands everything after `--` to the
-program as 14.1's `Program.arguments`, never to Emerald itself; `check`, `run`, and `test`
-all accept the same syntax, though only `run` and `test` ever give a program arguments to
-read. Without `--`, `Program.arguments` is `[]`.
+`emerald run <file.em> -- <program-argument>...` and `emerald test <file.em> --
+<program-argument>...` hand everything after `--` to the program as 14.1's
+`Program.arguments`, never to Emerald itself. `check` deliberately accepts only a file:
+because it does not run a program, accepting arguments it cannot use would be misleading.
+Without `--`, `Program.arguments` is `[]`.
 
 A machine-readable `--diagnostic-format=json` flag is a later-tooling design, not yet
 implemented (no diagnostic-producing command accepts it today). The design to build
@@ -3053,8 +3059,10 @@ Settled by the first implementation slice, and binding on any future backend tha
   literal can.
 - `emerald format <path>` is project-aware exactly like `check` and `run` (14.1): it
   formats every file of whatever project `path` names, not only `path` itself. `--check`
-  reports which files would change, exiting `1` (18.1's status shared with source
-  diagnostics) if any would, without writing any of them.
+  prints every file that would change, followed by the command that applies those changes;
+  it exits `1` (18.1's status shared with source diagnostics) if any would, without writing
+  any of them. A formatting run is silent when every file was already canonical and otherwise
+  reports the number of files it formatted.
 
 ### 18.4 REPL
 
@@ -3063,8 +3071,8 @@ value; a statement follows normal statement behavior. Multiline input continues 
 delimiter or declaration body remains incomplete.
 
 The REPL keeps ordinary binding rules: a `var` may be reassigned, while a name may not be
-redeclared and a `const` may not be replaced. The `:reset` REPL command clears the session.
-An invalid entry does not partially mutate the session.
+redeclared and a `const` may not be replaced. `:help` lists its three commands, `:reset`
+clears the session, and `:quit` exits. An invalid entry does not partially mutate the session.
 
 ### 18.5 Language server
 

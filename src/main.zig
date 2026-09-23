@@ -27,25 +27,24 @@ const ExitCode = enum(u8) {
     internal_failure = 70,
 };
 
-const usage =
-    \\usage: emerald <command> <file.em> [-- <program-argument>...]
+const global_help =
+    \\Emerald
     \\
-    \\commands:
-    \\  check           report problems without running the program
-    \\  run             report problems, then run the program
-    \\  test            report problems, then run every @test function
-    \\  format          rewrite a file, or its project, in the canonical style
-    \\  format --check  report which files would change, without writing them
-    \\  repl            start an interactive session
-    \\  lsp             start a language server over stdio (an optional
-    \\                  trailing --stdio is accepted and ignored)
+    \\Usage: emerald <command> [arguments]
     \\
-    \\Arguments after `--` are the running program's own (Program.arguments, 14.1),
-    \\never Emerald's; `run`/`test` are the commands that give a program any.
+    \\Commands:
+    \\  run       run a program
+    \\  check     report problems without running it
+    \\  test      run tests
+    \\  format    format a file or project
+    \\  repl      start an interactive session
+    \\  help      show help for a command
+    \\
+    \\Run `emerald help <command>` for command-specific help.
     \\
 ;
 
-const Command = enum { check, run, @"test", format, repl, lsp };
+const Command = enum { check, run, @"test", format, repl, lsp, help };
 
 /// The allocator a program's runtime work goes through. Zig's default for a
 /// ReleaseSafe build without libc is its leak-checking debug allocator, which
@@ -60,21 +59,31 @@ pub fn main(init: std.process.Init) !u8 {
     const io = init.io;
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len < 2) return misuse(io);
+    if (args.len < 2) return printGlobalHelp(io);
+    if (std.mem.eql(u8, args[1], "--help")) {
+        if (args.len == 2) return printGlobalHelp(io);
+        return commandMisuse(io, null, "`--help` must be used on its own");
+    }
 
-    const command = std.meta.stringToEnum(Command, args[1]) orelse return misuse(io);
+    const command = std.meta.stringToEnum(Command, args[1]) orelse return unknownCommand(io, args[1]);
+
+    if (command == .help) {
+        if (args.len == 3 and std.mem.eql(u8, args[2], "--help")) return printCommandHelp(io, command);
+        return executeHelp(io, args[2..]);
+    }
+    if (args.len == 3 and std.mem.eql(u8, args[2], "--help")) return printCommandHelp(io, command);
 
     if (command == .format) {
         // `emerald format [--check] <path>`: the one command with an
         // optional flag, so its argument count is checked on its own.
         if (args.len == 3) return executeFormat(gpa, io, args[2], false);
         if (args.len == 4 and std.mem.eql(u8, args[2], "--check")) return executeFormat(gpa, io, args[3], true);
-        return misuse(io);
+        return commandMisuse(io, command, "expects `<file.em>` or `--check <file.em>`");
     }
 
     if (command == .repl) {
         // Unlike every other command, `emerald repl` names no file (18.1).
-        if (args.len != 2) return misuse(io);
+        if (args.len != 2) return commandMisuse(io, command, "does not take arguments");
         return executeRepl(gpa, io);
     }
 
@@ -87,24 +96,110 @@ pub fn main(init: std.process.Init) !u8 {
         // to select this one explicitly, even when a server offers no other.
         if (args.len == 2) return executeLsp(gpa, io);
         if (args.len == 3 and std.mem.eql(u8, args[2], "--stdio")) return executeLsp(gpa, io);
-        return misuse(io);
+        return commandMisuse(io, command, "accepts only an optional `--stdio`");
     }
 
-    if (args.len < 3) return misuse(io);
+    if (args.len < 3) return commandMisuse(io, command, "expects a `<file.em>` path");
+    if (command == .check) {
+        if (args.len != 3) return commandMisuse(io, command, "does not run a program, so it cannot take program arguments");
+        return execute(gpa, io, command, args[2], &.{});
+    }
+
     // Section 14.1: `--` separates Emerald's own arguments from the running
-    // program's. Only `run`/`test` ever hand these to a program
-    // (`Program.arguments`); `check` accepts and simply never uses them, so
-    // one parsing rule covers all three rather than special-casing `check`.
+    // program's. `run` and `test` hand these to a program as
+    // `Program.arguments`.
     var program_arguments: []const []const u8 = &.{};
     if (args.len > 3) {
-        if (!std.mem.eql(u8, args[3], "--")) return misuse(io);
+        if (!std.mem.eql(u8, args[3], "--")) return commandMisuse(io, command, "expects program arguments after `--`");
         program_arguments = args[4..];
     }
     return execute(gpa, io, command, args[2], program_arguments);
 }
 
-fn misuse(io: std.Io) !u8 {
-    try writeAll(io, .stderr, usage);
+fn printGlobalHelp(io: std.Io) !u8 {
+    try writeAll(io, .stdout, global_help);
+    return @intFromEnum(ExitCode.success);
+}
+
+fn executeHelp(io: std.Io, topics: []const []const u8) !u8 {
+    if (topics.len == 0) return printGlobalHelp(io);
+    if (topics.len != 1) return commandMisuse(io, .help, "accepts at most one command name");
+    const command = std.meta.stringToEnum(Command, topics[0]) orelse return unknownCommand(io, topics[0]);
+    return printCommandHelp(io, command);
+}
+
+fn printCommandHelp(io: std.Io, command: Command) !u8 {
+    const text = switch (command) {
+        .check =>
+        \\Usage: emerald check <file.em>
+        \\
+        \\Analyze a file or project without running Emerald code.
+        \\
+        ,
+        .run =>
+        \\Usage: emerald run <file.em> [-- <program-argument>...]
+        \\
+        \\Check a file or project, then run it. Arguments after `--` become
+        \\Program.arguments.
+        \\
+        ,
+        .@"test" =>
+        \\Usage: emerald test <file.em> [-- <program-argument>...]
+        \\
+        \\Check a file or project, then run every @test function. Arguments
+        \\after `--` become Program.arguments.
+        \\
+        ,
+        .format =>
+        \\Usage: emerald format <file.em>
+        \\       emerald format --check <file.em>
+        \\
+        \\Format every file in the named file's project. `--check` lists files
+        \\that would change without writing them.
+        \\
+        ,
+        .repl =>
+        \\Usage: emerald repl
+        \\
+        \\Start an interactive Emerald session. Use :help inside the REPL to
+        \\see its commands.
+        \\
+        ,
+        .lsp =>
+        \\Usage: emerald lsp [--stdio]
+        \\
+        \\Start Emerald's language server over standard input and output for
+        \\editor integration.
+        \\
+        ,
+        .help =>
+        \\Usage: emerald help [command]
+        \\
+        \\Show global help or detailed help for one command.
+        \\
+        ,
+    };
+    try writeAll(io, .stdout, text);
+    return @intFromEnum(ExitCode.success);
+}
+
+fn unknownCommand(io: std.Io, name: []const u8) !u8 {
+    var buffer: [512]u8 = undefined;
+    const message = std.fmt.bufPrint(&buffer, "emerald: unknown command `{s}`\nRun `emerald help` to see available commands.\n", .{name}) catch
+        "emerald: unknown command\nRun `emerald help` to see available commands.\n";
+    try writeAll(io, .stderr, message);
+    return @intFromEnum(ExitCode.invalid_usage);
+}
+
+fn commandMisuse(io: std.Io, command: ?Command, detail: []const u8) !u8 {
+    var buffer: [512]u8 = undefined;
+    const message = if (command) |value|
+        std.fmt.bufPrint(&buffer, "emerald: {s} {s}\nRun `emerald help {s}` for usage.\n", .{ @tagName(value), detail, @tagName(value) }) catch
+            "emerald: invalid command usage\nRun `emerald help` to see available commands.\n"
+    else
+        std.fmt.bufPrint(&buffer, "emerald: {s}\nRun `emerald help` to see available commands.\n", .{detail}) catch
+            "emerald: invalid command usage\nRun `emerald help` to see available commands.\n";
+    try writeAll(io, .stderr, message);
     return @intFromEnum(ExitCode.invalid_usage);
 }
 
@@ -136,9 +231,9 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
         .check => emerald.checkProject(gpa, &project),
         .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .arguments = program_arguments }),
         .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .arguments = program_arguments }),
-        // `main` routes `format`, `repl`, and `lsp` to their own functions
+        // `main` routes `format`, `repl`, `lsp`, and `help` to their own functions
         // before this is reached.
-        .format, .repl, .lsp => unreachable,
+        .format, .repl, .lsp, .help => unreachable,
     };
     var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();
@@ -215,11 +310,17 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
         return @intFromEnum(ExitCode.source_diagnostics);
     }
 
-    var changed_any = false;
+    var changed_count: usize = 0;
     for (project.files, report.files) |file, formatted| {
         if (!formatted.changed) continue;
-        changed_any = true;
-        if (check_only) continue;
+        changed_count += 1;
+        if (check_only) {
+            var buffer: [512]u8 = undefined;
+            const message = std.fmt.bufPrint(&buffer, "Would format {s}\n", .{file.source.path}) catch
+                "Would format a file\n";
+            try writeAll(io, .stdout, message);
+            continue;
+        }
         std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file.source.path, .data = formatted.text }) catch |err| {
             var buffer: [512]u8 = undefined;
             const message = std.fmt.bufPrint(&buffer, "emerald: cannot write '{s}': {t}\n", .{ file.source.path, err }) catch
@@ -229,7 +330,21 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
         };
     }
 
-    if (check_only and changed_any) return @intFromEnum(ExitCode.source_diagnostics);
+    if (check_only and changed_count != 0) {
+        var buffer: [512]u8 = undefined;
+        const message = std.fmt.bufPrint(&buffer, "Run `emerald format {s}` to apply these changes.\n", .{path}) catch
+            "Run `emerald format <file.em>` to apply these changes.\n";
+        try writeAll(io, .stdout, message);
+        return @intFromEnum(ExitCode.source_diagnostics);
+    }
+    if (!check_only and changed_count != 0) {
+        var buffer: [128]u8 = undefined;
+        const message = if (changed_count == 1)
+            std.fmt.bufPrint(&buffer, "Formatted 1 file.\n", .{}) catch "Formatted a file.\n"
+        else
+            std.fmt.bufPrint(&buffer, "Formatted {d} files.\n", .{changed_count}) catch "Formatted files.\n";
+        try writeAll(io, .stdout, message);
+    }
     return @intFromEnum(ExitCode.success);
 }
 

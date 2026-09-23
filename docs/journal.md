@@ -30,6 +30,24 @@ ordinary named calls.
 Rename keeps its identifier contract: it rejects a cursor on an operator token and omits such
 reference locations when renaming the registered method.
 
+## Command-contract QA and interaction polish
+
+The CLI suite gained direct tests for the boundary between `check` and `run`: checking a valid
+program never runs its entry code, a source error stops `run` before entry execution, and a
+warning remains visible and yields status `1` even when `run` executes successfully. It also
+covers `--` arguments for both `run` and `test`, plus invalid `repl` and `lsp` invocations.
+Existing CLI cases already cover command usage, missing files, runtime errors, test failures,
+and formatter write/check behavior.
+
+The follow-up made the terminal contract discoverable rather than treating every situation as
+one generic usage error. Bare `emerald` and `--help` now show short global help; `help <command>`
+and `<command> --help` carry the details, while unknown or malformed invocations identify the
+mistake and point to the relevant help. The editor-only LSP endpoint stays available but is not
+advertised in that discovery list. `check` no longer accepts `--` arguments it would silently
+discard. Formatter checks name files that would change and a formatting run reports actual
+rewrites; a clean formatting run stays quiet. The REPL now offers the three small terminal
+commands beginners need: `:help`, `:reset`, and `:quit`.
+
 ## Pre-implementation decision pass
 
 The user asked for a judgment call on the remaining open design questions, prioritizing

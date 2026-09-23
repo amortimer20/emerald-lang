@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-22. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-23. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -21,6 +21,15 @@ data. Filesystem failures use `FileError`.
 Release hardening is in place: CI runs Debug and ReleaseSafe tests on Ubuntu, macOS, and
 Windows; the fuzz runner checks, formats, and boundedly executes generated clean programs;
 and allocator-failure coverage reaches the frontend pipeline and interpreter.
+
+The command-line contract has focused end-to-end coverage in `build.zig`: `check` completes
+analysis without executing valid entry code; `run` stops before execution on source errors,
+but executes warning-only programs while retaining status `1`; `run` and `test` receive
+arguments after `--`, while `check` rejects arguments it cannot use; and `test` distinguishes
+failed tests. The CLI has concise global and command-specific help, specific recovery text for
+bad invocations, formatter change reporting, and REPL `:help`/`:quit`; `lsp` remains available
+through its dedicated help but is intentionally absent from the interactive command list.
+Their substantive REPL and LSP protocol behavior remains covered in their own Zig modules.
 
 Arithmetic operator annotations are complete:
 `d73ede4` adds `@operator("+")`/`-`/`*`/`/` parsing, checking, formatting, and execution;
@@ -65,5 +74,9 @@ The operator-annotation feature passed Debug and ReleaseSafe `zig build test`, `
 named-method, operator-token go-to-definition, and operator-token reference coverage.
 Rename rejects an operator-token cursor and excludes operator-token locations from method
 rename edits.
+The command-contract QA and interactive-polish slice passed Debug and ReleaseSafe `zig build
+test`, `zig build`, `bash tools/check-doc-examples.sh` (92 linked files), and `git diff --check`
+with pinned Zig 0.16.0. The formatter's changed-file output and rewrite summary were also
+checked directly against a fresh temporary source file.
 Preserve the unrelated untracked
 `emerald-file-writer-streaming-closed.txt` artifact.

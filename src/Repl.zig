@@ -127,7 +127,7 @@ pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer) !voi
     var session: Session = .{};
     defer session.deinit(gpa);
 
-    try out.writeAll("Emerald REPL. `:reset` clears the session; Ctrl-D exits.\n");
+    try out.writeAll("Emerald REPL. Type `:help` for commands; Ctrl-D exits.\n");
 
     entries: while (true) {
         try out.writeAll("> ");
@@ -140,10 +140,24 @@ pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer) !voi
             const line = (try readLine(gpa, in)) orelse break :entries;
             defer gpa.free(line);
 
-            if (pending.items.len == 0 and std.mem.eql(u8, std.mem.trim(u8, line, " \t\r"), ":reset")) {
-                session.reset(gpa);
-                try out.writeAll("Session cleared.\n");
-                continue :entries;
+            if (pending.items.len == 0) {
+                const command = std.mem.trim(u8, line, " \t\r");
+                if (std.mem.eql(u8, command, ":help")) {
+                    try out.writeAll(
+                        \\Commands:
+                        \\  :help   show these commands
+                        \\  :reset  clear the session
+                        \\  :quit   leave the REPL
+                        \\
+                    );
+                    continue :entries;
+                }
+                if (std.mem.eql(u8, command, ":reset")) {
+                    session.reset(gpa);
+                    try out.writeAll("Session cleared.\n");
+                    continue :entries;
+                }
+                if (std.mem.eql(u8, command, ":quit")) break :entries;
             }
 
             try pending.appendSlice(gpa, line);
