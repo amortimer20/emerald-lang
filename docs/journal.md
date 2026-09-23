@@ -2171,3 +2171,11 @@ results. Neither should be mistaken for a server-side defect if seen again.
 documentation-example validation, whitespace checks, and a local baseline-CPU release-archive
 smoke. GitHub Actions then built and package-smoked Linux x86_64, macOS ARM64, and Windows x86_64
 archives before publishing them with `SHA256SUMS`. Development resumed at `0.5.0-dev`.
+
+## Root README refresh, 2026-09-23
+
+The root README became a concise user entry point instead of a history of implementation work.
+It now leads with the shared Emerald SVG, a runnable first program, Mise installation, common
+commands, source build instructions, and links to the language guide, library reference,
+examples, and diagnostics guide. Internal implementation status, agent coordination, and the
+source-tree inventory were removed from this user-facing page.

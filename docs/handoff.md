@@ -37,6 +37,9 @@ Release preparation now also packages and smokes the binary's version, `help`, `
 `test`, `format --check`, `explain`, and clean REPL exit on every release platform. A manual
 release-workflow dispatch builds and verifies artifacts but cannot publish them; publishing
 requires a `vX.Y.Z` tag.
+The root README is now a user-facing entry point: a first program, installation, common
+commands, source build, and learning links. It uses the shared Emerald SVG mark and leaves
+implementation history, agent instructions, and source-tree inventory to their proper docs.
 
 The first diagnostic-explainer slice is complete. CLI diagnostics label four common,
 curated problems with stable codes: undefined names, declaration type mismatches, const
@@ -107,3 +110,5 @@ pinned Zig 0.16.0. A locally built `ReleaseSafe`, baseline-CPU `Emerald 0.4.0` t
 unpacked and successfully exercised through every release smoke command, including a passing
 `@test` function. GitHub Actions then built, package-smoked, checksummed, and published all
 three 0.4.0 platform assets successfully.
+The pending README refresh passed `bash tools/check-doc-examples.sh` (92 linked files) and
+`git diff --check`; every relative link in its user-facing path was also checked directly.
