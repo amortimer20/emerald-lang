@@ -2192,3 +2192,23 @@ Development resumed at `0.6.0-dev`. Earlier platform-library roadmap edits were 
 outside these release commits.
 The `0.6.0-dev` bump also passed Debug and ReleaseSafe tests, a normal build and version
 check, documentation-example validation, and `git diff --check`.
+
+## Type-declaration audit fixes, 2026-09-24
+
+An audit of type declarations against the spec (all four kinds, both brace styles, one-line
+bodies, the removed braceless form, namespaces, module-private types, and enum members) found
+two small defects, both fixed here. First, the formatter split every enum value onto its own
+line, contradicting the decision table's reason for allowing commas ("so a short enum such as
+`small, medium, large` [can] stay on one line") and 18.3's rule that the author's line breaks
+decide list layout. A run of enum values written on one line now stays on one line; a run that
+spans lines, or holds a comment, stays one value per line. Second, a type declared as the last
+statement of a block reported its correct "belongs at the top level" error plus a spurious
+"this block is never closed": the declaration had already parsed completely, but it was still
+treated as a failed statement, and statement recovery's "a stray `}` is the failed statement"
+rule then consumed the enclosing block's own brace. It is now a `note`, the parser's existing
+mechanism for exactly this case, so every misplaced declaration in a block is reported and
+nothing else is. The message's article also now reads "an enum declaration."
+
+The same audit found that 14.3's nested types were never implemented, and that nothing recorded
+their absence; they are the subject of a separate design plan. Braceless type bodies were
+confirmed removed by 10.6's deliberate decision, not broken.

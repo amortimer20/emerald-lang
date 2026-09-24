@@ -1,0 +1,16 @@
+diagnostics/type-declaration-in-block.em:4:5: a struct declaration belongs at the top level
+      struct Local {}
+      ^^^^^^
+Move this struct out of the enclosing block.
+diagnostics/type-declaration-in-block.em:8:5: a class declaration belongs at the top level
+      class First {}
+      ^^^^^
+Move this class out of the enclosing block.
+diagnostics/type-declaration-in-block.em:9:5: an enum declaration belongs at the top level
+      enum Second { only }
+      ^^^^
+Move this enum out of the enclosing block.
+diagnostics/type-declaration-in-block.em:13:5: a trait declaration belongs at the top level
+      trait Third {}
+      ^^^^^
+Move this trait out of the enclosing block.

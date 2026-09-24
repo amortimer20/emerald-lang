@@ -461,11 +461,14 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             const nested = !self.at_top_level;
             const keyword = self.peek();
             const statement = try self.parseStructDeclaration();
+            // The declaration parsed completely, so this is a `note`, not a
+            // failed statement: recovery would skip past the next `}`, which
+            // is the enclosing block's own when the declaration comes last.
             if (nested) {
-                return self.reportFmt(
+                const article = if (keyword.kind == .keyword_enum) "an" else "a";
+                try self.note(
                     keyword.span,
-                    "a {s} declaration belongs at the top level",
-                    .{self.text(keyword)},
+                    try std.fmt.allocPrint(self.arena, "{s} {s} declaration belongs at the top level", .{ article, self.text(keyword) }),
                     try std.fmt.allocPrint(self.arena, "Move this {s} out of the enclosing block.", .{self.text(keyword)}),
                 );
             }

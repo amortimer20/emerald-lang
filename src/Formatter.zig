@@ -219,6 +219,13 @@ const Printer = struct {
         return std.mem.indexOfScalar(u8, self.source.text[start..end], '\n') != null;
     }
 
+    /// Whether `[start, end)` is one line holding no comment, since section
+    /// 12's enum values can never contain `#`.
+    fn isPlainOneLineRun(self: *Printer, start: u32, end: u32) bool {
+        if (self.spansMultipleLines(start, end)) return false;
+        return std.mem.indexOfScalar(u8, self.source.text[start..end], '#') == null;
+    }
+
     /// The test that decides one-line versus one-item-per-line layout for
     /// every delimited list, so the author's own choice survives: whether any
     /// two adjacent expressions were already separated by a newline, checking
@@ -701,6 +708,14 @@ const Printer = struct {
         return a.start() < b.start();
     }
 
+    /// One past the last enum value in the consecutive run starting at
+    /// `start`, or `start` itself when that member is not an enum value.
+    fn enumValueRunEnd(members: []const Member, start: usize) usize {
+        var end = start;
+        while (end < members.len and members[end] == .type_field and members[end].type_field.enum_value != null) end += 1;
+        return end;
+    }
+
     fn printStructDeclaration(self: *Printer, s: Ast.StructDeclaration, end: u32) PrintError!void {
         if (s.abstract_span != null) {
             try self.write("@abstract\n");
@@ -734,19 +749,35 @@ const Printer = struct {
 
         self.indent += 1;
         const mark = self.out.items.len;
-        for (members.items) |member| {
+        var index: usize = 0;
+        while (index < members.items.len) {
+            const member = members.items[index];
             const pending_blank = try self.flushTrivia(member.start());
             if (pending_blank and self.out.items.len != mark) try self.write("\n");
             try self.writeIndent();
-            switch (member) {
-                .field => |f| try self.printField(f),
-                .constructor => |c| try self.printConstructor(c),
-                .method => |m| try self.printFunctionDeclaration(m, s.trait),
-                .property => |p| try self.printProperty(p),
-                .type_function => |t| try self.printFunctionDeclaration(t.declaration, s.trait),
-                .type_field => |t| try self.printTypeField(t, s.name),
+            // Section 12's comma-separated values keep the layout their author
+            // chose, by the same test 18.3 applies to every delimited list: a
+            // run written on one line stays on one line. A comment inside the
+            // run falls back to one value per line, which keeps every comment.
+            const run_end = enumValueRunEnd(members.items, index);
+            if (run_end - index > 1 and self.isPlainOneLineRun(member.start(), members.items[run_end - 1].end())) {
+                for (members.items[index..run_end], 0..) |value, i| {
+                    if (i > 0) try self.write(", ");
+                    try self.write(value.type_field.name);
+                }
+                index = run_end;
+            } else {
+                switch (member) {
+                    .field => |f| try self.printField(f),
+                    .constructor => |c| try self.printConstructor(c),
+                    .method => |m| try self.printFunctionDeclaration(m, s.trait),
+                    .property => |p| try self.printProperty(p),
+                    .type_function => |t| try self.printFunctionDeclaration(t.declaration, s.trait),
+                    .type_field => |t| try self.printTypeField(t, s.name),
+                }
+                index += 1;
             }
-            try self.printTrailingComment(member.end());
+            try self.printTrailingComment(members.items[index - 1].end());
             try self.write("\n");
         }
         _ = try self.flushTrivia(end);

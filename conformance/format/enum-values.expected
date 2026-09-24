@@ -1,0 +1,36 @@
+enum Size {
+    small, medium, large
+}
+
+enum Mixed {
+    a
+    b
+    c
+}
+
+enum Tall {
+    x
+    y
+}
+
+enum Commented {
+    p #[ middle ]#
+    q, r
+}
+
+enum Trailing {
+    red, green # colors
+}
+
+enum WithMembers with Ordered {
+    low, high
+
+    @override
+    func compare(other: Self): Int {
+        return 0
+    }
+}
+
+enum One {
+    solo
+}

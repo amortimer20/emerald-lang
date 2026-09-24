@@ -104,6 +104,12 @@ only with user authorization.
 
 ## Validation and repository state
 
+The type-declaration audit fixes are complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
+`zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (93 linked files),
+`zig fmt --check src/Formatter.zig src/Parser.zig`, and `git diff --check` passed. New cases
+`conformance/format/enum-values` and `conformance/diagnostics/type-declaration-in-block` were
+read by hand before being accepted.
+
 The Random dispatch fix is complete. With pinned Zig 0.16.0, Debug and
 ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (93 linked
 files), `zig fmt --check src/Interpreter.zig`, and `git diff --check` passed. The new
