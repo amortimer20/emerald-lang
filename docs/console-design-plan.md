@@ -38,10 +38,19 @@ Accepted by the user after a Claude/Codex design pass:
   `docs/nested-types-design-plan.md` and rewrite-context 14.3), so the color type is a
   nested enum, `Console.Color`. Verified in the prelude specifically: a temporary nested
   enum in `class Random` was reachable as `Random.Mode.fair` in values, annotations, and an
-  exhaustive `case`, and displayed as `Random.Mode.fair`. Its key is `emerald.Console::Color`.
+  exhaustive `case`, and displayed as `Random.Mode.fair`. Its key is `Emerald.Console::Color`.
+- **The built-ins live in the `Emerald` namespace** (rewrite-context 14.2, 15.1, completed
+  2026-09-24). `Console` is one more built-in: `Emerald.Console.green(...)` works with no
+  extra code, and a program that declares its own `Console` still runs, with a warning. Every
+  prelude key starts with `Resolver.prelude_namespace` (`"Emerald"`); never hardcode that
+  string in the interpreter, since nine hardcoded copies had to be replaced when it changed.
 - Built-in namespaces are prelude classes with type-level functions (`class File { func
   File.read(...) }`), with native dispatch by key prefix (`Interpreter.isFilesystemKey`).
-  `Console` follows the same pattern.
+- **Native dispatch evaluates arguments by position only** (`callFilesystem` calls
+  `evaluateArguments(call.arguments)`), and no prelude function has ever had a default
+  parameter. A native `Console.style` would therefore mishandle `Console.style("x",
+  bold: true)`. This is why the implementation approach below writes the helpers in Emerald
+  and keeps native code to two single-argument primitives.
 - `Interpreter.run` receives `out: *std.Io.Writer` and never sees the underlying file, so it
   cannot detect a terminal itself. `emerald.Streams` (`out`, `in`, `arguments`) is the
   runtime's output configuration and the natural home for the policy. Every existing
@@ -57,20 +66,20 @@ Accepted by the user after a Claude/Codex design pass:
 
 ## Decisions
 
-Decision 1 was settled by implementing nested types. The user deferred decisions 2 through 5
-to the recommendations below (2026-09-24), noting that the REPL should display color, so each
-is settled as recommended.
+All five are settled (2026-09-24); none is open for the executor to revisit. Decision 1 was
+settled by implementing nested types; the user deferred 2 through 5 to the recommendations,
+noting that the REPL should display color.
 
 1. **Color type spelling.** Resolved: `Console.Color`, a nested enum. The user chose to
    implement 14.3's nested types first rather than add a top-level `ConsoleColor`, and they
    now exist. A file that writes the color often can alias it:
    `using Color = Console.Color`.
-2. **Explicit control surface.** Recommended: a CLI flag `--color=auto|always|never` on
-   `run` and `test`, plus the `NO_COLOR` and `FORCE_COLOR` environment variables. The flag
-   is the discoverable, per-invocation control a beginner can see in `emerald help`; the
+2. **Explicit control surface.** A CLI flag `--color=auto|always|never` on `run` and `test`,
+   plus the `NO_COLOR` and `FORCE_COLOR` environment variables. The flag is the
+   discoverable, per-invocation control a beginner can see in `emerald help`; the
    environment variables are what other terminal tools already honor. No Emerald-level
-   switch in this slice. Alternative: environment variables only, adding no CLI surface.
-3. **Precedence.** Recommended, highest first:
+   switch in this slice.
+3. **Precedence**, highest first:
    1. `--color=always` or `--color=never`.
    2. `NO_COLOR` present and non-empty: off (per no-color.org, which says CLI arguments
       override it).
@@ -79,12 +88,11 @@ is settled as recommended.
    5. Otherwise, on only when stdout is a TTY that supports ANSI escapes.
 
    If both `NO_COLOR` and `FORCE_COLOR` are set, `NO_COLOR` wins as the safer reading.
-4. **A full reset inside styled input.** Recommended: when wrapping text that contains
-   `ESC[0m`, re-open this layer's style after it, just as after the layer's own close code.
-   Each nested layer does the same, so every enclosing style survives a reset from inside.
-   Alternative: leave `ESC[0m` untouched, so an inner full reset ends all outer styling.
-5. **REPL.** Recommended: the REPL resolves the policy the same way `run` does, so
-   `Console.green("hi")` in an interactive terminal shows green. Alternative: always off.
+4. **A full reset inside styled input.** When wrapping text that contains `ESC[0m`, re-open
+   this layer's style after it, just as after the layer's own close code. Each nested layer
+   does the same, so every enclosing style survives a reset from inside.
+5. **REPL.** The REPL resolves the policy the same way `run` does, so `Console.green("hi")`
+   in an interactive terminal shows green.
 
 ## Specified behavior
 
@@ -139,8 +147,10 @@ When the policy is off, every helper and `Console.style` returns `text` unchange
 | Underline | `4` | `24` |
 
 Each sequence is `ESC [ <code> m`. `Console.style` applies each requested attribute as its
-own layer, in a fixed documented order (foreground, background, bold, dim, italic,
-underline), each wrapped with the nesting rule below. Pick one order and pin it with a test.
+own layer, innermost first, in this order: foreground, background, bold, dim, italic,
+underline. So `Console.style("w", foreground: Console.Color.bright_yellow, background:
+Console.Color.blue, bold: true)` is exactly
+`ESC[1m ESC[44m ESC[93m w ESC[39m ESC[49m ESC[22m` (spaces added here for reading only).
 
 ### Nesting
 
@@ -150,8 +160,8 @@ Wrapping `text` in one attribute with open `O` and close `C` produces:
 O + text' + C
 ```
 
-where `text'` is `text` with every occurrence of `C` replaced by `C + O` (and, if decision 4
-is approved, every `ESC[0m` replaced by `ESC[0m + O`). So after an inner span closes, the
+where `text'` is `text` with every occurrence of `C` replaced by `C + O`, and every `ESC[0m`
+replaced by `ESC[0m + O` (decision 4). So after an inner span closes, the
 outer style comes back:
 
 - `Console.green("a #{Console.red("b")} c")`: the inner close `39` becomes `39` + `32`, so
@@ -186,23 +196,111 @@ own styling. It is not a terminal-security sanitizer, and its docs should say so
 - Thread the bool into `Interpreter` alongside `out`. The `Console.*` native dispatch reads
   it. Nothing else in the interpreter changes behavior.
 
+## Implementation approach (prototyped 2026-09-24)
+
+Write `Console` in Emerald, in `src/prelude.em`, on top of two native primitives. Ordinary
+Emerald functions go through the interpreter's normal call path, which already handles named
+and defaulted arguments, optional narrowing, and nested enums. This was prototyped as a
+user-level class, and every assertion below passed:
+
+```emerald
+class Console {
+    enum Color {
+        black, red, green, yellow, blue, magenta, cyan, white
+        bright_black, bright_red, bright_green, bright_yellow
+        bright_blue, bright_magenta, bright_cyan, bright_white
+    }
+
+    # Native: the execution's color policy (`Streams.color`).
+    func Console._color(): Bool {
+        return false
+    }
+
+    func Console._layer(text: String, open: Int, close: Int): String {
+        const o = "\u{1B}[#{open}m"
+        const c = "\u{1B}[#{close}m"
+        const reset = "\u{1B}[0m"
+        return o + text.replace(c, c + o).replace(reset, reset + o) + c
+    }
+
+    func Console._code(color: Console.Color): Int {
+        return case color {
+            when Console.Color.black then 30
+            # ... red 31 through white 37, bright_black 90 through bright_white 97
+        }
+    }
+
+    func Console.style(text: String, foreground: Console.Color? = nothing, background: Console.Color? = nothing, bold: Bool = false, dim: Bool = false, italic: Bool = false, underline: Bool = false): String {
+        if not Console._color() {
+            return text
+        }
+        var result = text
+        if foreground != nothing {
+            result = Console._layer(result, Console._code(foreground), 39)
+        }
+        if background != nothing {
+            result = Console._layer(result, Console._code(background) + 10, 49)
+        }
+        if bold {
+            result = Console._layer(result, 1, 22)
+        }
+        # ... dim (2, 22), italic (3, 23), underline (4, 24), in that order
+        return result
+    }
+
+    func Console.green(text: String): String {
+        return Console.style(text, foreground: Console.Color.green)
+    }
+    # ... the other seven colors and bold/dim/italic/underline the same way
+
+    # Native: the SGR scanner.
+    func Console.plain(text: String): String {
+        return text
+    }
+}
+```
+
+Prototype assertions (with `E = "\u{1B}"`), which slice 1's conformance cases should carry:
+
+```emerald
+assert Console.green("x") == "#{E}[32mx#{E}[39m"
+assert Console.green("a #{Console.red("b")} c") == "#{E}[32ma #{E}[31mb#{E}[39m#{E}[32m c#{E}[39m"
+assert Console.bold("a #{Console.dim("b")} c") == "#{E}[1ma #{E}[2mb#{E}[22m#{E}[1m c#{E}[22m"
+assert Console.style("plain") == "plain"
+```
+
+Notes for the executor:
+
+- Emerald negation is `not`, not `!`. Division `/` yields `Float`; use `//` for `Int`.
+- The Emerald bodies of `_color` and `plain` above are placeholders. The interpreter must
+  intercept exactly the two keys `Emerald.Console::_color` and `Emerald.Console::plain`,
+  built from `Resolver.prelude_namespace`. Do **not** intercept every `Console::` key by
+  prefix, the way `isFilesystemKey` does for `File`: every other `Console` function has a
+  real Emerald body that must run through `callFunction`.
+- The prototype resolved `Con.Color` inside a user file's signatures. `Console.Color` inside
+  the prelude's own signatures has not been tried; confirm it first in slice 1, before
+  writing the rest.
+- The private helpers (`_color`, `_layer`, `_code`) follow 10.5's braces rule, so programs
+  cannot call them. Check whether LSP completion after `Console.` lists them; if it does,
+  filter private names there.
+
 ## Implementation map to verify
 
-- `src/prelude.em`: `class Console`, with the nested `enum Color` and type-level signatures,
-  using the same "ordinary signature, native body" convention as `File`.
-- `src/Interpreter.zig`: an `isConsoleKey`/`callConsole` pair modeled on
-  `isFilesystemKey`/`callFilesystem`. Implement the nesting rule, `plain`'s scanner, and
-  `Console.Color` → code mapping. Build results with `heap.createText`, the same way string
+- `src/prelude.em`: `class Console` as above.
+- `src/Interpreter.zig`: intercept the two native keys; `_color` returns the policy and
+  `plain` runs the SGR scanner, building its result with `heap.createText` the way string
   concatenation in `applyBinary` does.
 - `src/emerald.zig`: the `Streams.color` field, passed through `onLargeStack` into
   `Interpreter.run`.
 - `src/main.zig` and `src/arguments.zig`: `--color` parsing and validation, the pure
   precedence function, environment reads, `isTty`/`supportsAnsiEscapeCodes`, and Windows
-  enabling. Add the flag to `run`/`test` help text and to the relevant `emerald explain`
-  or usage diagnostics.
+  enabling. Add the flag to `run`/`test` help text, and report an unknown value such as
+  `--color=blue` as a usage error naming the three valid values.
 - `src/Repl.zig`: accept and forward the resolved policy (decision 5).
-- `src/conformance.zig` and `conformance/README.md`: a new `color/` case directory with
-  `run` semantics and `Streams.color = true`. Every other directory keeps color off.
+- `src/conformance.zig` and `conformance/README.md`: a new `color/` case directory. Add
+  `.color` to the `Kind` enum and `Kind.fromPath`, run it exactly like `.run` but with
+  `Streams.color = true`, and add its row to the README's table. Every other directory keeps
+  color off.
 - Checker, Resolver, Formatter, and LSP: no changes expected. `Console` is an ordinary
   prelude class, so hover, completion, and go to definition come with it. Verify rather
   than assume.
@@ -219,8 +317,10 @@ own styling. It is not a terminal-security sanitizer, and its docs should say so
    1, and cases that keep cursor sequences, bare `ESC`, and incomplete sequences intact.
 3. **Real terminals.** `--color`, environment precedence, TTY detection, Windows
    enabling, and REPL forwarding. Zig unit tests cover the pure precedence function. Then
-   check by hand: a real terminal shows color; `> file` and `| cat` show none; each
-   variable and flag overrides as specified; Windows CI stays green.
+   check the real binary: under a pseudo-terminal color appears (on Linux,
+   `script -qc 'emerald run x.em' /dev/null | cat -v` shows `^[[32m`), while `> file` and
+   `| cat` show none, and each variable and flag overrides as specified. Windows is checked
+   only by CI; say so rather than claim it was tested locally.
 4. **Documentation and integration.** `docs/library/console.md`, an `inventory.md` entry, a
    rewrite-context §15 subsection with decision-table rows for the representation choice,
    the policy, precedence, nesting, and `plain`'s scope, and a small `examples/` program. It
