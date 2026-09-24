@@ -2927,6 +2927,62 @@ Table and panel layout widgets, and line-oriented prompts (confirm, text input,
 single/multi-select), remain later slices of Console itself (24) rather than a separate
 library. `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than on the roadmap (24).
 
+### 15.7 Roadmap: standard library backlog
+
+Beyond what 15.2 through 15.6 already implement or design, the following is the current
+standard-library backlog, each item weighed against 15.1's own tests — does it replace an
+error-prone pattern, does it need platform/Unicode/runtime knowledge a user should not
+reproduce, is it established vocabulary, has it repeated in real programs, or does it have
+clear educational value — rather than ported wholesale from a richer standard library such
+as Ruby's.
+
+**Next up, needing no new runtime infrastructure:**
+
+- **Date and time.** Nothing implements clocks, calendar dates, durations, or time zones
+  today; 15.5 already named the gap. This is the highest-priority addition: it needs
+  nothing Emerald does not already have (Zig's own clock/calendar facilities can back it the
+  same way filesystem syscalls back 15.3), and it touches neither concurrency nor package
+  management. Its own design pass must settle timezone scope (UTC and a fixed offset first,
+  or a full time-zone database) and a duration representation before implementation begins.
+- **Regular expressions (15.4).** The API is already designed; implementing it is the
+  remaining work, most likely by wrapping one bundled C library the way 15.4 already
+  anticipates, while Emerald keeps ownership of Unicode behavior, the API, and diagnostics.
+- **JSON.** Maps directly onto `Dict`, `List`, `String`, `Int`, `Float`, and `Bool` with no
+  new representation to invent; a beginner's most common reason to want it is reading or
+  writing an API response, or saving a program's own state to a file.
+- **Small utilities**: `Base64` and one or two hash/digest functions. Narrow vocabulary, no
+  open design question, safe to add whenever there is time.
+
+**Worth doing before too long, still needing no concurrency or package manager:**
+
+- **A synchronous HTTP client.** This needs sockets and TLS, not concurrency: every
+  filesystem and `input()` operation is already blocking and single-threaded, so a
+  synchronous `Http.get(url)`-shaped API fits the existing model directly. Likely the
+  single highest-value gap after date/time: fetching a URL is one of the most common things
+  a beginner wants to do that Emerald cannot do at all today.
+- **CSV.** Small, and pairs directly with 15.3's `File`.
+
+**Deliberately not planned, rather than left ambiguous:**
+
+- **A wider numeric zoo** (`Complex`, `Rational`, arbitrary-precision decimals). 15.1's
+  small-essential-vocabulary principle already governs `Int`/`Float`; none of these has a
+  concrete Emerald program motivating it.
+- **Runtime introspection** (object-space walking, garbage-collector control, execution
+  tracing, arbitrary object marshaling). All in the family 21 already defers as runtime
+  metaprogramming.
+- **Library-shaped substitutes for language features** (a delegation helper, an observer
+  pattern, a singleton helper). These earn their place in languages without interfaces or
+  traits to lean on; Emerald's traits and classes (11) already cover the need they solve
+  elsewhere.
+
+**Already gated on a separate design pass, not repeated here:**
+
+- Threads, fibers, and any other concurrency primitive wait for the dedicated concurrency
+  design pass (21).
+- Anything that would want its own release cadence rather than living in this repository —
+  the parked platform libraries (15.6) chief among them — waits on a package manager, itself
+  undesigned (21).
+
 ## 16. Annotations, assertions, and tests
 
 ### 16.1 Annotations
@@ -3763,7 +3819,10 @@ for working Emerald programs, implementation measurements, or a dedicated design
   control" is allowed to mean here;
 - project templates and the eventual build, distribution, and package commands;
 - generated documentation and its searchable reference interface;
-- serialization, filesystem encoding policy, clocks, dates, time zones, and networking;
+- serialization more broadly (beyond JSON, itself recorded in 15.7) and filesystem encoding
+  policy remain open. 15.7 records the rest of the standard-library backlog: dates and time
+  zones, regular expressions, JSON, a synchronous networking client, and what is
+  deliberately not planned;
 - the runtime error taxonomy, expanded alongside the operations that need it. Existing
   named requirements include `RecursionError` for the recursion boundary and `InputError`
   for input failures; conversion, filesystem, regex, networking, and similar errors receive

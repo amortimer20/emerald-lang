@@ -98,18 +98,23 @@ method changes only ordinary identifier uses.
 ## Next step
 
 Console styling (all four slices) is committed and pushed. No further milestone is authorized
-yet. Console's own remaining scope (`Table`/`Panel` widgets, prompts, multi-select) needs its
-own design proposal and real beginner-program motivation before implementation begins (24).
-`Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than on the roadmap.
+yet. The standard-library backlog (15.7) names date/time as the highest-priority next
+addition, needing no new infrastructure; Console's own remaining scope (`Table`/`Panel`
+widgets, prompts, multi-select) is next after that. Each needs its own design proposal and
+real beginner-program motivation before implementation begins (24). `Tui`, `Graphics`, `Gui`,
+`Audio`, and `Game` are parked rather than on the roadmap.
 
 ## Deferred
 
 - Taking `Trait.method` as a value remains rejected.
 - Capturing a built-in function or method as a value, and variadic functions generally, remain
   rejected because no written function type describes them yet.
-- Expanded `emerald.toml`, bounded implementation limits,
-  networking, concurrency, generics, enum payloads, wider general overloading, and package
-  management each need a separate design pass or a concrete program that motivates them.
+- Expanded `emerald.toml`, bounded implementation limits, concurrency, generics, enum
+  payloads, wider general overloading, and package management each need a separate design
+  pass or a concrete program that motivates them.
+- The standard-library backlog is recorded in rewrite-context 15.7: date/time (highest
+  priority, no new infrastructure needed), regular expressions (15.4 already designed),
+  JSON, a synchronous networking client, and what is deliberately not planned.
 - Braceless type bodies (10.6) are deferred, not rejected: 24 records what a proposal must
   answer (one canonical formatter output, one parsing mode, one way to teach a declaration).
 - `Console`'s remaining scope — `Table`/`Panel` layout widgets and line-oriented interaction
