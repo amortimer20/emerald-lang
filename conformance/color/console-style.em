@@ -28,4 +28,12 @@ assert Console.style("w", foreground: Console.Color.bright_yellow, background: C
 assert Console.style("x", foreground: Console.Color.bright_cyan, background: Console.Color.bright_yellow) == "#{e}[103m#{e}[96mx#{e}[39m#{e}[49m"
 assert Console.style("plain") == "plain"
 
+# plain removes SGR only; it keeps other terminal control text untouched.
+assert Console.plain(Console.bold(Console.red("ready"))) == "ready"
+assert Console.plain("#{e}[1;31mready#{e}[0m#{e}[m") == "ready"
+assert Console.plain("before#{e}[2Jafter") == "before#{e}[2Jafter"
+assert Console.plain("before#{e}after") == "before#{e}after"
+assert Console.plain("before#{e}[31after") == "before#{e}[31after"
+assert Console.plain("before#{e}[31xafter") == "before#{e}[31xafter"
+
 print("color helpers passed")

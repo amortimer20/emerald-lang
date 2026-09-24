@@ -16,4 +16,5 @@ assert Emerald.Console.italic("x") == "x"
 assert Emerald.Console.underline("x") == "x"
 assert Emerald.Console.style("x", foreground: Emerald.Console.Color.bright_red, background: Emerald.Console.Color.bright_blue, bold: true, dim: true, italic: true, underline: true) == "x"
 assert Emerald.Console.style("plain") == "plain"
+assert Emerald.Console.plain("\u{1B}[32mplain\u{1B}[39m") == "plain"
 print(Emerald.Console.green("unstyled"))

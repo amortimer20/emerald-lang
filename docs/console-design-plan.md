@@ -307,7 +307,7 @@ Notes for the executor:
 
 ## Runnable implementation slices
 
-1. **Helpers under a forced policy — implemented locally, awaiting commit.** `Console.Color`, the twelve helpers, `Console.style`,
+1. **Helpers under a forced policy — completed in `0904ec7`.** `Console.Color`, the twelve helpers, `Console.style`,
    the nesting rule, `Streams.color`, and the `conformance/color/` directory. Cases assert
    exact sequences in source with `"\u{1B}"`, including nested foreground,
    foreground-in-background, bold/dim both ways, a full reset in input (per decision 4),
@@ -318,8 +318,10 @@ Notes for the executor:
    prelude's `Emerald` path stable while recovering from an invalid declaration of the
    reserved name. Completion now omits private type members such as `_color`, `_layer`, and
    `_code`.
-2. **`Console.plain`.** The SGR scanner, cases for stripping every styled output from slice
-   1, and cases that keep cursor sequences, bare `ESC`, and incomplete sequences intact.
+2. **`Console.plain` — implemented locally, awaiting commit.** The native scanner strips
+   complete SGR sequences while retaining every other sequence. Focused assertions cover
+   styled output from slice 1, a multi-code SGR sequence, cursor controls, bare `ESC`, and
+   incomplete or malformed sequences. `plain` has the same result with color policy on or off.
 3. **Real terminals.** `--color`, environment precedence, TTY detection, Windows
    enabling, and REPL forwarding. Zig unit tests cover the pure precedence function. Then
    check the real binary: under a pseudo-terminal color appears (on Linux,

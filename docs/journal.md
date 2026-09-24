@@ -2415,3 +2415,16 @@ declaration of the reserved `Emerald` name exposed the same recovery-path hazard
 resolver keeps prelude self-qualification anchored to its namespace while it reports that
 program error. Type-member completion now also filters private names; otherwise Console's
 native and implementation helpers would have appeared in `Console.` suggestions.
+
+## Console styling, slice 2: plain text, 2026-09-24
+
+`Console.plain(text)` is a single native scanner that removes complete ANSI SGR sequences from
+an ordinary Emerald `String`. A sequence is precisely `ESC`, `[`, zero or more ASCII decimal
+digits or semicolons, then `m`; this includes `ESC[m` and combined codes such as
+`ESC[1;31m`. It deliberately leaves cursor controls, bare escape characters, incomplete
+sequences, and malformed sequences alone. It is a styling-removal tool, not a terminal-security
+sanitizer, and its result does not depend on the execution's color policy.
+
+The forced-color conformance case now strips nested Console styling and direct SGR strings,
+then proves the scanner retains the non-SGR cases. The ordinary color-off run case confirms the
+same removal behavior without styled helper output.

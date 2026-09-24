@@ -102,6 +102,9 @@ class Console {
     # Native: whether this execution emits ANSI SGR styling.
     func Console._color(): Bool { return false }
 
+    # Native: removes complete ANSI SGR sequences, leaving other control text alone.
+    func Console.plain(text: String): String { return text }
+
     func Console._layer(text: String, open: Int, close: Int): String {
         const opened = "\u{1B}[#{open}m"
         const closed = "\u{1B}[#{close}m"

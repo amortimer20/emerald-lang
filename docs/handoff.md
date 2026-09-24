@@ -25,11 +25,12 @@ them settled while nothing implemented them; see
 [`nested-types-design-plan.md`](nested-types-design-plan.md) for what was decided and why. A
 module-level declaration may no longer share a directory namespace's name.
 
-Console styling slice 1 is implemented locally: `Console.Color`, `Console.style`, and the
-twelve basic helpers produce correctly nested ANSI SGR strings when the execution-owned
-policy is forced on, and remain ordinary strings when it is off. The policy is not yet exposed
-through the CLI, environment, terminal detection, or REPL; those belong to slice 3 of
-[`console-design-plan.md`](console-design-plan.md). `Console.plain` remains slice 2.
+Console styling slices 1 and 2 are implemented: `Console.Color`, `Console.style`, the twelve
+basic helpers, and `Console.plain`. Styled values produce correctly nested ANSI SGR strings
+when the execution-owned policy is forced on, and remain ordinary strings when it is off;
+`plain` removes complete SGR sequences regardless of that policy, retaining other terminal
+control text. The policy is not yet exposed through the CLI, environment, terminal detection,
+or REPL; those belong to slice 3 of [`console-design-plan.md`](console-design-plan.md).
 
 Inline `if condition then value else value` is now implemented, closing a gap that the
 design and language guide had incorrectly described as already available. It supports
@@ -92,10 +93,9 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-Console styling slice 1 is awaiting the user's commit decision. The next implementation slice
-is `Console.plain`: remove only complete ANSI SGR sequences while retaining other terminal
-control sequences. The broader Console policy (CLI flags, environment, terminal detection,
-and REPL) remains slice 3.
+Console styling slice 2 is awaiting the user's commit decision. The next implementation slice
+is real-terminal policy: CLI flags, environment precedence, terminal detection, Windows setup,
+and REPL forwarding. It remains slice 3 of the Console plan.
 
 ## Deferred
 
@@ -126,7 +126,14 @@ and REPL) remains slice 3.
 
 ## Validation and repository state
 
-Console styling slice 1 is implemented locally and uncommitted. With pinned Zig 0.16.0,
+Console styling slice 2 is implemented locally and uncommitted. With pinned Zig 0.16.0,
+Debug and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (97
+linked files), `zig fmt --check src/*.zig`, and `git diff --check` passed. `Console.plain`
+strips only complete `ESC[` + decimal-digit or semicolon + `m` sequences, and keeps cursor
+controls, bare escapes, and incomplete or malformed sequences. Its checks live beside the
+forced-color styling assertions and confirm that plain is also independent of the color policy.
+
+Console styling slice 1 is committed as `0904ec7`. With pinned Zig 0.16.0,
 `bash tools/check-toolchain.sh`, Debug and ReleaseSafe `zig build test`, `zig build`,
 `bash tools/check-doc-examples.sh` (97 linked files), `zig fmt --check src/*.zig`, and
 `git diff --check` passed. The new `color/console-style` and `run/console-style-off`
