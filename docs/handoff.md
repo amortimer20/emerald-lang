@@ -100,9 +100,9 @@ only with user authorization.
   inside a type body, and until 2026-09-24 nothing recorded the gap.
   [`nested-types-design-plan.md`](nested-types-design-plan.md) has all seven decisions
   approved; slices 0 through 2 are done, so nested types parse, format, are checked, and are
-  reached by path (`Console.Color.red`, `const c: Ui.Console.Color`, aliases). Slice 3 (LSP
-  navigation) and slice 4 (documentation, fuzzing) remain; the syntax is not yet in the
-  language guide.
+  reached by path (`Console.Color.red`, `const c: Ui.Console.Color`, aliases), with LSP
+  symbols, navigation, references, rename, and completion. Slice 4 (documentation, fuzzing)
+  remains; the syntax is not yet in the language guide.
   `Console.Color` in the uncommitted Console styling plan depends on it.
 - Formatter: the formatter expands every one-line body onto separate lines. The user decided
   (2026-09-24) that an **empty** body stays on one line (`class InvalidScore extends Error { }`,
@@ -122,6 +122,16 @@ only with user authorization.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+Nested types slice 3 (LSP) is complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
+`zig build test` (including new Lsp tests for nested symbols, per-segment definition,
+references without enum-value duplicates, and completion's nested path key), `zig build`,
+`bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, and `git diff --check`
+passed. Over JSON-RPC against `conformance/run/nested-types`: definition from every path
+segment, cross-file references and rename from `main.em`, and completion while typing
+(`Console.`, `Console.Color.`, `Ui.Console.Pair.`). A rename of the nested enum through a
+same-spelled alias, and of a top-level type used as `Point?` and `List[Point]`, were applied
+and the resulting programs run or check cleanly.
 
 Nested types slice 2 (use by path) is complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
 `zig build test`, `zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`,

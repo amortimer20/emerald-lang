@@ -2279,3 +2279,29 @@ A type-level member of a nested type names that type bare where it is declared
 (`func Pair.zero()` inside `Pair`), matching how the nested type itself is declared, and is
 used through the full path (`Console.Pair.zero()`). The parser already enforced this with a
 clear message.
+
+## Nested types in the language server, 2026-09-24
+
+Slice 3 of the nested-types plan. Document symbols now nest types, and hover needed nothing,
+since it shows checked types, which already display as `Console.Pair.Deep`. Most of the work
+was in paths. The resolver records a qualified path as one reference to its final member, so
+before this neither `Console` nor `Color` in `Console.Color.red` navigated anywhere — true of
+top-level types too, not only nested ones. The server now reads a segment it has no target for
+as the path written up to it, the same way it now reads a written type, so every segment of an
+expression, annotation, or `using` path goes to its declaration and counts as a reference.
+
+References had been listing every enum declaration once per value: each value carries a
+synthesized annotation naming its enum, spanning the enum's own name. Those are skipped.
+
+Rename had two alias bugs that predate nested types. A use spelled through an alias
+(`using Paint = Graphics.Color`, then `const p: Paint`) was rewritten to the new name, which
+that file cannot see; and the alias's own path was never renamed, leaving it pointing at a type
+that no longer existed. Rename now includes `using` paths, and edits only text spelled with the
+declaration's own name that does not begin a path with one of the file's aliases. An alias
+spelled exactly like the declaration (`using Color = Ui.Console.Color`) is the case that makes
+the second condition necessary. Renaming that nested `Color` to `Hue` across the run case and
+running the edited program was the check.
+
+Testing completion showed that it analyzes a rewritten copy of the document, so a statement
+typed into a project's non-entry file fails before completion can answer; completion was
+verified in the entry file, where statements belong.

@@ -685,6 +685,12 @@ fn documentSymbols(arena: std.mem.Allocator, source: *const Source, program: Ast
     return symbols.items;
 }
 
+/// A nested type (14.3) as the statement it would be at the top level, so the
+/// statement walkers below reach its members the same way.
+fn nestedStatement(nested: Ast.StructDeclaration.NestedType) Ast.Statement {
+    return .{ .span = nested.span, .data = .{ .struct_declaration = nested.declaration } };
+}
+
 fn structSymbol(arena: std.mem.Allocator, source: *const Source, span: Source.Span, s: Ast.StructDeclaration) !DocumentSymbol {
     const kind: u32 = if (s.trait) SymbolKind.interface else if (s.class) SymbolKind.class else if (s.enumeration) SymbolKind.@"enum" else SymbolKind.@"struct";
 
@@ -725,6 +731,8 @@ fn structSymbol(arena: std.mem.Allocator, source: *const Source, span: Source.Sp
         .range = lspRange(source, type_field.name_span),
         .selectionRange = lspRange(source, type_field.name_span),
     });
+    // Section 14.3's nested types, each with its own members beneath it.
+    for (s.types) |nested| try children.append(arena, try structSymbol(arena, source, nested.span, nested.declaration));
 
     return .{
         .name = s.name,
@@ -893,11 +901,13 @@ fn definitionAt(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file:
         const expr = found.expression;
         if (expr.data == .name) {
             if (analysis.resolved.facts.expression_targets.get(expr)) |target| return target;
+            if (chainTypeTarget(analysis, file, expr)) |target| return target;
         } else if (expr.data == .member) {
             const member = expr.data.member;
             if (offset >= member.name_span.start and offset <= member.name_span.end) {
                 if (try memberDefinition(gpa, analysis, file, expr)) |target| return target;
-            }
+                if (chainTypeTarget(analysis, file, expr)) |target| return target;
+            } else if (chainSegmentTarget(analysis, file, member.base, offset)) |target| return target;
         } else if (expr.data == .binary) {
             const binary = expr.data.binary;
             if (offset >= binary.operator_span.start and offset <= binary.operator_span.end) {
@@ -920,7 +930,7 @@ fn definitionAt(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file:
                     const member = callee.data.member;
                     if (offset >= member.name_span.start and offset <= member.name_span.end) {
                         if (try memberDefinition(gpa, analysis, file, callee)) |target| return target;
-                    }
+                    } else if (chainSegmentTarget(analysis, file, member.base, offset)) |target| return target;
                 }
             }
         }
@@ -1126,6 +1136,7 @@ fn findAssignmentInStatement(statement: Ast.Statement, file: u32, offset: u32, t
                 if (property.setter) |setter| if (findAssignmentInStatements(setter.body.statements, file, offset, targets)) |target| return target;
             }
             for (s.type_functions) |function| if (findAssignmentInStatements(function.declaration.body.statements, file, offset, targets)) |target| return target;
+            for (s.types) |nested| if (findAssignmentInStatement(nestedStatement(nested), file, offset, targets)) |target| return target;
         },
         .try_statement => |t| {
             if (findAssignmentInStatements(t.body.statements, file, offset, targets)) |target| return target;
@@ -1232,13 +1243,119 @@ fn checkTypeExpr(type_expr: Ast.TypeExpression, file: u32, offset: u32, analysis
     }
 
     if (type_expr.name.len > 0) {
-        const type_key = analysis.resolved.facts.keyFor(file, type_expr.name) orelse type_expr.name;
-        if (analysis.resolved.facts.declarations.get(type_key)) |target| return target;
+        // The segment under the cursor: `Console` or `Color` in `Console.Color`.
+        const at = offset - type_expr.span.start;
+        const end = if (at >= type_expr.name.len) type_expr.name.len else std.mem.indexOfScalarPos(u8, type_expr.name, at, '.') orelse type_expr.name.len;
+        if (typeTargetOf(analysis.resolved.facts, file, type_expr.name[0..end])) |target| return target;
         if (analysis.resolved.facts.namespaceAliasFor(file, type_expr.name)) |alias| {
             if (analysis.resolved.facts.declarations.get(alias)) |target| return target;
         }
     }
     return null;
+}
+
+/// A qualified path's inner segment: the resolver reads `Console.Color.red`
+/// as one reference to `red`, so neither `Console` nor `Console.Color` inside
+/// it has a target of its own. Read as written, each still names a type.
+fn chainTypeTarget(analysis: *const emerald.Analysis, file: u32, expression: *const Ast.Expression) ?Resolver.Target {
+    var buffer: [1024]u8 = undefined;
+    const written = chainName(expression, &buffer) orelse return null;
+    return typeTargetOf(analysis.resolved.facts, file, written);
+}
+
+/// The segment of a plain-name chain under the cursor, read as the type path
+/// written up to it: `Console` or `Console.Color` in `Console.Color.red`.
+fn chainSegmentTarget(analysis: *const emerald.Analysis, file: u32, base: *const Ast.Expression, offset: u32) ?Resolver.Target {
+    var at = base;
+    while (true) switch (at.data) {
+        .member => |member| {
+            if (offset >= member.name_span.start and offset <= member.name_span.end) return chainTypeTarget(analysis, file, at);
+            at = member.base;
+        },
+        .name => return if (offset >= at.span.start and offset <= at.span.end) chainTypeTarget(analysis, file, at) else null,
+        else => return null,
+    };
+}
+
+/// `Console.Color` for a chain of plain names, or null for anything else.
+fn chainName(expression: *const Ast.Expression, buffer: *[1024]u8) ?[]const u8 {
+    var parts: [64][]const u8 = undefined;
+    var count: usize = 0;
+    var at = expression;
+    while (true) {
+        if (count == parts.len) return null;
+        switch (at.data) {
+            .name => |name| {
+                parts[count] = name;
+                count += 1;
+                break;
+            },
+            .member => |member| {
+                parts[count] = member.name;
+                count += 1;
+                at = member.base;
+            },
+            else => return null,
+        }
+    }
+    var length: usize = 0;
+    var index = count;
+    while (index > 0) {
+        index -= 1;
+        const extra: usize = if (index + 1 == count) 0 else 1;
+        if (length + extra + parts[index].len > buffer.len) return null;
+        if (extra == 1) {
+            buffer[length] = '.';
+            length += 1;
+        }
+        @memcpy(buffer[length..][0..parts[index].len], parts[index]);
+        length += parts[index].len;
+    }
+    return buffer[0..length];
+}
+
+/// The declaration a written type name reaches, following section 14.3's
+/// nesting as `Checker.typeKeyOf` does: the longest prefix that is a type, then
+/// each remaining segment as a type nested in the last (`Outer::Inner`).
+fn typeTargetOf(facts: Resolver.Facts, file: u32, written: []const u8) ?Resolver.Target {
+    var buffer: [1024]u8 = undefined;
+    return facts.declarations.get(typeKeyForWritten(facts, file, written, &buffer) orelse return null);
+}
+
+/// The key `typeTargetOf` looks up, built in `buffer` when it needs one: the
+/// written key itself when it is declared, else a nested one (`Outer::Inner`).
+fn typeKeyForWritten(facts: Resolver.Facts, file: u32, written: []const u8, buffer: *[1024]u8) ?[]const u8 {
+    const whole = writtenTypeKey(facts, file, written, buffer) orelse return null;
+    if (facts.declarations.contains(whole)) return whole;
+    var cut = written.len;
+    while (std.mem.lastIndexOfScalar(u8, written[0..cut], '.')) |dot| {
+        cut = dot;
+        var outer_buffer: [1024]u8 = undefined;
+        const outer = writtenTypeKey(facts, file, written[0..dot], &outer_buffer) orelse return null;
+        if (!facts.declarations.contains(outer)) continue;
+        var length = outer.len;
+        if (length > buffer.len) return null;
+        std.mem.copyForwards(u8, buffer[0..length], outer);
+        var segments = std.mem.splitScalar(u8, written[dot + 1 ..], '.');
+        while (segments.next()) |segment| {
+            if (length + Resolver.method_separator.len + segment.len > buffer.len) return null;
+            @memcpy(buffer[length..][0..Resolver.method_separator.len], Resolver.method_separator);
+            length += Resolver.method_separator.len;
+            @memcpy(buffer[length..][0..segment.len], segment);
+            length += segment.len;
+        }
+        return if (facts.declarations.contains(buffer[0..length])) buffer[0..length] else null;
+    }
+    return null;
+}
+
+/// A written type name's key before any nesting, as `Checker.writtenTypeKey`
+/// finds it, built in `buffer` when a namespace alias has to be expanded.
+fn writtenTypeKey(facts: Resolver.Facts, file: u32, written: []const u8, buffer: *[1024]u8) ?[]const u8 {
+    if (facts.keyFor(file, written)) |key| return key;
+    const dot = std.mem.indexOfScalar(u8, written, '.') orelse return written;
+    const namespace = facts.namespaceAliasFor(file, written[0..dot]) orelse return written;
+    return std.fmt.bufPrint(buffer, "{s}{s}", .{ namespace, written[dot..] }) catch null;
 }
 
 fn findTypeInStatements(statements: []const Ast.Statement, file: u32, offset: u32, analysis: *const emerald.Analysis) ?Resolver.Target {
@@ -1285,6 +1402,7 @@ fn findTypeInStatement(statement: Ast.Statement, file: u32, offset: u32, analysi
             for (s.type_fields) |tf| {
                 if (tf.annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
             }
+            for (s.types) |nested| if (findTypeInStatement(nestedStatement(nested), file, offset, analysis)) |t| return t;
         },
         .conditional => |c| {
             if (findTypeInStatements(c.then_block.statements, file, offset, analysis)) |t| return t;
@@ -1465,6 +1583,7 @@ fn findDeclNameInStatement(statement: Ast.Statement, file: u32, offset: u32) ?Re
             for (s.type_fields) |tf| {
                 if (offset >= tf.name_span.start and offset <= tf.name_span.end) return .{ .file = file, .span = tf.name_span };
             }
+            for (s.types) |nested| if (findDeclNameInStatement(nestedStatement(nested), file, offset)) |t| return t;
         },
         .conditional => |c| {
             if (findDeclNameInStatements(c.then_block.statements, file, offset)) |t| return t;
@@ -1632,6 +1751,7 @@ fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // resolution, but it has no project URI, so references report only the
     // project's real source files.
     for (analysis.parsed[0..loaded.project.files.len], 0..) |parsed, file_index| {
+        try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
         try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
     }
 
@@ -1654,6 +1774,53 @@ fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
 
 fn targetEql(a: Resolver.Target, b: Resolver.Target) bool {
     return a.file == b.file and a.span.start == b.span.start and a.span.end == b.span.end;
+}
+
+/// Section 14.2's `using` paths name declarations too: `Graphics.Color` in
+/// `using Paint = Graphics.Color`, segment by segment as a written type is.
+/// A segment's span is derived from the whole path's, so only a path written
+/// without spaces, as the formatter writes one, contributes.
+/// Whether `name` at `span` is a use of one of the file's aliases rather than
+/// the declaration's own name. The path a `using` names is never an alias use.
+fn isAliasSpelling(usings: []const Ast.Using, name: []const u8, span: Source.Span) bool {
+    var aliased = false;
+    for (usings) |declaration| {
+        if (span.start >= declaration.path_span.start and span.end <= declaration.path_span.end) return false;
+        if (std.mem.eql(u8, declaration.alias, name)) aliased = true;
+    }
+    return aliased;
+}
+
+fn collectReferencesInUsings(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    target: Resolver.Target,
+    file: u32,
+    usings: []const Ast.Using,
+    out: *std.ArrayList(Resolver.Target),
+) std.mem.Allocator.Error!void {
+    for (usings) |declaration| {
+        var written_length: usize = declaration.path.len - 1;
+        for (declaration.path) |segment| written_length += segment.len;
+        if (declaration.path_span.end - declaration.path_span.start != written_length) continue;
+        var buffer: [1024]u8 = undefined;
+        var length: usize = 0;
+        for (declaration.path, 0..) |segment, index| {
+            if (index != 0) {
+                if (length == buffer.len) break;
+                buffer[length] = '.';
+                length += 1;
+            }
+            if (length + segment.len > buffer.len) break;
+            @memcpy(buffer[length..][0..segment.len], segment);
+            const start = length;
+            length += segment.len;
+            if (typeTargetOf(analysis.resolved.facts, file, buffer[0..length])) |found| if (targetEql(found, target)) {
+                const at: u32 = declaration.path_span.start + @as(u32, @intCast(start));
+                try out.append(gpa, .{ .file = file, .span = .{ .start = at, .end = at + @as(u32, @intCast(segment.len)) } });
+            };
+        }
+    }
 }
 
 fn collectReferencesInStatements(
@@ -1785,9 +1952,12 @@ fn collectReferencesInStruct(
     for (s.methods) |m| try collectReferencesInFunction(gpa, analysis, target, file, m, out);
     for (s.type_functions) |tf| try collectReferencesInFunction(gpa, analysis, target, file, tf.declaration, out);
     for (s.type_fields) |tf| {
-        if (tf.annotation) |ann| try collectReferencesInTypeExpression(gpa, analysis, target, file, ann, out);
+        // An enum value's annotation is synthesized, spanning the enum's own
+        // name, so it is not a reference someone wrote.
+        if (tf.enum_value == null) if (tf.annotation) |ann| try collectReferencesInTypeExpression(gpa, analysis, target, file, ann, out);
         try collectReferencesInExpression(gpa, analysis, target, file, tf.initializer, out);
     }
+    for (s.types) |nested| try collectReferencesInStruct(gpa, analysis, target, file, nested.declaration, out);
 }
 
 fn collectReferencesInCase(
@@ -1833,14 +2003,20 @@ fn collectReferencesInTypeExpression(
     }
 
     if (type_expr.name.len > 0) {
-        const type_key = analysis.resolved.facts.keyFor(file, type_expr.name) orelse type_expr.name;
-        var found = analysis.resolved.facts.declarations.get(type_key);
-        if (found == null) {
-            if (analysis.resolved.facts.namespaceAliasFor(file, type_expr.name)) |alias| {
-                found = analysis.resolved.facts.declarations.get(alias);
-            }
+        // Each segment names something of its own: `Console.Color` refers to
+        // both `Console` and the type nested in it (14.3).
+        var start: usize = 0;
+        while (start < type_expr.name.len) {
+            const end = std.mem.indexOfScalarPos(u8, type_expr.name, start, '.') orelse type_expr.name.len;
+            if (typeTargetOf(analysis.resolved.facts, file, type_expr.name[0..end])) |f| if (targetEql(f, target)) {
+                const at: u32 = type_expr.span.start + @as(u32, @intCast(start));
+                try out.append(gpa, .{ .file = file, .span = .{ .start = at, .end = at + @as(u32, @intCast(end - start)) } });
+            };
+            start = end + 1;
         }
-        if (found) |f| if (targetEql(f, target)) try out.append(gpa, .{ .file = file, .span = type_expr.span });
+        if (analysis.resolved.facts.namespaceAliasFor(file, type_expr.name)) |alias| {
+            if (analysis.resolved.facts.declarations.get(alias)) |f| if (targetEql(f, target)) try out.append(gpa, .{ .file = file, .span = type_expr.span });
+        }
     }
 }
 
@@ -1860,8 +2036,17 @@ fn collectReferencesInExpression(
             }
         },
         .member => |member| {
-            if (try memberDefinition(gpa, analysis, file, expr)) |found| {
+            // An inner segment of a qualified path has no target of its own
+            // (`Color` in `Ui.Console.Color.green`); read it as written.
+            if (try memberDefinition(gpa, analysis, file, expr) orelse chainTypeTarget(analysis, file, expr)) |found| {
                 if (targetEql(found, target)) try out.append(gpa, .{ .file = file, .span = member.name_span });
+            }
+            // The same for the path's head, which only a qualified chain
+            // leaves unrecorded, so a local is never mistaken for it.
+            if (member.base.data == .name and !analysis.resolved.facts.expression_targets.contains(member.base)) {
+                if (chainTypeTarget(analysis, file, member.base)) |found| {
+                    if (targetEql(found, target)) try out.append(gpa, .{ .file = file, .span = member.base.span });
+                }
             }
             try collectReferencesInExpression(gpa, analysis, target, file, member.base, out);
         },
@@ -1971,6 +2156,7 @@ fn onPrepareRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
     defer sites.deinit(gpa);
     try sites.append(gpa, target);
     for (analysis.parsed, 0..) |parsed, file_index| {
+        try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
         try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
     }
 
@@ -2025,6 +2211,7 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
     defer sites.deinit(gpa);
     try sites.append(gpa, target);
     for (analysis.parsed, 0..) |parsed, file_index| {
+        try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
         try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
     }
 
@@ -2033,11 +2220,24 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
         for (by_file.values()) |*edits| edits.deinit(gpa);
         by_file.deinit(gpa);
     }
+    // A reference written through an alias (`using Paint = Graphics.Color`,
+    // then `Paint`) spells the alias, not the declaration, so renaming the
+    // declaration leaves it alone; rewriting it would name something that
+    // file cannot see.
+    const declared_name = loaded.project.files[target.file].source.text[target.span.start..target.span.end];
     for (sites.items) |site| {
-        const gop = try by_file.getOrPut(gpa, site.file);
-        if (!gop.found_existing) gop.value_ptr.* = .empty;
         const site_source = &loaded.project.files[site.file].source;
         if (isOperatorTokenSpan(site_source, site.span)) continue;
+        const site_text = site_source.text[site.span.start..site.span.end];
+        if (!std.mem.eql(u8, site_text, declared_name)) continue;
+        // An alias spelled like the declaration (`using Color = Ui.Console.Color`)
+        // still means the alias in its own file, and keeps its name.
+        // An alias can only begin a path, so a later segment (`Console.Color`)
+        // is always the declaration's own name.
+        const begins_path = site.span.start == 0 or site_source.text[site.span.start - 1] != '.';
+        if (begins_path and site.file < analysis.parsed.len and isAliasSpelling(analysis.parsed[site.file].program.using, site_text, site.span)) continue;
+        const gop = try by_file.getOrPut(gpa, site.file);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
         try gop.value_ptr.append(gpa, .{ .range = lspRange(site_source, site.span), .newText = new_name });
     }
 
@@ -2343,6 +2543,11 @@ fn collectLocalCandidatesInStatements(
                 try collectFunctionLocalCandidates(gpa, type_function.declaration, cursor, false, seen, out);
                 break :nested;
             };
+            for (s.types) |nested_type| if (spanContains(nested_type.span, cursor)) {
+                const one = [_]Ast.Statement{nestedStatement(nested_type)};
+                try collectLocalCandidatesInStatements(gpa, &one, cursor, seen, out);
+                break :nested;
+            };
         },
         .conditional => |conditional| {
             if (spanContains(conditional.then_block.span, cursor)) {
@@ -2561,6 +2766,11 @@ fn identifierStartBefore(text: []const u8, cursor: u32) u32 {
 
 fn completionPathKey(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, written: []const u8) ![]u8 {
     if (analysis.resolved.facts.keyFor(file, written)) |key| return gpa.dupe(u8, key);
+    // `Console.Color.`: a type nested in another (14.3).
+    var buffer: [1024]u8 = undefined;
+    if (std.mem.indexOfScalar(u8, written, '.') != null) {
+        if (typeKeyForWritten(analysis.resolved.facts, file, written, &buffer)) |key| return gpa.dupe(u8, key);
+    }
     const dot = std.mem.indexOfScalar(u8, written, '.') orelse {
         if (analysis.resolved.facts.namespaceAliasFor(file, written)) |alias| return gpa.dupe(u8, alias);
         return gpa.dupe(u8, written);
@@ -2621,9 +2831,15 @@ fn findStructDeclarationAt(analysis: *const emerald.Analysis, target: Resolver.T
     if (target.file >= analysis.parsed.len) return null;
     for (analysis.parsed[target.file].program.statements) |statement| {
         if (statement.data != .struct_declaration) continue;
-        const s = statement.data.struct_declaration;
-        if (s.name_span.start == target.span.start and s.name_span.end == target.span.end) return s;
+        if (findStructDeclarationWithin(statement.data.struct_declaration, target.span)) |found| return found;
     }
+    return null;
+}
+
+/// `s` itself, or a type nested in it (14.3), whose name is written at `span`.
+fn findStructDeclarationWithin(s: Ast.StructDeclaration, span: Source.Span) ?Ast.StructDeclaration {
+    if (s.name_span.start == span.start and s.name_span.end == span.end) return s;
+    for (s.types) |nested| if (findStructDeclarationWithin(nested.declaration, span)) |found| return found;
     return null;
 }
 
@@ -2674,6 +2890,7 @@ fn collectTypeMembers(gpa: std.mem.Allocator, s: Ast.StructDeclaration, out: *st
     defer seen.deinit(gpa);
     for (s.type_functions) |function| try addCompletionOnce(gpa, &seen, out, function.member);
     for (s.type_fields) |field| try addCompletionOnce(gpa, &seen, out, field.name);
+    for (s.types) |nested| try addCompletionOnce(gpa, &seen, out, nested.declaration.name);
 }
 
 /// Direct children of `namespace`, plus direct child namespaces inferred from
@@ -2946,6 +3163,91 @@ test "definitionAt jumps from a written type annotation to the struct it names" 
     const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
     const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "struct Circle").? + "struct ".len);
     try testing.expectEqual(decl_offset, target.span.start);
+}
+
+const nested_types_text =
+    "class Console {\n" ++
+    "    enum Color {\n" ++
+    "        red, green\n" ++
+    "    }\n" ++
+    "}\n" ++
+    "\n" ++
+    "const c: Console.Color = Console.Color.red\n" ++
+    "print(c)\n";
+
+fn analyzeNestedTypes(gpa: std.mem.Allocator, source: *Source) !emerald.Analysis {
+    source.* = try Source.init(gpa, "t.em", nested_types_text);
+    var files = [_]emerald.Project.File{.{ .source = source.*, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+    return (try emerald.analyzeProject(gpa, &project)).?;
+}
+
+test "document symbols nest a nested type (14.3) under its enclosing type" {
+    const gpa = testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const source = try Source.init(arena, "t.em", nested_types_text);
+    const tokenized = try Lexer.tokenize(arena, &source);
+    const parsed = try Parser.parse(arena, &source, tokenized.tokens);
+    const symbols = try documentSymbols(arena, &source, parsed.program);
+    try testing.expectEqualStrings("Console", symbols[0].name);
+    const nested = symbols[0].children[0];
+    try testing.expectEqualStrings("Color", nested.name);
+    try testing.expectEqual(SymbolKind.@"enum", nested.kind);
+    try testing.expectEqual(@as(usize, 2), nested.children.len);
+}
+
+test "definitionAt reaches each segment of a nested type path, in an expression or an annotation" {
+    const gpa = testing.allocator;
+    var source: Source = undefined;
+    var analysis = try analyzeNestedTypes(gpa, &source);
+    defer analysis.deinit(gpa);
+    defer source.deinit(gpa);
+    const text = nested_types_text;
+    const console_decl: u32 = @intCast(std.mem.indexOf(u8, text, "class Console").? + "class ".len);
+    const color_decl: u32 = @intCast(std.mem.indexOf(u8, text, "enum Color").? + "enum ".len);
+    const red_decl: u32 = @intCast(std.mem.indexOf(u8, text, "red,").?);
+    const use: u32 = @intCast(std.mem.indexOf(u8, text, "= Console.Color.red").? + 2);
+    // Only `red` is a reference the resolver records; the rest are read as written.
+    try testing.expectEqual(console_decl, (try definitionAt(gpa, &analysis, 0, use)).?.span.start);
+    try testing.expectEqual(color_decl, (try definitionAt(gpa, &analysis, 0, use + @as(u32, "Console.".len))).?.span.start);
+    try testing.expectEqual(red_decl, (try definitionAt(gpa, &analysis, 0, use + @as(u32, "Console.Color.".len))).?.span.start);
+    const annotation: u32 = @intCast(std.mem.indexOf(u8, text, ": Console.Color").? + 2);
+    try testing.expectEqual(console_decl, (try definitionAt(gpa, &analysis, 0, annotation)).?.span.start);
+    try testing.expectEqual(color_decl, (try definitionAt(gpa, &analysis, 0, annotation + @as(u32, "Console.".len))).?.span.start);
+}
+
+test "references to a nested type find each written segment once, not its enum values' annotations" {
+    const gpa = testing.allocator;
+    var source: Source = undefined;
+    var analysis = try analyzeNestedTypes(gpa, &source);
+    defer analysis.deinit(gpa);
+    defer source.deinit(gpa);
+    const text = nested_types_text;
+    const color_decl: u32 = @intCast(std.mem.indexOf(u8, text, "enum Color").? + "enum ".len);
+    const target = (try definitionAt(gpa, &analysis, 0, color_decl)).?;
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    try collectReferencesInStatements(gpa, &analysis, target, 0, analysis.parsed[0].program.statements, &sites);
+    // The annotation's `Color` and the expression's `Color`; before this, each
+    // enum value's synthesized annotation added the declaration again.
+    try testing.expectEqual(@as(usize, 2), sites.items.len);
+    for (sites.items) |site| {
+        try testing.expectEqualStrings("Color", text[site.span.start..site.span.end]);
+        try testing.expect(site.span.start != color_decl);
+    }
+}
+
+test "completion finds a nested type's key from its written path" {
+    const gpa = testing.allocator;
+    var source: Source = undefined;
+    var analysis = try analyzeNestedTypes(gpa, &source);
+    defer analysis.deinit(gpa);
+    defer source.deinit(gpa);
+    const key = try completionPathKey(gpa, &analysis, 0, "Console.Color");
+    defer gpa.free(key);
+    try testing.expectEqualStrings("Console::Color", key);
 }
 
 test "definitionAt reaches an assignment inside a case arm's block" {

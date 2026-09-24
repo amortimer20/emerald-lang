@@ -216,12 +216,28 @@ of what was weighed.
    in its declaration, as the nested type itself is declared, so `func Pair.zero()` inside
    `Pair` is used as `Console.Pair.zero()`; the parser already required this. A misspelled
    capitalized member now reports "has no nested type named" and lists the public nested
-   types, sorted. Nothing already reported "`X` is an enum, not a value" misleadingly once
-   paths resolve. The LSP answered every hover, definition, references, completion, and
+   types, sorted. With paths resolving, the misleading "`Console.Color` is an enum, not a
+   value" report for `Console.Color.red` is gone. The LSP answered every hover, definition, references, completion, and
    symbol request over a nested-types project without failing; navigating nested types is
    slice 3.
-3. **Tooling.** LSP document symbols, hover, navigation, references, rename, and
-   completion.
+3. **Tooling.** Done, 2026-09-24. Document symbols nest nested types. Hover needed nothing:
+   it reads checked types, which already display as `Console.Pair.Deep`. Go to definition
+   reaches every segment of a path: the resolver records only a qualified path's final
+   member, so the LSP reads a segment it has no target for as written
+   (`chainSegmentTarget`, `typeTargetOf`), in expressions and annotations alike.
+   References walk nested bodies, count each segment of a written type or `using` path, and
+   no longer count an enum value's synthesized annotation, which had listed every enum
+   declaration once per value (top-level enums too). Completion resolves a nested path's key
+   and offers nested type names after `Console.`. Two rename bugs that predate nested types
+   were fixed on the way, both about aliases: a use spelled through an alias
+   (`using Paint = Graphics.Color`, then `Paint`) was rewritten to the new name, which that
+   file cannot see, and the `using` path itself was never renamed, leaving the alias
+   pointing at nothing. Rename now edits only sites spelled with the declaration's own name
+   that do not begin a path with one of the file's aliases, and includes `using` paths; an
+   applied rename of a nested enum through an alias of the same spelling was run to confirm
+   the result still works. Still true, and not specific to nested types: a file in a
+   directory with no `main.em` is its own program (14.1), so navigation from inside
+   `ui/console.em` cannot see a sibling `main.em`'s uses.
 4. **Documentation and integration.** Update rewrite-context 14.3 (and 10.4/14.2 where the
    decisions touch them) and the decision table; language guide pages; the handoff and
    journal. Update fuzz generation to emit nested types. Then unblock the Console plan's
