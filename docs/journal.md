@@ -2305,3 +2305,19 @@ running the edited program was the check.
 Testing completion showed that it analyzes a rewritten copy of the document, so a statement
 typed into a project's non-entry file fails before completion can answer; completion was
 verified in the entry file, where statements belong.
+
+## Nested types: documentation and integration, 2026-09-24
+
+Slice 4, which completes the nested-types plan. Rewrite-context 14.3 now states the rules the
+user approved, with an example that runs; 14.2's alias rule names nested types; and the
+decision table records why nested types are keyed as type-level members, declared bare, and
+always reached qualified. The language guide's objects page gained a "Nested types" section
+pointing at `conformance/run/nested-types`. The fuzzer's valid-program templates now include a
+nested enum, a nested struct with a `Self`-returning method and a nested type-level function,
+and an exhaustive `case` over the nested enum; the template was run directly on both branches,
+since a template that failed to check would pass the fuzzer silently.
+
+The Console styling plan had been waiting on this to spell its color type `Console.Color`.
+Before updating it, a nested enum was added to the prelude's `Random` class temporarily, to
+confirm that a prelude-declared nested type, keyed under the internal `emerald.` prefix,
+resolves in values, annotations, and `case` like any other. It did, and was removed.

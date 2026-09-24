@@ -65,7 +65,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // campaign rather than only by its unit test.
     if (random.uintLessThan(u8, 8) == 0) {
         const count = random.uintLessThan(u8, 16);
-        return switch (random.uintLessThan(u8, 4)) {
+        return switch (random.uintLessThan(u8, 5)) {
             0 => std.fmt.allocPrint(gpa,
                 \\var i = 0
                 \\while i < {d} {{
@@ -81,6 +81,36 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\const values = [1, 2, 3, {d}]
                 \\for value in values {{
                 \\    print(value * 2)
+                \\}}
+            , .{count}),
+            3 => std.fmt.allocPrint(gpa,
+                \\class Outer {{
+                \\    enum Mode {{
+                \\        low, high
+                \\    }}
+                \\
+                \\    struct Inner {{
+                \\        var n: Int
+                \\
+                \\        func doubled(): Self {{
+                \\            return Outer.Inner(self.n * 2)
+                \\        }}
+                \\
+                \\        func Inner.make(n: Int): Outer.Inner {{
+                \\            return Outer.Inner(n)
+                \\        }}
+                \\    }}
+                \\}}
+                \\
+                \\const inner: Outer.Inner = Outer.Inner.make({d})
+                \\const mode = if inner.n > 7 then Outer.Mode.high else Outer.Mode.low
+                \\case mode {{
+                \\    when Outer.Mode.low {{
+                \\        print(inner.doubled())
+                \\    }}
+                \\    when Outer.Mode.high {{
+                \\        print(mode)
+                \\    }}
                 \\}}
             , .{count}),
             else => std.fmt.allocPrint(gpa,

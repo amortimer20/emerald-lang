@@ -13,6 +13,15 @@ enums, typed errors, projects/namespaces, ranges and slicing. The formatter, REP
 diagnostics, symbols, format-on-save, hover, go to definition, find references, rename, and
 completion are complete.
 
+Nested types (14.3) are implemented: a struct, class, or enum can declare types inside its
+braces, reached by path (`Console.Color.red`, `Ui.Console.Pair`, `using Color =
+Console.Color`), with privacy by 10.5's braces rule and full LSP support. The spec had called
+them settled while nothing implemented them; see
+[`nested-types-design-plan.md`](nested-types-design-plan.md) for what was decided and why. A
+module-level declaration may no longer share a directory namespace's name. The Console styling
+plan ([`console-design-plan.md`](console-design-plan.md)) now spells its color type
+`Console.Color`; its decisions 2 through 5 still need the user.
+
 Inline `if condition then value else value` is now implemented, closing a gap that the
 design and language guide had incorrectly described as already available. It supports
 lazy branch evaluation, compatible result types, branch-local narrowing, expected types
@@ -74,8 +83,10 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-No implementation slice is active. Choose the next task from the deferred/features backlog
-only with user authorization.
+No implementation slice is active. Candidates the user has discussed: the Console styling
+plan (decisions 2 through 5 pending), the `Emerald` namespace plan (after nested types, now
+unblocked), and the approved empty-body formatter change. Start one only with user
+authorization.
 
 ## Deferred
 
@@ -96,14 +107,6 @@ only with user authorization.
 
 ## Active rough edges
 
-- Nested types (14.3) are specified but not implemented: the parser rejects a type declared
-  inside a type body, and until 2026-09-24 nothing recorded the gap.
-  [`nested-types-design-plan.md`](nested-types-design-plan.md) has all seven decisions
-  approved; slices 0 through 2 are done, so nested types parse, format, are checked, and are
-  reached by path (`Console.Color.red`, `const c: Ui.Console.Color`, aliases), with LSP
-  symbols, navigation, references, rename, and completion. Slice 4 (documentation, fuzzing)
-  remains; the syntax is not yet in the language guide.
-  `Console.Color` in the uncommitted Console styling plan depends on it.
 - Formatter: the formatter expands every one-line body onto separate lines. The user decided
   (2026-09-24) that an **empty** body stays on one line (`class InvalidScore extends Error { }`,
   `else { }`, as the spec already writes them); a body with content still expands. Not yet
@@ -122,6 +125,14 @@ only with user authorization.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+Nested types slice 4 (documentation and integration) is complete. With pinned Zig 0.16.0,
+Debug and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (95
+linked files), `zig fmt --check src/*.zig`, and `git diff --check` passed. A fuzz campaign
+(`zig build fuzz -- 20260924 3000`) passed 3,000 cases, 436 executed; its new nested-types
+template was run directly on both of its branches. The snippets added to rewrite-context 14.3
+and the language guide were run, and a temporary nested enum in the prelude was checked for
+the Console plan, then removed.
 
 Nested types slice 3 (LSP) is complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
 `zig build test` (including new Lsp tests for nested symbols, per-segment definition,

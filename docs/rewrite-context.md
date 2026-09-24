@@ -2596,7 +2596,7 @@ using UiColor = Graphics.Color
 
 `using` is file-local, imports only direct public names, and does not include or execute
 files. It may appear anywhere in a file and applies to all of it, since it names no order
-of execution. An alias may name either a namespace or one declaration in it. Ambiguity is
+of execution. An alias may name either a namespace, one declaration in it, or a type nested in one (14.3). Ambiguity is
 reported when a conflicting short name is used; a focused alias or fully qualified name
 resolves it. A name the file's own namespace declares is never ambiguous: `using` cannot
 take a name out from under the directory that declared it. Project inclusion remains
@@ -2615,6 +2615,52 @@ error, reported against the second with the first one named.
 A file may declare any number of outer types, all using the braced form of 10.6. Nested
 types are naming and visibility relationships only; they do not capture an enclosing class
 instance. A leading underscore makes a nested type private.
+
+```emerald
+class Console {
+    enum Color {
+        red, green
+    }
+
+    struct Pair {
+        var left: Int
+        var right: Int
+
+        func Pair.zero(): Console.Pair {
+            return Console.Pair(0, 0)
+        }
+    }
+}
+
+const color: Console.Color = Console.Color.red
+const pair = Console.Pair.zero()
+```
+
+- A `struct`, `class`, or `enum` body may declare nested `struct`, `class`, `enum`, and
+  `trait` types, to any depth the parser's nesting limit allows. A trait's body holds
+  requirements and defaults, so it may not declare one. An enum's nested types come after
+  its values, like every other enum member (12).
+- A nested type is declared with its bare name. It is a type-level member of the type around
+  it, so it shares that type's one member name space (10.3, 10.4), and it is always reached
+  through that type, `Console.Color`, including from the enclosing type's own methods and
+  from inside the nested type itself. A type-level member of a nested type names that type
+  bare where it is declared, as the nested type itself is declared: `func Pair.zero()` inside
+  `Pair`, used as `Console.Pair.zero()`.
+- A path through a directory namespace comes first: `Ui.Console.Color`. `using` still takes
+  only namespaces, but an alias may name a nested type, `using Color = Console.Color`.
+- A nested type displays with the types around it but without its directory namespace,
+  `Console.Color.red`: the nesting is part of the type's name, while the namespace is where
+  its file lives.
+- 10.5's braces rule is unchanged, which settles privacy in both directions: a nested type's
+  code is written inside its enclosing type's braces and so reaches that type's private
+  members, while the enclosing type's code is not inside the nested type's braces. A private
+  nested type is reachable only inside its enclosing type's braces, as a value or as a type.
+- `Self` in a nested type's method means the nested type. A nested type is not inherited: a
+  subclass reaches it through the class that declares it (`Animal.Tag`, not `Dog.Tag`).
+- Reaching a nested type's type-level member sets up that nested type's type-level fields
+  (14.1), not its enclosing type's.
+- A module-level declaration may not share its name with a directory namespace (14.2), so a
+  path such as `Shapes.Circle` never means a type member and a namespace member at once.
 
 The old filename-as-implicit-type rule is not assumed. Type declarations state their own
 names so search, rename, and diagnostics remain direct.
@@ -3587,6 +3633,7 @@ recorded in their normative sections:
 | A mixed sibling-class literal infers its base, undeferred (4.4, 10.7) | A list, dictionary, or value-producing `case` whose elements are different but related classes infers their nearest shared base (`Type.User.commonBase`, a plain walk up 10.7's single-inheritance chain), rather than reporting a mismatch that an explicit `List[Animal]` annotation was already accepted under | `[Dog(), Cat()]` failing to type-check when `const pets: List[Animal] = [Dog(), Cat()]` already worked was exactly the surprise 4.4's own widening principle argues against: `[1, 2.5]` already infers `List[Float]` rather than demanding an annotation, and a heterogeneous collection under a shared base is one of the most ordinary patterns an OOP-capable language has. Scoped to a shared class only, not a shared trait: inferring across a trait would expose only the trait's own contract on the result (11.2), a real loss of what the elements' own type already offered, unlike widening to a base class the elements already were. Guarded against either side being optional, since `Type.structOf` has no way to carry a `?` its caller did not already have on hand — left to the ordinary mismatch report rather than risk silently dropping one. |
 | `File.with_open` implementation (13.3, 15.3) | Native dispatch invokes the block and defers `close` | `File` type-level functions already dispatch natively as a namespace, so a prelude implementation would require a special exception to that routing. Keeping cleanup beside the native handle state makes closure on both normal and error unwinding direct and testable. |
 | `Bytes` storage (15.3) | Reuse `Heap.Text`'s immutable ref-counted byte buffer under a distinct `Value.Kind.bytes` tag | Text and raw bytes have the same ownership, collector, and copying needs; duplicating that machinery would add a second lifetime path with no benefit. The tag keeps their contracts separate: only String is Unicode-aware and only Bytes permits invalid UTF-8. |
+| Nested types (14.3) | Declared bare, keyed `Outer::Inner` as a type-level member, always reached qualified, displayed without the namespace; traits may not contain one; 10.5's braces rule decides privacy both ways | 14.3 described nested types as settled, but nothing implemented them and nothing recorded the gap until the Console styling plan needed `Console.Color`. The `::` key is 10.4's type-member form, which cannot collide with a directory namespace's `Outer.Inner`. A receiver in the declaration (`enum Console.Color`) would distinguish nothing, since a type is never an instance member. Always qualifying follows 10.4 and enum values; the one-line bare declaration of a member of a nested type (`func Pair.zero()`) matches how the nested type itself is declared. Display keeps the nesting because it is part of the type's name, and drops the namespace as namespaced types already do. The platform libraries (`Graphics`, `Gui`, `Game`) will want the same shape. |
 | A declaration sharing a namespace's name (14.2, 14.3) | An error at the declaration, naming the directory | The declaration used to win silently, so every member of the namespace became unreachable through that path and the only symptom was "has no type-level member" at a use. Nested types (14.3) would have made the same path legitimately mean either one, so the collision is refused rather than resolved by a precedence rule a reader cannot see. Only an exact key match can collide, since member keys hold `::` and private keys hold `#`. Built-in names are not covered: `Math` and `Program` already yield to a project namespace of the same name, while prelude classes such as `File` do not, and aligning those is a separate decision. |
 
 ## 23. Consistency rules for future work

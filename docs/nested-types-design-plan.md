@@ -1,7 +1,7 @@
 # Nested types: design and implementation plan
 
-Status: design handoff, 2026-09-24. This records the user's direction and a proposed
-implementation sequence. It does not authorize implementation, commits, or pushes by itself.
+Status: completed, 2026-09-24. This records the user's direction and the implementation
+sequence that landed. It does not authorize implementation, commits, or pushes by itself.
 Read AGENTS.md and the current handoff before acting; repository state takes precedence over
 remembered conversations. At the start of each slice, reread `git status`, the recent
 `git log`, relevant diffs, and docs/handoff.md. Other agent work may have landed since this
@@ -238,10 +238,14 @@ of what was weighed.
    the result still works. Still true, and not specific to nested types: a file in a
    directory with no `main.em` is its own program (14.1), so navigation from inside
    `ui/console.em` cannot see a sibling `main.em`'s uses.
-4. **Documentation and integration.** Update rewrite-context 14.3 (and 10.4/14.2 where the
-   decisions touch them) and the decision table; language guide pages; the handoff and
-   journal. Update fuzz generation to emit nested types. Then unblock the Console plan's
-   decision 1 by updating `docs/console-design-plan.md` to use `Console.Color`.
+4. **Documentation and integration.** Done, 2026-09-24. Rewrite-context 14.3 now states the
+   rules with a runnable example, 14.2's alias rule names nested types, and the decision
+   table has a row. The language guide's objects page has a "Nested types" section linking
+   `conformance/run/nested-types`. The fuzzer has a nested-types template. The Console plan
+   spells its color type `Console.Color`, after a temporary nested enum in the prelude
+   confirmed that prelude-declared nested types resolve like any other.
+
+Status: complete. All five slices landed, `0f939f1` through the documentation commit.
 
 Keep each slice runnable; commit only when authorized. Do not push without authorization.
 
