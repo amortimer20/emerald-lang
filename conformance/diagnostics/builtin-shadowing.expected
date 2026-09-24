@@ -1,0 +1,16 @@
+diagnostics/builtin-shadowing/file/describe.em:1:1: warning: the directory `diagnostics/builtin-shadowing/file/` hides Emerald's built-in `File`
+  func describe(): String {
+  ^
+A project name always wins, so `File.` here reaches this directory's names. Write `Emerald.File` to reach the built-in, or rename the directory.
+diagnostics/builtin-shadowing/main.em:5:8: warning: `Path` hides Emerald's built-in `Path`
+  struct Path {
+         ^^^^
+A name the program declares always wins, so `Path` here means this one. Write `Emerald.Path` to reach the built-in, or choose a different name.
+diagnostics/builtin-shadowing/main.em:9:7: warning: `random` hides Emerald's built-in `random`
+  const random = 4
+        ^^^^^^
+A name the program declares always wins, so `random` here means this one. Write `Emerald.random` to reach the built-in, or choose a different name.
+diagnostics/builtin-shadowing/main.em:17:7: `Emerald.print` is built in, and built-in functions cannot be used as values
+  print(Emerald.print)
+        ^^^^^^^^^^^^^
+Call it with parentheses, as in `Emerald.print(...)`, or wrap it in a lambda such as `{ value => Emerald.print(value) }`.

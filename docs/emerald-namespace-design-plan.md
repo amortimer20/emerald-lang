@@ -92,8 +92,19 @@ const text = Emerald.File.read("notes.txt") # the built-in
    passed `check` and even ran. Bad directories are now carried through to every report
    and stop execution. Unqualified names behave as before; the built-in functions,
    `Math`/`Program`, and the shadowing warning are slice 2.
-2. **Consistent shadowing.** Project directories win over built-ins; move `Math` and
-   `Program` into the namespace and delete their special cases; add the shadowing warning.
+2. **Consistent shadowing.** Done, 2026-09-24. The built-in functions are reachable as
+   `Emerald.print` (and the rest of `Resolver.prelude`): keyed `Emerald.print`, apart from
+   a program's own `print`, and mapped back to the built-in by `builtinFunctionName` in the
+   checker and interpreter (`Interpreter.callBuiltin`); used as a value, the qualified form
+   gets the bare form's "can only be called" error. `Math` and `Program` keep their special
+   handling, now one helper (`qualifyBuiltinNamespace`), reachable bare unless a project
+   namespace claims the name and always as `Emerald.Math`/`Emerald.Program`; the plan's
+   "delete their special cases" was not needed, since they already behaved as the rule
+   says. A project directory now wins over a prelude declaration of the same name
+   (`file/`'s `File.read` is the project's), where before the built-in silently won. The
+   shadowing warning covers module-level declarations and top-level directories, not
+   locals, so a parameter named `input` stays quiet. The shadowed-trait operator error now
+   also suggests `with Emerald.Ordered`.
 3. **Documentation.** rewrite-context 14.2 and 15, the decision table, the language guide's
    projects page, and the library inventory; the handoff and journal.
 

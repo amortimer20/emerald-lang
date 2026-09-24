@@ -84,9 +84,10 @@ method changes only ordinary identifier uses.
 ## Next step
 
 No implementation slice is active. Candidates the user has discussed: the Console styling
-plan (all decisions settled) and the `Emerald` namespace plan, whose slice 1 is done:
-built-ins are reachable as `Emerald.File`, and `Emerald` is reserved. Slice 2 (built-in
-functions, `Math`/`Program`, the shadowing warning) is next; Console follows it.
+plan (all decisions settled) and the `Emerald` namespace plan, whose slices 1 and 2 are done:
+every built-in is reachable qualified (`Emerald.File`, `Emerald.print`, `Emerald.Math`), a
+project name always wins with a warning, and `Emerald` is reserved. Slice 3 (spec and guide)
+is next; Console follows it.
 
 ## Deferred
 
@@ -121,6 +122,13 @@ functions, `Math`/`Program`, the shadowing warning) is next; Console follows it.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+`Emerald` namespace slice 2 is complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
+`zig build test`, `zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`,
+and `git diff --check` passed. New cases `run/emerald-builtins` and
+`diagnostics/builtin-shadowing` were read by hand; `diagnostics/operators-shadowed-trait`
+gained the new warning and its help now suggests `with Emerald.Ordered`, which was run to
+confirm it reaches the built-in trait.
 
 `Emerald` namespace slice 1 is complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
 `zig build test`, `zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`,

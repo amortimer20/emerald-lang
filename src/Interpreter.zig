@@ -2961,6 +2961,7 @@ fn evaluateCall(
     // resolver decided which, and recorded it.
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
+        if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
@@ -2986,6 +2987,12 @@ fn evaluateCall(
     if (self.find(name) != null) return self.callValue(expression.span, call);
     if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
     if (self.functions.contains(key)) return self.callFunction(expression.span, key, call);
+    return self.callBuiltin(expression, call, name);
+}
+
+/// One of the prelude's functions (`Resolver.prelude`), reached bare or as
+/// `Emerald.print`.
+fn callBuiltin(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call, name: []const u8) Error!Value {
     if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
         return self.evaluateInput(expression.span, call, std.mem.eql(u8, name, "input_maybe"));
     }

@@ -6178,6 +6178,8 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         std.mem.eql(u8, reference.key, Resolver.math_pi_key) or
         std.mem.eql(u8, reference.key, Resolver.math_e_key)) return .float;
     if (std.mem.eql(u8, reference.key, Resolver.program_arguments_key)) return try Type.listOf(self.arena, .string);
+    // `Emerald.print` as a value: a built-in function, which can only be called.
+    if (Resolver.builtinFunctionName(reference.key) != null) return self.typeOfFunctionValue(expression, reference);
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
     // Section 11.2's `Named.introduction(self)` is a call that runs one trait's
     // default; taking it as a value is not part of that yet.
@@ -8647,8 +8649,8 @@ fn typeOfOperatorCall(
                 span,
                 "`{s}` needs {f} to adopt the prelude's `{s}`",
                 .{ lexeme, left, contract.trait },
-                "This program declares its own `{s}`, which takes the prelude's place wherever the name is written, but operators run only through the prelude's. Rename this program's `{s}`.",
-                .{ contract.trait, contract.trait },
+                "This program declares its own `{s}`, which takes the prelude's place wherever the name is written, but operators run only through the prelude's. Adopt the built-in as `with " ++ Resolver.prelude_namespace ++ ".{s}`, or rename this program's `{s}`.",
+                .{ contract.trait, contract.trait, contract.trait },
             );
         } else if (!self.trait_list_errored.contains(user.name)) {
             try self.reportWithHelp(
@@ -9146,7 +9148,10 @@ fn typeOfCall(
         return self.typeOfValueCall(call, callee_type, null);
     };
 
-    const name = reference.display;
+    // `Emerald.print` is the built-in `print`, however the program's own
+    // names have hidden it (14.2's built-in namespace).
+    const builtin = Resolver.builtinFunctionName(reference.key);
+    const name = builtin orelse reference.display;
     if (Resolver.mathFunction(reference.key)) |function| {
         if (!try self.requireArity(.{ .name = name, .name_span = call.callee.span, .base = call.callee }, call.arguments, function.parameters, function.parameters)) return .invalid;
         for (call.arguments) |argument| _ = try self.typeOfExpected(argument, .float);
@@ -9180,7 +9185,12 @@ fn typeOfCall(
     // A bare name is looked up the way a read finds it, so a local — a nested
     // function (7.1), or a variable holding a block — hides a module-level name
     // even when `using` gave that name a key of its own.
-    const found = if (call.callee.data == .name) self.find(name) else self.findKey(reference.key);
+    const found = if (builtin) |bare|
+        self.prelude.getPtr(bare)
+    else if (call.callee.data == .name)
+        self.find(name)
+    else
+        self.findKey(reference.key);
     const binding = found orelse {
         try self.typeArguments(call.arguments);
         return .invalid;

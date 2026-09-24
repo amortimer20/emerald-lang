@@ -2364,3 +2364,23 @@ One implementation note for anyone touching `analyze`: a report literal that cop
 `arena_state` must not allocate from that arena in the same literal, since the copy is taken
 first and misses the later allocations. The first version of the merge did exactly that and
 leaked.
+
+## The `Emerald` namespace, slice 2: every built-in, and a project name always wins, 2026-09-24
+
+The built-in functions joined the namespace: `Emerald.print` reaches the built-in even inside
+a program's own `func print`. Both stages recognized a built-in by the written name of a plain
+call, so the qualified form is keyed `Emerald.print` (apart from a root-level `print` of the
+program's, whose key is `print`) and each stage maps that key back to the built-in's name. In
+the interpreter that meant pulling the bare-name dispatch into `callBuiltin`. Used as a value,
+`Emerald.print` gets the same "can only be called" error as the bare name; the first version
+silently accepted it, since the qualified key had no binding.
+
+The rule is now the same everywhere: a project name wins over a built-in. Declarations already
+did; `Math` and `Program` already yielded to a project directory; a directory named like a
+prelude class, such as `file/`, was the one case where the built-in silently won. The resolver
+now skips a prelude type when a project namespace has its name. Each of those is also a
+warning whose help names the qualified form, for module-level declarations and top-level
+directories only, since a parameter named `input` or a local named `write` is an ordinary name
+rather than a mistake. One existing fixture, about a program that declares its own `Ordered`,
+gained the warning, and its error now suggests `with Emerald.Ordered`, which was confirmed to
+adopt the built-in trait.

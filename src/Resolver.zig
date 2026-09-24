@@ -248,6 +248,17 @@ pub fn mathFunction(key: []const u8) ?Type.MathFunction {
     return Type.math_functions.get(key[prefix.len..]);
 }
 
+/// The built-in function `Emerald.print` (and the rest of `prelude`) names, or
+/// null for any other key.
+pub fn builtinFunctionName(key: []const u8) ?[]const u8 {
+    if (!isPreludeKey(key)) return null;
+    const name = key[prelude_namespace.len + 1 ..];
+    for (prelude) |builtin| {
+        if (std.mem.eql(u8, name, builtin)) return builtin;
+    }
+    return null;
+}
+
 /// The key of the prelude declaration `name`.
 pub fn preludeKey(comptime name: []const u8) []const u8 {
     return prelude_namespace ++ "." ++ name;
@@ -421,6 +432,7 @@ pub fn resolve(
     try resolver.collectNamespaces();
     try resolver.declareModuleLevel(programs);
     try resolver.reportNamespaceClashes();
+    try resolver.reportBuiltinShadowing();
 
     for (files) |file| {
         if (file.entry) resolver.entry_path = file.source.path;
@@ -516,6 +528,60 @@ fn reportNamespaceClashes(self: *Resolver) Error!void {
             .{name},
         );
     }
+}
+
+/// A project name always wins over a built-in of the same name (14.2), which is
+/// worth saying, since `File.read` then means the project's: a module-level
+/// declaration or a top-level directory named like a built-in is a warning
+/// whose help names the qualified form. Locals are not reported; `input` and
+/// `random` are ordinary names for a variable.
+fn reportBuiltinShadowing(self: *Resolver) Error!void {
+    const saved_file = self.file;
+    defer self.file = saved_file;
+    var declarations = self.facts.declarations.iterator();
+    while (declarations.next()) |entry| {
+        const key = entry.key_ptr.*;
+        if (std.mem.indexOf(u8, key, method_separator) != null or
+            std.mem.indexOfAny(u8, key, "@" ++ private_separator) != null or
+            isPreludeKey(key)) continue;
+        const declared = entry.value_ptr.*;
+        if (std.mem.eql(u8, self.files[declared.file].namespace, prelude_namespace)) continue;
+        const name = key[if (std.mem.lastIndexOfScalar(u8, key, '.')) |dot| dot + 1 else 0..];
+        if (!self.isBuiltinName(name)) continue;
+        self.file = declared.file;
+        try self.warn(
+            declared.span,
+            try std.fmt.allocPrint(self.arena, "`{s}` hides Emerald's built-in `{s}`", .{ name, name }),
+            try std.fmt.allocPrint(self.arena, "A name the program declares always wins, so `{s}` here means this one. Write `" ++ prelude_namespace ++ ".{s}` to reach the built-in, or choose a different name.", .{ name, name }),
+        );
+    }
+    var namespaces = self.namespaces.keyIterator();
+    while (namespaces.next()) |namespace| {
+        if (std.mem.indexOfScalar(u8, namespace.*, '.') != null or std.mem.eql(u8, namespace.*, prelude_namespace)) continue;
+        if (!self.isBuiltinName(namespace.*)) continue;
+        const file = for (self.files, 0..) |one, index| {
+            if (std.mem.eql(u8, one.namespace, namespace.*) or
+                (std.mem.startsWith(u8, one.namespace, namespace.*) and one.namespace[namespace.len] == '.')) break index;
+        } else continue;
+        self.file = @intCast(file);
+        try self.warn(
+            .{ .start = 0, .end = 0 },
+            try std.fmt.allocPrint(self.arena, "the directory `{s}/` hides Emerald's built-in `{s}`", .{ self.directoryOf(namespace.*), namespace.* }),
+            try std.fmt.allocPrint(self.arena, "A project name always wins, so `{s}.` here reaches this directory's names. Write `" ++ prelude_namespace ++ ".{s}` to reach the built-in, or rename the directory.", .{ namespace.*, namespace.* }),
+        );
+    }
+}
+
+/// Whether `name` is one of the built-ins: a prelude function, `Math` or
+/// `Program`, or a public declaration of `prelude.em`.
+fn isBuiltinName(self: *Resolver, name: []const u8) bool {
+    for (prelude) |builtin| {
+        if (std.mem.eql(u8, name, builtin)) return true;
+    }
+    if (std.mem.eql(u8, name, "Math") or std.mem.eql(u8, name, "Program")) return true;
+    var buffer: [256]u8 = undefined;
+    const key = std.fmt.bufPrint(&buffer, prelude_namespace ++ ".{s}", .{name}) catch return false;
+    return self.facts.declarations.contains(key);
 }
 
 /// The directory, as its files' paths spell it, that section 14.2 derives
@@ -2335,7 +2401,10 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     // A local or a module binding of that name is a value; section 14.2's
     // namespaces do not shadow it. A type is the one module-level name with
     // members of its own (10.4).
-    if (self.lookup(names[0])) |found| {
+    if (self.lookup(names[0])) |found| directory: {
+        // A project name always wins over a built-in: a `file/` directory's
+        // `File.helper` is the project's, and `Emerald.File` stays reachable.
+        if (found.scope == module_scope and isPreludeKey(found.key) and self.namespaces.contains(self.namespaceFor(names[0]))) break :directory;
         if (found.scope == module_scope and found.binding.kind == .type) {
             // `Console.Color.red`: nested types (14.3), then a member.
             const reached = try self.descendNested(found.key, names[0], names[1 .. length - 1]);
@@ -2359,35 +2428,14 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
         return .reported;
     }
 
-    // A project namespace named `Program` remains an ordinary namespace, the
-    // same way `Math` does below.
-    if (length == 2 and std.mem.eql(u8, names[0], "Program") and !self.namespaces.contains(self.namespaceFor("Program"))) {
-        if (std.mem.eql(u8, names[1], "arguments")) return .{ .key = program_arguments_key };
-        try self.reportWithHelpFmt(
-            expression.span,
-            "`Program` has no type-level member named `{s}`",
-            .{names[1]},
-            "Its one member is `Program.arguments`.",
-            .{},
-        );
-        return .reported;
+    // `Math` and `Program` are built-in namespaces (15.5, 14.1). A project
+    // namespace of either name wins, as any project name does, and the
+    // built-in stays reachable as `Emerald.Math`/`Emerald.Program`.
+    if (length == 2 and !self.namespaces.contains(self.namespaceFor(names[0]))) {
+        if (try self.qualifyBuiltinNamespace(expression.span, names[0], names[1])) |qualified| return qualified;
     }
-
-    // A project namespace named `Math` remains an ordinary namespace. The
-    // built-in namespace is only used when no project declaration owns it.
-    if (length == 2 and std.mem.eql(u8, names[0], "Math") and !self.namespaces.contains(self.namespaceFor("Math"))) {
-        if (std.mem.eql(u8, names[1], "pi")) return .{ .key = math_pi_key };
-        if (std.mem.eql(u8, names[1], "e")) return .{ .key = math_e_key };
-        const key = try std.fmt.allocPrint(self.arena, "Math.{s}", .{names[1]});
-        if (mathFunction(key) != null) return .{ .key = key };
-        try self.reportWithHelpFmt(
-            expression.span,
-            "`Math` has no member named `{s}`",
-            .{names[1]},
-            "Use its constants `Math.pi` and `Math.e`, or one of its documented numerical functions.",
-            .{},
-        );
-        return .reported;
+    if (length == 3 and std.mem.eql(u8, self.namespaceFor(names[0]), prelude_namespace)) {
+        if (try self.qualifyBuiltinNamespace(expression.span, names[1], names[2])) |qualified| return qualified;
     }
 
     var path: []const u8 = self.namespaceFor(names[0]);
@@ -2420,6 +2468,9 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     if (self.scopes.items[module_scope].contains(key) or self.module_declarations.contains(key)) {
         return .{ .key = key };
     }
+    // `Emerald.print`: a built-in function, keyed apart from a program's own
+    // `print`, which a bare name reaches instead.
+    if (std.mem.eql(u8, path, prelude_namespace) and builtinFunctionName(key) != null) return .{ .key = key };
 
     if (isPrivate(last)) {
         try self.report(
@@ -2438,6 +2489,37 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
         "Check the spelling. Only names without a leading underscore are visible outside the file that declares them.",
     );
     return .reported;
+}
+
+/// `Program.arguments`, `Math.pi`, `Math.e`, and `Math`'s functions: null when
+/// `namespace` is neither built-in namespace.
+fn qualifyBuiltinNamespace(self: *Resolver, span: Source.Span, namespace: []const u8, member: []const u8) Error!?Qualified {
+    if (std.mem.eql(u8, namespace, "Program")) {
+        if (std.mem.eql(u8, member, "arguments")) return .{ .key = program_arguments_key };
+        try self.reportWithHelpFmt(
+            span,
+            "`Program` has no type-level member named `{s}`",
+            .{member},
+            "Its one member is `Program.arguments`.",
+            .{},
+        );
+        return .reported;
+    }
+    if (std.mem.eql(u8, namespace, "Math")) {
+        if (std.mem.eql(u8, member, "pi")) return .{ .key = math_pi_key };
+        if (std.mem.eql(u8, member, "e")) return .{ .key = math_e_key };
+        const key = try std.fmt.allocPrint(self.arena, "Math.{s}", .{member});
+        if (mathFunction(key) != null) return .{ .key = key };
+        try self.reportWithHelpFmt(
+            span,
+            "`Math` has no member named `{s}`",
+            .{member},
+            "Use its constants `Math.pi` and `Math.e`, or one of its documented numerical functions.",
+            .{},
+        );
+        return .reported;
+    }
+    return null;
 }
 
 fn lessThanString(_: void, a: []const u8, b: []const u8) bool {
