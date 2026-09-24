@@ -83,51 +83,51 @@ pub const Code = enum {
             .unknown_name => .{
                 .title = "A name must be declared before Emerald can use it.",
                 .example =
-                    \\print(total)
-                    \\var total = 0
-                    \\
+                \\print(total)
+                \\var total = 0
+                \\
                 ,
                 .correction =
-                    \\var total = 0
-                    \\print(total)
-                    \\
+                \\var total = 0
+                \\print(total)
+                \\
                 ,
             },
             .type_mismatch => .{
                 .title = "A declaration's type and its value must agree.",
                 .example =
-                    \\var count: Int = "three"
-                    \\
+                \\var count: Int = "three"
+                \\
                 ,
                 .correction =
-                    \\var count: Int = 3
-                    \\
+                \\var count: Int = 3
+                \\
                 ,
             },
             .immutable_binding => .{
                 .title = "A const keeps the value it was given.",
                 .example =
-                    \\const score = 10
-                    \\score = 11
-                    \\
+                \\const score = 10
+                \\score = 11
+                \\
                 ,
                 .correction =
-                    \\var score = 10
-                    \\score = 11
-                    \\
+                \\var score = 10
+                \\score = 11
+                \\
                 ,
             },
             .unknown_member => .{
                 .title = "A value can use only the members its type provides.",
                 .example =
-                    \\var names = ["Ava"]
-                    \\names.push("Leo")
-                    \\
+                \\var names = ["Ava"]
+                \\names.push("Leo")
+                \\
                 ,
                 .correction =
-                    \\var names = ["Ava"]
-                    \\names.append("Leo")
-                    \\
+                \\var names = ["Ava"]
+                \\names.append("Leo")
+                \\
                 ,
             },
         };
