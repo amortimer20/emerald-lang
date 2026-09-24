@@ -85,6 +85,8 @@ only with user authorization.
 - Expanded `emerald.toml`, bounded implementation limits,
   networking, concurrency, generics, enum payloads, wider general overloading, and package
   management each need a separate design pass or a concrete program that motivates them.
+- Braceless type bodies (10.6) are deferred, not rejected: 24 records what a proposal must
+  answer (one canonical formatter output, one parsing mode, one way to teach a declaration).
 - Official platform libraries are a product direction, not an implemented API: `Console`
   (styled immediate terminal output and line-oriented interaction) is the first candidate;
   `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` each need their own design pass and real
@@ -94,6 +96,9 @@ only with user authorization.
 
 ## Active rough edges
 
+- Nested types (14.3) are specified but not implemented: the parser rejects a type declared
+  inside a type body, and until 2026-09-24 nothing recorded the gap. A design plan is next;
+  `Console.Color` in the Console styling plan depends on it.
 - Runtime failures currently share `RuntimeError` except `AssertionError` and `FileError`.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace

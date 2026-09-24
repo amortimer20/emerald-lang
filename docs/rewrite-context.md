@@ -1086,8 +1086,9 @@ would not be, so the reversible choice starts simple.
 
 Two consequences are deliberate. Type-level factory functions replace overloaded
 constructors, which reads better anyway: `Vector2.from_angle(radians)` says what
-`Vector2(Float)` only implies. And mixed-type operators stay deferred, since a type carries
-one `add`; 11.5 already declined to invent implicit widening for them.
+`Vector2(Float)` only implies. And mixed-type operators do not come from overloading:
+11.5's `@operator` annotation registers each operand type on its own uniquely named method,
+so ordinary method names stay unique.
 
 Default-valued parameters follow required parameters:
 
@@ -2113,9 +2114,11 @@ class Dog extends Animal with Speaker {
 ```
 
 An earlier draft also allowed a block-free top-level form whose body ran to end of file,
-inspired by GDScript. It is removed. It contradicted the formatter contract in 18.3: the
-formatter would have had to either rewrite block-free types into braced ones, making the
-form pointless, or maintain a second canonical output for a *different construct entirely*
+inspired by GDScript. It is removed from the initial language and deferred (21, 24): the
+reasons below are the bar a future proposal has to clear. It contradicted the formatter
+contract in 18.3: the formatter would have had to either rewrite block-free types into
+braced ones, making the form pointless, or maintain a second canonical output for a
+*different construct entirely*
 (a type body with no braces at all, not merely different brace placement — unlike 3.4's
 later brace-style choice, there is no shared parsed shape the two could both normalize to).
 It also added a second parsing mode, a second shape for error recovery to understand, and a
@@ -3336,7 +3339,7 @@ The following are deliberately outside the initial implementation:
 - immutable collection views and collection covariance;
 - function and method overloading, and with it overloaded constructors and constructor
   delegation through `self(...)`;
-- mixed-type operator contracts such as `Vector2 + Float`;
+- braceless type bodies, a file-scoped form whose body runs to end of file (10.6);
 - nested optionals;
 - variadic functions;
 - `protected` and type-level visibility controls;
@@ -3613,8 +3616,15 @@ for working Emerald programs, implementation measurements, or a dedicated design
   value-versus-reference distinction. Revisit this only as a dedicated syntax design pass,
   with beginner-facing examples and a migration assessment;
 - overloading, including overloaded constructors and `self(...)` delegation between them,
-  and mixed-type operator contracts, if real Emerald programs show that defaults, named
-  arguments, and named factory functions are genuinely insufficient;
+  if real Emerald programs show that defaults, named arguments, and named factory functions
+  are genuinely insufficient;
+- braceless type bodies (10.6), in which a file declaring one type omits that type's braces
+  and its body runs to end of file. The earlier draft was removed rather than rejected on
+  principle, and a proposal must answer 10.6's objections directly: one canonical formatter
+  output (18.3) with no second, unrelated construct to normalize; one parsing mode that
+  error recovery understands; and a single way to teach a class declaration. It must also
+  say how the form interacts with multiple types per file (14.3), nested types, and 3.4's
+  brace styles;
 - immutable collection views, covariance, `Any`, user generics, and user `Iterable`;
 - whether a class made entirely of `const` fields (which cannot change after construction,
   unlike an ordinary class) could be a dictionary or set key when it adopts `Hashable`
