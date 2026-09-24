@@ -465,7 +465,16 @@ fn analyze(
     // file inside it, but it is not fatal to the rest of the project: valid
     // files and malformed declarations still need their own diagnostics.
     for (project.bad_directories) |bad| {
-        try found.append(arena, .{
+        try found.append(arena, if (bad.reserved) .{
+            .message = try std.fmt.allocPrint(
+                arena,
+                "the directory `{s}` cannot be a namespace, because `" ++ Project.builtin_namespace ++ "` is reserved",
+                .{bad.path},
+            ),
+            .span = .{ .start = 0, .end = 0 },
+            .help = "`" ++ Project.builtin_namespace ++ "` is the namespace of Emerald's built-ins, which every file already sees. Rename the directory.",
+            .file = bad.file,
+        } else .{
             .message = try std.fmt.allocPrint(
                 arena,
                 "the directory `{s}` cannot be a namespace",
@@ -526,9 +535,15 @@ fn analyze(
     var resolved = try Resolver.resolve(gpa, files, programs, project.enclosing_project);
     defer resolved.deinit();
     for (resolved.diagnostics) |diagnostic| std.debug.assert(diagnostic.file < project.files.len);
+    // Only bad directories can be in `found` by now. They are errors, reported
+    // with the later stages' diagnostics rather than dropped, and the project
+    // never runs with one.
+    const directories = found.items;
     if (!resolved.ok()) {
-        const copies = try dupeDiagnostics(arena, resolved.diagnostics);
-        return .{ .arena_state = arena_state, .diagnostics = copies };
+        // Merged before the report copies `arena_state`, so the copy owns
+        // everything the merge allocated.
+        const reported = try mergeDiagnostics(arena, directories, resolved.diagnostics);
+        return .{ .arena_state = arena_state, .diagnostics = reported };
     }
 
     // The resolver's facts stay valid here: `resolved` is released only when
@@ -536,14 +551,16 @@ fn analyze(
     var checked = try Checker.check(gpa, files, programs, resolved.facts);
     defer checked.deinit();
     for (checked.diagnostics) |diagnostic| std.debug.assert(diagnostic.file < project.files.len);
-    if (!checked.ok()) {
-        const copies = try dupeDiagnostics(arena, checked.diagnostics);
-        return .{ .arena_state = arena_state, .diagnostics = copies };
+    // Only warnings can remain from the resolver here; they join the
+    // checker's report in source order, whatever it holds.
+    const combined = try mergeDiagnostics(arena, directories, try mergeDiagnostics(arena, resolved.diagnostics, checked.diagnostics));
+    if (!checked.ok() or directories.len != 0) {
+        return .{ .arena_state = arena_state, .diagnostics = combined };
     }
     // `ok()` above only stopped for an error, so only warnings can remain.
     // They do not block checking or execution, but still have to reach the
     // caller rather than being silently dropped.
-    const warnings = try dupeDiagnostics(arena, checked.diagnostics);
+    const warnings = combined;
 
     const running = streams orelse return .{ .arena_state = arena_state, .diagnostics = warnings };
 
@@ -579,6 +596,24 @@ fn analyze(
 
     const test_failures = try dupeDiagnostics(arena, outcome.test_failures);
     return .{ .arena_state = arena_state, .diagnostics = warnings, .failure = failure, .test_failures = test_failures, .test_count = outcome.test_count, .exit_code = outcome.exit_code };
+}
+
+/// Two stages' diagnostics as one list in source order, copied into `arena`.
+/// The sort is stable, so each stage's own order among equal positions stands.
+fn mergeDiagnostics(arena: std.mem.Allocator, first: []const Diagnostic, second: []const Diagnostic) ![]const Diagnostic {
+    if (first.len == 0) return dupeDiagnostics(arena, second);
+    const all = try arena.alloc(Diagnostic, first.len + second.len);
+    const copied_first = try dupeDiagnostics(arena, first);
+    const copied_second = try dupeDiagnostics(arena, second);
+    @memcpy(all[0..first.len], copied_first);
+    @memcpy(all[first.len..], copied_second);
+    std.sort.insertion(Diagnostic, all, {}, earlierInProgram);
+    return all;
+}
+
+fn earlierInProgram(_: void, a: Diagnostic, b: Diagnostic) bool {
+    if (a.file != b.file) return a.file < b.file;
+    return a.span.start < b.span.start;
 }
 
 /// Copies one file's diagnostics into the report's arena, stamping the file

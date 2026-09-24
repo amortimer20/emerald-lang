@@ -1,0 +1,4 @@
+diagnostics/using-emerald-redundant.em:3:7: warning: `using Emerald` is redundant
+  using Emerald
+        ^^^^^^^
+Every file already sees Emerald's built-in names. Remove it; write `Emerald.File` where a name of your own hides a built-in.

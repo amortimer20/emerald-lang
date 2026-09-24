@@ -2333,3 +2333,34 @@ body holding only a comment keeps its lines, so the comment is never displaced, 
 inside an empty body are dropped. It covers type declarations and every statement block and
 function body. Checking the examples against the new rule showed three of them had never been
 formatted at all (`} else {` on one line); all four affected examples are canonical now.
+
+## The `Emerald` namespace, slice 1: writable and reserved, 2026-09-24
+
+The prelude's internal namespace was lowercase `emerald`, chosen so no program could write it
+or collide with it. It is now `Emerald`, written like any other namespace, so a program that
+declares its own `File` still reaches the built-in as `Emerald.File`, in expressions,
+annotations, and aliases. That needed very little new resolution code: nested types' path
+handling already walks a namespace, then a type, then a member. The interpreter matched native
+functions by nine hardcoded `"emerald."` prefixes; they now use the shared constant.
+
+Only one name is reserved, and it never grows. A root-level declaration named `Emerald` is an
+error. A top-level `emerald/` directory is refused by the project loader rather than the
+resolver, because the resolver tells the prelude apart from user files by its namespace
+string, and a user `emerald/` directory would otherwise have shared it.
+
+`using Emerald` is allowed but reported as redundant. The resolver had never reported a
+warning: `Resolved.ok()` treated any diagnostic as fatal, and when resolution succeeded only
+the checker's diagnostics reached the report. Both are fixed, and resolver warnings now join
+the checker's report in source order.
+
+Following that path turned up an older bug. A directory whose name cannot be a namespace was
+reported only if some file also had a lex or parse error: after parsing, the later stages
+returned only their own diagnostics, dropping the directory report. A project with a lone
+`2bad/` directory passed `check` and ran. Bad directories are now carried into every later
+report and stop execution. The existing conformance cases had both paired a bad directory
+with a parse error, which is why they never noticed.
+
+One implementation note for anyone touching `analyze`: a report literal that copies
+`arena_state` must not allocate from that arena in the same literal, since the copy is taken
+first and misses the later allocations. The first version of the merge did exactly that and
+leaked.

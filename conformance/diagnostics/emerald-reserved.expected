@@ -1,0 +1,4 @@
+diagnostics/emerald-reserved.em:2:8: `Emerald` is reserved
+  struct Emerald {
+         ^^^^^^^
+`Emerald` is the namespace of Emerald's built-ins, which every file already sees, so `Emerald.File` has to mean the built-in. Choose a different name.

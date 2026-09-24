@@ -1,0 +1,4 @@
+diagnostics/project-reserved-directory/emerald/helper.em:1:1: the directory `emerald` cannot be a namespace, because `Emerald` is reserved
+  func helper(): Int {
+  ^
+`Emerald` is the namespace of Emerald's built-ins, which every file already sees. Rename the directory.

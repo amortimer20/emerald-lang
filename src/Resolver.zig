@@ -208,8 +208,10 @@ pub const Resolved = struct {
     diagnostics: []const Diagnostic,
     facts: Facts,
 
+    /// Whether checking may go on: only an error stops it. A warning, such as
+    /// a redundant `using Emerald`, is still reported with the checker's.
     pub fn ok(self: Resolved) bool {
-        return self.diagnostics.len == 0;
+        return !Diagnostic.anyErrors(self.diagnostics);
     }
 
     pub fn deinit(self: *Resolved) void {
@@ -223,10 +225,11 @@ pub const Resolved = struct {
 pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe", "random", "exit" };
 
 /// The namespace of the declarations written in `prelude.em`, such as section
-/// 11.5's `Ordered`. A directory's namespace always starts with a capital
-/// letter, so no project's names can land in it, and no program can write it.
-/// Its public names are visible bare in every file, under the file's own.
-pub const prelude_namespace = "emerald";
+/// 11.5's `Ordered`: `Emerald`, implicitly imported into every file. Its public
+/// names are visible bare in every file, under the file's own, and always
+/// reachable qualified (`Emerald.File`). The project loader refuses a
+/// top-level `emerald/` directory, so no project's names land in it.
+pub const prelude_namespace = Project.builtin_namespace;
 
 /// Section 15.5's two type-level Float constants. These keys occupy the same
 /// resolved-name channel as user type-level fields without pretending the
@@ -495,6 +498,15 @@ fn reportNamespaceClashes(self: *Resolver) Error!void {
     while (namespaces.next()) |namespace| {
         const declared = self.facts.declarations.get(namespace.*) orelse continue;
         self.file = declared.file;
+        if (std.mem.eql(u8, namespace.*, prelude_namespace)) {
+            try self.report(
+                declared.span,
+                "`" ++ prelude_namespace ++ "` is reserved",
+                .{},
+                "`" ++ prelude_namespace ++ "` is the namespace of Emerald's built-ins, which every file already sees, so `" ++ prelude_namespace ++ ".File` has to mean the built-in. Choose a different name.",
+            );
+            continue;
+        }
         const name = self.files[declared.file].source.text[declared.span.start..declared.span.end];
         try self.reportWithHelpFmt(
             declared.span,
@@ -527,6 +539,8 @@ fn directoryOf(self: *Resolver, namespace: []const u8) []const u8 {
 /// Every namespace, plus every prefix of one, so `Graphics` is known even when
 /// only `graphics/ui/` holds any source.
 fn collectNamespaces(self: *Resolver) Error!void {
+    // `Emerald.File`: the built-ins' own namespace is written like any other.
+    try self.namespaces.put(self.arena, prelude_namespace, {});
     for (self.files) |file| {
         if (std.mem.eql(u8, file.namespace, prelude_namespace)) continue;
         var at: usize = 0;
@@ -990,6 +1004,17 @@ fn applyUsing(self: *Resolver, declarations: []const Ast.Using, map: *KeyMap) Er
             continue;
         }
 
+        // Every file already sees the built-ins' names, so there is nothing to
+        // import; the declaration is allowed but says so.
+        if (std.mem.eql(u8, path, prelude_namespace)) {
+            try self.warn(
+                declaration.path_span,
+                "`using " ++ prelude_namespace ++ "` is redundant",
+                "Every file already sees Emerald's built-in names. Remove it; write `" ++ prelude_namespace ++ ".File` where a name of your own hides a built-in.",
+            );
+            continue;
+        }
+
         // Only the names directly in that namespace, so `using Graphics` does
         // not quietly bring in everything under `graphics/ui/` as well.
         var imported: usize = 0;
@@ -1232,6 +1257,17 @@ fn visibleLocal(self: *Resolver, name: []const u8) ?Binding {
         if (self.scopes.items[index].get(name)) |binding| return binding;
     }
     return null;
+}
+
+/// A warning: reported, but checking and execution go on (17).
+fn warn(self: *Resolver, span: Source.Span, message: []const u8, help: []const u8) !void {
+    try self.diagnostics.append(self.arena, .{
+        .message = message,
+        .span = span,
+        .help = help,
+        .file = self.file,
+        .severity = .warning,
+    });
 }
 
 fn reportWithHelpFmt(

@@ -3024,18 +3024,18 @@ fn joinPathParts(gpa: std.mem.Allocator, parts: []const []const u8) std.mem.Allo
 }
 
 fn isFilesystemKey(key: []const u8) bool {
-    return std.mem.startsWith(u8, key, "emerald.File::") or
-        std.mem.startsWith(u8, key, "emerald.Directory::") or
-        std.mem.startsWith(u8, key, "emerald.Path::") or
-        std.mem.startsWith(u8, key, "emerald.Bytes::");
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".File::") or
+        std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Directory::") or
+        std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Path::") or
+        std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Bytes::");
 }
 
 fn isFileHandleKey(key: []const u8) bool {
-    return std.mem.startsWith(u8, key, "emerald.FileHandle::");
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".FileHandle::");
 }
 
 fn isFileWriterKey(key: []const u8) bool {
-    return std.mem.startsWith(u8, key, "emerald.FileWriter::");
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".FileWriter::");
 }
 
 /// Section 15.3's deliberately small whole-file surface. The prelude declares
@@ -3048,7 +3048,7 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
     }
     const io = std.Io.Threaded.global_single_threaded.io();
     const cwd = std.Io.Dir.cwd();
-    const suffix = key["emerald.".len..];
+    const suffix = key[(Resolver.prelude_namespace ++ ".").len..];
     if (std.mem.eql(u8, suffix, "Bytes::from_list")) {
         const list = values[0].data.list;
         const bytes = try self.gpa.alloc(u8, list.items.items.len);
@@ -3280,7 +3280,7 @@ fn callFileHandle(self: *Interpreter, span: Source.Span, key: []const u8, member
     const receiver = try self.evaluate(member.base);
     defer self.heap.release(receiver);
     const id = receiver.data.struct_value.fields[0].data.int;
-    const suffix = key["emerald.FileHandle::".len..];
+    const suffix = key[(Resolver.prelude_namespace ++ ".FileHandle::").len..];
     if (std.mem.eql(u8, suffix, "close")) {
         self.closeFileHandle(id);
         return Value.nothing;
@@ -3341,7 +3341,7 @@ fn callFileWriter(self: *Interpreter, span: Source.Span, key: []const u8, member
     const receiver = try self.evaluate(member.base);
     defer self.heap.release(receiver);
     const id = receiver.data.struct_value.fields[0].data.int;
-    const suffix = key["emerald.FileWriter::".len..];
+    const suffix = key[(Resolver.prelude_namespace ++ ".FileWriter::").len..];
     if (std.mem.eql(u8, suffix, "close")) {
         self.closeFileWriter(id);
         return Value.nothing;

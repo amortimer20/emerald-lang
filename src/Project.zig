@@ -51,9 +51,16 @@ pub const File = struct {
 
 /// A directory name that cannot become a namespace, kept until there is a
 /// `Source` to attach the report to.
+/// The namespace the built-ins live in, implicitly imported into every file.
+/// A top-level directory may not claim it, since its files' names would then
+/// collide with the built-ins' own.
+pub const builtin_namespace = "Emerald";
+
 pub const BadDirectory = struct {
     /// The path below the project root, which is what the reader has to rename.
     path: []const u8,
+    /// Its name reads as a namespace, but that namespace is `builtin_namespace`.
+    reserved: bool = false,
     /// A file inside it, since a diagnostic always names a file. Filled in once
     /// the files are in their final order.
     file: u32 = 0,
@@ -297,8 +304,9 @@ const Loader = struct {
                     const segment = try namespaceSegment(self.gpa, name);
                     defer if (segment) |written| self.gpa.free(written);
 
-                    const nested_namespace = if (segment) |written|
-                        try self.qualify(namespace, written)
+                    const reserved = namespace.len == 0 and segment != null and std.mem.eql(u8, segment.?, builtin_namespace);
+                    const nested_namespace = if (segment != null and !reserved)
+                        try self.qualify(namespace, segment.?)
                     else
                         try self.gpa.dupe(u8, namespace);
                     defer self.gpa.free(nested_namespace);
@@ -317,11 +325,12 @@ const Loader = struct {
                     // Reported only when the directory actually holds source,
                     // and against the first file in it, so the report has
                     // something to point at.
-                    if (segment == null and self.files.items.len > before) {
+                    if ((segment == null or reserved) and self.files.items.len > before) {
                         const bad_path = try self.gpa.dupe(u8, nested_relative);
                         errdefer self.gpa.free(bad_path);
                         try self.bad_directories.append(self.gpa, .{
                             .path = bad_path,
+                            .reserved = reserved,
                         });
                     }
                 },

@@ -84,8 +84,9 @@ method changes only ordinary identifier uses.
 ## Next step
 
 No implementation slice is active. Candidates the user has discussed: the Console styling
-plan (decisions 2 through 5 pending) and the `Emerald` namespace plan (after nested types, now
-unblocked; its four decisions are pending). Start one only with user authorization.
+plan (all decisions settled) and the `Emerald` namespace plan, whose slice 1 is done:
+built-ins are reachable as `Emerald.File`, and `Emerald` is reserved. Slice 2 (built-in
+functions, `Math`/`Program`, the shadowing warning) is next; Console follows it.
 
 ## Deferred
 
@@ -120,6 +121,13 @@ unblocked; its four decisions are pending). Start one only with user authorizati
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+`Emerald` namespace slice 1 is complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
+`zig build test`, `zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`,
+and `git diff --check` passed, with no leaks. New cases `run/emerald-namespace`,
+`diagnostics/emerald-reserved`, `diagnostics/using-emerald-redundant`,
+`diagnostics/project-reserved-directory`, and `diagnostics/project-lone-bad-directory` were
+read by hand.
 
 Empty bodies now format as `{ }` on the header's line (18.3). With pinned Zig 0.16.0, Debug and
 ReleaseSafe `zig build test` (including a new Formatter test in both brace styles),

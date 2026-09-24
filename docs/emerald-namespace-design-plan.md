@@ -76,9 +76,22 @@ const text = Emerald.File.read("notes.txt") # the built-in
 
 ## Slices
 
-1. **Writable namespace.** Rename the internal prefix to `Emerald`, accept `Emerald.X` paths
-   in expressions and annotations, and reserve `Emerald`. Behavior for unqualified names is
-   unchanged.
+1. **Writable namespace.** Done, 2026-09-24. `Resolver.prelude_namespace` is now
+   `Project.builtin_namespace` (`"Emerald"`), the interpreter's nine hardcoded
+   `"emerald."` dispatch prefixes use it, and `Emerald` is registered as a namespace, so
+   `Emerald.File.exists?(...)`, `Emerald.RuntimeError(...)`, annotations such as
+   `Emerald.RuntimeError`, and aliases such as `using Handle = Emerald.FileHandle` resolve
+   through the existing path code. Reserved: a root-level declaration named `Emerald` (an
+   error at the declaration) and a top-level `emerald/` directory (refused by the project
+   loader, which keeps a user file from ever sharing the prelude's namespace string, the
+   resolver's only way to tell the prelude apart). `using Emerald` warns as redundant; the
+   resolver had no warnings before, and `Resolved.ok()` counted any diagnostic as fatal, so
+   it now counts only errors and resolver warnings are merged into the checker's report.
+   Found on the way: a bad directory was reported only when some file also had a lex or
+   parse error, since later stages returned only their own diagnostics; a lone `2bad/`
+   passed `check` and even ran. Bad directories are now carried through to every report
+   and stop execution. Unqualified names behave as before; the built-in functions,
+   `Math`/`Program`, and the shadowing warning are slice 2.
 2. **Consistent shadowing.** Project directories win over built-ins; move `Math` and
    `Program` into the namespace and delete their special cases; add the shadowing warning.
 3. **Documentation.** rewrite-context 14.2 and 15, the decision table, the language guide's
