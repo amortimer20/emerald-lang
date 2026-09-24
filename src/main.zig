@@ -10,6 +10,7 @@ const emerald = @import("emerald");
 const version_options = @import("version_options");
 const Repl = @import("Repl.zig");
 const Lsp = @import("Lsp.zig");
+const ColorPolicy = emerald.ColorPolicy;
 
 /// Section 18.1 fixes these, so they are named rather than written as bare numbers.
 /// `invalid_usage` and `missing_input` both borrow their values from BSD's
@@ -94,7 +95,7 @@ pub fn main(init: std.process.Init) !u8 {
     if (command == .repl) {
         // Unlike every other command, `emerald repl` names no file (18.1).
         if (args.len != 2) return commandMisuse(io, command, "does not take arguments");
-        return executeRepl(gpa, io);
+        return executeRepl(gpa, io, init.environ_map);
     }
 
     if (command == .lsp) {
@@ -112,18 +113,83 @@ pub fn main(init: std.process.Init) !u8 {
     if (args.len < 3) return commandMisuse(io, command, "expects a `<file.em>` path");
     if (command == .check) {
         if (args.len != 3) return commandMisuse(io, command, "does not run a program, so it cannot take program arguments");
-        return execute(gpa, io, command, args[2], &.{});
+        return execute(gpa, io, command, args[2], &.{}, false);
+    }
+
+    // `run` and `test` accept an optional `--color=auto|always|never` flag
+    // before the path (docs/console-design-plan.md's decision 2). `auto` and
+    // no flag at all mean the same thing: fall through to the environment
+    // and the output terminal, resolved below.
+    var path_index: usize = 2;
+    var color_flag: ?ColorPolicy.Flag = null;
+    if (std.mem.startsWith(u8, args[path_index], "--color")) {
+        const value = if (std.mem.indexOfScalar(u8, args[path_index], '=')) |at|
+            args[path_index][at + 1 ..]
+        else
+            "";
+        color_flag = std.meta.stringToEnum(ColorPolicy.Flag, value) orelse
+            return commandMisuse(io, command, "expects `--color=auto`, `--color=always`, or `--color=never`");
+        path_index += 1;
+        if (path_index >= args.len) return commandMisuse(io, command, "expects a `<file.em>` path");
     }
 
     // Section 14.1: `--` separates Emerald's own arguments from the running
     // program's. `run` and `test` hand these to a program as
     // `Program.arguments`.
     var program_arguments: []const []const u8 = &.{};
-    if (args.len > 3) {
-        if (!std.mem.eql(u8, args[3], "--")) return commandMisuse(io, command, "expects program arguments after `--`");
-        program_arguments = args[4..];
+    if (args.len > path_index + 1) {
+        if (!std.mem.eql(u8, args[path_index + 1], "--")) return commandMisuse(io, command, "expects program arguments after `--`");
+        program_arguments = args[path_index + 2 ..];
     }
-    return execute(gpa, io, command, args[2], program_arguments);
+    const color = try resolveColor(io, init.environ_map, color_flag);
+    return execute(gpa, io, command, args[path_index], program_arguments, color);
+}
+
+/// Resolves docs/console-design-plan.md's decision 3 against the real
+/// process for one invocation: `flag` is whatever `--color` parsed to (`run`
+/// and `test`) or `null` (`repl`, decision 5, which has no flag of its own).
+/// `ColorPolicy.resolve` itself is a pure function with its own unit tests;
+/// this just gathers what it needs from the environment and stdout.
+///
+/// On Windows, a real console may need one-time setup: a legacy console does
+/// not process ANSI escapes until asked to. Forced output never configures a
+/// console, so it remains usable for files, pipes, and CI logs. If automatic
+/// Windows setup fails, automatic styling is simply unavailable for that run.
+fn resolveColor(io: std.Io, environ_map: *const std.process.Environ.Map, flag: ?ColorPolicy.Flag) !bool {
+    const stdout = std.Io.File.stdout();
+    // A failed terminal probe must not stop a program. It simply means auto
+    // mode cannot establish a terminal that can render its ANSI strings.
+    const is_tty = stdout.isTty(io) catch false;
+    // On Windows, an ordinary console can render ANSI only after
+    // `enableAnsiEscapeCodes` turns VT processing on. Its current support
+    // answer is therefore not a reason to reject an otherwise real TTY.
+    const supports_ansi = if (builtin.os.tag == .windows and is_tty)
+        true
+    else
+        stdout.supportsAnsiEscapeCodes(io) catch false;
+    const no_color = environ_map.get("NO_COLOR");
+    const force_color = environ_map.get("FORCE_COLOR");
+    const color = ColorPolicy.resolve(.{
+        .flag = flag,
+        .no_color = no_color,
+        .force_color = force_color,
+        .term = environ_map.get("TERM"),
+        .is_tty = is_tty,
+        .supports_ansi = supports_ansi,
+    });
+    const force_active = if (force_color) |value|
+        value.len != 0 and !std.mem.eql(u8, value, "0")
+    else
+        false;
+    const no_color_active = if (no_color) |value| value.len != 0 else false;
+    const auto = (flag == null or flag.? == .auto) and !force_active and !no_color_active;
+    // Only auto detection configures a Windows console. `always` and
+    // FORCE_COLOR intentionally also work for redirected output, where there
+    // is no console to configure and a downstream reader owns interpretation.
+    if (color and auto and is_tty and builtin.os.tag == .windows) {
+        stdout.enableAnsiEscapeCodes(io) catch return false;
+    }
+    return color;
 }
 
 fn printGlobalHelp(io: std.Io) !u8 {
@@ -154,17 +220,20 @@ fn printCommandHelp(io: std.Io, command: Command) !u8 {
         \\
         ,
         .run =>
-        \\Usage: emerald run <file.em> [-- <program-argument>...]
+        \\Usage: emerald run [--color=auto|always|never] <file.em> [-- <program-argument>...]
         \\
         \\Check a file or project, then run it. Arguments after `--` become
-        \\Program.arguments.
+        \\Program.arguments. `--color` controls Console's ANSI styling and
+        \\defaults to `auto`, which styles output only on a terminal that
+        \\supports it; NO_COLOR and FORCE_COLOR are also honored.
         \\
         ,
         .@"test" =>
-        \\Usage: emerald test <file.em> [-- <program-argument>...]
+        \\Usage: emerald test [--color=auto|always|never] <file.em> [-- <program-argument>...]
         \\
         \\Check a file or project, then run every @test function. Arguments
-        \\after `--` become Program.arguments.
+        \\after `--` become Program.arguments. `--color` controls Console's
+        \\ANSI styling the same way `run`'s does.
         \\
         ,
         .format =>
@@ -252,7 +321,7 @@ fn commandMisuse(io: std.Io, command: ?Command, detail: []const u8) !u8 {
     return @intFromEnum(ExitCode.invalid_usage);
 }
 
-fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8) !u8 {
+fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8, color: bool) !u8 {
     // Section 14.1: the file alone, unless it sits beside a `main.em`, in which
     // case the whole project comes with it.
     var project = emerald.Project.load(gpa, io, path) catch |err| {
@@ -278,8 +347,8 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
 
     const analysis = switch (command) {
         .check => emerald.checkProject(gpa, &project),
-        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .arguments = program_arguments }),
-        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .arguments = program_arguments }),
+        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .arguments = program_arguments }),
+        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .arguments = program_arguments }),
         // `main` routes `format`, `repl`, `lsp`, and `help` to their own functions
         // before this is reached.
         .format, .repl, .lsp, .explain, .help => unreachable,
@@ -402,13 +471,17 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
 /// `emerald repl` (18.4). Both the REPL's own prompt-reading and any typed
 /// code's `input()` calls read from this one shared, long-lived stdin
 /// stream — see `Repl.run`'s doc comment.
-fn executeRepl(gpa: std.mem.Allocator, io: std.Io) !u8 {
+fn executeRepl(gpa: std.mem.Allocator, io: std.Io, environ_map: *const std.process.Environ.Map) !u8 {
     var out_buffer: [4096]u8 = undefined;
     var out = std.Io.File.stdout().writerStreaming(io, &out_buffer);
     var in_buffer: [4096]u8 = undefined;
     var in = std.Io.File.stdin().readerStreaming(io, &in_buffer);
 
-    Repl.run(gpa, &in.interface, &out.interface) catch |err| switch (err) {
+    // Decision 5: the REPL resolves the policy the same way `run` does, with
+    // no `--color` flag of its own to override it.
+    const color = try resolveColor(io, environ_map, null);
+
+    Repl.run(gpa, &in.interface, &out.interface, color) catch |err| switch (err) {
         error.OutOfMemory => return internalFailure(io, error.OutOfMemory),
         error.WriteFailed => return internalFailure(io, error.WriteFailed),
         error.ReadFailed => {

@@ -123,7 +123,11 @@ const ReplayReader = struct {
 /// long-lived stdin/stdout streams for the whole process — both the REPL's
 /// own prompt-reading and every entry's `input()` calls read from the same
 /// underlying stream, so there is exactly one of each for the session.
-pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer) !void {
+/// `color` is the execution's resolved Console styling policy
+/// (docs/console-design-plan.md's decision 5): `main.zig` resolves it the
+/// same way it does for `run`/`test`, since the REPL has no `--color` flag
+/// of its own.
+pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer, color: bool) !void {
     var session: Session = .{};
     defer session.deinit(gpa);
 
@@ -192,9 +196,9 @@ pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer) !voi
                         try wrapped.appendSlice(gpa, "print(");
                         try wrapped.appendSlice(gpa, trimmed);
                         try wrapped.appendSlice(gpa, ")\n");
-                        try tryEntry(gpa, &session, wrapped.items, in, out);
+                        try tryEntry(gpa, &session, wrapped.items, in, out, color);
                     } else {
-                        try tryEntry(gpa, &session, pending.items, in, out);
+                        try tryEntry(gpa, &session, pending.items, in, out, color);
                     }
                     continue :entries;
                 },
@@ -338,6 +342,7 @@ fn tryEntry(
     entry_text: []const u8,
     live_in: *std.Io.Reader,
     out: *std.Io.Writer,
+    color: bool,
 ) !void {
     var scratch_text: std.ArrayList(u8) = .empty;
     defer scratch_text.deinit(gpa);
@@ -355,7 +360,7 @@ fn tryEntry(
     var reader_buffer: [256]u8 = undefined;
     var replay = ReplayReader.init(session.recorded_input.items, live_in, &newly_read, gpa, &reader_buffer);
 
-    var report = try emerald.run(gpa, &source, .{ .out = &captured.writer, .in = &replay.interface });
+    var report = try emerald.run(gpa, &source, .{ .out = &captured.writer, .in = &replay.interface, .color = color });
     defer report.deinit();
 
     const sources = [_]Source{source};

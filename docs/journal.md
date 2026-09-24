@@ -2428,3 +2428,19 @@ sanitizer, and its result does not depend on the execution's color policy.
 The forced-color conformance case now strips nested Console styling and direct SGR strings,
 then proves the scanner retains the non-SGR cases. The ordinary color-off run case confirms the
 same removal behavior without styled helper output.
+
+## Console styling, slice 3: real terminals, 2026-09-24
+
+`emerald run` and `emerald test` now accept `--color=auto`, `--color=always`, and
+`--color=never`. The decision is a small pure `ColorPolicy` function: an explicit always/never
+flag wins; otherwise non-empty `NO_COLOR` wins over `FORCE_COLOR`; a non-empty FORCE_COLOR other
+than `0` wins over `TERM=dumb`; and the remaining automatic case requires stdout to be a
+TTY that supports ANSI. The REPL uses the same automatic path, while no Emerald program can
+change the policy during an execution.
+
+On Windows, automatic color treats an ordinary stdout console as eligible, then asks Zig to
+enable virtual-terminal processing; a failed setup simply leaves auto color off. Forced output
+never changes a console, so it remains suitable for redirected files, pipes, and CI logs. The
+CLI test suite covers flags, environment wiring, and `--` arguments; a Linux pseudo-terminal
+probe and a pipe probe checked the real automatic behavior. Windows setup is left to CI rather
+than claimed as locally verified.

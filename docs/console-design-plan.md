@@ -318,12 +318,15 @@ Notes for the executor:
    prelude's `Emerald` path stable while recovering from an invalid declaration of the
    reserved name. Completion now omits private type members such as `_color`, `_layer`, and
    `_code`.
-2. **`Console.plain` — implemented locally, awaiting commit.** The native scanner strips
+2. **`Console.plain` — completed in `9db62f7`.** The native scanner strips
    complete SGR sequences while retaining every other sequence. Focused assertions cover
    styled output from slice 1, a multi-code SGR sequence, cursor controls, bare `ESC`, and
    incomplete or malformed sequences. `plain` has the same result with color policy on or off.
-3. **Real terminals.** `--color`, environment precedence, TTY detection, Windows
-   enabling, and REPL forwarding. Zig unit tests cover the pure precedence function. Then
+3. **Real terminals — implemented locally, awaiting commit.** `--color`, environment
+   precedence, TTY detection, Windows enabling, and REPL forwarding. The pure `ColorPolicy`
+   function has unit tests for every precedence tier, while binary-level tests cover the CLI,
+   program arguments, and forced output. Linux manual probes verified the pseudo-terminal and
+   pipe behavior below; Windows VT setup has CI coverage only. Then
    check the real binary: under a pseudo-terminal color appears (on Linux,
    `script -qc 'emerald run x.em' /dev/null | cat -v` shows `^[[32m`), while `> file` and
    `| cat` show none, and each variable and flag overrides as specified. Windows is checked

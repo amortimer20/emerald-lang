@@ -29,6 +29,7 @@ pub const Heap = @import("Heap.zig");
 pub const Formatter = @import("Formatter.zig");
 pub const unicode = @import("unicode.zig");
 pub const strings = @import("strings.zig");
+pub const ColorPolicy = @import("ColorPolicy.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -769,6 +770,7 @@ test {
     _ = unicode;
     _ = strings;
     _ = @import("arguments.zig");
+    _ = ColorPolicy;
 }
 
 /// Runs a program and returns what it printed. The caller owns the result.

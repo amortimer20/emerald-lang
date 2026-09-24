@@ -259,7 +259,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     const run_help = b.addRunArtifact(exe);
     run_help.addArgs(&.{ "help", "run" });
     run_help.expectExitCode(0);
-    run_help.addCheck(.{ .expect_stdout_match = "Usage: emerald run <file.em> [-- <program-argument>...]" });
+    run_help.addCheck(.{ .expect_stdout_match = "Usage: emerald run [--color=auto|always|never] <file.em> [-- <program-argument>...]" });
     test_step.dependOn(&run_help.step);
 
     const explain_help = b.addRunArtifact(exe);
@@ -364,15 +364,98 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
 
     const receives_arguments = fixtures.add("receives-arguments.em", "print(Program.arguments)\n");
     const run_receives_arguments = b.addRunArtifact(exe);
-    run_receives_arguments.addArgs(&.{ "run" });
+    run_receives_arguments.addArgs(&.{"run"});
     run_receives_arguments.addFileArg(receives_arguments);
     run_receives_arguments.addArgs(&.{ "--", "Ada", "two words" });
     run_receives_arguments.expectStdOutEqual("[\"Ada\", \"two words\"]\n");
     run_receives_arguments.expectExitCode(0);
     test_step.dependOn(&run_receives_arguments.step);
 
+    // `--color` (docs/console-design-plan.md's decision 2/3): the flag is
+    // the highest-precedence input, so `always`/`never` are asserted against
+    // this redirected pipe, which auto-detection alone would always leave
+    // unstyled. The pure precedence function has its own exhaustive unit
+    // tests (`src/ColorPolicy.zig`); these are the end-to-end wiring: CLI
+    // parsing, `--` still working alongside the new flag, and environment
+    // variables actually reaching the process.
+    const greets = fixtures.add("greets.em", "print(Console.green(\"hi\"))\n");
+    const color_always = b.addRunArtifact(exe);
+    color_always.addArgs(&.{ "run", "--color=always" });
+    color_always.addFileArg(greets);
+    color_always.expectStdOutEqual("\x1b[32mhi\x1b[39m\n");
+    color_always.expectExitCode(0);
+    test_step.dependOn(&color_always.step);
+
+    const color_never = b.addRunArtifact(exe);
+    color_never.addArgs(&.{ "run", "--color=never" });
+    color_never.addFileArg(greets);
+    color_never.expectStdOutEqual("hi\n");
+    color_never.expectExitCode(0);
+    test_step.dependOn(&color_never.step);
+
+    // The flag still leaves room for the path and `--`-separated program
+    // arguments that follow it.
+    const color_with_arguments = b.addRunArtifact(exe);
+    color_with_arguments.addArgs(&.{ "run", "--color=always" });
+    color_with_arguments.addFileArg(receives_arguments);
+    color_with_arguments.addArgs(&.{ "--", "Ada" });
+    color_with_arguments.expectStdOutEqual("[\"Ada\"]\n");
+    color_with_arguments.expectExitCode(0);
+    test_step.dependOn(&color_with_arguments.step);
+
+    const color_rejects_unknown_value = b.addRunArtifact(exe);
+    color_rejects_unknown_value.addArgs(&.{ "run", "--color=blue" });
+    color_rejects_unknown_value.addFileArg(greets);
+    color_rejects_unknown_value.expectExitCode(64);
+    color_rejects_unknown_value.addCheck(.{
+        .expect_stderr_match = "expects `--color=auto`, `--color=always`, or `--color=never`",
+    });
+    test_step.dependOn(&color_rejects_unknown_value.step);
+
+    const color_rejects_missing_value = b.addRunArtifact(exe);
+    color_rejects_missing_value.addArgs(&.{ "run", "--color" });
+    color_rejects_missing_value.addFileArg(greets);
+    color_rejects_missing_value.expectExitCode(64);
+    color_rejects_missing_value.addCheck(.{
+        .expect_stderr_match = "expects `--color=auto`, `--color=always`, or `--color=never`",
+    });
+    test_step.dependOn(&color_rejects_missing_value.step);
+
+    // `test` accepts the same flag.
+    const color_test_fixture = fixtures.add("color-test-fixture.em", "@test\nfunc only() {\n    assert true\n}\n");
+    const color_on_test_command = b.addRunArtifact(exe);
+    color_on_test_command.addArgs(&.{ "test", "--color=always" });
+    color_on_test_command.addFileArg(color_test_fixture);
+    color_on_test_command.expectStdOutEqual("1 test passed.\n");
+    color_on_test_command.expectExitCode(0);
+    test_step.dependOn(&color_on_test_command.step);
+
+    // `FORCE_COLOR` reaches the process and turns styling on for this same
+    // redirected pipe when no flag overrides it (decision 3's tier 3).
+    const color_from_force_color_env = b.addRunArtifact(exe);
+    color_from_force_color_env.color = .manual;
+    color_from_force_color_env.removeEnvironmentVariable("NO_COLOR");
+    color_from_force_color_env.addArgs(&.{"run"});
+    color_from_force_color_env.addFileArg(greets);
+    color_from_force_color_env.setEnvironmentVariable("FORCE_COLOR", "1");
+    color_from_force_color_env.expectStdOutEqual("\x1b[32mhi\x1b[39m\n");
+    color_from_force_color_env.expectExitCode(0);
+    test_step.dependOn(&color_from_force_color_env.step);
+
+    // `--color=never` still wins over `FORCE_COLOR` (the flag is decision
+    // 3's highest tier, checked before any environment variable).
+    const color_flag_beats_force_color_env = b.addRunArtifact(exe);
+    color_flag_beats_force_color_env.color = .manual;
+    color_flag_beats_force_color_env.removeEnvironmentVariable("NO_COLOR");
+    color_flag_beats_force_color_env.addArgs(&.{ "run", "--color=never" });
+    color_flag_beats_force_color_env.addFileArg(greets);
+    color_flag_beats_force_color_env.setEnvironmentVariable("FORCE_COLOR", "1");
+    color_flag_beats_force_color_env.expectStdOutEqual("hi\n");
+    color_flag_beats_force_color_env.expectExitCode(0);
+    test_step.dependOn(&color_flag_beats_force_color_env.step);
+
     const check_rejects_arguments = b.addRunArtifact(exe);
-    check_rejects_arguments.addArgs(&.{ "check" });
+    check_rejects_arguments.addArgs(&.{"check"});
     check_rejects_arguments.addFileArg(receives_arguments);
     check_rejects_arguments.addArgs(&.{ "--", "Ada" });
     check_rejects_arguments.expectExitCode(64);
@@ -405,7 +488,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
 
     const tests_receive_arguments = fixtures.add("tests-receive-arguments.em", "@test\nfunc arguments_are_available() {\n    print(Program.arguments)\n}\n");
     const test_receives_arguments = b.addRunArtifact(exe);
-    test_receives_arguments.addArgs(&.{ "test" });
+    test_receives_arguments.addArgs(&.{"test"});
     test_receives_arguments.addFileArg(tests_receive_arguments);
     test_receives_arguments.addArgs(&.{ "--", "seed" });
     test_receives_arguments.expectStdOutEqual("[\"seed\"]\n1 test passed.\n");
