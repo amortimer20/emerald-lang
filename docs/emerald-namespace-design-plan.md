@@ -1,6 +1,6 @@
 # The `Emerald` namespace: design and implementation plan
 
-Status: design handoff, 2026-09-24, direction approved by the user. It does not authorize
+Status: design handoff, 2026-09-24, direction and all four decisions approved by the user. It does not authorize
 implementation, commits, or pushes by itself. Read AGENTS.md and the current handoff before
 acting; at the start of each slice, reread `git status`, the recent `git log`, and
 docs/handoff.md. Scheduled after nested types (`docs/nested-types-design-plan.md`), since the
@@ -63,14 +63,16 @@ const text = Emerald.File.read("notes.txt") # the built-in
   namespace, and stay as they are.
 - No program in the tree declares `Emerald`; it appears only in comments and strings.
 
-## Decisions to settle before slice 1
+## Decisions (settled by the user, 2026-09-24)
 
-1. Whether the bare built-in functions join the namespace (recommended: yes, `Emerald.print`)
-   or stay a separate, unshadowable list.
-2. Whether shadowing a built-in is a warning (recommended) or silent.
-3. Whether `using Emerald` is accepted as a harmless no-op or reported as redundant.
-4. How diagnostics display built-in types: unchanged bare names (`File`), recommended, since
-   `Emerald.` would add noise to every beginner's first error.
+1. The bare built-in functions join the namespace: `Emerald.print` reaches the built-in even
+   when a project declares its own `print`.
+2. A project name that hides a built-in is a warning, whose help names the qualified form.
+3. `using Emerald` is accepted but reported as redundant, since its names are already visible
+   in every file; it should appear only where it is needed. Emerald has two severities, error
+   and warning, so this is a warning worded as a hint, not a new diagnostic level.
+4. Diagnostics keep showing built-in types by their bare names (`File`, not `Emerald.File`),
+   for ease of reading.
 
 ## Slices
 

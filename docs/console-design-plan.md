@@ -55,9 +55,11 @@ Accepted by the user after a Claude/Codex design pass:
 - No existing example, conformance case, or source file declares `Console`, so adding it
   to the prelude breaks nothing in-tree.
 
-## Decisions needing user approval
+## Decisions
 
-Batch these; do not start slice 1 until they are answered.
+Decision 1 was settled by implementing nested types. The user deferred decisions 2 through 5
+to the recommendations below (2026-09-24), noting that the REPL should display color, so each
+is settled as recommended.
 
 1. **Color type spelling.** Resolved: `Console.Color`, a nested enum. The user chose to
    implement 14.3's nested types first rather than add a top-level `ConsoleColor`, and they
