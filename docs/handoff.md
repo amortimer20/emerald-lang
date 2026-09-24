@@ -32,8 +32,9 @@ four planned slices: `Console.Color`, `Console.style`, the twelve basic helpers,
 Windows VT setup resolve in that settled order; the REPL follows the same automatic policy.
 [`docs/library/console.md`](library/console.md), the inventory entry, rewrite-context 15.6
 and its decision-table rows, and [`examples/console.em`](../examples/console.em) document it.
-Line-oriented interaction (prompts, multi-select, tables) is a later slice of the same
-library; see [`console-design-plan.md`](console-design-plan.md).
+One-shot layout widgets (`Table`, `Panel`) and line-oriented interaction (prompts,
+multi-select) are later slices of the same library, not a separate `Tui`; see
+[`console-design-plan.md`](console-design-plan.md).
 
 Inline `if condition then value else value` is now implemented, closing a gap that the
 design and language guide had incorrectly described as already available. It supports
@@ -96,10 +97,11 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-Console styling is complete and awaiting the user's commit decision for slice 4 (documentation).
-No further milestone is authorized yet. The next platform-library candidates — `Tui`,
-`Graphics`, `Gui`, `Audio`, `Game` — and Console's own line-oriented interaction each need
-their own design proposal and real beginner-program motivation before implementation begins (24).
+Console styling (all four slices) is committed and pushed. No further milestone is authorized
+yet. Console's own remaining scope (`Table`/`Panel` widgets, prompts, multi-select) and the
+next platform-library candidates — `Graphics`, `Gui`, `Audio`, `Game` — each need their own
+design proposal and real beginner-program motivation before implementation begins (24). There
+is no `Tui` on the roadmap; that effort concentrates on Console and a future `Gui` instead.
 
 ## Deferred
 
@@ -111,10 +113,13 @@ their own design proposal and real beginner-program motivation before implementa
   management each need a separate design pass or a concrete program that motivates them.
 - Braceless type bodies (10.6) are deferred, not rejected: 24 records what a proposal must
   answer (one canonical formatter output, one parsing mode, one way to teach a declaration).
-- `Console`'s line-oriented interaction (prompts, multi-select, tables) remains undesigned.
-  Other official platform libraries — `Tui`, `Graphics`, `Gui`, `Audio`, `Game` — are a
-  product direction, not an implemented API, and each needs its own design pass and real
-  beginner-program motivation.
+- `Console`'s remaining scope — `Table`/`Panel` layout widgets and line-oriented interaction
+  (prompts, multi-select) — remains undesigned. There is no separate `Tui` library on the
+  roadmap: a full-screen, persistently redrawing terminal library needs runtime capabilities
+  Emerald does not have (raw-mode input, resize signals, concurrency for anything animated),
+  and nothing concrete has asked for it. Other official platform libraries — `Graphics`,
+  `Gui`, `Audio`, `Game` — are a product direction, not an implemented API, and each needs
+  its own design pass and real beginner-program motivation.
 - A generated diagnostic-code registry and reference page wait until the explainer catalog is
   large enough to justify their extra machinery.
 

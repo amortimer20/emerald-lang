@@ -2923,8 +2923,10 @@ bare reset (`ESC[0m`) found inside input text reopens every enclosing layer the 
 `Console.plain` removes only complete SGR sequences and is documented as exactly that, not as
 a general escape-sequence sanitizer for untrusted terminal output.
 
-`Tui`, `Graphics`, `Gui`, `Audio`, and `Game` remain roadmap items (24): each needs its own
-design proposal and real beginner motivation before implementation begins.
+Table and panel layout widgets, and line-oriented prompts (confirm, text input,
+single/multi-select), remain later slices of Console itself (24) rather than a separate
+library. `Graphics`, `Gui`, and `Audio` remain roadmap items (24): each needs its own design
+proposal and real beginner motivation before implementation begins.
 
 ## 16. Annotations, assertions, and tests
 
@@ -3769,11 +3771,17 @@ for working Emerald programs, implementation measurements, or a dedicated design
   specific types when their producing APIs are implemented or revisited;
 - an official platform-library family, shipped with Emerald rather than acquired through
   packages, so beginners can make visible and interactive programs from one installation.
-  `Console`'s terminal styling is implemented (15.6); its line-oriented interaction (prompts,
-  multi-select, tables) remains a later slice of that same library. `Tui`, `Graphics`, `Gui`,
-  `Audio`, and `Game` are later, separate libraries rather than one forced abstraction. Each
-  begins with a small design proposal and real beginner programs; this roadmap does not
-  precommit widget APIs, TUI/GUI compatibility, or a shared event model;
+  `Console`'s terminal styling is implemented (15.6); its remaining scope is one-shot
+  immediate output and line-oriented interaction — layout widgets such as `Table` and
+  `Panel`, and prompts (confirm, text input, single/multi-select) — as later slices of the
+  same library. There is no separate `Tui` library on the roadmap: a full-screen,
+  persistently redrawing, focus-managing terminal library needs runtime capabilities Emerald
+  does not have (raw-mode input, resize signals, concurrency for anything animated), and
+  nothing concrete has asked for it, so effort concentrates on Console and a future `Gui`
+  instead of a third terminal-facing library. `Graphics`, `Gui`, and `Audio` remain later,
+  separate libraries rather than one forced abstraction. Each begins with a small design
+  proposal and real beginner programs; this roadmap does not precommit widget APIs, GUI
+  compatibility, or a shared event model;
 - concurrency and async as a dedicated design project after the single-threaded runtime.
 
 Macros remain deferred as a separate language-design problem. If real boilerplate later
