@@ -3642,7 +3642,12 @@ for working Emerald programs, implementation measurements, or a dedicated design
   named requirements include `RecursionError` for the recursion boundary and `InputError`
   for input failures; conversion, filesystem, regex, networking, and similar errors receive
   specific types when their producing APIs are implemented or revisited;
-- the first TUI, 2D, GUI, or game-engine library used to exercise Emerald's APIs; and
+- an official platform-library family, shipped with Emerald rather than acquired through
+  packages, so beginners can make visible and interactive programs from one installation.
+  `Console` comes first: styled immediate terminal output and line-oriented interaction.
+  `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are later, separate libraries rather than one
+  forced abstraction. Each begins with a small design proposal and real beginner programs;
+  this roadmap does not precommit widget APIs, TUI/GUI compatibility, or a shared event model;
 - concurrency and async as a dedicated design project after the single-threaded runtime.
 
 Macros remain deferred as a separate language-design problem. If real boilerplate later

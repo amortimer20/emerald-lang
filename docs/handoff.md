@@ -85,6 +85,10 @@ only with user authorization.
 - Expanded `emerald.toml`, bounded implementation limits,
   networking, concurrency, generics, enum payloads, wider general overloading, and package
   management each need a separate design pass or a concrete program that motivates them.
+- Official platform libraries are a product direction, not an implemented API: `Console`
+  (styled immediate terminal output and line-oriented interaction) is the first candidate;
+  `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` each need their own design pass and real
+  beginner-program motivation.
 - A generated diagnostic-code registry and reference page wait until the explainer catalog is
   large enough to justify their extra machinery.
 
@@ -106,7 +110,7 @@ files), `zig fmt --check src/Interpreter.zig`, and `git diff --check` passed. Th
 `conformance/run/random-method-names.em` also ran directly with its output reviewed:
 user structs, inherited/overridden class methods, captured methods, and absent optional
 receivers work alongside seeded Random operations and ordinary `List.shuffle!()`.
-The earlier platform-library roadmap edits remain separate. The fix is committed as
+The platform-library roadmap is recorded in a separate documentation commit. The fix is committed as
 `c0dea26`, tagged locally as `v0.5.0`; publishing still requires a push.
 
 The inline-if slice is complete. With pinned Zig 0.16.0, it passed Debug
@@ -115,8 +119,8 @@ files), Zig formatting checks, and `git diff --check`. A bounded fuzz campaign
 (`zig build fuzz -- 20260923 2000`) passed 2,000 cases, with 247 reaching execution;
 the generator now includes inline conditionals. Focused conformance covers execution,
 diagnostics, and formatter idempotence; Zig tests cover return guards, mutation, nesting
-limits, allocation failures, and LSP traversal. The existing uncommitted platform-library
-roadmap edits remain intact and outside the inline-if commit. No push was requested.
+limits, allocation failures, and LSP traversal. The platform-library roadmap is recorded
+separately from the inline-if commit. Pushing the commits and release tag is left to the user.
 
 The operator-annotation feature passed Debug and ReleaseSafe `zig build test`, `zig build`,
 `bash tools/check-doc-examples.sh` (92 linked files), and `git diff --check` using pinned Zig
