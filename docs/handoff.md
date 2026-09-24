@@ -13,6 +13,11 @@ enums, typed errors, projects/namespaces, ranges and slicing. The formatter, REP
 diagnostics, symbols, format-on-save, hover, go to definition, find references, rename, and
 completion are complete.
 
+Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
+name always wins over a built-in, with a warning, and the built-in stays reachable as
+`Emerald.File`, `Emerald.print`, or `Emerald.Math.pi`. `Emerald` is the one reserved name. See
+[`emerald-namespace-design-plan.md`](emerald-namespace-design-plan.md).
+
 Nested types (14.3) are implemented: a struct, class, or enum can declare types inside its
 braces, reached by path (`Console.Color.red`, `Ui.Console.Pair`, `using Color =
 Console.Color`), with privacy by 10.5's braces rule and full LSP support. The spec had called
@@ -84,10 +89,8 @@ method changes only ordinary identifier uses.
 ## Next step
 
 No implementation slice is active. Candidates the user has discussed: the Console styling
-plan (all decisions settled) and the `Emerald` namespace plan, whose slices 1 and 2 are done:
-every built-in is reachable qualified (`Emerald.File`, `Emerald.print`, `Emerald.Math`), a
-project name always wins with a warning, and `Emerald` is reserved. Slice 3 (spec and guide)
-is next; Console follows it.
+plan, whose decisions are all settled; it is the natural next task, with `Console` in the
+`Emerald` namespace and its color type `Console.Color`.
 
 ## Deferred
 
@@ -122,6 +125,10 @@ is next; Console follows it.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+`Emerald` namespace slice 3 (documentation) is complete: rewrite-context 14.2, 15.1, and the
+decision table, the projects guide, and the library inventory. `bash tools/check-doc-examples.sh`
+and `git diff --check` passed, and both new snippets were run.
 
 `Emerald` namespace slice 2 is complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
 `zig build test`, `zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`,

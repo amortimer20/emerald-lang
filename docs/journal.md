@@ -2384,3 +2384,12 @@ directories only, since a parameter named `input` or a local named `write` is an
 rather than a mistake. One existing fixture, about a program that declares its own `Ordered`,
 gained the warning, and its error now suggests `with Emerald.Ordered`, which was confirmed to
 adopt the built-in trait.
+
+## The `Emerald` namespace, slice 3: documentation, 2026-09-24
+
+The plan is complete. Rewrite-context 14.2 now states the built-in rules with an example: a
+project name always wins, with a warning naming the qualified form; locals are exempt; `Emerald`
+is the one reserved name; `using Emerald` is redundant; diagnostics keep bare names. 15.1 no
+longer says the prelude functions are stored "in an internal namespace", since that namespace
+is now written like any other. The language guide's projects page and the library inventory
+explain `Emerald.` to readers, and both new snippets were run.

@@ -2582,6 +2582,26 @@ skipped. A module-level declaration whose name is also a namespace — `struct S
 root beside `shapes/`, or `enum Ui` in `graphics/` beside `graphics/ui/` — is an error at the
 declaration, since `Shapes.Circle` would otherwise mean a member of either one.
 
+The built-ins live in the namespace `Emerald` (15.1), implicitly imported into every file
+under the file's own names. A name the project declares, or a top-level directory's
+namespace, always wins over a built-in of the same name, and the built-in stays reachable
+qualified; the collision is a warning whose help names that form:
+
+```emerald
+struct File {
+    var name: String
+}
+
+const mine = File("notes") # the program's File (with a warning)
+const exists = Emerald.File.exists?("notes.txt") # the built-in
+```
+
+Only locals are exempt from the warning, since `input` or `random` is an ordinary name for a
+variable. The one reserved name is `Emerald` itself: a root-level declaration named `Emerald`
+and a top-level `emerald/` directory are errors, and the set never grows, so adding a built-in
+never breaks a program. `using Emerald` is allowed but reported as redundant. Diagnostics
+still name built-in types bare, `File` rather than `Emerald.File`.
+
 An optional `using` declaration shortens repeated qualification:
 
 ```emerald
@@ -2689,9 +2709,12 @@ Methods live on values when they are naturally discovered from that value. Cohes
 operations without one natural receiver live in named modules. Prelude functions are
 reserved for universal, frequent actions.
 
-The old `Kernel` name is not carried forward. `input`, `print`, `write`, `random`, and
-process-exit behavior are described as prelude functions even if the implementation stores
-them in an internal namespace.
+The old `Kernel` name is not carried forward. Every built-in — the prelude functions
+(`print`, `write`, `input`, `input_maybe`, `random`, `exit`), the prelude's types and traits
+(`File`, `Random`, `RuntimeError`, `Ordered`, and the rest), and the built-in namespaces
+`Math` and `Program` — lives in one namespace, `Emerald`, implicitly imported into every file
+(14.2). Each is written bare, and is always reachable qualified: `Emerald.print`,
+`Emerald.File`, `Emerald.Math.pi`. Future platform libraries (24) live there too.
 
 New convenience methods should meet at least one of these tests:
 
@@ -3636,6 +3659,7 @@ recorded in their normative sections:
 | A mixed sibling-class literal infers its base, undeferred (4.4, 10.7) | A list, dictionary, or value-producing `case` whose elements are different but related classes infers their nearest shared base (`Type.User.commonBase`, a plain walk up 10.7's single-inheritance chain), rather than reporting a mismatch that an explicit `List[Animal]` annotation was already accepted under | `[Dog(), Cat()]` failing to type-check when `const pets: List[Animal] = [Dog(), Cat()]` already worked was exactly the surprise 4.4's own widening principle argues against: `[1, 2.5]` already infers `List[Float]` rather than demanding an annotation, and a heterogeneous collection under a shared base is one of the most ordinary patterns an OOP-capable language has. Scoped to a shared class only, not a shared trait: inferring across a trait would expose only the trait's own contract on the result (11.2), a real loss of what the elements' own type already offered, unlike widening to a base class the elements already were. Guarded against either side being optional, since `Type.structOf` has no way to carry a `?` its caller did not already have on hand — left to the ordinary mismatch report rather than risk silently dropping one. |
 | `File.with_open` implementation (13.3, 15.3) | Native dispatch invokes the block and defers `close` | `File` type-level functions already dispatch natively as a namespace, so a prelude implementation would require a special exception to that routing. Keeping cleanup beside the native handle state makes closure on both normal and error unwinding direct and testable. |
 | `Bytes` storage (15.3) | Reuse `Heap.Text`'s immutable ref-counted byte buffer under a distinct `Value.Kind.bytes` tag | Text and raw bytes have the same ownership, collector, and copying needs; duplicating that machinery would add a second lifetime path with no benefit. The tag keeps their contracts separate: only String is Unicode-aware and only Bytes permits invalid UTF-8. |
+| The `Emerald` namespace (14.2, 15.1) | Built-ins are a writable, implicitly imported namespace `Emerald`; a project name always wins, with a warning; `Emerald` is the one reserved name | A project name matching a built-in was handled three ways: a declaration won, a `math/` or `program/` directory won, and a `file/` directory silently lost. Reserving every built-in name would have made each new platform library a breaking change for any program using its name. The model is C#'s implicit usings: the project's name wins and the built-in stays reachable qualified, so only one name, which never grows, is reserved. The warning keeps a beginner who names a type `File` by accident from being surprised; locals are exempt because `input` and `random` are ordinary variable names. Diagnostics keep bare names for readability. |
 | Empty bodies (18.3) | `{ }` on the header's line, in both brace styles; a comment-only body keeps its lines | The formatter used to open every body onto separate lines, so the spec's own `class InvalidScore extends Error { }` and `else { }` were not canonical. An empty body is where one line reads best, and it is what the spec already wrote; keeping any author-chosen one-line body would give ordinary code two canonical shapes. Allman's own-line brace opens a body's lines, and an empty body has none, so the rule does not vary by brace style. The spacing is the spec's `{ }`. |
 | Nested types (14.3) | Declared bare, keyed `Outer::Inner` as a type-level member, always reached qualified, displayed without the namespace; traits may not contain one; 10.5's braces rule decides privacy both ways | 14.3 described nested types as settled, but nothing implemented them and nothing recorded the gap until the Console styling plan needed `Console.Color`. The `::` key is 10.4's type-member form, which cannot collide with a directory namespace's `Outer.Inner`. A receiver in the declaration (`enum Console.Color`) would distinguish nothing, since a type is never an instance member. Always qualifying follows 10.4 and enum values; the one-line bare declaration of a member of a nested type (`func Pair.zero()`) matches how the nested type itself is declared. Display keeps the nesting because it is part of the type's name, and drops the namespace as namespaced types already do. The platform libraries (`Graphics`, `Gui`, `Game`) will want the same shape. |
 | A declaration sharing a namespace's name (14.2, 14.3) | An error at the declaration, naming the directory | The declaration used to win silently, so every member of the namespace became unreachable through that path and the only symptom was "has no type-level member" at a use. Nested types (14.3) would have made the same path legitimately mean either one, so the collision is refused rather than resolved by a precedence rule a reader cannot see. Only an exact key match can collide, since member keys hold `::` and private keys hold `#`. Built-in names are not covered: `Math` and `Program` already yield to a project namespace of the same name, while prelude classes such as `File` do not, and aligning those is a separate decision. |

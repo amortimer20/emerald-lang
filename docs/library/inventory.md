@@ -4,6 +4,11 @@
 > example, and conformance cases. `tools/check-doc-examples.sh` automatically checks that
 > every linked example stays executable after a build (`docs/README.md`'s step 4, done).
 
+Every built-in below lives in the `Emerald` namespace, implicitly imported into every file,
+so each is written bare and is always reachable qualified (`Emerald.print`, `Emerald.File`,
+`Emerald.Math.pi`) when a program's own name hides it. See
+[Projects and namespaces](../language/errors-tests-and-projects.md#namespaces-and-using).
+
 ## Prelude functions
 
 | API | Family page | Example/test source |

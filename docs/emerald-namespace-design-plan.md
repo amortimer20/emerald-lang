@@ -1,6 +1,6 @@
 # The `Emerald` namespace: design and implementation plan
 
-Status: design handoff, 2026-09-24, direction and all four decisions approved by the user. It does not authorize
+Status: completed, 2026-09-24. Direction and all four decisions were approved by the user. It does not authorize
 implementation, commits, or pushes by itself. Read AGENTS.md and the current handoff before
 acting; at the start of each slice, reread `git status`, the recent `git log`, and
 docs/handoff.md. Scheduled after nested types (`docs/nested-types-design-plan.md`), since the
@@ -105,8 +105,13 @@ const text = Emerald.File.read("notes.txt") # the built-in
    shadowing warning covers module-level declarations and top-level directories, not
    locals, so a parameter named `input` stays quiet. The shadowed-trait operator error now
    also suggests `with Emerald.Ordered`.
-3. **Documentation.** rewrite-context 14.2 and 15, the decision table, the language guide's
-   projects page, and the library inventory; the handoff and journal.
+3. **Documentation.** Done, 2026-09-24. Rewrite-context 14.2 states the rules with an
+   example, 15.1 replaces "stores them in an internal namespace" with the `Emerald`
+   namespace, and the decision table has a row. The language guide's projects page and the
+   library inventory explain `Emerald.` for readers. Both new snippets were run.
+
+Status: complete. All three slices landed: `45be6c8`, `fe6e3b3`, and the documentation
+commit.
 
 Each slice ends with Debug and ReleaseSafe `zig build test`, `zig build`,
 `bash tools/check-doc-examples.sh`, and `git diff --check`, with new conformance cases read by

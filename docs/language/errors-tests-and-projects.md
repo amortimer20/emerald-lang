@@ -110,6 +110,25 @@ A declaration may not share its name with a namespace either — a `struct Shape
 project root beside a `shapes/` directory would make `Shapes.Circle` mean a member of either
 one, so it is rejected at the declaration, naming the directory:
 [`conformance/diagnostics/namespace-clash`](../../conformance/diagnostics/namespace-clash).
+
+Emerald's own built-ins — `print`, `File`, `RuntimeError`, `Math`, and the rest — live in a
+namespace too, `Emerald`, which every file sees without a `using`. A name your project
+declares, or a directory's namespace, wins over a built-in with the same name, and Emerald
+warns you when that happens, since `File.read` then means yours. The built-in is still there,
+written in full:
+
+```emerald
+struct File {
+    var name: String
+}
+
+print(File("notes")) # your File
+print(Emerald.File.exists?("x.txt")) # Emerald's
+```
+
+Only `Emerald` itself is reserved, so a later version adding a built-in never breaks your
+program. See [`conformance/run/emerald-builtins`](../../conformance/run/emerald-builtins) and
+[`conformance/diagnostics/builtin-shadowing`](../../conformance/diagnostics/builtin-shadowing).
 A leading underscore keeps a module-level declaration private to the file that declares it —
 not just the directory — so two files may each have their own private `_helper` with no
 collision, and neither can reach the other's:
