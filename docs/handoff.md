@@ -98,10 +98,9 @@ method changes only ordinary identifier uses.
 ## Next step
 
 Console styling (all four slices) is committed and pushed. No further milestone is authorized
-yet. Console's own remaining scope (`Table`/`Panel` widgets, prompts, multi-select) and the
-next platform-library candidates — `Graphics`, `Gui`, `Audio`, `Game` — each need their own
-design proposal and real beginner-program motivation before implementation begins (24). There
-is no `Tui` on the roadmap; that effort concentrates on Console and a future `Gui` instead.
+yet. Console's own remaining scope (`Table`/`Panel` widgets, prompts, multi-select) needs its
+own design proposal and real beginner-program motivation before implementation begins (24).
+`Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than on the roadmap.
 
 ## Deferred
 
@@ -114,12 +113,10 @@ is no `Tui` on the roadmap; that effort concentrates on Console and a future `Gu
 - Braceless type bodies (10.6) are deferred, not rejected: 24 records what a proposal must
   answer (one canonical formatter output, one parsing mode, one way to teach a declaration).
 - `Console`'s remaining scope — `Table`/`Panel` layout widgets and line-oriented interaction
-  (prompts, multi-select) — remains undesigned. There is no separate `Tui` library on the
-  roadmap: a full-screen, persistently redrawing terminal library needs runtime capabilities
-  Emerald does not have (raw-mode input, resize signals, concurrency for anything animated),
-  and nothing concrete has asked for it. Other official platform libraries — `Graphics`,
-  `Gui`, `Audio`, `Game` — are a product direction, not an implemented API, and each needs
-  its own design pass and real beginner-program motivation.
+  (prompts, multi-select) — remains undesigned. `Tui`, `Graphics`, `Gui`, `Audio`, and `Game`
+  are parked rather than on the roadmap: a full-screen terminal library needs raw-mode input
+  and a redraw loop, and the other three need native platform bindings with no extension
+  mechanism to plug them in and likely their own repos once a package manager exists.
 - A generated diagnostic-code registry and reference page wait until the explainer catalog is
   large enough to justify their extra machinery.
 

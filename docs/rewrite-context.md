@@ -2925,8 +2925,7 @@ a general escape-sequence sanitizer for untrusted terminal output.
 
 Table and panel layout widgets, and line-oriented prompts (confirm, text input,
 single/multi-select), remain later slices of Console itself (24) rather than a separate
-library. `Graphics`, `Gui`, and `Audio` remain roadmap items (24): each needs its own design
-proposal and real beginner motivation before implementation begins.
+library. `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than on the roadmap (24).
 
 ## 16. Annotations, assertions, and tests
 
@@ -3771,17 +3770,15 @@ for working Emerald programs, implementation measurements, or a dedicated design
   specific types when their producing APIs are implemented or revisited;
 - an official platform-library family, shipped with Emerald rather than acquired through
   packages, so beginners can make visible and interactive programs from one installation.
-  `Console`'s terminal styling is implemented (15.6); its remaining scope is one-shot
-  immediate output and line-oriented interaction — layout widgets such as `Table` and
-  `Panel`, and prompts (confirm, text input, single/multi-select) — as later slices of the
-  same library. There is no separate `Tui` library on the roadmap: a full-screen,
-  persistently redrawing, focus-managing terminal library needs runtime capabilities Emerald
-  does not have (raw-mode input, resize signals, concurrency for anything animated), and
-  nothing concrete has asked for it, so effort concentrates on Console and a future `Gui`
-  instead of a third terminal-facing library. `Graphics`, `Gui`, and `Audio` remain later,
-  separate libraries rather than one forced abstraction. Each begins with a small design
-  proposal and real beginner programs; this roadmap does not precommit widget APIs, GUI
-  compatibility, or a shared event model;
+  `Console`'s terminal styling is implemented (15.6); its remaining scope — layout widgets
+  such as `Table` and `Panel`, and prompts (confirm, text input, single/multi-select) — is
+  later slices of the same library. A separate `Tui`, and `Graphics`, `Gui`, `Audio`, and
+  `Game`, are parked rather than on the roadmap: a full-screen terminal library needs
+  raw-mode input and a redraw loop Emerald does not have, and the other three need native
+  platform bindings (rendering, audio devices) with no extension mechanism to plug them in,
+  and would likely want their own repos and release cadence once a package manager exists to
+  depend on them. Revisit any of these only once that infrastructure exists, or a concrete
+  beginner program makes an earlier case;
 - concurrency and async as a dedicated design project after the single-threaded runtime.
 
 Macros remain deferred as a separate language-design problem. If real boilerplate later

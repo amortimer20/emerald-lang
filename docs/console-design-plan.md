@@ -9,13 +9,12 @@ Other agent work may have landed since this plan was written; preserve and recon
 
 ## Objective and accepted direction
 
-`Console` is the first of the official platform libraries (rewrite-context's roadmap: Console,
-Graphics, Gui, Audio, Game — separate libraries, shipped with Emerald). Its first slice is
-terminal styling of individual strings. Prompts, multi-select, tables, panels, RGB colors,
-and reusable style objects are later slices of Console itself, not a separate library: there
-is no `Tui` on the roadmap. Only something that needs an alternate screen buffer, a redraw
-loop, or focus management across live widgets would ever motivate a full-screen library, and
-nothing concrete asks for that today.
+`Console` is the first of the official platform libraries (rewrite-context's roadmap).
+Its first slice is terminal styling of individual strings. Prompts, multi-select, tables,
+panels, RGB colors, and reusable style objects are later slices of Console itself, not a
+separate library: there is no `Tui` on the roadmap. `Graphics`, `Gui`, `Audio`, and `Game`
+are parked rather than on the roadmap, pending a package manager and a native extension
+mechanism neither of which is designed yet.
 
 Accepted by the user after a Claude/Codex design pass:
 
