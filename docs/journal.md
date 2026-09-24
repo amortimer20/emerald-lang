@@ -2179,3 +2179,16 @@ It now leads with the shared Emerald SVG, a runnable first program, Mise install
 commands, source build instructions, and links to the language guide, library reference,
 examples, and diagnostics guide. Internal implementation status, agent coordination, and the
 source-tree inventory were removed from this user-facing page.
+
+## Emerald 0.5.0 local release, 2026-09-23
+
+`v0.5.0` was tagged locally at `c0dea26`, following `ae1e5e3`'s inline conditional
+expressions and the Random method-name collision fix. Debug and ReleaseSafe suites passed.
+A baseline-CPU ReleaseSafe build with `-Dversion=0.5.0` was packaged, unpacked, and checked
+through version, help, check, run, test, format, explain, and REPL commands, plus both new
+conformance examples. Documentation checks passed for 93 linked files. No push or GitHub
+publication was performed; cross-platform packaging remains the release workflow's job.
+Development resumed at `0.6.0-dev`. Earlier platform-library roadmap edits were preserved
+outside these release commits.
+The `0.6.0-dev` bump also passed Debug and ReleaseSafe tests, a normal build and version
+check, documentation-example validation, and `git diff --check`.

@@ -2973,7 +2973,7 @@ workflow. `emerald help lsp` documents its optional `--stdio` spelling.
 `build`, `debug`, and package `add` (18.1.1) as later tooling, not the settled command set.
 
 `emerald --version` prints the version embedded in the binary. Development builds currently
-print `Emerald 0.5.0-dev`; release automation derives a release build's value from its `vX.Y.Z`
+print `Emerald 0.6.0-dev`; release automation derives a release build's value from its `vX.Y.Z`
 tag, so the tagged `v0.4.0` binary prints `Emerald 0.4.0`.
 
 There is no `fmt` alias. `run` checks the complete project before executing; `check`

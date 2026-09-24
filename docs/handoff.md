@@ -40,7 +40,9 @@ failed tests. The CLI has concise global and command-specific help, specific rec
 bad invocations, formatter change reporting, and REPL `:help`/`:quit`; `lsp` remains available
 through its dedicated help but is intentionally absent from the interactive command list.
 Their substantive REPL and LSP protocol behavior remains covered in their own Zig modules.
-Emerald 0.4.0 is published. Development binaries now identify themselves as `Emerald 0.5.0-dev`;
+Emerald 0.4.0 is published; `v0.5.0` is tagged locally at `c0dea26` but not pushed or published.
+The 0.5.0 tag includes inline `if` expressions and the Random dispatch fix.
+Development binaries now identify themselves as `Emerald 0.6.0-dev`;
 release automation passes the pushed `vX.Y.Z` tag through the build so a distributed binary
 reports that exact version.
 Release preparation now also packages and smokes the binary's version, `help`, `check`, `run`,
@@ -104,8 +106,8 @@ files), `zig fmt --check src/Interpreter.zig`, and `git diff --check` passed. Th
 `conformance/run/random-method-names.em` also ran directly with its output reviewed:
 user structs, inherited/overridden class methods, captured methods, and absent optional
 receivers work alongside seeded Random operations and ordinary `List.shuffle!()`.
-The earlier platform-library roadmap edits remain separate. The fix is being committed
-for the local 0.5.0 release; publishing still requires a push.
+The earlier platform-library roadmap edits remain separate. The fix is committed as
+`c0dea26`, tagged locally as `v0.5.0`; publishing still requires a push.
 
 The inline-if slice is complete. With pinned Zig 0.16.0, it passed Debug
 and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (93 linked
