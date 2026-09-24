@@ -2321,3 +2321,15 @@ The Console styling plan had been waiting on this to spell its color type `Conso
 Before updating it, a nested enum was added to the prelude's `Random` class temporarily, to
 confirm that a prelude-declared nested type, keyed under the internal `emerald.` prefix,
 resolves in values, annotations, and `case` like any other. It did, and was removed.
+
+## Empty bodies on one line, 2026-09-24
+
+The formatter opened every body onto separate lines, so the spec's own
+`class InvalidScore extends Error { }` and `else { }` were not canonical. The user decided that
+an empty body stays on its header's line; a body with content still expands, so ordinary code
+keeps one canonical shape. The spelling follows the spec, `{ }`, and applies in both brace
+styles, since Allman's brace on its own line opens a body's lines and an empty body has none. A
+body holding only a comment keeps its lines, so the comment is never displaced, and blank lines
+inside an empty body are dropped. It covers type declarations and every statement block and
+function body. Checking the examples against the new rule showed three of them had never been
+formatted at all (`} else {` on one line); all four affected examples are canonical now.

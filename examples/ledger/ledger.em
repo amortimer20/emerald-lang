@@ -1,8 +1,7 @@
 ## The ledger's storage and reporting model. This file is part of the same
 ## project as main.em, so its public names are directly visible there.
 
-class LedgerError extends Error {
-}
+class LedgerError extends Error { }
 
 struct Entry with Textual, Hashable {
     const date: String
@@ -129,7 +128,8 @@ func append_entry(entry: Entry) {
     const line = "#{entry.date}\t#{entry.category}\t#{entry.amount}\t#{entry.note}\n"
     if File.exists?(store_path) {
         File.append(store_path, line)
-    } else {
+    }
+    else {
         File.write(store_path, line)
     }
 }

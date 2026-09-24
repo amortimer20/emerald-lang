@@ -1,0 +1,44 @@
+# An empty body stays on its header's line as `{ }` (18.3); a body holding only a
+# comment keeps its lines, so the comment has somewhere to go.
+class InvalidScore extends Error { }
+
+struct Marker { }
+
+trait Tag { }
+
+class Holder {
+    struct Inner { }
+
+    func noop() { }
+}
+
+func nothing_here() { }
+
+func commented() {
+    # left for later
+}
+
+class Noted {
+    # fields to come
+}
+
+const n = 3
+if n > 2 {
+    print("big")
+}
+else { }
+
+while false { }
+
+case n {
+    when 1 {
+        print("one")
+    }
+    else { }
+}
+
+try {
+    print("try")
+}
+catch error: InvalidScore { }
+finally { }

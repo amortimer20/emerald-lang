@@ -67,7 +67,8 @@ func summary(period: String) {
         categories[entry.category] = categories[entry.category].or(0) + entry.amount
         if entry.amount >= 0 {
             income += entry.amount
-        } else {
+        }
+        else {
             spending += entry.amount
         }
     }

@@ -347,10 +347,27 @@ const Printer = struct {
     // Blocks.
 
     fn printBlock(self: *Printer, block: Ast.Block) PrintError!void {
+        if (block.statements.len == 0 and try self.printEmptyBody(block.span.end)) return;
         try self.printBraceOpen();
         try self.printStatementsIndented(block.statements, block.span.end);
         try self.writeIndent();
         try self.write("}");
+    }
+
+    /// An empty body stays on its header's line as `{ }`, in either brace style
+    /// (18.3): `class InvalidScore extends Error { }`, `else { }`. Allman's brace
+    /// on its own line opens a body's lines, and an empty one has none. A body
+    /// holding only a comment keeps its lines, so the comment has somewhere to
+    /// go; blank lines inside an empty body are dropped. Returns whether it
+    /// printed one.
+    fn printEmptyBody(self: *Printer, end: u32) PrintError!bool {
+        var index = self.trivia_cursor;
+        while (index < self.trivia.len and self.trivia[index].span.start <= end) : (index += 1) {
+            if (self.trivia[index].kind != .blank_line) return false;
+        }
+        _ = try self.flushTrivia(end);
+        try self.write(" { }");
+        return true;
     }
 
     /// Section 3.4: a block's opening brace either trails the header that
@@ -738,6 +755,10 @@ const Printer = struct {
                 try self.printType(trait);
             }
         }
+        const empty = s.fields.len == 0 and s.constructor == null and s.methods.len == 0 and
+            s.properties.len == 0 and s.type_functions.len == 0 and s.type_fields.len == 0 and
+            s.types.len == 0;
+        if (empty and try self.printEmptyBody(end)) return;
         try self.printBraceOpen();
 
         var members: std.ArrayList(Member) = .empty;
@@ -1444,6 +1465,15 @@ test "nested types (14.3) keep their place and indentation in both brace styles"
     try expectFormatsWithStyle(.stroustrup, allman, stroustrup);
     try expectFormatsWithStyle(.allman, allman, allman);
     try expectFormatsWithStyle(.stroustrup, stroustrup, stroustrup);
+}
+
+test "an empty body stays on its header's line as `{ }` in both brace styles" {
+    const written = "class InvalidScore extends Error {\n}\n\nfunc noop() {\n\n}\n\nif true {\n    print(1)\n}\nelse {}\n";
+    const expected = "class InvalidScore extends Error { }\n\nfunc noop() { }\n\n";
+    try expectFormatsWithStyle(.stroustrup, written, expected ++ "if true {\n    print(1)\n}\nelse { }\n");
+    try expectFormatsWithStyle(.allman, written, expected ++ "if true\n{\n    print(1)\n}\nelse { }\n");
+    // A comment inside keeps the body's lines.
+    try expectFormatsWithStyle(.allman, "func later() {\n    # soon\n}\n", "func later()\n{\n    # soon\n}\n");
 }
 
 test "Allman brace style reaches every kind of block: struct, function, property, case" {

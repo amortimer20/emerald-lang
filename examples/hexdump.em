@@ -29,7 +29,8 @@ while true {
         }
         if byte.between?(32, 126) {
             ascii += printable_ascii[byte - 32]
-        } else {
+        }
+        else {
             ascii += "."
         }
     }

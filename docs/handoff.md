@@ -84,9 +84,8 @@ method changes only ordinary identifier uses.
 ## Next step
 
 No implementation slice is active. Candidates the user has discussed: the Console styling
-plan (decisions 2 through 5 pending), the `Emerald` namespace plan (after nested types, now
-unblocked), and the approved empty-body formatter change. Start one only with user
-authorization.
+plan (decisions 2 through 5 pending) and the `Emerald` namespace plan (after nested types, now
+unblocked; its four decisions are pending). Start one only with user authorization.
 
 ## Deferred
 
@@ -107,10 +106,6 @@ authorization.
 
 ## Active rough edges
 
-- Formatter: the formatter expands every one-line body onto separate lines. The user decided
-  (2026-09-24) that an **empty** body stays on one line (`class InvalidScore extends Error { }`,
-  `else { }`, as the spec already writes them); a body with content still expands. Not yet
-  implemented. Pick the canonical spacing of the empty form (`{ }` or `{}`) when it is.
 - A project name matching a built-in is handled three ways (a declaration wins, a `math/` or
   `program/` directory wins, a `file/` directory silently loses). The approved fix is a
   writable, implicitly imported `Emerald` namespace with one reserved name:
@@ -125,6 +120,13 @@ authorization.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+Empty bodies now format as `{ }` on the header's line (18.3). With pinned Zig 0.16.0, Debug and
+ReleaseSafe `zig build test` (including a new Formatter test in both brace styles),
+`zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, and
+`git diff --check` passed. `conformance/format/empty-bodies` was read by hand. Four examples
+were reformatted: two for this rule, and three that had never been formatted (`} else {` on
+one line in `hexdump.em` and the ledger).
 
 Nested types slice 4 (documentation and integration) is complete. With pinned Zig 0.16.0,
 Debug and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (95

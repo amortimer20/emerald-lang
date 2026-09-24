@@ -24,8 +24,7 @@ for day in forecast {
         when Weather.rainy, Weather.snowy {
             rainy_days += 1
         }
-        else {
-        }
+        else { }
     }
 }
 
