@@ -83,11 +83,11 @@ braces; equality and display still include a private field, since privacy limits
 ### Nested types
 
 A struct, class, or enum can declare other types inside its braces. A nested type is one
-more type-level member, so it's written with the type around it, `Console.Color`, everywhere
-— including inside `Console` itself:
+more type-level member, so it's written with the type around it, `Theme.Color`, everywhere
+— including inside `Theme` itself:
 
 ```emerald
-class Console {
+class Theme {
     enum Color {
         red, green
     }
@@ -96,24 +96,24 @@ class Console {
         var left: Int
         var right: Int
 
-        func Pair.zero(): Console.Pair {
-            return Console.Pair(0, 0)
+        func Pair.zero(): Theme.Pair {
+            return Theme.Pair(0, 0)
         }
     }
 }
 
-const color: Console.Color = Console.Color.red
-print(Console.Pair.zero()) # Console.Pair(left: 0, right: 0)
+const color: Theme.Color = Theme.Color.red
+print(Theme.Pair.zero()) # Theme.Pair(left: 0, right: 0)
 ```
 
-Nesting is only about names and visibility: a `Console.Pair` has no hidden link to any
-`Console` object. A nested type is declared with its bare name, and so is its own type-level
+Nesting is only about names and visibility: a `Theme.Pair` has no hidden link to any
+`Theme` object. A nested type is declared with its bare name, and so is its own type-level
 member (`func Pair.zero()` inside `Pair`), but both are always *used* through the full path.
-A type in another directory adds its namespace in front (`Ui.Console.Color`), and an alias
-shortens a long path: `using Color = Console.Color`. The privacy rule above covers nested
+A type in another directory adds its namespace in front (`Ui.Theme.Color`), and an alias
+shortens a long path: `using Color = Theme.Color`. The privacy rule above covers nested
 types without any change: a nested type's code sits inside its enclosing type's braces, so it
 can reach that type's private members, but not the other way around; and a private nested
-type such as `Console._Buffer` can be used only inside `Console`'s braces. A nested type is
+type such as `Theme._Buffer` can be used only inside `Theme`'s braces. A nested type is
 not inherited — a subclass reaches it through the class that declares it — and a trait can't
 declare one. See [`conformance/run/nested-types`](../../conformance/run/nested-types) for a
 project that uses each of these.

@@ -2637,7 +2637,7 @@ types are naming and visibility relationships only; they do not capture an enclo
 instance. A leading underscore makes a nested type private.
 
 ```emerald
-class Console {
+class Theme {
     enum Color {
         red, green
     }
@@ -2646,14 +2646,14 @@ class Console {
         var left: Int
         var right: Int
 
-        func Pair.zero(): Console.Pair {
-            return Console.Pair(0, 0)
+        func Pair.zero(): Theme.Pair {
+            return Theme.Pair(0, 0)
         }
     }
 }
 
-const color: Console.Color = Console.Color.red
-const pair = Console.Pair.zero()
+const color: Theme.Color = Theme.Color.red
+const pair = Theme.Pair.zero()
 ```
 
 - A `struct`, `class`, or `enum` body may declare nested `struct`, `class`, `enum`, and
@@ -2662,14 +2662,14 @@ const pair = Console.Pair.zero()
   its values, like every other enum member (12).
 - A nested type is declared with its bare name. It is a type-level member of the type around
   it, so it shares that type's one member name space (10.3, 10.4), and it is always reached
-  through that type, `Console.Color`, including from the enclosing type's own methods and
+  through that type, `Theme.Color`, including from the enclosing type's own methods and
   from inside the nested type itself. A type-level member of a nested type names that type
   bare where it is declared, as the nested type itself is declared: `func Pair.zero()` inside
-  `Pair`, used as `Console.Pair.zero()`.
-- A path through a directory namespace comes first: `Ui.Console.Color`. `using` still takes
-  only namespaces, but an alias may name a nested type, `using Color = Console.Color`.
+  `Pair`, used as `Theme.Pair.zero()`.
+- A path through a directory namespace comes first: `Ui.Theme.Color`. `using` still takes
+  only namespaces, but an alias may name a nested type, `using Color = Theme.Color`.
 - A nested type displays with the types around it but without its directory namespace,
-  `Console.Color.red`: the nesting is part of the type's name, while the namespace is where
+  `Theme.Color.red`: the nesting is part of the type's name, while the namespace is where
   its file lives.
 - 10.5's braces rule is unchanged, which settles privacy in both directions: a nested type's
   code is written inside its enclosing type's braces and so reaches that type's private
