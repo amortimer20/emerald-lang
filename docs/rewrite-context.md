@@ -2893,6 +2893,39 @@ Dates, time zones, durations, serialization, networking, and concurrency belong 
 standard-library passes. Their absence must not be patched with premature general-purpose
 generics.
 
+### 15.6 Platform libraries: Console
+
+`Console` is the first official platform library (24): terminal styling of individual
+strings, shipped with Emerald rather than acquired through packages so beginners can make
+visible, interactive programs from one installation. Full behavior, signatures, and the
+color policy's precedence are in [`docs/library/console.md`](library/console.md); this
+section records what is settled and why.
+
+A styled value is an ordinary `String` carrying ANSI SGR escape sequences. There is no
+`StyledText` type, no interpolation or display change, and no persistent
+foreground/background state to set and forget: every call styles exactly the string it is
+given. The accepted costs are that escape bytes count toward `count`, indexing, slicing,
+and search, and travel with the string wherever it goes, including to a file; the guidance
+is to style at the output boundary, not in stored data.
+
+The color policy — whether styling emits escapes at all — is one value per execution, owned
+by the runtime rather than a mutable Emerald-level switch, so a message already under
+construction cannot become half-styled by a policy change partway through. `run` and `test`
+resolve it from, highest precedence first: an explicit `--color=always`/`--color=never`
+flag; `NO_COLOR` (non-empty: off); `FORCE_COLOR` (non-empty and not `0`: on); `TERM=dumb`
+(off); otherwise on only when standard output is a TTY that supports ANSI. `repl` follows the
+same automatic resolution with no flag of its own. `NO_COLOR` beats `FORCE_COLOR` when both
+are set, the safer reading per no-color.org.
+
+Nesting one styled span inside another closes and reopens correctly: an inner style's close
+code is followed by the outer style's own open code rather than the terminal's default, and a
+bare reset (`ESC[0m`) found inside input text reopens every enclosing layer the same way.
+`Console.plain` removes only complete SGR sequences and is documented as exactly that, not as
+a general escape-sequence sanitizer for untrusted terminal output.
+
+`Tui`, `Graphics`, `Gui`, `Audio`, and `Game` remain roadmap items (24): each needs its own
+design proposal and real beginner motivation before implementation begins.
+
 ## 16. Annotations, assertions, and tests
 
 ### 16.1 Annotations
@@ -3663,6 +3696,10 @@ recorded in their normative sections:
 | Empty bodies (18.3) | `{ }` on the header's line, in both brace styles; a comment-only body keeps its lines | The formatter used to open every body onto separate lines, so the spec's own `class InvalidScore extends Error { }` and `else { }` were not canonical. An empty body is where one line reads best, and it is what the spec already wrote; keeping any author-chosen one-line body would give ordinary code two canonical shapes. Allman's own-line brace opens a body's lines, and an empty body has none, so the rule does not vary by brace style. The spacing is the spec's `{ }`. |
 | Nested types (14.3) | Declared bare, keyed `Outer::Inner` as a type-level member, always reached qualified, displayed without the namespace; traits may not contain one; 10.5's braces rule decides privacy both ways | 14.3 described nested types as settled, but nothing implemented them and nothing recorded the gap until the Console styling plan needed `Console.Color`. The `::` key is 10.4's type-member form, which cannot collide with a directory namespace's `Outer.Inner`. A receiver in the declaration (`enum Console.Color`) would distinguish nothing, since a type is never an instance member. Always qualifying follows 10.4 and enum values; the one-line bare declaration of a member of a nested type (`func Pair.zero()`) matches how the nested type itself is declared. Display keeps the nesting because it is part of the type's name, and drops the namespace as namespaced types already do. The platform libraries (`Graphics`, `Gui`, `Game`) will want the same shape. |
 | A declaration sharing a namespace's name (14.2, 14.3) | An error at the declaration, naming the directory | The declaration used to win silently, so every member of the namespace became unreachable through that path and the only symptom was "has no type-level member" at a use. Nested types (14.3) would have made the same path legitimately mean either one, so the collision is refused rather than resolved by a precedence rule a reader cannot see. Only an exact key match can collide, since member keys hold `::` and private keys hold `#`. Built-in names are not covered: `Math` and `Program` already yield to a project namespace of the same name, while prelude classes such as `File` do not, and aligning those is a separate decision. |
+| Console's styled-value representation (15.6) | A dedicated `StyledText` type, considered and rejected | An ordinary `String` carrying ANSI SGR escapes needs no interpolation, display, or equality changes, and keeps `print`, `+`, and assignment working unchanged; a wrapper type would need all of that machinery duplicated or bridged for one library. The accepted cost is that escape bytes count toward `count`, indexing, slicing, and search, and travel with the string to a file — documented rather than hidden, with the guidance to style at the output boundary rather than in stored data. |
+| Console's color policy ownership (15.6) | A mutable Emerald-level switch (a global variable, or a per-call argument to every helper) | Either would let a program's own code flip styling on or off mid-construction, so one message could end up half-styled. The policy is instead one value per execution, resolved once by the runtime (the CLI flag, environment, and terminal) and threaded through `Streams`/`Interpreter` the same way `out`/`in` already are; no Emerald API changes it. |
+| Console's color precedence (15.6) | Environment variables alone (as most CLI tools do), with no explicit flag | A beginner's first discoverable control should be visible in `emerald help`, not only documented convention, so an explicit `--color=always`/`--color=never` flag was added ahead of `NO_COLOR`/`FORCE_COLOR` rather than replacing them; the environment variables are what other terminal tools already honor, so both stay. `NO_COLOR` was given precedence over `FORCE_COLOR` when both are set, matching no-color.org's own recommendation, since a reader who set `NO_COLOR` is making a stronger claim (this environment cannot render color) than one setting `FORCE_COLOR` (this environment can, even though auto-detection says otherwise). |
+| Console nesting and `Console.plain`'s scope (15.6) | Re-closing to the terminal's bare default at every inner span, and a `plain` that strips any recognizable escape sequence | Closing to the default would lose the outer style after any nested span, which is wrong wherever one helper's output is interpolated into another's (`Console.bold("... #{Console.dim(x)} ...")`); reopening the enclosing style after both an inner close and a bare `ESC[0m` found in the input keeps composition correct either way. `plain` is scoped to undoing Console's own SGR styling — not a general sanitizer for untrusted terminal output — because the latter is a different, security-shaped problem (arbitrary cursor and mode-switching sequences, not just color) that this slice never claimed to solve. |
 
 ## 23. Consistency rules for future work
 
@@ -3732,10 +3769,11 @@ for working Emerald programs, implementation measurements, or a dedicated design
   specific types when their producing APIs are implemented or revisited;
 - an official platform-library family, shipped with Emerald rather than acquired through
   packages, so beginners can make visible and interactive programs from one installation.
-  `Console` comes first: styled immediate terminal output and line-oriented interaction.
-  `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are later, separate libraries rather than one
-  forced abstraction. Each begins with a small design proposal and real beginner programs;
-  this roadmap does not precommit widget APIs, TUI/GUI compatibility, or a shared event model;
+  `Console`'s terminal styling is implemented (15.6); its line-oriented interaction (prompts,
+  multi-select, tables) remains a later slice of that same library. `Tui`, `Graphics`, `Gui`,
+  `Audio`, and `Game` are later, separate libraries rather than one forced abstraction. Each
+  begins with a small design proposal and real beginner programs; this roadmap does not
+  precommit widget APIs, TUI/GUI compatibility, or a shared event model;
 - concurrency and async as a dedicated design project after the single-threaded runtime.
 
 Macros remain deferred as a separate language-design problem. If real boilerplate later

@@ -322,7 +322,7 @@ Notes for the executor:
    complete SGR sequences while retaining every other sequence. Focused assertions cover
    styled output from slice 1, a multi-code SGR sequence, cursor controls, bare `ESC`, and
    incomplete or malformed sequences. `plain` has the same result with color policy on or off.
-3. **Real terminals — implemented locally, awaiting commit.** `--color`, environment
+3. **Real terminals — completed in `7811a0f`.** `--color`, environment
    precedence, TTY detection, Windows enabling, and REPL forwarding. The pure `ColorPolicy`
    function has unit tests for every precedence tier, while binary-level tests cover the CLI,
    program arguments, and forced output. Linux manual probes verified the pseudo-terminal and
@@ -331,11 +331,12 @@ Notes for the executor:
    `script -qc 'emerald run x.em' /dev/null | cat -v` shows `^[[32m`), while `> file` and
    `| cat` show none, and each variable and flag overrides as specified. Windows is checked
    only by CI; say so rather than claim it was tested locally.
-4. **Documentation and integration.** `docs/library/console.md`, an `inventory.md` entry, a
-   rewrite-context §15 subsection with decision-table rows for the representation choice,
-   the policy, precedence, nesting, and `plain`'s scope, and a small `examples/` program. It
-   must behave with piped stdout and no arguments, since `tools/check-doc-examples.sh` runs
-   every example that way. Update the handoff.
+4. **Documentation and integration — implemented locally, awaiting commit.**
+   `docs/library/console.md`, an `inventory.md` entry, rewrite-context §15.6 with decision-table
+   rows in §22 for the representation choice, the policy, precedence, and nesting/`plain`'s
+   scope, and `examples/console.em`. The example runs cleanly with piped stdout and no
+   arguments (`tools/check-doc-examples.sh`'s own invocation), and was also run directly both
+   plain and with `--color=always`. The handoff is updated.
 
 Keep each slice runnable; commit only when authorized. Do not push without authorization.
 

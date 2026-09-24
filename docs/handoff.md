@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-23. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-24. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -25,11 +25,15 @@ them settled while nothing implemented them; see
 [`nested-types-design-plan.md`](nested-types-design-plan.md) for what was decided and why. A
 module-level declaration may no longer share a directory namespace's name.
 
-Console styling slices 1 through 3 are implemented locally: `Console.Color`, `Console.style`,
-the twelve basic helpers, `Console.plain`, and real execution policy. `run` and `test` accept
+Console styling (15.6), Emerald's first official platform library, is complete through all
+four planned slices: `Console.Color`, `Console.style`, the twelve basic helpers,
+`Console.plain`, and real execution policy. `run` and `test` accept
 `--color=auto|always|never`; `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb`, stdout capability, and
-Windows VT setup resolve in that settled order. The REPL follows the same automatic policy.
-Documentation and an example remain slice 4 of [`console-design-plan.md`](console-design-plan.md).
+Windows VT setup resolve in that settled order; the REPL follows the same automatic policy.
+[`docs/library/console.md`](library/console.md), the inventory entry, rewrite-context 15.6
+and its decision-table rows, and [`examples/console.em`](../examples/console.em) document it.
+Line-oriented interaction (prompts, multi-select, tables) is a later slice of the same
+library; see [`console-design-plan.md`](console-design-plan.md).
 
 Inline `if condition then value else value` is now implemented, closing a gap that the
 design and language guide had incorrectly described as already available. It supports
@@ -92,8 +96,10 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-Console styling slice 3 is awaiting the user's commit decision. The next Console work is slice
-4: library documentation, rewrite-context decisions, inventory entry, and a small example.
+Console styling is complete and awaiting the user's commit decision for slice 4 (documentation).
+No further milestone is authorized yet. The next platform-library candidates — `Tui`,
+`Graphics`, `Gui`, `Audio`, `Game` — and Console's own line-oriented interaction each need
+their own design proposal and real beginner-program motivation before implementation begins (24).
 
 ## Deferred
 
@@ -105,9 +111,9 @@ Console styling slice 3 is awaiting the user's commit decision. The next Console
   management each need a separate design pass or a concrete program that motivates them.
 - Braceless type bodies (10.6) are deferred, not rejected: 24 records what a proposal must
   answer (one canonical formatter output, one parsing mode, one way to teach a declaration).
-- Official platform libraries are a product direction, not an implemented API: `Console`
-  (styled immediate terminal output and line-oriented interaction) is the first candidate;
-  `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` each need their own design pass and real
+- `Console`'s line-oriented interaction (prompts, multi-select, tables) remains undesigned.
+  Other official platform libraries — `Tui`, `Graphics`, `Gui`, `Audio`, `Game` — are a
+  product direction, not an implemented API, and each needs its own design pass and real
   beginner-program motivation.
 - A generated diagnostic-code registry and reference page wait until the explainer catalog is
   large enough to justify their extra machinery.
@@ -124,7 +130,15 @@ Console styling slice 3 is awaiting the user's commit decision. The next Console
 
 ## Validation and repository state
 
-Console styling slice 3 is implemented locally and uncommitted. With pinned Zig 0.16.0, Debug
+Console styling slice 4 (documentation) is implemented locally and uncommitted:
+`docs/library/console.md`, the inventory entry, rewrite-context 15.6 with five new
+decision-table rows in 22, the updated 24 roadmap bullet, and `examples/console.em`, run both
+with and without `--color=always` and by `emerald format --check`. `bash
+tools/check-doc-examples.sh` (100 linked files) and `git diff --check` passed with pinned Zig
+0.16.0; nothing under `src/` changed, so `zig build test`/`zig build` were not re-run for this
+slice beyond confirming the existing binary still builds and runs.
+
+Console styling slice 3 is committed as `7811a0f`. With pinned Zig 0.16.0, Debug
 and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (97 linked
 files), `zig fmt --check src/*.zig`, and `git diff --check` passed. The pure `ColorPolicy`
 tests cover every precedence tier; binary-level tests cover `run`/`test` flags, `--`, bad color

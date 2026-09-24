@@ -2444,3 +2444,19 @@ never changes a console, so it remains suitable for redirected files, pipes, and
 CLI test suite covers flags, environment wiring, and `--` arguments; a Linux pseudo-terminal
 probe and a pipe probe checked the real automatic behavior. Windows setup is left to CI rather
 than claimed as locally verified.
+
+## Console styling, slice 4: documentation and integration, 2026-09-24
+
+Console styling closes out with `docs/library/console.md` (signatures, the nesting rule, and
+the color policy's precedence), an `inventory.md` row, and `examples/console.em`, checked both
+plain and with `--color=always` and by `emerald format --check`. Rewrite-context 15.6 records
+the settled design under Standard library organization, and 22 gains five decision-table rows:
+the styled-value representation (an ordinary `String`, not a dedicated type), the policy's
+ownership by the runtime rather than a mutable Emerald-level switch, the CLI-flag-plus-
+environment-variable precedence and why `NO_COLOR` beats `FORCE_COLOR`, and nesting's
+reopen-the-enclosing-style rule alongside `plain`'s deliberately narrow scope. The roadmap
+entry in 24 now points at 15.6 instead of describing Console as unimplemented.
+
+Console is Emerald's first complete official platform library. Its line-oriented interaction
+(prompts, multi-select, tables) remains a later, separately designed slice of the same
+library, and `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` remain undesigned roadmap items.
