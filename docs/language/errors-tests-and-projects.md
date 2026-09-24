@@ -106,6 +106,10 @@ whatever order the files happen to be read — `grades.em` can call `pass_mark` 
 `scores.em` beside it, since both sit in the same namespace. Two files in one directory
 declaring the same public name is rejected, naming the earlier file:
 [`conformance/diagnostics/duplicate-in-namespace`](../../conformance/diagnostics/duplicate-in-namespace).
+A declaration may not share its name with a namespace either — a `struct Shapes` in the
+project root beside a `shapes/` directory would make `Shapes.Circle` mean a member of either
+one, so it is rejected at the declaration, naming the directory:
+[`conformance/diagnostics/namespace-clash`](../../conformance/diagnostics/namespace-clash).
 A leading underscore keeps a module-level declaration private to the file that declares it —
 not just the directory — so two files may each have their own private `_helper` with no
 collision, and neither can reach the other's:

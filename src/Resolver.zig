@@ -417,6 +417,7 @@ pub fn resolve(
     try resolver.push();
     try resolver.collectNamespaces();
     try resolver.declareModuleLevel(programs);
+    try resolver.reportNamespaceClashes();
 
     for (files) |file| {
         if (file.entry) resolver.entry_path = file.source.path;
@@ -481,6 +482,46 @@ fn keyOf(self: *Resolver, file: u32, name: []const u8) Error![]const u8 {
     const namespace = self.files[file].namespace;
     if (namespace.len == 0) return name;
     return std.fmt.allocPrint(self.arena, "{s}.{s}", .{ namespace, name });
+}
+
+/// A module-level declaration whose key is also a namespace would make
+/// `Shapes.Circle` mean a member of either one, so it is reported rather than
+/// letting the declaration silently hide the namespace. Only an exact key match
+/// can collide: a member key holds `::` and a private one holds `#`.
+fn reportNamespaceClashes(self: *Resolver) Error!void {
+    const saved_file = self.file;
+    defer self.file = saved_file;
+    var namespaces = self.namespaces.keyIterator();
+    while (namespaces.next()) |namespace| {
+        const declared = self.facts.declarations.get(namespace.*) orelse continue;
+        self.file = declared.file;
+        const name = self.files[declared.file].source.text[declared.span.start..declared.span.end];
+        try self.reportWithHelpFmt(
+            declared.span,
+            "`{s}` is also the namespace of the `{s}/` directory",
+            .{ name, self.directoryOf(namespace.*) },
+            "A name written after `{s}.` could mean a member of either one. Rename this declaration, or rename the directory.",
+            .{name},
+        );
+    }
+}
+
+/// The directory, as its files' paths spell it, that section 14.2 derives
+/// `namespace` from. Any file in it or below it tells where it is.
+fn directoryOf(self: *Resolver, namespace: []const u8) []const u8 {
+    for (self.files) |file| {
+        const inside = std.mem.eql(u8, file.namespace, namespace) or
+            (std.mem.startsWith(u8, file.namespace, namespace) and file.namespace[namespace.len] == '.');
+        if (!inside) continue;
+        var path = file.source.path;
+        var levels = std.mem.count(u8, file.namespace, ".") - std.mem.count(u8, namespace, ".") + 1;
+        while (levels > 0) : (levels -= 1) {
+            const separator = std.mem.lastIndexOfAny(u8, path, "/\\") orelse break;
+            path = path[0..separator];
+        }
+        return path;
+    }
+    return namespace;
 }
 
 /// Every namespace, plus every prefix of one, so `Graphics` is known even when

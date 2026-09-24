@@ -2578,7 +2578,9 @@ above puts its declarations in `Shapes`, and moving a declaration from `circle.e
 24 left open, in favor of the reading 14.3 already implies by removing filename-as-type.
 Each directory becomes one namespace segment, written the way a type is written:
 `ui_kit/` is `UiKit`. A directory that cannot be read as a name is reported rather than
-skipped.
+skipped. A module-level declaration whose name is also a namespace — `struct Shapes` at the
+root beside `shapes/`, or `enum Ui` in `graphics/` beside `graphics/ui/` — is an error at the
+declaration, since `Shapes.Circle` would otherwise mean a member of either one.
 
 An optional `using` declaration shortens repeated qualification:
 
@@ -3585,6 +3587,7 @@ recorded in their normative sections:
 | A mixed sibling-class literal infers its base, undeferred (4.4, 10.7) | A list, dictionary, or value-producing `case` whose elements are different but related classes infers their nearest shared base (`Type.User.commonBase`, a plain walk up 10.7's single-inheritance chain), rather than reporting a mismatch that an explicit `List[Animal]` annotation was already accepted under | `[Dog(), Cat()]` failing to type-check when `const pets: List[Animal] = [Dog(), Cat()]` already worked was exactly the surprise 4.4's own widening principle argues against: `[1, 2.5]` already infers `List[Float]` rather than demanding an annotation, and a heterogeneous collection under a shared base is one of the most ordinary patterns an OOP-capable language has. Scoped to a shared class only, not a shared trait: inferring across a trait would expose only the trait's own contract on the result (11.2), a real loss of what the elements' own type already offered, unlike widening to a base class the elements already were. Guarded against either side being optional, since `Type.structOf` has no way to carry a `?` its caller did not already have on hand — left to the ordinary mismatch report rather than risk silently dropping one. |
 | `File.with_open` implementation (13.3, 15.3) | Native dispatch invokes the block and defers `close` | `File` type-level functions already dispatch natively as a namespace, so a prelude implementation would require a special exception to that routing. Keeping cleanup beside the native handle state makes closure on both normal and error unwinding direct and testable. |
 | `Bytes` storage (15.3) | Reuse `Heap.Text`'s immutable ref-counted byte buffer under a distinct `Value.Kind.bytes` tag | Text and raw bytes have the same ownership, collector, and copying needs; duplicating that machinery would add a second lifetime path with no benefit. The tag keeps their contracts separate: only String is Unicode-aware and only Bytes permits invalid UTF-8. |
+| A declaration sharing a namespace's name (14.2, 14.3) | An error at the declaration, naming the directory | The declaration used to win silently, so every member of the namespace became unreachable through that path and the only symptom was "has no type-level member" at a use. Nested types (14.3) would have made the same path legitimately mean either one, so the collision is refused rather than resolved by a precedence rule a reader cannot see. Only an exact key match can collide, since member keys hold `::` and private keys hold `#`. Built-in names are not covered: `Math` and `Program` already yield to a project namespace of the same name, while prelude classes such as `File` do not, and aligning those is a separate decision. |
 
 ## 23. Consistency rules for future work
 

@@ -2212,3 +2212,21 @@ nothing else is. The message's article also now reads "an enum declaration."
 The same audit found that 14.3's nested types were never implemented, and that nothing recorded
 their absence; they are the subject of a separate design plan. Braceless type bodies were
 confirmed removed by 10.6's deliberate decision, not broken.
+
+## Declaration and namespace name clash, 2026-09-24
+
+The first slice of the nested-types plan. A module-level declaration could share its name
+with a directory's namespace — `struct Shapes` at the root beside `shapes/` — and the
+declaration silently won, so every member of the namespace became unreachable through that
+path; the only symptom was "`Shapes` has no type-level member named `Circle`" at a use. Nested
+types would have given the same path two legitimate meanings, so the user approved making it
+an error instead of a precedence rule. `Resolver.reportNamespaceClashes` runs once hoisting
+is done and compares every namespace (and prefix of one) against the declaration keys. Only
+an exact key match can collide, since member keys hold `::` and private keys hold `#`. The
+report names the directory as the files spell it, so a nested namespace reads
+`graphics/ui/`. No existing example or conformance case relied on the shadowing.
+
+The same probe found that built-in names are inconsistent: `Math` and `Program` deliberately
+yield to a project namespace of the same name, but a prelude class such as `File` wins over a
+`file/` directory and hides it. That is recorded as a rough edge awaiting a decision rather
+than changed here.

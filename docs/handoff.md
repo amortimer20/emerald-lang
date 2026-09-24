@@ -97,8 +97,13 @@ only with user authorization.
 ## Active rough edges
 
 - Nested types (14.3) are specified but not implemented: the parser rejects a type declared
-  inside a type body, and until 2026-09-24 nothing recorded the gap. A design plan is next;
-  `Console.Color` in the Console styling plan depends on it.
+  inside a type body, and until 2026-09-24 nothing recorded the gap.
+  [`nested-types-design-plan.md`](nested-types-design-plan.md) has all seven decisions
+  approved; slice 0 is done and slice 1 (parse, format, resolve) is next. `Console.Color` in
+  the uncommitted Console styling plan depends on it.
+- A project namespace named like a built-in is handled inconsistently: `Math` and `Program`
+  yield to it, while a prelude class such as `File` silently wins and hides the namespace.
+  Needs a user decision before it changes.
 - Runtime failures currently share `RuntimeError` except `AssertionError` and `FileError`.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
@@ -108,6 +113,11 @@ only with user authorization.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+Nested types slice 0 (declaration/namespace name clash) is complete. With pinned Zig 0.16.0,
+Debug and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (94
+linked files), `zig fmt --check src/Resolver.zig`, and `git diff --check` passed.
+`conformance/diagnostics/namespace-clash` was read by hand before being accepted.
 
 The type-declaration audit fixes are complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
 `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (93 linked files),

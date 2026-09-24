@@ -1,0 +1,12 @@
+diagnostics/namespace-clash/graphics/ui_style.em:2:6: `Ui` is also the namespace of the `diagnostics/namespace-clash/graphics/ui/` directory
+  enum Ui {
+       ^^
+A name written after `Ui.` could mean a member of either one. Rename this declaration, or rename the directory.
+diagnostics/namespace-clash/main.em:3:8: `Shapes` is also the namespace of the `diagnostics/namespace-clash/shapes/` directory
+  struct Shapes {
+         ^^^^^^
+A name written after `Shapes.` could mean a member of either one. Rename this declaration, or rename the directory.
+diagnostics/namespace-clash/main.em:7:6: `Graphics` is also the namespace of the `diagnostics/namespace-clash/graphics/` directory
+  func Graphics(): Int {
+       ^^^^^^^^
+A name written after `Graphics.` could mean a member of either one. Rename this declaration, or rename the directory.
