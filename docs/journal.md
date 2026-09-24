@@ -2230,3 +2230,26 @@ The same probe found that built-in names are inconsistent: `Math` and `Program` 
 yield to a project namespace of the same name, but a prelude class such as `File` wins over a
 `file/` directory and hides it. That is recorded as a rough edge awaiting a decision rather
 than changed here.
+
+## Nested types: parsing, formatting, and registration, 2026-09-24
+
+Slice 1 of the nested-types plan. A `struct`, `class`, `enum`, or `trait` declared inside a
+struct, class, or enum body now parses (a trait body refuses one with its own message), and
+formats in place, idempotently, in both brace styles. The slice grew past "parse and register
+keys" once it was clear what the rest of the pipeline would do with a declaration it did not
+know about: the checker would have skipped a nested type's bodies, so a type error inside one
+passed `check`, and the formatter, which prints only the members it knows, would have deleted
+nested types from the file. So the resolver, checker, and interpreter each recurse through a
+type's nested declarations under `Outer::Inner` keys, the type-member key form 10.4 already
+uses, which cannot collide with a directory namespace's `Outer.Inner`. The checker's base,
+trait, and field helpers used to recompute a type's key from its bare name; they now take the
+key, which is the only way a nested type's key can reach them.
+
+Nested enums exposed one more bare-name dependency: each enum value carries a synthesized
+annotation and initializer naming its enum, and a nested enum's bare name does not resolve by
+design (decision 3). The parser now records the enum as the declaring file's key map names it,
+`Console::Color`, which that map resolves to the full key in root and namespaced files alike.
+
+A nested type clashing with any member of its enclosing type is reported at the nested type as
+"already a member of `Outer`", naming the shared name space. Paths through a type
+(`Console.Color.red`) are slice 2.

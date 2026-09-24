@@ -1,0 +1,12 @@
+diagnostics/nested-type-refusals.em:4:5: a nested type cannot be overridden
+      @override
+      ^^^^^^^^^
+Nested types are not inherited, so there is nothing to replace. Remove `@override`.
+diagnostics/nested-type-refusals.em:6:5: an enum cannot be abstract
+      @abstract
+      ^^^^^^^^^
+Only a class can be `@abstract`, since only a class can be extended. Remove `@abstract`, or declare a class.
+diagnostics/nested-type-refusals.em:11:5: a trait cannot declare a nested struct
+      struct Guest {}
+      ^^^^^^
+A trait's body holds requirements and defaults. Declare the type at the top level, or inside a struct, class, or enum.

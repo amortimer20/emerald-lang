@@ -104,7 +104,9 @@ pub const Case = struct {
 };
 
 pub const EnumValue = struct {
-    /// The enum's name as declared, in the file that declares it.
+    /// The enum as the file that declares it names it: its name at the top
+    /// level, `Outer::Inner` when nested (14.3), which that file's key map
+    /// resolves to the enum's key either way.
     type_name: []const u8,
     index: u32,
 };
@@ -143,6 +145,16 @@ pub const StructDeclaration = struct {
     type_functions: []const TypeFunction = &.{},
     /// Section 10.4's `var Player.count = 0`.
     type_fields: []const TypeField = &.{},
+    /// Section 14.3's nested types: a naming and visibility relationship to
+    /// this type, never a capture of one of its instances.
+    types: []const NestedType = &.{},
+
+    /// A type declared inside another type's body, with its whole span, the
+    /// way a top-level declaration's statement carries one.
+    pub const NestedType = struct {
+        declaration: StructDeclaration,
+        span: Source.Span,
+    };
 
     /// The keyword it was declared with, for diagnostics.
     pub fn keyword(self: StructDeclaration) []const u8 {

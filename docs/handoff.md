@@ -99,8 +99,11 @@ only with user authorization.
 - Nested types (14.3) are specified but not implemented: the parser rejects a type declared
   inside a type body, and until 2026-09-24 nothing recorded the gap.
   [`nested-types-design-plan.md`](nested-types-design-plan.md) has all seven decisions
-  approved; slice 0 is done and slice 1 (parse, format, resolve) is next. `Console.Color` in
-  the uncommitted Console styling plan depends on it.
+  approved; slices 0 and 1 are done, so nested types parse, format, and are checked, but
+  cannot yet be reached by a path such as `Console.Color.red`. Slice 2 (use) is next.
+  `Console.Color` in the uncommitted Console styling plan depends on it.
+- Formatter decision pending: every one-line body, including a nested
+  `enum Side { left, right }`, is expanded onto separate lines. The spec never settles this.
 - A project namespace named like a built-in is handled inconsistently: `Math` and `Program`
   yield to it, while a prelude class such as `File` silently wins and hides the namespace.
   Needs a user decision before it changes.
@@ -113,6 +116,14 @@ only with user authorization.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+Nested types slice 1 (parse, format, register, check bodies) is complete. With pinned Zig
+0.16.0, Debug and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh`,
+`zig fmt --check` on every changed source file, and `git diff --check` passed. New cases
+`format/nested-types`, `diagnostics/nested-type-refusals`, `diagnostics/nested-type-clashes`,
+and `diagnostics/nested-type-body`, plus a Formatter test covering both brace styles, were read
+by hand. A 300-deep nesting stops at the parser's 256-level limit rather than recursing
+without bound.
 
 Nested types slice 0 (declaration/namespace name clash) is complete. With pinned Zig 0.16.0,
 Debug and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (94

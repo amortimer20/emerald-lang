@@ -1,0 +1,40 @@
+# Nested types (14.3) are members like any other: kept in source order,
+# indented with their enclosing type, and separated by the author's blank lines.
+class Console {
+    var width: Int = 80
+
+    # The terminal's basic colors.
+    enum Color {
+        red, green, blue
+    }
+    struct Pair {
+        var left: Int
+        var right: Int
+
+        func total(): Int {
+            return self.left + self.right # both sides
+        }
+
+        enum Side {
+            left
+            right
+        }
+    }
+
+    @abstract
+    class Shape {
+        @abstract
+        func area(): Float
+    }
+    trait Named {
+        func name(): String
+    }
+}
+
+enum Level {
+    low, high
+
+    struct Detail {
+        var note: String
+    }
+}

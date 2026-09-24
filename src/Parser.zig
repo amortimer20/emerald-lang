@@ -57,6 +57,10 @@ has_traits: bool = false,
 /// The type whose members are being parsed, and whether it names a base class
 /// with `extends`, which is what gives `super` a meaning (10.7).
 type_name: []const u8 = "",
+/// The type being parsed as its own file's key map names it: `Color` at the
+/// top level, `Console::Color` for a nested type (14.3). An enum's values
+/// record it, since the bare name alone does not reach a nested enum.
+type_path: []const u8 = "",
 has_base: bool = false,
 /// Whether a section 12 enum's body is being parsed.
 in_enum: bool = false,
@@ -802,6 +806,11 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     const saved_has_base = self.has_base;
     const saved_has_traits = self.has_traits;
     const saved_enum = self.in_enum;
+    const saved_type_path = self.type_path;
+    self.type_path = if (self.type_path.len == 0)
+        try self.identifier(name)
+    else
+        try std.fmt.allocPrint(self.arena, "{s}::{s}", .{ self.type_path, try self.identifier(name) });
     self.in_enum = enumeration;
     self.in_class = class;
     self.in_trait = trait;
@@ -815,6 +824,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         self.has_base = saved_has_base;
         self.has_traits = saved_has_traits;
         self.in_enum = saved_enum;
+        self.type_path = saved_type_path;
     }
     var members: StructMembers = .{};
     self.skipSeparators();
@@ -865,6 +875,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             .properties = try members.properties.toOwnedSlice(self.arena),
             .type_functions = try members.type_functions.toOwnedSlice(self.arena),
             .type_fields = try members.type_fields.toOwnedSlice(self.arena),
+            .types = try members.types.toOwnedSlice(self.arena),
         } },
     };
 }
@@ -881,8 +892,8 @@ fn parseEnumValues(self: *Parser, type_name: Token, members: *StructMembers) Err
             .mutable = false,
             .name = value_name,
             .name_span = value.span,
-            .annotation = .{ .name = try self.identifier(type_name), .span = type_name.span, .question_span = null },
-            .initializer = try self.node(value.span, .{ .enum_value = .{ .type_name = try self.identifier(type_name), .index = index } }),
+            .annotation = .{ .name = self.type_path, .span = type_name.span, .question_span = null },
+            .initializer = try self.node(value.span, .{ .enum_value = .{ .type_name = self.type_path, .index = index } }),
             .enum_value = index,
         });
         if (self.match(.comma) != null) {
@@ -909,7 +920,41 @@ const StructMembers = struct {
     properties: std.ArrayList(Ast.StructDeclaration.Property) = .empty,
     type_functions: std.ArrayList(Ast.StructDeclaration.TypeFunction) = .empty,
     type_fields: std.ArrayList(Ast.StructDeclaration.TypeField) = .empty,
+    types: std.ArrayList(Ast.StructDeclaration.NestedType) = .empty,
 };
+
+/// Section 14.3's nested type, declared among a struct, class, or enum's
+/// members. The declaration is parsed in full even where it is refused, so
+/// the next member starts after its closing brace.
+fn parseNestedType(self: *Parser, marker: Token, annotations: Annotations, members: *StructMembers) Error!void {
+    try self.nest(marker.span);
+    defer self.unnest();
+    const statement = try self.parseStructDeclaration();
+    var declaration = statement.data.struct_declaration;
+    if (annotations.override) |span| try self.note(
+        span,
+        "a nested type cannot be overridden",
+        "Nested types are not inherited, so there is nothing to replace. Remove `@override`.",
+    );
+    if (annotations.abstract) |span| {
+        if (marker.kind == .keyword_class) {
+            declaration.abstract_span = span;
+        } else if (marker.kind == .keyword_trait) {
+            try self.note(span, "a trait needs no `@abstract`", "A trait is never constructed, and a member written without a body is already a requirement. Remove `@abstract`.");
+        } else {
+            try self.reportFmtNote(span, "{s} {s} cannot be abstract", .{ if (marker.kind == .keyword_enum) "an" else "a", self.text(marker) }, "Only a class can be `@abstract`, since only a class can be extended. Remove `@abstract`, or declare a class.");
+        }
+    }
+    if (self.in_trait) {
+        return self.reportFmtNote(
+            marker.span,
+            "a trait cannot declare a nested {s}",
+            .{self.text(marker)},
+            "A trait's body holds requirements and defaults. Declare the type at the top level, or inside a struct, class, or enum.",
+        );
+    }
+    try members.types.append(self.arena, .{ .declaration = declaration, .span = statement.span });
+}
 
 /// One member of a struct body, added to `members`. `name` is the struct's.
 fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!void {
@@ -939,6 +984,10 @@ fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!
             try self.note(annotation.span, "an overriding method inherits its operator registration", "Remove `@operator`; `@override` replaces the inherited implementation without declaring a second registration.");
             annotations.operator = null;
         }
+    }
+    switch (marker.kind) {
+        .keyword_struct, .keyword_class, .keyword_enum, .keyword_trait => return self.parseNestedType(marker, annotations, members),
+        else => {},
     }
     if (self.in_enum and self.startsEnumValue()) {
         _ = self.advance();

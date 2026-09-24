@@ -1,0 +1,16 @@
+diagnostics/nested-type-clashes.em:9:12: `Inner` is already a member of `Outer`
+      struct Inner {}
+             ^^^^^
+A nested type shares one name space with the fields, properties, methods, type-level members, and other nested types of the type it is declared in. Choose a different name.
+diagnostics/nested-type-clashes.em:10:10: `Setting` is already a member of `Outer`
+      enum Setting { on }
+           ^^^^^^^
+A nested type shares one name space with the fields, properties, methods, type-level members, and other nested types of the type it is declared in. Choose a different name.
+diagnostics/nested-type-clashes.em:11:12: `Build` is already a member of `Outer`
+      struct Build {}
+             ^^^^^
+A nested type shares one name space with the fields, properties, methods, type-level members, and other nested types of the type it is declared in. Choose a different name.
+diagnostics/nested-type-clashes.em:13:12: `Twice` is already a member of `Outer`
+      struct Twice {}
+             ^^^^^
+A nested type shares one name space with the fields, properties, methods, type-level members, and other nested types of the type it is declared in. Choose a different name.

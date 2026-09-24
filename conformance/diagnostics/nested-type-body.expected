@@ -1,0 +1,4 @@
+diagnostics/nested-type-body.em:5:20: this is String, but the function returns Int
+              return "not an int"
+                     ^^^^^^^^^^^^
+Return a value of the declared type, or convert it first.

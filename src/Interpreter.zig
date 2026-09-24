@@ -351,129 +351,7 @@ pub fn run(
         for (program.statements) |statement| {
             if (statement.data == .struct_declaration) {
                 const declaration = statement.data.struct_declaration;
-                const checked = checked_structs.get(interpreter.keyOf(declaration.name)).?;
-                const checked_fields = checked.user.?.fields;
-                const fields = try interpreter.arena.alloc(Value.StructType.Field, checked_fields.len);
-                for (checked_fields, fields) |field, *runtime| {
-                    runtime.* = .{ .name = field.name, .kind = kindOf(field.type) };
-                }
-                const type_key = interpreter.keyOf(declaration.name);
-                const properties = try interpreter.arena.alloc(Value.StructType.Property, declaration.properties.len);
-                for (declaration.properties, properties) |property, *runtime| {
-                    const getter = try Resolver.methodKey(interpreter.arena, type_key, property.name);
-                    try interpreter.functions.put(interpreter.arena, getter, property.getter);
-                    var setter: ?[]const u8 = null;
-                    if (property.setter) |declared| {
-                        setter = try Resolver.setterKey(interpreter.arena, type_key, property.name);
-                        try interpreter.functions.put(interpreter.arena, setter.?, declared);
-                    }
-                    runtime.* = .{ .name = property.name, .getter = getter, .setter = setter };
-                }
-                const adopted = try interpreter.arena.alloc([]const u8, checked.user.?.traits.len);
-                for (checked.user.?.traits, adopted) |trait, *trait_key| trait_key.* = trait.name;
-                // Section 11.1: a trait is never built, so it has no
-                // descriptor; its defaults are functions like any method.
-                if (declaration.trait) {
-                    for (declaration.methods) |method| {
-                        const method_key = try Resolver.methodKey(interpreter.arena, type_key, method.name);
-                        const hoisted = try interpreter.functions.getOrPut(interpreter.arena, method_key);
-                        if (!hoisted.found_existing) hoisted.value_ptr.* = method;
-                    }
-                    try interpreter.trait_infos.put(interpreter.arena, type_key, .{
-                        .declaration = declaration,
-                        .traits = adopted,
-                        .display_name = declaration.name,
-                    });
-                    continue;
-                }
-                const descriptor = try interpreter.arena.create(Value.StructType);
-                var depth: u32 = 0;
-                var ancestor = checked.user.?.base;
-                while (ancestor) |user| : (ancestor = user.base) depth += 1;
-                var values: std.ArrayList([]const u8) = .empty;
-                for (declaration.type_fields) |field| {
-                    if (field.enum_value != null) try values.append(interpreter.arena, field.name);
-                }
-                descriptor.* = .{
-                    .values = values.items,
-                    .name = type_key,
-                    .display_name = checked.user.?.display_name,
-                    .class = checked.user.?.class,
-                    .fields = fields,
-                    .properties = properties,
-                    .depth = depth,
-                };
-                for (fields, 0..) |field, position| {
-                    try descriptor.field_positions.put(interpreter.arena, field.name, position);
-                }
-                for (properties) |*property| {
-                    property.depth = depth;
-                    property.owner = descriptor.display_name;
-                }
-                try interpreter.structs.put(
-                    interpreter.arena,
-                    interpreter.keyOf(declaration.name),
-                    descriptor,
-                );
-                // A method is called like a function whose body also sees
-                // `self`, so it is kept with the functions, under its own key.
-                for (declaration.methods) |method| {
-                    const method_key = try Resolver.methodKey(interpreter.arena, interpreter.keyOf(declaration.name), method.name);
-                    const hoisted = try interpreter.functions.getOrPut(interpreter.arena, method_key);
-                    if (!hoisted.found_existing) hoisted.value_ptr.* = method;
-                }
-                // A type-level function is an ordinary function under its
-                // member key (10.4).
-                for (declaration.type_functions) |function| {
-                    const member_key = try Resolver.methodKey(interpreter.arena, type_key, function.member);
-                    const hoisted = try interpreter.functions.getOrPut(interpreter.arena, member_key);
-                    if (!hoisted.found_existing) hoisted.value_ptr.* = function.declaration;
-                }
-                if (declaration.type_fields.len > 0) {
-                    try interpreter.type_setups.put(interpreter.arena, type_key, .{
-                        .fields = declaration.type_fields,
-                        .display_name = descriptor.display_name,
-                        .frame_name = try std.fmt.allocPrint(
-                            interpreter.arena,
-                            "the type-level fields of `{s}`",
-                            .{descriptor.display_name},
-                        ),
-                    });
-                }
-                {
-                    const field_names = try interpreter.arena.alloc([]const u8, declaration.fields.len);
-                    const has_default = try interpreter.arena.alloc(bool, declaration.fields.len);
-                    var any_default = false;
-                    for (declaration.fields, field_names, has_default) |field, *name, *defaulted| {
-                        name.* = field.name;
-                        defaulted.* = field.default != null;
-                        any_default = any_default or defaulted.*;
-                    }
-                    try interpreter.struct_infos.put(interpreter.arena, type_key, .{
-                        .declaration = declaration,
-                        .field_names = field_names,
-                        .has_default = has_default,
-                        .any_default = any_default,
-                        .base = if (checked.user.?.base) |base| base.name else null,
-                        .traits = adopted,
-                        .offset = checked.user.?.inherited,
-                        .defaults_frame = try std.fmt.allocPrint(
-                            interpreter.arena,
-                            "the field defaults of `{s}`",
-                            .{descriptor.display_name},
-                        ),
-                    });
-                }
-                if (declaration.constructor) |constructor| {
-                    try interpreter.constructors.put(interpreter.arena, interpreter.keyOf(declaration.name), .{
-                        .declaration = constructor,
-                        .frame_name = try std.fmt.allocPrint(
-                            interpreter.arena,
-                            "the constructor of `{s}`",
-                            .{descriptor.display_name},
-                        ),
-                    });
-                }
+                try interpreter.registerStruct(checked_structs, declaration, interpreter.keyOf(declaration.name));
                 continue;
             }
             if (statement.data != .function_declaration) continue;
@@ -1710,6 +1588,136 @@ fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
     if (annotation.positions != null) return .tuple;
     if (annotation.signature != null) return .closure;
     return if (Type.fromName(annotation.name)) |builtin| kindOf(builtin) else .struct_value;
+}
+
+/// One type's runtime descriptor and functions, then its nested types'
+/// (14.3), each under its own key.
+fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, declaration: Ast.StructDeclaration, type_key: []const u8) std.mem.Allocator.Error!void {
+    for (declaration.types) |nested| {
+        try self.registerStruct(checked_structs, nested.declaration, try Resolver.methodKey(self.arena, type_key, nested.declaration.name));
+    }
+    const checked = checked_structs.get(type_key).?;
+    const checked_fields = checked.user.?.fields;
+    const fields = try self.arena.alloc(Value.StructType.Field, checked_fields.len);
+    for (checked_fields, fields) |field, *runtime| {
+        runtime.* = .{ .name = field.name, .kind = kindOf(field.type) };
+    }
+    const properties = try self.arena.alloc(Value.StructType.Property, declaration.properties.len);
+    for (declaration.properties, properties) |property, *runtime| {
+        const getter = try Resolver.methodKey(self.arena, type_key, property.name);
+        try self.functions.put(self.arena, getter, property.getter);
+        var setter: ?[]const u8 = null;
+        if (property.setter) |declared| {
+            setter = try Resolver.setterKey(self.arena, type_key, property.name);
+            try self.functions.put(self.arena, setter.?, declared);
+        }
+        runtime.* = .{ .name = property.name, .getter = getter, .setter = setter };
+    }
+    const adopted = try self.arena.alloc([]const u8, checked.user.?.traits.len);
+    for (checked.user.?.traits, adopted) |trait, *trait_key| trait_key.* = trait.name;
+    // Section 11.1: a trait is never built, so it has no
+    // descriptor; its defaults are functions like any method.
+    if (declaration.trait) {
+        for (declaration.methods) |method| {
+            const method_key = try Resolver.methodKey(self.arena, type_key, method.name);
+            const hoisted = try self.functions.getOrPut(self.arena, method_key);
+            if (!hoisted.found_existing) hoisted.value_ptr.* = method;
+        }
+        try self.trait_infos.put(self.arena, type_key, .{
+            .declaration = declaration,
+            .traits = adopted,
+            .display_name = checked.user.?.display_name,
+        });
+        return;
+    }
+    const descriptor = try self.arena.create(Value.StructType);
+    var depth: u32 = 0;
+    var ancestor = checked.user.?.base;
+    while (ancestor) |user| : (ancestor = user.base) depth += 1;
+    var values: std.ArrayList([]const u8) = .empty;
+    for (declaration.type_fields) |field| {
+        if (field.enum_value != null) try values.append(self.arena, field.name);
+    }
+    descriptor.* = .{
+        .values = values.items,
+        .name = type_key,
+        .display_name = checked.user.?.display_name,
+        .class = checked.user.?.class,
+        .fields = fields,
+        .properties = properties,
+        .depth = depth,
+    };
+    for (fields, 0..) |field, position| {
+        try descriptor.field_positions.put(self.arena, field.name, position);
+    }
+    for (properties) |*property| {
+        property.depth = depth;
+        property.owner = descriptor.display_name;
+    }
+    try self.structs.put(
+        self.arena,
+        type_key,
+        descriptor,
+    );
+    // A method is called like a function whose body also sees
+    // `self`, so it is kept with the functions, under its own key.
+    for (declaration.methods) |method| {
+        const method_key = try Resolver.methodKey(self.arena, type_key, method.name);
+        const hoisted = try self.functions.getOrPut(self.arena, method_key);
+        if (!hoisted.found_existing) hoisted.value_ptr.* = method;
+    }
+    // A type-level function is an ordinary function under its
+    // member key (10.4).
+    for (declaration.type_functions) |function| {
+        const member_key = try Resolver.methodKey(self.arena, type_key, function.member);
+        const hoisted = try self.functions.getOrPut(self.arena, member_key);
+        if (!hoisted.found_existing) hoisted.value_ptr.* = function.declaration;
+    }
+    if (declaration.type_fields.len > 0) {
+        try self.type_setups.put(self.arena, type_key, .{
+            .fields = declaration.type_fields,
+            .display_name = descriptor.display_name,
+            .frame_name = try std.fmt.allocPrint(
+                self.arena,
+                "the type-level fields of `{s}`",
+                .{descriptor.display_name},
+            ),
+        });
+    }
+    {
+        const field_names = try self.arena.alloc([]const u8, declaration.fields.len);
+        const has_default = try self.arena.alloc(bool, declaration.fields.len);
+        var any_default = false;
+        for (declaration.fields, field_names, has_default) |field, *name, *defaulted| {
+            name.* = field.name;
+            defaulted.* = field.default != null;
+            any_default = any_default or defaulted.*;
+        }
+        try self.struct_infos.put(self.arena, type_key, .{
+            .declaration = declaration,
+            .field_names = field_names,
+            .has_default = has_default,
+            .any_default = any_default,
+            .base = if (checked.user.?.base) |base| base.name else null,
+            .traits = adopted,
+            .offset = checked.user.?.inherited,
+            .defaults_frame = try std.fmt.allocPrint(
+                self.arena,
+                "the field defaults of `{s}`",
+                .{descriptor.display_name},
+            ),
+        });
+    }
+    if (declaration.constructor) |constructor| {
+        try self.constructors.put(self.arena, type_key, .{
+            .declaration = constructor,
+            .frame_name = try std.fmt.allocPrint(
+                self.arena,
+                "the constructor of `{s}`",
+                .{descriptor.display_name},
+            ),
+        });
+    }
 }
 
 /// The runtime kind for a checked type. `.invalid` never reaches a program that

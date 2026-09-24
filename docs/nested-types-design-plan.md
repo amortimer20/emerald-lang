@@ -184,10 +184,23 @@ of what was weighed.
    nested namespace. Recorded in 14.2, the decision table, and the projects guide. Built-in
    names were left alone: `Math` and `Program` already yield to a project namespace of the
    same name while prelude classes such as `File` do not, which is a separate decision.
-1. **Parse, format, and resolve.** Nested declarations parse in struct/class/enum bodies,
-   format idempotently in both brace styles, and register their keys. Name-space conflicts
-   are reported. Nothing is usable from code yet, so keep the syntax undocumented until
-   slice 2.
+1. **Parse, format, and resolve.** Done, 2026-09-24. Nested declarations parse in
+   struct/class/enum bodies (`Parser.parseNestedType`, inside the existing 256-level
+   nesting limit) and format idempotently in both brace styles. Registration is more than
+   the plan first said: if the resolver, checker, and interpreter did not also register
+   nested types, a nested type's bodies would pass `check` completely unchecked, and the
+   formatter would have deleted nested declarations outright. So each stage now recurses
+   through `types` under `Outer::Inner` keys: `Resolver.hoistType`/`recordBase`/
+   `walkStructDeclaration`, `Checker.registerStruct`/`checkStructBodies` (its base, trait,
+   and field helpers now take the key rather than recomputing it from a bare name), and
+   `Interpreter.registerStruct`. Nested display names are `Outer.Inner` from the start.
+   An enum value records its enum as the declaring file's key map names it (`Color`, or
+   `Console::Color` when nested; `Parser.type_path`), since a nested enum's bare name does
+   not resolve. A clash with any member of the enclosing type is reported at the nested
+   type as "already a member of `Outer`". Paths such as `Console.Color.red` are still
+   unresolved (slice 2); today they report "`Console.Color` is an enum, not a value" with
+   a suggestion that repeats what was written, which slice 2 must fix. The syntax stays
+   undocumented until slice 2.
 2. **Use.** Type paths in annotations and expressions, construction, enum values through a
    path, `Self`, per-type setup, display, privacy in both directions, and the
    not-inherited diagnostic. This is the main correctness slice.

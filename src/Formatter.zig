@@ -680,6 +680,7 @@ const Printer = struct {
         property: Ast.StructDeclaration.Property,
         type_function: Ast.StructDeclaration.TypeFunction,
         type_field: Ast.StructDeclaration.TypeField,
+        nested_type: Ast.StructDeclaration.NestedType,
 
         fn start(self: Member) u32 {
             return switch (self) {
@@ -689,6 +690,7 @@ const Printer = struct {
                 .property => |p| p.name_span.start,
                 .type_function => |t| t.declaration.name_span.start,
                 .type_field => |t| t.name_span.start,
+                .nested_type => |t| t.span.start,
             };
         }
 
@@ -700,6 +702,7 @@ const Printer = struct {
                 .property => |p| if (p.setter) |setter| setter.body.span.end else if (p.getter.abstract_span == null) p.getter.body.span.end else p.annotation.span.end,
                 .type_function => |t| t.declaration.body.span.end,
                 .type_field => |t| if (t.enum_value != null) t.name_span.end else t.initializer.span.end,
+                .nested_type => |t| t.span.end,
             };
         }
     };
@@ -745,6 +748,7 @@ const Printer = struct {
         for (s.properties) |p| try members.append(self.gpa, .{ .property = p });
         for (s.type_functions) |t| try members.append(self.gpa, .{ .type_function = t });
         for (s.type_fields) |t| try members.append(self.gpa, .{ .type_field = t });
+        for (s.types) |t| try members.append(self.gpa, .{ .nested_type = t });
         std.mem.sort(Member, members.items, {}, memberLessThan);
 
         self.indent += 1;
@@ -774,6 +778,7 @@ const Printer = struct {
                     .property => |p| try self.printProperty(p),
                     .type_function => |t| try self.printFunctionDeclaration(t.declaration, s.trait),
                     .type_field => |t| try self.printTypeField(t, s.name),
+                    .nested_type => |t| try self.printStructDeclaration(t.declaration, t.span.end),
                 }
                 index += 1;
             }
@@ -1428,6 +1433,17 @@ test "the formatter accepts Allman-written source and still normalizes to Strous
         "if true\n{\n    print(1)\n}\nelse\n{\n    print(2)\n}\n",
         "if true {\n    print(1)\n}\nelse {\n    print(2)\n}\n",
     );
+}
+
+test "nested types (14.3) keep their place and indentation in both brace styles" {
+    const stroustrup =
+        "class Console {\n    var width: Int\n\n    enum Color {\n        red, green\n    }\n\n    struct Pair {\n        var left: Int\n\n        enum Side {\n            left\n        }\n    }\n}\n";
+    const allman =
+        "class Console\n{\n    var width: Int\n\n    enum Color\n    {\n        red, green\n    }\n\n    struct Pair\n    {\n        var left: Int\n\n        enum Side\n        {\n            left\n        }\n    }\n}\n";
+    try expectFormatsWithStyle(.allman, stroustrup, allman);
+    try expectFormatsWithStyle(.stroustrup, allman, stroustrup);
+    try expectFormatsWithStyle(.allman, allman, allman);
+    try expectFormatsWithStyle(.stroustrup, stroustrup, stroustrup);
 }
 
 test "Allman brace style reaches every kind of block: struct, function, property, case" {

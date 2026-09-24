@@ -592,107 +592,134 @@ fn declareModuleLevel(self: *Resolver, programs: []const Ast.Program) Error!void
 /// program rather than an initialization step, and fields may refer to types
 /// declared later.
 fn hoistTypes(self: *Resolver, statements: []const Ast.Statement) Error!void {
-    const module = &self.scopes.items[module_scope];
     for (statements) |statement| {
         const declaration = switch (statement.data) {
             .struct_declaration => |value| value,
             else => continue,
         };
-        const key = try self.keyOf(self.file, declaration.name);
-        if (module.contains(key)) {
-            try self.reportDuplicate(declaration.name, declaration.name_span, key);
-            continue;
+        try self.hoistType(declaration, try self.keyOf(self.file, declaration.name), null);
+    }
+}
+
+/// One type and, after its own members, its nested types (14.3), each keyed
+/// as a type-level member of the type around it: `Outer::Inner`. `outer` is
+/// that enclosing type's key, or null at the top level.
+fn hoistType(self: *Resolver, declaration: Ast.StructDeclaration, key: []const u8, outer: ?[]const u8) Error!void {
+    const module = &self.scopes.items[module_scope];
+    // A nested type shares its enclosing type's one member name space
+    // (10.3, 10.4). Hoisted after that type's own members, a clash with
+    // any of them is reported here, at the nested type's name.
+    if (outer) |outer_key| {
+        if (module.contains(key) or self.instance_members.contains(key)) {
+            try self.reportWithHelpFmt(
+                declaration.name_span,
+                "`{s}` is already a member of `{s}`",
+                .{ declaration.name, try displayKey(self.arena, outer_key) },
+                "A nested type shares one name space with the fields, properties, methods, type-level members, and other nested types of the type it is declared in. Choose a different name.",
+                .{},
+            );
+            return;
         }
-        try module.put(self.arena, key, .{
-            .mutable = false,
-            .span = declaration.name_span,
-            .kind = .type,
-        });
-        try self.facts.owner.put(self.arena, key, self.file);
-        try self.facts.declarations.put(self.arena, key, .{ .file = self.file, .span = declaration.name_span });
-        if (declaration.constructor) |ctor| {
-            const ctor_key = try methodKey(self.arena, key, "constructor");
-            try self.facts.declarations.put(self.arena, ctor_key, .{ .file = self.file, .span = ctor.keyword_span });
-        }
-        if (declaration.trait) try self.facts.traits.put(self.arena, key, {});
-        // Constructing a value runs its constructor, which may read module
-        // variables and call functions like any function body, so a call to
-        // the type is recorded exactly as a call to a function is.
-        try self.facts.module_reads.put(self.arena, key, .empty);
-        try self.facts.calls.put(self.arena, key, .empty);
+    } else if (module.contains(key)) {
+        try self.reportDuplicate(declaration.name, declaration.name_span, key);
+        return;
+    }
+    try module.put(self.arena, key, .{
+        .mutable = false,
+        .span = declaration.name_span,
+        .kind = .type,
+    });
+    try self.facts.owner.put(self.arena, key, self.file);
+    try self.facts.declarations.put(self.arena, key, .{ .file = self.file, .span = declaration.name_span });
+    if (declaration.constructor) |ctor| {
+        const ctor_key = try methodKey(self.arena, key, "constructor");
+        try self.facts.declarations.put(self.arena, ctor_key, .{ .file = self.file, .span = ctor.keyword_span });
+    }
+    if (declaration.trait) try self.facts.traits.put(self.arena, key, {});
+    // Constructing a value runs its constructor, which may read module
+    // variables and call functions like any function body, so a call to
+    // the type is recorded exactly as a call to a function is.
+    try self.facts.module_reads.put(self.arena, key, .empty);
+    try self.facts.calls.put(self.arena, key, .empty);
+    if (outer) |outer_key| {
+        try self.facts.type_members.put(self.arena, key, outer_key);
+    } else {
         try self.noteElsewhere(declaration.name);
+    }
 
-        const setup = try typeSetupKey(self.arena, key);
-        try self.facts.owner.put(self.arena, setup, self.file);
-        try self.facts.module_reads.put(self.arena, setup, .empty);
-        try self.facts.calls.put(self.arena, setup, .empty);
-        // Constructing a value sets up the type's fields first.
-        try self.facts.calls.getPtr(key).?.put(self.arena, setup, {});
+    const setup = try typeSetupKey(self.arena, key);
+    try self.facts.owner.put(self.arena, setup, self.file);
+    try self.facts.module_reads.put(self.arena, setup, .empty);
+    try self.facts.calls.put(self.arena, setup, .empty);
+    // Constructing a value sets up the type's fields first.
+    try self.facts.calls.getPtr(key).?.put(self.arena, setup, {});
 
-        // An enum's values are hoisted before its other members, so a member
-        // sharing a value's name is the one reported (12).
-        if (declaration.enumeration) {
-            var listing: std.ArrayList(u8) = .empty;
-            for (declaration.type_fields) |field| {
-                if (field.enum_value == null) continue;
-                const member_key = try methodKey(self.arena, key, field.name);
-                if (module.contains(member_key)) continue;
-                try module.put(self.arena, member_key, .{ .mutable = false, .span = field.name_span });
-                try self.facts.owner.put(self.arena, member_key, self.file);
-                try self.facts.type_members.put(self.arena, member_key, key);
-                try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = field.name_span });
-                try self.enum_values.put(self.arena, member_key, {});
-                if (listing.items.len > 0) try listing.appendSlice(self.arena, ", ");
-                try listing.print(self.arena, "`{s}`", .{field.name});
-            }
-            try self.enum_listings.put(self.arena, key, listing.items);
-        }
-        for (declaration.fields) |field| {
-            const field_key = try methodKey(self.arena, key, field.name);
-            try self.instance_members.put(self.arena, field_key, {});
-            try self.facts.declarations.put(self.arena, field_key, .{ .file = self.file, .span = field.name_span });
-        }
-        for (declaration.methods) |method| {
-            const method_key = try methodKey(self.arena, key, method.name);
-            try self.instance_members.put(self.arena, method_key, {});
-            try self.hoistMember(method.name, method_key);
-            try self.facts.declarations.put(self.arena, method_key, .{ .file = self.file, .span = method.name_span });
-        }
-        // Section 10.4's members live in the module scope under their method
-        // keys, so `Vector2.origin` is reached exactly as `Shapes.area` is.
-        // A name shared with an instance member is reported by the checker.
-        for (declaration.type_functions) |function| {
-            const member_key = try methodKey(self.arena, key, function.member);
-            if (module.contains(member_key) or self.facts.owner.contains(member_key)) continue;
-            try module.put(self.arena, member_key, .{ .mutable = false, .span = function.member_span, .kind = .function });
-            try self.facts.owner.put(self.arena, member_key, self.file);
-            try self.facts.module_reads.put(self.arena, member_key, .empty);
-            try self.facts.calls.put(self.arena, member_key, .empty);
-            try self.facts.type_members.put(self.arena, member_key, key);
-            try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = function.member_span });
-            // Calling it reaches the type, which sets up its fields first.
-            try self.facts.calls.getPtr(member_key).?.put(self.arena, setup, {});
-        }
+    // An enum's values are hoisted before its other members, so a member
+    // sharing a value's name is the one reported (12).
+    if (declaration.enumeration) {
+        var listing: std.ArrayList(u8) = .empty;
         for (declaration.type_fields) |field| {
+            if (field.enum_value == null) continue;
             const member_key = try methodKey(self.arena, key, field.name);
-            if (module.contains(member_key) or self.facts.owner.contains(member_key)) continue;
-            try module.put(self.arena, member_key, .{ .mutable = field.mutable, .span = field.name_span });
+            if (module.contains(member_key)) continue;
+            try module.put(self.arena, member_key, .{ .mutable = false, .span = field.name_span });
             try self.facts.owner.put(self.arena, member_key, self.file);
             try self.facts.type_members.put(self.arena, member_key, key);
             try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = field.name_span });
+            try self.enum_values.put(self.arena, member_key, {});
+            if (listing.items.len > 0) try listing.appendSlice(self.arena, ", ");
+            try listing.print(self.arena, "`{s}`", .{field.name});
         }
-        for (declaration.properties) |property| {
-            const prop_key = try methodKey(self.arena, key, property.name);
-            try self.instance_members.put(self.arena, prop_key, {});
-            try self.hoistMember(property.name, prop_key);
-            try self.facts.declarations.put(self.arena, prop_key, .{ .file = self.file, .span = property.name_span });
-            if (property.setter != null) {
-                const setter_name = try std.fmt.allocPrint(self.arena, "{s}" ++ setter_suffix, .{property.name});
-                const setter_key = try setterKey(self.arena, key, property.name);
-                try self.hoistMember(setter_name, setter_key);
-                try self.facts.declarations.put(self.arena, setter_key, .{ .file = self.file, .span = property.name_span });
-            }
+        try self.enum_listings.put(self.arena, key, listing.items);
+    }
+    for (declaration.fields) |field| {
+        const field_key = try methodKey(self.arena, key, field.name);
+        try self.instance_members.put(self.arena, field_key, {});
+        try self.facts.declarations.put(self.arena, field_key, .{ .file = self.file, .span = field.name_span });
+    }
+    for (declaration.methods) |method| {
+        const method_key = try methodKey(self.arena, key, method.name);
+        try self.instance_members.put(self.arena, method_key, {});
+        try self.hoistMember(method.name, method_key);
+        try self.facts.declarations.put(self.arena, method_key, .{ .file = self.file, .span = method.name_span });
+    }
+    // Section 10.4's members live in the module scope under their method
+    // keys, so `Vector2.origin` is reached exactly as `Shapes.area` is.
+    // A name shared with an instance member is reported by the checker.
+    for (declaration.type_functions) |function| {
+        const member_key = try methodKey(self.arena, key, function.member);
+        if (module.contains(member_key) or self.facts.owner.contains(member_key)) continue;
+        try module.put(self.arena, member_key, .{ .mutable = false, .span = function.member_span, .kind = .function });
+        try self.facts.owner.put(self.arena, member_key, self.file);
+        try self.facts.module_reads.put(self.arena, member_key, .empty);
+        try self.facts.calls.put(self.arena, member_key, .empty);
+        try self.facts.type_members.put(self.arena, member_key, key);
+        try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = function.member_span });
+        // Calling it reaches the type, which sets up its fields first.
+        try self.facts.calls.getPtr(member_key).?.put(self.arena, setup, {});
+    }
+    for (declaration.type_fields) |field| {
+        const member_key = try methodKey(self.arena, key, field.name);
+        if (module.contains(member_key) or self.facts.owner.contains(member_key)) continue;
+        try module.put(self.arena, member_key, .{ .mutable = field.mutable, .span = field.name_span });
+        try self.facts.owner.put(self.arena, member_key, self.file);
+        try self.facts.type_members.put(self.arena, member_key, key);
+        try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = field.name_span });
+    }
+    for (declaration.properties) |property| {
+        const prop_key = try methodKey(self.arena, key, property.name);
+        try self.instance_members.put(self.arena, prop_key, {});
+        try self.hoistMember(property.name, prop_key);
+        try self.facts.declarations.put(self.arena, prop_key, .{ .file = self.file, .span = property.name_span });
+        if (property.setter != null) {
+            const setter_name = try std.fmt.allocPrint(self.arena, "{s}" ++ setter_suffix, .{property.name});
+            const setter_key = try setterKey(self.arena, key, property.name);
+            try self.hoistMember(setter_name, setter_key);
+            try self.facts.declarations.put(self.arena, setter_key, .{ .file = self.file, .span = property.name_span });
         }
+    }
+    for (declaration.types) |nested| {
+        try self.hoistType(nested.declaration, try methodKey(self.arena, key, nested.declaration.name), key);
     }
 }
 
@@ -705,21 +732,82 @@ fn recordBases(self: *Resolver, statements: []const Ast.Statement) Error!void {
             .struct_declaration => |value| value,
             else => continue,
         };
-        const type_key = try self.keyOf(self.file, declaration.name);
-        if (declaration.traits.len > 0 and !self.facts.adopted.contains(type_key)) {
-            var keys: std.ArrayList([]const u8) = .empty;
-            for (declaration.traits) |trait| {
-                try keys.append(self.arena, try self.typeKeyOf(trait.name) orelse continue);
-            }
-            try self.facts.adopted.put(self.arena, type_key, keys.items);
-        }
-        const written = declaration.base orelse continue;
-        const key = try self.typeKeyOf(written.name) orelse continue;
-        // A repeated type name is reported where it is hoisted.
-        if (self.facts.bases.contains(type_key)) continue;
-        try self.facts.bases.put(self.arena, type_key, key);
-        try self.facts.calls.getPtr(type_key).?.put(self.arena, key, {});
+        try self.recordBase(declaration, try self.keyOf(self.file, declaration.name));
     }
+}
+
+fn recordBase(self: *Resolver, declaration: Ast.StructDeclaration, type_key: []const u8) Error!void {
+    for (declaration.types) |nested| {
+        const nested_key = try methodKey(self.arena, type_key, nested.declaration.name);
+        if (self.hoistedNested(nested.declaration, nested_key)) try self.recordBase(nested.declaration, nested_key);
+    }
+    if (declaration.traits.len > 0 and !self.facts.adopted.contains(type_key)) {
+        var keys: std.ArrayList([]const u8) = .empty;
+        for (declaration.traits) |trait| {
+            try keys.append(self.arena, try self.typeKeyOf(trait.name) orelse continue);
+        }
+        try self.facts.adopted.put(self.arena, type_key, keys.items);
+    }
+    const written = declaration.base orelse return;
+    const key = try self.typeKeyOf(written.name) orelse return;
+    // A repeated type name is reported where it is hoisted.
+    if (self.facts.bases.contains(type_key)) return;
+    try self.facts.bases.put(self.arena, type_key, key);
+    try self.facts.calls.getPtr(type_key).?.put(self.arena, key, {});
+}
+
+/// A type's bodies, then its nested types' (14.3), each walked under its own key.
+fn walkStructDeclaration(self: *Resolver, declaration: Ast.StructDeclaration, type_key: []const u8) Error!void {
+    try self.walkFieldDefaults(type_key, declaration.fields);
+    if (declaration.constructor) |constructor| {
+        try self.walkBody(type_key, constructor.parameters, constructor.body.statements, true);
+    }
+    for (declaration.methods) |method| {
+        try self.walkBody(
+            try methodKey(self.arena, type_key, method.name),
+            method.parameters,
+            method.body.statements,
+            true,
+        );
+    }
+    for (declaration.type_functions) |function| {
+        try self.walkBody(
+            try methodKey(self.arena, type_key, function.member),
+            function.declaration.parameters,
+            function.declaration.body.statements,
+            false,
+        );
+    }
+    try self.walkTypeFields(type_key, declaration.type_fields);
+    for (declaration.properties) |property| {
+        try self.walkBody(
+            try methodKey(self.arena, type_key, property.name),
+            &.{},
+            property.getter.body.statements,
+            true,
+        );
+        if (property.setter) |setter| {
+            try self.walkBody(
+                try setterKey(self.arena, type_key, property.name),
+                setter.parameters,
+                setter.body.statements,
+                true,
+            );
+        }
+    }
+    for (declaration.types) |nested| {
+        const nested_key = try methodKey(self.arena, type_key, nested.declaration.name);
+        if (self.hoistedNested(nested.declaration, nested_key)) try self.walkStructDeclaration(nested.declaration, nested_key);
+    }
+}
+
+/// Whether this nested declaration is the one `hoistType` registered under
+/// `key`. One refused for sharing a member's name registered nothing, and
+/// neither did anything nested inside it.
+fn hoistedNested(self: *Resolver, declaration: Ast.StructDeclaration, key: []const u8) bool {
+    const entry = self.scopes.items[module_scope].get(key) orelse return false;
+    return entry.kind == .type and entry.span.start == declaration.name_span.start and
+        self.facts.owner.get(key) == self.file;
 }
 
 /// The key of the type a written type name reaches in the file being walked,
@@ -1650,46 +1738,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
             const key = self.facts.nested_keys.get(.{ .file = self.file, .start = function.name_span.start }) orelse return;
             try self.walkBody(key, function.parameters, function.body.statements, false);
         },
-        .struct_declaration => |declaration| {
-            const type_key = try self.keyOf(self.file, declaration.name);
-            try self.walkFieldDefaults(type_key, declaration.fields);
-            if (declaration.constructor) |constructor| {
-                try self.walkBody(type_key, constructor.parameters, constructor.body.statements, true);
-            }
-            for (declaration.methods) |method| {
-                try self.walkBody(
-                    try methodKey(self.arena, type_key, method.name),
-                    method.parameters,
-                    method.body.statements,
-                    true,
-                );
-            }
-            for (declaration.type_functions) |function| {
-                try self.walkBody(
-                    try methodKey(self.arena, type_key, function.member),
-                    function.declaration.parameters,
-                    function.declaration.body.statements,
-                    false,
-                );
-            }
-            try self.walkTypeFields(type_key, declaration.type_fields);
-            for (declaration.properties) |property| {
-                try self.walkBody(
-                    try methodKey(self.arena, type_key, property.name),
-                    &.{},
-                    property.getter.body.statements,
-                    true,
-                );
-                if (property.setter) |setter| {
-                    try self.walkBody(
-                        try setterKey(self.arena, type_key, property.name),
-                        setter.parameters,
-                        setter.body.statements,
-                        true,
-                    );
-                }
-            }
-        },
+        .struct_declaration => |declaration| try self.walkStructDeclaration(declaration, try self.keyOf(self.file, declaration.name)),
 
         .return_statement => |return_statement| {
             if (return_statement.value) |value| try self.walkExpression(value);

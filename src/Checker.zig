@@ -145,6 +145,7 @@ pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
 const StructSite = struct {
     file: u32,
     declaration: Ast.StructDeclaration,
+    key: []const u8,
 };
 
 /// Why a binding may or may not change. Each reason gets its own correction,
@@ -374,62 +375,8 @@ pub fn check(
         for (program.statements) |statement| {
             if (statement.data == .struct_declaration) {
                 const declaration = statement.data.struct_declaration;
-                try struct_sites.append(arena, .{ .file = @intCast(index), .declaration = declaration });
-                const key = checker.keyOf(declaration.name);
-                const user = try arena.create(Type.User);
-                user.* = .{ .name = key, .display_name = declaration.name, .class = declaration.class, .trait = declaration.trait, .enumeration = declaration.enumeration };
-                const struct_type = Type.structOf(user);
-                try checker.structs.put(arena, key, struct_type);
-                try checker.struct_declarations.put(arena, key, declaration);
-                try checker.type_spans.put(arena, key, statement.span);
-                if (declaration.constructor != null) try checker.constructors.put(arena, key, declaration);
-                for (declaration.methods) |method| {
-                    const method_key = try Resolver.methodKey(arena, key, method.name);
-                    // A repeated name is reported with the struct; the first
-                    // declaration is the one calls reach.
-                    if (checker.declarations.contains(method_key)) continue;
-                    try checker.declarations.put(arena, method_key, method);
-                    try checker.receivers.put(arena, method_key, struct_type);
-                }
-                for (declaration.properties) |property| {
-                    const getter_key = try Resolver.methodKey(arena, key, property.name);
-                    if (checker.declarations.contains(getter_key)) continue;
-                    try checker.declarations.put(arena, getter_key, property.getter);
-                    try checker.receivers.put(arena, getter_key, struct_type);
-                    try checker.properties.put(arena, getter_key, property.setter != null);
-                    if (property.setter) |setter| {
-                        const setter_key = try Resolver.setterKey(arena, key, property.name);
-                        try checker.declarations.put(arena, setter_key, setter);
-                        try checker.receivers.put(arena, setter_key, struct_type);
-                    }
-                }
-                // Section 10.4. A name shared with an instance member is
-                // reported with the struct; the member keeps the key.
-                for (declaration.type_functions) |function| {
-                    const member_key = try Resolver.methodKey(arena, key, function.member);
-                    if (checker.declarations.contains(member_key) or module.contains(member_key)) continue;
-                    try checker.declarations.put(arena, member_key, function.declaration);
-                    try module.put(arena, member_key, .{ .type = .invalid, .declared = .invalid, .assigned = true, .is_function = true });
-                }
-                for (declaration.type_fields) |field| {
-                    const member_key = try Resolver.methodKey(arena, key, field.name);
-                    if (checker.declarations.contains(member_key) or module.contains(member_key)) continue;
-                    try checker.type_fields.put(arena, member_key, .{ .field = field, .type_key = key });
-                    // Always assigned: the type sets up its fields before
-                    // anything can reach one.
-                    try module.put(arena, member_key, .{
-                        .type = .invalid,
-                        .declared = .invalid,
-                        .assigned = true,
-                        .mutability = if (field.mutable) .variable else .constant,
-                    });
-                }
-                try module.put(arena, key, .{
-                    .type = struct_type,
-                    .declared = struct_type,
-                    .assigned = true,
-                    .is_type = true,
-                });
+                checker.file = @intCast(index);
+                try checker.registerStruct(&struct_sites, declaration, checker.keyOf(declaration.name), declaration.name, statement.span);
                 continue;
             }
             const function = switch (statement.data) {
@@ -446,16 +393,16 @@ pub fn check(
     // since a subclass's fields begin with its base class's.
     for (struct_sites.items) |site| {
         checker.file = site.file;
-        try checker.resolveBase(site.declaration);
+        try checker.resolveBase(site.key, site.declaration);
     }
     for (struct_sites.items) |site| {
         checker.file = site.file;
-        try checker.breakBaseCycle(site.declaration);
-        try checker.resolveTraits(site.declaration);
+        try checker.breakBaseCycle(site.key, site.declaration);
+        try checker.resolveTraits(site.key, site.declaration);
     }
     for (struct_sites.items) |site| {
         checker.file = site.file;
-        try checker.breakTraitCycle(site.declaration);
+        try checker.breakTraitCycle(site.key, site.declaration);
     }
 
     // Every type identity exists before any field annotation is resolved, so
@@ -463,7 +410,7 @@ pub fn check(
     checker.resolving_struct_fields = true;
     for (struct_sites.items) |site| {
         checker.file = site.file;
-        try checker.ensureStructChecked(checker.keyOf(site.declaration.name));
+        try checker.ensureStructChecked(site.key);
     }
     checker.resolving_struct_fields = false;
 
@@ -472,7 +419,7 @@ pub fn check(
     for (struct_sites.items) |site| {
         checker.file = site.file;
         const declaration = site.declaration;
-        const user = checker.structs.get(checker.keyOf(declaration.name)).?.user.?;
+        const user = checker.structs.get(site.key).?.user.?;
         for (declaration.fields, user.fields[user.inherited..]) |field, checked_field| {
             try checker.validateKeyAnnotations(field.annotation, checked_field.type);
         }
@@ -524,60 +471,7 @@ pub fn check(
                         if (signature.return_type.kind != .nothing and signature.return_type.kind != .invalid) try checker.report(span, "a test function cannot return a value", .{}, "Remove the returned value; use `assert` to check the result inside the test.");
                     }
                 },
-                .struct_declaration => |declaration| {
-                    const type_key = checker.keyOf(declaration.name);
-                    try checker.checkInheritance(type_key);
-                    try checker.checkFieldDefaults(type_key);
-                    if (declaration.constructor != null) try checker.checkConstructorBody(type_key);
-                    for (declaration.methods) |method| {
-                        const method_key = try Resolver.methodKey(arena, type_key, method.name);
-                        // An abstract method has no body to check (10.7).
-                        if (method.abstract_span != null) {
-                            if (checker.declarations.get(method_key)) |declared| {
-                                if (declared.abstract_span != null) _ = try checker.signatureFor(method_key);
-                            }
-                            continue;
-                        }
-                        try checker.ensureBodyChecked(method_key);
-                    }
-                    for (declaration.type_functions) |function| {
-                        try checker.ensureBodyChecked(try Resolver.methodKey(arena, type_key, function.member));
-                    }
-                    for (declaration.type_fields) |field| {
-                        try checker.checkTypeFieldValue(try Resolver.methodKey(arena, type_key, field.name));
-                    }
-                    for (declaration.properties) |property| {
-                        // A trait's requirement has no body (11.1), but its
-                        // type is written all the same.
-                        if (property.getter.abstract_span != null) {
-                            _ = try checker.signatureFor(try Resolver.methodKey(arena, type_key, property.name));
-                            continue;
-                        }
-                        const getter_key = try Resolver.methodKey(arena, type_key, property.name);
-                        if (checker.properties.contains(getter_key)) {
-                            try checker.ensureBodyChecked(getter_key);
-                            // Section 10.3: "Properties should have no
-                            // surprising observable side effects." Changing
-                            // the value being read is the one the language
-                            // can see, and it would make reading a `const`
-                            // impossible to allow.
-                            if (try checker.methodChanges(getter_key)) {
-                                try checker.report(
-                                    property.name_span,
-                                    "reading `{s}` would change `self`",
-                                    .{property.name},
-                                    "Reading a property should never change the value it is read from. Make this a method instead.",
-                                );
-                            }
-                            if (property.setter != null) {
-                                const setter_key = try Resolver.setterKey(arena, type_key, property.name);
-                                if (checker.declarations.contains(setter_key)) {
-                                    try checker.ensureBodyChecked(setter_key);
-                                }
-                            }
-                        }
-                    }
-                },
+                .struct_declaration => |declaration| try checker.checkStructBodies(declaration, checker.keyOf(declaration.name)),
                 else => {},
             }
         }
@@ -663,9 +557,9 @@ fn membersOf(self: *Checker, declaration: Ast.StructDeclaration) Error![]Member 
 }
 
 /// Section 10.7's `extends`, which has to name a class.
-fn resolveBase(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
+fn resolveBase(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration) Error!void {
     const written = declaration.base orelse return;
-    const user = @constCast(self.structs.get(self.keyOf(declaration.name)).?.user.?);
+    const user = @constCast(self.structs.get(key).?.user.?);
     if (Type.fromName(written.name) == null and !self.structs.contains(try self.typeKeyOf(written.name))) {
         try self.reportWithHelp(
             written.span,
@@ -712,9 +606,9 @@ fn resolveBase(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
 }
 
 /// Section 11.2's `with` list, which has to name traits, each once.
-fn resolveTraits(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
+fn resolveTraits(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration) Error!void {
     if (declaration.traits.len == 0) return;
-    const user = @constCast(self.structs.get(self.keyOf(declaration.name)).?.user.?);
+    const user = @constCast(self.structs.get(key).?.user.?);
     var resolved: std.ArrayList(*const Type.User) = .empty;
     for (declaration.traits) |written| {
         if (Type.fromName(written.name) == null and !self.structs.contains(try self.typeKeyOf(written.name))) {
@@ -725,7 +619,7 @@ fn resolveTraits(self: *Checker, declaration: Ast.StructDeclaration) Error!void 
                 "Check the spelling, or declare `trait {s}` in this project.",
                 .{written.name},
             );
-            try self.trait_list_errored.put(self.arena, self.keyOf(declaration.name), {});
+            try self.trait_list_errored.put(self.arena, key, {});
             continue;
         }
         const adopted = try self.resolveTypeExpression(written);
@@ -760,9 +654,9 @@ fn resolveTraits(self: *Checker, declaration: Ast.StructDeclaration) Error!void 
 
 /// A trait that builds on itself, directly or through others, is reported on
 /// the `with` entry that closes the loop, which is then dropped.
-fn breakTraitCycle(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
+fn breakTraitCycle(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration) Error!void {
     if (!declaration.trait) return;
-    const user = @constCast(self.structs.get(self.keyOf(declaration.name)).?.user.?);
+    const user = @constCast(self.structs.get(key).?.user.?);
     for (user.traits, 0..) |adopted, position| {
         if (!self.traitReaches(adopted, user, 0)) continue;
         const written = for (declaration.traits) |entry| {
@@ -787,7 +681,7 @@ fn breakTraitCycle(self: *Checker, declaration: Ast.StructDeclaration) Error!voi
         @memcpy(kept[0..position], user.traits[0..position]);
         @memcpy(kept[position..], user.traits[position + 1 ..]);
         user.traits = kept;
-        return self.breakTraitCycle(declaration);
+        return self.breakTraitCycle(key, declaration);
     }
 }
 
@@ -820,8 +714,8 @@ fn collectTraits(self: *Checker, trait: *const Type.User, found: *std.ArrayList(
 /// A class that extends itself, directly or through others, has no base class
 /// to start from. Reported once, on the class whose `extends` closes the loop
 /// first in the order written, which then has no base.
-fn breakBaseCycle(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
-    const user = @constCast(self.structs.get(self.keyOf(declaration.name)).?.user.?);
+fn breakBaseCycle(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration) Error!void {
+    const user = @constCast(self.structs.get(key).?.user.?);
     const base = user.base orelse return;
     var at: ?*const Type.User = base;
     var steps: usize = 0;
@@ -857,18 +751,151 @@ fn ensureStructChecked(self: *Checker, key: []const u8) Error!void {
     const outer_file = self.file;
     defer self.file = outer_file;
     self.file = self.facts.owner.get(key).?;
-    try self.checkStructDeclaration(self.struct_declarations.get(key).?);
+    try self.checkStructDeclaration(key, self.struct_declarations.get(key).?);
 }
 
 /// Whether this type displays through section 15.1's `Textual`, directly or
 /// through a trait or base class that adopts it.
+/// Every body of one type, then of its nested types (14.3).
+fn checkStructBodies(self: *Checker, declaration: Ast.StructDeclaration, type_key: []const u8) Error!void {
+    try self.checkInheritance(type_key);
+    try self.checkFieldDefaults(type_key);
+    if (declaration.constructor != null) try self.checkConstructorBody(type_key);
+    for (declaration.methods) |method| {
+        const method_key = try Resolver.methodKey(self.arena, type_key, method.name);
+        // An abstract method has no body to check (10.7).
+        if (method.abstract_span != null) {
+            if (self.declarations.get(method_key)) |declared| {
+                if (declared.abstract_span != null) _ = try self.signatureFor(method_key);
+            }
+            continue;
+        }
+        try self.ensureBodyChecked(method_key);
+    }
+    for (declaration.type_functions) |function| {
+        try self.ensureBodyChecked(try Resolver.methodKey(self.arena, type_key, function.member));
+    }
+    for (declaration.type_fields) |field| {
+        try self.checkTypeFieldValue(try Resolver.methodKey(self.arena, type_key, field.name));
+    }
+    for (declaration.properties) |property| {
+        // A trait's requirement has no body (11.1), but its
+        // type is written all the same.
+        if (property.getter.abstract_span != null) {
+            _ = try self.signatureFor(try Resolver.methodKey(self.arena, type_key, property.name));
+            continue;
+        }
+        const getter_key = try Resolver.methodKey(self.arena, type_key, property.name);
+        if (self.properties.contains(getter_key)) {
+            try self.ensureBodyChecked(getter_key);
+            // Section 10.3: "Properties should have no
+            // surprising observable side effects." Changing
+            // the value being read is the one the language
+            // can see, and it would make reading a `const`
+            // impossible to allow.
+            if (try self.methodChanges(getter_key)) {
+                try self.report(
+                    property.name_span,
+                    "reading `{s}` would change `self`",
+                    .{property.name},
+                    "Reading a property should never change the value it is read from. Make this a method instead.",
+                );
+            }
+            if (property.setter != null) {
+                const setter_key = try Resolver.setterKey(self.arena, type_key, property.name);
+                if (self.declarations.contains(setter_key)) {
+                    try self.ensureBodyChecked(setter_key);
+                }
+            }
+        }
+    }
+    for (declaration.types) |nested| {
+        try self.checkStructBodies(nested.declaration, try Resolver.methodKey(self.arena, type_key, nested.declaration.name));
+    }
+}
+
+/// One type, then its nested types (14.3), each under its own key: nested
+/// ones are `Outer::Inner`, displayed `Outer.Inner` without the namespace.
+fn registerStruct(
+    self: *Checker,
+    struct_sites: *std.ArrayList(StructSite),
+    declaration: Ast.StructDeclaration,
+    key: []const u8,
+    display_name: []const u8,
+    span: Source.Span,
+) Error!void {
+    try struct_sites.append(self.arena, .{ .file = self.file, .declaration = declaration, .key = key });
+    const user = try self.arena.create(Type.User);
+    user.* = .{ .name = key, .display_name = display_name, .class = declaration.class, .trait = declaration.trait, .enumeration = declaration.enumeration };
+    const struct_type = Type.structOf(user);
+    try self.structs.put(self.arena, key, struct_type);
+    try self.struct_declarations.put(self.arena, key, declaration);
+    try self.type_spans.put(self.arena, key, span);
+    if (declaration.constructor != null) try self.constructors.put(self.arena, key, declaration);
+    for (declaration.methods) |method| {
+        const method_key = try Resolver.methodKey(self.arena, key, method.name);
+        // A repeated name is reported with the struct; the first
+        // declaration is the one calls reach.
+        if (self.declarations.contains(method_key)) continue;
+        try self.declarations.put(self.arena, method_key, method);
+        try self.receivers.put(self.arena, method_key, struct_type);
+    }
+    for (declaration.properties) |property| {
+        const getter_key = try Resolver.methodKey(self.arena, key, property.name);
+        if (self.declarations.contains(getter_key)) continue;
+        try self.declarations.put(self.arena, getter_key, property.getter);
+        try self.receivers.put(self.arena, getter_key, struct_type);
+        try self.properties.put(self.arena, getter_key, property.setter != null);
+        if (property.setter) |setter| {
+            const setter_key = try Resolver.setterKey(self.arena, key, property.name);
+            try self.declarations.put(self.arena, setter_key, setter);
+            try self.receivers.put(self.arena, setter_key, struct_type);
+        }
+    }
+    // Section 10.4. A name shared with an instance member is
+    // reported with the struct; the member keeps the key.
+    for (declaration.type_functions) |function| {
+        const member_key = try Resolver.methodKey(self.arena, key, function.member);
+        if (self.declarations.contains(member_key) or self.module.contains(member_key)) continue;
+        try self.declarations.put(self.arena, member_key, function.declaration);
+        try self.module.put(self.arena, member_key, .{ .type = .invalid, .declared = .invalid, .assigned = true, .is_function = true });
+    }
+    for (declaration.type_fields) |field| {
+        const member_key = try Resolver.methodKey(self.arena, key, field.name);
+        if (self.declarations.contains(member_key) or self.module.contains(member_key)) continue;
+        try self.type_fields.put(self.arena, member_key, .{ .field = field, .type_key = key });
+        // Always assigned: the type sets up its fields before
+        // anything can reach one.
+        try self.module.put(self.arena, member_key, .{
+            .type = .invalid,
+            .declared = .invalid,
+            .assigned = true,
+            .mutability = if (field.mutable) .variable else .constant,
+        });
+    }
+    try self.module.put(self.arena, key, .{
+        .type = struct_type,
+        .declared = struct_type,
+        .assigned = true,
+        .is_type = true,
+    });
+    for (declaration.types) |nested| {
+        try self.registerStruct(
+            struct_sites,
+            nested.declaration,
+            try Resolver.methodKey(self.arena, key, nested.declaration.name),
+            try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ display_name, nested.declaration.name }),
+            nested.span,
+        );
+    }
+}
+
 fn conformsToTextual(self: *Checker, user: *const Type.User) bool {
     const textual = self.structs.get(Resolver.preludeKey("Textual")) orelse return false;
     return user.conformsTo(textual.user orelse return false);
 }
 
-fn checkStructDeclaration(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
-    const key = self.keyOf(declaration.name);
+fn checkStructDeclaration(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration) Error!void {
     const struct_type = self.structs.get(key).?;
     const user = @constCast(struct_type.user.?);
     const inherited: []const Type.User.Field = if (user.base) |base| blk: {
