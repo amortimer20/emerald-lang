@@ -1,0 +1,8 @@
+diagnostics/if-expression.em:1:28: a condition must be a Bool, but this is Int
+  const wrong_condition = if 1 then "yes" else "no"
+                             ^
+Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.
+diagnostics/if-expression.em:2:43: this answer gives String, but the other gives Int
+  const wrong_answers = if true then 1 else "no"
+                                            ^^^^
+Both answers of an `if` expression must have compatible types.

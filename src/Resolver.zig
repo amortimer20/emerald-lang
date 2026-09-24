@@ -2429,6 +2429,11 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
         },
         .lambda => |lambda| try self.walkLambda(expression, lambda),
         .case_expression => |case| try self.walkCase(case),
+        .if_expression => |value| {
+            try self.walkExpression(value.condition);
+            try self.walkExpression(value.then_value);
+            try self.walkExpression(value.else_value);
+        },
         .tuple_literal => |positions| for (positions) |position| try self.walkExpression(position),
         .type_test => |test_| try self.walkExpression(test_.value),
         .dictionary_literal => |entries| for (entries) |entry| {

@@ -1178,6 +1178,11 @@ fn findAssignmentInExpression(expression: *const Ast.Expression, file: u32, offs
             .expression => |body| return findAssignmentInExpression(body, file, offset, targets),
             .block => |body| return findAssignmentInStatements(body.statements, file, offset, targets),
         },
+        .if_expression => |value| {
+            if (findAssignmentInExpression(value.condition, file, offset, targets)) |target| return target;
+            if (findAssignmentInExpression(value.then_value, file, offset, targets)) |target| return target;
+            return findAssignmentInExpression(value.else_value, file, offset, targets);
+        },
         .case_expression => |case| {
             if (case.subject) |subject| if (findAssignmentInExpression(subject, file, offset, targets)) |target| return target;
             for (case.arms) |arm| {
@@ -1365,6 +1370,11 @@ fn findTypeInExpression(expression: *const Ast.Expression, file: u32, offset: u3
                 .block => |body| findTypeInStatements(body.statements, file, offset, analysis),
             };
         },
+        .if_expression => |value| {
+            if (findTypeInExpression(value.condition, file, offset, analysis)) |target| return target;
+            if (findTypeInExpression(value.then_value, file, offset, analysis)) |target| return target;
+            return findTypeInExpression(value.else_value, file, offset, analysis);
+        },
         .case_expression => |case| {
             if (case.subject) |subject| if (findTypeInExpression(subject, file, offset, analysis)) |target| return target;
             for (case.arms) |arm| {
@@ -1550,6 +1560,11 @@ fn findDeclNameInExpression(expression: *const Ast.Expression, file: u32, offset
                 .expression => |body| findDeclNameInExpression(body, file, offset),
                 .block => |body| findDeclNameInStatements(body.statements, file, offset),
             };
+        },
+        .if_expression => |value| {
+            if (findDeclNameInExpression(value.condition, file, offset)) |target| return target;
+            if (findDeclNameInExpression(value.then_value, file, offset)) |target| return target;
+            return findDeclNameInExpression(value.else_value, file, offset);
         },
         .case_expression => |case| {
             if (case.subject) |subject| if (findDeclNameInExpression(subject, file, offset)) |target| return target;
@@ -1896,6 +1911,11 @@ fn collectReferencesInExpression(
             .block => |block| try collectReferencesInStatements(gpa, analysis, target, file, block.statements, out),
         },
         .case_expression => |case| try collectReferencesInCase(gpa, analysis, target, file, case.*, out),
+        .if_expression => |value| {
+            try collectReferencesInExpression(gpa, analysis, target, file, value.condition, out);
+            try collectReferencesInExpression(gpa, analysis, target, file, value.then_value, out);
+            try collectReferencesInExpression(gpa, analysis, target, file, value.else_value, out);
+        },
         .type_test => |t| {
             try collectReferencesInExpression(gpa, analysis, target, file, t.value, out);
             try collectReferencesInTypeExpression(gpa, analysis, target, file, t.target, out);
@@ -2948,15 +2968,15 @@ test "definitionAt reaches an assignment inside a case arm's block" {
     try testing.expectEqual(decl_offset, target.span.start);
 }
 
-test "definitionAt reaches declarations, writes, and annotations inside a lambda block" {
+test "definitionAt reaches declarations, writes, and annotations inside an inline-if lambda answer" {
     const gpa = testing.allocator;
     const text =
         "struct Token {}\n" ++
-        "const action: func(Token): Nothing = { token: Token =>\n" ++
+        "const action: func(Token): Nothing = if true then { token: Token =>\n" ++
         "    var local = token\n" ++
         "    local = token\n" ++
         "    print(local)\n" ++
-        "}\n";
+        "} else { token => print(token) }\n";
     var source = try Source.init(gpa, "t.em", text);
     defer source.deinit(gpa);
     var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
@@ -2999,6 +3019,28 @@ test "definitionAt jumps from a constructor call's own name to its struct" {
     const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
     const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "struct Point").? + "struct ".len);
     try testing.expectEqual(decl_offset, target.span.start);
+}
+
+test "inline if supports definition, hover types, and references in all three expressions" {
+    const gpa = testing.allocator;
+    const text = "const score = 5\nconst result = if score > 0 then score else -score\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "score =").?);
+    const target = (try definitionAt(gpa, &analysis, 0, decl_offset)).?;
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    try collectReferencesInStatements(gpa, &analysis, target, 0, analysis.parsed[0].program.statements, &sites);
+    try testing.expectEqual(@as(usize, 3), sites.items.len);
+    for (sites.items) |site| {
+        try testing.expectEqual(decl_offset, (try definitionAt(gpa, &analysis, 0, site.span.start)).?.span.start);
+        try testing.expectEqual(.int, expressionAt(&analysis, 0, site.span.start).?.type.kind);
+    }
 }
 
 test "collectReferencesInStatements finds every read of a variable, but not its declaration" {

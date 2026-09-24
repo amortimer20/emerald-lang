@@ -942,10 +942,11 @@ const Printer = struct {
     /// they mean the same thing — so the printer must always re-derive
     /// which parentheses are load-bearing from precedence and associativity
     /// alone, never from whether the source happened to write any.
-    const Level = enum(u8) { or_, and_, not_, comparison, range, additive, multiplicative, unary, power, postfix };
+    const Level = enum(u8) { conditional, or_, and_, not_, comparison, range, additive, multiplicative, unary, power, postfix };
 
     fn levelOf(self: *Printer, expr: *const Ast.Expression) Level {
         return switch (expr.data) {
+            .if_expression => .conditional,
             // The one Int literal whose own span carries a sign: `parseUnary`
             // reads the minimum Int's magnitude as a single token so its
             // positive numeral is never a legal Int on its own (5.3), which
@@ -1000,6 +1001,14 @@ const Printer = struct {
             .enum_value => unreachable,
 
             .case_expression => |c| try self.printCase(c, expr.span.end),
+            .if_expression => |value| {
+                try self.write("if ");
+                try self.printExpr(value.condition);
+                try self.write(" then ");
+                try self.printExpr(value.then_value);
+                try self.write(" else ");
+                try self.printExpr(value.else_value);
+            },
             .unary => |u| try self.printUnary(u),
             .binary => |b| try self.printBinary(b),
             .logical => |l| try self.printLogical(l),

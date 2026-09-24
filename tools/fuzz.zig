@@ -65,7 +65,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // campaign rather than only by its unit test.
     if (random.uintLessThan(u8, 8) == 0) {
         const count = random.uintLessThan(u8, 16);
-        return switch (random.uintLessThan(u8, 3)) {
+        return switch (random.uintLessThan(u8, 4)) {
             0 => std.fmt.allocPrint(gpa,
                 \\var i = 0
                 \\while i < {d} {{
@@ -77,11 +77,16 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\while true {
                 \\}
             ),
-            else => std.fmt.allocPrint(gpa,
+            2 => std.fmt.allocPrint(gpa,
                 \\const values = [1, 2, 3, {d}]
                 \\for value in values {{
                 \\    print(value * 2)
                 \\}}
+            , .{count}),
+            else => std.fmt.allocPrint(gpa,
+                \\const score = {d}
+                \\const result = if score > 5 then score * 2 else if score == 0 then 1 else score
+                \\print(result, (if score > 0 then 2 else 3) + 1)
             , .{count}),
         };
     }
@@ -98,7 +103,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
         "中",
         "😀",
         "\u{0301}",   "var",      "const",    "func", "if", "else", "return", "true", "false", "nothing", "print", "## note\n",
-        "#[ note ]#", "\"text\"", "\"#{x}\"",
+        "#[ note ]#", "\"text\"", "\"#{x}\"", "then",
     };
 
     var text: std.ArrayList(u8) = .empty;

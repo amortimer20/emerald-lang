@@ -1256,7 +1256,7 @@ const allocation_failure_program =
     \\for point in points {
     \\    total = total + point.sum()
     \\}
-    \\print("Total: #{total}")
+    \\print("Total: #{if total > 0 then total else 0}")
     \\
 ;
 
@@ -2968,6 +2968,61 @@ test "a long flat chain is a diagnostic, not a crash" {
 }
 
 // Section 7.4 and 7.5: lambdas, closures, and callable values.
+
+test "inline if returns a value without changing the meaning of a return guard" {
+    try expectOutput(
+        \\func guard(stop: Bool) {
+        \\    return if stop
+        \\    print("continued")
+        \\}
+        \\func choose(pick: Bool): Int {
+        \\    return if pick then 1 else 2
+        \\}
+        \\guard(true)
+        \\guard(false)
+        \\print(choose(true), choose(false))
+        \\try {
+        \\    raise if false then RuntimeError("wrong") else RuntimeError("selected")
+        \\}
+        \\catch error: RuntimeError {
+        \\    print(error.message)
+        \\}
+        \\
+    , "continued\n1 2\nselected\n");
+}
+
+test "inline if records mutations in either answer and merges narrowing" {
+    try expectOutput(
+        \\struct Counter {
+        \\    var value: Int = 0
+        \\    func advance(): Int {
+        \\        self.value += 1
+        \\        return self.value
+        \\    }
+        \\    func sample(pick: Bool): Int {
+        \\        return if pick then 0 else self.advance()
+        \\    }
+        \\}
+        \\var counter = Counter()
+        \\print(counter.sample(true), counter.sample(false), counter.value)
+        \\func inspect(value: Int?) {
+        \\    const result = if value != nothing then value + 1 else 0
+        \\    print(result, value.or(-1))
+        \\}
+        \\inspect(nothing)
+        \\inspect(4)
+        \\
+    , "0 1 1\n0 -1\n5 4\n");
+}
+
+test "inline if nesting is bounded even without parentheses" {
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(testing.allocator);
+    try text.appendSlice(testing.allocator, "print(");
+    for (0..256) |_| try text.appendSlice(testing.allocator, "if true then 1 else ");
+    try text.appendSlice(testing.allocator, "0)\n");
+    try expectFailure(text.items, "this is nested too deeply");
+}
 
 test "a lambda is a value that can be called" {
     try expectOutput("const double = { value: Int => value * 2 }\nprint(double(21))\n", "42\n");

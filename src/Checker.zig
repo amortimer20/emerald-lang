@@ -4549,6 +4549,9 @@ fn expressionChangesSelf(self: *Checker, expression: *const Ast.Expression, rece
         // `self` cannot appear inside a block (see `Parser.self_allowed`).
         .lambda => false,
         .case_expression => |case| self.caseChangesSelf(case, receiver),
+        .if_expression => |value| try self.expressionChangesSelf(value.condition, receiver) or
+            try self.expressionChangesSelf(value.then_value, receiver) or
+            try self.expressionChangesSelf(value.else_value, receiver),
     };
 }
 
@@ -5383,6 +5386,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
         .bool_literal => .bool,
         .nothing_literal => .nothing,
         .case_expression => self.typeOfCase(expression, null),
+        .if_expression => self.typeOfIfExpression(expression, null),
         .enum_value => |value| self.structs.get(self.keyOf(value.type_name)) orelse .invalid,
 
         .name => |name| blk: {
@@ -5479,6 +5483,7 @@ fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?
         .tuple_literal => try self.typeOfTuple(expression, expected),
         .dictionary_literal => try self.typeOfDictionary(expression, expected),
         .case_expression => try self.typeOfCase(expression, expected),
+        .if_expression => try self.typeOfIfExpression(expression, expected),
         else => return self.typeOf(expression),
     };
     try self.expression_types.put(self.arena, expression, .{ .file = self.file, .type = result });
@@ -8644,6 +8649,27 @@ fn typeOfOperatorCall(
     return signature.return_type;
 }
 
+/// Section 6.2: each answer sees its condition's proof, while code after the
+/// expression sees only facts true whichever answer ran.
+fn typeOfIfExpression(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
+    const value = expression.data.if_expression;
+    try self.requireCondition(value.condition);
+    const before = try self.snapshot();
+    self.narrow(value.condition, true);
+    const narrows_before = self.active_narrows.items.len;
+    try self.collectActiveNarrows(value.condition);
+    const then_type = try self.typeOfExpected(value.then_value, expected);
+    self.active_narrows.items.len = narrows_before;
+    const after_then = try self.snapshot();
+    self.restore(before);
+    self.narrow(value.condition, false);
+    const else_type = try self.typeOfExpected(value.else_value, expected);
+    self.intersect(after_then);
+    const result = try self.branchResultType(&.{ then_type, else_type }, &.{ value.then_value.span, value.else_value.span }, true);
+    try self.literal_types.put(self.arena, expression, result);
+    return result;
+}
+
 /// Section 6.3's `case` that produces a value. Its type is what its arms
 /// agree on, recorded so the interpreter can widen an `Int` arm to `Float`.
 fn typeOfCase(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
@@ -8746,7 +8772,7 @@ fn checkCase(self: *Checker, case: *const Ast.Case, expected: ?Type) Error!Type 
             );
         }
     }
-    return self.caseResultType(results.items, result_spans.items);
+    return self.branchResultType(results.items, result_spans.items, false);
 }
 
 /// One arm's block or value. Returns whether running it can carry on past the
@@ -8771,12 +8797,12 @@ fn checkCaseBody(
     }
 }
 
-/// What a `case`'s value arms agree on. `nothing` in some arms makes the
+/// What an `if` expression's answers or a `case`'s value arms agree on. `nothing` in some arms makes the
 /// others' type optional, `Int` and `Float` arms give `Float`, and sibling
 /// classes widen to their nearest shared base (10.7), the same widening
 /// `typeOfList`/`unifiedType` do and for the same reason: a factory-style
 /// case is exactly where arms naturally each give a different subclass.
-fn caseResultType(self: *Checker, results: []const Type, spans: []const Source.Span) Error!Type {
+fn branchResultType(self: *Checker, results: []const Type, spans: []const Source.Span, comptime inline_if: bool) Error!Type {
     var target: ?Type = null;
     var absent = false;
     for (results) |result| {
@@ -8807,9 +8833,9 @@ fn caseResultType(self: *Checker, results: []const Type, spans: []const Source.S
         if (result.kind == .nothing or result.assignableTo(agreed)) continue;
         try self.reportWithHelp(
             span,
-            "this arm gives {f}, but the others give {f}",
+            if (inline_if) "this answer gives {f}, but the other gives {f}" else "this arm gives {f}, but the others give {f}",
             .{ result, agreed },
-            "Every arm of a `case` gives the same type of value.",
+            if (inline_if) "Both answers of an `if` expression must have compatible types." else "Every arm of a `case` gives the same type of value.",
             .{},
         );
         return .invalid;

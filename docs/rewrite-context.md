@@ -459,7 +459,7 @@ loss must not make two distinct numeric values compare equal accidentally.
 
 Mutable collection types are invariant: `List[Dog]` is not assignable to `List[Animal]`. A
 literal's own elements widen more freely than that, the same way `[1, 2.5]` infers
-`List[Float]`: a mixed list, dictionary, or value-producing `case` of sibling classes
+`List[Float]`: a mixed list, dictionary, value-producing `case`, or inline `if` of sibling classes
 (10.7) infers their nearest shared base — `[Dog(), Cat()]` infers `List[Animal]` with no
 annotation needed, the same base an explicit `List[Animal]` already accepted them under.
 Two classes that share only a trait, with no common base class, still need an explicit
@@ -783,7 +783,19 @@ var label = if score >= 10 then "winner" else "playing"
 ```
 
 Teaching material begins with statement blocks. The expression form requires both answers
-and both answers must have a compatible type.
+and both answers must have a compatible type. Its condition must be `Bool`; the condition
+runs once, and only the chosen answer runs. Both answers are statically checked, with the
+condition's narrowing available in the corresponding answer. Result types follow the same
+rules as value-producing `case`: `Int` and `Float` give `Float`, an answer of `nothing`
+makes the other type optional, and sibling classes infer their nearest shared base.
+An expected collection or function type flows into both answers.
+
+Each answer is a full expression, so `if ready then 1 else 2 + 3` adds only in the
+`else` answer; write `(if ready then 1 else 2) + 3` to add after choosing. Nested
+choices need no extra syntax: `if first then a else if second then b else c`.
+`return if ready then a else b` returns a chosen value, while `return if ready` remains
+a guard on a bare return. Ordinary newline-continuation rules apply; parentheses allow
+the expression to be spread across lines.
 
 A trailing `if` makes one statement conditional, on one line. It is the guard form:
 

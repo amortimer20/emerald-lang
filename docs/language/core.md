@@ -78,6 +78,16 @@ statement on its own line (there is no `unless`; write `if not`). See
 the guard clauses throughout
 [`examples/loops.em`](../../examples/loops.em).
 
+```emerald
+const label = if score >= 10 then "winner" else "playing"
+```
+
+The condition must be `Bool`, and both answers must have compatible types. Only the
+chosen answer runs. Parentheses let an operation apply to the whole choice, as in
+`(if ready then 1 else 2) + 3`. See
+[`conformance/run/if-expression.em`](../../conformance/run/if-expression.em) for nesting,
+optional narrowing, and use in lambdas and interpolation.
+
 `case`/`when` compares a subject against alternatives top to bottom with `==`
 and runs the first match, or (with `then`) produces a value and must cover
 every case. A subjectless `case` treats each `when` as a `Bool` condition. See

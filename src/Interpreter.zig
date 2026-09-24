@@ -2032,7 +2032,7 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .member => |member| self.evaluateMember(expression, member),
         .string_literal => |bytes| self.evaluateStringLiteral(expression, bytes),
         .interpolation => |parts| self.evaluateInterpolation(parts),
-        .type_test, .lambda, .enum_value, .case_expression => self.evaluateByNode(expression),
+        .type_test, .lambda, .enum_value, .case_expression, .if_expression => self.evaluateByNode(expression),
     };
 }
 
@@ -2070,6 +2070,11 @@ fn evaluateByNode(self: *Interpreter, expression: *const Ast.Expression) Error!V
         .type_test => self.evaluateTypeTest(expression),
         .lambda => self.evaluateLambda(expression),
         .enum_value => self.evaluateEnumValue(expression),
+        .if_expression => |value| blk: {
+            const holds = try self.condition(value.condition);
+            const result = try self.evaluate(if (holds) value.then_value else value.else_value);
+            break :blk widen(result, kindOf(self.literal_types.get(expression).?));
+        },
         .case_expression => |case| blk: {
             const arm = try self.chooseArm(case) orelse unreachable;
             // An `Int` arm of a `case` that gives `Float` gives a `Float` (4.4).

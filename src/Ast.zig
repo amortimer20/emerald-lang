@@ -450,6 +450,8 @@ pub const Expression = struct {
         enum_value: EnumValue,
         /// Section 6.3's `case` that produces a value, with `then` arms.
         case_expression: *const Case,
+        /// Section 6.2's value-producing `if condition then value else value`.
+        if_expression: IfExpression,
         unary: Unary,
         binary: Binary,
         logical: Logical,
@@ -479,6 +481,12 @@ pub const Expression = struct {
         tuple_literal: []const *const Expression,
         /// Section 4.4's `animal is Dog`.
         type_test: TypeTest,
+    };
+
+    pub const IfExpression = struct {
+        condition: *const Expression,
+        then_value: *const Expression,
+        else_value: *const Expression,
     };
 
     /// `value is Type`, which asks what the value is at runtime.

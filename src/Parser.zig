@@ -368,6 +368,7 @@ fn deepestChild(data: Ast.Expression.Data) u32 {
         },
         .member => |member| member.base.depth,
         .type_test => |test_| test_.value.depth,
+        .if_expression => |value| @max(value.condition.depth, @max(value.then_value.depth, value.else_value.depth)),
         // A block body's statements each carry their own bound, so only an
         // expression body extends this lambda's height.
         .case_expression => |case| blk: {
@@ -1626,6 +1627,10 @@ fn finishSimpleStatement(self: *Parser, statement: Ast.Statement) Error!Ast.Stat
     }
 
     const condition = try self.parseExpression();
+    return self.finishGuardedStatement(statement, condition);
+}
+
+fn finishGuardedStatement(self: *Parser, statement: Ast.Statement, condition: *const Ast.Expression) Error!Ast.Statement {
     try self.expectStatementEnd();
 
     const guarded = try self.arena.alloc(Ast.Statement, 1);
@@ -1865,31 +1870,37 @@ fn parseNamedType(self: *Parser, name: Token, context: NamedTypeContext) Error!N
 /// Section 7.1 allows a bare `return` for a function with no result. Whether a
 /// value follows is decided by the same tokens that end an ordinary statement.
 fn parseReturn(self: *Parser) Error!Ast.Statement {
-    const keyword = self.advance();
-
-    // `return if not ready` is a bare return guarded by a trailing `if`.
-    const next = self.peek();
-    const value = switch (next.kind) {
-        .newline, .eof, .right_brace, .keyword_if => null,
-        else => try self.parseExpression(),
-    };
-
-    return self.finishSimpleStatement(.{
-        .span = if (value) |v| spanning(keyword.span, v.span) else keyword.span,
-        .data = .{ .return_statement = .{ .keyword_span = keyword.span, .value = value } },
-    });
+    return self.parseValueExit(.return_statement);
 }
 
 fn parseRaise(self: *Parser) Error!Ast.Statement {
+    return self.parseValueExit(.raise_statement);
+}
+
+fn parseValueExit(self: *Parser, comptime kind: std.meta.Tag(Ast.Statement.Data)) Error!Ast.Statement {
     const keyword = self.advance();
-    const next = self.peek();
-    const value = switch (next.kind) {
-        .newline, .eof, .right_brace, .keyword_if => null,
+    // `return if ready` guards a bare return, but `return if ready then a
+    // else b` returns a value. Parse the shared prefix once; `then` decides.
+    const value: ?*const Ast.Expression = switch (self.peek().kind) {
+        .newline, .eof, .right_brace => null,
+        .keyword_if => blk: {
+            const if_keyword = self.advance();
+            try self.nest(if_keyword.span);
+            defer self.unnest();
+            const condition = try self.parseExpression();
+            if (!self.check(.keyword_then)) {
+                return self.finishGuardedStatement(.{
+                    .span = keyword.span,
+                    .data = @unionInit(Ast.Statement.Data, @tagName(kind), .{ .keyword_span = keyword.span, .value = null }),
+                }, condition);
+            }
+            break :blk try self.finishIfExpression(if_keyword, condition);
+        },
         else => try self.parseExpression(),
     };
     return self.finishSimpleStatement(.{
         .span = if (value) |v| spanning(keyword.span, v.span) else keyword.span,
-        .data = .{ .raise_statement = .{ .keyword_span = keyword.span, .value = value } },
+        .data = @unionInit(Ast.Statement.Data, @tagName(kind), .{ .keyword_span = keyword.span, .value = value }),
     });
 }
 
@@ -2815,6 +2826,30 @@ fn parseExpression(self: *Parser) Error!*const Ast.Expression {
     return self.parseDisjunction();
 }
 
+fn parseIfExpression(self: *Parser) Error!*const Ast.Expression {
+    const keyword = self.advance();
+    try self.nest(keyword.span);
+    defer self.unnest();
+    const condition = try self.parseExpression();
+    return self.finishIfExpression(keyword, condition);
+}
+
+fn finishIfExpression(self: *Parser, keyword: Token, condition: *const Ast.Expression) Error!*const Ast.Expression {
+    if (self.match(.keyword_then) == null) {
+        return self.report(self.peek().span, "an `if` used as a value needs `then` after its condition", "Write `if condition then value else other_value`. Use braces when the `if` runs statements instead.");
+    }
+    const then_value = try self.parseExpression();
+    if (self.match(.keyword_else) == null) {
+        return self.report(self.peek().span, "an `if` used as a value needs an `else`", "Give a value for both outcomes: `if condition then value else other_value`.");
+    }
+    const else_value = try self.parseExpression();
+    return self.node(spanning(keyword.span, else_value.span), .{ .if_expression = .{
+        .condition = condition,
+        .then_value = then_value,
+        .else_value = else_value,
+    } });
+}
+
 fn parseDisjunction(self: *Parser) Error!*const Ast.Expression {
     var left = try self.parseConjunction();
     while (self.check(.keyword_or)) {
@@ -3728,6 +3763,7 @@ fn parseListLiteral(self: *Parser) Error!*const Ast.Expression {
 fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
     const token = self.peek();
     switch (token.kind) {
+        .keyword_if => return self.parseIfExpression(),
         .left_bracket => return self.parseListLiteral(),
         .left_brace => return self.parseLambda(),
         .keyword_case => {

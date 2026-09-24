@@ -1,0 +1,4 @@
+diagnostics/if-expression-missing-else.em:1:29: an `if` used as a value needs an `else`
+  const value = if true then 1
+                              ^
+Give a value for both outcomes: `if condition then value else other_value`.

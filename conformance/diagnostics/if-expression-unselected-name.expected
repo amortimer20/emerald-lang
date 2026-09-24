@@ -1,0 +1,4 @@
+diagnostics/if-expression-unselected-name.em:1:46: `unknown_answer` is not defined
+  const unchecked_answer = if true then 1 else unknown_answer
+                                               ^^^^^^^^^^^^^^
+Check the spelling, or declare it before this line.

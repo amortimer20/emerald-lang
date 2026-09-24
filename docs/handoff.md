@@ -13,6 +13,12 @@ enums, typed errors, projects/namespaces, ranges and slicing. The formatter, REP
 diagnostics, symbols, format-on-save, hover, go to definition, find references, rename, and
 completion are complete.
 
+Inline `if condition then value else value` is now implemented, closing a gap that the
+design and language guide had incorrectly described as already available. It supports
+lazy branch evaluation, compatible result types, branch-local narrowing, expected types
+for collections/lambdas, and use in returns, interpolation, and nested expressions.
+Formatting and LSP expression traversal cover it; `return if condition` remains a guard.
+
 The filesystem library supports UTF-8 and binary whole-file operations plus streamed text and
 binary reads/writes. `File.open` returns a read-only `FileHandle`; `File.create` returns a
 write-only `FileWriter`; their block forms guarantee closure. `Bytes` provides immutable raw
@@ -78,6 +84,11 @@ only with user authorization.
 
 ## Active rough edges
 
+- Inline-if testing exposed an unrelated native-dispatch bug in `Interpreter.callMethod`:
+  user methods named `next` or `choose` (and `shuffle!` with one argument) are routed to
+  `Random` by name alone, without checking their receiver. A user `choose(Bool)` method
+  crashed in `callRandomMethod` when it read the Bool as a List. This predates inline `if`
+  and remains unfixed; native dispatch needs to respect the checker's resolved method.
 - Runtime failures currently share `RuntimeError` except `AssertionError` and `FileError`.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
@@ -87,6 +98,15 @@ only with user authorization.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+The inline-if slice is complete. With pinned Zig 0.16.0, it passed Debug
+and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (93 linked
+files), Zig formatting checks, and `git diff --check`. A bounded fuzz campaign
+(`zig build fuzz -- 20260923 2000`) passed 2,000 cases, with 247 reaching execution;
+the generator now includes inline conditionals. Focused conformance covers execution,
+diagnostics, and formatter idempotence; Zig tests cover return guards, mutation, nesting
+limits, allocation failures, and LSP traversal. The existing uncommitted platform-library
+roadmap edits remain intact and outside the inline-if commit. No push was requested.
 
 The operator-annotation feature passed Debug and ReleaseSafe `zig build test`, `zig build`,
 `bash tools/check-doc-examples.sh` (92 linked files), and `git diff --check` using pinned Zig
