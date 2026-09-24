@@ -1,0 +1,8 @@
+Console.Color.red
+Console.Color.green
+cool
+Console.Color.red
+Console.Pair(left: 2, right: 1)
+Console.Pair(left: 0, right: 0)
+Console.Pair.Deep(note: "nested twice")
+7

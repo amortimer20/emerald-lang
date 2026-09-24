@@ -1,0 +1,12 @@
+diagnostics/nested-type-privacy.em:15:22: `_mine` is private to `Outer.Inner`
+          return inner._mine
+                       ^^^^^
+Only code written inside `Outer.Inner`'s braces can reach a name that starts with `_`.
+diagnostics/nested-type-privacy.em:19:19: `_Hidden` is private to `Outer`
+  func take(hidden: Outer._Hidden) {}
+                    ^^^^^^^^^^^^^
+Only code written inside `Outer`'s braces can reach a name that starts with `_`.
+diagnostics/nested-type-privacy.em:21:7: `_Hidden` is private to `Outer`
+  print(Outer._Hidden(1))
+        ^^^^^^^^^^^^^
+Only code written inside `Outer`'s braces can reach a name that starts with `_`.

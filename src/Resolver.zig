@@ -813,6 +813,21 @@ fn hoistedNested(self: *Resolver, declaration: Ast.StructDeclaration, key: []con
 /// The key of the type a written type name reaches in the file being walked,
 /// following a namespace alias at its front, or null when it reaches none.
 fn typeKeyOf(self: *Resolver, written: []const u8) Error!?[]const u8 {
+    if (try self.writtenTypeKey(written)) |key| return key;
+    // Section 14.3's nested types, as `Checker.typeKeyOf` finds them.
+    var cut = written.len;
+    while (std.mem.lastIndexOfScalar(u8, written[0..cut], '.')) |dot| {
+        cut = dot;
+        const outer = try self.writtenTypeKey(written[0..dot]) orelse continue;
+        const rest = try std.mem.replaceOwned(u8, self.arena, written[dot + 1 ..], ".", method_separator);
+        const nested = try std.fmt.allocPrint(self.arena, "{s}" ++ method_separator ++ "{s}", .{ outer, rest });
+        const binding = self.scopes.items[module_scope].get(nested) orelse return null;
+        return if (binding.kind == .type) nested else null;
+    }
+    return null;
+}
+
+fn writtenTypeKey(self: *Resolver, written: []const u8) Error!?[]const u8 {
     const module = &self.scopes.items[module_scope];
     const key = self.facts.keyFor(self.file, written) orelse blk: {
         const dot = std.mem.indexOfScalar(u8, written, '.') orelse return null;
@@ -956,6 +971,15 @@ fn applyUsing(self: *Resolver, declarations: []const Ast.Using, map: *KeyMap) Er
             if (self.scopes.items[module_scope].contains(path) or self.module_declarations.contains(path)) {
                 try map.put(self.arena, declaration.alias, path);
                 continue;
+            }
+            // `using Color = Console.Color`: a nested type (14.3).
+            if (path.len != declaration.path[0].len) {
+                if (try self.typeKeyOf(path)) |key| {
+                    if (std.mem.indexOf(u8, key, method_separator) != null) {
+                        try map.put(self.arena, declaration.alias, key);
+                        continue;
+                    }
+                }
             }
             try self.reportUnknownPath(declaration, path);
             continue;
@@ -2129,6 +2153,36 @@ fn qualifyTypeMember(
         );
         return .reported;
     }
+    // A capitalized name is most likely a nested type (14.3), so name the
+    // ones this type has rather than explaining type-level fields.
+    if (member.len > 0 and std.ascii.isUpper(member[0])) {
+        var names: std.ArrayList([]const u8) = .empty;
+        const prefix = try std.fmt.allocPrint(self.arena, "{s}" ++ method_separator, .{type_key});
+        var entries = self.scopes.items[module_scope].iterator();
+        while (entries.next()) |entry| {
+            if (entry.value_ptr.kind != .type or !std.mem.startsWith(u8, entry.key_ptr.*, prefix)) continue;
+            const nested = entry.key_ptr.*[prefix.len..];
+            if (std.mem.indexOf(u8, nested, method_separator) != null or isPrivate(nested)) continue;
+            try names.append(self.arena, nested);
+        }
+        // Scope order is a hash map's, so the listing is sorted to be stable.
+        std.mem.sort([]const u8, names.items, {}, lessThanString);
+        var listing: std.ArrayList(u8) = .empty;
+        for (names.items) |name| {
+            if (listing.items.len > 0) try listing.appendSlice(self.arena, ", ");
+            try listing.print(self.arena, "`{s}`", .{name});
+        }
+        if (listing.items.len > 0) {
+            try self.reportWithHelpFmt(
+                span,
+                "`{s}` has no nested type named `{s}`",
+                .{ written, member },
+                "Check the spelling. The types nested in `{s}` are {s}.",
+                .{ written, listing.items },
+            );
+            return .reported;
+        }
+    }
     try self.reportWithHelpFmt(
         span,
         "`{s}` has no type-level member named `{s}`",
@@ -2246,8 +2300,12 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     // namespaces do not shadow it. A type is the one module-level name with
     // members of its own (10.4).
     if (self.lookup(names[0])) |found| {
-        if (length == 2 and found.scope == module_scope and found.binding.kind == .type) {
-            return self.qualifyTypeMember(expression.span, found.key, names[0], names[1]);
+        if (found.scope == module_scope and found.binding.kind == .type) {
+            // `Console.Color.red`: nested types (14.3), then a member.
+            const reached = try self.descendNested(found.key, names[0], names[1 .. length - 1]);
+            if (reached.used == length - 2) {
+                return self.qualifyTypeMember(expression.span, reached.key, reached.written, names[length - 1]);
+            }
         }
         return .none;
     }
@@ -2302,17 +2360,21 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     }
     if (!self.namespaces.contains(path)) {
         // `Shapes.Circle.unit`: a type reached through its namespace, then
-        // one of its type-level members.
-        if (length >= 3) {
-            const dot = std.mem.lastIndexOfScalar(u8, path, '.').?;
-            if (self.namespaces.contains(path[0..dot])) {
-                if (self.scopes.items[module_scope].get(path)) |binding| {
-                    if (binding.kind == .type) {
-                        const written = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ names[0], path[dot + 1 ..] });
-                        return self.qualifyTypeMember(expression.span, path, written, names[length - 1]);
-                    }
-                }
-            }
+        // any nested types (14.3), then one of its type-level members. The
+        // longest namespace prefix is the one meant.
+        var split = length - 2;
+        while (split >= 1) : (split -= 1) {
+            var prefix: []const u8 = self.namespaceFor(names[0]);
+            for (names[1..split]) |segment| prefix = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ prefix, segment });
+            if (!self.namespaces.contains(prefix)) continue;
+            const type_key = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ prefix, names[split] });
+            const binding = self.scopes.items[module_scope].get(type_key) orelse return .none;
+            if (binding.kind != .type) return .none;
+            var written: []const u8 = names[0];
+            for (names[1 .. split + 1]) |segment| written = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ written, segment });
+            const reached = try self.descendNested(type_key, written, names[split + 1 .. length - 1]);
+            if (reached.used != length - split - 2) return .none;
+            return self.qualifyTypeMember(expression.span, reached.key, reached.written, names[length - 1]);
         }
         return .none;
     }
@@ -2342,10 +2404,42 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     return .reported;
 }
 
-/// One segment per directory the project loader accepts, plus a declaration
-/// and its type-level member. A longer chain is a property access on a value,
-/// which this is not about.
-const max_path_segments = Project.max_depth + 2;
+fn lessThanString(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
+const Descended = struct {
+    key: []const u8,
+    written: []const u8,
+    used: usize,
+};
+
+/// Follows `segments` through nested types (14.3) from the type `type_key`,
+/// as far as each one names a type nested in the last. `used` says how many it
+/// followed, and `written` is the path as the reader wrote it that far.
+fn descendNested(self: *Resolver, type_key: []const u8, written: []const u8, segments: []const []const u8) Error!Descended {
+    var reached: Descended = .{ .key = type_key, .written = written, .used = 0 };
+    for (segments) |segment| {
+        const nested = try methodKey(self.arena, reached.key, segment);
+        const binding = self.scopes.items[module_scope].get(nested) orelse break;
+        if (binding.kind != .type) break;
+        reached = .{
+            .key = nested,
+            .written = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ reached.written, segment }),
+            .used = reached.used + 1,
+        };
+    }
+    return reached;
+}
+
+/// One segment per directory the project loader accepts, plus a declaration,
+/// up to `max_nested_path` types nested in it (14.3), and a type-level member.
+/// A longer chain is a property access on a value, which this is not about.
+const max_path_segments = Project.max_depth + max_nested_path + 2;
+
+/// How many nested types one qualified expression path follows. The parser
+/// allows deeper nesting, but a chain longer than this is not read as a path.
+pub const max_nested_path = 16;
 
 /// Fills `names` with a chain of plain names, outermost last, and returns how
 /// many. Null when the chain does not bottom out in a name.

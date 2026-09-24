@@ -1870,6 +1870,26 @@ fn keyOf(self: *Checker, name: []const u8) []const u8 {
 /// Resolves both a bare imported type and a namespace alias at the front of a
 /// qualified type, such as `using L = Left` followed by `L.Marker`.
 fn typeKeyOf(self: *Checker, name: []const u8) Error![]const u8 {
+    const whole = try self.writtenTypeKey(name);
+    if (self.structs.contains(whole)) return whole;
+    // Section 14.3: `Console.Color` names a type nested in `Console`, keyed
+    // `Console::Color`. The longest prefix that is a type is the outermost
+    // one; slice 0's clash rule keeps a prefix from also being a namespace.
+    var cut = name.len;
+    while (std.mem.lastIndexOfScalar(u8, name[0..cut], '.')) |dot| {
+        cut = dot;
+        const outer = try self.writtenTypeKey(name[0..dot]);
+        if (!self.structs.contains(outer)) continue;
+        const rest = try std.mem.replaceOwned(u8, self.arena, name[dot + 1 ..], ".", Resolver.method_separator);
+        const nested = try std.fmt.allocPrint(self.arena, "{s}" ++ Resolver.method_separator ++ "{s}", .{ outer, rest });
+        return if (self.structs.contains(nested)) nested else whole;
+    }
+    return whole;
+}
+
+/// A written type name's key before any nesting: a name the file sees, or a
+/// namespace-qualified one, following a namespace alias at its front.
+fn writtenTypeKey(self: *Checker, name: []const u8) Error![]const u8 {
     if (self.facts.keyFor(self.file, name)) |key| return key;
     const dot = std.mem.indexOfScalar(u8, name, '.') orelse return name;
     const namespace = self.facts.namespaceAliasFor(self.file, name[0..dot]) orelse return name;
@@ -4138,6 +4158,20 @@ fn reportPrivateTypeMember(self: *Checker, key: []const u8, span: Source.Span) E
     return self.reportPrivate(type_key, key[at + Resolver.method_separator.len ..], span);
 }
 
+/// Section 10.5 for a written type path through nested types (14.3): each
+/// private nested type it passes, such as `Outer._Hidden`, must be reached
+/// from inside the braces of the type that declares it.
+fn reportPrivateNestedPath(self: *Checker, key: []const u8, span: Source.Span) Error!bool {
+    var start: usize = 0;
+    while (std.mem.indexOfPos(u8, key, start, Resolver.method_separator)) |at| {
+        const next = at + Resolver.method_separator.len;
+        const end = std.mem.indexOfPos(u8, key, next, Resolver.method_separator) orelse key.len;
+        if (try self.reportPrivateTypeMember(key[0..end], span)) return true;
+        start = next;
+    }
+    return false;
+}
+
 fn insideType(self: *Checker, type_key: []const u8, span: Source.Span) bool {
     const extent = self.type_spans.get(type_key) orelse return true;
     return self.facts.owner.get(type_key) == self.file and
@@ -5081,7 +5115,11 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         );
         return .invalid;
     }
-    if (self.structs.get(try self.typeKeyOf(annotation.name))) |user_type| return user_type;
+    const key = try self.typeKeyOf(annotation.name);
+    if (self.structs.get(key)) |user_type| {
+        if (try self.reportPrivateNestedPath(key, annotation.span)) return .invalid;
+        return user_type;
+    }
     try self.report(
         annotation.span,
         "`{s}` is not a type",

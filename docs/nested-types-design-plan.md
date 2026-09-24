@@ -201,9 +201,25 @@ of what was weighed.
    unresolved (slice 2); today they report "`Console.Color` is an enum, not a value" with
    a suggestion that repeats what was written, which slice 2 must fix. The syntax stays
    undocumented until slice 2.
-2. **Use.** Type paths in annotations and expressions, construction, enum values through a
-   path, `Self`, per-type setup, display, privacy in both directions, and the
-   not-inherited diagnostic. This is the main correctness slice.
+2. **Use.** Done, 2026-09-24. Type paths in annotations and expressions, construction,
+   enum values through a path, `Self`, per-type setup, display, privacy in both directions,
+   and the not-inherited diagnostic. Expressions: `Resolver.qualify` descends nested types
+   (`descendNested`) after a leading type or after the longest namespace prefix, so
+   `Console.Color.red` and `Ui.Console.Pair.Deep(...)` reach `qualifyTypeMember`; a
+   qualified chain follows at most `Resolver.max_nested_path` (16) nested types.
+   Annotations, `extends`, and `with`: `typeKeyOf` in the resolver and checker splits at the
+   longest prefix that is a type and joins the rest with `::`. Aliases:
+   `using Color = Console.Color` works through `applyUsing`. Privacy: expressions already
+   used 10.5's textual braces check (`Checker.insideType`), which gives decision 6 as is;
+   annotations now check each private nested segment (`reportPrivateNestedPath`).
+   Settled while implementing: a type-level member of a nested type names that type bare
+   in its declaration, as the nested type itself is declared, so `func Pair.zero()` inside
+   `Pair` is used as `Console.Pair.zero()`; the parser already required this. A misspelled
+   capitalized member now reports "has no nested type named" and lists the public nested
+   types, sorted. Nothing already reported "`X` is an enum, not a value" misleadingly once
+   paths resolve. The LSP answered every hover, definition, references, completion, and
+   symbol request over a nested-types project without failing; navigating nested types is
+   slice 3.
 3. **Tooling.** LSP document symbols, hover, navigation, references, rename, and
    completion.
 4. **Documentation and integration.** Update rewrite-context 14.3 (and 10.4/14.2 where the

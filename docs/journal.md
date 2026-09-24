@@ -2253,3 +2253,29 @@ design (decision 3). The parser now records the enum as the declaring file's key
 A nested type clashing with any member of its enclosing type is reported at the nested type as
 "already a member of `Outer`", naming the shared name space. Paths through a type
 (`Console.Color.red`) are slice 2.
+
+## Nested types: reaching them by path, 2026-09-24
+
+Slice 2 of the nested-types plan. `Console.Color.red`, `Ui.Console.Pair.Deep("x")`,
+`const c: Console.Color`, `extends Zoo.Animal`, `with Zoo.Named`, and
+`using Color = Console.Color` all resolve now. Before this, `qualify` treated a chain as a
+namespace path or as a type plus one member, so `Console.Color.red` qualified only its inner
+`Console.Color` and left `.red` as a property read on a type, reported as "`Console.Color` is
+an enum, not a value" with a suggestion that repeated what the reader had written. The
+resolver now descends through nested types after a leading type or the longest namespace
+prefix, and hands the last segment to the existing `qualifyTypeMember`. That reuse brought the
+not-inherited diagnostic (`Dog.Tag` suggests `Animal.Tag`) with no new code. For annotations,
+both `typeKeyOf`s split the written path at the longest prefix that is a type; slice 0's clash
+rule is what keeps that from being ambiguous.
+
+Privacy mostly came for free: 10.5's rule is already a textual "inside the braces" check, and a
+nested type's braces sit inside its enclosing type's, which is exactly decision 6. Annotations
+were the gap, since only expressions went through the member check, so a private nested type
+written as a type is now checked segment by segment. A misspelled capitalized member now reads
+"`Console` has no nested type named `Colour`" and lists the real ones, sorted so the message is
+stable.
+
+A type-level member of a nested type names that type bare where it is declared
+(`func Pair.zero()` inside `Pair`), matching how the nested type itself is declared, and is
+used through the full path (`Console.Pair.zero()`). The parser already enforced this with a
+clear message.

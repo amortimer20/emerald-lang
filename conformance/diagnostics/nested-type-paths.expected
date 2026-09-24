@@ -1,0 +1,12 @@
+diagnostics/nested-type-paths.em:22:7: `Console.Color` has no value or type-level member named `purple`
+  print(Console.Color.purple)
+        ^^^^^^^^^^^^^^^^^^^^
+Check the spelling. The values of `Console.Color` are `red`.
+diagnostics/nested-type-paths.em:23:7: `Console` has no nested type named `Colour`
+  print(Console.Colour.red)
+        ^^^^^^^^^^^^^^
+Check the spelling. The types nested in `Console` are `Color`, `Pair`.
+diagnostics/nested-type-paths.em:24:7: `Tag` belongs to the type `Animal`, and a class does not inherit type-level members
+  print(Dog.Tag(1))
+        ^^^^^^^
+Reach it through the type that declares it, as in `Animal.Tag`.

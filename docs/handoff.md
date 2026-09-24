@@ -99,8 +99,10 @@ only with user authorization.
 - Nested types (14.3) are specified but not implemented: the parser rejects a type declared
   inside a type body, and until 2026-09-24 nothing recorded the gap.
   [`nested-types-design-plan.md`](nested-types-design-plan.md) has all seven decisions
-  approved; slices 0 and 1 are done, so nested types parse, format, and are checked, but
-  cannot yet be reached by a path such as `Console.Color.red`. Slice 2 (use) is next.
+  approved; slices 0 through 2 are done, so nested types parse, format, are checked, and are
+  reached by path (`Console.Color.red`, `const c: Ui.Console.Color`, aliases). Slice 3 (LSP
+  navigation) and slice 4 (documentation, fuzzing) remain; the syntax is not yet in the
+  language guide.
   `Console.Color` in the uncommitted Console styling plan depends on it.
 - Formatter: the formatter expands every one-line body onto separate lines. The user decided
   (2026-09-24) that an **empty** body stays on one line (`class InvalidScore extends Error { }`,
@@ -120,6 +122,13 @@ only with user authorization.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+Nested types slice 2 (use by path) is complete. With pinned Zig 0.16.0, Debug and ReleaseSafe
+`zig build test`, `zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`,
+and `git diff --check` passed. New cases `run/nested-types`, `diagnostics/nested-type-paths`,
+and `diagnostics/nested-type-privacy` were read by hand. An LSP smoke test sent hover,
+definition, references, and completion at every third column of both files of
+`run/nested-types`, plus document symbols, and got all 1,824 responses with a clean exit.
 
 Nested types slice 1 (parse, format, register, check bodies) is complete. With pinned Zig
 0.16.0, Debug and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh`,
