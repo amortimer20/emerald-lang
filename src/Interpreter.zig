@@ -5189,15 +5189,8 @@ fn callMethod(
     if (self.method_calls.get(call.callee)) |key| {
         if (isFileHandleKey(key)) return self.callFileHandle(expression.span, key, member, call);
         if (isFileWriterKey(key)) return self.callFileWriter(expression.span, key, member, call);
-    }
-    if (std.mem.eql(u8, member.name, "next") or std.mem.eql(u8, member.name, "choose") or
-        (std.mem.eql(u8, member.name, "shuffle!") and call.arguments.len == 1))
-    {
-        return self.callRandomMethod(expression, call, member);
-    }
-    // Decided by the checker from the receiver's type, so a struct's own
-    // `append` or `each` is never mistaken for a collection's.
-    if (self.method_calls.get(call.callee)) |key| {
+        // A resolved user method owns its name, including `next`, `choose`,
+        // and `shuffle!`. Honor it before considering native operations.
         if (member.optional) {
             // The checker has already proved this is not a changing struct
             // method (4.5): one has nowhere through `?.` to write its change
@@ -5207,6 +5200,14 @@ fn callMethod(
             return self.callStructMethod(expression, call, member, key, receiver);
         }
         return self.callStructMethod(expression, call, member, key, null);
+    }
+    // These generic native operations have no declared method key. The
+    // checker accepts them only on the prelude Random type; user methods
+    // with the same spelling have already taken the resolved path above.
+    if (std.mem.eql(u8, member.name, "next") or std.mem.eql(u8, member.name, "choose") or
+        (std.mem.eql(u8, member.name, "shuffle!") and call.arguments.len == 1))
+    {
+        return self.callRandomMethod(expression, call, member);
     }
     // Section 4.5's way out of an optional, and the one method allowed on a
     // value that may be absent.

@@ -19,6 +19,10 @@ lazy branch evaluation, compatible result types, branch-local narrowing, expecte
 for collections/lambdas, and use in returns, interpolation, and nested expressions.
 Formatting and LSP expression traversal cover it; `return if condition` remains a guard.
 
+The native `Random` dispatch collision found during that work is fixed: resolved user
+methods take precedence over native name-based routing. User-defined `next`, `choose`,
+and `shuffle!` now follow ordinary mutation, inheritance, and optional-call semantics.
+
 The filesystem library supports UTF-8 and binary whole-file operations plus streamed text and
 binary reads/writes. `File.open` returns a read-only `FileHandle`; `File.create` returns a
 write-only `FileWriter`; their block forms guarantee closure. `Bytes` provides immutable raw
@@ -84,11 +88,6 @@ only with user authorization.
 
 ## Active rough edges
 
-- Inline-if testing exposed an unrelated native-dispatch bug in `Interpreter.callMethod`:
-  user methods named `next` or `choose` (and `shuffle!` with one argument) are routed to
-  `Random` by name alone, without checking their receiver. A user `choose(Bool)` method
-  crashed in `callRandomMethod` when it read the Bool as a List. This predates inline `if`
-  and remains unfixed; native dispatch needs to respect the checker's resolved method.
 - Runtime failures currently share `RuntimeError` except `AssertionError` and `FileError`.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
@@ -98,6 +97,15 @@ only with user authorization.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+The Random dispatch fix is complete. With pinned Zig 0.16.0, Debug and
+ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (93 linked
+files), `zig fmt --check src/Interpreter.zig`, and `git diff --check` passed. The new
+`conformance/run/random-method-names.em` also ran directly with its output reviewed:
+user structs, inherited/overridden class methods, captured methods, and absent optional
+receivers work alongside seeded Random operations and ordinary `List.shuffle!()`.
+The earlier platform-library roadmap edits remain separate. The fix is being committed
+for the local 0.5.0 release; publishing still requires a push.
 
 The inline-if slice is complete. With pinned Zig 0.16.0, it passed Debug
 and ReleaseSafe `zig build test`, `zig build`, `bash tools/check-doc-examples.sh` (93 linked
