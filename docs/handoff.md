@@ -102,11 +102,15 @@ only with user authorization.
   approved; slices 0 and 1 are done, so nested types parse, format, and are checked, but
   cannot yet be reached by a path such as `Console.Color.red`. Slice 2 (use) is next.
   `Console.Color` in the uncommitted Console styling plan depends on it.
-- Formatter decision pending: every one-line body, including a nested
-  `enum Side { left, right }`, is expanded onto separate lines. The spec never settles this.
-- A project namespace named like a built-in is handled inconsistently: `Math` and `Program`
-  yield to it, while a prelude class such as `File` silently wins and hides the namespace.
-  Needs a user decision before it changes.
+- Formatter: the formatter expands every one-line body onto separate lines. The user decided
+  (2026-09-24) that an **empty** body stays on one line (`class InvalidScore extends Error { }`,
+  `else { }`, as the spec already writes them); a body with content still expands. Not yet
+  implemented. Pick the canonical spacing of the empty form (`{ }` or `{}`) when it is.
+- A project name matching a built-in is handled three ways (a declaration wins, a `math/` or
+  `program/` directory wins, a `file/` directory silently loses). The approved fix is a
+  writable, implicitly imported `Emerald` namespace with one reserved name:
+  [`emerald-namespace-design-plan.md`](emerald-namespace-design-plan.md), scheduled after
+  nested types.
 - Runtime failures currently share `RuntimeError` except `AssertionError` and `FileError`.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
