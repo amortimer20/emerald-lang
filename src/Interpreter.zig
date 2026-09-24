@@ -162,6 +162,8 @@ facts: Resolver.Facts = .{},
 out: *std.Io.Writer,
 /// Where `input` reads lines from.
 in: *std.Io.Reader,
+/// The execution-owned Console styling policy.
+color: bool,
 failure: ?Diagnostic = null,
 /// The typed Emerald value traveling with `error.Raised`.
 raised_value: ?Value = null,
@@ -286,6 +288,7 @@ pub fn run(
     out: *std.Io.Writer,
     in: *std.Io.Reader,
     arguments: []const []const u8,
+    color: bool,
     stack: StackLimit,
     test_mode: bool,
     step_limit: ?usize,
@@ -319,6 +322,7 @@ pub fn run(
         .facts = facts,
         .out = out,
         .in = in,
+        .color = color,
         .arguments = arguments,
         .signatures = signatures,
         .changing_methods = changing_methods,
@@ -2962,6 +2966,7 @@ fn evaluateCall(
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
         if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);

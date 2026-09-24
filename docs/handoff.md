@@ -23,9 +23,13 @@ braces, reached by path (`Console.Color.red`, `Ui.Console.Pair`, `using Color =
 Console.Color`), with privacy by 10.5's braces rule and full LSP support. The spec had called
 them settled while nothing implemented them; see
 [`nested-types-design-plan.md`](nested-types-design-plan.md) for what was decided and why. A
-module-level declaration may no longer share a directory namespace's name. The Console styling
-plan ([`console-design-plan.md`](console-design-plan.md)) now spells its color type
-`Console.Color`; its decisions 2 through 5 still need the user.
+module-level declaration may no longer share a directory namespace's name.
+
+Console styling slice 1 is implemented locally: `Console.Color`, `Console.style`, and the
+twelve basic helpers produce correctly nested ANSI SGR strings when the execution-owned
+policy is forced on, and remain ordinary strings when it is off. The policy is not yet exposed
+through the CLI, environment, terminal detection, or REPL; those belong to slice 3 of
+[`console-design-plan.md`](console-design-plan.md). `Console.plain` remains slice 2.
 
 Inline `if condition then value else value` is now implemented, closing a gap that the
 design and language guide had incorrectly described as already available. It supports
@@ -88,9 +92,10 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-No implementation slice is active. Candidates the user has discussed: the Console styling
-plan, whose decisions are all settled; it is the natural next task, with `Console` in the
-`Emerald` namespace and its color type `Console.Color`.
+Console styling slice 1 is awaiting the user's commit decision. The next implementation slice
+is `Console.plain`: remove only complete ANSI SGR sequences while retaining other terminal
+control sequences. The broader Console policy (CLI flags, environment, terminal detection,
+and REPL) remains slice 3.
 
 ## Deferred
 
@@ -111,11 +116,6 @@ plan, whose decisions are all settled; it is the natural next task, with `Consol
 
 ## Active rough edges
 
-- A project name matching a built-in is handled three ways (a declaration wins, a `math/` or
-  `program/` directory wins, a `file/` directory silently loses). The approved fix is a
-  writable, implicitly imported `Emerald` namespace with one reserved name:
-  [`emerald-namespace-design-plan.md`](emerald-namespace-design-plan.md), scheduled after
-  nested types.
 - Runtime failures currently share `RuntimeError` except `AssertionError` and `FileError`.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
@@ -125,6 +125,15 @@ plan, whose decisions are all settled; it is the natural next task, with `Consol
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
 
 ## Validation and repository state
+
+Console styling slice 1 is implemented locally and uncommitted. With pinned Zig 0.16.0,
+`bash tools/check-toolchain.sh`, Debug and ReleaseSafe `zig build test`, `zig build`,
+`bash tools/check-doc-examples.sh` (97 linked files), `zig fmt --check src/*.zig`, and
+`git diff --check` passed. The new `color/console-style` and `run/console-style-off`
+expectations, plus the warning newly required by `diagnostics/nested-type-paths`, were read by
+hand. `Console`'s prelude bodies must use `Emerald.Console` internally: otherwise a project
+that declares its own `Console` captures them. The invalid-reserved-`Emerald` recovery path
+needed a resolver guard for the same reason.
 
 `Emerald` namespace slice 3 (documentation) is complete: rewrite-context 14.2, 15.1, and the
 decision table, the projects guide, and the library inventory. `bash tools/check-doc-examples.sh`

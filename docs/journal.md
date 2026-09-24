@@ -2393,3 +2393,25 @@ is the one reserved name; `using Emerald` is redundant; diagnostics keep bare na
 longer says the prelude functions are stored "in an internal namespace", since that namespace
 is now written like any other. The language guide's projects page and the library inventory
 explain `Emerald.` to readers, and both new snippets were run.
+
+## Console styling, slice 1: helpers under a forced policy, 2026-09-24
+
+`Console` is now an ordinary prelude class with the nested `Console.Color` enum, eight basic
+foreground helpers, four text-style helpers, and `Console.style`. Styled values are ordinary
+`String`s containing ANSI SGR sequences. The one native primitive, `Console._color()`, reads
+the execution-owned `Streams.color` bool; every other Console function has an Emerald body, so
+named/defaulted `style` arguments and interpolation keep their usual behavior. A new
+`conformance/color/` kind forces that policy on, while ordinary runs stay unstyled by default.
+
+Layers use their specific close codes and reopen after either their own close or a full reset.
+That makes nested foreground/background styling and the shared bold/dim close code compose
+without leaking or losing the surrounding style. The focused conformance program asserts every
+escape sequence in source, rather than placing raw terminal bytes in a golden file.
+
+The prototype's bare `Console` references were not safe once project declarations could shadow
+built-ins: a project's own `Console` could be resolved while checking prelude method bodies.
+The shipped prelude therefore writes `Emerald.Console` internally. A malformed project
+declaration of the reserved `Emerald` name exposed the same recovery-path hazard, so the
+resolver keeps prelude self-qualification anchored to its namespace while it reports that
+program error. Type-member completion now also filters private names; otherwise Console's
+native and implementation helpers would have appeared in `Console.` suggestions.

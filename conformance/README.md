@@ -15,6 +15,7 @@ Run them with `zig build test`. The runner is [`src/conformance.zig`](../src/con
 | `lexical/` | The program tokenizes with no diagnostics. |
 | `diagnostics/` | `check` reports exactly the text in its `.expected` file. |
 | `run/` | The program runs and prints exactly its `.expected` file. |
+| `color/` | The program runs with Console ANSI styling forced on. |
 | `runtime-errors/` | The program runs, then fails with exactly its `.expected` file. |
 | `format/` | `emerald format` produces exactly its `.expected` file, and formatting that output again changes nothing. |
 

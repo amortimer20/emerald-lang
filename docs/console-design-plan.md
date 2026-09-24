@@ -307,12 +307,17 @@ Notes for the executor:
 
 ## Runnable implementation slices
 
-1. **Helpers under a forced policy.** `Console.Color`, the twelve helpers, `Console.style`,
+1. **Helpers under a forced policy — implemented locally, awaiting commit.** `Console.Color`, the twelve helpers, `Console.style`,
    the nesting rule, `Streams.color`, and the `conformance/color/` directory. Cases assert
    exact sequences in source with `"\u{1B}"`, including nested foreground,
    foreground-in-background, bold/dim both ways, a full reset in input (per decision 4),
    and `style` layer order. `conformance/run/` cases confirm every helper is the identity
-   with color off. No CLI changes yet: the policy is only reachable by tests.
+   with color off. No CLI changes yet: the policy is only reachable by tests. The prelude
+   bodies qualify their internal calls as `Emerald.Console`, rather than bare `Console`, so a
+   program's own `Console` cannot capture those calls. The resolver likewise keeps the
+   prelude's `Emerald` path stable while recovering from an invalid declaration of the
+   reserved name. Completion now omits private type members such as `_color`, `_layer`, and
+   `_code`.
 2. **`Console.plain`.** The SGR scanner, cases for stripping every styled output from slice
    1, and cases that keep cursor sequences, bare `ESC`, and incomplete sequences intact.
 3. **Real terminals.** `--color`, environment precedence, TTY detection, Windows

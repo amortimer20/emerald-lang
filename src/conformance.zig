@@ -12,6 +12,7 @@
 //!   conformance/lexical/         tokenizes with no diagnostics
 //!   conformance/diagnostics/     `check` reports exactly its `.expected`
 //!   conformance/run/             runs, and prints exactly its `.expected`
+//!   conformance/color/           runs with Console styling forced on
 //!   conformance/runtime-errors/  runs, then fails with exactly its `.expected`
 //!
 //! A case is usually one `.em` file. A directory holding a `main.em` is one
@@ -126,6 +127,7 @@ const Kind = enum {
     lexical,
     diagnostics,
     run,
+    color,
     runtime_errors,
     format,
 
@@ -135,6 +137,7 @@ const Kind = enum {
         if (std.mem.eql(u8, directory, "lexical")) return .lexical;
         if (std.mem.eql(u8, directory, "diagnostics")) return .diagnostics;
         if (std.mem.eql(u8, directory, "run")) return .run;
+        if (std.mem.eql(u8, directory, "color")) return .color;
         if (std.mem.eql(u8, directory, "runtime-errors")) return .runtime_errors;
         if (std.mem.eql(u8, directory, "format")) return .format;
         return null;
@@ -248,12 +251,12 @@ fn produce(
             defer report.deinit();
             return try renderDiagnostics(gpa, sources, report.diagnostics);
         },
-        .run, .runtime_errors => {
+        .run, .color, .runtime_errors => {
             var out: std.Io.Writer.Allocating = .init(gpa);
             defer out.deinit();
 
             var in: std.Io.Reader = .fixed(input);
-            var report = try emerald.runProject(gpa, project, .{ .out = &out.writer, .in = &in });
+            var report = try emerald.runProject(gpa, project, .{ .out = &out.writer, .in = &in, .color = kind == .color });
             defer report.deinit();
 
             // A warning (Diagnostic.Severity) does not stop checking or
@@ -271,7 +274,7 @@ fn produce(
                 return null;
             }
 
-            if (kind == .run) {
+            if (kind == .run or kind == .color) {
                 if (report.failure) |failure| {
                     const rendered = try renderDiagnostics(gpa, sources, &.{failure});
                     defer gpa.free(rendered);

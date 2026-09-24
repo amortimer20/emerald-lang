@@ -2888,9 +2888,9 @@ fn collectInstanceMembers(gpa: std.mem.Allocator, analysis: *const emerald.Analy
 fn collectTypeMembers(gpa: std.mem.Allocator, s: Ast.StructDeclaration, out: *std.ArrayList(CompletionItem)) !void {
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(gpa);
-    for (s.type_functions) |function| try addCompletionOnce(gpa, &seen, out, function.member);
-    for (s.type_fields) |field| try addCompletionOnce(gpa, &seen, out, field.name);
-    for (s.types) |nested| try addCompletionOnce(gpa, &seen, out, nested.declaration.name);
+    for (s.type_functions) |function| if (!Resolver.isPrivate(function.member)) try addCompletionOnce(gpa, &seen, out, function.member);
+    for (s.type_fields) |field| if (!Resolver.isPrivate(field.name)) try addCompletionOnce(gpa, &seen, out, field.name);
+    for (s.types) |nested| if (!Resolver.isPrivate(nested.declaration.name)) try addCompletionOnce(gpa, &seen, out, nested.declaration.name);
 }
 
 /// Direct children of `namespace`, plus direct child namespaces inferred from
@@ -3612,7 +3612,11 @@ test "completion collects a type's own type-level members, not its instance memb
         \\    func Vector.origin(): Vector {
         \\        return Vector(0)
         \\    }
+        \\    func Vector._hidden(): Int {
+        \\        return 0
+        \\    }
         \\    const Vector.unit = Vector(1)
+        \\    const Vector._secret = 0
         \\}
         \\print(Vector.origin())
     ;
@@ -3636,6 +3640,8 @@ test "completion collects a type's own type-level members, not its instance memb
     try testing.expect(labels.contains("origin"));
     try testing.expect(labels.contains("unit"));
     try testing.expect(!labels.contains("x"));
+    try testing.expect(!labels.contains("_hidden"));
+    try testing.expect(!labels.contains("_secret"));
 }
 
 test "completion collects direct namespace members and child namespaces" {

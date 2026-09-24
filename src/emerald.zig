@@ -229,6 +229,9 @@ fn loneProject(files: []Project.File) Project {
 pub const Streams = struct {
     out: *std.Io.Writer,
     in: *std.Io.Reader,
+    /// Whether this execution emits Console's ANSI SGR styling. The default
+    /// keeps every existing caller deterministic until policy resolution.
+    color: bool = false,
     /// Section 14.1's `Program.arguments`. Empty unless the caller has actual
     /// program arguments to give, such as the CLI's `run`/`test` commands.
     arguments: []const []const u8 = &.{},
@@ -583,6 +586,7 @@ fn analyze(
         running.out,
         running.in,
         running.arguments,
+        running.color,
         stack,
         test_mode,
         step_limit,
@@ -678,6 +682,9 @@ test "analyzeProject exposes every expression's type, keyed by expression and it
     var iterator = analysis.checked.expression_types.iterator();
     while (iterator.next()) |entry| {
         if (entry.key_ptr.*.data != .int_literal) continue;
+        // Prelude implementation bodies also contribute checked expressions.
+        // This test is specifically locating the user's `5` literal.
+        if (entry.value_ptr.file != 0) continue;
         try testing.expectEqual(@as(u32, 0), entry.value_ptr.file);
         try testing.expectEqual(Type.int, entry.value_ptr.type);
         found_int_literal = true;

@@ -1,3 +1,7 @@
+diagnostics/nested-type-paths.em:3:7: warning: `Console` hides Emerald's built-in `Console`
+  class Console {
+        ^^^^^^^
+A name the program declares always wins, so `Console` here means this one. Write `Emerald.Console` to reach the built-in, or choose a different name.
 diagnostics/nested-type-paths.em:22:7: `Console.Color` has no value or type-level member named `purple`
   print(Console.Color.purple)
         ^^^^^^^^^^^^^^^^^^^^

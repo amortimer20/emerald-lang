@@ -90,6 +90,87 @@ class Path {
     func Path.absolute(path: String): String { return "" }
 }
 
+# Terminal styling is written in Emerald so it keeps normal named/defaulted
+# arguments and composes through ordinary String interpolation.
+class Console {
+    enum Color {
+        black, red, green, yellow, blue, magenta, cyan, white
+        bright_black, bright_red, bright_green, bright_yellow
+        bright_blue, bright_magenta, bright_cyan, bright_white
+    }
+
+    # Native: whether this execution emits ANSI SGR styling.
+    func Console._color(): Bool { return false }
+
+    func Console._layer(text: String, open: Int, close: Int): String {
+        const opened = "\u{1B}[#{open}m"
+        const closed = "\u{1B}[#{close}m"
+        const reset = "\u{1B}[0m"
+        return opened + text.replace(closed, closed + opened).replace(reset, reset + opened) + closed
+    }
+
+    func Console._code(color: Emerald.Console.Color): Int {
+        return case color {
+            when Emerald.Console.Color.black then 30
+            when Emerald.Console.Color.red then 31
+            when Emerald.Console.Color.green then 32
+            when Emerald.Console.Color.yellow then 33
+            when Emerald.Console.Color.blue then 34
+            when Emerald.Console.Color.magenta then 35
+            when Emerald.Console.Color.cyan then 36
+            when Emerald.Console.Color.white then 37
+            when Emerald.Console.Color.bright_black then 90
+            when Emerald.Console.Color.bright_red then 91
+            when Emerald.Console.Color.bright_green then 92
+            when Emerald.Console.Color.bright_yellow then 93
+            when Emerald.Console.Color.bright_blue then 94
+            when Emerald.Console.Color.bright_magenta then 95
+            when Emerald.Console.Color.bright_cyan then 96
+            when Emerald.Console.Color.bright_white then 97
+        }
+    }
+
+    func Console.style(text: String, foreground: Emerald.Console.Color? = nothing, background: Emerald.Console.Color? = nothing, bold: Bool = false, dim: Bool = false, italic: Bool = false, underline: Bool = false): String {
+        if not Emerald.Console._color() {
+            return text
+        }
+        var result = text
+        if foreground != nothing {
+            result = Emerald.Console._layer(result, Emerald.Console._code(foreground), 39)
+        }
+        if background != nothing {
+            result = Emerald.Console._layer(result, Emerald.Console._code(background) + 10, 49)
+        }
+        if bold {
+            result = Emerald.Console._layer(result, 1, 22)
+        }
+        if dim {
+            result = Emerald.Console._layer(result, 2, 22)
+        }
+        if italic {
+            result = Emerald.Console._layer(result, 3, 23)
+        }
+        if underline {
+            result = Emerald.Console._layer(result, 4, 24)
+        }
+        return result
+    }
+
+    func Console.black(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.black) }
+    func Console.red(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.red) }
+    func Console.green(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.green) }
+    func Console.yellow(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.yellow) }
+    func Console.blue(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.blue) }
+    func Console.magenta(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.magenta) }
+    func Console.cyan(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.cyan) }
+    func Console.white(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.white) }
+
+    func Console.bold(text: String): String { return Emerald.Console.style(text, bold: true) }
+    func Console.dim(text: String): String { return Emerald.Console.style(text, dim: true) }
+    func Console.italic(text: String): String { return Emerald.Console.style(text, italic: true) }
+    func Console.underline(text: String): String { return Emerald.Console.style(text, underline: true) }
+}
+
 # Section 9.3's repeatable randomness source. Its state is private and the
 # interpreter supplies the generic collection operations.
 class Random {

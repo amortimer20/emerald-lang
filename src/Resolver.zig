@@ -2401,18 +2401,25 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     // A local or a module binding of that name is a value; section 14.2's
     // namespaces do not shadow it. A type is the one module-level name with
     // members of its own (10.4).
-    if (self.lookup(names[0])) |found| directory: {
-        // A project name always wins over a built-in: a `file/` directory's
-        // `File.helper` is the project's, and `Emerald.File` stays reachable.
-        if (found.scope == module_scope and isPreludeKey(found.key) and self.namespaces.contains(self.namespaceFor(names[0]))) break :directory;
-        if (found.scope == module_scope and found.binding.kind == .type) {
-            // `Console.Color.red`: nested types (14.3), then a member.
-            const reached = try self.descendNested(found.key, names[0], names[1 .. length - 1]);
-            if (reached.used == length - 2) {
-                return self.qualifyTypeMember(expression.span, reached.key, reached.written, names[length - 1]);
+    // The prelude names its own declarations through `Emerald`. A malformed
+    // program may still declare that reserved name; its error must not make
+    // the prelude resolve the program's invalid declaration instead of its
+    // own namespace while collecting diagnostics.
+    const prelude_qualifying_itself = std.mem.eql(u8, self.files[self.file].namespace, prelude_namespace) and std.mem.eql(u8, names[0], prelude_namespace);
+    if (!prelude_qualifying_itself) {
+        if (self.lookup(names[0])) |found| directory: {
+            // A project name always wins over a built-in: a `file/` directory's
+            // `File.helper` is the project's, and `Emerald.File` stays reachable.
+            if (found.scope == module_scope and isPreludeKey(found.key) and self.namespaces.contains(self.namespaceFor(names[0]))) break :directory;
+            if (found.scope == module_scope and found.binding.kind == .type) {
+                // `Console.Color.red`: nested types (14.3), then a member.
+                const reached = try self.descendNested(found.key, names[0], names[1 .. length - 1]);
+                if (reached.used == length - 2) {
+                    return self.qualifyTypeMember(expression.span, reached.key, reached.written, names[length - 1]);
+                }
             }
+            return .none;
         }
-        return .none;
     }
 
     if (length == 2 and std.mem.eql(u8, names[0], "Float")) {
