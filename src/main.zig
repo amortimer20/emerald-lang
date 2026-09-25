@@ -208,8 +208,11 @@ extern "kernel32" fn GetDynamicTimeZoneInformation(information: *DYNAMIC_TIME_ZO
 fn windowsZone(arena: std.mem.Allocator) TimeZone.Local {
     var information: DYNAMIC_TIME_ZONE_INFORMATION = undefined;
     if (GetDynamicTimeZoneInformation(&information) == 0xFFFF_FFFF) return .utc;
-    const key = std.mem.sliceTo(&information.TimeZoneKeyName, 0);
-    const name = if (key.len == 0) "Local" else std.unicode.utf16LeToUtf8Alloc(arena, key) catch return .utc;
+    const key_utf16 = std.mem.sliceTo(&information.TimeZoneKeyName, 0);
+    const key = if (key_utf16.len == 0) "Local" else std.unicode.utf16LeToUtf8Alloc(arena, key_utf16) catch return .utc;
+    // Known as its IANA name, so the built-in database's full history is used
+    // for it; Windows's own current rule stays as the fallback.
+    const name = TimeZone.windowsZoneName(key) orelse key;
     const date = struct {
         fn of(time: SYSTEMTIME) TimeZone.WindowsDate {
             return .{ .year = time.wYear, .month = time.wMonth, .weekday = time.wDayOfWeek, .week = time.wDay, .hour = time.wHour, .minute = time.wMinute };

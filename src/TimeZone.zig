@@ -13,6 +13,10 @@
 //! does the reading.
 
 const std = @import("std");
+const tzdata = @import("tzdata/tzdata.zig");
+
+/// The IANA release built into Emerald (`tools/update-tzdata.py`).
+pub const database_version = tzdata.version;
 
 /// A moment, in seconds since 1970-01-01T00:00:00Z, from which clocks in the
 /// zone are `offset` seconds ahead of UTC.
@@ -275,6 +279,74 @@ fn civilFromDays(days: i64) struct { year: i64 } {
     return .{ .year = year_of_era + era * 400 + @as(i64, if (month_index >= 10) 1 else 0) };
 }
 
+/// The IANA time zone database built into Emerald, so a named zone gives the
+/// same answer on every operating system. It is decompressed only when a
+/// program first asks for a zone by name. See `tools/update-tzdata.py` for the
+/// layout.
+pub const Database = struct {
+    entries: []const Entry,
+    files: []const []const u8,
+
+    const Entry = struct { name: []const u8, file: u16 };
+
+    const compressed = @embedFile("tzdata/zones.zlib");
+
+    /// Everything it returns lives in `arena`.
+    pub fn load(arena: std.mem.Allocator) !Database {
+        var input: std.Io.Reader = .fixed(compressed);
+        var window: [std.compress.flate.max_window_len]u8 = undefined;
+        var decompress: std.compress.flate.Decompress = .init(&input, .zlib, &window);
+        const bytes = try decompress.reader.allocRemaining(arena, .unlimited);
+
+        var reader: std.Io.Reader = .fixed(bytes);
+        if (!std.mem.eql(u8, try reader.take(4), "EMTZ") or try reader.takeByte() != 1) return error.BadDatabase;
+        const entries = try arena.alloc(Entry, try reader.takeInt(u32, .little));
+        for (entries) |*entry| {
+            const name = try reader.take(try reader.takeByte());
+            entry.* = .{ .name = name, .file = try reader.takeInt(u16, .little) };
+        }
+        const files = try arena.alloc([]const u8, try reader.takeInt(u32, .little));
+        for (files) |*file| file.* = try reader.take(try reader.takeInt(u32, .little));
+        for (entries) |entry| if (entry.file >= files.len) return error.BadDatabase;
+        return .{ .entries = entries, .files = files };
+    }
+
+    /// The TZif file for exactly `name`, which is case-sensitive as IANA's
+    /// names are.
+    pub fn find(self: Database, name: []const u8) ?[]const u8 {
+        var low: usize = 0;
+        var high: usize = self.entries.len;
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            switch (std.mem.order(u8, self.entries[middle].name, name)) {
+                .eq => return self.files[self.entries[middle].file],
+                .lt => low = middle + 1,
+                .gt => high = middle,
+            }
+        }
+        return null;
+    }
+
+    pub fn rules(self: Database, arena: std.mem.Allocator, name: []const u8) !?Rules {
+        const file = self.find(name) orelse return null;
+        return try parseTzif(arena, file);
+    }
+
+    /// The name meant by one written in the wrong case, such as
+    /// `america/new_york`.
+    pub fn closest(self: Database, name: []const u8) ?[]const u8 {
+        for (self.entries) |entry| if (std.ascii.eqlIgnoreCase(entry.name, name)) return entry.name;
+        return null;
+    }
+};
+
+/// CLDR's IANA name for a Windows zone key name such as `Eastern Standard
+/// Time`.
+pub fn windowsZoneName(key: []const u8) ?[]const u8 {
+    for (tzdata.windows) |pair| if (std.mem.eql(u8, pair[0], key)) return pair[1];
+    return null;
+}
+
 /// Where the machine's zone comes from on a Unix-like system, following
 /// glibc: the `TZ` variable when it is set, otherwise `/etc/localtime`.
 pub const Source = union(enum) {
@@ -461,6 +533,35 @@ test "where the machine's zone comes from" {
     const absolute = localSource("/var/db/timezone/zoneinfo/Asia/Tokyo", null).file;
     try testing.expectEqualStrings("Asia/Tokyo", absolute.name);
     try testing.expectEqualStrings("/tmp/zone", localSource("/tmp/zone", null).file.name);
+}
+
+test "the built-in database" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const database = try Database.load(arena.allocator());
+    try testing.expect(database.entries.len > 400);
+
+    const new_york = (try database.rules(arena.allocator(), "America/New_York")).?;
+    try testing.expectEqual(-5 * 3600, new_york.offsetAt(utc(2026, 3, 8, 6, 59)));
+    try testing.expectEqual(-4 * 3600, new_york.offsetAt(utc(2026, 3, 8, 7, 0)));
+    // Before 1883 New York kept its own local mean time.
+    try testing.expectEqual(@as(i32, -17762), new_york.offsetAt(utc(1850, 1, 1, 0, 0)));
+    // Well past the last transition, the footer's rule still applies.
+    try testing.expectEqual(-4 * 3600, new_york.offsetAt(utc(2300, 7, 1, 0, 0)));
+
+    // Brazil stopped daylight time in 2019.
+    const sao_paulo = (try database.rules(arena.allocator(), "America/Sao_Paulo")).?;
+    try testing.expectEqual(-2 * 3600, sao_paulo.offsetAt(utc(2019, 1, 15, 0, 0)));
+    try testing.expectEqual(-3 * 3600, sao_paulo.offsetAt(utc(2020, 1, 15, 0, 0)));
+
+    try testing.expect(database.find("america/new_york") == null);
+    try testing.expectEqualStrings("America/New_York", database.closest("america/new_york").?);
+    try testing.expect(database.find("Nowhere/Special") == null);
+    try testing.expect(database.closest("Nowhere/Special") == null);
+    // Every Windows name maps to a zone the database has.
+    for (tzdata.windows) |pair| try testing.expect(database.find(pair[1]) != null);
+    try testing.expectEqualStrings("America/New_York", windowsZoneName("Eastern Standard Time").?);
+    try testing.expect(windowsZoneName("Nowhere Standard Time") == null);
 }
 
 test "Windows's description of a zone" {

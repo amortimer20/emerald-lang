@@ -292,6 +292,10 @@ Slice 4 notes. The local zone's rules come from the machine, not the built-in da
 clock changes run in `conformance/local-zone/`, where the local zone is `EST5EDT`.
 `TimeZone(name)` accepts the local zone's own name until slice 5 adds the rest.
 
+Slice 5 notes. The database is 56 KB compressed, not the 100–450 KB estimated above: IANA's
+current files are "slim", and aliases share them. `TimeZone.named_maybe` returns `nothing`
+for an unknown name, and a name in the wrong case is refused with its right spelling.
+
 ### Parsing
 
 The accepted text is a strict subset of ISO 8601 / RFC 3339, the same as the display format.

@@ -1,0 +1,11 @@
+2026-10-01T13:00:00Z 2026-10-01T15:00:00 2026-10-01T22:00:00
+2026-10-01T18:30:00 2026-10-01T23:00:00
+2026-03-08T07:30:00Z 2026-11-01T05:30:00Z
+-5h -4h
+-2h -3h
+1849-12-31T19:03:58 2300-07-01T16:00:00Z
+-4h -5h Etc/UTC
+true false home
+nothing Europe/London +02:00
+"america/new_york" is not a time zone Emerald knows: zone names are case-sensitive, so write "America/New_York"
+"Mars/Olympus" is not a time zone Emerald knows: use an IANA name such as "Europe/Paris", "UTC", or an offset such as "+05:30"

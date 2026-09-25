@@ -2572,3 +2572,24 @@ day on either side: try the earlier offset, then the later, else move forward by
 That reproduces Temporal's `"compatible"` choice without the runtime exposing transitions.
 The first draft of the local-zone test could flake at midnight, because it read today
 before now and allowed yesterday. It now reads now first and allows tomorrow.
+
+## Dates and times, slice 5: named zones from a built-in database, 2026-09-25
+
+Slice 4's CI run failed on Windows ReleaseSafe. After `Program.sleep(20 ms)`, a `Stopwatch`
+had measured less than 20 ms, because a Windows timer can wake early relative to the
+monotonic clock. Rather than loosen the test, `Program.sleep` now sleeps against a
+deadline on that clock (`57b58a5`), and CI went green everywhere. That run was also the
+first to execute the Windows zone binding.
+
+The database is IANA's own TZif files, taken from PyPI's `tzdata` wheel. IANA's site and
+ziglang.org were unreachable from the cloud sandbox, but PyPI and GitHub were not. Each
+distinct file is stored once behind a sorted name index and zlib-compressed: 598 names,
+345 files, 56 KB. `tools/update-tzdata.py` also turns CLDR's `windowsZones.xml` into a
+small generated `tzdata.zig`, so the Windows local zone can be named without decompressing
+anything. The interpreter decompresses the database into its run arena the first time a
+program names a zone, and caches each parsed zone. Named lookups prefer it over the
+machine's rules so that a name means the same everywhere.
+
+Testing named zones exposed a slice 4 regression. Making `TimeZone`'s private offset an
+`Int?` had silently stopped zones being dictionary keys, because an optional is not a key
+type. It is now an `Int` beside a `Bool`, and `run/named-zones` uses a zone as a key.

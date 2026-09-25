@@ -99,18 +99,18 @@ method changes only ordinary identifier uses.
 
 Dates and times (rewrite-context 15.8) are being implemented from
 [`date-time-design-plan.md`](date-time-design-plan.md). The user accepted every decision in
-it. Slices 1–4 are done: every type in the plan, plus the machine's local zone and its
-defaults.
+it. Slices 1–5 are done: every type in the plan, the machine's local zone, and named IANA
+zones from the database built into Emerald (`src/tzdata/`).
 
-Slice 5 is next: named IANA zones from a copy of the time-zone database built into Emerald
-(decision 1C). It needs a generated, compact data file under version control; a
-`tools/update-tzdata.sh` that regenerates it from IANA's release; and
-`TimeZone(name)`/`TimeZone.named_maybe`. The interpreter's `zoneRules` then looks names up
-there as well as in the local zone. On Windows, the local zone's key name (`Eastern Standard
-Time`) should map to its IANA name through CLDR's `windowsZones` table, so it can use the
-built-in rules. Keep writing prelude bodies with `Emerald.`-qualified built-in names, and
-share helpers through private module-level functions. Library pages and an example program
-come in slice 6.
+Slice 6 is next: library pages (`docs/library/`) for `Date`, `Time`, `DateTime`, `Instant`,
+`Duration`, `TimeZone`, `Weekday`, and `Stopwatch`, or one combined page if that reads
+better; inventory rows; `examples/dates.em` with the plan's beginner programs; and a
+fuzz-generator template if its value shapes can reach these types cheaply. After that,
+checking only the prelude bodies a program can reach is the next performance task.
+
+Refresh the time-zone data before each release with `python3 tools/update-tzdata.py` (see
+`src/tzdata/README.md`). The release workflow does not yet ship third-party notices with the
+binaries, and CLDR's terms may call for one; the user has not decided that.
 
 Console's remaining scope (`Table`/`Panel` widgets, prompts, multi-select) comes after dates
 and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Audio`, and
@@ -157,27 +157,28 @@ and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Aud
   on one machine). Checking only the prelude bodies a program can reach would need the
   interpreter to stop relying on facts recorded for every body. It is the next performance
   task once dates and times are finished.
-- On Windows, the local zone comes from the system's current yearly rule, so dates before
-  the zone last changed its rules may get the wrong offset until slice 5's database is used
-  for it.
+- On Windows, a local zone whose key name CLDR does not map (rare) falls back to Windows's
+  current yearly rule, which can give the wrong offset for dates before the zone last
+  changed its rules.
 - A module-level variable in the prelude takes part in a program's module-setup ordering
   analysis and would leak its `prelude.em#` key into a diagnostic. The prelude avoids them
   for now; the checker should eventually leave prelude bindings out of that analysis.
 
 ## Validation and repository state
 
-Dates and times slice 4 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe
-`zig build test` (including `src/TimeZone.zig`'s unit tests, the new `local-zone/`
-conformance directory, and two new CLI tests of `TZ`), `zig build`, `zig fmt --check
-src/*.zig build.zig`, cross-builds for `x86_64-windows` and `aarch64-macos`,
+Dates and times slice 5 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe
+`zig build test` (including a unit test that loads the built-in database and checks New
+York, São Paulo, and every Windows name), `zig build`, `zig fmt --check src/*.zig
+build.zig`, cross-builds for `x86_64-windows` and `aarch64-macos`,
 `bash tools/check-doc-examples.sh`, `git diff --check`, and fuzz seeds 20260925 (3000) and
-9001 (2000) passed. Real zones were checked through `TZ` on Linux: `America/New_York` across
-both 2026 clock changes, `Australia/Sydney`, `Asia/Kolkata`, `Europe/Paris` by path, a POSIX
-rule, an empty `TZ`, an unknown name, and `/etc/localtime`. The Windows binding compiles but
-has not run anywhere yet; CI's Windows job is its first run.
+5150 (2000) passed. `tools/update-tzdata.py` produced identical files on two offline runs and
+one online run (IANA 2026d, 598 zones, 56 KB). The new `run/named-zones` case was checked by
+hand, including a meeting across four cities.
 
-Startup was measured interleaved over 60 runs on a noisier machine: 5.6 ms before any date
-work, 8.8 ms after slice 3, and 9.8 ms after slice 4.
+CI run 76 (commit `57b58a5`) is green on all three platforms, including Windows ReleaseSafe.
+That run was the first to execute slice 4's Windows zone code, and it confirmed the
+`Program.sleep` fix for the Windows timer that woke early. Startup is unchanged by the
+database, which loads only when a program names a zone.
 
 All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.

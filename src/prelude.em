@@ -1169,13 +1169,16 @@ struct Instant with Ordered, Textual {
 }
 
 # The rules that turn an Instant into what a calendar and clock show in some
-# place: UTC, a fixed offset from it such as "+05:30", or the machine's own
-# zone, whose offset may change during the year.
+# place: UTC, a fixed offset from it such as "+05:30", a named IANA zone such
+# as "Europe/Paris" from the database built into Emerald, or the machine's own
+# zone.
 struct TimeZone with Textual {
     const name: String
-    # Seconds ahead of UTC for a fixed zone; nothing when the runtime holds
-    # rules for this name instead.
-    const _offset: Int?
+    # Whether the zone is always `_offset` seconds ahead of UTC; otherwise the
+    # runtime holds rules for its name. Not an `Int?`, so a zone stays usable
+    # as a dictionary key.
+    const _fixed: Bool
+    const _offset: Int
 
     const TimeZone.utc = Emerald.TimeZone("UTC")
 
@@ -1187,10 +1190,23 @@ struct TimeZone with Textual {
     constructor(name: String) {
         const offset = Emerald.TimeZone._fixed_offset(name)
         if offset == nothing and not Emerald.TimeZone._known?(name) {
-            raise Emerald.DateTimeError("\"#{name}\" is not a time zone Emerald knows: use \"UTC\", an offset such as \"+05:30\", or TimeZone.local")
+            const suggestion = Emerald.TimeZone._suggestion(name)
+            if suggestion != nothing {
+                raise Emerald.DateTimeError("\"#{name}\" is not a time zone Emerald knows: zone names are case-sensitive, so write \"#{suggestion}\"")
+            }
+            raise Emerald.DateTimeError("\"#{name}\" is not a time zone Emerald knows: use an IANA name such as \"Europe/Paris\", \"UTC\", or an offset such as \"+05:30\"")
         }
         self.name = name
-        self._offset = offset
+        self._fixed = offset != nothing
+        self._offset = offset.or(0)
+    }
+
+    # The zone called `name`, or nothing when there is none.
+    func TimeZone.named_maybe(name: String): Emerald.TimeZone? {
+        if Emerald.TimeZone._fixed_offset(name) == nothing and not Emerald.TimeZone._known?(name) {
+            return nothing
+        }
+        return Emerald.TimeZone(name)
     }
 
     # A zone always this far from UTC, named like "+05:30" or "-03:30". The
@@ -1209,9 +1225,8 @@ struct TimeZone with Textual {
 
     # How far ahead of UTC clocks in this zone are at `instant`.
     func offset_at(instant: Emerald.Instant): Emerald.Duration {
-        const fixed = self._offset
-        if fixed != nothing {
-            return Emerald.Duration(seconds: fixed)
+        if self._fixed {
+            return Emerald.Duration(seconds: self._offset)
         }
         return Emerald.Duration(seconds: Emerald.TimeZone._offset_seconds(self.name, instant.unix_seconds))
     }
@@ -1236,6 +1251,11 @@ struct TimeZone with Textual {
     # Native: whether the runtime holds rules for a zone of this name.
     func TimeZone._known?(name: String): Bool {
         return false
+    }
+
+    # Native: the zone name meant by one written in the wrong case.
+    func TimeZone._suggestion(name: String): String? {
+        return nothing
     }
 
     # Native: the offset in seconds that a rule-based zone has at a moment

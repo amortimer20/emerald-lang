@@ -63,7 +63,7 @@ attempt_moment("before 1") { => Instant.from_unix_seconds(-62135596800) - Durati
 attempt_moment("no offset") { => Instant.parse("2026-09-25T14:30:00") }
 attempt_moment("moment shape") { => Instant.parse("2026-09-25T14:30Q") }
 attempt_moment("moment range") { => Instant.parse("2026-09-25T14:61:00Z") }
-attempt_moment("zone name") { => DateTime(2026, 1, 1).to_instant(TimeZone("Asia/Tokyo")) }
+attempt_moment("zone name") { => DateTime(2026, 1, 1).to_instant(TimeZone("Mars/Olympus")) }
 attempt_moment("minute sign") { => DateTime(2026, 1, 1).to_instant(TimeZone.fixed(hours: -3, minutes: 30)) }
 attempt_moment("offset size") { => DateTime(2026, 1, 1).to_instant(TimeZone.fixed(hours: 19)) }
 
