@@ -2617,3 +2617,21 @@ Over the milestone, startup for a ReleaseSafe `print(1)` went from about 5.0 ms 
 loads only when a program names a zone. Profiling found and fixed two checker hot spots on
 the way: the module view copy, and its per-body iteration. What remains is checking every
 prelude body on every run; the handoff lists it as the next performance candidate.
+
+## Regular expressions, slice 1: Unicode data, 2026-09-25
+
+The user chose regular expressions after dates and times, and accepted
+`docs/regex-design-plan.md`. The plan's decisions were the executor's, the user having left
+judgement to them: Emerald's own linear-time engine, matching by grapheme, ASCII `\d`,
+literal replacements, and literal patterns checked before a program runs.
+
+Slice 1 adds the Unicode data `\w` and `ignore_case` need. `unicode.org` is blocked from
+cloud sessions, but Unicode's own `unicodetools` repository on GitHub serves the UCD files.
+Regenerating the existing tables from that mirror reproduced `src/unicode/tables.zig`
+byte for byte before anything changed, which established that it is the same data.
+`tools/unicode/fetch.sh` now takes a `UCD_BASE` override and fetches `CaseFolding.txt`.
+The generator gained two tables. `word` is UTS #18's `\w`, precomputed as one merged range
+table: Alphabetic, Join_Control, and the Mn, Mc, Me, Nd, and Pc general categories, with
+UnicodeData.txt's First/Last range lines expanded. `simple_fold` holds CaseFolding.txt's C
+and S mappings. A separate Python parse agreed on every code point. Nothing outside the
+tests uses them yet, so the binary is unchanged in size until slice 2's engine does.

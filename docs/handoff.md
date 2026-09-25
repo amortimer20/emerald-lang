@@ -105,13 +105,14 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-Regular expressions are next: the user chose them from the 15.7 backlog.
-[`regex-design-plan.md`](regex-design-plan.md) proposes the engine (Emerald's own
-linear-time matcher over graphemes, rather than wrapping a C library), the pattern language,
-groups, replacements, errors checked before a program runs, and six slices. It awaits the
-user's review; its decisions stand unless the user overturns one. Slice 1 needs UCD 17.0.0
-files, which cloud sessions can fetch from `unicode-org/unicodetools` on GitHub, not
-`unicode.org`.
+Regular expressions are in progress: the user chose them from the 15.7 backlog and accepted
+[`regex-design-plan.md`](regex-design-plan.md). Slice 1 (Unicode data for `\w` and
+case-insensitive matching) is done. Slice 2 is next: the engine in `src/Regex.zig`, with no
+Emerald surface yet. It covers parsing with positioned errors, compiling, a Pike VM over
+graphemes, captures, both options, size limits, Zig unit tests, a local differential check
+against Python's `re`, and a linear-time check on `(a+)+$`. Cloud sessions fetch UCD files
+with `UCD_BASE` set to the `unicode-org/unicodetools` GitHub mirror (see
+`tools/unicode/fetch.sh`).
 
 Other candidates, each needing the user's go-ahead:
 
@@ -176,16 +177,12 @@ on the roadmap.
 
 ## Validation and repository state
 
-Dates and times slice 6 (documentation and integration) is committed. With pinned Zig
-0.16.0, Debug and ReleaseSafe `zig build test`, `zig build`, `zig fmt --check src/*.zig
-build.zig tools/fuzz.zig`, `bash tools/check-doc-examples.sh`, `git diff --check`, and fuzz
-seeds 20260925 (3000) and 31337 (2000), with the new date template, passed. Every `emerald`
-snippet on the eight new library pages was run and prints what its page says, and
-`examples/dates.em` was run and passes `emerald format --check`. The release workflow's new
-packaging step was dry-run for the tar archives here and its YAML parsed; the Windows zip
-path and the smoke test's `test -f` checks first run on the next release or manual dispatch.
-
-CI run 77 (commit `02eb597`, slice 5) is green on all three platforms.
+Regex slice 1 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`,
+`zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`, and `git diff --check`
+passed, and `zig build unicode-conformance -Doptimize=ReleaseSafe` over UCD 17.0.0 reported
+20,034 cases and 0 failures. The new `word` and `simple_fold` tables match an independent
+Python parse of the same files. The date and time milestone before it was merged to `main`
+as pull request #1, with CI green on all three platforms.
 
 All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.

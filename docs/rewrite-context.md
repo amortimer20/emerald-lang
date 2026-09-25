@@ -3485,7 +3485,10 @@ database, `tools/unicode/generate.zig` writes `src/unicode/tables.zig`, and
 `zig build unicode-conformance` checks the result against the whole of Unicode's
 NormalizationTest.txt. The routine test suite embeds GraphemeBreakTest.txt and every part
 of NormalizationTest.txt except the character-by-character part. The same tables supply
-identifier characters (3.3), whitespace, and full case mapping.
+identifier characters (3.3), whitespace, and full case mapping, and, for regular expressions
+(15.4), UTS #18's word characters and simple case folding. `fetch.sh` takes a `UCD_BASE`
+for machines that cannot reach unicode.org; Unicode's `unicodetools` repository on GitHub
+serves the same files, and regenerating from it reproduces the tables byte for byte.
 
 ### 19.2 Frontend pipeline
 

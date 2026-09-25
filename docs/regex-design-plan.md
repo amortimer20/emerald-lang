@@ -1,6 +1,6 @@
 # Regular expressions: design and implementation plan
 
-Status: proposal, 2026-09-25. Rewrite-context 15.4 settles the API's outline. This plan fills
+Status: accepted, 2026-09-25; slice 1 done. Rewrite-context 15.4 settles the API's outline. This plan fills
 in what 15.4 leaves open (where the matching engine comes from, what `.` and `\d` mean in a
 language whose characters are graphemes, captures, replacements, and errors) and orders the
 work. The decisions below are recommendations; the executor proceeds with them unless the
@@ -213,6 +213,10 @@ ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`, the doc-example ch
 
 1. **Unicode data.** Regenerate `src/unicode/tables.zig` with the new properties, keeping
    version 17.0.0; add lookup functions and unit tests; run the Unicode conformance tests.
+   Done: `word` and `simple_fold` tables, `unicode.isWordCharacter` and
+   `unicode.simpleFold`. Both tables match an independent Python parse of the UCD files
+   (149,366 word characters, 1,512 foldings), and regenerating from the GitHub mirror
+   first reproduced the existing tables byte for byte.
 2. **The engine, without Emerald.** `src/Regex.zig`: parsing with positioned errors for
    every refused feature, compiling, the Pike VM over graphemes, captures, both options, and
    the size limits. Zig unit tests, plus a differential check against Python's `re` on
