@@ -1,0 +1,20 @@
+diagnostics/program-sleep.em:2:15: this is Int, but `Program.sleep` needs a Duration
+  Program.sleep(5)
+                ^
+Say how long with its unit, as in `Program.sleep(Duration(milliseconds: 500))`.
+diagnostics/program-sleep.em:3:13: `Program.sleep` is a built-in function, so it has to be called
+  const nap = Program.sleep
+              ^^^^^^^^^^^^^
+Call it with how long to pause, as in `Program.sleep(Duration(seconds: 1))`.
+diagnostics/program-sleep.em:4:1: `Program.sleep` takes 1 argument, but this call passes 2
+  Program.sleep(Duration(seconds: 1), 2)
+  ^^^^^^^^^^^^^
+Pass how long to pause, as in `Program.sleep(Duration(seconds: 1))`.
+diagnostics/program-sleep.em:7:15: `Stopwatch` is not built by calling it
+  const watch = Stopwatch()
+                ^^^^^^^^^
+Get one from `Stopwatch.start()`.
+diagnostics/program-sleep.em:8:16: `Instant` is not built by calling it
+  const moment = Instant(1, 2)
+                 ^^^^^^^
+Get one from `Instant.now()`.

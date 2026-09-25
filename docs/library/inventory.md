@@ -34,8 +34,16 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | [`Range`](range.md) | Iteration, `count`, `empty?()`, `step`, `reverse`, `to_list` | `conformance/run/range-values.em` |
 | [`Random`](random.md) | Seeded range selection, choosing, and shuffling | `conformance/run/randomness.em` |
 | [`File`, `Directory`, `Path`](file.md) | Whole-file and streamed UTF-8 text, directories, lexical paths | `conformance/run/file-streaming.em` |
-| [`Program`](program.md) | The running program's own CLI arguments | `conformance/run/program-arguments.em` |
+| [`Program`](program.md) | The running program's own CLI arguments, and pausing it | `conformance/run/program-arguments.em` |
 | [`Console`](console.md) | Color/style helpers, `Console.style`, `Console.plain`, the color policy | `conformance/color/console-style.em` |
+| [Dates and times](dates-and-times.md) | Choosing a type, calendar vs. exact arithmetic, text, zones, errors | `examples/dates.em` |
+| [`Date`, `Weekday`](date.md) | Calendar dates, weekdays, month arithmetic, differences, parsing | `conformance/run/date-basics.em` |
+| [`Time`](time.md) | Times of day, wrapping arithmetic, parsing | `conformance/run/time-basics.em` |
+| [`DateTime`](date-time.md) | Date and time together, arithmetic, conversion through a zone | `conformance/run/date-time-basics.em` |
+| [`Instant`](instant.md) | Exact moments, the clock, Unix time, RFC 3339 | `conformance/run/instant-basics.em` |
+| [`Duration`](duration.md) | Exact lengths of time, arithmetic, whole and total units | `conformance/run/duration-basics.em` |
+| [`TimeZone`](time-zone.md) | Named IANA zones, fixed offsets, the local zone | `conformance/run/named-zones.em` |
+| [`Stopwatch`](stopwatch.md) | Measuring elapsed time on the monotonic clock | `conformance/run/clock.em` |
 
 ## Errors and tests
 

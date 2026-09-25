@@ -166,6 +166,11 @@ arena: std.mem.Allocator,
 scopes: std.ArrayList(*Scope) = .empty,
 prelude: *Scope,
 module: *Scope,
+/// The keys `moduleView` copies, and the scope sizes they were found at. A
+/// module or prelude binding never changes between a variable and a function
+/// or type, so the list only goes stale when a scope gains a name.
+view_keys: std.ArrayList(ViewKey) = .empty,
+view_sizes: [2]usize = .{ std.math.maxInt(usize), std.math.maxInt(usize) },
 diagnostics: std.ArrayList(Diagnostic) = .empty,
 
 facts: Resolver.Facts,
@@ -1941,7 +1946,7 @@ fn find(self: *Checker, name: []const u8) ?*Binding {
             if (self.scopes.items[index].getPtr(qualified)) |binding| return binding;
         }
     }
-    return null;
+    return self.moduleFallback(&.{ name, key });
 }
 
 fn findKey(self: *Checker, key: []const u8) ?*Binding {
@@ -1950,7 +1955,7 @@ fn findKey(self: *Checker, key: []const u8) ?*Binding {
         index -= 1;
         if (self.scopes.items[index].getPtr(key)) |binding| return binding;
     }
-    return null;
+    return self.moduleFallback(&.{key});
 }
 
 fn report(
@@ -3736,20 +3741,55 @@ fn checkFunctionBody(
 
 /// The prelude and module scope as a body sees them: a copy in which every
 /// binding counts as assigned (see the module comment).
+///
+/// Only variables are copied, since only they have flow state a body can
+/// change. Functions and types, nearly every module name and every member of
+/// every type, are found in place by `moduleFallback`. Copying them made each
+/// body, and each branch's snapshot inside it, cost as much as the whole
+/// program, prelude included.
 fn moduleView(self: *Checker) Error!*Scope {
+    const sizes = [2]usize{ self.prelude.count(), self.module.count() };
+    if (!std.mem.eql(usize, &sizes, &self.view_sizes)) {
+        self.view_keys.clearRetainingCapacity();
+        // The module scope second, so a program name shadows a prelude one, as
+        // it does at the top level.
+        for ([_]*const Scope{ self.prelude, self.module }) |source| {
+            var entries = source.iterator();
+            while (entries.next()) |entry| {
+                if (entry.value_ptr.is_function or entry.value_ptr.is_type) continue;
+                if (source == self.prelude and self.module.contains(entry.key_ptr.*)) continue;
+                try self.view_keys.append(self.arena, .{ .key = entry.key_ptr.*, .from_module = source == self.module });
+            }
+        }
+        self.view_sizes = sizes;
+    }
     const view = try self.arena.create(Scope);
     view.* = .empty;
-    // The module scope second, so a program function named like a prelude
-    // function shadows it, as it does at the top level.
-    for ([_]*const Scope{ self.prelude, self.module }) |source| {
-        var entries = source.iterator();
-        while (entries.next()) |entry| {
-            var binding = entry.value_ptr.*;
-            binding.assigned = true;
-            try view.put(self.arena, entry.key_ptr.*, binding);
-        }
+    try view.ensureTotalCapacity(self.arena, @intCast(self.view_keys.items.len));
+    for (self.view_keys.items) |entry| {
+        const source = if (entry.from_module) self.module else self.prelude;
+        var binding = source.get(entry.key).?;
+        binding.assigned = true;
+        view.putAssumeCapacity(entry.key, binding);
     }
     return view;
+}
+
+const ViewKey = struct {
+    key: []const u8,
+    from_module: bool,
+};
+
+/// A function or type that `moduleView` leaves in place, looked up in the
+/// order the scope stack itself uses: the module, then the prelude.
+fn moduleFallback(self: *Checker, names: []const ?[]const u8) ?*Binding {
+    for ([_]*Scope{ self.module, self.prelude }) |source| {
+        for (names) |maybe| {
+            const binding = source.getPtr(maybe orelse continue) orelse continue;
+            if (binding.is_function or binding.is_type) return binding;
+        }
+    }
+    return null;
 }
 
 /// The key a function body is known by decides whether it has a `self`.
@@ -4754,11 +4794,13 @@ fn typeOfStructMethodCall(
         return .invalid;
     }
     const signature = try self.signatureOn(declared, base);
-    try self.checkArguments(call, member.name, try self.parametersOf(
+    var parameters = try self.parametersOf(
         signature,
         (try self.declarationWithDefaults(key)).parameters,
         "Match the number of arguments to the method's parameters.",
-    ));
+    );
+    parameters.named_units = takesNamedUnits(key);
+    try self.checkArguments(call, member.name, parameters);
     if (!isClass(base) and try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
     if (!self.in_function) try self.checkCaptures(expression.span, key, member.name);
     return signature.return_type;
@@ -6178,6 +6220,15 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         std.mem.eql(u8, reference.key, Resolver.math_pi_key) or
         std.mem.eql(u8, reference.key, Resolver.math_e_key)) return .float;
     if (std.mem.eql(u8, reference.key, Resolver.program_arguments_key)) return try Type.listOf(self.arena, .string);
+    if (std.mem.eql(u8, reference.key, Resolver.program_sleep_key)) {
+        try self.report(
+            expression.span,
+            "`Program.sleep` is a built-in function, so it has to be called",
+            .{},
+            "Call it with how long to pause, as in `Program.sleep(Duration(seconds: 1))`.",
+        );
+        return .invalid;
+    }
     // `Emerald.print` as a value: a built-in function, which can only be called.
     if (Resolver.builtinFunctionName(reference.key) != null) return self.typeOfFunctionValue(expression, reference);
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
@@ -9152,6 +9203,7 @@ fn typeOfCall(
     // names have hidden it (14.2's built-in namespace).
     const builtin = Resolver.builtinFunctionName(reference.key);
     const name = builtin orelse reference.display;
+    if (std.mem.eql(u8, reference.key, Resolver.program_sleep_key)) return self.typeOfSleep(call, name);
     if (Resolver.mathFunction(reference.key)) |function| {
         if (!try self.requireArity(.{ .name = name, .name_span = call.callee.span, .base = call.callee }, call.arguments, function.parameters, function.parameters)) return .invalid;
         for (call.arguments) |argument| _ = try self.typeOfExpected(argument, .float);
@@ -9299,6 +9351,49 @@ fn typeOfCall(
     return signature.return_type;
 }
 
+/// The first public type-level function of a built-in type that returns
+/// that type, written as a call: `Stopwatch.start()`.
+fn builtinFactory(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration, built: Type) Error!?[]const u8 {
+    for (declaration.type_functions) |function| {
+        if (Resolver.isPrivate(function.member)) continue;
+        const signature = try self.signatureFor(try Resolver.methodKey(self.arena, key, function.member));
+        if (!signature.return_type.same(built)) continue;
+        const arguments = if (function.declaration.parameters.len == 0) "()" else "(...)";
+        return try std.fmt.allocPrint(self.arena, "{s}.{s}{s}", .{ built.user.?.display_name, function.member, arguments });
+    }
+    return null;
+}
+
+/// Section 15.8's `Program.sleep(duration)`, whose one argument is a
+/// `Duration` so its unit is never in doubt.
+fn typeOfSleep(self: *Checker, call: Ast.Expression.Call, name: []const u8) Error!Type {
+    if (try self.rejectNames(call)) {
+        try self.typeArguments(call.arguments);
+        return .nothing;
+    }
+    const duration = self.structs.get(Resolver.preludeKey("Duration")) orelse return .invalid;
+    if (call.arguments.len != 1) {
+        try self.report(
+            call.callee.span,
+            "`{s}` takes 1 argument, but this call passes {d}",
+            .{ name, call.arguments.len },
+            "Pass how long to pause, as in `Program.sleep(Duration(seconds: 1))`.",
+        );
+        try self.typeArguments(call.arguments);
+        return .nothing;
+    }
+    const actual = try self.typeOfExpected(call.arguments[0], duration);
+    if (!actual.assignableTo(duration)) {
+        try self.report(
+            call.arguments[0].span,
+            "this is {f}, but `{s}` needs a Duration",
+            .{ actual, name },
+            "Say how long with its unit, as in `Program.sleep(Duration(milliseconds: 500))`.",
+        );
+    }
+    return .nothing;
+}
+
 /// The arguments of a call that builds a value of the type `key`: calling the
 /// type, or a subclass's `super(...)`. `name` is the type as written there.
 fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8, name: []const u8) Error!void {
@@ -9307,11 +9402,13 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
     // parameters are what a call must match.
     if (self.constructors.contains(key)) {
         const constructor = self.constructors.get(key).?.constructor.?;
-        try self.checkArguments(call, name, try self.parametersOf(
+        var parameters = try self.parametersOf(
             try self.constructorSignature(key),
             constructor.parameters,
             "Match the number of arguments to the constructor's parameters.",
-        ));
+        );
+        parameters.named_units = takesNamedUnits(key);
+        try self.checkArguments(call, name, parameters);
         return;
     }
     const declaration = self.struct_declarations.get(key).?;
@@ -9351,6 +9448,21 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
     const outside = !self.insideType(key, call.callee.span);
     if (outside) for (declaration.fields) |field| {
         if (!Resolver.isPrivate(field.name) or field.default != null) continue;
+        // A built-in such as `Stopwatch` is not the program's to change, so
+        // point at the type-level function that gives one instead.
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".")) {
+            if (try self.builtinFactory(key, declaration, built)) |factory| {
+                try self.reportWithHelp(
+                    call.callee.span,
+                    "`{s}` is not built by calling it",
+                    .{name},
+                    "Get one from `{s}`.",
+                    .{factory},
+                );
+                try self.typeArguments(call.arguments);
+                return;
+            }
+        }
         try self.reportWithHelp(
             call.callee.span,
             "`{s}` cannot be built here, because its field `{s}` is private and has no default",
@@ -9620,7 +9732,25 @@ const Parameters = struct {
     /// The type whose private fields a generated constructor called from
     /// outside it may not be given (10.5).
     private_to: ?[]const u8 = null,
+    /// Every parameter is a unit of time, so each argument must be named
+    /// (15.8): `Duration(5)` would silently mean five days.
+    named_units: bool = false,
 };
+
+/// Section 15.8's calls whose arguments are all amounts in units of time.
+fn takesNamedUnits(key: []const u8) bool {
+    const keys = comptime [_][]const u8{
+        Resolver.preludeKey("Duration"),
+        Resolver.preludeKey("Date") ++ Resolver.method_separator ++ "add",
+        Resolver.preludeKey("Date") ++ Resolver.method_separator ++ "subtract",
+        Resolver.preludeKey("Time") ++ Resolver.method_separator ++ "add",
+        Resolver.preludeKey("Time") ++ Resolver.method_separator ++ "subtract",
+        Resolver.preludeKey("DateTime") ++ Resolver.method_separator ++ "add",
+        Resolver.preludeKey("DateTime") ++ Resolver.method_separator ++ "subtract",
+    };
+    for (keys) |candidate| if (std.mem.eql(u8, key, candidate)) return true;
+    return false;
+}
 
 fn parametersOf(self: *Checker, signature: Signature, written: []const Ast.Parameter, arity_help: []const u8) Error!Parameters {
     const defaults = try self.arena.alloc(bool, written.len);
@@ -9709,6 +9839,23 @@ fn checkArguments(
         ),
     }
     if (problem != .none) return self.typeArguments(call.arguments);
+
+    if (parameters.named_units) for (call.arguments, 0..) |argument, index| {
+        if (index < call.names.len and call.names[index] != null) continue;
+        var units: std.Io.Writer.Allocating = .init(self.arena);
+        for (parameters.names, 0..) |unit, position| {
+            const separator = if (position == 0) "" else if (position + 1 == parameters.names.len) ", or " else ", ";
+            units.writer.print("{s}`{s}:`", .{ separator, unit }) catch return error.OutOfMemory;
+        }
+        try self.reportWithHelp(
+            argument.span,
+            "`{s}` needs the unit of this amount named",
+            .{name},
+            "By position it would count `{s}`, which is easy to misread. Write its unit in front of it: {s}.",
+            .{ parameters.names[index], units.written() },
+        );
+        return self.typeArguments(call.arguments);
+    };
 
     for (bound, parameters.types, parameters.names) |argument_index, expected, parameter_name| {
         const argument = call.arguments[argument_index orelse continue];

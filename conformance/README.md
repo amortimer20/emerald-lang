@@ -16,6 +16,7 @@ Run them with `zig build test`. The runner is [`src/conformance.zig`](../src/con
 | `diagnostics/` | `check` reports exactly the text in its `.expected` file. |
 | `run/` | The program runs and prints exactly its `.expected` file. |
 | `color/` | The program runs with Console ANSI styling forced on. |
+| `local-zone/` | The program runs with `TimeZone.local` set to `EST5EDT`, the United States' Eastern rules, so changes of clocks are the same everywhere. |
 | `runtime-errors/` | The program runs, then fails with exactly its `.expected` file. |
 | `format/` | `emerald format` produces exactly its `.expected` file, and formatting that output again changes nothing. |
 

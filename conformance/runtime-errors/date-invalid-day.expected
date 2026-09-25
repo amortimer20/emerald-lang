@@ -1,0 +1,5 @@
+runtime-errors/date-invalid-day.em:4:12: DateTimeError: day 30 is not between 1 and 28: February 2026 has 28 days
+      return Date(2026, 2, 30)
+             ^^^^^^^^^^^^^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.
+in `deadline`, called at runtime-errors/date-invalid-day.em:7:7

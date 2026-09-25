@@ -2889,9 +2889,9 @@ locale-independent. Locale-aware formatting is a separate later facility. Infini
 NaN render plainly as `"Infinity"` and `"NaN"`, ignoring `format`'s arguments, and are exposed
 as type-level `Float` constants.
 
-Dates, time zones, durations, serialization, networking, and concurrency belong in later
-standard-library passes. Their absence must not be patched with premature general-purpose
-generics.
+Dates, times, and durations are 15.8's. Serialization, networking, and concurrency belong
+in later standard-library passes. Their absence must not be patched with premature
+general-purpose generics.
 
 ### 15.6 Platform libraries: Console
 
@@ -2938,12 +2938,7 @@ as Ruby's.
 
 **Next up, needing no new runtime infrastructure:**
 
-- **Date and time.** Nothing implements clocks, calendar dates, durations, or time zones
-  today; 15.5 already named the gap. This is the highest-priority addition: it needs
-  nothing Emerald does not already have (Zig's own clock/calendar facilities can back it the
-  same way filesystem syscalls back 15.3), and it touches neither concurrency nor package
-  management. Its own design pass must settle timezone scope (UTC and a fixed offset first,
-  or a full time-zone database) and a duration representation before implementation begins.
+- **Date and time** is done (15.8).
 - **Regular expressions (15.4).** The API is already designed; implementing it is the
   remaining work, most likely by wrapping one bundled C library the way 15.4 already
   anticipates, while Emerald keeps ownership of Unicode behavior, the API, and diagnostics.
@@ -2982,6 +2977,147 @@ as Ruby's.
 - Anything that would want its own release cadence rather than living in this repository —
   the parked platform libraries (15.6) chief among them — waits on a package manager, itself
   undesigned (21).
+
+### 15.8 Dates and times
+
+Dates and times are settled built-ins in the `Emerald` namespace (15.1). The full design,
+its alternatives, and its implementation slices are in
+[`docs/date-time-design-plan.md`](date-time-design-plan.md); the reference starts at
+[`docs/library/dates-and-times.md`](library/dates-and-times.md), and
+[`examples/dates.em`](../examples/dates.em) shows the programs they were designed for. `Date`, `Time`, `DateTime`,
+`Instant`, `Duration`, `Weekday`, `Stopwatch`, `Program.sleep`, `DateTimeError`, and
+`TimeZone` with UTC, fixed offsets, named IANA zones, and the machine's local zone are all
+implemented and documented.
+
+**One type per meaning.** A calendar date (`Date`), a time on the clock (`Time`), a date and
+time with no zone (`DateTime`), an exact moment (`Instant`), and an exact length of time
+(`Duration`) are different types, so the checker catches mixing them up. There is no zoned
+date-time type and no calendar-period type: an `Instant` converts to a `DateTime` through an
+explicit `TimeZone`, and calendar amounts are named arguments to `add`. Every value type is
+an immutable struct, compared by value and usable as a dictionary key; `Stopwatch`, a running
+thing, is the one class.
+
+**Operators for exact time, words for the calendar.** `Duration` and `Instant` have
+operators, because their arithmetic is exact. A calendar step depends on the date it starts
+from, so it is a named method with named units:
+
+```emerald
+const due = Date(2026, 1, 31).add(months: 1)   # 2026-02-28
+const trip = Duration(hours: 1, minutes: 30)
+print(trip * 2, trip / Duration(minutes: 45))   # 3h 2.0
+```
+
+Adding months or years keeps the day when the new month has it and otherwise uses that
+month's last day; weeks and days then count calendar days. `days_until`, `months_until`, and
+`years_until` count whole units, rounding toward zero, so `born.years_until(today)` is an
+age: the most years `add(years:)` can move `born` without passing `today`.
+
+**Units are always named.** Every argument to the `Duration` constructor and to `add` and
+`subtract` on `Date`, `Time`, and `DateTime` is an amount in some unit, so each must be
+written with its name:
+`Duration(5)` is a check-time error listing the units, since by position it would silently
+mean five days. This is a rule about those calls only, not a general named-only parameter
+feature, which would need its own design (7.3).
+
+**Values.** `Date` has public `const` fields `year`, `month` (1 through 12), and `day`, plus
+`weekday`, `month_name` (English, as all built-in text is), `day_of_year`, `days_in_month`,
+and `leap_year?()`. The weekday is the enum `Weekday`, `monday` through `sunday`, displayed
+as `Monday`: a weekday number would have to pick between conventions that disagree about
+which day is 0 or 1. `Weekday` does not adopt `Ordered`, since the week is a cycle whose
+first day depends on culture (12). Dates use the proleptic Gregorian calendar from year 1
+through 9999; a result outside that range raises rather than wrapping.
+
+`Time` has public `const` fields `hour` (0 through 23), `minute`, `second`, and
+`nanosecond`; `Time(14, 30)` leaves the rest zero. Its `add` and `subtract` take `hours`
+through `nanoseconds` and wrap around midnight, so `Time(23, 0).add(hours: 2)` is `01:00:00`.
+`DateTime` holds a `date` and a `time`, with the components of both and `weekday` as
+properties, and `date.at(time)` builds one. Its `add` and `subtract` take every unit from
+`years` to `nanoseconds`: years and months move the date as `Date.add` does, then weeks,
+days, and whatever whole days the time units carried past midnight, so
+`DateTime(2026, 1, 31, 23).add(months: 1, hours: 2)` is `2026-03-01T01:00:00`, as in Temporal.
+`duration_until` is the difference the calendar and clock show, as if every day had
+exactly 24 hours; a clock change in some zone is the business of `Instant`.
+
+`Instant` is an exact moment: whole seconds since 1970-01-01T00:00:00Z and a nanosecond
+part, from the start of year 1 to the end of 9999. `Instant.now()` reads the system clock;
+`from_unix_seconds` and `from_unix_milliseconds` build one, and `unix_seconds` and
+`unix_milliseconds` read it back, rounded toward the past as Unix time is. `+` and `-` with a
+`Duration` give an `Instant` (the methods `after` and `before`), and `-` between two gives
+the `Duration` from one to the other (`since`). `to_date_time(zone)` gives what a calendar
+and clock in `zone` show, and `DateTime.to_instant(zone)` goes back. An `Instant` is not
+built by calling it; the diagnostic for `Instant(...)` or `Stopwatch()` names the
+type-level function that gives one.
+
+`TimeZone.utc` and `TimeZone.fixed(hours:, minutes:)` are the zones so far. A fixed zone is
+named like its offset, `+05:30`, and `TimeZone("+05:30")` or `TimeZone("UTC")` reaches one
+by name; its minutes take the sign of its hours, and it is at most 18 hours from UTC.
+`zone.offset_at(instant)` is how far ahead of UTC its clocks are. Two zones are equal when
+their names are, so `TimeZone.fixed(hours: 0)`, named `+00:00`, is not `TimeZone.utc`.
+
+`Stopwatch.start()` measures with the monotonic clock, which a change to the system clock
+cannot move: `elapsed()` is a fresh reading each call, and `restart()` starts over. It is a
+class, since a stopwatch is a running thing rather than a value. `Program.sleep(duration)`
+blocks the program for a `Duration`, which is the only argument it takes, so its unit is
+never in doubt; a negative one raises.
+
+`Duration` is an exact, possibly negative count of nanoseconds, built from any combination
+of `days`, `hours`, `minutes`, `seconds`, `milliseconds`, `microseconds`, and `nanoseconds`.
+A day there is exactly 24 hours, unlike a calendar day in `add(days:)`. It has `+` and `-`
+with another `Duration`, `*` and `/` by an `Int` (`/` rounds toward zero at one nanosecond),
+and `/` by another `Duration` giving a `Float` ratio; `total_days`, `total_hours`,
+`total_minutes`, `total_seconds`, and `total_milliseconds` as `Float`; `whole_days` through
+`whole_nanoseconds` as `Int`, rounded toward zero, so `Duration(minutes: 90).whole_hours` is
+1; and `abs()`, `zero?()`, and `negative?()`. Its storage is private and normalized, so structural equality
+and hashing are exact.
+
+**Display and parsing.** Every value displays in ISO 8601 form (`2026-09-25`, `14:30:00`,
+`2026-09-25T14:30:00`), and each type's `parse` reads that form back, ignoring surrounding
+whitespace as `to_int` does (9.4). A time may leave out its seconds (`14:30`) and may give a
+fraction of a second with one to nine digits; its display shows a fraction only when there
+is one, in groups of three digits (`14:30:00.250`). A date and time may be separated by `T`
+or one space. Each `parse_maybe` returns `nothing` instead of raising; `.or(...)` covers the
+third policy of 9.4's family. A `Duration` displays its nonzero units largest first (`2d 3h`,
+`1h 30m`, `1.25s`, `0s`, `-5m`). There is no format-pattern language (15.5): custom layouts
+are interpolation of the components, and named readable formats wait for real programs.
+
+**Errors.** Invalid input raises `DateTimeError`, a `RuntimeError`, whose message names the
+part that is wrong and its range: `day 30 is not between 1 and 28: February 2026 has 28
+days`. A failure raised inside the prelude's own Emerald code is reported at the program's
+call into it, with the prelude's frames left out of the trace.
+
+**Time zones.** A function that needs a zone takes a `zone` parameter that defaults to
+`TimeZone.local`: `Date.today()`, `Time.now()`, `DateTime.now()`, `DateTime.to_instant`, and
+`Instant.to_date_time`. Only `Instant`'s display always uses UTC. The runtime resolves
+`TimeZone.local` once per execution, as it does Console's color policy (15.6), and it is UTC
+by default, so `emerald check`, tests of Emerald itself, and embedded runs never depend on
+the machine they run on. `run`, `test`, and `repl` resolve the machine's zone the way glibc
+does. A `TZ` variable wins: empty means UTC; a name is looked up in the system's zoneinfo
+directories and otherwise read as a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`; a path
+names a zone file. Without `TZ`, `/etc/localtime` is read, and named from where it links.
+Windows reads its own current zone rules. Whatever cannot be read or understood leaves the
+program in UTC rather than stopping it. `TimeZone.local.name` is the zone's name, such as
+`America/New_York`.
+
+A wall-clock time that a change of clocks repeats resolves to the earlier moment, and one it
+skips moves forward by the length of the gap, as Temporal's default does: in New York,
+`DateTime(2026, 3, 8, 2, 30).to_instant()` is 03:30 daylight time. `to_instant` works this
+out from the zone's offsets a day on either side, which is enough because no zone changes
+its clocks twice in two days. A calendar day can therefore be 23 or 25 hours: `add(days: 1)`
+keeps the clock time, while adding `Duration(days: 1)` to an `Instant` keeps the length.
+
+**Named zones.** `TimeZone("Europe/Paris")` reaches any zone in the IANA time zone
+database, older aliases such as `US/Eastern` and `Etc/GMT+5` included, with its full
+history: New York kept its own local mean time until 1883, and Brazil stopped daylight time
+in 2019. A copy of the database is built into Emerald (`src/tzdata/`, regenerated by
+`tools/update-tzdata.py`), so a program gives the same answer on every operating system,
+Windows included, and the release is recorded as `TimeZone`'s own data rather than read from
+the machine. Names are case-sensitive, as IANA's are; a name written in the wrong case is
+refused with the right spelling in the message. `TimeZone.named_maybe(name)` returns
+`nothing` for an unknown name instead of raising. Two zones are equal when their names are,
+so `US/Eastern` is not `America/New_York`, though their offsets always agree. The machine's
+local zone uses the same built-in rules whenever its name is one IANA has, and on Windows its
+key name (`Eastern Standard Time`) is mapped to its IANA name through CLDR's table first; the
+machine's own rules are used only for a zone the database does not know.
 
 ## 16. Annotations, assertions, and tests
 
@@ -3757,6 +3893,29 @@ recorded in their normative sections:
 | Console's color policy ownership (15.6) | A mutable Emerald-level switch (a global variable, or a per-call argument to every helper) | Either would let a program's own code flip styling on or off mid-construction, so one message could end up half-styled. The policy is instead one value per execution, resolved once by the runtime (the CLI flag, environment, and terminal) and threaded through `Streams`/`Interpreter` the same way `out`/`in` already are; no Emerald API changes it. |
 | Console's color precedence (15.6) | Environment variables alone (as most CLI tools do), with no explicit flag | A beginner's first discoverable control should be visible in `emerald help`, not only documented convention, so an explicit `--color=always`/`--color=never` flag was added ahead of `NO_COLOR`/`FORCE_COLOR` rather than replacing them; the environment variables are what other terminal tools already honor, so both stay. `NO_COLOR` was given precedence over `FORCE_COLOR` when both are set, matching no-color.org's own recommendation, since a reader who set `NO_COLOR` is making a stronger claim (this environment cannot render color) than one setting `FORCE_COLOR` (this environment can, even though auto-detection says otherwise). |
 | Console nesting and `Console.plain`'s scope (15.6) | Re-closing to the terminal's bare default at every inner span, and a `plain` that strips any recognizable escape sequence | Closing to the default would lose the outer style after any nested span, which is wrong wherever one helper's output is interpolated into another's (`Console.bold("... #{Console.dim(x)} ...")`); reopening the enclosing style after both an inner close and a bare `ESC[0m` found in the input keeps composition correct either way. `plain` is scoped to undoing Console's own SGR styling — not a general sanitizer for untrusted terminal output — because the latter is a different, security-shaped problem (arbitrary cursor and mode-switching sequences, not just color) that this slice never claimed to solve. |
+| Date and time type shape (15.8) | One type per meaning, with no zoned date-time or calendar-period type | Temporal, java.time, and kotlinx-datetime all separate dates, clock times, wall-clock date-times, exact moments, and durations, which is what lets the checker catch a birthday used as a timestamp. kotlinx-datetime also shows a zoned type can be left out: converting with an explicit zone covers the need without a sixth type to teach. A period type is replaced by named units on `add`. |
+| Date and time arithmetic (15.8) | Operators only where arithmetic is exact (`Duration`, `Instant`); named methods with named units for calendar steps | "One month" and "one day" depend on where they start, and a `+` would hide that. The rule is short enough to teach in one sentence. |
+| Month arithmetic past a month's end (15.8) | Use the new month's last day | What Temporal, java.time, and kotlinx-datetime do by default. Raising would make `add(months: 1)` fail on 31 January, the most common case a beginner tries. |
+| Positional time units (7.3, 15.8) | A check-time error for the `Duration` constructor and a date's `add` and `subtract`, listing the units | `Duration(5)` otherwise means five days, and `date.add(1)` one year, silently. A general named-only parameter feature was considered and deferred: it is new syntax, and these calls are the only ones that need it so far. Factories such as `Duration.seconds(5)` would be a second way to build the same value. |
+| Month and weekday representation (15.8) | Month as an `Int` 1–12 with `month_name`; weekday as the `Weekday` enum | Month numbers are universal and keep `Date(2026, 9, 25)` short. Weekday numbers are not: systems disagree on whether Sunday or Monday comes first and whether counting starts at 0 or 1. |
+| Duration precision and storage (15.8) | Nanoseconds, stored privately as normalized whole seconds and a nanosecond part | Nanoseconds match the OS clocks and modern libraries. A single nanosecond `Int` would stop at the years 1677 and 2262, too narrow for differences between dates from year 1 to 9999. |
+| Failures inside the prelude's Emerald code (13.2, 15.8) | Reported at the program's call into the prelude, with the prelude's frames left out | The prelude is not one of the program's files, so a location inside it could not even be displayed, and the call the program made is what its author needs to fix. |
+| Moving a `Time` (15.8) | Wrap around midnight | java.time and Temporal do the same. A `Time` has no date to carry into, and raising would make `alarm.add(hours: 8)` fail for an evening alarm. A program that needs the day uses `DateTime`. |
+| Adding time units to a `DateTime` (15.8) | Years and months first, then weeks, days, and the days the time units carried | Temporal's order. It keeps `add(months: 1, hours: 2)` equal to adding the months and then the hours, and month-end handling stays the one rule `Date.add` already has. |
+| `DateTime.duration_until` (15.8) | The calendar and clock difference, counting every day as 24 hours | A `DateTime` has no zone, so it cannot know about a clock change. Temporal's `PlainDateTime.until` behaves the same; an exact difference across a clock change goes through `Instant`. |
+| Shared prelude helpers (15.8) | Private module-level functions, never module-level variables | A type's private members cannot be reached from another type, and helpers shared by `Date`, `Time`, and `DateTime` must stay out of programs' reach. A module-level variable in the prelude took part in every program's module-setup ordering (14.1) and leaked its name into a program's diagnostic; a function does not. |
+| Names of `Instant`'s operator methods (11.5, 15.8) | `after`, `before`, and `since` | 11.5 reserves `add` and `subtract` for `Self -> Self`, and these mix types. The names read as English at a call written out: `start.after(timeout)`, `now.since(start)`. |
+| Reading a `Duration` exactly (15.8) | `whole_days` through `whole_nanoseconds`, rounded toward zero, beside the `Float` `total_*` | Kotlin's `inWhole*` pair with `total_*`: "90 minutes" as a whole number is a common beginner question, and `Instant`, outside `Duration`'s braces, needs exact integer access to do its own arithmetic. |
+| Building a built-in with private state (10.5, 15.8) | The diagnostic for `Stopwatch()` or `Instant(...)` names the type-level function that gives one | 10.5's help, "give it a default or a constructor", is advice for the program's own types; a program cannot edit a built-in. |
+| `Program.sleep`'s argument (15.8) | Exactly one `Duration`, never a number | A bare number would have to pick seconds or milliseconds, and languages disagree. A `Duration` says which, and the named-unit rule already makes that visible. |
+| Fixed-offset zone names (15.8) | Named like the offset (`+05:30`), reachable through `TimeZone(name)`; `+00:00` is not `UTC` | Java's `ZoneId.of("+05:30")` does the same, and it lets one constructor cover both kinds of zone. Equality by name keeps a zone's identity what a reader sees printed. |
+| Where `TimeZone.local` comes from (15.8) | The runtime, once per execution, UTC unless the CLI resolves the machine's zone | The color policy's pattern (15.6): no program can change it partway, and every run that is not a real invocation stays deterministic. Tests of zone behavior run in `conformance/local-zone/`, whose runner sets `EST5EDT`, the way `color/` forces styling. |
+| Resolving the machine's zone (15.8) | glibc's order: `TZ` (empty is UTC; a zoneinfo name; else a POSIX rule; a path), then `/etc/localtime`; Windows's own rules; UTC for anything unreadable | Following the C library means a program agrees with `date` and every other tool on the machine. Failing to UTC, as glibc does, never stops a program over its environment. Windows supplies only its current yearly rule, so dates before a zone last changed its rules may be off there until the built-in database arrives. |
+| Repeated and skipped wall-clock times (15.8) | The earlier moment for a repeated time; forward by the gap for a skipped one | Temporal's `"compatible"` default, which also matches what most operating systems do. It never raises, so `to_instant` has no failure a beginner must handle for a rule that happens twice a year. |
+| Where named zones' rules come from (15.8) | A copy of the IANA database built into Emerald, not the operating system's | Windows has no IANA database, and Linux and macOS carry whatever release the machine last installed, so the same program would give different answers. Built in, it costs 56 KB compressed (114 KB of binary), nothing at startup, and about 0.1 ms the first time a program names a zone. It is regenerated from PyPI's `tzdata` (IANA's releases compiled by `zic`) and CLDR's `windowsZones.xml` by one standard-library Python script, deterministically. |
+| The built-in database's format (15.8) | IANA's own TZif files, each distinct file once, behind a sorted name index, zlib-compressed | TZif is what `std.tz` and Emerald's rule engine already read, so there is no second format to trust. Aliases share files, which halves the size before compression. |
+| Zone name case (15.8) | Case-sensitive, with the correctly cased name suggested | IANA names are case-sensitive, and accepting any case would make two spellings of one zone compare unequal by name. Suggesting the right case turns the most likely mistake into a one-word fix. |
+| Third-party notices (15.8) | `THIRD_PARTY_NOTICES.md` ships in every release archive beside `LICENSE` | The binary embeds CLDR data under the Unicode License V3, which asks for its notice to travel with copies; the Unicode tables and Zig's standard library were already inside it. Release archives had carried only the binary, not even Emerald's own MIT license. |
 
 ## 23. Consistency rules for future work
 
@@ -3820,9 +3979,9 @@ for working Emerald programs, implementation measurements, or a dedicated design
 - project templates and the eventual build, distribution, and package commands;
 - generated documentation and its searchable reference interface;
 - serialization more broadly (beyond JSON, itself recorded in 15.7) and filesystem encoding
-  policy remain open. 15.7 records the rest of the standard-library backlog: dates and time
-  zones, regular expressions, JSON, a synchronous networking client, and what is
-  deliberately not planned;
+  policy remain open. 15.7 records the rest of the standard-library backlog: regular
+  expressions, JSON, a synchronous networking client, and what is deliberately not planned.
+  Dates and times are designed in 15.8;
 - the runtime error taxonomy, expanded alongside the operations that need it. Existing
   named requirements include `RecursionError` for the recursion boundary and `InputError`
   for input failures; conversion, filesystem, regex, networking, and similar errors receive

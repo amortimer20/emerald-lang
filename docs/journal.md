@@ -2460,3 +2460,160 @@ entry in 24 now points at 15.6 instead of describing Console as unimplemented.
 Console is Emerald's first complete official platform library. Its line-oriented interaction
 (prompts, multi-select, tables) remains a later, separately designed slice of the same
 library, and `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` remain undesigned roadmap items.
+
+## Roadmap passes and handoff reconciliation, 2026-09-24 to 2026-09-25
+
+Three documentation-only commits followed Console slice 4 (`e0e5363`). `f6099cc` made
+`Table`/`Panel` layout widgets and prompts later slices of Console itself and dropped a
+separate `Tui`. `79c0861` parked `Graphics`, `Gui`, `Audio`, and `Game` rather than keeping
+them on the roadmap: each needs native bindings and likely its own release cadence once a
+package manager exists. `076ee72` added rewrite-context 15.7, the standard-library backlog,
+which puts date/time first.
+
+The 0.5.0 entry above records a local tag that was not yet pushed. `v0.5.0` at `c0dea26` was
+later pushed and published as a GitHub release (2026-09-24). The handoff still called Console
+slice 4 uncommitted and 0.5.0 unpublished. On 2026-09-25 it was brought back in line with
+Git, and its per-slice validation history, all already recorded above, was cut down to the
+current state.
+
+## Dates and times, slice 1: `Date` and `Duration`, 2026-09-25
+
+The user accepted every recommendation in `docs/date-time-design-plan.md` and left the open
+question about sleeping to the executor, who included `Program.sleep` in slice 3. Slice 1
+writes `DateTimeError`, `Weekday`, `Duration`, and `Date` in ordinary Emerald in the
+prelude. Calendar conversion uses Howard Hinnant's days-from-civil algorithms in floor
+arithmetic. `Duration` keeps whole seconds and a nanosecond part so that it can span the
+full year range. Its division by a large `Int` uses overflow-free binary long division
+rather than widening.
+
+Two engine changes came with it. First, a runtime failure inside the prelude's Emerald code
+used to crash the CLI's renderer, because the prelude is not among the files it renders.
+`raiseTyped` now moves such a failure out to the program's first call into the prelude and
+drops the prelude frames. Console had never raised, so nothing had exposed this.
+
+Second, `moduleView` copied the whole prelude and module scope, every type and member
+included, into a fresh map for each function body. Every branch's definite-assignment
+snapshot then walked that copy. Cost grew with bodies × names, so about 400 prelude lines
+nearly tripled startup. The view now copies only variables, and functions and types are
+found in place through `moduleFallback`, in the stack's own module-then-prelude order.
+Startup for `print(1)` went from 13.6 ms to 5.5 ms (ReleaseSafe). Without the date code it
+is 3.3 ms, down from 5.0 ms.
+
+The named-unit rule (decision 2(a)) is a `named_units` flag on the checker's `Parameters`,
+set for three prelude keys. It reports a positional argument and lists the units the call
+accepts.
+
+## Dates and times, slice 2: `Time` and `DateTime`, 2026-09-25
+
+`Time` and `DateTime` join `Date` in the prelude. The parsing and validation that all three
+share moved out of `Date`'s private type-level functions into private module-level
+functions (`_digits`, `_date_shaped?`, `_time_shaped?`, `_date_problem`, `_time_problem`,
+`_shifted`, and so on). A type's private members cannot be reached from another type, and
+private module-level names cannot be reached, or captured, by a program. A probe confirmed
+both before the move.
+
+A module-level list of month names broke an unrelated conformance case. The checker's
+module-setup ordering analysis treated the prelude's `_month_names` as one of the program's
+module bindings. It reported that a program's setup call read `prelude.em#_month_names`
+before assignment. The list became a function, and the gap is recorded as a rough edge.
+
+`DateTime.add` follows Temporal's order: the time units are balanced first, then years and
+months move the date, then weeks, days, and the carried days. `duration_until` is the plain
+wall-clock difference. `moduleView` now caches the keys of the variables it copies, and
+rebuilds that list only when the prelude or module scope gains a name. Slice 2's extra
+prelude bodies had made each view's full iteration show up in profiles again.
+
+## Dates and times, slice 3: `Instant`, clocks, fixed zones, `Stopwatch`, and `Program.sleep`, 2026-09-25
+
+`Instant` is two private `Int`s, whole Unix seconds and a nanosecond part. Everything builds
+one through `Instant._at`, which normalizes it and checks the years 1 through 9999. Its
+operators are named `after`, `before`, and `since`: 11.5 reserves `add` and `subtract` for
+`Self -> Self`. `Instant` cannot reach `Duration`'s private fields, so it needed exact
+integer access. `Duration` gained `whole_days` through `whole_nanoseconds` (toward zero),
+which beginners also want ("90 minutes").
+
+The native surface is three calls. `Instant._now` and `Stopwatch._ticks` read
+`std.Io.Clock.real` and `.awake`, dispatched by key next to `Console._color`.
+`Program.sleep` is a special resolver key like `Program.arguments` and `Math`'s functions,
+because `Program` is not a prelude class. The checker accepts exactly one `Duration`, and
+the interpreter reads the `Duration`'s fields and calls `std.Io.sleep` on the monotonic
+clock.
+
+`TimeZone` has one constructor that takes a name: `"UTC"` or an offset such as `"+05:30"`
+for now. `TimeZone.fixed` formats the offset and calls it, so slice 5's IANA names extend
+the same constructor. A private-field built-in used to get 10.5's "give it a default or a
+constructor" help. It now names the type-level function that gives one.
+
+Editing the prelude exposed a tooling gap: a checker diagnostic inside the prelude trips an
+assertion instead of printing. A temporary print in `emerald.analyze` showed two redundant
+`.or(0)` calls, which narrowing had already made unnecessary. The print was removed before
+committing.
+
+## Dates and times, slice 4: the local zone, 2026-09-25
+
+`src/TimeZone.zig` is the rule engine. It reads a zone as TZif transitions followed by a
+POSIX TZ rule for every later moment. `std.tz` parses the file but does no lookup and
+leaves the footer rule as text, so evaluating `Mm.w.d`, `Jn`, and `n` dates is
+Emerald's own code. It has unit tests for United States and Sydney daylight time, rule
+forms, a TZif file built byte by byte (the PyPI Zig ships none of `std.tz`'s fixtures), the
+choice of source, and Windows's zone description.
+
+`localSource` is the pure half of glibc's order (`TZ`, then `/etc/localtime`), and
+`main.zig` does the reading. Windows gets `GetDynamicTimeZoneInformation` through a
+hand-declared kernel32 binding, since `std.os.windows` has none. The Windows build compiles
+here, but only CI runs it. The resolved `TimeZone.Local` travels in `emerald.Streams` next
+to `color` and defaults to UTC. `conformance/local-zone/` runs with a fixed `EST5EDT` so
+clock changes are testable everywhere, and its expectation matches what the CLI prints with
+the real `EST5EDT` zone file.
+
+On the Emerald side, a rule-based `TimeZone` has no fixed offset and asks the runtime for
+one. `DateTime.to_instant` resolves repeated and skipped wall-clock times from the offsets a
+day on either side: try the earlier offset, then the later, else move forward by the gap.
+That reproduces Temporal's `"compatible"` choice without the runtime exposing transitions.
+The first draft of the local-zone test could flake at midnight, because it read today
+before now and allowed yesterday. It now reads now first and allows tomorrow.
+
+## Dates and times, slice 5: named zones from a built-in database, 2026-09-25
+
+Slice 4's CI run failed on Windows ReleaseSafe. After `Program.sleep(20 ms)`, a `Stopwatch`
+had measured less than 20 ms, because a Windows timer can wake early relative to the
+monotonic clock. Rather than loosen the test, `Program.sleep` now sleeps against a
+deadline on that clock (`57b58a5`), and CI went green everywhere. That run was also the
+first to execute the Windows zone binding.
+
+The database is IANA's own TZif files, taken from PyPI's `tzdata` wheel. IANA's site and
+ziglang.org were unreachable from the cloud sandbox, but PyPI and GitHub were not. Each
+distinct file is stored once behind a sorted name index and zlib-compressed: 598 names,
+345 files, 56 KB. `tools/update-tzdata.py` also turns CLDR's `windowsZones.xml` into a
+small generated `tzdata.zig`, so the Windows local zone can be named without decompressing
+anything. The interpreter decompresses the database into its run arena the first time a
+program names a zone, and caches each parsed zone. Named lookups prefer it over the
+machine's rules so that a name means the same everywhere.
+
+Testing named zones exposed a slice 4 regression. Making `TimeZone`'s private offset an
+`Int?` had silently stopped zones being dictionary keys, because an optional is not a key
+type. It is now an `Int` beside a `Bool`, and `run/named-zones` uses a zone as a key.
+
+## Dates and times, slice 6: documentation and integration, 2026-09-25
+
+The milestone closes with eight library pages. An overview page, `dates-and-times.md`, says
+which type to choose, then one page each covers `Date` (with `Weekday`), `Time`, `DateTime`,
+`Instant`, `Duration`, `TimeZone`, and `Stopwatch`. They add inventory rows, a
+`DateTimeError` paragraph on the errors page, and `examples/dates.em` with the plan's
+beginner programs. Every inline snippet was run; the `Stopwatch` one had called an undefined
+`build_report()` and now does real work. The fuzz generator gained a valid-program template
+that moves dates and converts a random New York hour on the spring-forward day.
+
+Given the choice, the executor decided to ship third-party notices. Unicode's License V3 asks
+for its notice to travel with copies of CLDR data, which every binary now embeds. Release
+archives had carried only the binary, without even Emerald's own MIT `LICENSE`.
+`THIRD_PARTY_NOTICES.md` quotes Unicode's terms (fetched from CLDR's repository) and Zig's
+MIT license (from the pinned toolchain) verbatim, and notes that IANA's data is public
+domain. The release workflow packs it and `LICENSE` beside the binary, and its smoke test
+checks both unpacked.
+
+Over the milestone, startup for a ReleaseSafe `print(1)` went from about 5.0 ms to about
+8.3 ms, roughly 1 ms per slice of prelude code. The zone database adds nothing, since it
+loads only when a program names a zone. Profiling found and fixed two checker hot spots on
+the way: the module view copy, and its per-body iteration. What remains is checking every
+prelude body on every run; the handoff lists it as the next performance candidate.
