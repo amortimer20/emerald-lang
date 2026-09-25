@@ -1,0 +1,8 @@
+diagnostics/time-units-named.em:2:16: `Duration` needs the unit of this amount named
+  print(Duration(5))
+                 ^
+By position it would count `days`, which is easy to misread. Write its unit in front of it: `days:`, `hours:`, `minutes:`, `seconds:`, `milliseconds:`, `microseconds:`, or `nanoseconds:`.
+diagnostics/time-units-named.em:3:28: `add` needs the unit of this amount named
+  print(Date(2026, 1, 1).add(1))
+                             ^
+By position it would count `years`, which is easy to misread. Write its unit in front of it: `years:`, `months:`, `weeks:`, or `days:`.

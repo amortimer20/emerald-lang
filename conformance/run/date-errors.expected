@@ -1,0 +1,9 @@
+month month 13 is not between 1 and 12
+year year 0 is not between 1 and 9999
+leap day 29 is not between 1 and 28: February 2026 has 28 days
+parse range "2026-13-01" is not a valid date: month 13 is not between 1 and 12
+parse shape "25/09/2026" is not a date written as YYYY-MM-DD, such as 2026-09-25
+past 9999 year 10000 is not between 1 and 9999
+month past 9999 year 10000 is not between 1 and 9999
+a Duration cannot be divided by zero
+DateTimeError a Duration cannot be divided by a zero Duration

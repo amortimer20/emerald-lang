@@ -2475,3 +2475,30 @@ later pushed and published as a GitHub release (2026-09-24). The handoff still c
 slice 4 uncommitted and 0.5.0 unpublished. On 2026-09-25 it was brought back in line with
 Git, and its per-slice validation history, all already recorded above, was cut down to the
 current state.
+
+## Dates and times, slice 1: `Date` and `Duration`, 2026-09-25
+
+The user accepted every recommendation in `docs/date-time-design-plan.md` and left the open
+question about sleeping to the executor, who included `Program.sleep` in slice 3. Slice 1
+writes `DateTimeError`, `Weekday`, `Duration`, and `Date` in ordinary Emerald in the
+prelude. Calendar conversion uses Howard Hinnant's days-from-civil algorithms in floor
+arithmetic. `Duration` keeps whole seconds and a nanosecond part so that it can span the
+full year range. Its division by a large `Int` uses overflow-free binary long division
+rather than widening.
+
+Two engine changes came with it. First, a runtime failure inside the prelude's Emerald code
+used to crash the CLI's renderer, because the prelude is not among the files it renders.
+`raiseTyped` now moves such a failure out to the program's first call into the prelude and
+drops the prelude frames. Console had never raised, so nothing had exposed this.
+
+Second, `moduleView` copied the whole prelude and module scope, every type and member
+included, into a fresh map for each function body. Every branch's definite-assignment
+snapshot then walked that copy. Cost grew with bodies × names, so about 400 prelude lines
+nearly tripled startup. The view now copies only variables, and functions and types are
+found in place through `moduleFallback`, in the stack's own module-then-prelude order.
+Startup for `print(1)` went from 13.6 ms to 5.5 ms (ReleaseSafe). Without the date code it
+is 3.3 ms, down from 5.0 ms.
+
+The named-unit rule (decision 2(a)) is a `named_units` flag on the checker's `Parameters`,
+set for three prelude keys. It reports a positional argument and lists the units the call
+accepts.

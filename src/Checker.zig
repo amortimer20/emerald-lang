@@ -4774,11 +4774,13 @@ fn typeOfStructMethodCall(
         return .invalid;
     }
     const signature = try self.signatureOn(declared, base);
-    try self.checkArguments(call, member.name, try self.parametersOf(
+    var parameters = try self.parametersOf(
         signature,
         (try self.declarationWithDefaults(key)).parameters,
         "Match the number of arguments to the method's parameters.",
-    ));
+    );
+    parameters.named_units = takesNamedUnits(key);
+    try self.checkArguments(call, member.name, parameters);
     if (!isClass(base) and try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
     if (!self.in_function) try self.checkCaptures(expression.span, key, member.name);
     return signature.return_type;
@@ -9327,11 +9329,13 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
     // parameters are what a call must match.
     if (self.constructors.contains(key)) {
         const constructor = self.constructors.get(key).?.constructor.?;
-        try self.checkArguments(call, name, try self.parametersOf(
+        var parameters = try self.parametersOf(
             try self.constructorSignature(key),
             constructor.parameters,
             "Match the number of arguments to the constructor's parameters.",
-        ));
+        );
+        parameters.named_units = takesNamedUnits(key);
+        try self.checkArguments(call, name, parameters);
         return;
     }
     const declaration = self.struct_declarations.get(key).?;
@@ -9640,7 +9644,21 @@ const Parameters = struct {
     /// The type whose private fields a generated constructor called from
     /// outside it may not be given (10.5).
     private_to: ?[]const u8 = null,
+    /// Every parameter is a unit of time, so each argument must be named
+    /// (15.8): `Duration(5)` would silently mean five days.
+    named_units: bool = false,
 };
+
+/// Section 15.8's calls whose arguments are all amounts in units of time.
+fn takesNamedUnits(key: []const u8) bool {
+    const keys = comptime [_][]const u8{
+        Resolver.preludeKey("Duration"),
+        Resolver.preludeKey("Date") ++ Resolver.method_separator ++ "add",
+        Resolver.preludeKey("Date") ++ Resolver.method_separator ++ "subtract",
+    };
+    for (keys) |candidate| if (std.mem.eql(u8, key, candidate)) return true;
+    return false;
+}
 
 fn parametersOf(self: *Checker, signature: Signature, written: []const Ast.Parameter, arity_help: []const u8) Error!Parameters {
     const defaults = try self.arena.alloc(bool, written.len);
@@ -9729,6 +9747,23 @@ fn checkArguments(
         ),
     }
     if (problem != .none) return self.typeArguments(call.arguments);
+
+    if (parameters.named_units) for (call.arguments, 0..) |argument, index| {
+        if (index < call.names.len and call.names[index] != null) continue;
+        var units: std.Io.Writer.Allocating = .init(self.arena);
+        for (parameters.names, 0..) |unit, position| {
+            const separator = if (position == 0) "" else if (position + 1 == parameters.names.len) ", or " else ", ";
+            units.writer.print("{s}`{s}:`", .{ separator, unit }) catch return error.OutOfMemory;
+        }
+        try self.reportWithHelp(
+            argument.span,
+            "`{s}` needs the unit of this amount named",
+            .{name},
+            "By position it would count `{s}`, which is easy to misread. Write its unit in front of it: {s}.",
+            .{ parameters.names[index], units.written() },
+        );
+        return self.typeArguments(call.arguments);
+    };
 
     for (bound, parameters.types, parameters.names) |argument_index, expected, parameter_name| {
         const argument = call.arguments[argument_index orelse continue];

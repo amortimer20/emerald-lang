@@ -7130,14 +7130,29 @@ fn raiseTyped(self: *Interpreter, span: Source.Span, type_name: []const u8, mess
     for (trace, 0..) |*frame, index| {
         frame.* = self.call_stack.items[self.call_stack.items.len - 1 - index];
     }
+    // A failure inside the prelude's own Emerald code, such as a `Date`
+    // rejecting its day, points at the program's call instead: the prelude is
+    // not one of the program's files, and its internals are not what the
+    // reader needs to fix.
+    var location_span = span;
+    var location_file = self.file;
+    var skipped: usize = 0;
+    while (self.inPrelude(location_file) and skipped < trace.len) : (skipped += 1) {
+        location_span = trace[skipped].call_span;
+        location_file = trace[skipped].file;
+    }
     self.failure = .{
         .message = if (type_name.len == 0) try self.arena.dupe(u8, message) else try std.fmt.allocPrint(self.arena, "{s}: {s}", .{ type_name, message }),
-        .span = span,
+        .span = location_span,
         .help = try self.arena.dupe(u8, help),
-        .trace = trace,
-        .file = self.file,
+        .trace = trace[skipped..],
+        .file = location_file,
     };
     return error.Raised;
+}
+
+fn inPrelude(self: *const Interpreter, file: u32) bool {
+    return std.mem.eql(u8, self.files[file].namespace, Resolver.prelude_namespace);
 }
 
 fn raiseFmt(

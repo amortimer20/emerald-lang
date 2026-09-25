@@ -97,12 +97,16 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-Date and time, the highest-priority standard-library addition (15.7), has a design plan in
-[`date-time-design-plan.md`](date-time-design-plan.md). It is a proposal: its open decisions
-are waiting on the user, and no implementation is authorized yet. Console's remaining scope
-(`Table`/`Panel` widgets, prompts, multi-select) comes after it and needs its own design
-proposal (24). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than on the
-roadmap.
+Dates and times (rewrite-context 15.8) are being implemented from
+[`date-time-design-plan.md`](date-time-design-plan.md). The user accepted every decision in
+it. Slice 1 (`Date`, `Duration`, `Weekday`, `DateTimeError`, and the named-unit diagnostic)
+is done. Slice 2, `Time` and `DateTime`, is next. It follows the same approach: pure
+Emerald in `src/prelude.em`, and `Emerald.`-qualified names inside prelude bodies. Library
+pages and an example program come in slice 6, as the plan says.
+
+Console's remaining scope (`Table`/`Panel` widgets, prompts, multi-select) comes after dates
+and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Audio`, and
+`Game` are parked rather than on the roadmap.
 
 ## Deferred
 
@@ -127,7 +131,8 @@ roadmap.
 
 ## Active rough edges
 
-- Runtime failures currently share `RuntimeError` except `AssertionError` and `FileError`.
+- Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`, and
+  `DateTimeError`.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
   remain unsupported.
@@ -137,16 +142,22 @@ roadmap.
 
 ## Validation and repository state
 
-Everything through `076ee72` is committed and pushed. Console styling slice 4 is `e0e5363`.
-The three commits after it (`f6099cc`, `79c0861`, `076ee72`) change documentation only: they
-record Console's `Table`/`Panel` roadmap, park `Tui`, `Graphics`, `Gui`, `Audio`, and `Game`, and
-add the standard-library backlog (15.7). Each slice's validation is recorded in
-[`journal.md`](journal.md) and its commit message.
+Dates and times slice 1 is committed after its own checker performance fix. With pinned
+Zig 0.16.0, Debug and ReleaseSafe `zig build test`, `zig build`, `zig fmt --check
+src/*.zig`, `bash tools/check-doc-examples.sh` (100 linked files), `git diff --check`, and a
+fuzz campaign (`zig build fuzz -- 20260925 3000`: 3,000 cases, 402 executed) passed. The new
+conformance cases `run/date-basics`, `run/duration-basics`, `run/date-errors`,
+`runtime-errors/date-invalid-day`, and `diagnostics/time-units-named` were checked by hand,
+including the weekday of 0001-01-01, month-end clamping, and large-divisor `Duration`
+division against Python.
 
-The last `src/` change, Console slice 3 (`7811a0f`), passed Debug and ReleaseSafe
-`zig build test`, `zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`,
-and `git diff --check` with pinned Zig 0.16.0. Since then only documentation has changed.
-Those commits passed `bash tools/check-doc-examples.sh` (100 linked files) and `git diff --check`.
+Startup cost was measured as the plan asked. A ReleaseSafe `print(1)` took 5.0 ms before
+this work. The new prelude code first pushed that to 13.6 ms, because the checker copied the
+whole module scope into every function body it checked and snapshotted that copy at every
+branch. Copying only variables brought it to 5.5 ms (3.3 ms without the date code).
+
+All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
+is recorded in [`journal.md`](journal.md) and its commit message.
 
 Cloud sessions cannot reach ziglang.org. The pinned Zig 0.16.0 comes from the `ziglang==0.16.0`
 PyPI wheel instead (`pip download ziglang==0.16.0 --no-deps`, unzip, and put `ziglang/` on

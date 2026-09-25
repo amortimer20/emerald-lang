@@ -1,15 +1,14 @@
 # Dates and times: design and implementation plan
 
-Status: design proposal, 2026-09-25. This plan does not authorize implementation, commits,
-or pushes. Read AGENTS.md and the current handoff before acting; the repository takes
-precedence over remembered conversations. At the start of each slice, reread `git status`,
-the recent `git log`, relevant diffs, and docs/handoff.md.
+Status: accepted design, 2026-09-25. The user accepted every recommendation below and left
+remaining judgement calls to the executor; implementation proceeds slice by slice. Read
+AGENTS.md and the current handoff before acting; the repository takes precedence over
+remembered conversations. At the start of each slice, reread `git status`, the recent
+`git log`, relevant diffs, and docs/handoff.md.
 
 The user asked for a date/time API that is **easy to understand and modern**. Rewrite-context
 15.7 makes date/time the highest-priority standard-library addition and requires its design
-pass to settle time-zone scope and how durations are represented. This plan does both. It
-also leaves a short list of decisions for the user (see "Open decisions"). Every other choice
-below is a recommendation the executor may follow without asking again.
+pass to settle time-zone scope and how durations are represented. This plan does both.
 
 ## What beginner programs need
 
@@ -44,7 +43,7 @@ print("Back in #{lunch}")               # Back in 45m
 # A timestamp for a log line
 print("[#{DateTime.now()}] started")    # [2026-09-25T14:30:07] started
 
-# A meeting time somewhere else (named zones are an open decision)
+# A meeting time somewhere else
 const meeting = DateTime(2026, 10, 1, 9, 0).to_instant(TimeZone("America/New_York"))
 print(meeting.to_date_time(TimeZone("Europe/Paris")))   # 2026-10-01T15:00:00
 ```
@@ -251,7 +250,7 @@ the supported year range, where a single nanosecond `Int` would stop at 1677–2
 TimeZone.utc: TimeZone
 TimeZone.local: TimeZone                        # decided once per execution
 TimeZone.fixed(hours: Int, minutes: Int = 0): TimeZone    # "+05:30"
-TimeZone(name: String)                          # IANA name, e.g. "Asia/Tokyo" (open decision)
+TimeZone(name: String)                          # IANA name, e.g. "Asia/Tokyo" (decision)
 TimeZone.named_maybe(name: String): TimeZone?
 
 zone.name: String
@@ -321,11 +320,13 @@ print("#{time.hour}:#{time.minute.to_string().pad_start(2, "0")}")
 ```
 
 A small set of named readable formats, such as a 12-hour clock or `September 25, 2026`, is a
-candidate later slice (open decision 5).
+candidate later slice (decision 5).
 
-## Open decisions (for the user)
+## Decisions
 
-Each item below has a recommendation. Where one blocks a slice, that is noted.
+All six are settled (2026-09-25): the user accepted each recommendation. For decision 4 the
+user left the open part to the executor's judgement, and `Program.sleep` is included in
+slice 3. The options that were weighed are kept below as the record of why.
 
 1. **Time-zone scope.** This blocks slices 4–5.
    - **A.** UTC, fixed offsets, and the machine's local zone only. `TimeZone("Asia/Tokyo")`
@@ -339,7 +340,7 @@ Each item below has a recommendation. Where one blocks a slice, that is noted.
      every OS and in CI. Emerald releases have to pick up database updates, and a
      `tools/update-tzdata.sh` script would regenerate the built-in copy.
 
-   **Recommendation: C, built as the last slice.** A meeting-in-another-city program is a
+   **Settled: C, built as the last slice.** A meeting-in-another-city program is a
    common beginner wish, and matching results everywhere suits a language whose conformance
    tests run on three OSes. Slices 1–4 are the same under A, B, or C, so this decision can
    wait until slice 5.
@@ -353,25 +354,25 @@ Each item below has a recommendation. Where one blocks a slice, that is noted.
    - (c) Factories only: `Duration.seconds(5)`, `Duration.minutes(30)`. These are clear but
      can't combine (`1h 30m` needs `+`), and are a second way to build the same thing.
 
-   **Recommendation: (a).** It is the least new machinery, and it fits "errors are pedagogy".
+   **Settled: (a).** It is the least new machinery, and it fits "errors are pedagogy".
    Generalize it into (b) only if a second library wants the same rule.
-3. **`Month`: number or enum.** The recommendation is an `Int` (1–12) plus `month_name`,
+3. **`Month`: number or enum.** Settled: an `Int` (1–12) plus `month_name`,
    because month numbers are universal, beginners write `date.month == 12`, and `Date(2026,
    9, 25)` stays short. A `Month` enum would make `Date(2026, Month.september, 25)` the
    canonical form, which is safer but noisier. Weekday is the enum because its numbering is
    *not* universal.
-4. **`Stopwatch` and sleeping.** The recommendation is to include `Stopwatch`. Also consider
+4. **`Stopwatch` and sleeping.** Settled: include `Stopwatch`, and also
    `Program.sleep(duration: Duration)`, a blocking pause, for countdowns and simple animation.
-   It fits the single-threaded model (21) and has an obvious beginner use. It doesn't need to
-   be decided before slice 3.
-5. **Readable formats.** Recommendation: ship ISO display plus components first, and decide
+   It fits the single-threaded model (21) and has an obvious beginner use. Both land in
+   slice 3.
+5. **Readable formats.** Settled: ship ISO display plus components first, and decide
    on a small named-format set (such as `date.format(style: DateStyle.long)` →
    `September 25, 2026`, and a 12-hour `Time` form) after real programs show which ones
    people use. All output stays English and locale-independent (15.5).
 6. **Names.** The proposal uses `Time` (Python and Swift readers may expect a moment rather
    than a clock reading; `TimeOfDay` is the alternative), `DateTime` rather than Temporal's
    `PlainDateTime` or java.time's `LocalDateTime`, and `Instant` (java.time, Temporal, and
-   kotlinx all use it). Recommendation: keep the short names. The type table and the error
+   kotlinx all use it). Settled: keep the short names. The type table and the error
    message for mixing them up do the teaching.
 
 ## Implementation approach
@@ -395,7 +396,7 @@ Each item below has a recommendation. Where one blocks a slice, that is noted.
   transitions, then evaluate the POSIX `TZ` footer rule for later dates. Unit-test it against
   known transitions (US and EU daylight-saving changes, a zone that dropped DST, a
   half-hour-offset zone, the southern hemisphere).
-- **Checker work** is limited to open decision 2's named-unit diagnostic, if accepted.
+- **Checker work** is limited to decision 2's named-unit diagnostic, if accepted.
   Everything else is ordinary prelude code that the checker, formatter, and LSP already handle
   (hover and completion come free from the prelude signatures).
 
@@ -415,15 +416,16 @@ slice's rewrite-context text is written in the same change as its code (23.6).
    negative durations, overflow. Measure prelude startup cost.
 2. **`Time` and `DateTime`** (pure). Midnight wraparound, `at`, `duration_until`, the parse
    and display round trip, fractional-second display.
-3. **`Instant`, the clock, `TimeZone.utc`/`fixed`, `Stopwatch`.** `Instant.now()`, Unix
-   conversions, operators, offset parsing, `to_date_time`/`to_instant` with fixed zones.
-   Tests assert relations (`later >= earlier`, a stopwatch reading is non-negative), never
-   the actual current time. Resolve the `conformance/run/traits.em` `Stopwatch` collision.
+3. **`Instant`, the clock, `TimeZone.utc`/`fixed`, `Stopwatch`, `Program.sleep`.**
+   `Instant.now()`, Unix conversions, operators, offset parsing, `to_date_time`/`to_instant`
+   with fixed zones. Tests assert relations (`later >= earlier`, a stopwatch reading is
+   non-negative), never the actual current time. Resolve the `conformance/run/traits.em`
+   `Stopwatch` collision.
 4. **The local zone.** `TimeZone.local`, `Date.today()`, `Time.now()`, `DateTime.now()`, and
    the `Streams.time_zone` plumbing. OS detection runs through the pure resolution function.
    Daylight-saving gap and overlap resolution is tested through an injected zone. Windows is
    verified by CI, as Console's VT setup was.
-5. **Named zones** (per open decision 1). `TimeZone(name)`, `named_maybe`, and the data
+5. **Named zones** (per decision 1). `TimeZone(name)`, `named_maybe`, and the data
    source with its update script. Conformance on real transitions, such as America/New_York
    on the 2026 spring-forward and fall-back days, and Asia/Kolkata's half-hour offset.
 6. **Documentation and integration.** Library pages (`date.md`, `time.md`, `date-time.md`,
@@ -446,5 +448,5 @@ shows the need (24).
   move the heaviest calendar routines to native code behind the same Emerald signatures.
 - **Zone data freshness** under option C. Mitigation: the update script plus a release
   checklist line.
-- **Named-unit rule creep.** If open decision 2(a) starts growing exceptions, stop and
+- **Named-unit rule creep.** If decision 2(a) starts growing exceptions, stop and
   propose 2(b) as a proper language feature.
