@@ -433,6 +433,146 @@ struct Duration with Ordered, Textual {
     }
 }
 
+# Shared by the date and time types, and private to this file, so programs
+# neither see nor capture them.
+
+# A function rather than a module-level list: a module binding in the prelude
+# would take part in every program's module-setup ordering (14.1).
+func _month_name(month: Int): String {
+    return ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][month - 1]
+}
+
+func _leap?(year: Int): Bool {
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+}
+
+func _month_length(year: Int, month: Int): Int {
+    if month == 2 {
+        return if _leap?(year) then 29 else 28
+    }
+    return if month == 4 or month == 6 or month == 9 or month == 11 then 30 else 31
+}
+
+func _year_problem(year: Int): String? {
+    if year < 1 or year > 9999 {
+        return "year #{year} is not between 1 and 9999"
+    }
+    return nothing
+}
+
+func _date_problem(year: Int, month: Int, day: Int): String? {
+    const year_problem = _year_problem(year)
+    if year_problem != nothing {
+        return year_problem
+    }
+    if month < 1 or month > 12 {
+        return "month #{month} is not between 1 and 12"
+    }
+    const length = _month_length(year, month)
+    if day < 1 or day > length {
+        return "day #{day} is not between 1 and #{length}: #{_month_name(month)} #{year} has #{length} days"
+    }
+    return nothing
+}
+
+func _time_problem(hour: Int, minute: Int, second: Int, nanosecond: Int): String? {
+    if hour < 0 or hour > 23 {
+        return "hour #{hour} is not between 0 and 23"
+    }
+    if minute < 0 or minute > 59 {
+        return "minute #{minute} is not between 0 and 59"
+    }
+    if second < 0 or second > 59 {
+        return "second #{second} is not between 0 and 59"
+    }
+    if nanosecond < 0 or nanosecond > 999999999 {
+        return "nanosecond #{nanosecond} is not between 0 and 999999999"
+    }
+    return nothing
+}
+
+# A time of day moved by an exact amount: the whole days it crossed, then the
+# new second of the day and nanosecond. Each unit is split into whole seconds
+# and a remainder, so no product leaves `Int` for any reasonable amount.
+func _shifted(second_of_day: Int, nanosecond: Int, hours: Int, minutes: Int, seconds: Int, milliseconds: Int, microseconds: Int, nanoseconds: Int): (Int, Int, Int) {
+    const parts = nanosecond + (milliseconds % 1000) * 1000000 + (microseconds % 1000000) * 1000 + nanoseconds % 1000000000
+    const total = second_of_day + hours * 3600 + minutes * 60 + seconds + milliseconds // 1000 + microseconds // 1000000 + nanoseconds // 1000000000 + parts // 1000000000
+    return (total // 86400, total % 86400, parts % 1000000000)
+}
+
+# The digits after a decimal point for a nanosecond count, in groups of
+# three: 250000000 is ".250". Nothing at all for a whole second.
+func _second_fraction(nanosecond: Int): String {
+    if nanosecond == 0 {
+        return ""
+    }
+    if nanosecond % 1000000 == 0 {
+        return "." + (nanosecond // 1000000).to_string().pad_start(3, "0")
+    }
+    if nanosecond % 1000 == 0 {
+        return "." + (nanosecond // 1000).to_string().pad_start(6, "0")
+    }
+    return "." + nanosecond.to_string().pad_start(9, "0")
+}
+
+func _two_digits(value: Int): String {
+    return value.to_string().pad_start(2, "0")
+}
+
+# Text is read as code points, since every accepted form is ASCII.
+
+# The number written in `count` ASCII digits starting at `start`, or nothing
+# when any of them is not a digit.
+func _digits(points: List[Int], start: Int, count: Int): Int? {
+    var value = 0
+    for index in start..<start + count {
+        const point = points[index]
+        if point < 48 or point > 57 {
+            return nothing
+        }
+        value = value * 10 + point - 48
+    }
+    return value
+}
+
+# Whether YYYY-MM-DD starts at `start`, ignoring what follows it.
+func _date_shaped?(points: List[Int], start: Int): Bool {
+    if points.count < start + 10 or points[start + 4] != 45 or points[start + 7] != 45 {
+        return false
+    }
+    return _digits(points, start, 4) != nothing and _digits(points, start + 5, 2) != nothing and _digits(points, start + 8, 2) != nothing
+}
+
+func _date_at(points: List[Int], start: Int): (Int, Int, Int) {
+    return (_digits(points, start, 4).or(0), _digits(points, start + 5, 2).or(0), _digits(points, start + 8, 2).or(0))
+}
+
+# Whether exactly HH:MM, HH:MM:SS, or HH:MM:SS.fraction runs from `start` to
+# `end`, with one to nine fraction digits.
+func _time_shaped?(points: List[Int], start: Int, end: Int): Bool {
+    const length = end - start
+    if not (length == 5 or length == 8 or (length >= 10 and length <= 18)) {
+        return false
+    }
+    if points[start + 2] != 58 or _digits(points, start, 2) == nothing or _digits(points, start + 3, 2) == nothing {
+        return false
+    }
+    if length >= 8 and (points[start + 5] != 58 or _digits(points, start + 6, 2) == nothing) {
+        return false
+    }
+    return length < 10 or (points[start + 8] == 46 and _digits(points, start + 9, length - 9) != nothing)
+}
+
+func _time_at(points: List[Int], start: Int, end: Int): (Int, Int, Int, Int) {
+    const length = end - start
+    const second = if length >= 8 then _digits(points, start + 6, 2).or(0) else 0
+    var nanosecond = 0
+    if length >= 10 {
+        nanosecond = _digits(points, start + 9, length - 9).or(0) * 10 ** (18 - length)
+    }
+    return (_digits(points, start, 2).or(0), _digits(points, start + 3, 2).or(0), second, nanosecond)
+}
+
 # A calendar date with no time of day or time zone, in the proleptic Gregorian
 # calendar from year 1 through 9999.
 struct Date with Ordered, Textual {
@@ -440,11 +580,10 @@ struct Date with Ordered, Textual {
     const month: Int
     const day: Int
 
-    const Date._month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
     const Date._weekdays = [Emerald.Weekday.monday, Emerald.Weekday.tuesday, Emerald.Weekday.wednesday, Emerald.Weekday.thursday, Emerald.Weekday.friday, Emerald.Weekday.saturday, Emerald.Weekday.sunday]
 
     constructor(year: Int, month: Int, day: Int) {
-        const problem = Emerald.Date._problem(year, month, day)
+        const problem = _date_problem(year, month, day)
         if problem != nothing {
             raise Emerald.DateTimeError(problem)
         }
@@ -473,7 +612,7 @@ struct Date with Ordered, Textual {
     }
 
     const month_name: String {
-        return Emerald.Date._month_names[self.month - 1]
+        return _month_name(self.month)
     }
 
     const day_of_year: Int {
@@ -481,11 +620,11 @@ struct Date with Ordered, Textual {
     }
 
     const days_in_month: Int {
-        return Emerald.Date._month_length(self.year, self.month)
+        return _month_length(self.year, self.month)
     }
 
     func leap_year?(): Bool {
-        return Emerald.Date._leap?(self.year)
+        return _leap?(self.year)
     }
 
     # Years and months first, keeping the day when that month has it and
@@ -494,11 +633,11 @@ struct Date with Ordered, Textual {
         const index = self.year * 12 + self.month - 1 + years * 12 + months
         const year = index // 12
         const month = index % 12 + 1
-        const year_problem = Emerald.Date._year_problem(year)
+        const year_problem = _year_problem(year)
         if year_problem != nothing {
             raise Emerald.DateTimeError(year_problem)
         }
-        const moved = Emerald.Date(year, month, self.day.clamp(1, Emerald.Date._month_length(year, month)))
+        const moved = Emerald.Date(year, month, self.day.clamp(1, _month_length(year, month)))
         if weeks == 0 and days == 0 {
             return moved
         }
@@ -532,6 +671,11 @@ struct Date with Ordered, Textual {
         return if months >= 0 then months // 12 else -((-months) // 12)
     }
 
+    # This date at a time of day.
+    func at(time: Emerald.Time): Emerald.DateTime {
+        return Emerald.DateTime(self.year, self.month, self.day, time.hour, time.minute, time.second, time.nanosecond)
+    }
+
     @override
     func compare(other: Self): Int {
         return self._days() - other._days()
@@ -539,45 +683,12 @@ struct Date with Ordered, Textual {
 
     @override
     func to_string(): String {
-        return "#{self.year.to_string().pad_start(4, "0")}-#{self.month.to_string().pad_start(2, "0")}-#{self.day.to_string().pad_start(2, "0")}"
+        return "#{self.year.to_string().pad_start(4, "0")}-#{_two_digits(self.month)}-#{_two_digits(self.day)}"
     }
 
     # Days since 1970-01-01, which is day 0.
     func _days(): Int {
         return Emerald.Date._days_from_civil(self.year, self.month, self.day)
-    }
-
-    func Date._leap?(year: Int): Bool {
-        return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
-    }
-
-    func Date._month_length(year: Int, month: Int): Int {
-        if month == 2 {
-            return if Emerald.Date._leap?(year) then 29 else 28
-        }
-        return if month == 4 or month == 6 or month == 9 or month == 11 then 30 else 31
-    }
-
-    func Date._year_problem(year: Int): String? {
-        if year < 1 or year > 9999 {
-            return "year #{year} is not between 1 and 9999"
-        }
-        return nothing
-    }
-
-    func Date._problem(year: Int, month: Int, day: Int): String? {
-        const year_problem = Emerald.Date._year_problem(year)
-        if year_problem != nothing {
-            return year_problem
-        }
-        if month < 1 or month > 12 {
-            return "month #{month} is not between 1 and 12"
-        }
-        const length = Emerald.Date._month_length(year, month)
-        if day < 1 or day > length {
-            return "day #{day} is not between 1 and #{length}: #{Emerald.Date._month_names[month - 1]} #{year} has #{length} days"
-        }
-        return nothing
     }
 
     # Howard Hinnant's days_from_civil, in floor arithmetic.
@@ -604,33 +715,13 @@ struct Date with Ordered, Textual {
         return Emerald.Date(year, month, day)
     }
 
-    # The number written in `count` ASCII digits starting at `start`, or
-    # nothing when any of them is not a digit.
-    func Date._digits(points: List[Int], start: Int, count: Int): Int? {
-        var value = 0
-        for index in start..<start + count {
-            const point = points[index]
-            if point < 48 or point > 57 {
-                return nothing
-            }
-            value = value * 10 + point - 48
-        }
-        return value
-    }
-
     func Date._text_problem(text: String): String? {
         const points = text.trim().code_points()
-        const shape = "\"#{text}\" is not a date written as YYYY-MM-DD, such as 2026-09-25"
-        if points.count != 10 or points[4] != 45 or points[7] != 45 {
-            return shape
+        if points.count != 10 or not _date_shaped?(points, 0) {
+            return "\"#{text}\" is not a date written as YYYY-MM-DD, such as 2026-09-25"
         }
-        const year = Emerald.Date._digits(points, 0, 4)
-        const month = Emerald.Date._digits(points, 5, 2)
-        const day = Emerald.Date._digits(points, 8, 2)
-        if year == nothing or month == nothing or day == nothing {
-            return shape
-        }
-        const problem = Emerald.Date._problem(year, month, day)
+        const (year, month, day) = _date_at(points, 0)
+        const problem = _date_problem(year, month, day)
         if problem != nothing {
             return "\"#{text}\" is not a valid date: #{problem}"
         }
@@ -639,7 +730,204 @@ struct Date with Ordered, Textual {
 
     # Only after `_text_problem` has accepted the text.
     func Date._from_text(text: String): Emerald.Date {
+        const (year, month, day) = _date_at(text.trim().code_points(), 0)
+        return Emerald.Date(year, month, day)
+    }
+}
+
+# A time on the clock with no date or time zone, to the nanosecond. Moving it
+# wraps around midnight.
+struct Time with Ordered, Textual {
+    const hour: Int
+    const minute: Int
+    const second: Int
+    const nanosecond: Int
+
+    constructor(hour: Int, minute: Int = 0, second: Int = 0, nanosecond: Int = 0) {
+        const problem = _time_problem(hour, minute, second, nanosecond)
+        if problem != nothing {
+            raise Emerald.DateTimeError(problem)
+        }
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+        self.nanosecond = nanosecond
+    }
+
+    func Time.parse(text: String): Emerald.Time {
+        const problem = Emerald.Time._text_problem(text)
+        if problem != nothing {
+            raise Emerald.DateTimeError(problem)
+        }
+        return Emerald.Time._from_text(text)
+    }
+
+    func Time.parse_maybe(text: String): Emerald.Time? {
+        if Emerald.Time._text_problem(text) != nothing {
+            return nothing
+        }
+        return Emerald.Time._from_text(text)
+    }
+
+    func add(hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0): Self {
+        const (_, second_of_day, nanosecond) = _shifted(self._second_of_day(), self.nanosecond, hours, minutes, seconds, milliseconds, microseconds, nanoseconds)
+        return Emerald.Time(second_of_day // 3600, second_of_day % 3600 // 60, second_of_day % 60, nanosecond)
+    }
+
+    func subtract(hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0): Self {
+        return self.add(hours: -hours, minutes: -minutes, seconds: -seconds, milliseconds: -milliseconds, microseconds: -microseconds, nanoseconds: -nanoseconds)
+    }
+
+    @override
+    func compare(other: Self): Int {
+        return (self._second_of_day() - other._second_of_day()) * 1000000000 + self.nanosecond - other.nanosecond
+    }
+
+    # HH:MM:SS, with a fraction of a second only when there is one.
+    @override
+    func to_string(): String {
+        return "#{_two_digits(self.hour)}:#{_two_digits(self.minute)}:#{_two_digits(self.second)}#{_second_fraction(self.nanosecond)}"
+    }
+
+    func _second_of_day(): Int {
+        return self.hour * 3600 + self.minute * 60 + self.second
+    }
+
+    func Time._text_problem(text: String): String? {
         const points = text.trim().code_points()
-        return Emerald.Date(Emerald.Date._digits(points, 0, 4).or(0), Emerald.Date._digits(points, 5, 2).or(0), Emerald.Date._digits(points, 8, 2).or(0))
+        if not _time_shaped?(points, 0, points.count) {
+            return "\"#{text}\" is not a time written as HH:MM or HH:MM:SS, such as 14:30"
+        }
+        const (hour, minute, second, nanosecond) = _time_at(points, 0, points.count)
+        const problem = _time_problem(hour, minute, second, nanosecond)
+        if problem != nothing {
+            return "\"#{text}\" is not a valid time: #{problem}"
+        }
+        return nothing
+    }
+
+    # Only after `_text_problem` has accepted the text.
+    func Time._from_text(text: String): Emerald.Time {
+        const points = text.trim().code_points()
+        const (hour, minute, second, nanosecond) = _time_at(points, 0, points.count)
+        return Emerald.Time(hour, minute, second, nanosecond)
+    }
+}
+
+# A date and a time of day with no time zone: what a calendar and a wall clock
+# show together.
+struct DateTime with Ordered, Textual {
+    const date: Emerald.Date
+    const time: Emerald.Time
+
+    constructor(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0, nanosecond: Int = 0) {
+        self.date = Emerald.Date(year, month, day)
+        self.time = Emerald.Time(hour, minute, second, nanosecond)
+    }
+
+    func DateTime.parse(text: String): Emerald.DateTime {
+        const problem = Emerald.DateTime._text_problem(text)
+        if problem != nothing {
+            raise Emerald.DateTimeError(problem)
+        }
+        return Emerald.DateTime._from_text(text)
+    }
+
+    func DateTime.parse_maybe(text: String): Emerald.DateTime? {
+        if Emerald.DateTime._text_problem(text) != nothing {
+            return nothing
+        }
+        return Emerald.DateTime._from_text(text)
+    }
+
+    const year: Int {
+        return self.date.year
+    }
+
+    const month: Int {
+        return self.date.month
+    }
+
+    const day: Int {
+        return self.date.day
+    }
+
+    const hour: Int {
+        return self.time.hour
+    }
+
+    const minute: Int {
+        return self.time.minute
+    }
+
+    const second: Int {
+        return self.time.second
+    }
+
+    const nanosecond: Int {
+        return self.time.nanosecond
+    }
+
+    const weekday: Emerald.Weekday {
+        return self.date.weekday
+    }
+
+    # Years and months first, as `Date.add` moves them; then weeks and days,
+    # together with any whole days the time units carry past midnight.
+    func add(years: Int = 0, months: Int = 0, weeks: Int = 0, days: Int = 0, hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0): Self {
+        const time = self.time
+        const (carried, second_of_day, nanosecond) = _shifted(time.hour * 3600 + time.minute * 60 + time.second, time.nanosecond, hours, minutes, seconds, milliseconds, microseconds, nanoseconds)
+        const date = self.date.add(years: years, months: months, weeks: weeks, days: days + carried)
+        return Emerald.DateTime(date.year, date.month, date.day, second_of_day // 3600, second_of_day % 3600 // 60, second_of_day % 60, nanosecond)
+    }
+
+    func subtract(years: Int = 0, months: Int = 0, weeks: Int = 0, days: Int = 0, hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0): Self {
+        return self.add(years: -years, months: -months, weeks: -weeks, days: -days, hours: -hours, minutes: -minutes, seconds: -seconds, milliseconds: -milliseconds, microseconds: -microseconds, nanoseconds: -nanoseconds)
+    }
+
+    # The difference the calendar and clock show, as if every day had exactly
+    # 24 hours: a change of clocks in some time zone is not counted.
+    func duration_until(other: Self): Emerald.Duration {
+        const days = self.date.days_until(other.date)
+        const seconds = (other.time.hour - self.time.hour) * 3600 + (other.time.minute - self.time.minute) * 60 + other.time.second - self.time.second
+        return Emerald.Duration(seconds: days * 86400 + seconds, nanoseconds: other.time.nanosecond - self.time.nanosecond)
+    }
+
+    @override
+    func compare(other: Self): Int {
+        const by_date = self.date.compare(other.date)
+        return if by_date != 0 then by_date else self.time.compare(other.time)
+    }
+
+    # YYYY-MM-DDTHH:MM:SS, the ISO 8601 form.
+    @override
+    func to_string(): String {
+        return "#{self.date}T#{self.time}"
+    }
+
+    func DateTime._text_problem(text: String): String? {
+        const points = text.trim().code_points()
+        const shaped = points.count >= 16 and _date_shaped?(points, 0) and (points[10] == 84 or points[10] == 32) and _time_shaped?(points, 11, points.count)
+        if not shaped {
+            return "\"#{text}\" is not a date and time written as YYYY-MM-DDTHH:MM:SS, such as 2026-09-25T14:30:00"
+        }
+        const (year, month, day) = _date_at(points, 0)
+        const (hour, minute, second, nanosecond) = _time_at(points, 11, points.count)
+        var problem = _date_problem(year, month, day)
+        if problem == nothing {
+            problem = _time_problem(hour, minute, second, nanosecond)
+        }
+        if problem != nothing {
+            return "\"#{text}\" is not a valid date and time: #{problem}"
+        }
+        return nothing
+    }
+
+    # Only after `_text_problem` has accepted the text.
+    func DateTime._from_text(text: String): Emerald.DateTime {
+        const points = text.trim().code_points()
+        const (year, month, day) = _date_at(points, 0)
+        const (hour, minute, second, nanosecond) = _time_at(points, 11, points.count)
+        return Emerald.DateTime(year, month, day, hour, minute, second, nanosecond)
     }
 }

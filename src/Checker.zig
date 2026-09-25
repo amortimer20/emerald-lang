@@ -166,6 +166,11 @@ arena: std.mem.Allocator,
 scopes: std.ArrayList(*Scope) = .empty,
 prelude: *Scope,
 module: *Scope,
+/// The keys `moduleView` copies, and the scope sizes they were found at. A
+/// module or prelude binding never changes between a variable and a function
+/// or type, so the list only goes stale when a scope gains a name.
+view_keys: std.ArrayList(ViewKey) = .empty,
+view_sizes: [2]usize = .{ std.math.maxInt(usize), std.math.maxInt(usize) },
 diagnostics: std.ArrayList(Diagnostic) = .empty,
 
 facts: Resolver.Facts,
@@ -3743,22 +3748,37 @@ fn checkFunctionBody(
 /// body, and each branch's snapshot inside it, cost as much as the whole
 /// program, prelude included.
 fn moduleView(self: *Checker) Error!*Scope {
+    const sizes = [2]usize{ self.prelude.count(), self.module.count() };
+    if (!std.mem.eql(usize, &sizes, &self.view_sizes)) {
+        self.view_keys.clearRetainingCapacity();
+        // The module scope second, so a program name shadows a prelude one, as
+        // it does at the top level.
+        for ([_]*const Scope{ self.prelude, self.module }) |source| {
+            var entries = source.iterator();
+            while (entries.next()) |entry| {
+                if (entry.value_ptr.is_function or entry.value_ptr.is_type) continue;
+                if (source == self.prelude and self.module.contains(entry.key_ptr.*)) continue;
+                try self.view_keys.append(self.arena, .{ .key = entry.key_ptr.*, .from_module = source == self.module });
+            }
+        }
+        self.view_sizes = sizes;
+    }
     const view = try self.arena.create(Scope);
     view.* = .empty;
-    // The module scope second, so a program name shadows a prelude one, as it
-    // does at the top level.
-    for ([_]*const Scope{ self.prelude, self.module }) |source| {
-        var entries = source.iterator();
-        while (entries.next()) |entry| {
-            if (entry.value_ptr.is_function or entry.value_ptr.is_type) continue;
-            if (source == self.prelude and self.module.contains(entry.key_ptr.*)) continue;
-            var binding = entry.value_ptr.*;
-            binding.assigned = true;
-            try view.put(self.arena, entry.key_ptr.*, binding);
-        }
+    try view.ensureTotalCapacity(self.arena, @intCast(self.view_keys.items.len));
+    for (self.view_keys.items) |entry| {
+        const source = if (entry.from_module) self.module else self.prelude;
+        var binding = source.get(entry.key).?;
+        binding.assigned = true;
+        view.putAssumeCapacity(entry.key, binding);
     }
     return view;
 }
+
+const ViewKey = struct {
+    key: []const u8,
+    from_module: bool,
+};
 
 /// A function or type that `moduleView` leaves in place, looked up in the
 /// order the scope stack itself uses: the module, then the prelude.
@@ -9655,6 +9675,10 @@ fn takesNamedUnits(key: []const u8) bool {
         Resolver.preludeKey("Duration"),
         Resolver.preludeKey("Date") ++ Resolver.method_separator ++ "add",
         Resolver.preludeKey("Date") ++ Resolver.method_separator ++ "subtract",
+        Resolver.preludeKey("Time") ++ Resolver.method_separator ++ "add",
+        Resolver.preludeKey("Time") ++ Resolver.method_separator ++ "subtract",
+        Resolver.preludeKey("DateTime") ++ Resolver.method_separator ++ "add",
+        Resolver.preludeKey("DateTime") ++ Resolver.method_separator ++ "subtract",
     };
     for (keys) |candidate| if (std.mem.eql(u8, key, candidate)) return true;
     return false;

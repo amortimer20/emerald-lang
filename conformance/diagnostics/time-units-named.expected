@@ -6,3 +6,11 @@ diagnostics/time-units-named.em:3:28: `add` needs the unit of this amount named
   print(Date(2026, 1, 1).add(1))
                              ^
 By position it would count `years`, which is easy to misread. Write its unit in front of it: `years:`, `months:`, `weeks:`, or `days:`.
+diagnostics/time-units-named.em:5:19: `add` needs the unit of this amount named
+  print(Time(9).add(1))
+                    ^
+By position it would count `hours`, which is easy to misread. Write its unit in front of it: `hours:`, `minutes:`, `seconds:`, `milliseconds:`, `microseconds:`, or `nanoseconds:`.
+diagnostics/time-units-named.em:6:37: `subtract` needs the unit of this amount named
+  print(DateTime(2026, 1, 1).subtract(2))
+                                      ^
+By position it would count `years`, which is easy to misread. Write its unit in front of it: `years:`, `months:`, `weeks:`, `days:`, `hours:`, `minutes:`, `seconds:`, `milliseconds:`, `microseconds:`, or `nanoseconds:`.

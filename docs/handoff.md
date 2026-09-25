@@ -99,10 +99,13 @@ method changes only ordinary identifier uses.
 
 Dates and times (rewrite-context 15.8) are being implemented from
 [`date-time-design-plan.md`](date-time-design-plan.md). The user accepted every decision in
-it. Slice 1 (`Date`, `Duration`, `Weekday`, `DateTimeError`, and the named-unit diagnostic)
-is done. Slice 2, `Time` and `DateTime`, is next. It follows the same approach: pure
-Emerald in `src/prelude.em`, and `Emerald.`-qualified names inside prelude bodies. Library
-pages and an example program come in slice 6, as the plan says.
+it. Slices 1 and 2 are done: `Date`, `Time`, `DateTime`, `Duration`, `Weekday`,
+`DateTimeError`, and the named-unit diagnostic. Slice 3 is next: `Instant`, the real clock,
+`TimeZone.utc`/`fixed`, `Stopwatch`, and `Program.sleep`. It is the first slice with native
+primitives, and it must resolve `conformance/run/traits.em`'s own `struct Stopwatch`, which
+will start shadowing the built-in. Keep writing prelude bodies with `Emerald.`-qualified
+built-in names. Share helpers through private module-level functions, never module-level
+variables (see 22). Library pages and an example program come in slice 6.
 
 Console's remaining scope (`Table`/`Panel` widgets, prompts, multi-select) comes after dates
 and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Audio`, and
@@ -139,22 +142,30 @@ and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Aud
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
+- Every run type-checks all of the prelude's bodies. With slices 1 and 2, a ReleaseSafe
+  `print(1)` starts in about 6.5 ms, up from 5.1 ms. Checking only the prelude bodies a
+  program can reach would need the interpreter to stop relying on facts recorded for every
+  body. It is worth doing if later slices push startup much higher.
+- A module-level variable in the prelude takes part in a program's module-setup ordering
+  analysis and would leak its `prelude.em#` key into a diagnostic. The prelude avoids them
+  for now; the checker should eventually leave prelude bindings out of that analysis.
 
 ## Validation and repository state
 
-Dates and times slice 1 is committed after its own checker performance fix. With pinned
-Zig 0.16.0, Debug and ReleaseSafe `zig build test`, `zig build`, `zig fmt --check
-src/*.zig`, `bash tools/check-doc-examples.sh` (100 linked files), `git diff --check`, and a
-fuzz campaign (`zig build fuzz -- 20260925 3000`: 3,000 cases, 402 executed) passed. The new
-conformance cases `run/date-basics`, `run/duration-basics`, `run/date-errors`,
-`runtime-errors/date-invalid-day`, and `diagnostics/time-units-named` were checked by hand,
-including the weekday of 0001-01-01, month-end clamping, and large-divisor `Duration`
-division against Python.
+Dates and times slice 2 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe
+`zig build test`, `zig build`, `zig fmt --check src/*.zig`,
+`bash tools/check-doc-examples.sh` (100 linked files), `git diff --check`, and two fuzz
+campaigns (`zig build fuzz -- 20260925 3000` and `-- 4242 2000`) passed. The new conformance
+cases `run/time-basics` and `run/date-time-basics`, and the additions to `run/date-errors`
+and `diagnostics/time-units-named`, were checked by hand. That includes midnight wraparound,
+month-end with a carried day, and fraction display and parsing.
 
-Startup cost was measured as the plan asked. A ReleaseSafe `print(1)` took 5.0 ms before
-this work. The new prelude code first pushed that to 13.6 ms, because the checker copied the
-whole module scope into every function body it checked and snapshotted that copy at every
-branch. Copying only variables brought it to 5.5 ms (3.3 ms without the date code).
+The first full run failed `runtime-errors/receiver-in-use-during-module-setup`: a
+module-level list in the prelude had joined that program's module-setup analysis. It became
+a function (see the rough edge above). `moduleView` now also caches which keys it copies, so
+a body no longer iterates every module name. Startup was measured interleaved over 60 runs:
+5.1 ms before any date work, 5.5 ms after slice 1, 7.0 ms with slice 2, and 6.5 ms with the
+cache.
 
 All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.

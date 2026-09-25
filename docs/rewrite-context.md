@@ -2938,8 +2938,8 @@ as Ruby's.
 
 **Next up, needing no new runtime infrastructure:**
 
-- **Date and time** is designed in 15.8 and being implemented slice by slice; `Date` and
-  `Duration` are done.
+- **Date and time** is designed in 15.8 and being implemented slice by slice; `Date`,
+  `Time`, `DateTime`, and `Duration` are done.
 - **Regular expressions (15.4).** The API is already designed; implementing it is the
   remaining work, most likely by wrapping one bundled C library the way 15.4 already
   anticipates, while Emerald keeps ownership of Unicode behavior, the API, and diagnostics.
@@ -2983,9 +2983,9 @@ as Ruby's.
 
 Dates and times are settled built-ins in the `Emerald` namespace (15.1). The full design,
 its alternatives, and its implementation slices are in
-[`docs/date-time-design-plan.md`](date-time-design-plan.md). `Date`, `Duration`, `Weekday`,
-and `DateTimeError` are implemented. `Time`, `DateTime`, `Instant`, `TimeZone`, `Stopwatch`,
-and `Program.sleep` are settled and follow in later slices.
+[`docs/date-time-design-plan.md`](date-time-design-plan.md). `Date`, `Time`, `DateTime`,
+`Duration`, `Weekday`, and `DateTimeError` are implemented. `Instant`, `TimeZone`,
+`Stopwatch`, and `Program.sleep` are settled and follow in later slices.
 
 **One type per meaning.** A calendar date (`Date`), a time on the clock (`Time`), a date and
 time with no zone (`DateTime`), an exact moment (`Instant`), and an exact length of time
@@ -3010,8 +3010,9 @@ month's last day; weeks and days then count calendar days. `days_until`, `months
 `years_until` count whole units, rounding toward zero, so `born.years_until(today)` is an
 age: the most years `add(years:)` can move `born` without passing `today`.
 
-**Units are always named.** Every argument to the `Duration` constructor and to a date's
-`add` and `subtract` is an amount in some unit, so each must be written with its name:
+**Units are always named.** Every argument to the `Duration` constructor and to `add` and
+`subtract` on `Date`, `Time`, and `DateTime` is an amount in some unit, so each must be
+written with its name:
 `Duration(5)` is a check-time error listing the units, since by position it would silently
 mean five days. This is a rule about those calls only, not a general named-only parameter
 feature, which would need its own design (7.3).
@@ -3024,6 +3025,17 @@ which day is 0 or 1. `Weekday` does not adopt `Ordered`, since the week is a cyc
 first day depends on culture (12). Dates use the proleptic Gregorian calendar from year 1
 through 9999; a result outside that range raises rather than wrapping.
 
+`Time` has public `const` fields `hour` (0 through 23), `minute`, `second`, and
+`nanosecond`; `Time(14, 30)` leaves the rest zero. Its `add` and `subtract` take `hours`
+through `nanoseconds` and wrap around midnight, so `Time(23, 0).add(hours: 2)` is `01:00:00`.
+`DateTime` holds a `date` and a `time`, with the components of both and `weekday` as
+properties, and `date.at(time)` builds one. Its `add` and `subtract` take every unit from
+`years` to `nanoseconds`: years and months move the date as `Date.add` does, then weeks,
+days, and whatever whole days the time units carried past midnight, so
+`DateTime(2026, 1, 31, 23).add(months: 1, hours: 2)` is `2026-03-01T01:00:00`, as in Temporal.
+`duration_until` is the difference the calendar and clock show, as if every day had
+exactly 24 hours; a clock change in some zone is the business of `Instant`.
+
 `Duration` is an exact, possibly negative count of nanoseconds, built from any combination
 of `days`, `hours`, `minutes`, `seconds`, `milliseconds`, `microseconds`, and `nanoseconds`.
 A day there is exactly 24 hours, unlike a calendar day in `add(days:)`. It has `+` and `-`
@@ -3033,10 +3045,13 @@ and `/` by another `Duration` giving a `Float` ratio; `total_days`, `total_hours
 `zero?()`, and `negative?()`. Its storage is private and normalized, so structural equality
 and hashing are exact.
 
-**Display and parsing.** Every value displays in ISO 8601 form (`2026-09-25`), and
-`Date.parse` reads exactly that form back, ignoring surrounding whitespace as `to_int` does
-(9.4). `Date.parse_maybe` returns `nothing` instead of raising; `.or(...)` covers the third
-policy of 9.4's family. A `Duration` displays its nonzero units largest first (`2d 3h`,
+**Display and parsing.** Every value displays in ISO 8601 form (`2026-09-25`, `14:30:00`,
+`2026-09-25T14:30:00`), and each type's `parse` reads that form back, ignoring surrounding
+whitespace as `to_int` does (9.4). A time may leave out its seconds (`14:30`) and may give a
+fraction of a second with one to nine digits; its display shows a fraction only when there
+is one, in groups of three digits (`14:30:00.250`). A date and time may be separated by `T`
+or one space. Each `parse_maybe` returns `nothing` instead of raising; `.or(...)` covers the
+third policy of 9.4's family. A `Duration` displays its nonzero units largest first (`2d 3h`,
 `1h 30m`, `1.25s`, `0s`, `-5m`). There is no format-pattern language (15.5): custom layouts
 are interpolation of the components, and named readable formats wait for real programs.
 
@@ -3833,6 +3848,10 @@ recorded in their normative sections:
 | Month and weekday representation (15.8) | Month as an `Int` 1–12 with `month_name`; weekday as the `Weekday` enum | Month numbers are universal and keep `Date(2026, 9, 25)` short. Weekday numbers are not: systems disagree on whether Sunday or Monday comes first and whether counting starts at 0 or 1. |
 | Duration precision and storage (15.8) | Nanoseconds, stored privately as normalized whole seconds and a nanosecond part | Nanoseconds match the OS clocks and modern libraries. A single nanosecond `Int` would stop at the years 1677 and 2262, too narrow for differences between dates from year 1 to 9999. |
 | Failures inside the prelude's Emerald code (13.2, 15.8) | Reported at the program's call into the prelude, with the prelude's frames left out | The prelude is not one of the program's files, so a location inside it could not even be displayed, and the call the program made is what its author needs to fix. |
+| Moving a `Time` (15.8) | Wrap around midnight | java.time and Temporal do the same. A `Time` has no date to carry into, and raising would make `alarm.add(hours: 8)` fail for an evening alarm. A program that needs the day uses `DateTime`. |
+| Adding time units to a `DateTime` (15.8) | Years and months first, then weeks, days, and the days the time units carried | Temporal's order. It keeps `add(months: 1, hours: 2)` equal to adding the months and then the hours, and month-end handling stays the one rule `Date.add` already has. |
+| `DateTime.duration_until` (15.8) | The calendar and clock difference, counting every day as 24 hours | A `DateTime` has no zone, so it cannot know about a clock change. Temporal's `PlainDateTime.until` behaves the same; an exact difference across a clock change goes through `Instant`. |
+| Shared prelude helpers (15.8) | Private module-level functions, never module-level variables | A type's private members cannot be reached from another type, and helpers shared by `Date`, `Time`, and `DateTime` must stay out of programs' reach. A module-level variable in the prelude took part in every program's module-setup ordering (14.1) and leaked its name into a program's diagnostic; a function does not. |
 
 ## 23. Consistency rules for future work
 

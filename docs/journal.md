@@ -2502,3 +2502,23 @@ is 3.3 ms, down from 5.0 ms.
 The named-unit rule (decision 2(a)) is a `named_units` flag on the checker's `Parameters`,
 set for three prelude keys. It reports a positional argument and lists the units the call
 accepts.
+
+## Dates and times, slice 2: `Time` and `DateTime`, 2026-09-25
+
+`Time` and `DateTime` join `Date` in the prelude. The parsing and validation that all three
+share moved out of `Date`'s private type-level functions into private module-level
+functions (`_digits`, `_date_shaped?`, `_time_shaped?`, `_date_problem`, `_time_problem`,
+`_shifted`, and so on). A type's private members cannot be reached from another type, and
+private module-level names cannot be reached, or captured, by a program. A probe confirmed
+both before the move.
+
+A module-level list of month names broke an unrelated conformance case. The checker's
+module-setup ordering analysis treated the prelude's `_month_names` as one of the program's
+module bindings. It reported that a program's setup call read `prelude.em#_month_names`
+before assignment. The list became a function, and the gap is recorded as a rough edge.
+
+`DateTime.add` follows Temporal's order: the time units are balanced first, then years and
+months move the date, then weeks, days, and the carried days. `duration_until` is the plain
+wall-clock difference. `moduleView` now caches the keys of the variables it copies, and
+rebuilds that list only when the prelude or module scope gains a name. Slice 2's extra
+prelude bodies had made each view's full iteration show up in profiles again.

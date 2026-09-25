@@ -167,7 +167,7 @@ Time.parse(text: String): Time
 Time.parse_maybe(text: String): Time?
 
 time.hour, time.minute, time.second, time.nanosecond: Int
-time.add(hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, nanoseconds: Int = 0): Time
+time.add(hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0): Time
 time.subtract(...same units...): Time
 ```
 

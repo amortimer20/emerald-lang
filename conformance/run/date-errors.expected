@@ -5,5 +5,14 @@ parse range "2026-13-01" is not a valid date: month 13 is not between 1 and 12
 parse shape "25/09/2026" is not a date written as YYYY-MM-DD, such as 2026-09-25
 past 9999 year 10000 is not between 1 and 9999
 month past 9999 year 10000 is not between 1 and 9999
+date and time day 30 is not between 1 and 28: February 2026 has 28 days
+hour past 9999 year 10000 is not between 1 and 9999
+hour hour 24 is not between 0 and 23
+minute minute 60 is not between 0 and 59
+nanosecond nanosecond -1 is not between 0 and 999999999
+parse shape "7:30" is not a time written as HH:MM or HH:MM:SS, such as 14:30
+parse range "12:61" is not a valid time: minute 61 is not between 0 and 59
+date and time text "2026-09-25T24:00" is not a valid date and time: hour 24 is not between 0 and 23
+date and time shape "2026-09-25" is not a date and time written as YYYY-MM-DDTHH:MM:SS, such as 2026-09-25T14:30:00
 a Duration cannot be divided by zero
 DateTimeError a Duration cannot be divided by a zero Duration
