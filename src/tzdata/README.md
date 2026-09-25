@@ -26,6 +26,9 @@ several releases a year; updating before each Emerald release keeps recent rule 
 
 ## Sources and terms
 
+The full license texts are in `THIRD_PARTY_NOTICES.md` at the repository root, which every
+release archive includes beside the binary.
+
 - **IANA time zone database**, release recorded in `tzdata.zig`. Public domain.
   <https://www.iana.org/time-zones>
 - **Unicode CLDR `windowsZones.xml`** (the Windows-to-IANA names only). Copyright © 1991-2013

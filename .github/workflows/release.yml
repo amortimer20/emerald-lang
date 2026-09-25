@@ -73,13 +73,17 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist smoke
+          # The binary travels with Emerald's own license and the notices
+          # for the third-party data and code compiled into it.
           if [ "${{ matrix.archive }}" = "tar" ]; then
-            tar -czf "dist/${{ matrix.asset }}" -C "$(dirname "${{ matrix.binary }}")" "$(basename "${{ matrix.binary }}")"
+            tar -czf "dist/${{ matrix.asset }}" -C "$(dirname "${{ matrix.binary }}")" "$(basename "${{ matrix.binary }}")" -C "$PWD" LICENSE THIRD_PARTY_NOTICES.md
             tar -xzf "dist/${{ matrix.asset }}" -C smoke
           else
-            powershell -NoProfile -Command "Compress-Archive -Path '${{ matrix.binary }}' -DestinationPath 'dist/${{ matrix.asset }}' -Force"
+            powershell -NoProfile -Command "Compress-Archive -Path '${{ matrix.binary }}','LICENSE','THIRD_PARTY_NOTICES.md' -DestinationPath 'dist/${{ matrix.asset }}' -Force"
             powershell -NoProfile -Command "Expand-Archive -Path 'dist/${{ matrix.asset }}' -DestinationPath 'smoke' -Force"
           fi
+          test -f smoke/LICENSE
+          test -f smoke/THIRD_PARTY_NOTICES.md
           version="0.6.0-dev"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
