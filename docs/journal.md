@@ -2593,3 +2593,27 @@ machine's rules so that a name means the same everywhere.
 Testing named zones exposed a slice 4 regression. Making `TimeZone`'s private offset an
 `Int?` had silently stopped zones being dictionary keys, because an optional is not a key
 type. It is now an `Int` beside a `Bool`, and `run/named-zones` uses a zone as a key.
+
+## Dates and times, slice 6: documentation and integration, 2026-09-25
+
+The milestone closes with eight library pages. An overview page, `dates-and-times.md`, says
+which type to choose, then one page each covers `Date` (with `Weekday`), `Time`, `DateTime`,
+`Instant`, `Duration`, `TimeZone`, and `Stopwatch`. They add inventory rows, a
+`DateTimeError` paragraph on the errors page, and `examples/dates.em` with the plan's
+beginner programs. Every inline snippet was run; the `Stopwatch` one had called an undefined
+`build_report()` and now does real work. The fuzz generator gained a valid-program template
+that moves dates and converts a random New York hour on the spring-forward day.
+
+Given the choice, the executor decided to ship third-party notices. Unicode's License V3 asks
+for its notice to travel with copies of CLDR data, which every binary now embeds. Release
+archives had carried only the binary, without even Emerald's own MIT `LICENSE`.
+`THIRD_PARTY_NOTICES.md` quotes Unicode's terms (fetched from CLDR's repository) and Zig's
+MIT license (from the pinned toolchain) verbatim, and notes that IANA's data is public
+domain. The release workflow packs it and `LICENSE` beside the binary, and its smoke test
+checks both unpacked.
+
+Over the milestone, startup for a ReleaseSafe `print(1)` went from about 5.0 ms to about
+8.3 ms, roughly 1 ms per slice of prelude code. The zone database adds nothing, since it
+loads only when a program names a zone. Profiling found and fixed two checker hot spots on
+the way: the module view copy, and its per-body iteration. What remains is checking every
+prelude body on every run; the handoff lists it as the next performance candidate.

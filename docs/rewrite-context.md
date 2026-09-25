@@ -2938,8 +2938,7 @@ as Ruby's.
 
 **Next up, needing no new runtime infrastructure:**
 
-- **Date and time** is designed and implemented in 15.8; its library pages and an example
-  program are the last slice.
+- **Date and time** is done (15.8).
 - **Regular expressions (15.4).** The API is already designed; implementing it is the
   remaining work, most likely by wrapping one bundled C library the way 15.4 already
   anticipates, while Emerald keeps ownership of Unicode behavior, the API, and diagnostics.
@@ -2983,10 +2982,12 @@ as Ruby's.
 
 Dates and times are settled built-ins in the `Emerald` namespace (15.1). The full design,
 its alternatives, and its implementation slices are in
-[`docs/date-time-design-plan.md`](date-time-design-plan.md). `Date`, `Time`, `DateTime`,
+[`docs/date-time-design-plan.md`](date-time-design-plan.md); the reference starts at
+[`docs/library/dates-and-times.md`](library/dates-and-times.md), and
+[`examples/dates.em`](../examples/dates.em) shows the programs they were designed for. `Date`, `Time`, `DateTime`,
 `Instant`, `Duration`, `Weekday`, `Stopwatch`, `Program.sleep`, `DateTimeError`, and
-`TimeZone` with UTC, fixed offsets, named IANA zones, and the machine's local zone are
-implemented. Library pages and an example program are the remaining slice.
+`TimeZone` with UTC, fixed offsets, named IANA zones, and the machine's local zone are all
+implemented and documented.
 
 **One type per meaning.** A calendar date (`Date`), a time on the clock (`Time`), a date and
 time with no zone (`DateTime`), an exact moment (`Instant`), and an exact length of time
@@ -3914,6 +3915,7 @@ recorded in their normative sections:
 | Where named zones' rules come from (15.8) | A copy of the IANA database built into Emerald, not the operating system's | Windows has no IANA database, and Linux and macOS carry whatever release the machine last installed, so the same program would give different answers. Built in, it costs 56 KB compressed (114 KB of binary), nothing at startup, and about 0.1 ms the first time a program names a zone. It is regenerated from PyPI's `tzdata` (IANA's releases compiled by `zic`) and CLDR's `windowsZones.xml` by one standard-library Python script, deterministically. |
 | The built-in database's format (15.8) | IANA's own TZif files, each distinct file once, behind a sorted name index, zlib-compressed | TZif is what `std.tz` and Emerald's rule engine already read, so there is no second format to trust. Aliases share files, which halves the size before compression. |
 | Zone name case (15.8) | Case-sensitive, with the correctly cased name suggested | IANA names are case-sensitive, and accepting any case would make two spellings of one zone compare unequal by name. Suggesting the right case turns the most likely mistake into a one-word fix. |
+| Third-party notices (15.8) | `THIRD_PARTY_NOTICES.md` ships in every release archive beside `LICENSE` | The binary embeds CLDR data under the Unicode License V3, which asks for its notice to travel with copies; the Unicode tables and Zig's standard library were already inside it. Release archives had carried only the binary, not even Emerald's own MIT license. |
 
 ## 23. Consistency rules for future work
 

@@ -24,13 +24,15 @@ ordinary constructor starting with `super(message)`, like any other class (10.7)
 subclass that adds required state but no constructor is a checking error (`needs a
 constructor, because building {base} takes arguments`).
 
-Three subclasses are built in: **`RuntimeError`**, raised by interpreter-detected failures
+Four subclasses are built in: **`RuntimeError`**, raised by interpreter-detected failures
 (overflow, division by zero, an out-of-range index, and every other **Raises** case
 documented on the other library pages), and **`AssertionError`**, raised by a failed
 `assert`. Both are ordinary `Error` subclasses a typed or untyped `catch` can handle like any
 other. **`FileError`** extends `RuntimeError` and is raised by the whole-file filesystem
 operations, so `catch error: FileError` handles missing paths and access failures without
-also handling unrelated runtime failures.
+also handling unrelated runtime failures. **`DateTimeError`** extends `RuntimeError` too, and
+is raised by [dates and times](dates-and-times.md) for a value that cannot exist, text in the
+wrong form, or an unknown time zone.
 
 `raise` accepts only an `Error` value.
 

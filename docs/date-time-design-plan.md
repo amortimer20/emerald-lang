@@ -1,10 +1,9 @@
 # Dates and times: design and implementation plan
 
-Status: accepted design, 2026-09-25. The user accepted every recommendation below and left
-remaining judgement calls to the executor; implementation proceeds slice by slice. Read
-AGENTS.md and the current handoff before acting; the repository takes precedence over
-remembered conversations. At the start of each slice, reread `git status`, the recent
-`git log`, relevant diffs, and docs/handoff.md.
+Status: implemented, 2026-09-25. The user accepted every recommendation below and left
+remaining judgement calls to the executor. All six slices are done; the settled behavior is
+rewrite-context 15.8, and the reference starts at `docs/library/dates-and-times.md`. This
+plan remains as the record of the options weighed and the order things were built in.
 
 The user asked for a date/time API that is **easy to understand and modern**. Rewrite-context
 15.7 makes date/time the highest-priority standard-library addition and requires its design
