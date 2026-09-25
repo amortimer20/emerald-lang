@@ -454,6 +454,30 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     color_flag_beats_force_color_env.expectExitCode(0);
     test_step.dependOn(&color_flag_beats_force_color_env.step);
 
+    // Section 15.8's local zone reaches the process through `TZ`, read the
+    // way glibc reads it. A POSIX rule needs no zoneinfo files, so the
+    // result is the same on every Unix-like host; an empty `TZ` means UTC.
+    // Windows describes its zone through the system instead, and ignores
+    // `TZ`. `src/TimeZone.zig` unit-tests every source and rule form.
+    if (b.graph.host.result.os.tag != .windows) {
+        const reports_zone = fixtures.add("reports-zone.em", "print(TimeZone.local, TimeZone.local.offset_at(Instant.parse(\"2026-07-01T00:00:00Z\")))\n");
+        const zone_from_posix_rule = b.addRunArtifact(exe);
+        zone_from_posix_rule.addArg("run");
+        zone_from_posix_rule.addFileArg(reports_zone);
+        zone_from_posix_rule.setEnvironmentVariable("TZ", "EST5EDT,M3.2.0,M11.1.0");
+        zone_from_posix_rule.expectStdOutEqual("EST5EDT,M3.2.0,M11.1.0 -4h\n");
+        zone_from_posix_rule.expectExitCode(0);
+        test_step.dependOn(&zone_from_posix_rule.step);
+
+        const zone_empty_is_utc = b.addRunArtifact(exe);
+        zone_empty_is_utc.addArg("run");
+        zone_empty_is_utc.addFileArg(reports_zone);
+        zone_empty_is_utc.setEnvironmentVariable("TZ", "");
+        zone_empty_is_utc.expectStdOutEqual("UTC 0s\n");
+        zone_empty_is_utc.expectExitCode(0);
+        test_step.dependOn(&zone_empty_is_utc.step);
+    }
+
     const check_rejects_arguments = b.addRunArtifact(exe);
     check_rejects_arguments.addArgs(&.{"check"});
     check_rejects_arguments.addFileArg(receives_arguments);

@@ -99,19 +99,18 @@ method changes only ordinary identifier uses.
 
 Dates and times (rewrite-context 15.8) are being implemented from
 [`date-time-design-plan.md`](date-time-design-plan.md). The user accepted every decision in
-it. Slices 1–3 are done: `Date`, `Time`, `DateTime`, `Instant`, `Duration`, `Weekday`,
-`Stopwatch`, `Program.sleep`, `DateTimeError`, `TimeZone.utc`/`fixed`, and the named-unit
-diagnostic.
+it. Slices 1–4 are done: every type in the plan, plus the machine's local zone and its
+defaults.
 
-Slice 4 is next: the local zone. That means `TimeZone.local`, resolved once per execution
-into `emerald.Streams` (UTC by default, like the color policy) through a pure,
-unit-tested function in `main.zig`. It also brings `Date.today()`, `Time.now()`, and
-`DateTime.now()`, and makes `TimeZone.local` the default `zone` of `to_instant` and
-`to_date_time`. A zone whose offset varies needs `DateTime.to_instant` to resolve repeated
-and skipped wall-clock times (take the earlier moment; move forward by the gap). Today it
-applies one offset. Keep writing prelude bodies with `Emerald.`-qualified built-in names,
-and share helpers through private module-level functions, never module-level variables.
-Library pages and an example program come in slice 6.
+Slice 5 is next: named IANA zones from a copy of the time-zone database built into Emerald
+(decision 1C). It needs a generated, compact data file under version control; a
+`tools/update-tzdata.sh` that regenerates it from IANA's release; and
+`TimeZone(name)`/`TimeZone.named_maybe`. The interpreter's `zoneRules` then looks names up
+there as well as in the local zone. On Windows, the local zone's key name (`Eastern Standard
+Time`) should map to its IANA name through CLDR's `windowsZones` table, so it can use the
+built-in rules. Keep writing prelude bodies with `Emerald.`-qualified built-in names, and
+share helpers through private module-level functions. Library pages and an example program
+come in slice 6.
 
 Console's remaining scope (`Table`/`Panel` widgets, prompts, multi-select) comes after dates
 and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Audio`, and
@@ -153,28 +152,32 @@ and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Aud
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
-- Every run type-checks all of the prelude's bodies. With slices 1–3, a ReleaseSafe
-  `print(1)` starts in about 7.9 ms, up from 5.2 ms. Checking only the prelude bodies a
-  program can reach would need the interpreter to stop relying on facts recorded for every
-  body. It is worth doing if later slices push startup much higher.
+- Every run type-checks all of the prelude's bodies. With slices 1–4, a ReleaseSafe
+  `print(1)` starts in about 9.8 ms, against 5.6 ms before the date work (measured together
+  on one machine). Checking only the prelude bodies a program can reach would need the
+  interpreter to stop relying on facts recorded for every body. It is the next performance
+  task once dates and times are finished.
+- On Windows, the local zone comes from the system's current yearly rule, so dates before
+  the zone last changed its rules may get the wrong offset until slice 5's database is used
+  for it.
 - A module-level variable in the prelude takes part in a program's module-setup ordering
   analysis and would leak its `prelude.em#` key into a diagnostic. The prelude avoids them
   for now; the checker should eventually leave prelude bindings out of that analysis.
 
 ## Validation and repository state
 
-Dates and times slice 3 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe
-`zig build test`, `zig build`, `zig fmt --check src/*.zig`,
+Dates and times slice 4 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe
+`zig build test` (including `src/TimeZone.zig`'s unit tests, the new `local-zone/`
+conformance directory, and two new CLI tests of `TZ`), `zig build`, `zig fmt --check
+src/*.zig build.zig`, cross-builds for `x86_64-windows` and `aarch64-macos`,
 `bash tools/check-doc-examples.sh`, `git diff --check`, and fuzz seeds 20260925 (3000) and
-777 (2000) passed. The new cases `run/instant-basics`, `run/clock`, and
-`diagnostics/program-sleep`, and the additions to `run/date-errors` and
-`run/duration-basics`, were checked by hand; `run/clock` asserts only relations between
-readings. `run/traits.em`'s `Stopwatch` became `LapTimer`, so it no longer shadows the
-built-in; its output is unchanged. The countdown example on `docs/library/program.md` was
-run and took three seconds.
+9001 (2000) passed. Real zones were checked through `TZ` on Linux: `America/New_York` across
+both 2026 clock changes, `Australia/Sydney`, `Asia/Kolkata`, `Europe/Paris` by path, a POSIX
+rule, an empty `TZ`, an unknown name, and `/etc/localtime`. The Windows binding compiles but
+has not run anywhere yet; CI's Windows job is its first run.
 
-Startup was measured interleaved over 60 runs: 5.2 ms before any date work and 7.9 ms after
-slice 3.
+Startup was measured interleaved over 60 runs on a noisier machine: 5.6 ms before any date
+work, 8.8 ms after slice 3, and 9.8 ms after slice 4.
 
 All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.

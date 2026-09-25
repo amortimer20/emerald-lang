@@ -668,6 +668,11 @@ struct Date with Ordered, Textual {
         self.day = day
     }
 
+    # Today's date in `zone`.
+    func Date.today(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.Date {
+        return Emerald.Instant.now().to_date_time(zone).date
+    }
+
     func Date.parse(text: String): Emerald.Date {
         const problem = Emerald.Date._text_problem(text)
         if problem != nothing {
@@ -807,6 +812,11 @@ struct Time with Ordered, Textual {
         self.nanosecond = nanosecond
     }
 
+    # The time on the clock in `zone` now.
+    func Time.now(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.Time {
+        return Emerald.Instant.now().to_date_time(zone).time
+    }
+
     func Time.parse(text: String): Emerald.Time {
         const problem = Emerald.Time._text_problem(text)
         if problem != nothing {
@@ -878,6 +888,11 @@ struct DateTime with Ordered, Textual {
         self.time = Emerald.Time(hour, minute, second, nanosecond)
     }
 
+    # What a calendar and clock in `zone` show now.
+    func DateTime.now(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.DateTime {
+        return Emerald.Instant.now().to_date_time(zone)
+    }
+
     func DateTime.parse(text: String): Emerald.DateTime {
         const problem = Emerald.DateTime._text_problem(text)
         if problem != nothing {
@@ -938,11 +953,25 @@ struct DateTime with Ordered, Textual {
         return self.add(years: -years, months: -months, weeks: -weeks, days: -days, hours: -hours, minutes: -minutes, seconds: -seconds, milliseconds: -milliseconds, microseconds: -microseconds, nanoseconds: -nanoseconds)
     }
 
-    # The moment this date and time is in `zone`.
-    func to_instant(zone: Emerald.TimeZone): Emerald.Instant {
+    # The moment this date and time is in `zone`. When clocks go back, a time
+    # happens twice and this is the earlier; when they go forward, a time is
+    # skipped and this moves it forward by the gap, as Temporal does.
+    func to_instant(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.Instant {
         const seconds = _days_from_civil(self.year, self.month, self.day) * 86400 + self.hour * 3600 + self.minute * 60 + self.second
         const naive = Emerald.Instant.from_unix_seconds(seconds).after(Emerald.Duration(nanoseconds: self.nanosecond))
-        return naive.before(zone.offset_at(naive))
+        # The offsets a day either side. Clocks change at most once in that
+        # span, so a repeated time has both, and a skipped time has neither.
+        const before = zone.offset_at(Emerald.Instant.from_unix_seconds((seconds - 86400).clamp(-62135596800, 253402300799)))
+        const after = zone.offset_at(Emerald.Instant.from_unix_seconds((seconds + 86400).clamp(-62135596800, 253402300799)))
+        const earlier = naive.before(before)
+        if zone.offset_at(earlier) == before {
+            return earlier
+        }
+        const later = naive.before(after)
+        if zone.offset_at(later) == after {
+            return later
+        }
+        return earlier
     }
 
     # The difference the calendar and clock show, as if every day had exactly
@@ -1059,7 +1088,7 @@ struct Instant with Ordered, Textual {
     }
 
     # What a calendar and clock in `zone` show at this moment.
-    func to_date_time(zone: Emerald.TimeZone): Emerald.DateTime {
+    func to_date_time(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.DateTime {
         const local = self.after(zone.offset_at(self))
         const (year, month, day) = _civil_from_days(local._seconds // 86400)
         const second_of_day = local._seconds % 86400
@@ -1140,17 +1169,25 @@ struct Instant with Ordered, Textual {
 }
 
 # The rules that turn an Instant into what a calendar and clock show in some
-# place. For now, UTC and fixed offsets from it such as "+05:30".
+# place: UTC, a fixed offset from it such as "+05:30", or the machine's own
+# zone, whose offset may change during the year.
 struct TimeZone with Textual {
     const name: String
-    const _offset: Int
+    # Seconds ahead of UTC for a fixed zone; nothing when the runtime holds
+    # rules for this name instead.
+    const _offset: Int?
 
     const TimeZone.utc = Emerald.TimeZone("UTC")
 
+    # The machine's zone, decided once when the program starts. UTC for
+    # `emerald check`, tests of Emerald itself, and anywhere else no machine
+    # zone was resolved.
+    const TimeZone.local = Emerald.TimeZone(Emerald.TimeZone._local_name())
+
     constructor(name: String) {
         const offset = Emerald.TimeZone._fixed_offset(name)
-        if offset == nothing {
-            raise Emerald.DateTimeError("\"#{name}\" is not a time zone Emerald knows: use \"UTC\" or an offset such as \"+05:30\"")
+        if offset == nothing and not Emerald.TimeZone._known?(name) {
+            raise Emerald.DateTimeError("\"#{name}\" is not a time zone Emerald knows: use \"UTC\", an offset such as \"+05:30\", or TimeZone.local")
         }
         self.name = name
         self._offset = offset
@@ -1172,7 +1209,11 @@ struct TimeZone with Textual {
 
     # How far ahead of UTC clocks in this zone are at `instant`.
     func offset_at(instant: Emerald.Instant): Emerald.Duration {
-        return Emerald.Duration(seconds: self._offset)
+        const fixed = self._offset
+        if fixed != nothing {
+            return Emerald.Duration(seconds: fixed)
+        }
+        return Emerald.Duration(seconds: Emerald.TimeZone._offset_seconds(self.name, instant.unix_seconds))
     }
 
     @override
@@ -1185,6 +1226,22 @@ struct TimeZone with Textual {
             return 0
         }
         return _offset_at(name.code_points(), 0)
+    }
+
+    # Native: the name of the zone the runtime resolved for this execution.
+    func TimeZone._local_name(): String {
+        return "UTC"
+    }
+
+    # Native: whether the runtime holds rules for a zone of this name.
+    func TimeZone._known?(name: String): Bool {
+        return false
+    }
+
+    # Native: the offset in seconds that a rule-based zone has at a moment
+    # given in Unix seconds.
+    func TimeZone._offset_seconds(name: String, unix_seconds: Int): Int {
+        return 0
     }
 }
 

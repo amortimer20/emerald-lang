@@ -13,6 +13,7 @@
 //!   conformance/diagnostics/     `check` reports exactly its `.expected`
 //!   conformance/run/             runs, and prints exactly its `.expected`
 //!   conformance/color/           runs with Console styling forced on
+//!   conformance/local-zone/      runs with `TimeZone.local` set to `EST5EDT`
 //!   conformance/runtime-errors/  runs, then fails with exactly its `.expected`
 //!
 //! A case is usually one `.em` file. A directory holding a `main.em` is one
@@ -128,6 +129,7 @@ const Kind = enum {
     diagnostics,
     run,
     color,
+    local_zone,
     runtime_errors,
     format,
 
@@ -138,10 +140,22 @@ const Kind = enum {
         if (std.mem.eql(u8, directory, "diagnostics")) return .diagnostics;
         if (std.mem.eql(u8, directory, "run")) return .run;
         if (std.mem.eql(u8, directory, "color")) return .color;
+        if (std.mem.eql(u8, directory, "local-zone")) return .local_zone;
         if (std.mem.eql(u8, directory, "runtime-errors")) return .runtime_errors;
         if (std.mem.eql(u8, directory, "format")) return .format;
         return null;
     }
+};
+
+/// `local-zone/`'s machine zone: the United States' Eastern rules since
+/// 2007, which make every change of clocks reproducible wherever the suite
+/// runs. `EST5EDT` is also the IANA name of a zone with exactly these rules.
+const eastern: emerald.TimeZone.Local = .{
+    .name = "EST5EDT",
+    .rules = .{
+        .initial = -5 * 3600,
+        .footer = emerald.TimeZone.parsePosix("EST5EDT,M3.2.0,M11.1.0").?,
+    },
 };
 
 /// Renders diagnostics in order, exactly as the command line prints them.
@@ -251,12 +265,17 @@ fn produce(
             defer report.deinit();
             return try renderDiagnostics(gpa, sources, report.diagnostics);
         },
-        .run, .color, .runtime_errors => {
+        .run, .color, .local_zone, .runtime_errors => {
             var out: std.Io.Writer.Allocating = .init(gpa);
             defer out.deinit();
 
             var in: std.Io.Reader = .fixed(input);
-            var report = try emerald.runProject(gpa, project, .{ .out = &out.writer, .in = &in, .color = kind == .color });
+            var report = try emerald.runProject(gpa, project, .{
+                .out = &out.writer,
+                .in = &in,
+                .color = kind == .color,
+                .local_zone = if (kind == .local_zone) eastern else .utc,
+            });
             defer report.deinit();
 
             // A warning (Diagnostic.Severity) does not stop checking or
@@ -274,7 +293,7 @@ fn produce(
                 return null;
             }
 
-            if (kind == .run or kind == .color) {
+            if (kind == .run or kind == .color or kind == .local_zone) {
                 if (report.failure) |failure| {
                     const rendered = try renderDiagnostics(gpa, sources, &.{failure});
                     defer gpa.free(rendered);

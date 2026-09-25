@@ -2939,7 +2939,7 @@ as Ruby's.
 **Next up, needing no new runtime infrastructure:**
 
 - **Date and time** is designed in 15.8 and being implemented slice by slice; everything
-  but the local zone and named zones is done.
+  but named zones is done.
 - **Regular expressions (15.4).** The API is already designed; implementing it is the
   remaining work, most likely by wrapping one bundled C library the way 15.4 already
   anticipates, while Emerald keeps ownership of Unicode behavior, the API, and diagnostics.
@@ -2985,8 +2985,8 @@ Dates and times are settled built-ins in the `Emerald` namespace (15.1). The ful
 its alternatives, and its implementation slices are in
 [`docs/date-time-design-plan.md`](date-time-design-plan.md). `Date`, `Time`, `DateTime`,
 `Instant`, `Duration`, `Weekday`, `Stopwatch`, `Program.sleep`, `DateTimeError`, and
-`TimeZone` with UTC and fixed offsets are implemented. The local zone and named zones follow
-in later slices.
+`TimeZone` with UTC, fixed offsets, and the machine's local zone are implemented. Named IANA
+zones follow in a later slice.
 
 **One type per meaning.** A calendar date (`Date`), a time on the clock (`Time`), a date and
 time with no zone (`DateTime`), an exact moment (`Instant`), and an exact length of time
@@ -3084,12 +3084,29 @@ part that is wrong and its range: `day 30 is not between 1 and 28: February 2026
 days`. A failure raised inside the prelude's own Emerald code is reported at the program's
 call into it, with the prelude's frames left out of the trace.
 
-**Time zones** (later slices). A function that needs a zone takes a `zone` parameter; once
-the local zone exists it defaults to `TimeZone.local`, which the runtime resolves once per execution, as it does
-Console's color policy (15.6), and which is UTC by default for tests and embedded runs.
-Named IANA zones come from a copy of the time-zone database built into Emerald, so a program
-gives the same answer on every operating system. A wall-clock time that a clock change
-repeats resolves to the earlier moment, and one it skips moves forward by the gap.
+**Time zones.** A function that needs a zone takes a `zone` parameter that defaults to
+`TimeZone.local`: `Date.today()`, `Time.now()`, `DateTime.now()`, `DateTime.to_instant`, and
+`Instant.to_date_time`. Only `Instant`'s display always uses UTC. The runtime resolves
+`TimeZone.local` once per execution, as it does Console's color policy (15.6), and it is UTC
+by default, so `emerald check`, tests of Emerald itself, and embedded runs never depend on
+the machine they run on. `run`, `test`, and `repl` resolve the machine's zone the way glibc
+does. A `TZ` variable wins: empty means UTC; a name is looked up in the system's zoneinfo
+directories and otherwise read as a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`; a path
+names a zone file. Without `TZ`, `/etc/localtime` is read, and named from where it links.
+Windows reads its own current zone rules. Whatever cannot be read or understood leaves the
+program in UTC rather than stopping it. `TimeZone.local.name` is the zone's name, such as
+`America/New_York`.
+
+A wall-clock time that a change of clocks repeats resolves to the earlier moment, and one it
+skips moves forward by the length of the gap, as Temporal's default does: in New York,
+`DateTime(2026, 3, 8, 2, 30).to_instant()` is 03:30 daylight time. `to_instant` works this
+out from the zone's offsets a day on either side, which is enough because no zone changes
+its clocks twice in two days. A calendar day can therefore be 23 or 25 hours: `add(days: 1)`
+keeps the clock time, while adding `Duration(days: 1)` to an `Instant` keeps the length.
+
+Named IANA zones (a later slice) will come from a copy of the time-zone database built into
+Emerald, so a program gives the same answer on every operating system. Until then,
+`TimeZone(name)` accepts `"UTC"`, an offset, and the local zone's own name.
 
 ## 16. Annotations, assertions, and tests
 
@@ -3881,6 +3898,9 @@ recorded in their normative sections:
 | Building a built-in with private state (10.5, 15.8) | The diagnostic for `Stopwatch()` or `Instant(...)` names the type-level function that gives one | 10.5's help, "give it a default or a constructor", is advice for the program's own types; a program cannot edit a built-in. |
 | `Program.sleep`'s argument (15.8) | Exactly one `Duration`, never a number | A bare number would have to pick seconds or milliseconds, and languages disagree. A `Duration` says which, and the named-unit rule already makes that visible. |
 | Fixed-offset zone names (15.8) | Named like the offset (`+05:30`), reachable through `TimeZone(name)`; `+00:00` is not `UTC` | Java's `ZoneId.of("+05:30")` does the same, and it lets one constructor cover both kinds of zone. Equality by name keeps a zone's identity what a reader sees printed. |
+| Where `TimeZone.local` comes from (15.8) | The runtime, once per execution, UTC unless the CLI resolves the machine's zone | The color policy's pattern (15.6): no program can change it partway, and every run that is not a real invocation stays deterministic. Tests of zone behavior run in `conformance/local-zone/`, whose runner sets `EST5EDT`, the way `color/` forces styling. |
+| Resolving the machine's zone (15.8) | glibc's order: `TZ` (empty is UTC; a zoneinfo name; else a POSIX rule; a path), then `/etc/localtime`; Windows's own rules; UTC for anything unreadable | Following the C library means a program agrees with `date` and every other tool on the machine. Failing to UTC, as glibc does, never stops a program over its environment. Windows supplies only its current yearly rule, so dates before a zone last changed its rules may be off there until the built-in database arrives. |
+| Repeated and skipped wall-clock times (15.8) | The earlier moment for a repeated time; forward by the gap for a skipped one | Temporal's `"compatible"` default, which also matches what most operating systems do. It never raises, so `to_instant` has no failure a beginner must handle for a rule that happens twice a year. |
 
 ## 23. Consistency rules for future work
 

@@ -2548,3 +2548,27 @@ Editing the prelude exposed a tooling gap: a checker diagnostic inside the prelu
 assertion instead of printing. A temporary print in `emerald.analyze` showed two redundant
 `.or(0)` calls, which narrowing had already made unnecessary. The print was removed before
 committing.
+
+## Dates and times, slice 4: the local zone, 2026-09-25
+
+`src/TimeZone.zig` is the rule engine. It reads a zone as TZif transitions followed by a
+POSIX TZ rule for every later moment. `std.tz` parses the file but does no lookup and
+leaves the footer rule as text, so evaluating `Mm.w.d`, `Jn`, and `n` dates is
+Emerald's own code. It has unit tests for United States and Sydney daylight time, rule
+forms, a TZif file built byte by byte (the PyPI Zig ships none of `std.tz`'s fixtures), the
+choice of source, and Windows's zone description.
+
+`localSource` is the pure half of glibc's order (`TZ`, then `/etc/localtime`), and
+`main.zig` does the reading. Windows gets `GetDynamicTimeZoneInformation` through a
+hand-declared kernel32 binding, since `std.os.windows` has none. The Windows build compiles
+here, but only CI runs it. The resolved `TimeZone.Local` travels in `emerald.Streams` next
+to `color` and defaults to UTC. `conformance/local-zone/` runs with a fixed `EST5EDT` so
+clock changes are testable everywhere, and its expectation matches what the CLI prints with
+the real `EST5EDT` zone file.
+
+On the Emerald side, a rule-based `TimeZone` has no fixed offset and asks the runtime for
+one. `DateTime.to_instant` resolves repeated and skipped wall-clock times from the offsets a
+day on either side: try the earlier offset, then the later, else move forward by the gap.
+That reproduces Temporal's `"compatible"` choice without the runtime exposing transitions.
+The first draft of the local-zone test could flake at midnight, because it read today
+before now and allowed yesterday. It now reads now first and allows tomorrow.

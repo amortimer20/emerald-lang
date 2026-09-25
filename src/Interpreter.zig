@@ -34,6 +34,7 @@ const Heap = @import("Heap.zig");
 const Project = @import("Project.zig");
 const Range = @import("Range.zig").Range;
 const Resolver = @import("Resolver.zig");
+const TimeZone = @import("TimeZone.zig");
 const Source = @import("Source.zig");
 const Type = @import("Type.zig");
 const Value = @import("Value.zig");
@@ -164,6 +165,8 @@ out: *std.Io.Writer,
 in: *std.Io.Reader,
 /// The execution-owned Console styling policy.
 color: bool,
+/// Section 15.8's `TimeZone.local`, resolved once for the whole execution.
+local_zone: TimeZone.Local,
 failure: ?Diagnostic = null,
 /// The typed Emerald value traveling with `error.Raised`.
 raised_value: ?Value = null,
@@ -289,6 +292,7 @@ pub fn run(
     in: *std.Io.Reader,
     arguments: []const []const u8,
     color: bool,
+    local_zone: TimeZone.Local,
     stack: StackLimit,
     test_mode: bool,
     step_limit: ?usize,
@@ -323,6 +327,7 @@ pub fn run(
         .out = out,
         .in = in,
         .color = color,
+        .local_zone = local_zone,
         .arguments = arguments,
         .signatures = signatures,
         .changing_methods = changing_methods,
@@ -2970,6 +2975,9 @@ fn evaluateCall(
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsolePlain(call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(.real));
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(.awake));
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.local_zone.name);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_known?")) return self.callZoneKnown(call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_offset_seconds")) return self.callZoneOffset(call);
         if (std.mem.eql(u8, key, Resolver.program_sleep_key)) return self.callSleep(expression.span, call);
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
@@ -3538,6 +3546,29 @@ fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Erro
     for (call.arguments, 0..) |argument, index| values[index] = toFloat(try self.evaluate(argument));
     const name = key["Math.".len..];
     return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else std.math.pow(f64, values[0], values[1]));
+}
+
+/// The rules a zone name has, for a zone whose offset changes. Only the
+/// local zone has any so far.
+fn zoneRules(self: *const Interpreter, name: []const u8) ?TimeZone.Rules {
+    const rules = self.local_zone.rules orelse return null;
+    return if (std.mem.eql(u8, name, self.local_zone.name)) rules else null;
+}
+
+fn callZoneKnown(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
+    const name = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(name);
+    return .initBool(self.zoneRules(name.data.string.bytes) != null);
+}
+
+/// The offset in seconds a rule-based zone has at a moment in Unix seconds.
+/// The prelude asks only after `_known?` has accepted the name.
+fn callZoneOffset(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
+    const name = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(name);
+    const at = (try self.evaluate(call.arguments[1])).data.int;
+    const rules = self.zoneRules(name.data.string.bytes) orelse return .initInt(0);
+    return .initInt(rules.offsetAt(at));
 }
 
 /// A clock reading in nanoseconds: since 1970 for `.real`, which fits `Int`

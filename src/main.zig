@@ -11,6 +11,7 @@ const version_options = @import("version_options");
 const Repl = @import("Repl.zig");
 const Lsp = @import("Lsp.zig");
 const ColorPolicy = emerald.ColorPolicy;
+const TimeZone = emerald.TimeZone;
 
 /// Section 18.1 fixes these, so they are named rather than written as bare numbers.
 /// `invalid_usage` and `missing_input` both borrow their values from BSD's
@@ -113,7 +114,7 @@ pub fn main(init: std.process.Init) !u8 {
     if (args.len < 3) return commandMisuse(io, command, "expects a `<file.em>` path");
     if (command == .check) {
         if (args.len != 3) return commandMisuse(io, command, "does not run a program, so it cannot take program arguments");
-        return execute(gpa, io, command, args[2], &.{}, false);
+        return execute(gpa, io, command, args[2], &.{}, false, .utc);
     }
 
     // `run` and `test` accept an optional `--color=auto|always|never` flag
@@ -142,7 +143,82 @@ pub fn main(init: std.process.Init) !u8 {
         program_arguments = args[path_index + 2 ..];
     }
     const color = try resolveColor(io, init.environ_map, color_flag);
-    return execute(gpa, io, command, args[path_index], program_arguments, color);
+    var zone_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer zone_arena.deinit();
+    const local_zone = resolveLocalZone(zone_arena.allocator(), io, init.environ_map);
+    return execute(gpa, io, command, args[path_index], program_arguments, color, local_zone);
+}
+
+/// Section 15.8's `TimeZone.local` for one invocation, allocated in `arena`.
+/// Whatever cannot be read or understood leaves the program in UTC, as glibc
+/// does, rather than stopping it.
+fn resolveLocalZone(arena: std.mem.Allocator, io: std.Io, environ_map: *const std.process.Environ.Map) TimeZone.Local {
+    if (builtin.os.tag == .windows) return windowsZone(arena);
+    var link_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const link = if (std.Io.Dir.readLinkAbsolute(io, "/etc/localtime", &link_buffer)) |length| link_buffer[0..length] else |_| null;
+    switch (TimeZone.localSource(environ_map.get("TZ"), link)) {
+        .utc => return .utc,
+        .file => |file| {
+            const rules = readZoneFile(arena, io, file.path) orelse return .utc;
+            return .{ .name = arena.dupe(u8, file.name) catch return .utc, .rules = rules };
+        },
+        .named => |name| {
+            for (TimeZone.zoneinfo_directories) |directory| {
+                const path = std.mem.concat(arena, u8, &.{ directory, name }) catch return .utc;
+                if (readZoneFile(arena, io, path)) |rules| return .{ .name = name, .rules = rules };
+            }
+            const rule = TimeZone.parsePosix(name) orelse return .utc;
+            return .{ .name = name, .rules = .{ .initial = rule.standard, .footer = rule } };
+        },
+    }
+}
+
+fn readZoneFile(arena: std.mem.Allocator, io: std.Io, path: []const u8) ?TimeZone.Rules {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch return null;
+    return TimeZone.parseTzif(arena, bytes) catch null;
+}
+
+const SYSTEMTIME = extern struct {
+    wYear: u16,
+    wMonth: u16,
+    wDayOfWeek: u16,
+    wDay: u16,
+    wHour: u16,
+    wMinute: u16,
+    wSecond: u16,
+    wMilliseconds: u16,
+};
+
+const DYNAMIC_TIME_ZONE_INFORMATION = extern struct {
+    Bias: i32,
+    StandardName: [32]u16,
+    StandardDate: SYSTEMTIME,
+    StandardBias: i32,
+    DaylightName: [32]u16,
+    DaylightDate: SYSTEMTIME,
+    DaylightBias: i32,
+    TimeZoneKeyName: [128]u16,
+    DynamicDaylightTimeDisabled: u8,
+};
+
+extern "kernel32" fn GetDynamicTimeZoneInformation(information: *DYNAMIC_TIME_ZONE_INFORMATION) callconv(.winapi) u32;
+
+/// Windows describes the machine's zone by its key name, such as `Eastern
+/// Standard Time`, and this year's rule for changing clocks.
+fn windowsZone(arena: std.mem.Allocator) TimeZone.Local {
+    var information: DYNAMIC_TIME_ZONE_INFORMATION = undefined;
+    if (GetDynamicTimeZoneInformation(&information) == 0xFFFF_FFFF) return .utc;
+    const key = std.mem.sliceTo(&information.TimeZoneKeyName, 0);
+    const name = if (key.len == 0) "Local" else std.unicode.utf16LeToUtf8Alloc(arena, key) catch return .utc;
+    const date = struct {
+        fn of(time: SYSTEMTIME) TimeZone.WindowsDate {
+            return .{ .year = time.wYear, .month = time.wMonth, .weekday = time.wDayOfWeek, .week = time.wDay, .hour = time.wHour, .minute = time.wMinute };
+        }
+    };
+    var daylight = date.of(information.DaylightDate);
+    if (information.DynamicDaylightTimeDisabled != 0) daylight.month = 0;
+    const rule = TimeZone.fromWindows(information.Bias, information.StandardBias, information.DaylightBias, date.of(information.StandardDate), daylight);
+    return .{ .name = name, .rules = .{ .initial = rule.standard, .footer = rule } };
 }
 
 /// Resolves docs/console-design-plan.md's decision 3 against the real
@@ -321,7 +397,7 @@ fn commandMisuse(io: std.Io, command: ?Command, detail: []const u8) !u8 {
     return @intFromEnum(ExitCode.invalid_usage);
 }
 
-fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8, color: bool) !u8 {
+fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8, color: bool, local_zone: TimeZone.Local) !u8 {
     // Section 14.1: the file alone, unless it sits beside a `main.em`, in which
     // case the whole project comes with it.
     var project = emerald.Project.load(gpa, io, path) catch |err| {
@@ -347,8 +423,8 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
 
     const analysis = switch (command) {
         .check => emerald.checkProject(gpa, &project),
-        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .arguments = program_arguments }),
-        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .arguments = program_arguments }),
+        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .local_zone = local_zone, .arguments = program_arguments }),
+        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .local_zone = local_zone, .arguments = program_arguments }),
         // `main` routes `format`, `repl`, `lsp`, and `help` to their own functions
         // before this is reached.
         .format, .repl, .lsp, .explain, .help => unreachable,
@@ -480,8 +556,11 @@ fn executeRepl(gpa: std.mem.Allocator, io: std.Io, environ_map: *const std.proce
     // Decision 5: the REPL resolves the policy the same way `run` does, with
     // no `--color` flag of its own to override it.
     const color = try resolveColor(io, environ_map, null);
+    var zone_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer zone_arena.deinit();
+    const local_zone = resolveLocalZone(zone_arena.allocator(), io, environ_map);
 
-    Repl.run(gpa, &in.interface, &out.interface, color) catch |err| switch (err) {
+    Repl.run(gpa, &in.interface, &out.interface, color, local_zone) catch |err| switch (err) {
         error.OutOfMemory => return internalFailure(io, error.OutOfMemory),
         error.WriteFailed => return internalFailure(io, error.WriteFailed),
         error.ReadFailed => {

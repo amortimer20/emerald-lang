@@ -30,6 +30,7 @@ pub const Formatter = @import("Formatter.zig");
 pub const unicode = @import("unicode.zig");
 pub const strings = @import("strings.zig");
 pub const ColorPolicy = @import("ColorPolicy.zig");
+pub const TimeZone = @import("TimeZone.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -233,6 +234,9 @@ pub const Streams = struct {
     /// Whether this execution emits Console's ANSI SGR styling. The default
     /// keeps every existing caller deterministic until policy resolution.
     color: bool = false,
+    /// Section 15.8's `TimeZone.local`. UTC unless the caller resolves the
+    /// machine's own zone, so every other caller stays deterministic.
+    local_zone: TimeZone.Local = .utc,
     /// Section 14.1's `Program.arguments`. Empty unless the caller has actual
     /// program arguments to give, such as the CLI's `run`/`test` commands.
     arguments: []const []const u8 = &.{},
@@ -588,6 +592,7 @@ fn analyze(
         running.in,
         running.arguments,
         running.color,
+        running.local_zone,
         stack,
         test_mode,
         step_limit,
@@ -771,6 +776,7 @@ test {
     _ = strings;
     _ = @import("arguments.zig");
     _ = ColorPolicy;
+    _ = TimeZone;
 }
 
 /// Runs a program and returns what it printed. The caller owns the result.

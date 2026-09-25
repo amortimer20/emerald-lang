@@ -287,6 +287,11 @@ the diagnostic for calling one names `Instant.now()` or `Stopwatch.start()`. `In
 a `Duration` exactly through `whole_seconds` and `whole_nanoseconds`, because another type's
 private fields are out of its reach.
 
+Slice 4 notes. The local zone's rules come from the machine, not the built-in database:
+`TZ` and `/etc/localtime` on Unix, `GetDynamicTimeZoneInformation` on Windows. Tests of
+clock changes run in `conformance/local-zone/`, where the local zone is `EST5EDT`.
+`TimeZone(name)` accepts the local zone's own name until slice 5 adds the rest.
+
 ### Parsing
 
 The accepted text is a strict subset of ISO 8601 / RFC 3339, the same as the display format.
