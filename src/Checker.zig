@@ -1941,7 +1941,7 @@ fn find(self: *Checker, name: []const u8) ?*Binding {
             if (self.scopes.items[index].getPtr(qualified)) |binding| return binding;
         }
     }
-    return null;
+    return self.moduleFallback(&.{ name, key });
 }
 
 fn findKey(self: *Checker, key: []const u8) ?*Binding {
@@ -1950,7 +1950,7 @@ fn findKey(self: *Checker, key: []const u8) ?*Binding {
         index -= 1;
         if (self.scopes.items[index].getPtr(key)) |binding| return binding;
     }
-    return null;
+    return self.moduleFallback(&.{key});
 }
 
 fn report(
@@ -3736,20 +3736,40 @@ fn checkFunctionBody(
 
 /// The prelude and module scope as a body sees them: a copy in which every
 /// binding counts as assigned (see the module comment).
+///
+/// Only variables are copied, since only they have flow state a body can
+/// change. Functions and types, nearly every module name and every member of
+/// every type, are found in place by `moduleFallback`. Copying them made each
+/// body, and each branch's snapshot inside it, cost as much as the whole
+/// program, prelude included.
 fn moduleView(self: *Checker) Error!*Scope {
     const view = try self.arena.create(Scope);
     view.* = .empty;
-    // The module scope second, so a program function named like a prelude
-    // function shadows it, as it does at the top level.
+    // The module scope second, so a program name shadows a prelude one, as it
+    // does at the top level.
     for ([_]*const Scope{ self.prelude, self.module }) |source| {
         var entries = source.iterator();
         while (entries.next()) |entry| {
+            if (entry.value_ptr.is_function or entry.value_ptr.is_type) continue;
+            if (source == self.prelude and self.module.contains(entry.key_ptr.*)) continue;
             var binding = entry.value_ptr.*;
             binding.assigned = true;
             try view.put(self.arena, entry.key_ptr.*, binding);
         }
     }
     return view;
+}
+
+/// A function or type that `moduleView` leaves in place, looked up in the
+/// order the scope stack itself uses: the module, then the prelude.
+fn moduleFallback(self: *Checker, names: []const ?[]const u8) ?*Binding {
+    for ([_]*Scope{ self.module, self.prelude }) |source| {
+        for (names) |maybe| {
+            const binding = source.getPtr(maybe orelse continue) orelse continue;
+            if (binding.is_function or binding.is_type) return binding;
+        }
+    }
+    return null;
 }
 
 /// The key a function body is known by decides whether it has a `self`.
