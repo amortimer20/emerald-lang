@@ -105,14 +105,22 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-No milestone is authorized. Two candidates, each needing the user's go-ahead:
+Regular expressions are next: the user chose them from the 15.7 backlog.
+[`regex-design-plan.md`](regex-design-plan.md) proposes the engine (Emerald's own
+linear-time matcher over graphemes, rather than wrapping a C library), the pattern language,
+groups, replacements, errors checked before a program runs, and six slices. It awaits the
+user's review; its decisions stand unless the user overturns one. Slice 1 needs UCD 17.0.0
+files, which cloud sessions can fetch from `unicode-org/unicodetools` on GitHub, not
+`unicode.org`.
+
+Other candidates, each needing the user's go-ahead:
 
 - **Startup performance.** Every run type-checks every prelude body, and the date and time
   work took a ReleaseSafe `print(1)` from about 5 ms to about 8.3 ms. Checking only the
   prelude bodies a program can reach needs the interpreter to stop relying on facts recorded
   for every body; measure before and after, as the date slices did.
-- **Console's remaining scope**, `Table`/`Panel` widgets and prompts, next on the 15.7 and 24
-  roadmap after dates and times, which needs its own design proposal (24).
+- **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
+  design proposal (24).
 
 Before each release, refresh the time-zone data with `python3 tools/update-tzdata.py` (see
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than

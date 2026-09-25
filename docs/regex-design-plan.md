@@ -1,0 +1,248 @@
+# Regular expressions: design and implementation plan
+
+Status: proposal, 2026-09-25. Rewrite-context 15.4 settles the API's outline. This plan fills
+in what 15.4 leaves open (where the matching engine comes from, what `.` and `\d` mean in a
+language whose characters are graphemes, captures, replacements, and errors) and orders the
+work. The decisions below are recommendations; the executor proceeds with them unless the
+user overturns one. Read AGENTS.md and the current handoff before acting, and at the start of
+each slice reread `git status`, the recent `git log`, and docs/handoff.md.
+
+## What beginner programs need
+
+The API is judged by these programs. Each should read naturally, and none should be able to
+hang, however unlucky the pattern:
+
+```emerald
+# Is this a valid code?
+const code = Regex('[A-Z]{3}-\d{4}')
+if not code.matches?(input("Ticket: ")) {
+    print("Tickets look like ABC-1234")
+}
+
+# Pull every number out of a line.
+const numbers = Regex('\d+').find_all("3 apples, 12 pears").map { found => found.text.to_int() }
+print(numbers.sum())                      # 15
+
+# Split on any run of commas and spaces.
+print(Regex('[,\s]+').split("red, green,blue"))       # ["red", "green", "blue"]
+
+# Read the parts of a date written the American way.
+const us_date = Regex('(?<month>\d{1,2})/(?<day>\d{1,2})/(?<year>\d{4})')
+const found = us_date.find("Due 9/25/2026")
+if found != nothing {
+    print(Date(found.named("year").to_int(), found.named("month").to_int(), found.named("day").to_int()))
+}
+
+# Tidy text.
+print(Regex('\s+').replace_all("too    many   spaces", " "))
+print(Regex('\d+').replace_each("3 apples") { found => (found.text.to_int() * 2).to_string() })
+```
+
+## Principles
+
+1. **No pattern can hang a program.** Matching takes time proportional to the pattern times
+   the text, always. Backtracking engines (PCRE, Python's `re`, JavaScript) can take
+   exponential time on patterns such as `(a+)+$`; a beginner cannot be expected to know
+   which patterns do, and a hung program teaches nothing. This is the property Go, Rust,
+   and RE2 chose, and it rules out backreferences and lookaround.
+2. **A character is a grapheme, here as everywhere.** Emerald's strings count, index, and
+   search by grapheme (9.1, 9.2). A regex that matched code points would give `.` a
+   different idea of "one character" than `count`, and could report a match that splits
+   `é` or a family emoji in two. Swift's `Regex` matches by grapheme by default for the same
+   reason.
+3. **Familiar syntax, honestly refused where unsupported.** The pattern language is the
+   common core that JavaScript, Python, Java, Go, and Rust share, so tutorials and existing
+   knowledge carry over. Syntax outside it is rejected by name, with the reason and an
+   alternative, never silently treated as literal text.
+4. **Errors are pedagogy.** A bad pattern names what is wrong and where in the pattern; a
+   pattern written as a string literal is checked before the program runs.
+5. **Values, not machinery.** A `Regex` is an ordinary value: it prints as its pattern,
+   compares by pattern and options, and can be a dictionary key. Compiled programs are a
+   runtime cache the program never sees.
+
+## Verified constraints (checked against source, 2026-09-25)
+
+- **Raw strings suit patterns.** Single-quoted strings process no escapes (5.1), so
+  `Regex('\d+')` means what it says.
+- **The Unicode tables have what grapheme matching needs, except general categories.**
+  `src/unicode/tables.zig` (UCD 17.0.0) has grapheme break properties, `White_Space`,
+  casing, and NFC data, and `unicode.zig` has `isGraphemeBoundary`, `normalize`, and
+  `equal`. It has no `General_Category`, `Alphabetic`, or case folding, which `\w` and
+  `ignore_case` need. `tools/unicode/generate.zig` already reads `UnicodeData.txt` and
+  `DerivedCoreProperties.txt`; `CaseFolding.txt` and `PropList.txt`'s `Join_Control` are
+  new. `unicode.org` is blocked in cloud sessions, but the same files are served from
+  `https://raw.githubusercontent.com/unicode-org/unicodetools/main/unicodetools/data/ucd/17.0.0/`.
+- **Nested types exist** (14.3), so the match type can be `Regex.Match` rather than a
+  top-level `Match` that programs might want for themselves.
+- **String semantics to agree with.** `split` keeps empty pieces (`",a,,b,".split(",")` is
+  `["", "a", "", "b", ""]`) and refuses an empty separator; searching compares canonically
+  and only matches whole graphemes (9.2).
+- **Native dispatch evaluates arguments by position** (the Console plan's finding), so
+  methods with named or defaulted arguments are written in Emerald in the prelude, over a
+  few positional native primitives, as `Console` and the date types are.
+- **Startup cost.** Every run type-checks the prelude (handoff rough edge). The engine is
+  native Zig; the prelude part stays small.
+
+## Proposed API
+
+All in the `Emerald` namespace. `Regex` is a struct; `Regex.Match` is nested in it.
+
+```emerald
+Regex(pattern: String, ignore_case: Bool = false, multiline: Bool = false)
+Regex.escape(text: String): String       # a pattern that matches `text` literally
+
+regex.pattern: String
+regex.matches?(text: String): Bool             # the whole text
+regex.contains_match?(text: String): Bool
+regex.find(text: String): Regex.Match?         # the first match
+regex.find_all(text: String): List[Regex.Match]
+regex.replace(text: String, replacement: String): String       # the first match
+regex.replace_all(text: String, replacement: String): String
+regex.replace_each(text: String, block: func(Regex.Match): String): String
+regex.split(text: String): List[String]
+
+found.text: String
+found.start: Int              # grapheme index; text[found.start..<found.end] is found.text
+found.end: Int
+found.group(number: Int): String      # 0 is the whole match
+found.group_maybe(number: Int): String?
+found.named(name: String): String
+found.named_maybe(name: String): String?
+```
+
+- **Options are named arguments,** not inline flags such as `(?i)`: `Regex('hello',
+  ignore_case: true)` reads as English, and matches how `Console.style` takes options.
+  `multiline` makes `^` and `$` match at the start and end of each line as well.
+- **Replacement text is literal.** `replace_all(text, "$1")` inserts a dollar sign and a
+  one. Other languages give `$1` or `\1` special meaning in replacements, which surprises
+  anyone replacing with a price; computed replacements, including ones that use groups, go
+  through `replace_each` and a block, which is ordinary Emerald.
+- **`find_all` finds non-overlapping matches from left to right.** After an empty match, the
+  search moves on one grapheme, so `Regex('x*').find_all("ab")` finds three empty matches.
+- **`split` keeps empty pieces,** as `String.split` does, and an empty-matching pattern splits
+  between every grapheme.
+- **A `Regex` is a value.** Two are equal when their patterns and options are; it prints as
+  its pattern; it can be a dictionary key or `const`. A `Regex.Match` is a value too, and
+  prints as `Regex.Match("42" at 3..<5)`.
+
+## Pattern language
+
+Supported, with the meaning JavaScript, Python, and Rust share:
+
+| Syntax | Meaning |
+| --- | --- |
+| `a`, `\.`, `\\`, `\n`, `\t`, `\u{1F600}` | Literal characters; a literal compares canonically, as `==` does |
+| `.` | Any one grapheme except a line break (`\n`, or `\r\n`, which is one grapheme) |
+| `[abc]`, `[a-z]`, `[^0-9]`, `[\w-]` | A set of characters; ranges are by code point |
+| `\d` `\D` | ASCII digits 0–9, and not |
+| `\w` `\W` | Word characters: letters, marks, decimal digits, and connector punctuation such as `_` (Unicode's definition, UTS #18), and not |
+| `\s` `\S` | Unicode white space, and not |
+| `^` `$` | Start and end of the text, or of any line with `multiline: true` |
+| `\b` `\B` | A word boundary, and not |
+| `x*` `x+` `x?` `x{3}` `x{2,}` `x{2,5}` | Repetition, as many as possible |
+| `x*?` `x+?` `x??` `x{2,5}?` | Repetition, as few as possible |
+| `x\|y` | Either |
+| `(x)` `(?<name>x)` `(?:x)` | A numbered group, a named group, and a group that captures nothing |
+
+Decisions within it:
+
+- **`\d` is ASCII only.** A Unicode `\d` also matches Arabic-Indic or Devanagari digits,
+  which `to_int` then refuses, so `Regex('\d+')` followed by `to_int()` could fail on text
+  that matched. `\w` stays Unicode, since names and words in every script should count.
+- **A grapheme belongs to a class by its first code point.** `[a-z]` matches `é` written as
+  `e` plus a combining accent only if it matches `e`; the accent comes along, and the match
+  never splits the grapheme. Emerald's grapheme tables make this cheap and predictable.
+- **`$` matches only at the very end,** not also before a final newline as Perl and Python
+  allow; Go and Rust agree. `multiline` covers line ends.
+- **`ignore_case` uses Unicode simple case folding,** so `Regex('straße', ignore_case: true)`
+  matches `STRASSE` only where simple folding says so. Full folding, where one character
+  becomes two, is deferred.
+
+Refused, each with a specific `RegexError` that says why and what to do instead:
+backreferences (`\1`, `\k<name>`), lookahead and lookbehind (`(?=`, `(?!`, `(?<=`, `(?<!`),
+atomic groups and possessive repetition, inline flags (`(?i)`: use `ignore_case:`), `\A`,
+`\z`, and `\Z` (use `^` and `$`), and Unicode property classes `\p{...}` (a later addition).
+A repetition count over 1000, or a pattern that compiles to more than a fixed number of
+instructions, is refused as too large rather than allowed to use unbounded memory.
+
+## Errors
+
+- **`RegexError`** extends `RuntimeError`. Its message quotes the pattern, names the
+  problem, and gives the grapheme position in the pattern where it is:
+  `the pattern "(\d+" has an unclosed "(" at position 0`, or
+  `the pattern "a(?=b)" uses lookahead at position 1, which Emerald's regular expressions do
+  not support: they guarantee a match takes time in proportion to the text`.
+- **A pattern known before the program runs is checked then.** When `Regex(...)`'s first
+  argument is a string literal, the checker compiles it with the same Zig code and reports
+  the error as an ordinary diagnostic, pointing at the exact character inside the literal in
+  the source. The LSP then shows it while typing. Patterns built at run time raise
+  `RegexError` as above.
+- **Groups follow the `to_int` / `to_int_maybe` pattern (9.4).** `found.group(n)` and
+  `found.named(name)` return the group's text, and raise `RegexError` when the group took no
+  part in the match, as in `(x)?` without an `x`; the `_maybe` forms return `nothing`
+  instead. A group the pattern does not have raises for every form, naming the groups it
+  does have, since asking for one is always a mistake.
+
+## Implementation approach
+
+- **The engine is Emerald's own, in Zig** (`src/Regex.zig`): a parser to a small syntax tree
+  with positions, a compiler to instructions, and a Pike VM (Thompson's NFA simulation with
+  capture slots) that runs over the text's graphemes. Leftmost-first semantics, as
+  backtracking engines have, so results match what users expect from other languages.
+  Wrapping PCRE2, as 15.4 had anticipated, was weighed and rejected: it backtracks, it
+  counts code points rather than graphemes, and it would add Emerald's first C dependency
+  to every platform's build. Zig's standard library has no regex engine.
+- **Text is matched as graphemes.** The subject is segmented once with the existing grapheme
+  rules; each grapheme keeps its byte range for building results, and literal comparison
+  uses the existing canonical equality. Positions are grapheme indices, consistent with
+  indexing and slicing.
+- **Compiled programs are cached** per interpreter, keyed by pattern and options, so a
+  `Regex` built in a loop is compiled once.
+- **The prelude part is thin:** the `Regex` struct holding its pattern and options, the named
+  and defaulted signatures, and `replace_each`'s block call, over a few positional natives
+  (`_find(pattern, options, text, start)` and similar).
+- **Unicode data:** `tools/unicode/generate.zig` gains `Alphabetic`, the `Mark`,
+  `Decimal_Number`, and `Connector_Punctuation` general categories, `Join_Control`, and
+  simple case folding, from the same UCD 17.0.0 release.
+
+## Slices
+
+Each slice is runnable and committed on its own, with AGENTS.md's validation (Debug and
+ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`, the doc-example check,
+`git diff --check`) and rewrite-context text written in the same change as the code.
+
+1. **Unicode data.** Regenerate `src/unicode/tables.zig` with the new properties, keeping
+   version 17.0.0; add lookup functions and unit tests; run the Unicode conformance tests.
+2. **The engine, without Emerald.** `src/Regex.zig`: parsing with positioned errors for
+   every refused feature, compiling, the Pike VM over graphemes, captures, both options, and
+   the size limits. Zig unit tests, plus a differential check against Python's `re` on
+   generated ASCII patterns and texts (a local tool, where the two engines' semantics
+   agree), and a timing test that `(a+)+$` against a long run of `a`s stays linear.
+3. **The Emerald API.** `Regex`, `Regex.Match`, `RegexError`, and every method above except
+   groups; conformance cases for matching, finding, replacing, splitting, options, empty
+   matches, graphemes (`é` in both forms, emoji, `\r\n`), and runtime errors.
+4. **Groups.** `group`, `group_maybe`, `named`, `named_maybe`, and groups inside
+   `replace_each`; conformance for optional groups, nested groups, and names.
+5. **Checking literal patterns.** The checker reports a bad literal pattern at its source
+   position; diagnostics cases, and LSP behavior checked over JSON-RPC.
+6. **Documentation and integration.** `docs/library/regex.md`, an inventory row,
+   `examples/regex.em` with the programs above, rewrite-context 15.4 rewritten with the
+   settled behavior and decision-table rows in 22, a fuzz template, and 15.7 updated.
+
+## Out of scope for this milestone
+
+Backreferences and lookaround (ruled out by principle 1), `\p{...}` properties, full case
+folding, inline flags, verbose/commented patterns, matching over byte strings or `Bytes`,
+`String` methods that take a `Regex` (15.4 keeps literal methods literal), and a regex
+literal syntax (22 already rules one out). Each can be revisited with a real program that
+needs it (24).
+
+## Risks
+
+- **Grapheme matching costs a segmentation pass.** Linear, and done once per call; measure
+  in slice 3 on a large file, and cache segmentation per text only if it shows.
+- **Case-insensitive matching over graphemes** has edge cases where folding changes a
+  grapheme's length. Simple folding per code point, applied to both sides, keeps it
+  well-defined; the differential test covers the ASCII core.
+- **Divergence from other engines** users compare against. Every intentional difference
+  (`\d`, `$`, literal replacements, graphemes) is listed on the library page with the reason.
