@@ -3590,9 +3590,16 @@ fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) E
         self.raised_value = try self.makeError(Resolver.preludeKey("DateTimeError"), "`Program.sleep` cannot pause for a negative Duration");
         return self.raiseTyped(span, "DateTimeError", "`Program.sleep` cannot pause for a negative Duration", "Pass a Duration of zero or more.");
     }
+    // At least the whole Duration on the monotonic clock `Stopwatch` reads:
+    // a Windows timer can wake a little early, so any remainder is slept too.
     const io = std.Io.Threaded.global_single_threaded.io();
     const total = @as(i96, seconds) * std.time.ns_per_s + nanoseconds;
-    io.sleep(.fromNanoseconds(total), .awake) catch {};
+    const deadline = std.Io.Clock.awake.now(io).toNanoseconds() + total;
+    while (true) {
+        const remaining = deadline - std.Io.Clock.awake.now(io).toNanoseconds();
+        if (remaining <= 0) break;
+        io.sleep(.fromNanoseconds(remaining), .awake) catch break;
+    }
     return .nothing;
 }
 
