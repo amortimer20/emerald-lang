@@ -2460,3 +2460,18 @@ entry in 24 now points at 15.6 instead of describing Console as unimplemented.
 Console is Emerald's first complete official platform library. Its line-oriented interaction
 (prompts, multi-select, tables) remains a later, separately designed slice of the same
 library, and `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` remain undesigned roadmap items.
+
+## Roadmap passes and handoff reconciliation, 2026-09-24 to 2026-09-25
+
+Three documentation-only commits followed Console slice 4 (`e0e5363`). `f6099cc` made
+`Table`/`Panel` layout widgets and prompts later slices of Console itself and dropped a
+separate `Tui`. `79c0861` parked `Graphics`, `Gui`, `Audio`, and `Game` rather than keeping
+them on the roadmap: each needs native bindings and likely its own release cadence once a
+package manager exists. `076ee72` added rewrite-context 15.7, the standard-library backlog,
+which puts date/time first.
+
+The 0.5.0 entry above records a local tag that was not yet pushed. `v0.5.0` at `c0dea26` was
+later pushed and published as a GitHub release (2026-09-24). The handoff still called Console
+slice 4 uncommitted and 0.5.0 unpublished. On 2026-09-25 it was brought back in line with
+Git, and its per-slice validation history, all already recorded above, was cut down to the
+current state.
