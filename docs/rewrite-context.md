@@ -2938,8 +2938,8 @@ as Ruby's.
 
 **Next up, needing no new runtime infrastructure:**
 
-- **Date and time** is designed in 15.8 and being implemented slice by slice; `Date`,
-  `Time`, `DateTime`, and `Duration` are done.
+- **Date and time** is designed in 15.8 and being implemented slice by slice; everything
+  but the local zone and named zones is done.
 - **Regular expressions (15.4).** The API is already designed; implementing it is the
   remaining work, most likely by wrapping one bundled C library the way 15.4 already
   anticipates, while Emerald keeps ownership of Unicode behavior, the API, and diagnostics.
@@ -2984,8 +2984,9 @@ as Ruby's.
 Dates and times are settled built-ins in the `Emerald` namespace (15.1). The full design,
 its alternatives, and its implementation slices are in
 [`docs/date-time-design-plan.md`](date-time-design-plan.md). `Date`, `Time`, `DateTime`,
-`Duration`, `Weekday`, and `DateTimeError` are implemented. `Instant`, `TimeZone`,
-`Stopwatch`, and `Program.sleep` are settled and follow in later slices.
+`Instant`, `Duration`, `Weekday`, `Stopwatch`, `Program.sleep`, `DateTimeError`, and
+`TimeZone` with UTC and fixed offsets are implemented. The local zone and named zones follow
+in later slices.
 
 **One type per meaning.** A calendar date (`Date`), a time on the clock (`Time`), a date and
 time with no zone (`DateTime`), an exact moment (`Instant`), and an exact length of time
@@ -3036,13 +3037,36 @@ days, and whatever whole days the time units carried past midnight, so
 `duration_until` is the difference the calendar and clock show, as if every day had
 exactly 24 hours; a clock change in some zone is the business of `Instant`.
 
+`Instant` is an exact moment: whole seconds since 1970-01-01T00:00:00Z and a nanosecond
+part, from the start of year 1 to the end of 9999. `Instant.now()` reads the system clock;
+`from_unix_seconds` and `from_unix_milliseconds` build one, and `unix_seconds` and
+`unix_milliseconds` read it back, rounded toward the past as Unix time is. `+` and `-` with a
+`Duration` give an `Instant` (the methods `after` and `before`), and `-` between two gives
+the `Duration` from one to the other (`since`). `to_date_time(zone)` gives what a calendar
+and clock in `zone` show, and `DateTime.to_instant(zone)` goes back. An `Instant` is not
+built by calling it; the diagnostic for `Instant(...)` or `Stopwatch()` names the
+type-level function that gives one.
+
+`TimeZone.utc` and `TimeZone.fixed(hours:, minutes:)` are the zones so far. A fixed zone is
+named like its offset, `+05:30`, and `TimeZone("+05:30")` or `TimeZone("UTC")` reaches one
+by name; its minutes take the sign of its hours, and it is at most 18 hours from UTC.
+`zone.offset_at(instant)` is how far ahead of UTC its clocks are. Two zones are equal when
+their names are, so `TimeZone.fixed(hours: 0)`, named `+00:00`, is not `TimeZone.utc`.
+
+`Stopwatch.start()` measures with the monotonic clock, which a change to the system clock
+cannot move: `elapsed()` is a fresh reading each call, and `restart()` starts over. It is a
+class, since a stopwatch is a running thing rather than a value. `Program.sleep(duration)`
+blocks the program for a `Duration`, which is the only argument it takes, so its unit is
+never in doubt; a negative one raises.
+
 `Duration` is an exact, possibly negative count of nanoseconds, built from any combination
 of `days`, `hours`, `minutes`, `seconds`, `milliseconds`, `microseconds`, and `nanoseconds`.
 A day there is exactly 24 hours, unlike a calendar day in `add(days:)`. It has `+` and `-`
 with another `Duration`, `*` and `/` by an `Int` (`/` rounds toward zero at one nanosecond),
 and `/` by another `Duration` giving a `Float` ratio; `total_days`, `total_hours`,
-`total_minutes`, `total_seconds`, and `total_milliseconds` as `Float`; and `abs()`,
-`zero?()`, and `negative?()`. Its storage is private and normalized, so structural equality
+`total_minutes`, `total_seconds`, and `total_milliseconds` as `Float`; `whole_days` through
+`whole_nanoseconds` as `Int`, rounded toward zero, so `Duration(minutes: 90).whole_hours` is
+1; and `abs()`, `zero?()`, and `negative?()`. Its storage is private and normalized, so structural equality
 and hashing are exact.
 
 **Display and parsing.** Every value displays in ISO 8601 form (`2026-09-25`, `14:30:00`,
@@ -3060,8 +3084,8 @@ part that is wrong and its range: `day 30 is not between 1 and 28: February 2026
 days`. A failure raised inside the prelude's own Emerald code is reported at the program's
 call into it, with the prelude's frames left out of the trace.
 
-**Time zones** (later slices). A function that needs a zone takes a `zone` parameter that
-defaults to `TimeZone.local`, which the runtime resolves once per execution, as it does
+**Time zones** (later slices). A function that needs a zone takes a `zone` parameter; once
+the local zone exists it defaults to `TimeZone.local`, which the runtime resolves once per execution, as it does
 Console's color policy (15.6), and which is UTC by default for tests and embedded runs.
 Named IANA zones come from a copy of the time-zone database built into Emerald, so a program
 gives the same answer on every operating system. A wall-clock time that a clock change
@@ -3852,6 +3876,11 @@ recorded in their normative sections:
 | Adding time units to a `DateTime` (15.8) | Years and months first, then weeks, days, and the days the time units carried | Temporal's order. It keeps `add(months: 1, hours: 2)` equal to adding the months and then the hours, and month-end handling stays the one rule `Date.add` already has. |
 | `DateTime.duration_until` (15.8) | The calendar and clock difference, counting every day as 24 hours | A `DateTime` has no zone, so it cannot know about a clock change. Temporal's `PlainDateTime.until` behaves the same; an exact difference across a clock change goes through `Instant`. |
 | Shared prelude helpers (15.8) | Private module-level functions, never module-level variables | A type's private members cannot be reached from another type, and helpers shared by `Date`, `Time`, and `DateTime` must stay out of programs' reach. A module-level variable in the prelude took part in every program's module-setup ordering (14.1) and leaked its name into a program's diagnostic; a function does not. |
+| Names of `Instant`'s operator methods (11.5, 15.8) | `after`, `before`, and `since` | 11.5 reserves `add` and `subtract` for `Self -> Self`, and these mix types. The names read as English at a call written out: `start.after(timeout)`, `now.since(start)`. |
+| Reading a `Duration` exactly (15.8) | `whole_days` through `whole_nanoseconds`, rounded toward zero, beside the `Float` `total_*` | Kotlin's `inWhole*` pair with `total_*`: "90 minutes" as a whole number is a common beginner question, and `Instant`, outside `Duration`'s braces, needs exact integer access to do its own arithmetic. |
+| Building a built-in with private state (10.5, 15.8) | The diagnostic for `Stopwatch()` or `Instant(...)` names the type-level function that gives one | 10.5's help, "give it a default or a constructor", is advice for the program's own types; a program cannot edit a built-in. |
+| `Program.sleep`'s argument (15.8) | Exactly one `Duration`, never a number | A bare number would have to pick seconds or milliseconds, and languages disagree. A `Duration` says which, and the named-unit rule already makes that visible. |
+| Fixed-offset zone names (15.8) | Named like the offset (`+05:30`), reachable through `TimeZone(name)`; `+00:00` is not `UTC` | Java's `ZoneId.of("+05:30")` does the same, and it lets one constructor cover both kinds of zone. Equality by name keeps a zone's identity what a reader sees printed. |
 
 ## 23. Consistency rules for future work
 

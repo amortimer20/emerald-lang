@@ -6220,6 +6220,15 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         std.mem.eql(u8, reference.key, Resolver.math_pi_key) or
         std.mem.eql(u8, reference.key, Resolver.math_e_key)) return .float;
     if (std.mem.eql(u8, reference.key, Resolver.program_arguments_key)) return try Type.listOf(self.arena, .string);
+    if (std.mem.eql(u8, reference.key, Resolver.program_sleep_key)) {
+        try self.report(
+            expression.span,
+            "`Program.sleep` is a built-in function, so it has to be called",
+            .{},
+            "Call it with how long to pause, as in `Program.sleep(Duration(seconds: 1))`.",
+        );
+        return .invalid;
+    }
     // `Emerald.print` as a value: a built-in function, which can only be called.
     if (Resolver.builtinFunctionName(reference.key) != null) return self.typeOfFunctionValue(expression, reference);
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
@@ -9194,6 +9203,7 @@ fn typeOfCall(
     // names have hidden it (14.2's built-in namespace).
     const builtin = Resolver.builtinFunctionName(reference.key);
     const name = builtin orelse reference.display;
+    if (std.mem.eql(u8, reference.key, Resolver.program_sleep_key)) return self.typeOfSleep(call, name);
     if (Resolver.mathFunction(reference.key)) |function| {
         if (!try self.requireArity(.{ .name = name, .name_span = call.callee.span, .base = call.callee }, call.arguments, function.parameters, function.parameters)) return .invalid;
         for (call.arguments) |argument| _ = try self.typeOfExpected(argument, .float);
@@ -9341,6 +9351,49 @@ fn typeOfCall(
     return signature.return_type;
 }
 
+/// The first public type-level function of a built-in type that returns
+/// that type, written as a call: `Stopwatch.start()`.
+fn builtinFactory(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration, built: Type) Error!?[]const u8 {
+    for (declaration.type_functions) |function| {
+        if (Resolver.isPrivate(function.member)) continue;
+        const signature = try self.signatureFor(try Resolver.methodKey(self.arena, key, function.member));
+        if (!signature.return_type.same(built)) continue;
+        const arguments = if (function.declaration.parameters.len == 0) "()" else "(...)";
+        return try std.fmt.allocPrint(self.arena, "{s}.{s}{s}", .{ built.user.?.display_name, function.member, arguments });
+    }
+    return null;
+}
+
+/// Section 15.8's `Program.sleep(duration)`, whose one argument is a
+/// `Duration` so its unit is never in doubt.
+fn typeOfSleep(self: *Checker, call: Ast.Expression.Call, name: []const u8) Error!Type {
+    if (try self.rejectNames(call)) {
+        try self.typeArguments(call.arguments);
+        return .nothing;
+    }
+    const duration = self.structs.get(Resolver.preludeKey("Duration")) orelse return .invalid;
+    if (call.arguments.len != 1) {
+        try self.report(
+            call.callee.span,
+            "`{s}` takes 1 argument, but this call passes {d}",
+            .{ name, call.arguments.len },
+            "Pass how long to pause, as in `Program.sleep(Duration(seconds: 1))`.",
+        );
+        try self.typeArguments(call.arguments);
+        return .nothing;
+    }
+    const actual = try self.typeOfExpected(call.arguments[0], duration);
+    if (!actual.assignableTo(duration)) {
+        try self.report(
+            call.arguments[0].span,
+            "this is {f}, but `{s}` needs a Duration",
+            .{ actual, name },
+            "Say how long with its unit, as in `Program.sleep(Duration(milliseconds: 500))`.",
+        );
+    }
+    return .nothing;
+}
+
 /// The arguments of a call that builds a value of the type `key`: calling the
 /// type, or a subclass's `super(...)`. `name` is the type as written there.
 fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8, name: []const u8) Error!void {
@@ -9395,6 +9448,21 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
     const outside = !self.insideType(key, call.callee.span);
     if (outside) for (declaration.fields) |field| {
         if (!Resolver.isPrivate(field.name) or field.default != null) continue;
+        // A built-in such as `Stopwatch` is not the program's to change, so
+        // point at the type-level function that gives one instead.
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".")) {
+            if (try self.builtinFactory(key, declaration, built)) |factory| {
+                try self.reportWithHelp(
+                    call.callee.span,
+                    "`{s}` is not built by calling it",
+                    .{name},
+                    "Get one from `{s}`.",
+                    .{factory},
+                );
+                try self.typeArguments(call.arguments);
+                return;
+            }
+        }
         try self.reportWithHelp(
             call.callee.span,
             "`{s}` cannot be built here, because its field `{s}` is private and has no default",

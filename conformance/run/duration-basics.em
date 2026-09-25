@@ -5,6 +5,11 @@ print(Duration(minutes: -5), Duration(nanoseconds: 1), Duration(microseconds: 25
 print(trip.total_minutes, trip.total_hours, trip.total_days, Duration(milliseconds: 1250).total_milliseconds)
 print(trip.total_seconds, trip.zero?(), Duration().zero?(), Duration(seconds: -1).negative?())
 
+# Whole units round toward zero.
+print(trip.whole_hours, Duration(minutes: -90).whole_hours, Duration(milliseconds: 1999).whole_seconds)
+print(Duration(seconds: 2).whole_milliseconds, Duration(days: 3).whole_minutes, Duration(days: 2).whole_days)
+print(Duration(nanoseconds: -1500).whole_microseconds, Duration(milliseconds: 5).whole_nanoseconds)
+
 # Operators do exact arithmetic.
 print(trip + Duration(minutes: 5), trip - Duration(hours: 2), trip * 3, trip / 4)
 print(trip / Duration(minutes: 45), Duration(seconds: 59, milliseconds: 999) + Duration(milliseconds: 1))

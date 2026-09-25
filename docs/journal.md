@@ -2522,3 +2522,29 @@ months move the date, then weeks, days, and the carried days. `duration_until` i
 wall-clock difference. `moduleView` now caches the keys of the variables it copies, and
 rebuilds that list only when the prelude or module scope gains a name. Slice 2's extra
 prelude bodies had made each view's full iteration show up in profiles again.
+
+## Dates and times, slice 3: `Instant`, clocks, fixed zones, `Stopwatch`, and `Program.sleep`, 2026-09-25
+
+`Instant` is two private `Int`s, whole Unix seconds and a nanosecond part. Everything builds
+one through `Instant._at`, which normalizes it and checks the years 1 through 9999. Its
+operators are named `after`, `before`, and `since`: 11.5 reserves `add` and `subtract` for
+`Self -> Self`. `Instant` cannot reach `Duration`'s private fields, so it needed exact
+integer access. `Duration` gained `whole_days` through `whole_nanoseconds` (toward zero),
+which beginners also want ("90 minutes").
+
+The native surface is three calls. `Instant._now` and `Stopwatch._ticks` read
+`std.Io.Clock.real` and `.awake`, dispatched by key next to `Console._color`.
+`Program.sleep` is a special resolver key like `Program.arguments` and `Math`'s functions,
+because `Program` is not a prelude class. The checker accepts exactly one `Duration`, and
+the interpreter reads the `Duration`'s fields and calls `std.Io.sleep` on the monotonic
+clock.
+
+`TimeZone` has one constructor that takes a name: `"UTC"` or an offset such as `"+05:30"`
+for now. `TimeZone.fixed` formats the offset and calls it, so slice 5's IANA names extend
+the same constructor. A private-field built-in used to get 10.5's "give it a default or a
+constructor" help. It now names the type-level function that gives one.
+
+Editing the prelude exposed a tooling gap: a checker diagnostic inside the prelude trips an
+assertion instead of printing. A temporary print in `emerald.analyze` showed two redundant
+`.or(0)` calls, which narrowing had already made unnecessary. The print was removed before
+committing.

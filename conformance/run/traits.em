@@ -198,7 +198,7 @@ trait Resettable {
     func reset()
 }
 
-struct Stopwatch with Resettable {
+struct LapTimer with Resettable {
     var seconds: Int = 9
 
     @override
@@ -207,9 +207,9 @@ struct Stopwatch with Resettable {
     }
 }
 
-var timer: Resettable = Stopwatch()
+var timer: Resettable = LapTimer()
 timer.reset()
-if timer is Stopwatch {
+if timer is LapTimer {
     print(timer.seconds)
 }
 

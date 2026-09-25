@@ -241,6 +241,8 @@ pub const math_e_key = "Math.e";
 /// Section 14.1's `Program.arguments`: the program's own CLI arguments,
 /// excluding the Emerald executable and entry-file paths.
 pub const program_arguments_key = "Program.arguments";
+/// Section 15.8's `Program.sleep(duration)`: pauses the program.
+pub const program_sleep_key = "Program.sleep";
 
 pub fn mathFunction(key: []const u8) ?Type.MathFunction {
     const prefix = "Math.";
@@ -2498,16 +2500,17 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     return .reported;
 }
 
-/// `Program.arguments`, `Math.pi`, `Math.e`, and `Math`'s functions: null when
+/// `Program.arguments`, `Program.sleep`, `Math.pi`, `Math.e`, and `Math`'s functions: null when
 /// `namespace` is neither built-in namespace.
 fn qualifyBuiltinNamespace(self: *Resolver, span: Source.Span, namespace: []const u8, member: []const u8) Error!?Qualified {
     if (std.mem.eql(u8, namespace, "Program")) {
         if (std.mem.eql(u8, member, "arguments")) return .{ .key = program_arguments_key };
+        if (std.mem.eql(u8, member, "sleep")) return .{ .key = program_sleep_key };
         try self.reportWithHelpFmt(
             span,
             "`Program` has no type-level member named `{s}`",
             .{member},
-            "Its one member is `Program.arguments`.",
+            "Its members are `Program.arguments` and `Program.sleep`.",
             .{},
         );
         return .reported;

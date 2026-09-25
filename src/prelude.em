@@ -281,6 +281,43 @@ struct Duration with Ordered, Textual {
         return self._seconds * 1000.0 + self._nanoseconds / 1000000
     }
 
+    # Whole units, rounded toward zero: `Duration(minutes: 90).whole_hours` is 1.
+    const whole_days: Int {
+        return self._whole(1, 86400)
+    }
+
+    const whole_hours: Int {
+        return self._whole(1, 3600)
+    }
+
+    const whole_minutes: Int {
+        return self._whole(1, 60)
+    }
+
+    const whole_seconds: Int {
+        return self._whole(1, 1)
+    }
+
+    const whole_milliseconds: Int {
+        return self._whole(1000, 1)
+    }
+
+    const whole_microseconds: Int {
+        return self._whole(1000000, 1)
+    }
+
+    const whole_nanoseconds: Int {
+        return self._whole(1000000000, 1)
+    }
+
+    # How many `per_unit`s of a unit there are `per_second` of in a second,
+    # counted on the magnitude so the result rounds toward zero.
+    func _whole(per_second: Int, per_unit: Int): Int {
+        const magnitude = self.abs()
+        const value = (magnitude._seconds * per_second + magnitude._nanoseconds // (1000000000 // per_second)) // per_unit
+        return if self.negative?() then -value else value
+    }
+
     func _total_seconds(): Float {
         return self._seconds + self._nanoseconds / 1000000000
     }
@@ -519,6 +556,45 @@ func _two_digits(value: Int): String {
     return value.to_string().pad_start(2, "0")
 }
 
+# Howard Hinnant's days_from_civil, in floor arithmetic: days since
+# 1970-01-01, which is day 0.
+func _days_from_civil(year: Int, month: Int, day: Int): Int {
+    const shifted = if month <= 2 then year - 1 else year
+    const era = shifted // 400
+    const year_of_era = shifted - era * 400
+    const day_of_year = (153 * ((month + 9) % 12) + 2) // 5 + day - 1
+    const day_of_era = year_of_era * 365 + year_of_era // 4 - year_of_era // 100 + day_of_year
+    return era * 146097 + day_of_era - 719468
+}
+
+# The inverse, Hinnant's civil_from_days: the year, month, and day.
+func _civil_from_days(days: Int): (Int, Int, Int) {
+    const shifted = days + 719468
+    const era = shifted // 146097
+    const day_of_era = shifted - era * 146097
+    const year_of_era = (day_of_era - day_of_era // 1460 + day_of_era // 36524 - day_of_era // 146096) // 365
+    const day_of_year = day_of_era - (365 * year_of_era + year_of_era // 4 - year_of_era // 100)
+    const month_index = (5 * day_of_year + 2) // 153
+    const day = day_of_year - (153 * month_index + 2) // 5 + 1
+    const month = if month_index < 10 then month_index + 3 else month_index - 9
+    return (year_of_era + era * 400 + (if month <= 2 then 1 else 0), month, day)
+}
+
+# An offset from UTC written as +HH:MM or -HH:MM at `start`, in seconds, or
+# nothing when it is not written that way or is past 18 hours.
+func _offset_at(points: List[Int], start: Int): Int? {
+    if points.count != start + 6 or (points[start] != 43 and points[start] != 45) or points[start + 3] != 58 {
+        return nothing
+    }
+    const hours = _digits(points, start + 1, 2)
+    const minutes = _digits(points, start + 4, 2)
+    if hours == nothing or minutes == nothing or minutes > 59 or hours * 60 + minutes > 18 * 60 {
+        return nothing
+    }
+    const seconds = hours * 3600 + minutes * 60
+    return if points[start] == 45 then -seconds else seconds
+}
+
 # Text is read as code points, since every accepted form is ASCII.
 
 # The number written in `count` ASCII digits starting at `start`, or nothing
@@ -616,7 +692,7 @@ struct Date with Ordered, Textual {
     }
 
     const day_of_year: Int {
-        return self._days() - Emerald.Date._days_from_civil(self.year, 1, 1) + 1
+        return self._days() - _days_from_civil(self.year, 1, 1) + 1
     }
 
     const days_in_month: Int {
@@ -641,7 +717,8 @@ struct Date with Ordered, Textual {
         if weeks == 0 and days == 0 {
             return moved
         }
-        return Emerald.Date._from_days(moved._days() + weeks * 7 + days)
+        const (year_moved, month_moved, day_moved) = _civil_from_days(moved._days() + weeks * 7 + days)
+        return Emerald.Date(year_moved, month_moved, day_moved)
     }
 
     func subtract(years: Int = 0, months: Int = 0, weeks: Int = 0, days: Int = 0): Self {
@@ -688,31 +765,7 @@ struct Date with Ordered, Textual {
 
     # Days since 1970-01-01, which is day 0.
     func _days(): Int {
-        return Emerald.Date._days_from_civil(self.year, self.month, self.day)
-    }
-
-    # Howard Hinnant's days_from_civil, in floor arithmetic.
-    func Date._days_from_civil(year: Int, month: Int, day: Int): Int {
-        const shifted = if month <= 2 then year - 1 else year
-        const era = shifted // 400
-        const year_of_era = shifted - era * 400
-        const day_of_year = (153 * ((month + 9) % 12) + 2) // 5 + day - 1
-        const day_of_era = year_of_era * 365 + year_of_era // 4 - year_of_era // 100 + day_of_year
-        return era * 146097 + day_of_era - 719468
-    }
-
-    # The inverse, Hinnant's civil_from_days.
-    func Date._from_days(days: Int): Emerald.Date {
-        const shifted = days + 719468
-        const era = shifted // 146097
-        const day_of_era = shifted - era * 146097
-        const year_of_era = (day_of_era - day_of_era // 1460 + day_of_era // 36524 - day_of_era // 146096) // 365
-        const day_of_year = day_of_era - (365 * year_of_era + year_of_era // 4 - year_of_era // 100)
-        const month_index = (5 * day_of_year + 2) // 153
-        const day = day_of_year - (153 * month_index + 2) // 5 + 1
-        const month = if month_index < 10 then month_index + 3 else month_index - 9
-        const year = year_of_era + era * 400 + (if month <= 2 then 1 else 0)
-        return Emerald.Date(year, month, day)
+        return _days_from_civil(self.year, self.month, self.day)
     }
 
     func Date._text_problem(text: String): String? {
@@ -885,6 +938,13 @@ struct DateTime with Ordered, Textual {
         return self.add(years: -years, months: -months, weeks: -weeks, days: -days, hours: -hours, minutes: -minutes, seconds: -seconds, milliseconds: -milliseconds, microseconds: -microseconds, nanoseconds: -nanoseconds)
     }
 
+    # The moment this date and time is in `zone`.
+    func to_instant(zone: Emerald.TimeZone): Emerald.Instant {
+        const seconds = _days_from_civil(self.year, self.month, self.day) * 86400 + self.hour * 3600 + self.minute * 60 + self.second
+        const naive = Emerald.Instant.from_unix_seconds(seconds).after(Emerald.Duration(nanoseconds: self.nanosecond))
+        return naive.before(zone.offset_at(naive))
+    }
+
     # The difference the calendar and clock show, as if every day had exactly
     # 24 hours: a change of clocks in some time zone is not counted.
     func duration_until(other: Self): Emerald.Duration {
@@ -929,5 +989,229 @@ struct DateTime with Ordered, Textual {
         const (year, month, day) = _date_at(points, 0)
         const (hour, minute, second, nanosecond) = _time_at(points, 11, points.count)
         return Emerald.DateTime(year, month, day, hour, minute, second, nanosecond)
+    }
+}
+
+# An exact moment, the same everywhere: whole seconds since
+# 1970-01-01T00:00:00Z and a nanosecond part, within the years 1 through 9999.
+struct Instant with Ordered, Textual {
+    const _seconds: Int
+    const _nanoseconds: Int
+
+    func Instant.now(): Emerald.Instant {
+        const now = Emerald.Instant._now()
+        return Emerald.Instant._at(now // 1000000000, now % 1000000000)
+    }
+
+    # Native: nanoseconds since 1970-01-01T00:00:00Z on the system clock.
+    func Instant._now(): Int {
+        return 0
+    }
+
+    func Instant.from_unix_seconds(seconds: Int): Emerald.Instant {
+        return Emerald.Instant._at(seconds, 0)
+    }
+
+    func Instant.from_unix_milliseconds(milliseconds: Int): Emerald.Instant {
+        return Emerald.Instant._at(milliseconds // 1000, milliseconds % 1000 * 1000000)
+    }
+
+    func Instant.parse(text: String): Emerald.Instant {
+        const problem = Emerald.Instant._text_problem(text)
+        if problem != nothing {
+            raise Emerald.DateTimeError(problem)
+        }
+        return Emerald.Instant._from_text(text)
+    }
+
+    func Instant.parse_maybe(text: String): Emerald.Instant? {
+        if Emerald.Instant._text_problem(text) != nothing {
+            return nothing
+        }
+        return Emerald.Instant._from_text(text)
+    }
+
+    # Rounded toward the past, as Unix time is.
+    const unix_seconds: Int {
+        return self._seconds
+    }
+
+    const unix_milliseconds: Int {
+        return self._seconds * 1000 + self._nanoseconds // 1000000
+    }
+
+    @operator("+")
+    func after(duration: Emerald.Duration): Emerald.Instant {
+        const seconds = duration.whole_seconds
+        const part = (duration - Emerald.Duration(seconds: seconds)).whole_nanoseconds
+        return Emerald.Instant._at(self._seconds + seconds, self._nanoseconds + part)
+    }
+
+    @operator("-")
+    func before(duration: Emerald.Duration): Emerald.Instant {
+        return self.after(duration * -1)
+    }
+
+    # The exact time from `other` to this moment.
+    @operator("-")
+    func since(other: Self): Emerald.Duration {
+        return Emerald.Duration(seconds: self._seconds - other._seconds, nanoseconds: self._nanoseconds - other._nanoseconds)
+    }
+
+    # What a calendar and clock in `zone` show at this moment.
+    func to_date_time(zone: Emerald.TimeZone): Emerald.DateTime {
+        const local = self.after(zone.offset_at(self))
+        const (year, month, day) = _civil_from_days(local._seconds // 86400)
+        const second_of_day = local._seconds % 86400
+        return Emerald.DateTime(year, month, day, second_of_day // 3600, second_of_day % 3600 // 60, second_of_day % 60, local._nanoseconds)
+    }
+
+    @override
+    func compare(other: Self): Int {
+        if self._seconds != other._seconds {
+            return if self._seconds < other._seconds then -1 else 1
+        }
+        return self._nanoseconds - other._nanoseconds
+    }
+
+    # Always in UTC, marked with Z.
+    @override
+    func to_string(): String {
+        return "#{self.to_date_time(Emerald.TimeZone.utc)}Z"
+    }
+
+    # The one way an Instant is built: normalized, and within the years 1
+    # through 9999.
+    func Instant._at(seconds: Int, nanoseconds: Int): Emerald.Instant {
+        const whole = seconds + nanoseconds // 1000000000
+        if whole < -62135596800 {
+            raise Emerald.DateTimeError("this moment is before 0001-01-01T00:00:00Z, the earliest an Instant can be")
+        }
+        if whole > 253402300799 {
+            raise Emerald.DateTimeError("this moment is after 9999-12-31T23:59:59.999999999Z, the latest an Instant can be")
+        }
+        return Emerald.Instant(whole, nanoseconds % 1000000000)
+    }
+
+    func Instant._text_problem(text: String): String? {
+        const points = text.trim().code_points()
+        const end = Emerald.Instant._time_end(points)
+        const shaped = points.count >= 17 and _date_shaped?(points, 0) and (points[10] == 84 or points[10] == 32)
+        if shaped and end == nothing and _time_shaped?(points, 11, points.count) {
+            return "\"#{text}\" has no Z or offset, so it could be any moment: add Z for UTC, or read it with DateTime.parse"
+        }
+        if not shaped or end == nothing or not _time_shaped?(points, 11, end) {
+            return "\"#{text}\" is not a moment written as YYYY-MM-DDTHH:MM:SS with Z or an offset, such as 2026-09-25T14:30:00Z"
+        }
+        const (year, month, day) = _date_at(points, 0)
+        const (hour, minute, second, nanosecond) = _time_at(points, 11, end)
+        var problem = _date_problem(year, month, day)
+        if problem == nothing {
+            problem = _time_problem(hour, minute, second, nanosecond)
+        }
+        if problem != nothing {
+            return "\"#{text}\" is not a valid moment: #{problem}"
+        }
+        return nothing
+    }
+
+    # Where the time of day ends: before a final Z or a +HH:MM or -HH:MM
+    # offset, or nothing when there is neither.
+    func Instant._time_end(points: List[Int]): Int? {
+        if points.count > 0 and points[points.count - 1] == 90 {
+            return points.count - 1
+        }
+        if points.count >= 6 and _offset_at(points, points.count - 6) != nothing {
+            return points.count - 6
+        }
+        return nothing
+    }
+
+    # Only after `_text_problem` has accepted the text.
+    func Instant._from_text(text: String): Emerald.Instant {
+        const points = text.trim().code_points()
+        const end = Emerald.Instant._time_end(points).or(0)
+        const (year, month, day) = _date_at(points, 0)
+        const (hour, minute, second, nanosecond) = _time_at(points, 11, end)
+        const offset = if end == points.count - 1 then 0 else _offset_at(points, end).or(0)
+        const local = Emerald.DateTime(year, month, day, hour, minute, second, nanosecond)
+        return local.to_instant(Emerald.TimeZone.utc).before(Emerald.Duration(seconds: offset))
+    }
+}
+
+# The rules that turn an Instant into what a calendar and clock show in some
+# place. For now, UTC and fixed offsets from it such as "+05:30".
+struct TimeZone with Textual {
+    const name: String
+    const _offset: Int
+
+    const TimeZone.utc = Emerald.TimeZone("UTC")
+
+    constructor(name: String) {
+        const offset = Emerald.TimeZone._fixed_offset(name)
+        if offset == nothing {
+            raise Emerald.DateTimeError("\"#{name}\" is not a time zone Emerald knows: use \"UTC\" or an offset such as \"+05:30\"")
+        }
+        self.name = name
+        self._offset = offset
+    }
+
+    # A zone always this far from UTC, named like "+05:30" or "-03:30". The
+    # minutes take the sign of the hours.
+    func TimeZone.fixed(hours: Int, minutes: Int = 0): Emerald.TimeZone {
+        if minutes < -59 or minutes > 59 or (hours > 0 and minutes < 0) or (hours < 0 and minutes > 0) {
+            raise Emerald.DateTimeError("minutes #{minutes} must be between -59 and 59, with the same sign as hours #{hours}: write minutes: #{-minutes} instead")
+        }
+        const total = (hours * 60 + minutes).abs()
+        if total > 18 * 60 {
+            raise Emerald.DateTimeError("an offset of #{hours} hours is not between -18 and 18")
+        }
+        const sign = if hours < 0 or minutes < 0 then "-" else "+"
+        return Emerald.TimeZone("#{sign}#{_two_digits(total // 60)}:#{_two_digits(total % 60)}")
+    }
+
+    # How far ahead of UTC clocks in this zone are at `instant`.
+    func offset_at(instant: Emerald.Instant): Emerald.Duration {
+        return Emerald.Duration(seconds: self._offset)
+    }
+
+    @override
+    func to_string(): String {
+        return self.name
+    }
+
+    func TimeZone._fixed_offset(name: String): Int? {
+        if name == "UTC" {
+            return 0
+        }
+        return _offset_at(name.code_points(), 0)
+    }
+}
+
+# Measures elapsed time on the monotonic clock, which a change to the system
+# clock cannot move.
+class Stopwatch with Textual {
+    var _started: Int
+
+    func Stopwatch.start(): Emerald.Stopwatch {
+        return Emerald.Stopwatch(Emerald.Stopwatch._ticks())
+    }
+
+    # Native: nanoseconds on the monotonic clock, from an unspecified start.
+    func Stopwatch._ticks(): Int {
+        return 0
+    }
+
+    func elapsed(): Emerald.Duration {
+        return Emerald.Duration(nanoseconds: Emerald.Stopwatch._ticks() - self._started)
+    }
+
+    func restart() {
+        self._started = Emerald.Stopwatch._ticks()
+    }
+
+    @override
+    func to_string(): String {
+        return "Stopwatch(#{self.elapsed()})"
     }
 }

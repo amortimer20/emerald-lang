@@ -16,3 +16,12 @@ date and time text "2026-09-25T24:00" is not a valid date and time: hour 24 is n
 date and time shape "2026-09-25" is not a date and time written as YYYY-MM-DDTHH:MM:SS, such as 2026-09-25T14:30:00
 a Duration cannot be divided by zero
 DateTimeError a Duration cannot be divided by a zero Duration
+after 9999 this moment is after 9999-12-31T23:59:59.999999999Z, the latest an Instant can be
+before 1 this moment is before 0001-01-01T00:00:00Z, the earliest an Instant can be
+no offset "2026-09-25T14:30:00" has no Z or offset, so it could be any moment: add Z for UTC, or read it with DateTime.parse
+moment shape "2026-09-25T14:30Q" is not a moment written as YYYY-MM-DDTHH:MM:SS with Z or an offset, such as 2026-09-25T14:30:00Z
+moment range "2026-09-25T14:61:00Z" is not a valid moment: minute 61 is not between 0 and 59
+zone name "Asia/Tokyo" is not a time zone Emerald knows: use "UTC" or an offset such as "+05:30"
+minute sign minutes 30 must be between -59 and 59, with the same sign as hours -3: write minutes: -30 instead
+offset size an offset of 19 hours is not between -18 and 18
+`Program.sleep` cannot pause for a negative Duration

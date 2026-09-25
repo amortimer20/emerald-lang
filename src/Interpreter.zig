@@ -2968,6 +2968,9 @@ fn evaluateCall(
         if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsolePlain(call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(.real));
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(.awake));
+        if (std.mem.eql(u8, key, Resolver.program_sleep_key)) return self.callSleep(expression.span, call);
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
@@ -3535,6 +3538,31 @@ fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Erro
     for (call.arguments, 0..) |argument, index| values[index] = toFloat(try self.evaluate(argument));
     const name = key["Math.".len..];
     return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else std.math.pow(f64, values[0], values[1]));
+}
+
+/// A clock reading in nanoseconds: since 1970 for `.real`, which fits `Int`
+/// until 2262, and since some unspecified start for the monotonic `.awake`.
+fn clockNanoseconds(clock: std.Io.Clock) i64 {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    return @intCast(clock.now(io).toNanoseconds());
+}
+
+/// Section 15.8's `Program.sleep`. The checker guarantees a `Duration`, whose
+/// private fields are whole seconds and a nanosecond part.
+fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    const duration = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(duration);
+    const object = duration.data.struct_value;
+    const seconds = object.fields[fieldPosition(object, "_seconds").?].data.int;
+    const nanoseconds = object.fields[fieldPosition(object, "_nanoseconds").?].data.int;
+    if (seconds < 0) {
+        self.raised_value = try self.makeError(Resolver.preludeKey("DateTimeError"), "`Program.sleep` cannot pause for a negative Duration");
+        return self.raiseTyped(span, "DateTimeError", "`Program.sleep` cannot pause for a negative Duration", "Pass a Duration of zero or more.");
+    }
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const total = @as(i96, seconds) * std.time.ns_per_s + nanoseconds;
+    io.sleep(.fromNanoseconds(total), .awake) catch {};
+    return .nothing;
 }
 
 fn random(self: *Interpreter) std.Random {

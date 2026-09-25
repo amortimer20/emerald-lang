@@ -211,9 +211,9 @@ instant.unix_seconds: Int                       # rounded toward the past
 instant.unix_milliseconds: Int
 instant.to_date_time(zone: TimeZone = TimeZone.local): DateTime
 
-instant + duration    # Instant
-instant - duration    # Instant
-instant - instant     # Duration
+instant + duration    # Instant (the method `after`)
+instant - duration    # Instant (`before`)
+instant - instant     # Duration (`since`)
 ```
 
 `Instant` adopts `Ordered` and `Textual`. It always prints in UTC with `Z`. To show local
@@ -225,6 +225,7 @@ time, convert with `to_date_time()`.
 Duration(days: Int = 0, hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0)
 
 duration.total_days, total_hours, total_minutes, total_seconds, total_milliseconds: Float
+duration.whole_days ... whole_nanoseconds: Int      # rounded toward zero
 duration.abs(): Duration
 duration.zero?(), negative?(): Bool
 
@@ -250,7 +251,7 @@ the supported year range, where a single nanosecond `Int` would stop at 1677–2
 TimeZone.utc: TimeZone
 TimeZone.local: TimeZone                        # decided once per execution
 TimeZone.fixed(hours: Int, minutes: Int = 0): TimeZone    # "+05:30"
-TimeZone(name: String)                          # IANA name, e.g. "Asia/Tokyo" (decision)
+TimeZone(name: String)                          # "UTC", "+05:30", or an IANA name such as "Asia/Tokyo"
 TimeZone.named_maybe(name: String): TimeZone?
 
 zone.name: String
@@ -279,6 +280,12 @@ monotonic clock, so a program's timing isn't wrecked when the system clock chang
 `Instant.now() - start` stays possible, but the docs point timing questions to `Stopwatch`.
 `elapsed()` is a method rather than a property because its answer changes each time it is
 called.
+
+Slice 3 notes. `to_instant` and `to_date_time` take their `zone` explicitly until slice 4
+adds `TimeZone.local` as the default. `Instant` and `Stopwatch` have no public constructor;
+the diagnostic for calling one names `Instant.now()` or `Stopwatch.start()`. `Instant` reads
+a `Duration` exactly through `whole_seconds` and `whole_nanoseconds`, because another type's
+private fields are out of its reach.
 
 ### Parsing
 

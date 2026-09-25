@@ -48,3 +48,28 @@ try {
 catch error: RuntimeError {
     print(error.type_name, error.message)
 }
+
+func attempt_moment(label: String, block: func(): Instant) {
+    try {
+        print(label, block())
+    }
+    catch error: DateTimeError {
+        print(label, error.message)
+    }
+}
+
+attempt_moment("after 9999") { => Instant.from_unix_seconds(253402300800) }
+attempt_moment("before 1") { => Instant.from_unix_seconds(-62135596800) - Duration(nanoseconds: 1) }
+attempt_moment("no offset") { => Instant.parse("2026-09-25T14:30:00") }
+attempt_moment("moment shape") { => Instant.parse("2026-09-25T14:30Q") }
+attempt_moment("moment range") { => Instant.parse("2026-09-25T14:61:00Z") }
+attempt_moment("zone name") { => DateTime(2026, 1, 1).to_instant(TimeZone("Asia/Tokyo")) }
+attempt_moment("minute sign") { => DateTime(2026, 1, 1).to_instant(TimeZone.fixed(hours: -3, minutes: 30)) }
+attempt_moment("offset size") { => DateTime(2026, 1, 1).to_instant(TimeZone.fixed(hours: 19)) }
+
+try {
+    Program.sleep(Duration(seconds: -1))
+}
+catch error: DateTimeError {
+    print(error.message)
+}

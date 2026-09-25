@@ -34,7 +34,7 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | [`Range`](range.md) | Iteration, `count`, `empty?()`, `step`, `reverse`, `to_list` | `conformance/run/range-values.em` |
 | [`Random`](random.md) | Seeded range selection, choosing, and shuffling | `conformance/run/randomness.em` |
 | [`File`, `Directory`, `Path`](file.md) | Whole-file and streamed UTF-8 text, directories, lexical paths | `conformance/run/file-streaming.em` |
-| [`Program`](program.md) | The running program's own CLI arguments | `conformance/run/program-arguments.em` |
+| [`Program`](program.md) | The running program's own CLI arguments, and pausing it | `conformance/run/program-arguments.em` |
 | [`Console`](console.md) | Color/style helpers, `Console.style`, `Console.plain`, the color policy | `conformance/color/console-style.em` |
 
 ## Errors and tests

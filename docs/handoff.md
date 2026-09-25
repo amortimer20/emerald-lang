@@ -99,13 +99,19 @@ method changes only ordinary identifier uses.
 
 Dates and times (rewrite-context 15.8) are being implemented from
 [`date-time-design-plan.md`](date-time-design-plan.md). The user accepted every decision in
-it. Slices 1 and 2 are done: `Date`, `Time`, `DateTime`, `Duration`, `Weekday`,
-`DateTimeError`, and the named-unit diagnostic. Slice 3 is next: `Instant`, the real clock,
-`TimeZone.utc`/`fixed`, `Stopwatch`, and `Program.sleep`. It is the first slice with native
-primitives, and it must resolve `conformance/run/traits.em`'s own `struct Stopwatch`, which
-will start shadowing the built-in. Keep writing prelude bodies with `Emerald.`-qualified
-built-in names. Share helpers through private module-level functions, never module-level
-variables (see 22). Library pages and an example program come in slice 6.
+it. Slices 1–3 are done: `Date`, `Time`, `DateTime`, `Instant`, `Duration`, `Weekday`,
+`Stopwatch`, `Program.sleep`, `DateTimeError`, `TimeZone.utc`/`fixed`, and the named-unit
+diagnostic.
+
+Slice 4 is next: the local zone. That means `TimeZone.local`, resolved once per execution
+into `emerald.Streams` (UTC by default, like the color policy) through a pure,
+unit-tested function in `main.zig`. It also brings `Date.today()`, `Time.now()`, and
+`DateTime.now()`, and makes `TimeZone.local` the default `zone` of `to_instant` and
+`to_date_time`. A zone whose offset varies needs `DateTime.to_instant` to resolve repeated
+and skipped wall-clock times (take the earlier moment; move forward by the gap). Today it
+applies one offset. Keep writing prelude bodies with `Emerald.`-qualified built-in names,
+and share helpers through private module-level functions, never module-level variables.
+Library pages and an example program come in slice 6.
 
 Console's remaining scope (`Table`/`Panel` widgets, prompts, multi-select) comes after dates
 and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Audio`, and
@@ -136,14 +142,19 @@ and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Aud
 
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`, and
   `DateTimeError`.
+- `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
+  value; `Program.sleep` reports it.
+- A diagnostic the checker reports inside the prelude trips an assertion in
+  `emerald.analyze` rather than printing. While editing the prelude, temporarily print
+  `diagnostic.message` for any diagnostic whose file is past the program's files.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
   remain unsupported.
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
-- Every run type-checks all of the prelude's bodies. With slices 1 and 2, a ReleaseSafe
-  `print(1)` starts in about 6.5 ms, up from 5.1 ms. Checking only the prelude bodies a
+- Every run type-checks all of the prelude's bodies. With slices 1–3, a ReleaseSafe
+  `print(1)` starts in about 7.9 ms, up from 5.2 ms. Checking only the prelude bodies a
   program can reach would need the interpreter to stop relying on facts recorded for every
   body. It is worth doing if later slices push startup much higher.
 - A module-level variable in the prelude takes part in a program's module-setup ordering
@@ -152,20 +163,18 @@ and times and needs its own design proposal (24). `Tui`, `Graphics`, `Gui`, `Aud
 
 ## Validation and repository state
 
-Dates and times slice 2 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe
+Dates and times slice 3 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe
 `zig build test`, `zig build`, `zig fmt --check src/*.zig`,
-`bash tools/check-doc-examples.sh` (100 linked files), `git diff --check`, and two fuzz
-campaigns (`zig build fuzz -- 20260925 3000` and `-- 4242 2000`) passed. The new conformance
-cases `run/time-basics` and `run/date-time-basics`, and the additions to `run/date-errors`
-and `diagnostics/time-units-named`, were checked by hand. That includes midnight wraparound,
-month-end with a carried day, and fraction display and parsing.
+`bash tools/check-doc-examples.sh`, `git diff --check`, and fuzz seeds 20260925 (3000) and
+777 (2000) passed. The new cases `run/instant-basics`, `run/clock`, and
+`diagnostics/program-sleep`, and the additions to `run/date-errors` and
+`run/duration-basics`, were checked by hand; `run/clock` asserts only relations between
+readings. `run/traits.em`'s `Stopwatch` became `LapTimer`, so it no longer shadows the
+built-in; its output is unchanged. The countdown example on `docs/library/program.md` was
+run and took three seconds.
 
-The first full run failed `runtime-errors/receiver-in-use-during-module-setup`: a
-module-level list in the prelude had joined that program's module-setup analysis. It became
-a function (see the rough edge above). `moduleView` now also caches which keys it copies, so
-a body no longer iterates every module name. Startup was measured interleaved over 60 runs:
-5.1 ms before any date work, 5.5 ms after slice 1, 7.0 ms with slice 2, and 6.5 ms with the
-cache.
+Startup was measured interleaved over 60 runs: 5.2 ms before any date work and 7.9 ms after
+slice 3.
 
 All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.
