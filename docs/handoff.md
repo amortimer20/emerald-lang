@@ -109,14 +109,16 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-No milestone is in progress. The regular-expression milestone is finished; choosing the next
-piece of work is the user's call.
+JSON is next. The user chose to finish the standard library (JSON, then an HTTP client, then
+the smaller items in rewrite-context 15.7), then make small optimizations such as startup
+time, and eventually build a native compiler. [`json-design-plan.md`](json-design-plan.md)
+is proposed and awaits the user's decisions, above all decision 3: whether `Json.encode` and
+`Json.decode(text, as: Type)` are typed specially by the checker. Implementation starts with
+slice 1 once the plan is accepted.
 
-Candidates, each needing the user's go-ahead:
+Other candidates, each needing the user's go-ahead:
 
-- **JSON** or a **synchronous HTTP client**, the next items on rewrite-context 15.7's
-  standard-library backlog; each needs its own design plan first, as dates and regular
-  expressions had.
+- A **synchronous HTTP client**, after JSON, with its own design plan.
 - **Startup performance.** Every run type-checks every prelude body, and the date and time
   work took a ReleaseSafe `print(1)` from about 5 ms to about 8.3 ms. Checking only the
   prelude bodies a program can reach needs the interpreter to stop relying on facts recorded
