@@ -116,7 +116,7 @@ as startup time, and eventually build a native compiler.
 decision 3 (a): the checker types `Json.encode` and `Json.decode(text, as: Type)` specially,
 as it does `print`. Slices 1 (the native parser and writer, `src/Json.zig`) and 2 (the `Json` value in the
 prelude: `parse`, `parse_maybe`, `kind`, navigation, conversions, paths in errors, display,
-equality, and `JsonError`; rewrite-context 15.9) are done. Slice 3 is next: `Json.null`, the
+equality, and `JsonError`; rewrite-context 15.9) are done. Slice 3 is next, but paused at the user's request until they pick it back up: `Json.null`, the
 `from_string`/`from_int`/`from_float`/`from_bool`/`from_list`/`from_object` builders, and
 `Json.encode` for `Json` values, compact and pretty, with round-trip conformance. `_write`
 in `Interpreter.callJson` already writes a `Json` value; a built `Float` must refuse NaN and
@@ -207,7 +207,7 @@ UTF-8 character; see the journal). Slice 2 followed. After it, Debug and Release
 `zig build json-conformance` (0 mismatches), and 8,000 more differential cases (seeds 12 and
 13) passed.
 
-Slice 1 is pushed to `claude/adoring-pasteur-wz5l0h`; the review fixes and slice 2 are committed locally on that branch and not yet pushed. Work continues in a local session; the cloud session is no longer in use. Each earlier slice's validation
+Slices 1 and 2 and the review fixes are pushed to `claude/adoring-pasteur-wz5l0h`. Work continues in a local session; the cloud session is no longer in use. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.
 
 Cloud sessions cannot reach ziglang.org. The pinned Zig 0.16.0 comes from the `ziglang==0.16.0`
