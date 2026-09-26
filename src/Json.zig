@@ -47,9 +47,19 @@ pub const Problem = struct {
     fn fail(self: *Problem, position: Position, comptime format: []const u8, arguments: anytype) error{InvalidJson} {
         self.line = position.line;
         self.column = position.column;
-        const written: []const u8 = std.fmt.bufPrint(&self.buffer, format, arguments) catch &self.buffer;
-        self.length = written.len;
+        self.length = if (std.fmt.bufPrint(&self.buffer, format, arguments)) |written| written.len else |_| self.truncate();
         return error.InvalidJson;
+    }
+
+    /// A message naming a very long key or word overflows the buffer, which
+    /// `bufPrint` has filled as far as it could: cut it at a UTF-8 boundary,
+    /// with room for a trailing ellipsis, so it is still valid text.
+    fn truncate(self: *Problem) usize {
+        const ellipsis = "\u{2026}";
+        var end = self.buffer.len - ellipsis.len;
+        while (end > 0 and self.buffer[end] & 0xC0 == 0x80) end -= 1;
+        @memcpy(self.buffer[end..][0..ellipsis.len], ellipsis);
+        return end + ellipsis.len;
     }
 };
 
@@ -106,7 +116,7 @@ pub const Value = struct {
     /// with a decimal point or exponent, since it came from a `Float`.
     pub fn initFloat(value: f64) Value {
         var result: Value = .{ .kind = .number, .float_value = value, .is_float_literal = true };
-        if (std.math.isFinite(value) and value == @trunc(value) and value >= min_exact_int and value <= max_exact_int) {
+        if (std.math.isFinite(value) and value == @trunc(value) and value >= min_int_float and value < past_max_int_float) {
             result.is_integer = true;
             result.int_value = @intFromFloat(value);
         }
@@ -139,11 +149,11 @@ pub const Value = struct {
     }
 };
 
-/// -2^63 and 2^63 - 1, the smallest and largest exact `f64` values at or
-/// within `Int`'s range: `Int`'s own bounds are not exactly representable as
-/// `f64`, so the comparison uses the nearest values that are.
-const min_exact_int: f64 = -9223372036854775808.0;
-const max_exact_int: f64 = 9223372036854775807.0;
+/// `Int`'s range as `f64` bounds: -2^63 is exact and within it, but 2^63 - 1
+/// is not representable and rounds up to 2^63, which is past the range, so
+/// the upper bound is exclusive.
+const min_int_float: f64 = -9223372036854775808.0;
+const past_max_int_float: f64 = 9223372036854775808.0;
 
 /// A parsed document: its root value, and the arena everything it points to
 /// lives in.
@@ -187,13 +197,9 @@ const Frame = struct {
     items: std.ArrayList(Value) = .empty,
     entries: std.ArrayList(Entry) = .empty,
     pending_key: ?[]const u8 = null,
-
-    fn hasKey(self: *const Frame, key: []const u8) bool {
-        for (self.entries.items) |entry| {
-            if (std.mem.eql(u8, entry.key, key)) return true;
-        }
-        return false;
-    }
+    /// An object's keys so far, so a duplicate is found without comparing
+    /// each key against every earlier one.
+    keys: std.StringHashMapUnmanaged(void) = .empty,
 };
 
 /// Whether delivering a completed value finished the document (there was
@@ -313,7 +319,7 @@ const Parser = struct {
                 const key_position = self.position();
                 if (self.peek() != '"') return self.failBadKey(frame, key_position);
                 const key = try self.readStringLiteral();
-                if (frame.hasKey(key)) {
+                if ((try frame.keys.getOrPut(self.arena, key)).found_existing) {
                     return self.fail(key_position, "the key \"{s}\" is already used in this object", .{key});
                 }
                 frame.pending_key = key;
@@ -499,13 +505,13 @@ const Parser = struct {
         self.advance(); // the opening quote
         var built: std.ArrayList(u8) = .empty;
         while (true) {
-            const byte = self.peek() orelse return self.fail(start, "this text ends inside a string that started at line {d}, column {d}", .{ start.line, start.column });
+            const byte = self.peek() orelse return self.failUnterminated(start);
             if (byte == '"') {
                 self.advance();
                 return try built.toOwnedSlice(self.arena);
             }
             if (byte == '\\') {
-                try self.readEscape(&built);
+                try self.readEscape(&built, start);
                 continue;
             }
             if (byte < 0x20) {
@@ -518,10 +524,14 @@ const Parser = struct {
         }
     }
 
-    fn readEscape(self: *Parser, built: *std.ArrayList(u8)) ParseError!void {
+    fn failUnterminated(self: *Parser, start: Position) error{InvalidJson} {
+        return self.fail(start, "this text ends inside a string that started at line {d}, column {d}", .{ start.line, start.column });
+    }
+
+    fn readEscape(self: *Parser, built: *std.ArrayList(u8), string_start: Position) ParseError!void {
         const backslash_at = self.position();
         self.advance(); // the backslash
-        const letter = self.peek() orelse return self.fail(backslash_at, "a pattern cannot end with a single backslash", .{});
+        const letter = self.peek() orelse return self.failUnterminated(string_start);
         switch (letter) {
             '"' => try appendByte(built, self.arena, '"'),
             '\\' => try appendByte(built, self.arena, '\\'),
@@ -1011,4 +1021,37 @@ test "round-tripping a parsed document reaches the same canonical text" {
     var document = try expectParses("{\"a\":1,\"b\":[true,false,null,\"x\"],\"c\":3.0}");
     defer document.deinit();
     try expectWritten(document.root, .{}, "{\"a\":1,\"b\":[true,false,null,\"x\"],\"c\":3.0}");
+}
+
+test "a whole number at or past 2^63 is not an Int" {
+    var document = try expectParses("[9223372036854775808, 9223372036854775807.0, -9223372036854775808.0]");
+    defer document.deinit();
+    try testing.expect(!document.root.items[0].is_integer);
+    try testing.expect(!document.root.items[1].is_integer);
+    try testing.expect(document.root.items[2].is_integer);
+    try testing.expectEqual(std.math.minInt(i64), document.root.items[2].int_value);
+    try testing.expect(!Value.initFloat(9223372036854775808.0).is_integer);
+}
+
+test "a string ending in a backslash is unterminated" {
+    try expectRefused("[\"ab\\", 1, 2, "this text ends inside a string that started at line 1, column 2");
+}
+
+test "a message too long for its buffer is cut at a character boundary" {
+    const key = "\u{E9}" ** 300;
+    var problem: Problem = .{};
+    try testing.expectError(error.InvalidJson, parse(testing.allocator, "{\"" ++ key ++ "\":1,\"" ++ key ++ "\":2}", &problem));
+    try testing.expect(std.unicode.utf8ValidateSlice(problem.message()));
+    try testing.expect(std.mem.endsWith(u8, problem.message(), "\u{2026}"));
+}
+
+test "a duplicate key is found among many" {
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(testing.allocator);
+    try text.append(testing.allocator, '{');
+    for (0..5000) |index| try text.print(testing.allocator, "\"k{d}\":{d},", .{ index, index });
+    try text.appendSlice(testing.allocator, "\"k1234\":0}");
+    var problem: Problem = .{};
+    try testing.expectError(error.InvalidJson, parse(testing.allocator, text.items, &problem));
+    try testing.expectEqualStrings("the key \"k1234\" is already used in this object", problem.message());
 }

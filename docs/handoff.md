@@ -197,6 +197,10 @@ found 0 differences from Python's `json` over 25,000 generated cases (seeds 1–
 generated document parses in about 38 ms and writes back in about 6 ms (ReleaseSafe); a
 document nested 200,000 levels deep is refused cleanly, confirming the parser's explicit
 stack, not Zig's own call stack, is what bounds recursion.
+A review of slice 1 then fixed four defects (a crash on a whole number at 2^63, quadratic
+duplicate-key checking, one miscopied message, and message truncation that could split a
+UTF-8 character; see the journal), with the same validation, JSONTestSuite, and a further
+5,000 differential cases (seed 11) passing. That fix is committed locally, not yet pushed.
 
 All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.

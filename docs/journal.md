@@ -2775,3 +2775,20 @@ documents with one common mistake introduced, and checks agreement with Python's
 0 differences over 25,000 cases (seeds 1–5), once its generator gave every key a running
 number so it never produces a duplicate on its own. A 1 MB generated document parses in about
 38 ms and writes back in about 6 ms (ReleaseSafe).
+
+## JSON, slice 1 review fixes, 2026-09-26
+
+Reviewing slice 1 found four defects in `src/Json.zig`, each now fixed with a unit test:
+
+- **A whole number at 2^63 crashed.** `Int`'s upper bound, 2^63 - 1, is not representable as
+  an `f64` and rounds to 2^63, so an inclusive `<=` check let `9223372036854775808` (or
+  `9223372036854775807.0`) reach `@intFromFloat` and panic. The bound is now an exclusive
+  2^63. `Value.initFloat`, the future `Json.from_float`, shared the bug.
+- **Duplicate-key checking was quadratic.** Each key was compared with every earlier key in
+  its object, so a flat 40,000-key object took 1.1 s to parse; a per-object hash set brings it
+  to 25 ms (ReleaseSafe).
+- **A string ending in a backslash** said "a pattern cannot end with a single backslash",
+  copied from `Regex`; it now gets the unterminated-string message.
+- **A message too long for `Problem`'s 400-byte buffer** (a duplicate key hundreds of
+  characters long) was cut wherever the buffer ended, possibly inside a UTF-8 sequence. It is
+  now cut at a character boundary and ends with an ellipsis.
