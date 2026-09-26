@@ -2659,3 +2659,27 @@ records its capture, which RE2 documents as a deliberate difference from Perl. P
 `\B` also never matches an empty text. Both are now documented behavior, and the generator
 leaves them out; 30,000 further cases agreed exactly. The first version of the linear-time
 unit test was wrong, not the engine: `(a*)*b$` does match a run of `a`s ending in `b`.
+
+## Regular expressions, slice 3: the Emerald API, 2026-09-26
+
+`Regex`, `Regex.Match`, and `RegexError` are in the prelude. The constructor takes its
+options by name and asks the native `_problem` whether the pattern compiles, raising
+`RegexError` when it does not. Every other method passes the pattern and options,
+positionally, to a native in `Interpreter.callRegex`. `Regex.Match` keeps each group's span,
+text, and name in private fields, ready for slice 4. Privacy (10.5) means `Regex`'s own code
+cannot set a nested type's private fields, so the native `_find` builds the match values
+directly; programs cannot build one at all.
+
+Two behaviors the plan had left open were settled here, following Go and Rust. First, an
+empty match just where the previous match ended does not count. Second, an empty match at
+the very start or end of a text splits nothing off, which is what makes an empty pattern
+split between every grapheme.
+
+The first version was slow on a 1.2 MB text: about a second for `find_all('\w+')`,
+`replace_all`, and `split` each. Three changes brought that down. `Regex.Matcher` keeps
+the engine's threads and scratch space between the runs of one search, instead of
+allocating them per match. ASCII characters skip normalization. And `replace`,
+`replace_all`, and `split` became natives over match spans, where they had built a match
+value for each match and run an Emerald lambda to filter them. The results are
+`find_all` at 0.7 s (mostly building 240,000 match values), `replace_all` at 0.3 s, and
+`split` at 0.5 s, against 0.15 s for the engine alone. Startup rose about 0.3 ms.

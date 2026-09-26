@@ -1,6 +1,6 @@
 # Regular expressions: design and implementation plan
 
-Status: accepted, 2026-09-25; slices 1 and 2 done. Rewrite-context 15.4 settles the API's outline. This plan fills
+Status: accepted, 2026-09-25; slices 1 to 3 done. Rewrite-context 15.4 settles the API's outline. This plan fills
 in what 15.4 leaves open (where the matching engine comes from, what `.` and `\d` mean in a
 language whose characters are graphemes, captures, replacements, and errors) and orders the
 work. The decisions below are recommendations; the executor proceeds with them unless the
@@ -92,6 +92,8 @@ Regex(pattern: String, ignore_case: Bool = false, multiline: Bool = false)
 Regex.escape(text: String): String       # a pattern that matches `text` literally
 
 regex.pattern: String
+regex.ignore_case: Bool
+regex.multiline: Bool
 regex.matches?(text: String): Bool             # the whole text
 regex.contains_match?(text: String): Bool
 regex.find(text: String): Regex.Match?         # the first match
@@ -119,8 +121,13 @@ found.named_maybe(name: String): String?
   through `replace_each` and a block, which is ordinary Emerald.
 - **`find_all` finds non-overlapping matches from left to right.** After an empty match, the
   search moves on one grapheme, so `Regex('x*').find_all("ab")` finds three empty matches.
+  An empty match just where the previous match ended does not count, as in Go and Rust, so
+  `Regex('\s*').find_all("a b")` finds an empty match at 0, the space, and an empty match
+  at 3, not a fourth one at 2 as Python does. (Settled in slice 3.)
 - **`split` keeps empty pieces,** as `String.split` does, and an empty-matching pattern splits
-  between every grapheme.
+  between every grapheme: an empty match at the very start or end of the text splits nothing
+  off, as in Go and JavaScript, so `Regex('').split("abc")` is `["a", "b", "c"]`. A match
+  that is not empty does split there: `Regex(',').split(",a")` is `["", "a"]`.
 - **A `Regex` is a value.** Two are equal when their patterns and options are; it prints as
   its pattern; it can be a dictionary key or `const`. A `Regex.Match` is a value too, and
   prints as `Regex.Match("42" at 3..<5)`.
@@ -175,11 +182,11 @@ instructions, is refused as too large rather than allowed to use unbounded memor
 
 ## Errors
 
-- **`RegexError`** extends `RuntimeError`. Its message quotes the pattern, names the
-  problem, and gives the grapheme position in the pattern where it is:
-  `the pattern "(\d+" has an unclosed "(" at position 0`, or
-  `the pattern "a(?=b)" uses lookahead at position 1, which Emerald's regular expressions do
-  not support: they guarantee a match takes time in proportion to the text`.
+- **`RegexError`** extends `RuntimeError`. Its message quotes the pattern, gives the grapheme
+  position in the pattern, and names the problem:
+  `the pattern "(\d+" at position 0: a "(" here has no matching ")"`, or
+  `the pattern "a(?=b)" at position 1: "(?=" here is lookahead, which Emerald's regular
+  expressions do not support, so that matching always takes time in proportion to the text`.
 - **A pattern known before the program runs is checked then.** When `Regex(...)`'s first
   argument is a string literal, the checker compiles it with the same Zig code and reports
   the error as an ordinary diagnostic, pointing at the exact character inside the literal in
@@ -239,6 +246,16 @@ ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`, the doc-example ch
 3. **The Emerald API.** `Regex`, `Regex.Match`, `RegexError`, and every method above except
    groups; conformance cases for matching, finding, replacing, splitting, options, empty
    matches, graphemes (`é` in both forms, emoji, `\r\n`), and runtime errors.
+   Done: the prelude's `Regex` and `Regex.Match` over six positional natives
+   (`_problem`, `_whole?`, `_find`, `_replace`, `_split`, `_splice`, plus `Regex.escape`) in
+   `Interpreter.callRegex`, which build `Regex.Match` values directly so their private group
+   fields need no public constructor. `Regex.Matcher` keeps the engine's working space
+   between the runs of one search. Compiled programs are cached per execution, keyed by
+   options and pattern, up to 256 of them; past that a pattern is compiled for each call.
+   Measured on a 1.2 MB text (ReleaseSafe): `find_all('\w+')`, 240,000 matches, 0.7 s, most
+   of it building match values; `replace_all('\d+')` 0.3 s; `split('\s+')` 0.5 s; the
+   engine alone finds the 240,000 matches in 0.15 s after 0.09 s of grapheme segmentation.
+   A ReleaseSafe `print(1)` starts about 0.3 ms later than before.
 4. **Groups.** `group`, `group_maybe`, `named`, `named_maybe`, and groups inside
    `replace_each`; conformance for optional groups, nested groups, and names.
 5. **Checking literal patterns.** The checker reports a bad literal pattern at its source
@@ -257,8 +274,8 @@ needs it (24).
 
 ## Risks
 
-- **Grapheme matching costs a segmentation pass.** Linear, and done once per call; measure
-  in slice 3 on a large file, and cache segmentation per text only if it shows.
+- **Grapheme matching costs a segmentation pass.** Linear, and done once per call: about
+  0.09 s for 1.2 MB, measured in slice 3 (above), so segmentation is not cached per text.
 - **Case-insensitive matching over graphemes** has edge cases where folding changes a
   grapheme's length. Simple folding per code point, applied to both sides, keeps it
   well-defined; the differential test covers the ASCII core.

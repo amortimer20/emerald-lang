@@ -1292,3 +1292,145 @@ class Stopwatch with Textual {
         return "Stopwatch(#{self.elapsed()})"
     }
 }
+
+# Regular expressions (15.4). The matching engine is native (src/Regex.zig):
+# a pattern takes time in proportion to the text, whatever it is. What is here
+# gives it named options, validation, and display, over positional natives that
+# take the pattern and options each time; the runtime caches each compiled
+# pattern, so building the same Regex again costs nothing.
+
+# A pattern that cannot be compiled, or a group a match does not have. The
+# message quotes the pattern and gives the position of the problem in it.
+class RegexError extends RuntimeError {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
+struct Regex with Textual {
+    const pattern: String
+    const ignore_case: Bool
+    const multiline: Bool
+
+    # One match, found in some text. `start` and `end` count characters as
+    # indexing does, so `text[found.start..<found.end]` is `found.text`.
+    struct Match with Textual {
+        const text: String
+        const start: Int
+        const end: Int
+        # Every group, group 0 (the whole match) first: where each starts and
+        # ends, -1 for a group that took no part, and its text.
+        const _spans: List[Int]
+        const _texts: List[String]
+        # Each group's name, or "" for a group without one.
+        const _names: List[String]
+
+        @override
+        func to_string(): String {
+            return "Regex.Match(\"#{self.text}\" at #{self.start}..<#{self.end})"
+        }
+    }
+
+    constructor(pattern: String, ignore_case: Bool = false, multiline: Bool = false) {
+        const problem = Emerald.Regex._problem(pattern, ignore_case, multiline)
+        if problem != nothing {
+            raise Emerald.RegexError(problem)
+        }
+        self.pattern = pattern
+        self.ignore_case = ignore_case
+        self.multiline = multiline
+    }
+
+    # Native: a pattern that matches `text` and nothing else, every character
+    # with a meaning in patterns written with a backslash.
+    func Regex.escape(text: String): String {
+        return text
+    }
+
+    # Whether the whole of `text` matches.
+    func matches?(text: String): Bool {
+        return Emerald.Regex._whole?(self.pattern, self.ignore_case, self.multiline, text)
+    }
+
+    # Whether some part of `text` matches.
+    func contains_match?(text: String): Bool {
+        return Emerald.Regex._find(self.pattern, self.ignore_case, self.multiline, text, 1).count > 0
+    }
+
+    # The first match in `text`, or nothing.
+    func find(text: String): Emerald.Regex.Match? {
+        const found = Emerald.Regex._find(self.pattern, self.ignore_case, self.multiline, text, 1)
+        if found.count == 0 {
+            return nothing
+        }
+        return found[0]
+    }
+
+    # Every match in `text`, from left to right, none overlapping.
+    func find_all(text: String): List[Emerald.Regex.Match] {
+        return Emerald.Regex._find(self.pattern, self.ignore_case, self.multiline, text, 0)
+    }
+
+    # `text` with its first match replaced. The replacement is used as it is
+    # written: "$1" is a dollar sign and a one.
+    func replace(text: String, replacement: String): String {
+        return Emerald.Regex._replace(self.pattern, self.ignore_case, self.multiline, text, replacement, 1)
+    }
+
+    # `text` with every match replaced, the replacement used as it is written.
+    func replace_all(text: String, replacement: String): String {
+        return Emerald.Regex._replace(self.pattern, self.ignore_case, self.multiline, text, replacement, 0)
+    }
+
+    # `text` with every match replaced by what `block` returns for it.
+    func replace_each(text: String, block: func(Emerald.Regex.Match): String): String {
+        const found = self.find_all(text)
+        return Emerald.Regex._splice(text, found, found.map { each => block(each) })
+    }
+
+    # The pieces of `text` between matches, empty pieces included, as
+    # String.split keeps them. A match of nothing at the very start or end
+    # splits nothing off, so a pattern that matches nothing splits between
+    # every character.
+    func split(text: String): List[String] {
+        return Emerald.Regex._split(self.pattern, self.ignore_case, self.multiline, text)
+    }
+
+    @override
+    func to_string(): String {
+        return self.pattern
+    }
+
+    # Native: why the pattern cannot be compiled, or nothing when it can.
+    func Regex._problem(pattern: String, ignore_case: Bool, multiline: Bool): String? {
+        return nothing
+    }
+
+    # Native: whether the whole text matches.
+    func Regex._whole?(pattern: String, ignore_case: Bool, multiline: Bool, text: String): Bool {
+        return false
+    }
+
+    # Native: the matches in `text` from left to right, at most `limit` of
+    # them, or all of them when `limit` is 0.
+    func Regex._find(pattern: String, ignore_case: Bool, multiline: Bool, text: String, limit: Int): List[Emerald.Regex.Match] {
+        return []
+    }
+
+    # Native: `text` with at most `limit` matches replaced, or all of them
+    # when `limit` is 0.
+    func Regex._replace(pattern: String, ignore_case: Bool, multiline: Bool, text: String, replacement: String, limit: Int): String {
+        return text
+    }
+
+    # Native: the pieces of `text` between matches.
+    func Regex._split(pattern: String, ignore_case: Bool, multiline: Bool, text: String): List[String] {
+        return []
+    }
+
+    # Native: `text` with each match replaced by the replacement at the same
+    # position.
+    func Regex._splice(text: String, found: List[Emerald.Regex.Match], replacements: List[String]): String {
+        return text
+    }
+}

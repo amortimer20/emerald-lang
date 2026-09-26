@@ -2868,7 +2868,19 @@ The engine is Emerald's own (`src/Regex.zig`), not a wrapped C library: a Pike V
 matches in time proportional to the pattern times the text, whatever the pattern, and that
 matches by grapheme, as every other string operation does. Its full design, and the
 remaining work, are in [`docs/regex-design-plan.md`](regex-design-plan.md); this section is
-rewritten with the settled behavior when the API lands.
+rewritten with the settled behavior when the whole API lands.
+
+Implemented so far: `Regex(pattern, ignore_case: false, multiline: false)`, `Regex.escape`,
+the seven methods above, `replace_each(text) { found => ... }`, and `Regex.Match`'s `text`,
+`start`, and `end`, which count graphemes as indexing does. `RegexError` extends
+`RuntimeError`; its message quotes the pattern and gives the grapheme position of the
+problem, and a failure is reported at the program's own call. Replacement text is literal
+(`"$1"` is a dollar sign and a one). Matches never overlap; after a match of nothing the
+search moves on one grapheme, and a match of nothing where the previous match ended does not
+count, as in Go and Rust. `split` keeps empty pieces, as `String.split` does, but a match of
+nothing at the very start or end splits nothing off, so an empty pattern splits between every
+grapheme. A `Regex` is a value: it prints as its pattern and compares by pattern and options.
+The runtime compiles each pattern once per execution and reuses it.
 
 ### 15.5 Formatting
 

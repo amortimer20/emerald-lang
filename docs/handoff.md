@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-25. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-26. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -106,12 +106,12 @@ method changes only ordinary identifier uses.
 ## Next step
 
 Regular expressions are in progress: the user chose them from the 15.7 backlog and accepted
-[`regex-design-plan.md`](regex-design-plan.md). Slices 1 (Unicode data) and 2 (the engine,
-`src/Regex.zig`, not yet reachable from Emerald) are done. Slice 3 is next: the Emerald API
-(`Regex`, `Regex.Match`, `RegexError`, and every method but groups), written in the prelude
-over positional natives that call `Regex.compile` and `Regex.run`. It includes a per-interpreter
-cache of compiled programs keyed by pattern and options, and conformance for graphemes,
-options, empty matches, and runtime errors. `python3 tools/regex-differential.py [count]
+[`regex-design-plan.md`](regex-design-plan.md). Slices 1 (Unicode data), 2 (the engine,
+`src/Regex.zig`), and 3 (the Emerald API: `Regex`, `Regex.Match`, `RegexError`, and every
+method but groups, in the prelude over natives in `Interpreter.callRegex`) are done. Slice 4
+is next: `group`, `group_maybe`, `named`, and `named_maybe` on `Regex.Match`, written in the
+prelude over the private `_spans`, `_texts`, and `_names` fields that the native `_find`
+already fills, with conformance for optional, nested, and named groups. `python3 tools/regex-differential.py [count]
 [seed]` re-checks the engine against Python's `re` after any engine change.
 
 Other candidates, each needing the user's go-ahead:
@@ -150,8 +150,8 @@ on the roadmap.
 
 ## Active rough edges
 
-- Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`, and
-  `DateTimeError`.
+- Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`,
+  `DateTimeError`, and `RegexError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
 - A diagnostic the checker reports inside the prelude trips an assertion in
@@ -177,13 +177,12 @@ on the roadmap.
 
 ## Validation and repository state
 
-Regex slice 2 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`
-(436 tests, including the engine's), `zig build`, `zig fmt --check`, cross-builds for
-`x86_64-windows` and `aarch64-macos`, `bash tools/check-doc-examples.sh`, and
-`git diff --check` passed. `tools/regex-differential.py` found 0 differences from Python's
-`re` over 30,000 generated cases (seeds 1–3), once its generator left out two deliberate
-differences it had first found (see the plan). Slice 1's Unicode tables passed
-`zig build unicode-conformance` (20,034 cases).
+Regex slice 3 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`
+(including the new `regex-*` conformance cases), `zig build`, `zig fmt --check`, cross-builds
+for `x86_64-windows` and `aarch64-macos`, `bash tools/check-doc-examples.sh`, and
+`git diff --check` passed. `tools/regex-differential.py` still finds 0 differences from
+Python's `re` after the engine's `Matcher` change (10,000 cases, seed 4; 30,000 more in
+slice 2). Slice 1's Unicode tables passed `zig build unicode-conformance` (20,034 cases).
 
 All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.

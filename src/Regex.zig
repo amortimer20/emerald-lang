@@ -705,6 +705,11 @@ const Character = struct {
 };
 
 fn describe(scratch: Allocator, grapheme: []const u8) Allocator.Error!Character {
+    if (grapheme.len == 1 and grapheme[0] < 0x80) {
+        // ASCII on its own, the common case, is already in NFC.
+        const byte = grapheme[0];
+        return .{ .normalized = grapheme, .first = byte, .line_break = byte == '\n', .word = std.ascii.isAlphanumeric(byte) or byte == '_' };
+    }
     const normalized = if (unicode.quickCheck(grapheme) == .yes) grapheme else try unicode.normalize(scratch, grapheme);
     const first, _ = unicode.decode(normalized, 0);
     return .{
@@ -836,83 +841,123 @@ const Machine = struct {
 /// `slots` (length `program.slotCount()`) with grapheme positions, `unset`
 /// for a group that took no part, and returns true.
 pub fn run(program: *const Program, gpa: Allocator, text: Text, start: usize, mode: Mode, slots: []usize) Allocator.Error!bool {
-    std.debug.assert(slots.len == program.slotCount());
-    std.debug.assert(start <= text.count());
-    const count = text.count();
-    const slot_count = program.slotCount();
-    const instruction_count = program.instructions.len;
+    var matcher = try Matcher.init(gpa, program);
+    defer matcher.deinit();
+    return matcher.run(text, start, mode, slots);
+}
 
-    var current = try Threads.init(gpa, instruction_count, slot_count);
-    defer current.deinit(gpa);
-    var next = try Threads.init(gpa, instruction_count, slot_count);
-    defer next.deinit(gpa);
-    const working = try gpa.alloc(usize, slot_count);
-    defer gpa.free(working);
-    var scratch_state: std.heap.ArenaAllocator = .init(gpa);
-    defer scratch_state.deinit();
-    const scratch = scratch_state.allocator();
+/// The working space for running one program, kept between runs so that
+/// finding every match in a text allocates only once.
+pub const Matcher = struct {
+    program: *const Program,
+    gpa: Allocator,
+    current: Threads,
+    next: Threads,
+    working: []usize,
+    scratch_state: std.heap.ArenaAllocator,
+    stack: std.ArrayList(Frame) = .empty,
 
-    var machine: Machine = .{ .program = program, .slot_count = slot_count, .gpa = gpa, .count = count };
-    defer machine.stack.deinit(gpa);
+    pub fn init(gpa: Allocator, program: *const Program) Allocator.Error!Matcher {
+        const slot_count = program.slotCount();
+        const instruction_count = program.instructions.len;
+        var current = try Threads.init(gpa, instruction_count, slot_count);
+        errdefer current.deinit(gpa);
+        var next = try Threads.init(gpa, instruction_count, slot_count);
+        errdefer next.deinit(gpa);
+        return .{
+            .program = program,
+            .gpa = gpa,
+            .current = current,
+            .next = next,
+            .working = try gpa.alloc(usize, slot_count),
+            .scratch_state = .init(gpa),
+        };
+    }
 
-    var matched = false;
-    var position = start;
-    // The characters just before, at, and just after the position. Only
-    // `here` and `ahead` keep their normalized bytes, so the scratch space can
-    // be reset as the search moves on.
-    var behind: ?Character = if (start > 0) try describe(scratch, text.grapheme(start - 1)) else null;
-    var here: ?Character = if (start < count) try describe(scratch, text.grapheme(start)) else null;
-    while (true) {
-        const ahead: ?Character = if (position + 1 < count) try describe(scratch, text.grapheme(position + 1)) else null;
-        machine.before = behind;
-        machine.current = here;
-        // A new attempt starts here, behind every thread already running, so
-        // an earlier start always wins.
-        if (!matched and (mode == .search or position == start)) {
-            @memset(working, unset);
-            try machine.add(&current, 0, position, working);
-        }
-        if (current.len == 0 and (matched or mode == .whole or position >= count)) break;
+    pub fn deinit(self: *Matcher) void {
+        self.current.deinit(self.gpa);
+        self.next.deinit(self.gpa);
+        self.gpa.free(self.working);
+        self.scratch_state.deinit();
+        self.stack.deinit(self.gpa);
+    }
 
-        next.len = 0;
-        // Threads that consume this character continue at the next position,
-        // whose assertions look at this character and the one after it.
-        machine.before = here;
-        machine.current = ahead;
-        for (0..current.len) |index| {
-            const pc = current.dense[index];
-            const thread_slots = current.slots[index * slot_count ..][0..slot_count];
-            const consumes = switch (program.instructions[pc]) {
-                .match => {
-                    if (mode == .whole and position != count) continue;
-                    @memcpy(slots, thread_slots);
-                    matched = true;
-                    // Every thread after this one has lower priority.
-                    break;
-                },
-                .literal => |literal| here != null and literalMatches(literal, here.?, program.options.ignore_case),
-                .any => here != null and !here.?.line_break,
-                .class => |class| here != null and class.matches(here.?.first, program.options.ignore_case),
-                else => false,
-            };
-            if (consumes) {
-                @memcpy(working, thread_slots);
-                try machine.add(&next, pc + 1, position + 1, working);
+    /// As `Regex.run`.
+    pub fn run(self: *Matcher, text: Text, start: usize, mode: Mode, slots: []usize) Allocator.Error!bool {
+        const program = self.program;
+        std.debug.assert(slots.len == program.slotCount());
+        std.debug.assert(start <= text.count());
+        const count = text.count();
+        const slot_count = program.slotCount();
+        var current = &self.current;
+        var next = &self.next;
+        current.len = 0;
+        const working = self.working;
+        defer _ = self.scratch_state.reset(.retain_capacity);
+        const scratch = self.scratch_state.allocator();
+
+        var machine: Machine = .{ .program = program, .slot_count = slot_count, .gpa = self.gpa, .count = count, .stack = self.stack };
+        defer self.stack = machine.stack;
+
+        var matched = false;
+        var position = start;
+        // The characters just before, at, and just after the position. Only
+        // `here` and `ahead` keep their normalized bytes, so the scratch space can
+        // be reset as the search moves on.
+        var behind: ?Character = if (start > 0) try describe(scratch, text.grapheme(start - 1)) else null;
+        var here: ?Character = if (start < count) try describe(scratch, text.grapheme(start)) else null;
+        while (true) {
+            const ahead: ?Character = if (position + 1 < count) try describe(scratch, text.grapheme(position + 1)) else null;
+            machine.before = behind;
+            machine.current = here;
+            // A new attempt starts here, behind every thread already running, so
+            // an earlier start always wins.
+            if (!matched and (mode == .search or position == start)) {
+                @memset(working, unset);
+                try machine.add(current, 0, position, working);
+            }
+            if (current.len == 0 and (matched or mode == .whole or position >= count)) break;
+
+            next.len = 0;
+            // Threads that consume this character continue at the next position,
+            // whose assertions look at this character and the one after it.
+            machine.before = here;
+            machine.current = ahead;
+            for (0..current.len) |index| {
+                const pc = current.dense[index];
+                const thread_slots = current.slots[index * slot_count ..][0..slot_count];
+                const consumes = switch (program.instructions[pc]) {
+                    .match => {
+                        if (mode == .whole and position != count) continue;
+                        @memcpy(slots, thread_slots);
+                        matched = true;
+                        // Every thread after this one has lower priority.
+                        break;
+                    },
+                    .literal => |literal| here != null and literalMatches(literal, here.?, program.options.ignore_case),
+                    .any => here != null and !here.?.line_break,
+                    .class => |class| here != null and class.matches(here.?.first, program.options.ignore_case),
+                    else => false,
+                };
+                if (consumes) {
+                    @memcpy(working, thread_slots);
+                    try machine.add(next, pc + 1, position + 1, working);
+                }
+            }
+            if (position >= count) break;
+            std.mem.swap(*Threads, &current, &next);
+            behind = here;
+            here = ahead;
+            position += 1;
+            if (position % 256 == 0) {
+                // `behind` needs only its flags; `here` is described afresh.
+                _ = self.scratch_state.reset(.retain_capacity);
+                if (here != null) here = try describe(scratch, text.grapheme(position));
             }
         }
-        if (position >= count) break;
-        std.mem.swap(Threads, &current, &next);
-        behind = here;
-        here = ahead;
-        position += 1;
-        if (position % 256 == 0) {
-            // `behind` needs only its flags; `here` is described afresh.
-            _ = scratch_state.reset(.retain_capacity);
-            if (here != null) here = try describe(scratch, text.grapheme(position));
-        }
+        return matched;
     }
-    return matched;
-}
+};
 
 // Tests.
 
@@ -1107,6 +1152,29 @@ test "searching from a later position" {
     try testing.expect(try run(&program, testing.allocator, text, 1, .search, slots));
     try testing.expectEqual(@as(usize, 3), slots[0]);
     try testing.expect(!try run(&program, testing.allocator, text, 4, .search, slots));
+}
+
+test "a matcher runs again from where the last match ended" {
+    var problem: Problem = .{};
+    var program = try compile(testing.allocator, "(\\w)\\w*", .{}, &problem);
+    defer program.deinit();
+    // Long enough that one run resets its scratch space along the way.
+    const subject = "é" ++ "a" ** 300 ++ " be\u{301}e, x";
+    const text = try Text.init(testing.allocator, subject);
+    defer text.deinit(testing.allocator);
+    const slots = try testing.allocator.alloc(usize, program.slotCount());
+    defer testing.allocator.free(slots);
+    var matcher = try Matcher.init(testing.allocator, &program);
+    defer matcher.deinit();
+    const expected = [_][4]usize{ .{ 0, 301, 0, 1 }, .{ 302, 305, 302, 303 }, .{ 307, 308, 307, 308 } };
+    var position: usize = 0;
+    for (expected) |want| {
+        try testing.expect(try matcher.run(text, position, .search, slots));
+        try testing.expectEqualSlices(usize, &want, slots);
+        position = slots[1];
+    }
+    try testing.expect(!try matcher.run(text, position, .search, slots));
+    try testing.expect(try matcher.run(text, 302, .whole, slots) == false);
 }
 
 test "names find their groups" {
