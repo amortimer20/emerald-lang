@@ -1,0 +1,23 @@
+9/25/2026 9 25 2026
+2026 9 25
+2026-09-25
+ana@example ana example example
+555 89 89
+555 nothing nothing
+nothing dog dog
+abc c
+Lovelace Ada, Turing Alan
+12 and 20
+unset group 1 of the pattern "(a)|(b)" took no part in this match; use group_maybe(1) to get nothing instead
+unset maybe nothing
+too high the pattern "(a)|(b)" has no group 3: its groups are numbered 0 to 2, where 0 is the whole match
+too high maybe the pattern "(a)|(b)" has no group 3: its groups are numbered 0 to 2, where 0 is the whole match
+negative the pattern "(a)|(b)" has no group -1: its groups are numbered 0 to 2, where 0 is the whole match
+no groups the pattern "x" has no group 1: its only group is 0, the whole match
+no names the pattern "(a)|(b)" has no group named "a": it has no named groups; write (?<name>...) to name one
+unknown name the pattern "(?<month>\d{1,2})/(?<day>\d{1,2})/(?<year>\d{4})" has no group named "years": its named groups are "month", "day" and "year"
+unknown maybe the pattern "(?<month>\d{1,2})/(?<day>\d{1,2})/(?<year>\d{4})" has no group named "": its named groups are "month", "day" and "year"
+one name the pattern "(?<only>x)" has no group named "other": its one named group is "only"
+two names the pattern "(?<one>x)(?<two>y)" has no group named "three": its named groups are "one" and "two"
+unset name the group named "sign" in the pattern "(?<sign>-)?\d+" took no part in this match; use named_maybe("sign") to get nothing instead
+unset name maybe nothing

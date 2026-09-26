@@ -2683,3 +2683,17 @@ allocating them per match. ASCII characters skip normalization. And `replace`,
 value for each match and run an Emerald lambda to filter them. The results are
 `find_all` at 0.7 s (mostly building 240,000 match values), `replace_all` at 0.3 s, and
 `split` at 0.5 s, against 0.15 s for the engine alone. Startup rose about 0.3 ms.
+
+## Regular expressions, slice 4: groups, 2026-09-26
+
+`group`, `group_maybe`, `named`, and `named_maybe` are Emerald methods on `Regex.Match`,
+reading the private fields the native `_find` fills; slice 3 had laid them out for this.
+Each match now also holds its pattern, as a retained reference and not a copy, so that
+messages can quote it. A group that took no part raises `RegexError` from `group` and
+`named` and gives `nothing` from the `_maybe` forms, as 9.4's `to_int` pair does. A group the
+pattern lacks raises from every form, with a message naming the groups the pattern has.
+
+Formatting the new conformance case turned up an unrelated bug: `emerald format` printed
+`due?.named("year")` as `due.named("year")`. `Formatter.printMemberAccess` never wrote the
+`?` of an optional member access, so formatting a program, or saving it in an editor with
+format-on-save, could change what it meant. It is fixed, with a `format/` case.

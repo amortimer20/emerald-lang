@@ -3654,7 +3654,7 @@ fn callRegex(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Er
             var matches: RegexMatches = .{ .matcher = &matcher, .text = text, .slots = slots };
             return switch (native) {
                 .@"_whole?" => .initBool(try matcher.run(text, 0, .whole, slots)),
-                ._find => try self.regexFind(&matches, @intCast(values[4].data.int)),
+                ._find => try self.regexFind(&matches, values[0], @intCast(values[4].data.int)),
                 ._replace => try self.regexReplace(&matches, values[4].data.string.bytes, @intCast(values[5].data.int)),
                 ._split => try self.regexSplit(&matches),
                 else => unreachable,
@@ -3742,7 +3742,7 @@ const RegexMatches = struct {
 };
 
 /// At most `limit` matches as `Regex.Match` values, or all of them for 0.
-fn regexFind(self: *Interpreter, matches: *RegexMatches, limit: usize) Error!Value {
+fn regexFind(self: *Interpreter, matches: *RegexMatches, pattern: Value, limit: usize) Error!Value {
     const program = matches.matcher.program;
     const descriptor = self.structs.get(Resolver.preludeKey("Regex::Match")).?;
     var found: std.ArrayList(Value) = .empty;
@@ -3764,7 +3764,7 @@ fn regexFind(self: *Interpreter, matches: *RegexMatches, limit: usize) Error!Val
 
     while ((limit == 0 or found.items.len < limit) and try matches.next()) {
         try found.ensureUnusedCapacity(self.gpa, 1);
-        found.appendAssumeCapacity(try self.regexMatch(descriptor, matches.text, matches.slots, names));
+        found.appendAssumeCapacity(try self.regexMatch(descriptor, matches.text, matches.slots, names, pattern));
     }
     const list = try self.heap.createList(.struct_value, found.items.len);
     list.items.appendSliceAssumeCapacity(found.items);
@@ -3815,7 +3815,7 @@ fn regexSplit(self: *Interpreter, matches: *RegexMatches) Error!Value {
 }
 
 /// A `Regex.Match` for the match `slots` describe.
-fn regexMatch(self: *Interpreter, descriptor: *const Value.StructType, text: Regex.Text, slots: []const usize, names: Value) Error!Value {
+fn regexMatch(self: *Interpreter, descriptor: *const Value.StructType, text: Regex.Text, slots: []const usize, names: Value, pattern: Value) Error!Value {
     const fields = try self.gpa.alloc(Value, descriptor.fields.len);
     @memset(fields, Value.nothing);
     var owned = true;
@@ -3829,6 +3829,7 @@ fn regexMatch(self: *Interpreter, descriptor: *const Value.StructType, text: Reg
     fields[descriptor.fieldPosition("start").?] = .initInt(@intCast(slots[0]));
     fields[descriptor.fieldPosition("end").?] = .initInt(@intCast(slots[1]));
     fields[descriptor.fieldPosition("_names").?] = Heap.retain(names);
+    fields[descriptor.fieldPosition("_pattern").?] = Heap.retain(pattern);
     const spans = try self.heap.createList(.int, 2 * groups);
     fields[descriptor.fieldPosition("_spans").?] = .{ .data = .{ .list = spans } };
     const texts = try self.heap.createList(.string, groups);

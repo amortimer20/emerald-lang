@@ -2861,8 +2861,8 @@ digits.split(text)
 ```
 
 Construction validates the pattern and raises a `RegexError` with the location inside the
-pattern. A `Match` exposes at least `text`, `start`, and `end`; capture groups remain a
-later addition. Literal string methods never interpret their argument as a pattern.
+pattern. A `Match` exposes `text`, `start`, and `end`, and its capture groups through
+`group(number)`, `group_maybe(number)`, `named(name)`, and `named_maybe(name)`. Literal string methods never interpret their argument as a pattern.
 
 The engine is Emerald's own (`src/Regex.zig`), not a wrapped C library: a Pike VM that
 matches in time proportional to the pattern times the text, whatever the pattern, and that
@@ -2872,7 +2872,11 @@ rewritten with the settled behavior when the whole API lands.
 
 Implemented so far: `Regex(pattern, ignore_case: false, multiline: false)`, `Regex.escape`,
 the seven methods above, `replace_each(text) { found => ... }`, and `Regex.Match`'s `text`,
-`start`, and `end`, which count graphemes as indexing does. `RegexError` extends
+`start`, and `end`, which count graphemes as indexing does, and its groups. Group 0 is the
+whole match and the others count opening parentheses; a repeated group holds its last round.
+`group` and `named` raise `RegexError` for a group that took no part in the match, where the
+`_maybe` forms return `nothing` (as `to_int` and `to_int_maybe` do, 9.4). A group the pattern
+does not have raises from every form, naming the groups it does have. `RegexError` extends
 `RuntimeError`; its message quotes the pattern and gives the grapheme position of the
 problem, and a failure is reported at the program's own call. Replacement text is literal
 (`"$1"` is a dollar sign and a one). Matches never overlap; after a match of nothing the

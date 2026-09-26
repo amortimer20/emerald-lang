@@ -1,6 +1,6 @@
 # Regular expressions: design and implementation plan
 
-Status: accepted, 2026-09-25; slices 1 to 3 done. Rewrite-context 15.4 settles the API's outline. This plan fills
+Status: accepted, 2026-09-25; slices 1 to 4 done. Rewrite-context 15.4 settles the API's outline. This plan fills
 in what 15.4 leaves open (where the matching engine comes from, what `.` and `\d` mean in a
 language whose characters are graphemes, captures, replacements, and errors) and orders the
 work. The decisions below are recommendations; the executor proceeds with them unless the
@@ -258,6 +258,10 @@ ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`, the doc-example ch
    A ReleaseSafe `print(1)` starts about 0.3 ms later than before.
 4. **Groups.** `group`, `group_maybe`, `named`, `named_maybe`, and groups inside
    `replace_each`; conformance for optional groups, nested groups, and names.
+   Done: the four methods are Emerald in `Regex.Match`, over the private `_spans`, `_texts`,
+   `_names`, and `_pattern` fields `_find` fills; a name of `""` never finds the unnamed
+   groups' placeholder. Writing the conformance case exposed a formatter bug, fixed in the
+   same change: `emerald format` printed `a?.b` as `a.b`, changing what a program means.
 5. **Checking literal patterns.** The checker reports a bad literal pattern at its source
    position; diagnostics cases, and LSP behavior checked over JSON-RPC.
 6. **Documentation and integration.** `docs/library/regex.md`, an inventory row,

@@ -1324,6 +1324,63 @@ struct Regex with Textual {
         const _texts: List[String]
         # Each group's name, or "" for a group without one.
         const _names: List[String]
+        # The pattern that found it, for messages.
+        const _pattern: String
+
+        # Group `number`'s text, where group 0 is the whole match and the
+        # others count opening parentheses from the left. A RegexError when
+        # the group took no part in this match, as `(x)?` without an x.
+        func group(number: Int): String {
+            const text = self.group_maybe(number)
+            if text == nothing {
+                raise Emerald.RegexError("group #{number} of the pattern \"#{self._pattern}\" took no part in this match; use group_maybe(#{number}) to get nothing instead")
+            }
+            return text
+        }
+
+        # Group `number`'s text, or nothing when it took no part in this match.
+        func group_maybe(number: Int): String? {
+            if number < 0 or number >= self._texts.count {
+                const groups = if self._texts.count == 1 then "its only group is 0, the whole match" else "its groups are numbered 0 to #{self._texts.count - 1}, where 0 is the whole match"
+                raise Emerald.RegexError("the pattern \"#{self._pattern}\" has no group #{number}: #{groups}")
+            }
+            if self._spans[2 * number] < 0 {
+                return nothing
+            }
+            return self._texts[number]
+        }
+
+        # The text of the group written (?<name>...). A RegexError when it
+        # took no part in this match.
+        func named(name: String): String {
+            const text = self.named_maybe(name)
+            if text == nothing {
+                raise Emerald.RegexError("the group named \"#{name}\" in the pattern \"#{self._pattern}\" took no part in this match; use named_maybe(\"#{name}\") to get nothing instead")
+            }
+            return text
+        }
+
+        # The text of the group written (?<name>...), or nothing when it took
+        # no part in this match.
+        func named_maybe(name: String): String? {
+            const number = if name == "" then nothing else self._names.find_index { each => each == name }
+            if number == nothing {
+                raise Emerald.RegexError("the pattern \"#{self._pattern}\" has no group named \"#{name}\": #{self._named_groups()}")
+            }
+            return self.group_maybe(number)
+        }
+
+        func _named_groups(): String {
+            const names = self._names.filter { each => each != "" }
+            if names.count == 0 {
+                return "it has no named groups; write (?<name>...) to name one"
+            }
+            var listed = "\"#{names[0]}\""
+            for index in 1..<names.count {
+                listed += if index == names.count - 1 then " and \"#{names[index]}\"" else ", \"#{names[index]}\""
+            }
+            return if names.count == 1 then "its one named group is #{listed}" else "its named groups are #{listed}"
+        }
 
         @override
         func to_string(): String {

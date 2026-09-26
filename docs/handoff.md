@@ -107,11 +107,12 @@ method changes only ordinary identifier uses.
 
 Regular expressions are in progress: the user chose them from the 15.7 backlog and accepted
 [`regex-design-plan.md`](regex-design-plan.md). Slices 1 (Unicode data), 2 (the engine,
-`src/Regex.zig`), and 3 (the Emerald API: `Regex`, `Regex.Match`, `RegexError`, and every
-method but groups, in the prelude over natives in `Interpreter.callRegex`) are done. Slice 4
-is next: `group`, `group_maybe`, `named`, and `named_maybe` on `Regex.Match`, written in the
-prelude over the private `_spans`, `_texts`, and `_names` fields that the native `_find`
-already fills, with conformance for optional, nested, and named groups. `python3 tools/regex-differential.py [count]
+`src/Regex.zig`), 3 (the Emerald API: `Regex`, `Regex.Match`, `RegexError`, and their
+methods, in the prelude over natives in `Interpreter.callRegex`), and 4 (groups) are done.
+Slice 5 is next: when `Regex(...)`'s first argument is a string literal, the checker compiles
+it with `Regex.compile` and reports a bad pattern as an ordinary diagnostic at the exact
+character inside the literal, so the LSP shows it while typing; diagnostics cases, and LSP
+behavior checked over JSON-RPC. `python3 tools/regex-differential.py [count]
 [seed]` re-checks the engine against Python's `re` after any engine change.
 
 Other candidates, each needing the user's go-ahead:
@@ -177,8 +178,8 @@ on the roadmap.
 
 ## Validation and repository state
 
-Regex slice 3 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`
-(including the new `regex-*` conformance cases), `zig build`, `zig fmt --check`, cross-builds
+Regex slice 4 is committed, with a formatter fix (`?.` was printed as `.`). With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`
+(including the `regex-*` conformance cases), `zig build`, `zig fmt --check`, cross-builds
 for `x86_64-windows` and `aarch64-macos`, `bash tools/check-doc-examples.sh`, and
 `git diff --check` passed. `tools/regex-differential.py` still finds 0 differences from
 Python's `re` after the engine's `Matcher` change (10,000 cases, seed 4; 30,000 more in
