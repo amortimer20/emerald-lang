@@ -518,6 +518,7 @@ fn analyze(
         tokenized[lexed] = try Lexer.tokenize(gpa, &files[lexed].source);
         try appendFrom(arena, &found, tokenized[lexed].diagnostics, @intCast(lexed));
     }
+    panicOnPreludeProblem(found.items, &prelude_source, project.files.len);
     if (found.items.len > bad_directory_count) {
         return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
@@ -532,6 +533,7 @@ fn analyze(
         parsed[parsed_count] = try Parser.parse(gpa, &files[parsed_count].source, tokenized[parsed_count].tokens);
         try appendFrom(arena, &found, parsed[parsed_count].diagnostics, @intCast(parsed_count));
     }
+    panicOnPreludeProblem(found.items, &prelude_source, project.files.len);
     if (found.items.len > bad_directory_count) {
         return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
@@ -544,7 +546,7 @@ fn analyze(
     // because a name in one file can only be understood against the rest.
     var resolved = try Resolver.resolve(gpa, files, programs, project.enclosing_project);
     defer resolved.deinit();
-    for (resolved.diagnostics) |diagnostic| std.debug.assert(diagnostic.file < project.files.len);
+    panicOnPreludeProblem(resolved.diagnostics, &prelude_source, project.files.len);
     // Only bad directories can be in `found` by now. They are errors, reported
     // with the later stages' diagnostics rather than dropped, and the project
     // never runs with one.
@@ -560,7 +562,7 @@ fn analyze(
     // this function returns.
     var checked = try Checker.check(gpa, files, programs, resolved.facts);
     defer checked.deinit();
-    for (checked.diagnostics) |diagnostic| std.debug.assert(diagnostic.file < project.files.len);
+    panicOnPreludeProblem(checked.diagnostics, &prelude_source, project.files.len);
     // Only warnings can remain from the resolver here; they join the
     // checker's report in source order, whatever it holds.
     const combined = try mergeDiagnostics(arena, directories, try mergeDiagnostics(arena, resolved.diagnostics, checked.diagnostics));
@@ -631,6 +633,17 @@ fn earlierInProgram(_: void, a: Diagnostic, b: Diagnostic) bool {
 /// Copies one file's diagnostics into the report's arena, stamping the file
 /// they came from. A stage that works on one file at a time does not know its
 /// index, so it is filled in here, where the loop does.
+/// A problem in the prelude is Emerald's own bug, never the program's, and
+/// the program's report has no file to show it against: stop, saying where
+/// in the prelude it is, so editing the prelude does not mean guessing.
+fn panicOnPreludeProblem(diagnostics: []const Diagnostic, prelude_source: *const Source, prelude_file: usize) void {
+    for (diagnostics) |diagnostic| {
+        if (diagnostic.file < prelude_file) continue;
+        const at = prelude_source.location(diagnostic.span.start);
+        std.debug.panic("the prelude has a problem at prelude.em:{d}:{d}: {s}", .{ at.line, at.column, diagnostic.message });
+    }
+}
+
 fn appendFrom(
     arena: std.mem.Allocator,
     into: *std.ArrayList(Diagnostic),

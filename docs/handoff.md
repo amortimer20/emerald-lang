@@ -114,11 +114,13 @@ client, then the smaller items in rewrite-context 15.7), then make small optimiz
 as startup time, and eventually build a native compiler.
 [`json-design-plan.md`](json-design-plan.md) is accepted with every recommendation, including
 decision 3 (a): the checker types `Json.encode` and `Json.decode(text, as: Type)` specially,
-as it does `print`. Slice 1 (the native parser and writer, `src/Json.zig`, not yet reachable
-from Emerald) is done. Slice 2 is next: the `Json` value itself, in the prelude — `parse`,
-`parse_maybe`, `kind`, navigation, conversions, `JsonError`, and conformance for each kind and
-every error message. Follow the regex milestone's shape: `src/Regex.zig` and
-`Interpreter.callRegex` are the models for the native layer and its prelude wrapper.
+as it does `print`. Slices 1 (the native parser and writer, `src/Json.zig`) and 2 (the `Json` value in the
+prelude: `parse`, `parse_maybe`, `kind`, navigation, conversions, paths in errors, display,
+equality, and `JsonError`; rewrite-context 15.9) are done. Slice 3 is next: `Json.null`, the
+`from_string`/`from_int`/`from_float`/`from_bool`/`from_list`/`from_object` builders, and
+`Json.encode` for `Json` values, compact and pretty, with round-trip conformance. `_write`
+in `Interpreter.callJson` already writes a `Json` value; a built `Float` must refuse NaN and
+Infinity (`Json.write` returns `error.NonFiniteNumber`, now `unreachable` in `jsonWrite`).
 
 Other candidates, each needing the user's go-ahead:
 
@@ -161,18 +163,18 @@ on the roadmap.
   `DateTimeError`, and `RegexError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
-- A diagnostic the checker reports inside the prelude trips an assertion in
-  `emerald.analyze` rather than printing. While editing the prelude, temporarily print
-  `diagnostic.message` for any diagnostic whose file is past the program's files.
+- A problem inside the prelude stops `emerald.analyze` with a panic naming its
+  `prelude.em` line, column, and message, rather than printing as a diagnostic; it is always
+  Emerald's own bug.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
   remain unsupported.
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
-- Every run type-checks all of the prelude's bodies. With slices 1–4, a ReleaseSafe
-  `print(1)` starts in about 9.8 ms, against 5.6 ms before the date work (measured together
-  on one machine). Checking only the prelude bodies a program can reach would need the
+- Every run type-checks all of the prelude's bodies. A ReleaseSafe `print(1)` starts in
+  about 9.3 ms with JSON slice 2, against 7.5 ms before it (measured together on one
+  machine); the date work had already taken it from about 5.6 ms. Checking only the prelude bodies a program can reach would need the
   interpreter to stop relying on facts recorded for every body. It is the next performance
   task once dates and times are finished.
 - On Windows, a local zone whose key name CLDR does not map (rare) falls back to Windows's
@@ -199,10 +201,13 @@ document nested 200,000 levels deep is refused cleanly, confirming the parser's 
 stack, not Zig's own call stack, is what bounds recursion.
 A review of slice 1 then fixed four defects (a crash on a whole number at 2^63, quadratic
 duplicate-key checking, one miscopied message, and message truncation that could split a
-UTF-8 character; see the journal), with the same validation, JSONTestSuite, and a further
-5,000 differential cases (seed 11) passing. That fix is committed locally, not yet pushed.
+UTF-8 character; see the journal). Slice 2 followed. After it, Debug and ReleaseSafe
+`zig build test`, `zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`,
+`git diff --check`, fuzz (seed 13, 300 cases), Windows and macOS cross-builds,
+`zig build json-conformance` (0 mismatches), and 8,000 more differential cases (seeds 12 and
+13) passed.
 
-All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
+Slice 1 is pushed to `claude/adoring-pasteur-wz5l0h`; the review fixes and slice 2 are committed locally on that branch and not yet pushed. Work continues in a local session; the cloud session is no longer in use. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.
 
 Cloud sessions cannot reach ziglang.org. The pinned Zig 0.16.0 comes from the `ziglang==0.16.0`

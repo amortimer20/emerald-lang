@@ -22,6 +22,7 @@
 //! preservation of whatever whitespace or digits someone typed.
 
 const std = @import("std");
+const unicode = @import("unicode.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -84,9 +85,9 @@ pub const Value = struct {
     /// and a number too large for `Int` do not.
     is_integer: bool = false,
     int_value: i64 = 0,
-    /// For `kind == .number`, always: a best-effort `Float` reading, which is
-    /// `Infinity` or `-Infinity` for a magnitude too large for one, per
-    /// IEEE 754. Precision beyond a `Float`'s is not preserved.
+    /// For `kind == .number`, always: the nearest `Float`. Precision beyond a
+    /// `Float`'s is not preserved, and a number too large for one is refused
+    /// when parsing, so this is always finite for a parsed number.
     float_value: f64 = 0,
     /// For the writer only: whether to write this number with a decimal
     /// point or exponent. True for a number written or built with one
@@ -184,8 +185,25 @@ pub fn parse(gpa: Allocator, text: []const u8, problem: *Problem) ParseError!Doc
     const arena = arena_state.allocator();
 
     var parser: Parser = .{ .arena = arena, .text = stripByteOrderMark(text), .problem = problem };
+    // An Emerald `String` is always valid UTF-8, but this parser does not
+    // rely on it: RFC 8259 requires UTF-8, and everything below assumes it.
+    if (firstInvalidUtf8(parser.text)) |bad| {
+        while (parser.at < bad) parser.advance();
+        return parser.fail(parser.position(), "this text is not valid UTF-8", .{});
+    }
     const root = try parser.parseDocument();
     return .{ .arena_state = arena_state, .root = root };
+}
+
+fn firstInvalidUtf8(bytes: []const u8) ?usize {
+    var index: usize = 0;
+    while (index < bytes.len) {
+        const length = std.unicode.utf8ByteSequenceLength(bytes[index]) catch return index;
+        if (index + length > bytes.len) return index;
+        _ = std.unicode.utf8Decode(bytes[index..][0..length]) catch return index;
+        index += length;
+    }
+    return null;
 }
 
 /// What a container currently open on the frame stack is waiting for next.
@@ -197,8 +215,11 @@ const Frame = struct {
     items: std.ArrayList(Value) = .empty,
     entries: std.ArrayList(Entry) = .empty,
     pending_key: ?[]const u8 = null,
-    /// An object's keys so far, so a duplicate is found without comparing
-    /// each key against every earlier one.
+    /// An object's keys so far, normalized as section 9.2 compares strings,
+    /// so a duplicate is found without comparing each key against every
+    /// earlier one, and two spellings of one key (a precomposed "é" and "e"
+    /// with a combining accent) count as the duplicate an Emerald `Dict`
+    /// would take them to be.
     keys: std.StringHashMapUnmanaged(void) = .empty,
 };
 
@@ -319,7 +340,8 @@ const Parser = struct {
                 const key_position = self.position();
                 if (self.peek() != '"') return self.failBadKey(frame, key_position);
                 const key = try self.readStringLiteral();
-                if ((try frame.keys.getOrPut(self.arena, key)).found_existing) {
+                const normalized = if (unicode.quickCheck(key) == .yes) key else try unicode.normalize(self.arena, key);
+                if ((try frame.keys.getOrPut(self.arena, normalized)).found_existing) {
                     return self.fail(key_position, "the key \"{s}\" is already used in this object", .{key});
                 }
                 frame.pending_key = key;
@@ -515,7 +537,12 @@ const Parser = struct {
                 continue;
             }
             if (byte < 0x20) {
-                return self.fail(self.position(), "a string cannot contain this control character unescaped; write \\n, \\t, or \\u{{{X:0>4}}}", .{byte});
+                return switch (byte) {
+                    '\n' => self.fail(self.position(), "a string cannot contain a line break; write \\n instead", .{}),
+                    '\t' => self.fail(self.position(), "a string cannot contain a tab; write \\t instead", .{}),
+                    '\r' => self.fail(self.position(), "a string cannot contain a carriage return; write \\r instead", .{}),
+                    else => self.fail(self.position(), "a string cannot contain this control character; write \\u{X:0>4} instead", .{byte}),
+                };
             }
             const length = std.unicode.utf8ByteSequenceLength(byte) catch 1;
             const clamped = @min(length, self.text.len - self.at);
@@ -524,8 +551,9 @@ const Parser = struct {
         }
     }
 
+    /// Reported where the text ends, naming where the string began.
     fn failUnterminated(self: *Parser, start: Position) error{InvalidJson} {
-        return self.fail(start, "this text ends inside a string that started at line {d}, column {d}", .{ start.line, start.column });
+        return self.fail(self.position(), "this text ends inside a string that started at line {d}, column {d}", .{ start.line, start.column });
     }
 
     fn readEscape(self: *Parser, built: *std.ArrayList(u8), string_start: Position) ParseError!void {
@@ -637,6 +665,8 @@ const Parser = struct {
         }
         const text = self.text[begin..self.at];
         const float_value = std.fmt.parseFloat(f64, text) catch unreachable;
+        // Refused rather than read as Infinity, which JSON cannot write back.
+        if (!std.math.isFinite(float_value)) return self.fail(start, "this number is too large for a Float", .{});
         if (!saw_fraction_or_exponent) {
             // A bare integer as written ("123", "-45"). Kept in that shape
             // for writing even when it is too large for `Int`, in which
@@ -931,11 +961,13 @@ test "malformed numbers say what is wrong" {
 }
 
 test "an unterminated string names where it started" {
-    try expectRefused("[\"abc", 1, 2, "this text ends inside a string that started at line 1, column 2");
+    try expectRefused("[\"abc", 1, 6, "this text ends inside a string that started at line 1, column 2");
 }
 
 test "an unescaped control character is refused" {
-    try expectRefused("\"a\tb\"", 1, 3, "a string cannot contain this control character unescaped; write \\n, \\t, or \\u{0009}");
+    try expectRefused("\"a\tb\"", 1, 3, "a string cannot contain a tab; write \\t instead");
+    try expectRefused("\"a\nb\"", 1, 3, "a string cannot contain a line break; write \\n instead");
+    try expectRefused("\"a\x01b\"", 1, 3, "a string cannot contain this control character; write \\u0001 instead");
 }
 
 test "a bad escape names the letter" {
@@ -1034,7 +1066,7 @@ test "a whole number at or past 2^63 is not an Int" {
 }
 
 test "a string ending in a backslash is unterminated" {
-    try expectRefused("[\"ab\\", 1, 2, "this text ends inside a string that started at line 1, column 2");
+    try expectRefused("[\"ab\\", 1, 6, "this text ends inside a string that started at line 1, column 2");
 }
 
 test "a message too long for its buffer is cut at a character boundary" {
@@ -1054,4 +1086,21 @@ test "a duplicate key is found among many" {
     var problem: Problem = .{};
     try testing.expectError(error.InvalidJson, parse(testing.allocator, text.items, &problem));
     try testing.expectEqualStrings("the key \"k1234\" is already used in this object", problem.message());
+}
+
+test "a number too large for a Float is refused" {
+    try expectRefused("[1e400]", 1, 2, "this number is too large for a Float");
+    try expectRefused("-1e400", 1, 1, "this number is too large for a Float");
+    var document = try expectParses("1e-400");
+    defer document.deinit();
+    try testing.expectEqual(@as(f64, 0), document.root.float_value);
+}
+
+test "keys that normalize to the same text are duplicates" {
+    try expectRefused("{\"caf\u{e9}\": 1, \"cafe\u{301}\": 2}", 1, 13, "the key \"cafe\u{301}\" is already used in this object");
+}
+
+test "text that is not UTF-8 is refused where it stops being UTF-8" {
+    try expectRefused("[\"ab\xFFc\"]", 1, 5, "this text is not valid UTF-8");
+    try expectRefused("\n [\xC3]", 2, 3, "this text is not valid UTF-8");
 }

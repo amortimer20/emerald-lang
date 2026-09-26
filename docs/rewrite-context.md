@@ -2974,7 +2974,7 @@ as Ruby's.
 - **Date and time** is done (15.8).
 - **Regular expressions** are done (15.4), with Emerald's own linear-time engine rather than
   a wrapped C library.
-- **JSON.** Maps directly onto `Dict`, `List`, `String`, `Int`, `Float`, and `Bool` with no
+- **JSON** is in progress (15.9). It maps directly onto `Dict`, `List`, `String`, `Int`, `Float`, and `Bool` with no
   new representation to invent; a beginner's most common reason to want it is reading or
   writing an API response, or saving a program's own state to a file.
 - **Small utilities**: `Base64` and one or two hash/digest functions. Narrow vocabulary, no
@@ -3154,6 +3154,31 @@ calendar-period type, date ranges (`Range` is `Int`-only), non-Gregorian calenda
 locale-aware names and formats, format patterns such as `%Y-%m-%d`, parsing arbitrary
 layouts, relative phrases ("3 days ago"), leap seconds, and zone abbreviations such as `EST`
 as input.
+
+### 15.9 JSON
+
+`Json` reads and writes JSON, strictly as RFC 8259 defines it. Its full design, and the
+remaining work (building values, `Json.encode`, and `Json.decode(text, as: Type)` for a
+program's own types), are in [`docs/json-design-plan.md`](json-design-plan.md); this section
+is rewritten with the settled behavior when the whole API lands.
+
+Implemented so far: `Json.parse(text)` and `Json.parse_maybe(text)`; a value's `kind`
+(`Json.Kind`: `null`, `bool`, `number`, `string`, `list`, `object`), `null?()`, `count`, and
+`keys()`; navigation with `get(key)`, `at(index)`, and their `_maybe` forms; and the
+conversions `string()`, `int()`, `float()`, `bool()`, `list()`, and `object()`, each with a
+`_maybe` form. `int()` accepts any number with no fractional part that fits in an `Int`, so
+`3`, `3.0`, and `3e2` all read as whole numbers. A value prints as compact JSON text, and two
+values are equal when they are the same JSON: numbers compare by value, and an object's keys
+may come in any order.
+
+`JsonError` extends `RuntimeError`. Text that is not JSON gives the line and column of the
+first mistake, with its own message for each common one: a trailing comma, single quotes,
+an unquoted key, a comment, `NaN`, and a string that never closes. A value that is not what
+the program asked for gives its path in the document (`at players[2].score: expected a whole
+number, found the text "12"`), and a missing key lists the keys there are. Parsing refuses a
+duplicate key, including two keys that differ only in their Unicode normalization (9.2), since
+a `Dict` would take them to be one; nesting deeper than 512 levels; and a number too large for
+a `Float`.
 
 ## 16. Annotations, assertions, and tests
 

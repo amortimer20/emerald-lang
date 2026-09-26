@@ -1,6 +1,6 @@
 # JSON: design and implementation plan
 
-Status: accepted, 2026-09-26; slice 1 done. The user accepted every recommendation,
+Status: accepted, 2026-09-26; slices 1 and 2 done. The user accepted every recommendation,
 including decision 3 (a): the checker types `Json.encode` and `Json.decode` specially.
 Rewrite-context 15.7 lists JSON as the next standard-library item. This plan sets out the
 API, how a statically typed language holds a document of unknown shape, errors, and the order
@@ -288,6 +288,21 @@ rewrite-context text written in the same change.
 2. **The `Json` value.** `Json.parse`, `parse_maybe`, `kind`, navigation, conversions, paths
    in errors, display, and equality; `JsonError`; conformance for each kind, every error
    message, Unicode text, and large and deep documents.
+   Done: `Json` is a prelude struct with private fields and a `var _path`, which `get`, `at`,
+   `list()`, and `object()` set on the copy they return, so a parsed tree's values carry no
+   path until navigated to and share one empty text, list, and dictionary. Four functions
+   remain native (`_parse`, `_problem`, `_write`, and `_key_path` for path segments); `Json.parse`
+   asks `_problem` for the message only after `_parse` has refused, so the error path parses
+   twice and the success path once. Settled while building it: a missing key lists up to ten
+   keys, then "and N more"; a key that does not read as a name is written `["first name"]`
+   in a path; a conversion at the root says `expected the document to be ...`. Three
+   refusals were added to the parser: a number too large for a `Float` (rather than reading
+   it as Infinity, which could not be written back), two keys equal after Unicode
+   normalization (an Emerald `Dict` would merge them, silently dropping one), and text that
+   is not UTF-8. A 1.28 MB document of 9,000 records parses in about 150 ms (ReleaseSafe),
+   against 38 ms/MB for the native parser alone, so the fallback in "Risks" (keeping parsed
+   documents native) is not needed. Startup rose from about 7.5 ms to 9.3 ms for `print(1)`,
+   the prelude's usual cost.
 3. **Building and writing.** `Json.null` and the `from_string`, `from_int`, `from_float`,
    `from_bool`, `from_list`, and `from_object` builders, and `Json.encode` for `Json` values, compact and pretty; round-trip
    conformance.

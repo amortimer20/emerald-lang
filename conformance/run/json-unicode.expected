@@ -1,0 +1,13 @@
+café 😀
+6
+エメラルド
+{"greeting":"café 😀","名前":"エメラルド","first name":"Ada","quote":"\"hi\" \\ / \b\f\n\r\t"}
+at ["first name"]: there is no key "missing"; the object is empty
+at 名前: there is no key "missing"; the object is empty
+at _id: there is no key "missing"; the object is empty
+at ["2nd"]: there is no key "missing"; the object is empty
+at [""]: there is no key "missing"; the object is empty
+line 1, column 18: the key "café" is already used in this object
+1
+line 1, column 15: JSON does not allow a comma before "}"
+[1]

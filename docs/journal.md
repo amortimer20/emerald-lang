@@ -2792,3 +2792,37 @@ Reviewing slice 1 found four defects in `src/Json.zig`, each now fixed with a un
 - **A message too long for `Problem`'s 400-byte buffer** (a duplicate key hundreds of
   characters long) was cut wherever the buffer ended, possibly inside a UTF-8 sequence. It is
   now cut at a character boundary and ends with an ellipsis.
+
+## JSON, slice 2: the `Json` value, 2026-09-26
+
+`Json.parse`, `Json.parse_maybe`, `JsonError`, and the `Json` value are in the prelude:
+`kind`, `null?()`, `count`, `keys()`, `get`/`at` and their `_maybe` forms, and the six
+conversions with theirs. Display is compact JSON text, and `Equatable` makes equality JSON's
+own: `1 == 1.0`, objects equal in any key order, the path ignored. The value is an ordinary
+struct over private fields, built natively by `Interpreter.JsonBuilder`; its path is a
+private `var` field the navigation methods set on the copy they return, so a parsed tree
+stores no paths at all and navigation needs no native call.
+
+Refusing a document is where the parser and Emerald met. A `Dict` compares keys after
+normalization (9.2), so the parser's duplicate check now normalizes too; otherwise a
+document with a precomposed and a decomposed "café" would have silently lost one value when
+it became a `Dict`. A number too large for a `Float` is now refused rather than read as
+Infinity, which `Json.write` cannot write back. JSONTestSuite's invalid-UTF-8 files then
+crashed the normalizer, which assumes valid text, so `Json.parse` validates UTF-8 first;
+no Emerald program can reach that, since its strings are always valid, but `src/Json.zig`
+is meant to stand alone for a future backend.
+
+Writing the prelude code hit the handoff's rough edge — a checker diagnostic inside the
+prelude tripped an assertion instead of printing — four times in a row. `emerald.analyze`
+now panics with `the prelude has a problem at prelude.em:LINE:COLUMN: MESSAGE` after each
+stage instead, which is still a crash (a prelude problem is always Emerald's own bug) but
+says what and where. The rough edge is closed.
+
+Two messages from slice 1 were reworded once seen in context: an unterminated string is
+reported where the text ends rather than where it began (the message already names that),
+and an unescaped control character suggests JSON's own escape (`\t`, or `\u0001`) rather
+than Emerald's `\u{0009}`.
+
+A 1.28 MB document of 9,000 records parses in about 150 ms (ReleaseSafe). Startup for
+`print(1)` rose from about 7.5 ms to 9.3 ms (median of 60, same machine), the largest single
+jump yet; the startup task queued after the standard library now matters more.
