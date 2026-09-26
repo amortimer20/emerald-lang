@@ -1,6 +1,6 @@
 # Regular expressions: design and implementation plan
 
-Status: accepted, 2026-09-25; slice 1 done. Rewrite-context 15.4 settles the API's outline. This plan fills
+Status: accepted, 2026-09-25; slices 1 and 2 done. Rewrite-context 15.4 settles the API's outline. This plan fills
 in what 15.4 leaves open (where the matching engine comes from, what `.` and `\d` mean in a
 language whose characters are graphemes, captures, replacements, and errors) and orders the
 work. The decisions below are recommendations; the executor proceeds with them unless the
@@ -149,9 +149,17 @@ Decisions within it:
 - **`\d` is ASCII only.** A Unicode `\d` also matches Arabic-Indic or Devanagari digits,
   which `to_int` then refuses, so `Regex('\d+')` followed by `to_int()` could fail on text
   that matched. `\w` stays Unicode, since names and words in every script should count.
-- **A grapheme belongs to a class by its first code point.** `[a-z]` matches `é` written as
-  `e` plus a combining accent only if it matches `e`; the accent comes along, and the match
-  never splits the grapheme. Emerald's grapheme tables make this cheap and predictable.
+- **A grapheme belongs to a set by its first code point in NFC.** `[a-z]` does not match
+  `é`, whether it is written as one code point or as `e` and a combining accent: the accent
+  is part of the character, and a character matches the same way however it is encoded.
+  `[é]` matches both forms. (Refined in slice 2: the proposal had used the first code point
+  as written, which would have let decomposed `é` match `[a-z]`.)
+- **A repetition never takes a round that matches nothing.** `(a|)*` on `"b"` matches the
+  empty string with group 1 unset; Python and Perl take one empty round and record it, and
+  so report group 1 as `""`. RE2, Go, and Rust behave as Emerald does, and it is what keeps
+  every repetition finite.
+- **`\B` matches an empty text,** which has no word boundary; Python's `\B` never matches
+  there, while Rust's and Go's do.
 - **`$` matches only at the very end,** not also before a final newline as Perl and Python
   allow; Go and Rust agree. `multiline` covers line ends.
 - **`ignore_case` uses Unicode simple case folding,** so `Regex('straße', ignore_case: true)`
@@ -222,6 +230,12 @@ ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`, the doc-example ch
    the size limits. Zig unit tests, plus a differential check against Python's `re` on
    generated ASCII patterns and texts (a local tool, where the two engines' semantics
    agree), and a timing test that `(a+)+$` against a long run of `a`s stays linear.
+   Done: `src/Regex.zig` with unit tests, and `tools/regex-differential.py` with
+   `tools/regex_probe.zig`. Across 30,000 generated cases (seeds 1–3) its first match and
+   every group agree with Python's `re`; the generator leaves out the two deliberate
+   differences above (empty rounds, and `\B` on an empty text), which the first run found.
+   `(a+)+$` and three other patterns that take backtracking engines exponential time finish
+   at once on 20,000 characters.
 3. **The Emerald API.** `Regex`, `Regex.Match`, `RegexError`, and every method above except
    groups; conformance cases for matching, finding, replacing, splitting, options, empty
    matches, graphemes (`é` in both forms, emoji, `\r\n`), and runtime errors.

@@ -90,6 +90,16 @@ pub fn simpleFold(code_point: u21) u21 {
     return if (entryFor(&tables.simple_fold, code_point)) |entry| entry[1] else code_point;
 }
 
+/// UnicodeData.txt's one-to-one lowercase mapping, or the code point itself.
+pub fn simpleLower(code_point: u21) u21 {
+    return if (entryFor(&tables.simple_lower, code_point)) |entry| entry[1] else code_point;
+}
+
+/// UnicodeData.txt's one-to-one uppercase mapping, or the code point itself.
+pub fn simpleUpper(code_point: u21) u21 {
+    return if (entryFor(&tables.simple_upper, code_point)) |entry| entry[1] else code_point;
+}
+
 pub fn combiningClass(code_point: u21) u8 {
     return valueIn(u8, &tables.combining_class, code_point, 0);
 }

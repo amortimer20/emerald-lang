@@ -2635,3 +2635,27 @@ table: Alphabetic, Join_Control, and the Mn, Mc, Me, Nd, and Pc general categori
 UnicodeData.txt's First/Last range lines expanded. `simple_fold` holds CaseFolding.txt's C
 and S mappings. A separate Python parse agreed on every code point. Nothing outside the
 tests uses them yet, so the binary is unchanged in size until slice 2's engine does.
+
+## Regular expressions, slice 2: the engine, 2026-09-26
+
+`src/Regex.zig` is a parser to a syntax tree with grapheme positions, a compiler to
+instructions, and a Pike VM. Every thread advances through the text together, in priority
+order, so matching is linear and leftmost-first. Threads live in a sparse set with capture
+slots; the closure over non-consuming instructions uses an explicit stack with restore
+frames, not recursion. The text is segmented into graphemes once. At each position the
+current grapheme is described once, as its NFC bytes, first code point, and line-break and
+word flags, rather than once per thread.
+
+Two refinements came from building it. First, a set decides by a character's first code
+point in NFC rather than as written, so decomposed `é` no longer slips into `[a-z]`.
+Second, adjacent literals that form one grapheme merge (`\r\n`, `e\u{301}`); otherwise a
+pattern could never match a text's one-grapheme `\r\n`.
+
+`tools/regex-differential.py` generates random ASCII patterns and texts, asks
+`tools/regex_probe.zig` (run with `zig run` and the engine as a module), and compares with
+Python's `re`. Its first 3,000 cases found five differences, all in two categories where
+Python differs from linear-time engines. Python takes one empty round of a repetition and
+records its capture, which RE2 documents as a deliberate difference from Perl. Python's
+`\B` also never matches an empty text. Both are now documented behavior, and the generator
+leaves them out; 30,000 further cases agreed exactly. The first version of the linear-time
+unit test was wrong, not the engine: `(a*)*b$` does match a run of `a`s ending in `b`.

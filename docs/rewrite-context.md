@@ -2862,9 +2862,13 @@ digits.split(text)
 
 Construction validates the pattern and raises a `RegexError` with the location inside the
 pattern. A `Match` exposes at least `text`, `start`, and `end`; capture groups remain a
-later addition. Literal string methods never interpret their argument as a pattern. The
-implementation may wrap a proven C library, but Emerald owns the Unicode behavior, API,
-and diagnostics.
+later addition. Literal string methods never interpret their argument as a pattern.
+
+The engine is Emerald's own (`src/Regex.zig`), not a wrapped C library: a Pike VM that
+matches in time proportional to the pattern times the text, whatever the pattern, and that
+matches by grapheme, as every other string operation does. Its full design, and the
+remaining work, are in [`docs/regex-design-plan.md`](regex-design-plan.md); this section is
+rewritten with the settled behavior when the API lands.
 
 ### 15.5 Formatting
 
@@ -3919,6 +3923,7 @@ recorded in their normative sections:
 | The built-in database's format (15.8) | IANA's own TZif files, each distinct file once, behind a sorted name index, zlib-compressed | TZif is what `std.tz` and Emerald's rule engine already read, so there is no second format to trust. Aliases share files, which halves the size before compression. |
 | Zone name case (15.8) | Case-sensitive, with the correctly cased name suggested | IANA names are case-sensitive, and accepting any case would make two spellings of one zone compare unequal by name. Suggesting the right case turns the most likely mistake into a one-word fix. |
 | Third-party notices (15.8) | `THIRD_PARTY_NOTICES.md` ships in every release archive beside `LICENSE` | The binary embeds CLDR data under the Unicode License V3, which asks for its notice to travel with copies; the Unicode tables and Zig's standard library were already inside it. Release archives had carried only the binary, not even Emerald's own MIT license. |
+| The regular-expression engine (15.4) | Emerald's own linear-time Pike VM in Zig, matching by grapheme; a wrapped C library such as PCRE2, which 15.4 had anticipated, was weighed and rejected | A backtracking engine can take exponential time on patterns such as `(a+)+$`, and a beginner cannot tell which patterns do. PCRE2 also counts code points rather than graphemes, and would be Emerald's first C dependency on every platform. The cost is no backreferences or lookaround, which 15.4 never promised. It agrees with Python's `re` on 30,000 generated ASCII cases, apart from two documented differences that RE2, Go, and Rust share. |
 
 ## 23. Consistency rules for future work
 

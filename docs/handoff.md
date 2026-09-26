@@ -106,13 +106,13 @@ method changes only ordinary identifier uses.
 ## Next step
 
 Regular expressions are in progress: the user chose them from the 15.7 backlog and accepted
-[`regex-design-plan.md`](regex-design-plan.md). Slice 1 (Unicode data for `\w` and
-case-insensitive matching) is done. Slice 2 is next: the engine in `src/Regex.zig`, with no
-Emerald surface yet. It covers parsing with positioned errors, compiling, a Pike VM over
-graphemes, captures, both options, size limits, Zig unit tests, a local differential check
-against Python's `re`, and a linear-time check on `(a+)+$`. Cloud sessions fetch UCD files
-with `UCD_BASE` set to the `unicode-org/unicodetools` GitHub mirror (see
-`tools/unicode/fetch.sh`).
+[`regex-design-plan.md`](regex-design-plan.md). Slices 1 (Unicode data) and 2 (the engine,
+`src/Regex.zig`, not yet reachable from Emerald) are done. Slice 3 is next: the Emerald API
+(`Regex`, `Regex.Match`, `RegexError`, and every method but groups), written in the prelude
+over positional natives that call `Regex.compile` and `Regex.run`. It includes a per-interpreter
+cache of compiled programs keyed by pattern and options, and conformance for graphemes,
+options, empty matches, and runtime errors. `python3 tools/regex-differential.py [count]
+[seed]` re-checks the engine against Python's `re` after any engine change.
 
 Other candidates, each needing the user's go-ahead:
 
@@ -177,12 +177,13 @@ on the roadmap.
 
 ## Validation and repository state
 
-Regex slice 1 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`,
-`zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`, and `git diff --check`
-passed, and `zig build unicode-conformance -Doptimize=ReleaseSafe` over UCD 17.0.0 reported
-20,034 cases and 0 failures. The new `word` and `simple_fold` tables match an independent
-Python parse of the same files. The date and time milestone before it was merged to `main`
-as pull request #1, with CI green on all three platforms.
+Regex slice 2 is committed. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`
+(436 tests, including the engine's), `zig build`, `zig fmt --check`, cross-builds for
+`x86_64-windows` and `aarch64-macos`, `bash tools/check-doc-examples.sh`, and
+`git diff --check` passed. `tools/regex-differential.py` found 0 differences from Python's
+`re` over 30,000 generated cases (seeds 1–3), once its generator left out two deliberate
+differences it had first found (see the plan). Slice 1's Unicode tables passed
+`zig build unicode-conformance` (20,034 cases).
 
 All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.
