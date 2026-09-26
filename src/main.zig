@@ -118,9 +118,9 @@ pub fn main(init: std.process.Init) !u8 {
     }
 
     // `run` and `test` accept an optional `--color=auto|always|never` flag
-    // before the path (docs/console-design-plan.md's decision 2). `auto` and
-    // no flag at all mean the same thing: fall through to the environment
-    // and the output terminal, resolved below.
+    // before the path (rewrite-context 15.6). `auto` and no flag at all mean
+    // the same thing: fall through to the environment and the output
+    // terminal, resolved below.
     var path_index: usize = 2;
     var color_flag: ?ColorPolicy.Flag = null;
     if (std.mem.startsWith(u8, args[path_index], "--color")) {
@@ -224,9 +224,9 @@ fn windowsZone(arena: std.mem.Allocator) TimeZone.Local {
     return .{ .name = name, .rules = .{ .initial = rule.standard, .footer = rule } };
 }
 
-/// Resolves docs/console-design-plan.md's decision 3 against the real
+/// Resolves rewrite-context 15.6's color precedence against the real
 /// process for one invocation: `flag` is whatever `--color` parsed to (`run`
-/// and `test`) or `null` (`repl`, decision 5, which has no flag of its own).
+/// and `test`) or `null` (`repl`, which has no flag of its own).
 /// `ColorPolicy.resolve` itself is a pure function with its own unit tests;
 /// this just gathers what it needs from the environment and stdout.
 ///

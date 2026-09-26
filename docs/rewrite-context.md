@@ -2847,8 +2847,7 @@ subclasses remain deferred.
 Regular expressions are a standard-library type, `Regex`, not literal syntax or a macro.
 Single-quoted raw strings keep patterns readable (`Regex('\d+')`), and literal string methods
 never interpret their argument as a pattern. The reference is
-[`docs/library/regex.md`](library/regex.md); the design record is
-[`docs/regex-design-plan.md`](regex-design-plan.md).
+[`docs/library/regex.md`](library/regex.md).
 
 ```emerald
 const digits = Regex('\d+')                  # also ignore_case:, multiline:
@@ -3013,9 +3012,7 @@ as Ruby's.
 
 ### 15.8 Dates and times
 
-Dates and times are settled built-ins in the `Emerald` namespace (15.1). The full design,
-its alternatives, and its implementation slices are in
-[`docs/date-time-design-plan.md`](date-time-design-plan.md); the reference starts at
+Dates and times are settled built-ins in the `Emerald` namespace (15.1). The reference starts at
 [`docs/library/dates-and-times.md`](library/dates-and-times.md), and
 [`examples/dates.em`](../examples/dates.em) shows the programs they were designed for. `Date`, `Time`, `DateTime`,
 `Instant`, `Duration`, `Weekday`, `Stopwatch`, `Program.sleep`, `DateTimeError`, and
@@ -3151,6 +3148,12 @@ so `US/Eastern` is not `America/New_York`, though their offsets always agree. Th
 local zone uses the same built-in rules whenever its name is one IANA has, and on Windows its
 key name (`Eastern Standard Time`) is mapped to its IANA name through CLDR's table first; the
 machine's own rules are used only for a zone the database does not know.
+
+Deferred, each awaiting a program that needs it (24): a zoned date-time type, a
+calendar-period type, date ranges (`Range` is `Int`-only), non-Gregorian calendars,
+locale-aware names and formats, format patterns such as `%Y-%m-%d`, parsing arbitrary
+layouts, relative phrases ("3 days ago"), leap seconds, and zone abbreviations such as `EST`
+as input.
 
 ## 16. Annotations, assertions, and tests
 

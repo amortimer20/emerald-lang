@@ -1,4 +1,4 @@
-//! Console styling's color policy (docs/console-design-plan.md, decision 3):
+//! Console styling's color policy (rewrite-context 15.6):
 //! whether an execution emits ANSI SGR sequences at all, resolved from the
 //! `--color` flag, `NO_COLOR`/`FORCE_COLOR`/`TERM`, and whether the output is
 //! a terminal that supports ANSI escapes. `resolve` is a pure function of
@@ -15,7 +15,7 @@ const std = @import("std");
 /// environment and the terminal.
 pub const Flag = enum { auto, always, never };
 
-/// Everything decision 3 reads, gathered here so `resolve` stays pure.
+/// Everything the precedence reads, gathered here so `resolve` stays pure.
 pub const Inputs = struct {
     flag: ?Flag = null,
     no_color: ?[]const u8 = null,
@@ -25,8 +25,7 @@ pub const Inputs = struct {
     supports_ansi: bool = false,
 };
 
-/// docs/console-design-plan.md's decision 3, checked highest precedence
-/// first:
+/// Rewrite-context 15.6's precedence, highest first:
 ///
 /// 1. `--color=always`/`--color=never` (an explicit `flag` other than
 ///    `.auto`) settles it outright.

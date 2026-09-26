@@ -124,9 +124,9 @@ const ReplayReader = struct {
 /// own prompt-reading and every entry's `input()` calls read from the same
 /// underlying stream, so there is exactly one of each for the session.
 /// `color` is the execution's resolved Console styling policy
-/// (docs/console-design-plan.md's decision 5): `main.zig` resolves it the
-/// same way it does for `run`/`test`, since the REPL has no `--color` flag
-/// of its own. `local_zone` is the machine's time zone, resolved the same way
+/// (rewrite-context 15.6): `main.zig` resolves it the same way it does for
+/// `run`/`test`, since the REPL has no `--color` flag of its own.
+/// `local_zone` is the machine's time zone, resolved the same way
 /// too (15.8).
 pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer, color: bool, local_zone: emerald.TimeZone.Local) !void {
     var session: Session = .{};
