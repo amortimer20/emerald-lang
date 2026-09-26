@@ -1,6 +1,6 @@
 # Regular expressions: design and implementation plan
 
-Status: accepted, 2026-09-25; slices 1 to 5 done. Rewrite-context 15.4 settles the API's outline. This plan fills
+Status: complete, 2026-09-26; all six slices done. Rewrite-context 15.4 settles the API's outline. This plan fills
 in what 15.4 leaves open (where the matching engine comes from, what `.` and `\d` mean in a
 language whose characters are graphemes, captures, replacements, and errors) and orders the
 work. The decisions below are recommendations; the executor proceeds with them unless the
@@ -276,6 +276,13 @@ ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`, the doc-example ch
 6. **Documentation and integration.** `docs/library/regex.md`, an inventory row,
    `examples/regex.em` with the programs above, rewrite-context 15.4 rewritten with the
    settled behavior and decision-table rows in 22, a fuzz template, and 15.7 updated.
+
+   Done: [`docs/library/regex.md`](library/regex.md), with every intentional difference from
+   other engines and its reason; an inventory row; a pointer from `String`'s search methods;
+   [`examples/regex.em`](../examples/regex.em) with the programs above (reading a list rather
+   than `input`, so the doc check can run it); rewrite-context 15.4 rewritten with the
+   settled behavior, five decision rows in 22, and 15.7 marking regular expressions done; and
+   a fuzz template that builds, searches, replaces, splits, and reads groups.
 
 ## Out of scope for this milestone
 

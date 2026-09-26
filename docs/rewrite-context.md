@@ -2844,50 +2844,61 @@ subclasses remain deferred.
 
 ### 15.4 Regular expressions
 
-Regular expressions are a standard-library roadmap facility, not part of the first
-interpreter milestone, new literal syntax, or a macro. Raw single-quoted strings keep
-patterns readable. The intended focused API is:
+Regular expressions are a standard-library type, `Regex`, not literal syntax or a macro.
+Single-quoted raw strings keep patterns readable (`Regex('\d+')`), and literal string methods
+never interpret their argument as a pattern. The reference is
+[`docs/library/regex.md`](library/regex.md); the design record is
+[`docs/regex-design-plan.md`](regex-design-plan.md).
 
 ```emerald
-var digits = Regex('\d+')
-
-digits.matches?(text)                    # entire string
+const digits = Regex('\d+')                  # also ignore_case:, multiline:
+digits.matches?(text)                        # the whole text
 digits.contains_match?(text)
-digits.find(text)                        # optional Match
-digits.find_all(text)                    # list of Match
-digits.replace(text, replacement)        # first match
+digits.find(text)                            # Regex.Match?
+digits.find_all(text)                        # List[Regex.Match]
+digits.replace(text, replacement)            # the first match; replacement is literal
 digits.replace_all(text, replacement)
+digits.replace_each(text) { found => ... }   # a computed replacement
 digits.split(text)
+Regex.escape(text)                           # a pattern matching text exactly
+
+found.text; found.start; found.end           # grapheme positions, as indexing counts
+found.group(1); found.group_maybe(1); found.named("year"); found.named_maybe("year")
 ```
 
-Construction validates the pattern and raises a `RegexError` with the location inside the
-pattern. A `Match` exposes `text`, `start`, and `end`, and its capture groups through
-`group(number)`, `group_maybe(number)`, `named(name)`, and `named_maybe(name)`. Literal string methods never interpret their argument as a pattern.
+- **Matching is linear.** The engine is Emerald's own (`src/Regex.zig`), a Pike VM that takes
+  time in proportion to the pattern times the text, whatever the pattern. Backreferences,
+  lookaround, atomic groups, and possessive repetition are therefore refused, each by name.
+  Priorities are leftmost-first, as in backtracking engines: repetition is greedy unless
+  followed by `?`, and the first alternative that matches wins.
+- **A character is a grapheme.** `.` and sets match whole graphemes, literals compare
+  canonically as `==` does, and a set decides by a grapheme's first code point in NFC, so
+  `[a-z]` never matches `é` however it is encoded. `\d` is ASCII 0 to 9, `\w` is UTS #18's
+  word characters, and `ignore_case` uses Unicode simple case folding.
+- **The pattern language** is the common core of JavaScript, Python, Java, Go, and Rust:
+  literals and escapes including `\u{...}`, `.`, sets and ranges, `\d \w \s` and their
+  negations, `^ $ \b \B`, greedy and lazy repetition with counts up to 1000, alternation,
+  and numbered, named (`(?<name>...)`), and non-capturing groups. Options are named
+  arguments, never inline flags; `$` matches only at the end (or a line's end with
+  `multiline`). A repeated group never takes an empty round, and `\B` matches an empty text,
+  as in Go and Rust.
+- **Matches never overlap.** After an empty match the search moves on one grapheme, and an
+  empty match where the previous match ended does not count. `split` keeps empty pieces, as
+  `String.split` does, but an empty match at the very start or end splits nothing off.
+  Replacement text is literal; `replace_each` computes replacements.
+- **Errors.** `RegexError` extends `RuntimeError`. A bad pattern's message quotes it, gives
+  the grapheme position of the problem, and says what to write instead; a pattern written as
+  a string literal is checked before the program runs and reported at the character inside
+  the literal. `group` and `named` raise for a group that took no part in the match, where
+  the `_maybe` forms give `nothing` (as `to_int`/`to_int_maybe`, 9.4); a group the pattern
+  lacks raises from every form.
+- **Values.** A `Regex` prints as its pattern and compares by pattern and options, so it can
+  be a `const` or a dictionary key. The runtime compiles each pattern once per execution. A
+  `Regex.Match` prints as `Regex.Match("42" at 3..<5)` and cannot be built by a program.
 
-The engine is Emerald's own (`src/Regex.zig`), not a wrapped C library: a Pike VM that
-matches in time proportional to the pattern times the text, whatever the pattern, and that
-matches by grapheme, as every other string operation does. Its full design, and the
-remaining work, are in [`docs/regex-design-plan.md`](regex-design-plan.md); this section is
-rewritten with the settled behavior when the whole API lands.
-
-Implemented so far: `Regex(pattern, ignore_case: false, multiline: false)`, `Regex.escape`,
-the seven methods above, `replace_each(text) { found => ... }`, and `Regex.Match`'s `text`,
-`start`, and `end`, which count graphemes as indexing does, and its groups. Group 0 is the
-whole match and the others count opening parentheses; a repeated group holds its last round.
-`group` and `named` raise `RegexError` for a group that took no part in the match, where the
-`_maybe` forms return `nothing` (as `to_int` and `to_int_maybe` do, 9.4). A group the pattern
-does not have raises from every form, naming the groups it does have. `RegexError` extends
-`RuntimeError`; its message quotes the pattern and gives the grapheme position of the
-problem, and a failure is reported at the program's own call. A pattern written as a string
-literal in `Regex(...)` is compiled while checking, so a mistake in it is a diagnostic before
-the program runs, pointing at the character inside the literal (or at the whole literal, with
-the position, when escapes in it hide where the character is); the LSP shows it while typing. Replacement text is literal
-(`"$1"` is a dollar sign and a one). Matches never overlap; after a match of nothing the
-search moves on one grapheme, and a match of nothing where the previous match ended does not
-count, as in Go and Rust. `split` keeps empty pieces, as `String.split` does, but a match of
-nothing at the very start or end splits nothing off, so an empty pattern splits between every
-grapheme. A `Regex` is a value: it prints as its pattern and compares by pattern and options.
-The runtime compiles each pattern once per execution and reuses it.
+Deferred, each awaiting a program that needs it (24): `\p{...}` property classes, full case
+folding, inline flags, verbose patterns, matching over `Bytes`, and `String` methods that take
+a `Regex`. A regex literal syntax stays ruled out (22).
 
 ### 15.5 Formatting
 
@@ -2962,9 +2973,8 @@ as Ruby's.
 **Next up, needing no new runtime infrastructure:**
 
 - **Date and time** is done (15.8).
-- **Regular expressions (15.4).** The API is already designed; implementing it is the
-  remaining work, most likely by wrapping one bundled C library the way 15.4 already
-  anticipates, while Emerald keeps ownership of Unicode behavior, the API, and diagnostics.
+- **Regular expressions** are done (15.4), with Emerald's own linear-time engine rather than
+  a wrapped C library.
 - **JSON.** Maps directly onto `Dict`, `List`, `String`, `Int`, `Float`, and `Bool` with no
   new representation to invent; a beginner's most common reason to want it is reading or
   writing an API response, or saving a program's own state to a file.
@@ -3943,6 +3953,11 @@ recorded in their normative sections:
 | Zone name case (15.8) | Case-sensitive, with the correctly cased name suggested | IANA names are case-sensitive, and accepting any case would make two spellings of one zone compare unequal by name. Suggesting the right case turns the most likely mistake into a one-word fix. |
 | Third-party notices (15.8) | `THIRD_PARTY_NOTICES.md` ships in every release archive beside `LICENSE` | The binary embeds CLDR data under the Unicode License V3, which asks for its notice to travel with copies; the Unicode tables and Zig's standard library were already inside it. Release archives had carried only the binary, not even Emerald's own MIT license. |
 | The regular-expression engine (15.4) | Emerald's own linear-time Pike VM in Zig, matching by grapheme; a wrapped C library such as PCRE2, which 15.4 had anticipated, was weighed and rejected | A backtracking engine can take exponential time on patterns such as `(a+)+$`, and a beginner cannot tell which patterns do. PCRE2 also counts code points rather than graphemes, and would be Emerald's first C dependency on every platform. The cost is no backreferences or lookaround, which 15.4 never promised. It agrees with Python's `re` on 30,000 generated ASCII cases, apart from two documented differences that RE2, Go, and Rust share. |
+| Regex replacement text (15.4) | Literal: `"$1"` is a dollar sign and a one; computed replacements, including ones that use groups, go through `replace_each` and a block | Other languages give `$1` or `\1` meaning in replacements, which surprises anyone replacing with a price, and a block is ordinary Emerald that needs no second mini-language. |
+| Regex options (15.4) | Named arguments, `Regex('abc', ignore_case: true, multiline: true)`; inline flags such as `(?i)` are refused with a message naming the argument | Reads as English, matches how `Console.style` takes options, and keeps one way to say it. |
+| What `\d` and a set match (15.4) | `\d` is ASCII 0–9 while `\w` is Unicode; a set decides by a grapheme's first code point in NFC | A Unicode `\d` matches digits `to_int` refuses, so `Regex('\d+')` then `to_int()` could fail on text that matched. Deciding sets in NFC means a character matches the same way however it is encoded: `[a-z]` never matches `é`. |
+| Empty regex matches (15.4) | As Go and Rust: no empty match where the previous match ended, no empty repetition round, `\B` matches an empty text, and an empty match at the very start or end of a text splits nothing off | These keep every repetition finite and every result small and predictable, and make an empty pattern split between every grapheme. Python's `re` differs on the first three; the differential tool leaves those cases out. |
+| Checking literal regex patterns (15.4) | When `Regex(...)`'s pattern is a string literal, the checker compiles it with the runtime's own code and reports a mistake at the character inside the literal | Principle 4 of the regex plan: an error is caught before the program runs, and the LSP shows it while typing, with no chance of the checker and runtime disagreeing. |
 
 ## 23. Consistency rules for future work
 

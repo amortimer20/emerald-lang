@@ -2712,3 +2712,20 @@ session confirmed the UTF-16 column after an emoji and that fixing the pattern c
 
 Two slice-3 conformance cases wrote bad literal patterns to exercise `RegexError`; they now
 build the pattern as the program runs, which is the case that still reaches run time.
+
+## Regular expressions, slice 6: documentation and integration, 2026-09-26
+
+`docs/library/regex.md` is the reference. Beyond the signatures, it has a table of the pattern
+language and a section listing every deliberate difference from other engines, each with its
+reason. Every claim on the page was run before it was written down. `examples/regex.em`
+holds the plan's beginner programs; it reads tickets from a list rather than `input`, because
+the doc check runs examples unattended. `String`'s search section now points to `Regex` for
+searching by pattern. Rewrite-context 15.4 is rewritten from the design outline into the
+settled behavior. Section 22 gains five decision rows (literal replacements, named options,
+`\d` and sets, empty matches, and checking literal patterns), and 15.7 marks regular
+expressions done. The fuzz runner has a regex template that builds, searches, replaces,
+splits, and reads groups.
+
+The milestone is complete. The engine is about 1,200 lines of Zig with no dependency, runs in time
+linear in the text, and agrees with Python's `re` on 40,000 generated cases outside the
+documented differences.
