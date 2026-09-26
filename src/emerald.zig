@@ -32,6 +32,7 @@ pub const strings = @import("strings.zig");
 pub const ColorPolicy = @import("ColorPolicy.zig");
 pub const TimeZone = @import("TimeZone.zig");
 pub const Regex = @import("Regex.zig");
+pub const Json = @import("Json.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -779,6 +780,7 @@ test {
     _ = ColorPolicy;
     _ = TimeZone;
     _ = Regex;
+    _ = Json;
 }
 
 /// Runs a program and returns what it printed. The caller owns the result.

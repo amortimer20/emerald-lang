@@ -11,3 +11,4 @@ zig-out/
 .*.py
 _scratch/
 .unicode/
+.jsontestsuite/

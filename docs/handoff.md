@@ -109,15 +109,16 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-JSON is next. The user chose to finish the standard library (JSON, then an HTTP client, then
-the smaller items in rewrite-context 15.7), then make small optimizations such as startup
-time, and eventually build a native compiler. [`json-design-plan.md`](json-design-plan.md)
-is accepted with every recommendation, including decision 3 (a): the checker types
-`Json.encode` and `Json.decode(text, as: Type)` specially, as it does `print`. Slice 1 is
-next: `src/Json.zig`, the native parser and writer, with Zig unit tests, JSONTestSuite's
-cases, and a local differential check against Python's `json`, before anything is reachable
-from Emerald. Follow the regex milestone's shape: `src/Regex.zig` and
-`tools/regex-differential.py` are the models for the engine and its differential tool.
+JSON is in progress. The user chose to finish the standard library (JSON, then an HTTP
+client, then the smaller items in rewrite-context 15.7), then make small optimizations such
+as startup time, and eventually build a native compiler.
+[`json-design-plan.md`](json-design-plan.md) is accepted with every recommendation, including
+decision 3 (a): the checker types `Json.encode` and `Json.decode(text, as: Type)` specially,
+as it does `print`. Slice 1 (the native parser and writer, `src/Json.zig`, not yet reachable
+from Emerald) is done. Slice 2 is next: the `Json` value itself, in the prelude — `parse`,
+`parse_maybe`, `kind`, navigation, conversions, `JsonError`, and conformance for each kind and
+every error message. Follow the regex milestone's shape: `src/Regex.zig` and
+`Interpreter.callRegex` are the models for the native layer and its prelude wrapper.
 
 Other candidates, each needing the user's go-ahead:
 
@@ -184,12 +185,18 @@ on the roadmap.
 ## Validation and repository state
 
 The regular-expression milestone is merged to `main`
-([amortimer20/emerald-lang#2](https://github.com/amortimer20/emerald-lang/pull/2)). Since
-then, the six completed design plans have been removed from `docs/` (see the journal); a new
-milestone's plan lives in `docs/` while it is in progress and goes once its behavior is in
-rewrite-context. After that change, with pinned Zig 0.16.0, Debug and ReleaseSafe
-`zig build test`, `zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`, and
-`git diff --check` passed.
+([amortimer20/emerald-lang#2](https://github.com/amortimer20/emerald-lang/pull/2)), and so is
+the design-plan cleanup ([amortimer20/emerald-lang#3](https://github.com/amortimer20/emerald-lang/pull/3)).
+JSON slice 1 is committed on top of that: `src/Json.zig`, `tools/json/fetch.sh`,
+`tools/json/conformance.zig` (`zig build json-conformance`), `tools/json/probe.zig`, and
+`tools/json/differential.py`. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`,
+`zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`, `git diff --check`, fuzz
+(seed 12, 300 cases), and Windows and macOS cross-builds passed. Against JSONTestSuite's 318
+files, only the two documented duplicate-key exceptions differ. `tools/json/differential.py`
+found 0 differences from Python's `json` over 25,000 generated cases (seeds 1–5). A 1 MB
+generated document parses in about 38 ms and writes back in about 6 ms (ReleaseSafe); a
+document nested 200,000 levels deep is refused cleanly, confirming the parser's explicit
+stack, not Zig's own call stack, is what bounds recursion.
 
 All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.

@@ -2743,3 +2743,35 @@ end of 15.8, matching 15.4's. Code comments that cited a console plan decision b
 now cite rewrite-context 15.6, which states the same precedence. Earlier entries in this
 journal still name the plans; those names are history, and `git log -- docs/<name>` finds
 the files.
+
+## JSON, slice 1: the parser and writer, 2026-09-26
+
+`src/Json.zig` is a strict RFC 8259 parser and writer, native Zig, with no Emerald-facing type
+yet. It parses in one pass and is genuinely iterative: an explicit stack of open containers
+(`Parser.stack`) stands in for recursion, the same way `Regex`'s own matcher uses an explicit
+stack instead of recursion, so nesting depth is bounded by that stack, not by how deep Zig's
+own call stack happens to go. A document nested 200,000 levels deep is refused cleanly rather
+than crashing, well past the 512-level limit that ordinary documents are held to. Every common
+mistake gets its own message: a trailing comma, single quotes, an unquoted key, a comment,
+`NaN`, `Infinity`, and a string that never closes or names half a surrogate pair. Positions are
+one-based lines and Unicode scalar-value columns, the same counting `Source.Location` uses.
+
+A number keeps two readings and one writing flag, not one boolean doing both jobs: `is_integer`
+(with `int_value`) decides whether a future `int()` accessor should succeed, following the
+plan's rule that `3`, `3.0`, and `3e2` all count as whole numbers; `is_float_literal` decides
+only how the writer formats the number, so a parsed `3.0` writes back as `3.0`, not `3` — the
+plan's "nothing surprising" principle, applied to the parser and writer themselves before any
+Emerald-facing type exists to apply it to. The first draft conflated the two, which silently
+turned every whole `Float` into an `Int`-looking number on the way back out; the round-trip
+unit test caught it.
+
+JSONTestSuite (`tools/json/fetch.sh`, cloned with `git` since this session's GitHub access is
+scoped to specific repositories over the REST API and codeload.github.com, but not over the
+plain git protocol or raw.githubusercontent.com) checks 318 files
+(`zig build json-conformance`). Two disagree, both the plan's own documented exception: it
+refuses a duplicate key, where JSONTestSuite counts either answer acceptable, since most
+parsers take the last value. `tools/json/differential.py` generates random documents, and
+documents with one common mistake introduced, and checks agreement with Python's `json`;
+0 differences over 25,000 cases (seeds 1–5), once its generator gave every key a running
+number so it never produces a duplicate on its own. A 1 MB generated document parses in about
+38 ms and writes back in about 6 ms (ReleaseSafe).

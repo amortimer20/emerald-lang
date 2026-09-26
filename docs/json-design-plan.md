@@ -1,6 +1,6 @@
 # JSON: design and implementation plan
 
-Status: accepted, 2026-09-26; no slice started. The user accepted every recommendation,
+Status: accepted, 2026-09-26; slice 1 done. The user accepted every recommendation,
 including decision 3 (a): the checker types `Json.encode` and `Json.decode` specially.
 Rewrite-context 15.7 lists JSON as the next standard-library item. This plan sets out the
 API, how a statically typed language holds a document of unknown shape, errors, and the order
@@ -267,6 +267,24 @@ rewrite-context text written in the same change.
    surrogate pairs, and compact and pretty writing. Zig unit tests, JSONTestSuite's
    accept/reject cases (fetched from its GitHub mirror, as the Unicode data was), and a local
    differential check against Python's `json` on generated documents.
+   Done: the parser is iterative (an explicit stack of open containers, like `Regex`'s own
+   matcher), so nesting depth is enforced directly rather than by how deep Zig's call stack
+   happens to go; confirmed against 200,000 levels of `[`, well past the 512 limit, with no
+   crash. A number keeps its `Int` reading, its `Float` reading, and, separately, whether it
+   was written with a decimal point or exponent, so writing a parsed `3.0` back out stays
+   `3.0` rather than becoming `3` (the plan's "nothing surprising" principle, applied to the
+   parser itself, not only to encoding the program's own values later). `tools/json/fetch.sh`
+   clones JSONTestSuite with `git` rather than the GitHub REST API or a tarball, both of
+   which this session's scoped GitHub access refuses; the plain git protocol and
+   `raw.githubusercontent.com` are not scoped. Against its 318 files
+   (`zig build json-conformance`), only two disagree, both a documented, deliberate
+   exception: JSONTestSuite counts a duplicate key as acceptable, since most parsers take
+   the last value, but this plan refuses one, as decided above. `tools/json/differential.py`
+   found 0 differences from Python's `json` across 25,000 generated cases (well-formed
+   documents, and documents with one common mistake introduced), once its generator gave
+   every object key a running number so it never produces the other documented exception
+   (a duplicate key) by accident. A 1 MB generated document parses in about 38 ms and writes
+   back in about 6 ms (ReleaseSafe).
 2. **The `Json` value.** `Json.parse`, `parse_maybe`, `kind`, navigation, conversions, paths
    in errors, display, and equality; `JsonError`; conformance for each kind, every error
    message, Unicode text, and large and deep documents.

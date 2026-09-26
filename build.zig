@@ -105,6 +105,22 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_unicode_check.addArgs(args);
     b.step("unicode-conformance", "Check the Unicode tables against a full database download").dependOn(&run_unicode_check.step);
 
+    // `zig build json-conformance -- <test_parsing directory>` checks the
+    // JSON parser against JSONTestSuite, whose 318 files are too many to
+    // commit; see tools/json/fetch.sh.
+    const json_check = b.addExecutable(.{
+        .name = "json-conformance",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/json/conformance.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "emerald", .module = emerald_module }},
+        }),
+    });
+    const run_json_check = b.addRunArtifact(json_check);
+    if (b.args) |args| run_json_check.addArgs(args);
+    b.step("json-conformance", "Check the JSON parser against JSONTestSuite").dependOn(&run_json_check.step);
+
     // A deterministic, bounded frontend campaign. It deliberately is not a
     // dependency of `test`: CI selects a short fixed campaign, while a local
     // run can choose a seed and case count with `zig build fuzz -- <seed> <cases>`.
