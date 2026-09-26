@@ -1,5 +1,5 @@
-runtime-errors/regex-invalid-pattern.em:4:12: RegexError: the pattern "(\d{4}-\d{2}" at position 0: a "(" here has no matching ")"
-      return Regex('(\d{4}-\d{2}')
-             ^^^^^^^^^^^^^^^^^^^^^
+runtime-errors/regex-invalid-pattern.em:5:12: RegexError: the pattern "(\d{4}-\d{2}" at position 0: a "(" here has no matching ")"
+      return Regex('(\d{' + digits.to_string() + '}-\d{2}')
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Handle this error with `try` and `catch`, or correct the condition that raised it.
-in `dates`, called at runtime-errors/regex-invalid-pattern.em:7:7
+in `dates`, called at runtime-errors/regex-invalid-pattern.em:8:7

@@ -2878,7 +2878,10 @@ whole match and the others count opening parentheses; a repeated group holds its
 `_maybe` forms return `nothing` (as `to_int` and `to_int_maybe` do, 9.4). A group the pattern
 does not have raises from every form, naming the groups it does have. `RegexError` extends
 `RuntimeError`; its message quotes the pattern and gives the grapheme position of the
-problem, and a failure is reported at the program's own call. Replacement text is literal
+problem, and a failure is reported at the program's own call. A pattern written as a string
+literal in `Regex(...)` is compiled while checking, so a mistake in it is a diagnostic before
+the program runs, pointing at the character inside the literal (or at the whole literal, with
+the position, when escapes in it hide where the character is); the LSP shows it while typing. Replacement text is literal
 (`"$1"` is a dollar sign and a one). Matches never overlap; after a match of nothing the
 search moves on one grapheme, and a match of nothing where the previous match ended does not
 count, as in Go and Rust. `split` keeps empty pieces, as `String.split` does, but a match of

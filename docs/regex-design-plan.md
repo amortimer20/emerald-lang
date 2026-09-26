@@ -1,6 +1,6 @@
 # Regular expressions: design and implementation plan
 
-Status: accepted, 2026-09-25; slices 1 to 4 done. Rewrite-context 15.4 settles the API's outline. This plan fills
+Status: accepted, 2026-09-25; slices 1 to 5 done. Rewrite-context 15.4 settles the API's outline. This plan fills
 in what 15.4 leaves open (where the matching engine comes from, what `.` and `\d` mean in a
 language whose characters are graphemes, captures, replacements, and errors) and orders the
 work. The decisions below are recommendations; the executor proceeds with them unless the
@@ -264,6 +264,15 @@ ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`, the doc-example ch
    same change: `emerald format` printed `a?.b` as `a.b`, changing what a program means.
 5. **Checking literal patterns.** The checker reports a bad literal pattern at its source
    position; diagnostics cases, and LSP behavior checked over JSON-RPC.
+   Done: `Checker.checkLiteralPattern`, run after a `Regex(...)` call's arguments are
+   checked, compiles a literal first argument (positional or `pattern:`) with
+   `Regex.compile`. The diagnostic points at the pattern's character when the literal's
+   source text is exactly its value (no escapes, not triple-quoted), and otherwise at the
+   whole literal with the position in the message. Checked over JSON-RPC: `emerald lsp`
+   publishes the diagnostic with UTF-16 columns (after an emoji too) and clears it once the
+   pattern is fixed. Two conformance cases that had written bad literal patterns to test
+   the runtime error now build them as the program runs. Building a `Regex.Match` directly
+   now says where one comes from, instead of suggesting a default for its private field.
 6. **Documentation and integration.** `docs/library/regex.md`, an inventory row,
    `examples/regex.em` with the programs above, rewrite-context 15.4 rewritten with the
    settled behavior and decision-table rows in 22, a fuzz template, and 15.7 updated.

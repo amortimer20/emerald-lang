@@ -2697,3 +2697,18 @@ Formatting the new conformance case turned up an unrelated bug: `emerald format`
 `due?.named("year")` as `due.named("year")`. `Formatter.printMemberAccess` never wrote the
 `?` of an optional member access, so formatting a program, or saving it in an editor with
 format-on-save, could change what it meant. It is fixed, with a `format/` case.
+
+## Regular expressions, slice 5: checking literal patterns, 2026-09-26
+
+`Checker.checkLiteralPattern` runs once a `Regex(...)` call's arguments have been checked. When
+the pattern argument, positional or `pattern:`, is a string literal, it compiles it with
+the same `Regex.compile` the runtime uses. The literal's value has had its escapes applied,
+so a grapheme position maps back to the source only when the source text between the quotes
+is exactly the value. That holds for every single-quoted pattern, which is the style the
+guide teaches. In that case the diagnostic underlines the one character and leaves the
+position out, since the caret shows it. Otherwise it underlines the literal and names the
+position. The LSP needed no change: it publishes the checker's diagnostics, and a JSON-RPC
+session confirmed the UTF-16 column after an emoji and that fixing the pattern clears it.
+
+Two slice-3 conformance cases wrote bad literal patterns to exercise `RegexError`; they now
+build the pattern as the program runs, which is the case that still reaches run time.

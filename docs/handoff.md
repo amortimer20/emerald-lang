@@ -108,11 +108,12 @@ method changes only ordinary identifier uses.
 Regular expressions are in progress: the user chose them from the 15.7 backlog and accepted
 [`regex-design-plan.md`](regex-design-plan.md). Slices 1 (Unicode data), 2 (the engine,
 `src/Regex.zig`), 3 (the Emerald API: `Regex`, `Regex.Match`, `RegexError`, and their
-methods, in the prelude over natives in `Interpreter.callRegex`), and 4 (groups) are done.
-Slice 5 is next: when `Regex(...)`'s first argument is a string literal, the checker compiles
-it with `Regex.compile` and reports a bad pattern as an ordinary diagnostic at the exact
-character inside the literal, so the LSP shows it while typing; diagnostics cases, and LSP
-behavior checked over JSON-RPC. `python3 tools/regex-differential.py [count]
+methods, in the prelude over natives in `Interpreter.callRegex`), 4 (groups), and 5 (literal patterns
+checked before the program runs, in `Checker.checkLiteralPattern`) are done. Slice 6 is next:
+`docs/library/regex.md` listing every intentional difference from other engines, an
+inventory row, `examples/regex.em` with the plan's beginner programs, rewrite-context 15.4
+rewritten with the settled behavior and decision rows in 22, a fuzz template, and 15.7
+updated. `python3 tools/regex-differential.py [count]
 [seed]` re-checks the engine against Python's `re` after any engine change.
 
 Other candidates, each needing the user's go-ahead:
@@ -178,7 +179,7 @@ on the roadmap.
 
 ## Validation and repository state
 
-Regex slice 4 is committed, with a formatter fix (`?.` was printed as `.`). With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`
+Regex slice 5 is committed; slice 4 also fixed the formatter, which printed `?.` as `.`. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`
 (including the `regex-*` conformance cases), `zig build`, `zig fmt --check`, cross-builds
 for `x86_64-windows` and `aarch64-macos`, `bash tools/check-doc-examples.sh`, and
 `git diff --check` passed. `tools/regex-differential.py` still finds 0 differences from

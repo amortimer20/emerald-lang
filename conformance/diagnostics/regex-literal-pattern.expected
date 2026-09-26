@@ -1,0 +1,20 @@
+diagnostics/regex-literal-pattern.em:3:25: this pattern is not valid: a "(" here has no matching ")"
+  const unclosed = Regex('(\d+')
+                          ^
+Correct the pattern; left as it is, `Regex` raises RegexError here when the program runs.
+diagnostics/regex-literal-pattern.em:4:31: this pattern is not valid: "(?=" here is lookahead, which Emerald's regular expressions do not support, so that matching always takes time in proportion to the text
+  const lookahead = Regex('price(?= USD)', ignore_case: true)
+                                ^
+Correct the pattern; left as it is, `Regex` raises RegexError here when the program runs.
+diagnostics/regex-literal-pattern.em:5:32: this pattern is not valid: this range runs backwards; put the smaller character first
+  const named = Regex(pattern: '[z-a]')
+                                 ^
+Correct the pattern; left as it is, `Regex` raises RegexError here when the program runs.
+diagnostics/regex-literal-pattern.em:6:25: this pattern is not valid: the repetition {5,2} asks for at most fewer than at least; write {2,5}
+  const emoji = Regex('😀 x{5,2}')
+                          ^
+Correct the pattern; left as it is, `Regex` raises RegexError here when the program runs.
+diagnostics/regex-literal-pattern.em:10:23: this pattern is not valid at position 4: a "[" here has no matching "]"
+  const escaped = Regex("caf\u{E9}[")
+                        ^^^^^^^^^^^^
+Correct the pattern; left as it is, `Regex` raises RegexError here when the program runs.

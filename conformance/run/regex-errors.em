@@ -34,9 +34,11 @@ attempt('(?P<year>\d+)')
 attempt('\Aabc')
 attempt('\p{L}')
 
-# A RegexError is a RuntimeError.
+# A RegexError is a RuntimeError. (A pattern written as a literal is checked
+# before the program runs, so this one is built as it runs.)
+const unclosed = "("
 try {
-    Regex('(')
+    Regex(unclosed)
 }
 catch error: RuntimeError {
     print("caught as RuntimeError")

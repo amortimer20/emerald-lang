@@ -1,7 +1,8 @@
-# A pattern that cannot be compiled raises RegexError at the program's own
-# call, not inside the prelude code that checked it.
-func dates(): Regex {
-    return Regex('(\d{4}-\d{2}')
+# A pattern built as the program runs, and so not checked before it, raises
+# RegexError at the program's own call when it cannot be compiled, not inside
+# the prelude code that checked it.
+func dates(digits: Int): Regex {
+    return Regex('(\d{' + digits.to_string() + '}-\d{2}')
 }
 
-print(dates())
+print(dates(4))
