@@ -112,9 +112,12 @@ method changes only ordinary identifier uses.
 JSON is next. The user chose to finish the standard library (JSON, then an HTTP client, then
 the smaller items in rewrite-context 15.7), then make small optimizations such as startup
 time, and eventually build a native compiler. [`json-design-plan.md`](json-design-plan.md)
-is proposed and awaits the user's decisions, above all decision 3: whether `Json.encode` and
-`Json.decode(text, as: Type)` are typed specially by the checker. Implementation starts with
-slice 1 once the plan is accepted.
+is accepted with every recommendation, including decision 3 (a): the checker types
+`Json.encode` and `Json.decode(text, as: Type)` specially, as it does `print`. Slice 1 is
+next: `src/Json.zig`, the native parser and writer, with Zig unit tests, JSONTestSuite's
+cases, and a local differential check against Python's `json`, before anything is reachable
+from Emerald. Follow the regex milestone's shape: `src/Regex.zig` and
+`tools/regex-differential.py` are the models for the engine and its differential tool.
 
 Other candidates, each needing the user's go-ahead:
 

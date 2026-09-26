@@ -1,10 +1,11 @@
 # JSON: design and implementation plan
 
-Status: proposed, 2026-09-26, awaiting the user's decisions below. Rewrite-context 15.7 lists
-JSON as the next standard-library item. This plan proposes the API, how a statically typed
-language holds a document of unknown shape, errors, and the order of work. The decisions are
-recommendations; decision 3 changes how the checker types two calls and needs the user's
-explicit go-ahead. At the start of each slice, reread `git status`, the recent `git log`, and
+Status: accepted, 2026-09-26; no slice started. The user accepted every recommendation,
+including decision 3 (a): the checker types `Json.encode` and `Json.decode` specially.
+Rewrite-context 15.7 lists JSON as the next standard-library item. This plan sets out the
+API, how a statically typed language holds a document of unknown shape, errors, and the order
+of work. Remaining judgement calls within a slice are the executor's, as with the date and
+regex plans. At the start of each slice, reread `git status`, the recent `git log`, and
 docs/handoff.md.
 
 ## What beginner programs need
@@ -175,6 +176,8 @@ Json.from_object(entries: Dict[String, Json]): Json
   `FileError` and a `JsonError` stay distinct. The docs will show the pattern.
 
 ## Decisions
+
+All four were accepted as recommended on 2026-09-26.
 
 1. **Name: `Json`,** not `JSON`. Emerald's types are written like words (`Regex`), and the
    standard library's later `Http` and `Csv` should match. Alternative: `JSON`, which Swift
