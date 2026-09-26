@@ -1,5 +1,5 @@
 //! Section 15.4's regular expressions: Emerald's own engine
-//! (docs/regex-design-plan.md). A pattern is parsed into a small syntax tree,
+//! (docs/library/regex.md). A pattern is parsed into a small syntax tree,
 //! compiled to instructions, and run by a Pike VM: every way the pattern could
 //! match advances through the text together, one grapheme at a time, so
 //! matching takes time in proportion to the pattern times the text, whatever

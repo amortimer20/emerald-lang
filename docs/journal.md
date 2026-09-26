@@ -2729,3 +2729,17 @@ splits, and reads groups.
 The milestone is complete. The engine is about 1,200 lines of Zig with no dependency, runs in time
 linear in the text, and agrees with Python's `re` on 40,000 generated cases outside the
 documented differences.
+
+## Removing completed design plans, 2026-09-26
+
+At the user's request, the six design plans under `docs/` were removed once their work had
+landed: console styling, dates and times, the `Emerald` namespace, nested types, operator
+annotations, and regular expressions. Each had served as a slice-by-slice handoff while its
+milestone was in progress. Their settled behavior is in rewrite-context (sections 11.5, 14.2,
+14.3, 15.4, 15.6, and 15.8, with decision rows in 22), and their history is here and in Git.
+
+The date-and-time plan's list of what was left out had no home in the spec, so it moved to the
+end of 15.8, matching 15.4's. Code comments that cited a console plan decision by number
+now cite rewrite-context 15.6, which states the same precedence. Earlier entries in this
+journal still name the plans; those names are history, and `git log -- docs/<name>` finds
+the files.

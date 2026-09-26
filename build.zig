@@ -371,10 +371,9 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     run_receives_arguments.expectExitCode(0);
     test_step.dependOn(&run_receives_arguments.step);
 
-    // `--color` (docs/console-design-plan.md's decision 2/3): the flag is
-    // the highest-precedence input, so `always`/`never` are asserted against
-    // this redirected pipe, which auto-detection alone would always leave
-    // unstyled. The pure precedence function has its own exhaustive unit
+    // `--color` (rewrite-context 15.6): the flag is the highest-precedence
+    // input, so `always`/`never` are asserted against this redirected pipe,
+    // which auto-detection alone would always leave unstyled. The pure precedence function has its own exhaustive unit
     // tests (`src/ColorPolicy.zig`); these are the end-to-end wiring: CLI
     // parsing, `--` still working alongside the new flag, and environment
     // variables actually reaching the process.
@@ -431,7 +430,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     test_step.dependOn(&color_on_test_command.step);
 
     // `FORCE_COLOR` reaches the process and turns styling on for this same
-    // redirected pipe when no flag overrides it (decision 3's tier 3).
+    // redirected pipe when no flag overrides it (third in 15.6's precedence).
     const color_from_force_color_env = b.addRunArtifact(exe);
     color_from_force_color_env.color = .manual;
     color_from_force_color_env.removeEnvironmentVariable("NO_COLOR");
