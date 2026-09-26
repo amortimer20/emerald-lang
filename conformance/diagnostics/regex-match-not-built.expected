@@ -1,0 +1,4 @@
+diagnostics/regex-match-not-built.em:2:15: `Emerald.Regex.Match` is not built by calling it
+  const found = Regex.Match("a", 0, 1)
+                ^^^^^^^^^^^
+Get one from a Regex's `find` or `find_all`.

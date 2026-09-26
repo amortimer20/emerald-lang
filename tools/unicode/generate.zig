@@ -45,6 +45,7 @@ pub fn main(init: std.process.Init) !void {
     const emoji = try read.file(arena, io, directory, "emoji-data.txt");
     const properties = try read.file(arena, io, directory, "PropList.txt");
     const special = try read.file(arena, io, directory, "SpecialCasing.txt");
+    const folding = try read.file(arena, io, directory, "CaseFolding.txt");
 
     var buffer: [64 * 1024]u8 = undefined;
     var stdout = std.Io.File.stdout().writerStreaming(io, &buffer);
@@ -98,6 +99,15 @@ pub fn main(init: std.process.Init) !void {
     try writeRanges(arena, out, "xid_continue", core, "XID_Continue");
     try writeRanges(arena, out, "white_space", properties, "White_Space");
 
+    // Regular expressions' \w (UTS #18, Annex C): Alphabetic, every Mark,
+    // Decimal_Number, Connector_Punctuation, and Join_Control, as one table.
+    var word: std.ArrayList(Range) = .empty;
+    try word.appendSlice(arena, try collectRanges(arena, core, "Alphabetic"));
+    try word.appendSlice(arena, try collectRanges(arena, properties, "Join_Control"));
+    try word.appendSlice(arena, try categoryRanges(arena, unicode_data, &.{ "Mn", "Mc", "Me", "Nd", "Pc" }));
+    try out.writeAll("/// Word characters, as regular expressions' `\\w` means them (UTS #18).\n");
+    try writeRangeList(out, "word", try merge(arena, word.items));
+
     // Case mapping, including what Final_Sigma needs.
     try writeRanges(arena, out, "cased", core, "Cased");
     try writeRanges(arena, out, "case_ignorable", core, "Case_Ignorable");
@@ -112,6 +122,7 @@ pub fn main(init: std.process.Init) !void {
     try writeDecompositions(arena, out, records);
     try writeCompositions(out, records, exclusions);
     try writeCaseMappings(arena, out, records, special);
+    try writeCaseFolding(out, folding);
 
     try out.flush();
 }
@@ -224,6 +235,32 @@ fn merge(arena: std.mem.Allocator, ranges: []Range) ![]const Range {
     return merged.toOwnedSlice(arena);
 }
 
+/// Every code point whose General_Category, from UnicodeData.txt's third
+/// field, is one of `categories`. A `<..., First>` line and the `<..., Last>`
+/// line after it stand for the whole range between them.
+fn categoryRanges(arena: std.mem.Allocator, text: []const u8, categories: []const []const u8) ![]const Range {
+    var ranges: std.ArrayList(Range) = .empty;
+    var first: ?u21 = null;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        var parts = std.mem.splitScalar(u8, line, ';');
+        const code = try parseCode(parts.next().?);
+        const name = parts.next() orelse "";
+        const category = parts.next() orelse "";
+        if (std.mem.endsWith(u8, name, "First>")) {
+            first = code;
+            continue;
+        }
+        const start = if (std.mem.endsWith(u8, name, "Last>")) first.? else code;
+        first = null;
+        for (categories) |wanted| {
+            if (std.mem.eql(u8, category, wanted)) try ranges.append(arena, .{ .first = start, .last = code });
+        }
+    }
+    return merge(arena, ranges.items);
+}
+
 fn contains(ranges: []const Range, code_point: u21) bool {
     var low: usize = 0;
     var high = ranges.len;
@@ -247,7 +284,10 @@ fn writeRanges(
     text: []const u8,
     property: []const u8,
 ) !void {
-    const ranges = try collectRanges(arena, text, property);
+    try writeRangeList(out, name, try collectRanges(arena, text, property));
+}
+
+fn writeRangeList(out: *std.Io.Writer, name: []const u8, ranges: []const Range) !void {
     try out.print("pub const {s} = [_]Range{{\n", .{name});
     for (ranges) |range| try out.print("    .{{ 0x{X:0>4}, 0x{X:0>4} }},\n", .{ range.first, range.last });
     try out.writeAll("};\n\n");
@@ -446,6 +486,28 @@ fn writeCaseMappings(arena: std.mem.Allocator, out: *std.Io.Writer, records: []c
         try out.writeAll(", ");
         try writeTriple(out, entry.upper);
         try out.writeAll(" },\n");
+    }
+    try out.writeAll("};\n");
+}
+
+/// Simple case folding: CaseFolding.txt's common (C) and simple (S) lines,
+/// which map one code point to one. Full folding (F), where one becomes
+/// several, is not used.
+fn writeCaseFolding(out: *std.Io.Writer, text: []const u8) !void {
+    try out.writeAll(
+        \\
+        \\
+        \\/// Simple case folding (CaseFolding.txt, statuses C and S), for comparing
+        \\/// text without regard to case.
+        \\pub const simple_fold = [_]struct { u21, u21 }{
+        \\
+    );
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = try parseLine(raw) orelse continue;
+        if (line.count < 2) continue;
+        if (!std.mem.eql(u8, line.fields[0], "C") and !std.mem.eql(u8, line.fields[0], "S")) continue;
+        try out.print("    .{{ 0x{X:0>4}, 0x{X:0>4} }},\n", .{ line.range.first, try parseCode(line.fields[1]) });
     }
     try out.writeAll("};\n");
 }

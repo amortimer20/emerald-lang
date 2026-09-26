@@ -73,6 +73,9 @@ All three remove whole graphemes of Unicode whitespace, never a partial characte
 
 ## Search
 
+These methods take their argument literally: `"a.b".contains?(".")` looks for a dot. To
+search by pattern, such as "any run of digits", use a [`Regex`](regex.md).
+
 ## contains?(text: String) -> Bool
 
 ## starts_with?(text: String) -> Bool

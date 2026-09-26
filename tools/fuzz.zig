@@ -65,7 +65,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // campaign rather than only by its unit test.
     if (random.uintLessThan(u8, 8) == 0) {
         const count = random.uintLessThan(u8, 16);
-        return switch (random.uintLessThan(u8, 6)) {
+        return switch (random.uintLessThan(u8, 7)) {
             0 => std.fmt.allocPrint(gpa,
                 \\var i = 0
                 \\while i < {d} {{
@@ -119,6 +119,15 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\const clock = DateTime(2026, 3, 8, {d}, 30).to_instant(TimeZone("America/New_York"))
                 \\print(moved, moved.weekday, start.days_until(moved), clock, Duration(minutes: {d}) * 3)
             , .{ count, count * 3, count % 24, count }),
+            5 => std.fmt.allocPrint(gpa,
+                \\const text = "a1 b22 c333 caf\u{{E9}} {d}"
+                \\const digits = Regex('\d{{1,{d}}}')
+                \\print(digits.find_all(text), digits.replace_all(text, "#"), Regex('\s*').split(text))
+                \\const found = Regex('(?<letter>\w)(\d+)?', ignore_case: {s}).find(text)
+                \\if found != nothing {{
+                \\    print(found.named("letter"), found.group_maybe(2), found)
+                \\}}
+            , .{ count, count + 1, if (count % 2 == 0) "true" else "false" }),
             else => std.fmt.allocPrint(gpa,
                 \\const score = {d}
                 \\const result = if score > 5 then score * 2 else if score == 0 then 1 else score

@@ -1,0 +1,4 @@
+runtime-errors/regex-missing-group.em:5:7: RegexError: the pattern "(\d+)-(\d+)" has no group 3: its groups are numbered 0 to 2, where 0 is the whole match
+  print(found.group(3))
+        ^^^^^^^^^^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.

@@ -1152,7 +1152,7 @@ const Printer = struct {
 
     fn printMemberAccess(self: *Printer, m: Ast.Expression.Member) PrintError!void {
         try self.printOperand(m.base, .postfix, false);
-        try self.write(".");
+        try self.write(if (m.optional) "?." else ".");
         if (m.position) |position| try self.writeInt(position) else try self.write(m.name);
     }
 

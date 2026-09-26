@@ -76,6 +76,30 @@ pub fn isWhiteSpace(code_point: u21) bool {
     return inRanges(&tables.white_space, code_point);
 }
 
+/// A word character as regular expressions' `\w` means one (UTS #18): a
+/// letter or other alphabetic character, a mark, a decimal digit in any
+/// script, or connector punctuation such as `_`.
+pub fn isWordCharacter(code_point: u21) bool {
+    return inRanges(&tables.word, code_point);
+}
+
+/// The code point Unicode's simple case folding gives, which is the code
+/// point itself when folding leaves it alone. Two code points that differ only
+/// in case fold to the same one.
+pub fn simpleFold(code_point: u21) u21 {
+    return if (entryFor(&tables.simple_fold, code_point)) |entry| entry[1] else code_point;
+}
+
+/// UnicodeData.txt's one-to-one lowercase mapping, or the code point itself.
+pub fn simpleLower(code_point: u21) u21 {
+    return if (entryFor(&tables.simple_lower, code_point)) |entry| entry[1] else code_point;
+}
+
+/// UnicodeData.txt's one-to-one uppercase mapping, or the code point itself.
+pub fn simpleUpper(code_point: u21) u21 {
+    return if (entryFor(&tables.simple_upper, code_point)) |entry| entry[1] else code_point;
+}
+
 pub fn combiningClass(code_point: u21) u8 {
     return valueIn(u8, &tables.combining_class, code_point, 0);
 }
@@ -543,6 +567,30 @@ test "a grapheme cluster is what a reader sees as one character" {
     try testing.expectEqual(@as(usize, 2), graphemeCount("\u{1F1FA}\u{1F1F8}\u{1F1EC}\u{1F1E7}"));
     try testing.expect(!isGraphemeBoundary("e\u{301}", 1));
     try testing.expect(isGraphemeBoundary("ab", 1));
+}
+
+test "word characters are UTS #18's, across scripts" {
+    for ([_]u21{ 'a', 'Z', '0', '9', '_', 0x00E9, 0x0301, 0x4E2D, 0x0663, 0x203F, 0x200D }) |word| {
+        try std.testing.expect(isWordCharacter(word));
+    }
+    for ([_]u21{ ' ', '-', '.', '!', 0x00A0, 0x1F600, '$' }) |other| {
+        try std.testing.expect(!isWordCharacter(other));
+    }
+}
+
+test "simple case folding maps both cases to one" {
+    try std.testing.expectEqual(@as(u21, 'a'), simpleFold('A'));
+    try std.testing.expectEqual(@as(u21, 'a'), simpleFold('a'));
+    try std.testing.expectEqual(@as(u21, '1'), simpleFold('1'));
+    // É and é, Greek sigma in all three forms, and the Kelvin sign.
+    try std.testing.expectEqual(simpleFold(0x00C9), simpleFold(0x00E9));
+    try std.testing.expectEqual(simpleFold(0x03A3), simpleFold(0x03C3));
+    try std.testing.expectEqual(simpleFold(0x03C2), simpleFold(0x03C3));
+    try std.testing.expectEqual(@as(u21, 'k'), simpleFold(0x212A));
+    // ß has only a full folding (to "ss"), so simple folding leaves it alone,
+    // while capital ẞ folds to it.
+    try std.testing.expectEqual(@as(u21, 0x00DF), simpleFold(0x00DF));
+    try std.testing.expectEqual(@as(u21, 0x00DF), simpleFold(0x1E9E));
 }
 
 test "case mapping is full, locale-independent, and handles final sigma" {

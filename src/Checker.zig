@@ -36,9 +36,11 @@ const std = @import("std");
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Project = @import("Project.zig");
+const Regex = @import("Regex.zig");
 const Resolver = @import("Resolver.zig");
 const Source = @import("Source.zig");
 const Type = @import("Type.zig");
+const unicode = @import("unicode.zig");
 const call_arguments = @import("arguments.zig");
 
 const Checker = @This();
@@ -9409,6 +9411,7 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
         );
         parameters.named_units = takesNamedUnits(key);
         try self.checkArguments(call, name, parameters);
+        if (std.mem.eql(u8, key, Resolver.preludeKey("Regex"))) try self.checkLiteralPattern(call);
         return;
     }
     const declaration = self.struct_declarations.get(key).?;
@@ -9462,6 +9465,16 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
                 try self.typeArguments(call.arguments);
                 return;
             }
+            // A value only Emerald's own operations give, as a
+            // `Regex.Match` comes from `find`.
+            try self.report(
+                call.callee.span,
+                "`{s}` is not built by calling it",
+                .{name},
+                if (std.mem.eql(u8, key, Resolver.preludeKey("Regex::Match"))) "Get one from a Regex's `find` or `find_all`." else "Emerald's own operations give these values; see the library reference for the one that returns it.",
+            );
+            try self.typeArguments(call.arguments);
+            return;
         }
         try self.reportWithHelp(
             call.callee.span,
@@ -9736,6 +9749,61 @@ const Parameters = struct {
     /// (15.8): `Duration(5)` would silently mean five days.
     named_units: bool = false,
 };
+
+/// Section 15.4: a pattern written as a string literal is compiled while
+/// checking, with the same code that compiles it at run time, so a mistake in
+/// it is reported before the program runs, at the character where it is.
+fn checkLiteralPattern(self: *Checker, call: Ast.Expression.Call) Error!void {
+    var argument: ?*const Ast.Expression = null;
+    for (call.arguments, 0..) |candidate, index| {
+        const label = if (index < call.names.len) call.names[index] else null;
+        if (label) |named| {
+            if (std.mem.eql(u8, named.text, "pattern")) argument = candidate;
+        } else if (index == 0) {
+            argument = candidate;
+        }
+    }
+    const literal = argument orelse return;
+    const pattern = switch (literal.data) {
+        .string_literal => |text| text,
+        else => return,
+    };
+    var problem: Regex.Problem = .{};
+    var program = Regex.compile(self.arena, pattern, .{}, &problem) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidPattern => {
+            const help = "Correct the pattern; left as it is, `Regex` raises RegexError here when the program runs.";
+            const span = self.patternSpan(literal.span, pattern, problem.position);
+            if (span.start == literal.span.start) {
+                // Escapes in the literal hide where the character is.
+                try self.report(span, "this pattern is not valid at position {d}: {s}", .{ problem.position, problem.message() }, help);
+            } else {
+                try self.report(span, "this pattern is not valid: {s}", .{problem.message()}, help);
+            }
+            return;
+        },
+    };
+    program.deinit();
+}
+
+/// Where grapheme `position` of a pattern is in the source: the character
+/// itself when the literal is written exactly as its text, with no escapes
+/// or triple quotes, or otherwise the whole literal.
+fn patternSpan(self: *Checker, literal: Source.Span, pattern: []const u8, position: usize) Source.Span {
+    const text = self.files[self.file].source.text;
+    const written = text[literal.start..literal.end];
+    if (written.len != pattern.len + 2 or std.mem.startsWith(u8, written, "'''") or std.mem.startsWith(u8, written, "\"\"\"")) return literal;
+    if (!std.mem.eql(u8, written[1 .. written.len - 1], pattern)) return literal;
+    var clusters: unicode.Graphemes = .init(pattern);
+    var index: usize = 0;
+    while (clusters.next()) |cluster| : (index += 1) {
+        if (index == position) {
+            const start: u32 = literal.start + 1 + @as(u32, @intCast(@intFromPtr(cluster.ptr) - @intFromPtr(pattern.ptr)));
+            return .{ .start = start, .end = start + @as(u32, @intCast(cluster.len)) };
+        }
+    }
+    return literal;
+}
 
 /// Section 15.8's calls whose arguments are all amounts in units of time.
 fn takesNamedUnits(key: []const u8) bool {

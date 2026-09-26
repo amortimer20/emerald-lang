@@ -44,6 +44,7 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | [`Duration`](duration.md) | Exact lengths of time, arithmetic, whole and total units | `conformance/run/duration-basics.em` |
 | [`TimeZone`](time-zone.md) | Named IANA zones, fixed offsets, the local zone | `conformance/run/named-zones.em` |
 | [`Stopwatch`](stopwatch.md) | Measuring elapsed time on the monotonic clock | `conformance/run/clock.em` |
+| [`Regex`, `Regex.Match`](regex.md) | Patterns: matching, finding, replacing, splitting, groups, `RegexError` | `examples/regex.em` |
 
 ## Errors and tests
 

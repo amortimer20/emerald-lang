@@ -1,0 +1,13 @@
+true false false
+true false
+Regex.Match("9" at 4..<5) nothing
+9 4 5 9
+[3, 12, 7] 22
+[Regex.Match("aa" at 0..<2), Regex.Match("aa" at 2..<4)]
+Regex.Match("<a><b>" at 0..<6) Regex.Match("<a>" at 0..<3)
+Regex.Match("cat" at 0..<3) Regex.Match("category" at 0..<8)
+[Regex.Match("one" at 0..<3)] [Regex.Match("four" at 14..<18)]
+[Regex.Match("cat" at 0..<3), Regex.Match("cat" at 11..<14)]
+\w+ true false \w+
+1 2
+\$4\.99 \(each\) true false

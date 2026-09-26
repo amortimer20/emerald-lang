@@ -1,0 +1,20 @@
+the pattern "(\d+" at position 0: a "(" here has no matching ")"
+the pattern "a)" at position 1: a ")" here has no "(" to close
+the pattern "*a" at position 0: "*" here has nothing before it to repeat; write \* to match it literally
+the pattern "a**" at position 2: "*" here repeats a repetition; wrap the first in (?:...) to repeat it again
+the pattern "[z-a]" at position 1: this range runs backwards; put the smaller character first
+the pattern "[]" at position 0: an empty set "[]" matches nothing; write \[\] to match the brackets
+the pattern "x{2000}" at position 1: a repetition count above 1000 is too large
+the pattern "x{5,2}" at position 1: the repetition {5,2} asks for at most fewer than at least; write {2,5}
+the pattern "\q" at position 0: "\q" is not an escape Emerald's regular expressions know; write q without the backslash to match it
+the pattern "é\" at position 1: a pattern cannot end with a single backslash; write \\ for a backslash
+the pattern "(a)\1" at position 3: "\1" here refers back to a group, which Emerald's regular expressions do not support, so that matching always takes time in proportion to the text
+the pattern "a(?=b)" at position 1: "(?=" here is lookahead, which Emerald's regular expressions do not support, so that matching always takes time in proportion to the text
+the pattern "(?<!a)b" at position 0: "(?<!" here is lookbehind, which Emerald's regular expressions do not support, so that matching always takes time in proportion to the text
+the pattern "a++" at position 2: "++" is possessive repetition, which Emerald's regular expressions do not support, so that matching always takes time in proportion to the text
+the pattern "(?>a)" at position 0: "(?>" here is an atomic group, which Emerald's regular expressions do not support, so that matching always takes time in proportion to the text
+the pattern "(?i)abc" at position 0: "(?i" here is an inline flag; pass ignore_case: true or multiline: true to Regex instead
+the pattern "(?P<year>\d+)" at position 0: "(?P" here is Python's spelling; write (?<name>...) for a named group
+the pattern "\Aabc" at position 0: "\A" is not supported; use ^ and $ for the start and end of the text
+the pattern "\p{L}" at position 0: Unicode property classes such as \p{L} are not supported yet; use \w, \d, \s, or a set such as [a-z]
+caught as RuntimeError

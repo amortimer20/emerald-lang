@@ -1,0 +1,13 @@
+true 4 4
+true true true
+true false
+false false
+true true
+1 true 4
+3 false true true
+Regex.Match("b" at 2..<3)
+[Regex.Match("naïve" at 0..<5), Regex.Match("Ωmega" at 6..<11), Regex.Match("東京" at 12..<14), Regex.Match("x_1" at 15..<18)]
+[Regex.Match("12" at 0..<2), Regex.Match("56" at 6..<8)]
+[Regex.Match("Hello" at 0..<5), Regex.Match("HELLO" at 6..<11), Regex.Match("hello" at 12..<17)]
+true true
+[Regex.Match("one" at 0..<3), Regex.Match("three" at 14..<19)] []

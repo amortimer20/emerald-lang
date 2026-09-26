@@ -13,7 +13,10 @@ set -euo pipefail
 
 version="${1:?usage: fetch.sh <unicode version> <directory>}"
 directory="${2:?usage: fetch.sh <unicode version> <directory>}"
-base="https://www.unicode.org/Public/${version}/ucd"
+# UCD_BASE overrides the source, for machines that cannot reach unicode.org:
+# Unicode's own tools repository serves the same files, for example
+#   UCD_BASE=https://raw.githubusercontent.com/unicode-org/unicodetools/main/unicodetools/data/ucd/17.0.0
+base="${UCD_BASE:-https://www.unicode.org/Public/${version}/ucd}"
 
 mkdir -p "$directory"
 for file in \
@@ -22,6 +25,7 @@ for file in \
     DerivedNormalizationProps.txt \
     PropList.txt \
     SpecialCasing.txt \
+    CaseFolding.txt \
     NormalizationTest.txt \
     auxiliary/GraphemeBreakProperty.txt \
     auxiliary/GraphemeBreakTest.txt \

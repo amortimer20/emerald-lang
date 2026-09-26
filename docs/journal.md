@@ -2617,3 +2617,115 @@ Over the milestone, startup for a ReleaseSafe `print(1)` went from about 5.0 ms 
 loads only when a program names a zone. Profiling found and fixed two checker hot spots on
 the way: the module view copy, and its per-body iteration. What remains is checking every
 prelude body on every run; the handoff lists it as the next performance candidate.
+
+## Regular expressions, slice 1: Unicode data, 2026-09-25
+
+The user chose regular expressions after dates and times, and accepted
+`docs/regex-design-plan.md`. The plan's decisions were the executor's, the user having left
+judgement to them: Emerald's own linear-time engine, matching by grapheme, ASCII `\d`,
+literal replacements, and literal patterns checked before a program runs.
+
+Slice 1 adds the Unicode data `\w` and `ignore_case` need. `unicode.org` is blocked from
+cloud sessions, but Unicode's own `unicodetools` repository on GitHub serves the UCD files.
+Regenerating the existing tables from that mirror reproduced `src/unicode/tables.zig`
+byte for byte before anything changed, which established that it is the same data.
+`tools/unicode/fetch.sh` now takes a `UCD_BASE` override and fetches `CaseFolding.txt`.
+The generator gained two tables. `word` is UTS #18's `\w`, precomputed as one merged range
+table: Alphabetic, Join_Control, and the Mn, Mc, Me, Nd, and Pc general categories, with
+UnicodeData.txt's First/Last range lines expanded. `simple_fold` holds CaseFolding.txt's C
+and S mappings. A separate Python parse agreed on every code point. Nothing outside the
+tests uses them yet, so the binary is unchanged in size until slice 2's engine does.
+
+## Regular expressions, slice 2: the engine, 2026-09-26
+
+`src/Regex.zig` is a parser to a syntax tree with grapheme positions, a compiler to
+instructions, and a Pike VM. Every thread advances through the text together, in priority
+order, so matching is linear and leftmost-first. Threads live in a sparse set with capture
+slots; the closure over non-consuming instructions uses an explicit stack with restore
+frames, not recursion. The text is segmented into graphemes once. At each position the
+current grapheme is described once, as its NFC bytes, first code point, and line-break and
+word flags, rather than once per thread.
+
+Two refinements came from building it. First, a set decides by a character's first code
+point in NFC rather than as written, so decomposed `é` no longer slips into `[a-z]`.
+Second, adjacent literals that form one grapheme merge (`\r\n`, `e\u{301}`); otherwise a
+pattern could never match a text's one-grapheme `\r\n`.
+
+`tools/regex-differential.py` generates random ASCII patterns and texts, asks
+`tools/regex_probe.zig` (run with `zig run` and the engine as a module), and compares with
+Python's `re`. Its first 3,000 cases found five differences, all in two categories where
+Python differs from linear-time engines. Python takes one empty round of a repetition and
+records its capture, which RE2 documents as a deliberate difference from Perl. Python's
+`\B` also never matches an empty text. Both are now documented behavior, and the generator
+leaves them out; 30,000 further cases agreed exactly. The first version of the linear-time
+unit test was wrong, not the engine: `(a*)*b$` does match a run of `a`s ending in `b`.
+
+## Regular expressions, slice 3: the Emerald API, 2026-09-26
+
+`Regex`, `Regex.Match`, and `RegexError` are in the prelude. The constructor takes its
+options by name and asks the native `_problem` whether the pattern compiles, raising
+`RegexError` when it does not. Every other method passes the pattern and options,
+positionally, to a native in `Interpreter.callRegex`. `Regex.Match` keeps each group's span,
+text, and name in private fields, ready for slice 4. Privacy (10.5) means `Regex`'s own code
+cannot set a nested type's private fields, so the native `_find` builds the match values
+directly; programs cannot build one at all.
+
+Two behaviors the plan had left open were settled here, following Go and Rust. First, an
+empty match just where the previous match ended does not count. Second, an empty match at
+the very start or end of a text splits nothing off, which is what makes an empty pattern
+split between every grapheme.
+
+The first version was slow on a 1.2 MB text: about a second for `find_all('\w+')`,
+`replace_all`, and `split` each. Three changes brought that down. `Regex.Matcher` keeps
+the engine's threads and scratch space between the runs of one search, instead of
+allocating them per match. ASCII characters skip normalization. And `replace`,
+`replace_all`, and `split` became natives over match spans, where they had built a match
+value for each match and run an Emerald lambda to filter them. The results are
+`find_all` at 0.7 s (mostly building 240,000 match values), `replace_all` at 0.3 s, and
+`split` at 0.5 s, against 0.15 s for the engine alone. Startup rose about 0.3 ms.
+
+## Regular expressions, slice 4: groups, 2026-09-26
+
+`group`, `group_maybe`, `named`, and `named_maybe` are Emerald methods on `Regex.Match`,
+reading the private fields the native `_find` fills; slice 3 had laid them out for this.
+Each match now also holds its pattern, as a retained reference and not a copy, so that
+messages can quote it. A group that took no part raises `RegexError` from `group` and
+`named` and gives `nothing` from the `_maybe` forms, as 9.4's `to_int` pair does. A group the
+pattern lacks raises from every form, with a message naming the groups the pattern has.
+
+Formatting the new conformance case turned up an unrelated bug: `emerald format` printed
+`due?.named("year")` as `due.named("year")`. `Formatter.printMemberAccess` never wrote the
+`?` of an optional member access, so formatting a program, or saving it in an editor with
+format-on-save, could change what it meant. It is fixed, with a `format/` case.
+
+## Regular expressions, slice 5: checking literal patterns, 2026-09-26
+
+`Checker.checkLiteralPattern` runs once a `Regex(...)` call's arguments have been checked. When
+the pattern argument, positional or `pattern:`, is a string literal, it compiles it with
+the same `Regex.compile` the runtime uses. The literal's value has had its escapes applied,
+so a grapheme position maps back to the source only when the source text between the quotes
+is exactly the value. That holds for every single-quoted pattern, which is the style the
+guide teaches. In that case the diagnostic underlines the one character and leaves the
+position out, since the caret shows it. Otherwise it underlines the literal and names the
+position. The LSP needed no change: it publishes the checker's diagnostics, and a JSON-RPC
+session confirmed the UTF-16 column after an emoji and that fixing the pattern clears it.
+
+Two slice-3 conformance cases wrote bad literal patterns to exercise `RegexError`; they now
+build the pattern as the program runs, which is the case that still reaches run time.
+
+## Regular expressions, slice 6: documentation and integration, 2026-09-26
+
+`docs/library/regex.md` is the reference. Beyond the signatures, it has a table of the pattern
+language and a section listing every deliberate difference from other engines, each with its
+reason. Every claim on the page was run before it was written down. `examples/regex.em`
+holds the plan's beginner programs; it reads tickets from a list rather than `input`, because
+the doc check runs examples unattended. `String`'s search section now points to `Regex` for
+searching by pattern. Rewrite-context 15.4 is rewritten from the design outline into the
+settled behavior. Section 22 gains five decision rows (literal replacements, named options,
+`\d` and sets, empty matches, and checking literal patterns), and 15.7 marks regular
+expressions done. The fuzz runner has a regex template that builds, searches, replaces,
+splits, and reads groups.
+
+The milestone is complete. The engine is about 1,200 lines of Zig with no dependency, runs in time
+linear in the text, and agrees with Python's `re` on 40,000 generated cases outside the
+documented differences.

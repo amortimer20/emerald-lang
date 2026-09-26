@@ -1,0 +1,13 @@
+too many spaces
+a#b2c3 a#b#c#
+costs $1
+6 apples and 24 pears
+HELLO BIG WORLD
+no match here
+["red", "green", "blue"]
+["", "a", "", "b", ""] ["", "a", "", "b", ""]
+[""] ["abc"]
+[Regex.Match("" at 0..<0), Regex.Match("" at 1..<1), Regex.Match("" at 2..<2)]
+[Regex.Match("" at 0..<0), Regex.Match(" " at 1..<2), Regex.Match("" at 3..<3)]
+-a-b- .h.é.l.l.o.
+["a", "b", "c"] ["h", "é", "l", "l", "o"] [""]
