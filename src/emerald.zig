@@ -779,6 +779,9 @@ test {
     _ = ColorPolicy;
     _ = TimeZone;
     _ = Regex;
+    _ = Formatter;
+    _ = Project;
+    _ = @import("Range.zig");
 }
 
 /// Runs a program and returns what it printed. The caller owns the result.

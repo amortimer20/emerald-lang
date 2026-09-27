@@ -1004,15 +1004,12 @@ const Printer = struct {
     fn levelOf(self: *Printer, expr: *const Ast.Expression) Level {
         return switch (expr.data) {
             .if_expression => .conditional,
-            // The one Int literal whose own span carries a sign: `parseUnary`
-            // reads the minimum Int's magnitude as a single token so its
-            // positive numeral is never a legal Int on its own (5.3), which
-            // means it can only be written as `-9223372036854775808` and
-            // never reaches `parsePostfix` the way an ordinary literal does.
-            // `(-9223372036854775808).digits()` therefore needs its parens
-            // kept, unlike every other literal, which is always safe to chain
-            // `.member`/`(...)`/`[...]` off of directly.
-            .int_literal => if (self.source.text[expr.span.start] == '-') .unary else .postfix,
+            // A number written with its `-` attached (5.3) is one literal,
+            // so `-3.abs()` needs no parens; `printBinary` keeps them before
+            // `**`, which the sign does not bind across. The minimum Int
+            // written with a space after its `-` is also one literal, but
+            // only on its own, so it keeps its parens before a member.
+            .int_literal, .float_literal => if (self.source.text[expr.span.start] == '-' and !self.attachedSign(expr)) .unary else .postfix,
             .logical => |l| if (l.operator == .disjunction) .or_ else .and_,
             .unary => |u| if (u.operator == .not) .not_ else .unary,
             .comparison, .type_test => .comparison,
@@ -1105,7 +1102,40 @@ const Printer = struct {
             .not => .{ .not_, "not " },
         };
         try self.write(text);
+        // Written against a number, a `-` becomes part of it (5.3): negating
+        // `3.abs()` must print `-(3.abs())`, not `-3.abs()`, and negating
+        // `-3` must not print `--3`.
+        if (u.operator == .negate and (self.startsWithNumber(u.operand) or self.attachedSign(u.operand))) {
+            try self.write("(");
+            try self.printExpr(u.operand);
+            try self.write(")");
+            return;
+        }
         try self.printOperand(u.operand, level, false);
+    }
+
+    /// Whether `expr` is a number literal with its `-` written against it.
+    fn attachedSign(self: *Printer, expr: *const Ast.Expression) bool {
+        if (expr.data != .int_literal and expr.data != .float_literal) return false;
+        const written = self.source.text[expr.span.start..expr.span.end];
+        return written.len > 1 and written[0] == '-' and std.ascii.isDigit(written[1]);
+    }
+
+    /// Whether printing `expr` begins with the digits of a number literal, as
+    /// `3.abs()` and `2.5[0]` do: a `-` printed right before it would join
+    /// the number.
+    fn startsWithNumber(self: *Printer, expr: *const Ast.Expression) bool {
+        return switch (expr.data) {
+            .int_literal, .float_literal => self.source.text[expr.span.start] != '-',
+            .call => |c| self.startsWithNumber(c.callee),
+            .member => |m| self.startsWithNumber(m.base),
+            .index => |i| self.startsWithNumber(i.base),
+            .slice => |slice| self.startsWithNumber(slice.base),
+            // `-2 ** 2` already means `-(2 ** 2)`: a number that `**` follows
+            // keeps its sign apart. `-(3.abs() ** 2)` still needs the parens.
+            .binary => |b| b.operator == .power and b.left.data != .int_literal and b.left.data != .float_literal and self.startsWithNumber(b.left),
+            else => false,
+        };
     }
 
     fn printBinary(self: *Printer, b: Ast.Expression.Binary) PrintError!void {
@@ -1118,7 +1148,14 @@ const Printer = struct {
         // operand needs parens at its own level, and its right operand does
         // not, exactly reversed from every left-associative operator here.
         const right_associative = b.operator == .power;
-        try self.printOperand(b.left, level, right_associative);
+        if (b.operator == .power and self.attachedSign(b.left)) {
+            // `(-2) ** 2`: the sign does not bind across `**` (5.3).
+            try self.write("(");
+            try self.printExpr(b.left);
+            try self.write(")");
+        } else {
+            try self.printOperand(b.left, level, right_associative);
+        }
         try self.write(" ");
         try self.write(b.operator.lexeme());
         try self.write(" ");
@@ -1417,10 +1454,24 @@ test "power's right associativity needs no parens on the right, but does on the 
     );
 }
 
-test "the minimum Int keeps its parentheses before a member access" {
+test "a number with its sign attached needs no parentheses before a member access" {
     try expectFormats(
-        "const a = (-9223372036854775808).digits()\n",
-        "const a = (-9223372036854775808).digits()\n",
+        "const a = (-9223372036854775808).digits()\nconst b = (-3).abs()\n",
+        "const a = -9223372036854775808.digits()\nconst b = -3.abs()\n",
+    );
+}
+
+test "a sign written with a space keeps its parentheses before a member access" {
+    try expectFormats(
+        "const a = (- 9223372036854775808).digits()\nconst b = - 3.abs()\n",
+        "const a = (- 9223372036854775808).digits()\nconst b = -(3.abs())\n",
+    );
+}
+
+test "a negative number keeps its parentheses before a power" {
+    try expectFormats(
+        "const a = (-2) ** 2\nconst b = -2 ** 2\nconst c = - 3.abs() ** 2\n",
+        "const a = (-2) ** 2\nconst b = -2 ** 2\nconst c = -(3.abs() ** 2)\n",
     );
 }
 
@@ -1480,6 +1531,6 @@ test "Allman brace style reaches every kind of block: struct, function, property
     try expectFormatsWithStyle(
         .allman,
         "struct Point {\n    var x: Int\n    const doubled: Int {\n        return self.x * 2\n    }\n}\nfunc square(n: Int): Int {\n    return n * n\n}\ncase 1 {\n    when 1 {\n        print(1)\n    }\n}\n",
-        "struct Point\n{\n    var x: Int\n    const doubled: Int\n    {\n        return self.x * 2\n    }\n}\n\nfunc square(n: Int): Int\n{\n    return n * n\n}\n\ncase 1\n{\n    when 1\n    {\n        print(1)\n    }\n}\n",
+        "struct Point\n{\n    var x: Int\n    const doubled: Int\n    {\n        return self.x * 2\n    }\n}\nfunc square(n: Int): Int\n{\n    return n * n\n}\ncase 1\n{\n    when 1\n    {\n        print(1)\n    }\n}\n",
     );
 }
