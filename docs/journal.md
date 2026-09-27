@@ -2868,3 +2868,16 @@ raise `JsonError` at the source call with a JSON path; paths now also quote keys
 as Emerald names, such as `["first name"]`. The slice's conformance covers nested collections,
 enum values, defaults, optional fields, ISO values, target rejection, and representative runtime
 failures.
+
+## JSON, slice 6: documentation and integration, 2026-09-26
+
+JSON's public page now distinguishes the two deliberately different workflows: `Json.parse`
+and navigation for a document whose shape arrives at runtime, and `Json.encode`/`Json.decode`
+for a program's own known types. `examples/json.em` demonstrates both without requiring files
+or arguments, so the documentation check can run it safely. The inventory links the page and
+example, and the rewrite context now contains the settled rather than in-progress 15.9 rules.
+
+The bounded execution fuzzer also gained a typed struct list that it encodes, parses, and
+decodes. That is not a replacement for the focused conformance cases; it puts the new parser,
+checker special case, and interpreter conversion into the existing randomized frontend and
+execution cleanup path.

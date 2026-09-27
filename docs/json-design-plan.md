@@ -1,6 +1,6 @@
 # JSON: design and implementation plan
 
-Status: accepted, 2026-09-26; slices 1 through 5 done. The user accepted every recommendation,
+Status: complete, 2026-09-26. The user accepted every recommendation,
 including decision 3 (a): the checker types `Json.encode` and `Json.decode` specially.
 Rewrite-context 15.7 lists JSON as the next standard-library item. This plan sets out the
 API, how a statically typed language holds a document of unknown shape, errors, and the order
@@ -337,6 +337,11 @@ rewrite-context text written in the same change.
 6. **Documentation and integration.** `docs/library/json.md`, an inventory row,
    `examples/json.em` with the programs above, a new rewrite-context section and decision
    rows in 22, 15.7 updated, and a fuzz template.
+   Done: the reference page names the strict parser, navigable `Json` value, builders, and
+   checker-known typed conversions, with a runnable example in the inventory. The rewrite
+   context records the two conversion paths, generated-constructor rule, and narrow `as:`
+   source-type syntax. The bounded execution fuzzer now builds, encodes, parses, and decodes a
+   typed list of structs.
 
 If decision 3 goes to (c), slices 4 and 5 are dropped, and `Json.encode` takes only a `Json`.
 

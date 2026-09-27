@@ -36,6 +36,7 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | [`File`, `Directory`, `Path`](file.md) | Whole-file and streamed UTF-8 text, directories, lexical paths | `conformance/run/file-streaming.em` |
 | [`Program`](program.md) | The running program's own CLI arguments, and pausing it | `conformance/run/program-arguments.em` |
 | [`Console`](console.md) | Color/style helpers, `Console.style`, `Console.plain`, the color policy | `conformance/color/console-style.em` |
+| [`Json`](json.md) | Strict parsing, navigation, typed encoding and decoding, builders, `JsonError` | `examples/json.em` |
 | [Dates and times](dates-and-times.md) | Choosing a type, calendar vs. exact arithmetic, text, zones, errors | `examples/dates.em` |
 | [`Date`, `Weekday`](date.md) | Calendar dates, weekdays, month arithmetic, differences, parsing | `conformance/run/date-basics.em` |
 | [`Time`](time.md) | Times of day, wrapping arithmetic, parsing | `conformance/run/time-basics.em` |

@@ -109,9 +109,9 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-JSON is in progress. The user chose to finish the standard library (JSON, then an HTTP
-client, then the smaller items in rewrite-context 15.7), then make small optimizations such
-as startup time, and eventually build a native compiler.
+JSON is complete. The user chose to finish the standard library (JSON, then an HTTP client,
+then the smaller items in rewrite-context 15.7), then make small optimizations such as startup
+time, and eventually build a native compiler.
 [`json-design-plan.md`](json-design-plan.md) is accepted with every recommendation, including
 decision 3 (a): the checker types `Json.encode` and `Json.decode(text, as: Type)` specially,
 as it does `print`. Slices 1 (the native parser and writer, `src/Json.zig`), 2 (the `Json`
@@ -130,8 +130,13 @@ non-finite Float remains a catchable runtime `JsonError`. Slice 5 is also comple
 types. It handles structs through generated constructors, uses field defaults and optional
 fields when JSON leaves them out, ignores extra JSON fields, and reports a path-rich
 `JsonError` for malformed text or a mismatched value. Focused run, diagnostic, and runtime-error
-conformance covers the boundary. Slice 6 — reference documentation, example, rewrite-context
-integration, and a fuzz template — is next.
+conformance covers the boundary. Slice 6 completes the integration: [`docs/library/json.md`](library/json.md),
+an inventory row, a zero-argument [`examples/json.em`](../examples/json.em), the settled
+rewrite-context rules and decision rows, and a typed JSON round-trip in the bounded execution
+fuzzer. JSON's milestone is complete; the next approved library design is a synchronous HTTP
+client. Slice 6 validation passed with the pinned toolchain, Debug and ReleaseSafe tests,
+`zig build`, documentation examples, a 1,000-case ReleaseSafe fuzz campaign (seed 24), Zig
+format checks, and `git diff --check`.
 
 Other candidates, each needing the user's go-ahead:
 
