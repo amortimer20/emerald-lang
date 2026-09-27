@@ -1,6 +1,6 @@
 # JSON: design and implementation plan
 
-Status: accepted, 2026-09-26; slices 1 and 2 done. The user accepted every recommendation,
+Status: accepted, 2026-09-26; slices 1 through 3 done. The user accepted every recommendation,
 including decision 3 (a): the checker types `Json.encode` and `Json.decode` specially.
 Rewrite-context 15.7 lists JSON as the next standard-library item. This plan sets out the
 API, how a statically typed language holds a document of unknown shape, errors, and the order
@@ -306,6 +306,14 @@ rewrite-context text written in the same change.
 3. **Building and writing.** `Json.null` and the `from_string`, `from_int`, `from_float`,
    `from_bool`, `from_list`, and `from_object` builders, and `Json.encode` for `Json` values, compact and pretty; round-trip
    conformance.
+   Done: the builders are ordinary prelude functions over the same private fields that the
+   parser fills. `Json.null` is a type-level constant; `from_float` preserves a Float-shaped
+   whole number such as `3.0`, including `-0.0`, and refuses `NaN` and both infinities before
+   an invalid value exists. `Json.encode` delegates to the native writer that slice 1 already
+   tested, defaulting to compact text and using its two-space indentation when `pretty: true`.
+   The native boundary now defensively turns a malformed internal non-finite value into a
+   `JsonError` rather than reaching an `unreachable` branch. Conformance covers every builder,
+   both output forms, nested round trips, and fresh paths in built containers.
 4. **Encoding the program's own values** (decision 3). The checker accepts encodable types and
    reports others at the field that is not; the native encoder; conformance and diagnostics
    cases.

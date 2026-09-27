@@ -3158,7 +3158,7 @@ as input.
 ### 15.9 JSON
 
 `Json` reads and writes JSON, strictly as RFC 8259 defines it. Its full design, and the
-remaining work (building values, `Json.encode`, and `Json.decode(text, as: Type)` for a
+remaining typed conversion work (`Json.encode` and `Json.decode(text, as: Type)` for a
 program's own types), are in [`docs/json-design-plan.md`](json-design-plan.md); this section
 is rewritten with the settled behavior when the whole API lands.
 
@@ -3170,6 +3170,13 @@ conversions `string()`, `int()`, `float()`, `bool()`, `list()`, and `object()`, 
 `3`, `3.0`, and `3e2` all read as whole numbers. A value prints as compact JSON text, and two
 values are equal when they are the same JSON: numbers compare by value, and an object's keys
 may come in any order.
+
+`Json.null` is the JSON null value. `from_string`, `from_int`, `from_float`, `from_bool`,
+`from_list`, and `from_object` build each corresponding kind; a list or object's contents are
+already `Json` values, so nesting stays explicit. `from_float` keeps a Float visibly a Float
+(`3.0` and `-0.0` stay that way) and raises `JsonError` for `NaN` or either infinity, which
+JSON cannot represent. `Json.encode(value, pretty: false)` currently accepts a `Json` value,
+writing compact text by default or two-space-indented text with `pretty: true`.
 
 `JsonError` extends `RuntimeError`. Text that is not JSON gives the line and column of the
 first mistake, with its own message for each common one: a trailing comma, single quotes,

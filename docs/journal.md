@@ -2826,3 +2826,16 @@ than Emerald's `\u{0009}`.
 A 1.28 MB document of 9,000 records parses in about 150 ms (ReleaseSafe). Startup for
 `print(1)` rose from about 7.5 ms to 9.3 ms (median of 60, same machine), the largest single
 jump yet; the startup task queued after the standard library now matters more.
+
+## JSON, slice 3: building and writing Json values, 2026-09-26
+
+`Json.null`, the six `from_` builders, and `Json.encode` now complete the manual Json-value
+workflow. The builders remain ordinary prelude code: a single private helper fills the same
+fields the native parser does, and `Json.encode` delegates to the existing native writer.
+That preserves Float-shaped numbers such as `3.0` and `-0.0`, dictionary insertion order, and
+the writer's established compact and two-space-pretty forms without duplicating serialization
+logic. `from_float` refuses `NaN` and both infinities as `JsonError`; the native writer now
+also makes its formerly unreachable non-finite case a catchable `JsonError` as a defensive
+boundary check. New end-to-end coverage builds a nested value, tests compact and pretty output
+and round trips, verifies fresh paths in built containers, and exercises all three non-finite
+spellings.

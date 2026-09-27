@@ -114,13 +114,14 @@ client, then the smaller items in rewrite-context 15.7), then make small optimiz
 as startup time, and eventually build a native compiler.
 [`json-design-plan.md`](json-design-plan.md) is accepted with every recommendation, including
 decision 3 (a): the checker types `Json.encode` and `Json.decode(text, as: Type)` specially,
-as it does `print`. Slices 1 (the native parser and writer, `src/Json.zig`) and 2 (the `Json` value in the
-prelude: `parse`, `parse_maybe`, `kind`, navigation, conversions, paths in errors, display,
-equality, and `JsonError`; rewrite-context 15.9) are done. Slice 3 is next, but paused at the user's request until they pick it back up: `Json.null`, the
+as it does `print`. Slices 1 (the native parser and writer, `src/Json.zig`), 2 (the `Json`
+value in the prelude: `parse`, `parse_maybe`, `kind`, navigation, conversions, paths in
+errors, display, equality, and `JsonError`), and 3 are done. Slice 3 adds `Json.null`, the
 `from_string`/`from_int`/`from_float`/`from_bool`/`from_list`/`from_object` builders, and
-`Json.encode` for `Json` values, compact and pretty, with round-trip conformance. `_write`
-in `Interpreter.callJson` already writes a `Json` value; a built `Float` must refuse NaN and
-Infinity (`Json.write` returns `error.NonFiniteNumber`, now `unreachable` in `jsonWrite`).
+`Json.encode` for already-built `Json` values, compact and pretty, with round-trip
+conformance. `from_float` refuses NaN and infinity as `JsonError`; the native writer also
+defensively reports malformed internal non-finite values as `JsonError` rather than crashing.
+Slice 4 is next: checker-supported typed encoding of the program's own values (decision 3).
 
 Other candidates, each needing the user's go-ahead:
 
@@ -209,6 +210,12 @@ UTF-8 character; see the journal). Slice 2 followed. After it, Debug and Release
 
 Slices 1 and 2 and the review fixes are pushed to `claude/adoring-pasteur-wz5l0h`. Work continues in a local session; the cloud session is no longer in use. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.
+
+Slice 3's Debug and ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`,
+`bash tools/check-doc-examples.sh`, and `git diff --check` pass. The manually read new
+`json-building` and `json-non-finite` conformance outputs match the built CLI exactly; the
+standalone JSONTestSuite check reports 95 accepted, 188 refused, 35 implementation-defined,
+2 known duplicate-key exceptions, and 0 mismatches.
 
 Cloud sessions cannot reach ziglang.org. The pinned Zig 0.16.0 comes from the `ziglang==0.16.0`
 PyPI wheel instead (`pip download ziglang==0.16.0 --no-deps`, unzip, and put `ziglang/` on

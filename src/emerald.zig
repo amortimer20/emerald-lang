@@ -844,6 +844,21 @@ fn expectFailure(text: []const u8, expected_message: []const u8) !void {
     try testing.expectEqualStrings(expected_message, problem.message);
 }
 
+test "JSON builders and encoding preserve JSON's values and refuse non-finite Float values" {
+    try expectOutput(
+        \\const document = Json.from_object(["name": Json.from_string("Ada"), "items": Json.from_list([Json.from_int(1), Json.null]), "ratio": Json.from_float(2.0)])
+        \\print(Json.encode(document))
+        \\print(Json.encode(document, pretty: true))
+        \\print(Json.parse(Json.encode(document)) == document)
+    ,
+        "{\"name\":\"Ada\",\"items\":[1,null],\"ratio\":2.0}\n" ++
+            "{\n  \"name\": \"Ada\",\n  \"items\": [\n    1,\n    null\n  ],\n  \"ratio\": 2.0\n}\n" ++
+            "true\n",
+    );
+    try expectFailure("Json.from_float(Float.nan)", "JsonError: NaN cannot be written as JSON");
+    try expectFailure("Json.from_float(Float.infinity)", "JsonError: Infinity cannot be written as JSON");
+}
+
 test "File read methods reject invalid UTF-8 as FileError" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

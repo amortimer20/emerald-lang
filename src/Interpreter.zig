@@ -3698,7 +3698,7 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
             defer builder.deinit();
             return try builder.build(document.root);
         },
-        ._write => return try self.jsonWrite(values[0], values[1].data.bool),
+        ._write => return try self.jsonWrite(call.callee.span, values[0], values[1].data.bool),
         ._key_path => return try self.jsonKeyPath(values[0].data.string.bytes, values[1].data.string.bytes),
     }
 }
@@ -3835,7 +3835,7 @@ const JsonBuilder = struct {
 };
 
 /// A prelude `Json` value as JSON text.
-fn jsonWrite(self: *Interpreter, value: Value, pretty: bool) Error!Value {
+fn jsonWrite(self: *Interpreter, span: Source.Span, value: Value, pretty: bool) Error!Value {
     var arena_state: std.heap.ArenaAllocator = .init(self.gpa);
     defer arena_state.deinit();
     const descriptor = self.structs.get(Resolver.preludeKey("Json")).?;
@@ -3844,10 +3844,17 @@ fn jsonWrite(self: *Interpreter, value: Value, pretty: bool) Error!Value {
     defer out.deinit();
     Json.write(json, .{ .pretty = pretty }, &out.writer) catch |err| switch (err) {
         error.WriteFailed => return error.OutOfMemory,
-        // A parsed number is always finite; slice 3's builders refuse the rest.
-        error.NonFiniteNumber => unreachable,
+        // `Json.from_float` refuses these before a value is built. Keep the
+        // native boundary safe too: a malformed internal Json value must still
+        // be a normal, catchable JsonError rather than an interpreter crash.
+        error.NonFiniteNumber => return self.raiseJson(span, "a non-finite Float cannot be written as JSON"),
     };
     return try self.heap.copyText(out.written());
+}
+
+fn raiseJson(self: *Interpreter, span: Source.Span, message: []const u8) Error {
+    self.raised_value = self.makeError(Resolver.preludeKey("JsonError"), message) catch return error.OutOfMemory;
+    return self.raiseTyped(span, "JsonError", message, "JSON cannot represent NaN or infinity.");
 }
 
 fn jsonFromValue(arena: std.mem.Allocator, at: JsonFields, value: Value) std.mem.Allocator.Error!Json.Value {

@@ -1525,6 +1525,18 @@ struct Json with Textual, Equatable {
     # or "" for the document itself. Not part of equality or display.
     var _path: String
 
+    # JSON's one null value. Like enum values, this is a type-level value, not
+    # a function call, so building a document reads naturally.
+    const Json.null: Emerald.Json = Emerald.Json._built(Emerald.Json.Kind.null, false, 0.0, false, 0, false, "", [], [])
+
+    # Build a value with no document path. Public `from_` functions below are
+    # deliberately small wrappers around this one shape, so every new value
+    # starts as a document root rather than retaining where an input value was
+    # found.
+    func Json._built(kind: Emerald.Json.Kind, bool: Bool, number: Float, whole: Bool, integer: Int, decimal: Bool, text: String, items: List[Emerald.Json], entries: Dict[String, Emerald.Json]): Emerald.Json {
+        return Emerald.Json(kind, bool, number, whole, integer, decimal, text, items, entries, "")
+    }
+
     # The document `text` holds. A JsonError at the line and column of the
     # first mistake when it is not JSON.
     func Json.parse(text: String): Emerald.Json {
@@ -1538,6 +1550,49 @@ struct Json with Textual, Equatable {
     # The document `text` holds, or nothing when it is not JSON.
     func Json.parse_maybe(text: String): Emerald.Json? {
         return Emerald.Json._parse(text)
+    }
+
+    # A JSON text value.
+    func Json.from_string(text: String): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.string, false, 0.0, false, 0, false, text, [], [])
+    }
+
+    # A JSON whole number.
+    func Json.from_int(value: Int): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.number, false, value, true, value, false, "", [], [])
+    }
+
+    # A JSON number from a Float. JSON has no spelling for NaN or infinity.
+    func Json.from_float(value: Float): Emerald.Json {
+        if not value.finite?() {
+            raise Emerald.JsonError("#{value} cannot be written as JSON")
+        }
+        const whole = value >= -9223372036854775808.0 and value < 9223372036854775808.0 and value == value.to_int().to_float()
+        const integer = if whole then value.to_int() else 0
+        return Emerald.Json._built(Emerald.Json.Kind.number, false, value, whole, integer, true, "", [], [])
+    }
+
+    # A JSON true or false value.
+    func Json.from_bool(value: Bool): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.bool, value, 0.0, false, 0, false, "", [], [])
+    }
+
+    # A JSON list. Its items must already be Json values, which makes nested
+    # documents explicit and keeps this first builder slice statically small.
+    func Json.from_list(items: List[Emerald.Json]): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.list, false, 0.0, false, 0, false, "", items, [])
+    }
+
+    # A JSON object. Dictionary insertion order becomes the object's key
+    # order, as it does for a parsed document.
+    func Json.from_object(entries: Dict[String, Emerald.Json]): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.object, false, 0.0, false, 0, false, "", [], entries)
+    }
+
+    # JSON text for an already-built Json value. Encoding the program's own
+    # structs and collections follows in the next JSON slice.
+    func Json.encode(value: Emerald.Json, pretty: Bool = false): String {
+        return Emerald.Json._write(value, pretty)
     }
 
     # Whether this is JSON's null.
