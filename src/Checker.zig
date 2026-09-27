@@ -76,6 +76,10 @@ pub const Checked = struct {
     /// Every compound assignment that selected an annotated arithmetic method,
     /// keyed by the source location its interpreter execution reaches.
     operator_assignments: OperatorAssignments,
+    /// The statically checked source type for each `Json.encode` call.  The
+    /// native encoder follows this shape instead of trying to rediscover it
+    /// from erased runtime collection values.
+    json_encodes: JsonEncodes,
     /// Every `super.name` that reads or sets a base class's property (10.7):
     /// a read by its member expression, mapped to the getter's key, and an
     /// assignment by its value, mapped to the setter's. Unlike `value.name`, which runs whatever
@@ -141,6 +145,7 @@ pub const MethodCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const 
 pub const OperatorCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
 pub const OperatorAssignment = struct { file: u32, target_span: Source.Span };
 pub const OperatorAssignments = std.AutoHashMapUnmanaged(OperatorAssignment, []const u8);
+pub const JsonEncodes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 pub const TypeTest = struct { value: Type, target: Type };
 pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
 
@@ -198,6 +203,7 @@ changes_in_progress: Resolver.NameSet = .empty,
 method_calls: MethodCalls = .empty,
 operator_calls: OperatorCalls = .empty,
 operator_assignments: OperatorAssignments = .empty,
+json_encodes: JsonEncodes = .empty,
 super_members: MethodCalls = .empty,
 type_tests: TypeTests = .empty,
 type_names: LiteralTypes = .empty,
@@ -506,6 +512,7 @@ pub fn check(
         .method_calls = checker.method_calls,
         .operator_calls = checker.operator_calls,
         .operator_assignments = checker.operator_assignments,
+        .json_encodes = checker.json_encodes,
         .super_members = checker.super_members,
         .type_tests = checker.type_tests,
         .type_names = checker.type_names,
@@ -9306,6 +9313,15 @@ fn typeOfCall(
     const key = binding.function_key orelse reference.key;
     if (binding.function_key != null) try self.checkNestedUse(call.callee);
 
+    // Section 15.9: no written Emerald signature can say "every value which
+    // JSON can represent".  Keep that one exception at this boundary, as
+    // `print` does: ordinary argument binding still supplies its familiar
+    // named/default diagnostics, while the first argument is checked by the
+    // small, explicit JSON-encodable set below.
+    if (isJsonEncodeKey(key)) {
+        return self.typeOfJsonEncode(call, name, key);
+    }
+
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
     if (!self.declarations.contains(key)) {
@@ -9351,6 +9367,104 @@ fn typeOfCall(
 
     if (!self.in_function) try self.checkCaptures(expression.span, key, name);
     return signature.return_type;
+}
+
+const JsonEncodeIssue = struct {
+    type: Type,
+    /// A stored-field path, when this refusal came from inside a struct. The
+    /// field is the useful correction: it points at the declaration the
+    /// programmer changes rather than at an opaque call site.
+    field_path: []const u8 = "",
+};
+
+/// The checker half of `Json.encode(value, pretty:)` (15.9). It deliberately
+/// retains the declaration's argument names and default so this special case
+/// behaves like every other type-level function at the call site.
+fn typeOfJsonEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8, key: []const u8) Error!Type {
+    const signature = try self.signatureFor(key);
+    var parameters = try self.parametersOf(
+        signature,
+        self.declarations.get(key).?.parameters,
+        "Pass a JSON value to write, and optionally `pretty: true` for indented text.",
+    );
+
+    // Let the first argument infer itself (a list literal must remain a
+    // `List[Int]`, for example), while `pretty` stays an ordinary Bool.
+    const types = try self.arena.dupe(Type, parameters.types);
+    types[0] = .invalid;
+    parameters.types = types;
+    const bound = try self.arena.alloc(?usize, parameters.names.len);
+    const problem = call_arguments.bind(call, parameters.names, parameters.has_default, bound);
+    try self.checkArguments(call, name, parameters);
+    if (problem != .none) return .string;
+
+    const value = try self.typeOf(call.arguments[bound[0].?]);
+    if (value.kind == .invalid) return .string;
+    if (try self.jsonEncodeIssue(value, "")) |issue| {
+        if (issue.field_path.len > 0) {
+            try self.report(
+                call.arguments[bound[0].?].span,
+                "field `{s}` of {f} cannot be written as JSON because it is {f}",
+                .{ issue.field_path, value, issue.type },
+                "JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
+            );
+        } else {
+            try self.report(
+                call.arguments[bound[0].?].span,
+                "this is {f}, which `Json.encode` cannot write as JSON",
+                .{value},
+                "JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
+            );
+        }
+        return .string;
+    }
+    try self.json_encodes.put(self.arena, call.callee, value);
+    return .string;
+}
+
+/// The exact static set decision 3(a) gives `Json.encode`. `Nothing` alone is
+/// not included: an optional is what explicitly says a program value may be
+/// represented by JSON null.
+fn jsonEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?JsonEncodeIssue {
+    if (value.optional) return self.jsonEncodeIssue(value.payload(), field_path);
+    switch (value.kind) {
+        .string, .int, .float, .bool => return null,
+        .list => return self.jsonEncodeIssue(value.element.?.*, field_path),
+        .dictionary => {
+            if (value.key.?.kind != .string or value.key.?.optional) return .{ .type = value, .field_path = field_path };
+            return self.jsonEncodeIssue(value.element.?.*, field_path);
+        },
+        .struct_value => {
+            const user = value.user.?;
+            if (user.enumeration) return null;
+            if (user.class or user.trait) return .{ .type = value, .field_path = field_path };
+            if (jsonTextualType(user.name)) return null;
+            for (user.fields) |field| {
+                const next = if (field_path.len == 0)
+                    field.name
+                else
+                    try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ field_path, field.name });
+                if (try self.jsonEncodeIssue(field.type, next)) |issue| return issue;
+            }
+            return null;
+        },
+        .nothing, .bytes, .range, .tuple, .set, .function, .invalid => return .{ .type = value, .field_path = field_path },
+    }
+}
+
+fn isJsonEncodeKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
+        std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Json::encode");
+}
+
+fn jsonTextualType(key: []const u8) bool {
+    if (!std.mem.startsWith(u8, key, Resolver.prelude_namespace)) return false;
+    const short = key[Resolver.prelude_namespace.len..];
+    return std.mem.eql(u8, short, ".Json") or
+        std.mem.eql(u8, short, ".Date") or
+        std.mem.eql(u8, short, ".Time") or
+        std.mem.eql(u8, short, ".DateTime") or
+        std.mem.eql(u8, short, ".Instant");
 }
 
 /// The first public type-level function of a built-in type that returns

@@ -1,6 +1,6 @@
 # JSON: design and implementation plan
 
-Status: accepted, 2026-09-26; slices 1 through 3 done. The user accepted every recommendation,
+Status: accepted, 2026-09-26; slices 1 through 4 done. The user accepted every recommendation,
 including decision 3 (a): the checker types `Json.encode` and `Json.decode` specially.
 Rewrite-context 15.7 lists JSON as the next standard-library item. This plan sets out the
 API, how a statically typed language holds a document of unknown shape, errors, and the order
@@ -316,7 +316,12 @@ rewrite-context text written in the same change.
    both output forms, nested round trips, and fresh paths in built containers.
 4. **Encoding the program's own values** (decision 3). The checker accepts encodable types and
    reports others at the field that is not; the native encoder; conformance and diagnostics
-   cases.
+   cases. Done: the checker records each accepted source type at `Json.encode`, so the native
+   encoder retains collection element types erased from runtime values. It writes structs in
+   field order, dictionaries in insertion order, enums by their value name, optionals as null,
+   and date/time values through their ISO `to_string()` form. A rejected `Set`, class,
+   function, bytes, non-string-keyed dictionary, or unsupported nested field receives a
+   check-time diagnostic; a non-finite Float remains a catchable JsonError at execution.
 5. **Decoding into the program's own types.** `Json.decode(text, as: Type)`: the checker
    types the result, the decoder builds values through generated constructors, with missing
    and extra fields per decision 4 and path errors; conformance and diagnostics cases.

@@ -121,7 +121,12 @@ errors, display, equality, and `JsonError`), and 3 are done. Slice 3 adds `Json.
 `Json.encode` for already-built `Json` values, compact and pretty, with round-trip
 conformance. `from_float` refuses NaN and infinity as `JsonError`; the native writer also
 defensively reports malformed internal non-finite values as `JsonError` rather than crashing.
-Slice 4 is next: checker-supported typed encoding of the program's own values (decision 3).
+Slice 4 is complete: `Json.encode` now accepts the settled encodable program values — scalars,
+optionals, lists, string-keyed dictionaries, enums, dates/times, `Json`, and structs made from
+them — using the checker-recorded source type to preserve collection element types. It reports
+nonencodable values at check time, including the specific unsupported field of a struct; only a
+non-finite Float remains a catchable runtime `JsonError`. Focused run and diagnostic
+conformance covers the boundary. Slice 5 is next: `Json.decode(text, as: Type)`.
 
 Other candidates, each needing the user's go-ahead:
 
@@ -216,6 +221,9 @@ Slice 3's Debug and ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`
 `json-building` and `json-non-finite` conformance outputs match the built CLI exactly; the
 standalone JSONTestSuite check reports 95 accepted, 188 refused, 35 implementation-defined,
 2 known duplicate-key exceptions, and 0 mismatches.
+
+Slice 4's pinned-toolchain check, Debug and ReleaseSafe `zig build test`, `zig build`,
+`bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, and `git diff --check` pass.
 
 Cloud sessions cannot reach ziglang.org. The pinned Zig 0.16.0 comes from the `ziglang==0.16.0`
 PyPI wheel instead (`pip download ziglang==0.16.0 --no-deps`, unzip, and put `ziglang/` on

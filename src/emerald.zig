@@ -587,6 +587,7 @@ fn analyze(
         &checked.method_calls,
         &checked.operator_calls,
         &checked.operator_assignments,
+        &checked.json_encodes,
         &checked.super_members,
         &checked.type_tests,
         &checked.type_names,
@@ -857,6 +858,36 @@ test "JSON builders and encoding preserve JSON's values and refuse non-finite Fl
     );
     try expectFailure("Json.from_float(Float.nan)", "JsonError: NaN cannot be written as JSON");
     try expectFailure("Json.from_float(Float.infinity)", "JsonError: Infinity cannot be written as JSON");
+}
+
+test "Json.encode writes ordinary checked values and rejects values JSON cannot represent" {
+    try expectOutput(
+        \\enum State { ready, done }
+        \\struct Score {
+        \\    const name: String
+        \\    const points: Int
+        \\    const note: String?
+        \\    const state: State
+        \\}
+        \\const score = Score("Ada", 42, nothing, State.ready)
+        \\print(Json.encode(score))
+        \\print(Json.encode(["first": score]))
+        \\try {
+        \\    print(Json.encode(Float.nan))
+        \\} catch error: JsonError {
+        \\    print(error.message)
+        \\}
+    ,
+        "{\"name\":\"Ada\",\"points\":42,\"note\":null,\"state\":\"ready\"}\n" ++
+            "{\"first\":{\"name\":\"Ada\",\"points\":42,\"note\":null,\"state\":\"ready\"}}\n" ++
+            "a non-finite Float cannot be written as JSON\n",
+    );
+    try expectFailure(
+        \\struct Save { const seen: Set[String] }
+        \\Json.encode(Save(["Ada"].to_set()))
+    ,
+        "field `seen` of Save cannot be written as JSON because it is Set[String]",
+    );
 }
 
 test "File read methods reject invalid UTF-8 as FileError" {

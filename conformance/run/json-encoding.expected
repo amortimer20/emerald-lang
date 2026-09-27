@@ -1,0 +1,23 @@
+{"name":"Ada","points":120,"bonus":3.0,"note":null,"status":"ready","played_on":"2026-09-26","tags":["new","high"],"details":{"verified":true,"shared":false}}
+[
+  {
+    "name": "Ada",
+    "points": 120,
+    "bonus": 3.0,
+    "note": null,
+    "status": "ready",
+    "played_on": "2026-09-26",
+    "tags": [
+      "new",
+      "high"
+    ],
+    "details": {
+      "verified": true,
+      "shared": false
+    }
+  }
+]
+true
+"text" 42 2.0 false null "yes"
+{"active":true,"shared":false}
+"done" "2026-01-02" "09:05:00" "2026-01-02T03:04:00" "1970-01-01T00:00:00Z"

@@ -246,6 +246,8 @@ operator_calls: *const Checker.OperatorCalls,
 /// Annotated arithmetic methods selected for compound assignments, keyed by
 /// the assignment site that reaches them at runtime.
 operator_assignments: *const Checker.OperatorAssignments,
+/// The static source type for each `Json.encode` call (15.9).
+json_encodes: *const Checker.JsonEncodes,
 /// Every `super.name` that reaches a base class's property (10.7).
 super_members: *const Checker.MethodCalls,
 /// Section 4.4's type tests and `type_name` reads, with the static types they
@@ -293,6 +295,7 @@ pub fn run(
     method_calls: *const Checker.MethodCalls,
     operator_calls: *const Checker.OperatorCalls,
     operator_assignments: *const Checker.OperatorAssignments,
+    json_encodes: *const Checker.JsonEncodes,
     super_members: *const Checker.MethodCalls,
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
@@ -344,6 +347,7 @@ pub fn run(
         .method_calls = method_calls,
         .operator_calls = operator_calls,
         .operator_assignments = operator_assignments,
+        .json_encodes = json_encodes,
         .super_members = super_members,
         .type_tests = type_tests,
         .type_names = type_names,
@@ -3673,8 +3677,20 @@ fn callRegex(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Er
 }
 
 fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { _parse, _problem, _write, _key_path };
+    const Native = enum { _parse, _problem, _write, _key_path, encode };
     const native = std.meta.stringToEnum(Native, name) orelse return null;
+    if (native == .encode) {
+        const bound = try self.evaluateBound(call, &.{ "value", "pretty" }, &.{ false, true });
+        defer self.gpa.free(bound.values);
+        defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+        defer for (bound.values) |value| self.heap.release(value);
+        return @as(?Value, try self.jsonEncode(
+            call.callee.span,
+            bound.values[0],
+            self.json_encodes.get(call.callee).?,
+            if (bound.omitted != null and bound.omitted.?[1]) false else bound.values[1].data.bool,
+        ));
+    }
     const values = try self.evaluateArguments(call.arguments);
     defer {
         for (values) |value| self.heap.release(value);
@@ -3700,6 +3716,7 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
         },
         ._write => return try self.jsonWrite(call.callee.span, values[0], values[1].data.bool),
         ._key_path => return try self.jsonKeyPath(values[0].data.string.bytes, values[1].data.string.bytes),
+        .encode => unreachable,
     }
 }
 
@@ -3850,6 +3867,84 @@ fn jsonWrite(self: *Interpreter, span: Source.Span, value: Value, pretty: bool) 
         error.NonFiniteNumber => return self.raiseJson(span, "a non-finite Float cannot be written as JSON"),
     };
     return try self.heap.copyText(out.written());
+}
+
+/// Writes an ordinary Emerald value according to the static shape the checker
+/// accepted for `Json.encode` (15.9). Collection element types are otherwise
+/// erased at runtime, so the recorded type is both the language rule and the
+/// information this conversion needs.
+fn jsonEncode(self: *Interpreter, span: Source.Span, value: Value, value_type: Type, pretty: bool) Error!Value {
+    var arena_state: std.heap.ArenaAllocator = .init(self.gpa);
+    defer arena_state.deinit();
+    const json = try self.jsonFromTypedValue(arena_state.allocator(), span, value, value_type);
+    var out: std.Io.Writer.Allocating = .init(self.gpa);
+    defer out.deinit();
+    Json.write(json, .{ .pretty = pretty }, &out.writer) catch |err| switch (err) {
+        error.WriteFailed => return error.OutOfMemory,
+        error.NonFiniteNumber => return self.raiseJson(span, "a non-finite Float cannot be written as JSON"),
+    };
+    return try self.heap.copyText(out.written());
+}
+
+fn jsonFromTypedValue(self: *Interpreter, arena: std.mem.Allocator, span: Source.Span, value: Value, value_type: Type) Error!Json.Value {
+    if (value_type.optional) {
+        if (value.data == .nothing) return .initNull();
+        return self.jsonFromTypedValue(arena, span, value, value_type.payload());
+    }
+    return switch (value_type.kind) {
+        .string => .initString(value.data.string.bytes),
+        .int => .initInt(value.data.int),
+        .float => .initFloat(value.data.float),
+        .bool => .initBool(value.data.bool),
+        .list => blk: {
+            const source = value.data.list.items.items;
+            const items = try arena.alloc(Json.Value, source.len);
+            for (source, items) |item, *json| json.* = try self.jsonFromTypedValue(arena, span, item, value_type.element.?.*);
+            break :blk .initList(items);
+        },
+        .dictionary => blk: {
+            const source = value.data.map.entries.items;
+            const entries = try arena.alloc(Json.Entry, source.len);
+            for (source, entries) |entry, *json| json.* = .{
+                .key = entry.key.data.string.bytes,
+                .value = try self.jsonFromTypedValue(arena, span, entry.value, value_type.element.?.*),
+            };
+            break :blk .initObject(entries);
+        },
+        .struct_value => self.jsonFromStructValue(arena, span, value, value_type),
+        .nothing, .bytes, .range, .tuple, .set, .function, .invalid => unreachable,
+    };
+}
+
+fn jsonFromStructValue(self: *Interpreter, arena: std.mem.Allocator, span: Source.Span, value: Value, value_type: Type) Error!Json.Value {
+    const user = value_type.user.?;
+    if (std.mem.eql(u8, user.name, Resolver.preludeKey("Json"))) {
+        const descriptor = self.structs.get(Resolver.preludeKey("Json")).?;
+        return jsonFromValue(arena, JsonFields.of(descriptor), value);
+    }
+    if (user.enumeration) return .initString(value.data.struct_value.descriptor.values[value.data.struct_value.variant]);
+    if (jsonTextualType(user.name)) {
+        const text = try self.callTextual(span, value);
+        defer self.heap.release(text);
+        return .initString(try arena.dupe(u8, text.data.string.bytes));
+    }
+
+    const fields = value.data.struct_value.fields;
+    const entries = try arena.alloc(Json.Entry, user.fields.len);
+    for (user.fields, fields, entries) |field, source, *entry| entry.* = .{
+        .key = field.name,
+        .value = try self.jsonFromTypedValue(arena, span, source, field.type),
+    };
+    return .initObject(entries);
+}
+
+fn jsonTextualType(key: []const u8) bool {
+    if (!std.mem.startsWith(u8, key, Resolver.prelude_namespace)) return false;
+    const short = key[Resolver.prelude_namespace.len..];
+    return std.mem.eql(u8, short, ".Date") or
+        std.mem.eql(u8, short, ".Time") or
+        std.mem.eql(u8, short, ".DateTime") or
+        std.mem.eql(u8, short, ".Instant");
 }
 
 fn raiseJson(self: *Interpreter, span: Source.Span, message: []const u8) Error {

@@ -1,0 +1,4 @@
+diagnostics/json-encode-struct-field.em:6:13: field `seen` of Save cannot be written as JSON because it is Set[String]
+  Json.encode(Save("Ada", ["welcome"].to_set()))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.

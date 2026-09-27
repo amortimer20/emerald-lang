@@ -2839,3 +2839,16 @@ also makes its formerly unreachable non-finite case a catchable `JsonError` as a
 boundary check. New end-to-end coverage builds a nested value, tests compact and pretty output
 and round trips, verifies fresh paths in built containers, and exercises all three non-finite
 spellings.
+
+## JSON, slice 4: encoding program values, 2026-09-26
+
+`Json.encode` now accepts the small recursive set established in the JSON plan: scalar text
+and numbers, Bool, optionals, lists, string-keyed dictionaries, enums, date/time values,
+`Json`, and structs made from those values. The checker records the source type at each call;
+the native encoder uses it to retain element types that a runtime `List` or `Dict` does not
+carry. Struct fields and dictionary keys keep their declared and insertion order respectively.
+
+The checker refuses unrepresentable types before execution. Most importantly, a struct with a
+bad nested field identifies that field rather than hiding the cause behind the outer struct.
+Non-finite Float values are intentionally the one runtime check: their static type is valid,
+but their particular value has no JSON representation, so they raise `JsonError`.

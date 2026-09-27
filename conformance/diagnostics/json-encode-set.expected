@@ -1,0 +1,4 @@
+diagnostics/json-encode-set.em:1:13: this is Set[Int], which `Json.encode` cannot write as JSON
+  Json.encode([1, 2].to_set())
+              ^^^^^^^^^^^^^^^
+JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.

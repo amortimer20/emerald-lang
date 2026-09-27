@@ -3175,8 +3175,12 @@ may come in any order.
 `from_list`, and `from_object` build each corresponding kind; a list or object's contents are
 already `Json` values, so nesting stays explicit. `from_float` keeps a Float visibly a Float
 (`3.0` and `-0.0` stay that way) and raises `JsonError` for `NaN` or either infinity, which
-JSON cannot represent. `Json.encode(value, pretty: false)` currently accepts a `Json` value,
-writing compact text by default or two-space-indented text with `pretty: true`.
+JSON cannot represent. `Json.encode(value, pretty: false)` writes compact text by default or
+two-space-indented text with `pretty: true`. It accepts `Json`, `String`, `Int`, `Float`,
+`Bool`, an optional value (as JSON null when absent), `List`, `Dict[String, _]`, an enum (as
+its value name), `Date`, `Time`, `DateTime`, `Instant`, or a struct whose stored fields are
+all encodable. A `Set`, class, function, byte data, or a struct field that is not encodable is
+a checking error; `NaN` and either infinity remain a `JsonError` at run time.
 
 `JsonError` extends `RuntimeError`. Text that is not JSON gives the line and column of the
 first mistake, with its own message for each common one: a trailing comma, single quotes,
