@@ -248,6 +248,8 @@ operator_calls: *const Checker.OperatorCalls,
 operator_assignments: *const Checker.OperatorAssignments,
 /// The static source type for each `Json.encode` call (15.9).
 json_encodes: *const Checker.JsonEncodes,
+/// The statically checked target type for each `Json.decode` call (15.9).
+json_decodes: *const Checker.JsonDecodes,
 /// Every `super.name` that reaches a base class's property (10.7).
 super_members: *const Checker.MethodCalls,
 /// Section 4.4's type tests and `type_name` reads, with the static types they
@@ -296,6 +298,7 @@ pub fn run(
     operator_calls: *const Checker.OperatorCalls,
     operator_assignments: *const Checker.OperatorAssignments,
     json_encodes: *const Checker.JsonEncodes,
+    json_decodes: *const Checker.JsonDecodes,
     super_members: *const Checker.MethodCalls,
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
@@ -348,6 +351,7 @@ pub fn run(
         .operator_calls = operator_calls,
         .operator_assignments = operator_assignments,
         .json_encodes = json_encodes,
+        .json_decodes = json_decodes,
         .super_members = super_members,
         .type_tests = type_tests,
         .type_names = type_names,
@@ -2049,6 +2053,7 @@ fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
         .logical => |logical| self.evaluateLogical(logical),
         .comparison => |comparison| self.evaluateComparison(expression, comparison),
         .call => |call| self.evaluateCall(expression, call),
+        .type_literal => unreachable,
         .range => |range| blk: {
             const start = (try self.evaluate(range.start)).data.int;
             const end = (try self.evaluate(range.end)).data.int;
@@ -3677,7 +3682,7 @@ fn callRegex(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Er
 }
 
 fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { _parse, _problem, _write, _key_path, encode };
+    const Native = enum { _parse, _problem, _write, _key_path, encode, decode };
     const native = std.meta.stringToEnum(Native, name) orelse return null;
     if (native == .encode) {
         const bound = try self.evaluateBound(call, &.{ "value", "pretty" }, &.{ false, true });
@@ -3690,6 +3695,17 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
             self.json_encodes.get(call.callee).?,
             if (bound.omitted != null and bound.omitted.?[1]) false else bound.values[1].data.bool,
         ));
+    }
+    if (native == .decode) {
+        const text = try self.evaluate(call.arguments[0]);
+        defer self.heap.release(text);
+        var problem: Json.Problem = .{};
+        var document = Json.parse(self.gpa, text.data.string.bytes, &problem) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidJson => return self.raiseJsonDecodeParse(call.callee.span, problem),
+        };
+        defer document.deinit();
+        return @as(?Value, try self.jsonDecodeValue(call.callee.span, document.root, self.json_decodes.get(call.callee).?, ""));
     }
     const values = try self.evaluateArguments(call.arguments);
     defer {
@@ -3717,6 +3733,7 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
         ._write => return try self.jsonWrite(call.callee.span, values[0], values[1].data.bool),
         ._key_path => return try self.jsonKeyPath(values[0].data.string.bytes, values[1].data.string.bytes),
         .encode => unreachable,
+        .decode => unreachable,
     }
 }
 
@@ -3884,6 +3901,168 @@ fn jsonEncode(self: *Interpreter, span: Source.Span, value: Value, value_type: T
         error.NonFiniteNumber => return self.raiseJson(span, "a non-finite Float cannot be written as JSON"),
     };
     return try self.heap.copyText(out.written());
+}
+
+/// Builds the checked target type from one parsed JSON value. The parser owns
+/// its document only for this call, so text and containers are copied into the
+/// Emerald heap as each value is built.
+fn jsonDecodeValue(self: *Interpreter, span: Source.Span, json: Json.Value, target: Type, path: []const u8) Error!Value {
+    if (target.optional) {
+        if (json.kind == .null) return Value.nothing;
+        return self.jsonDecodeValue(span, json, target.payload(), path);
+    }
+    return switch (target.kind) {
+        .string => if (json.kind == .string) self.heap.copyText(json.string_value) else self.raiseJsonDecodeKind(span, path, "text", json),
+        .int => if (json.kind == .number and json.is_integer) .initInt(json.int_value) else self.raiseJsonDecodeKind(span, path, "a whole number", json),
+        .float => if (json.kind == .number) .initFloat(json.float_value) else self.raiseJsonDecodeKind(span, path, "a number", json),
+        .bool => if (json.kind == .bool) .initBool(json.bool_value) else self.raiseJsonDecodeKind(span, path, "true or false", json),
+        .list => self.jsonDecodeList(span, json, target, path),
+        .dictionary => self.jsonDecodeDictionary(span, json, target, path),
+        .struct_value => self.jsonDecodeStruct(span, json, target, path),
+        .nothing, .bytes, .range, .tuple, .set, .function, .invalid => unreachable,
+    };
+}
+
+fn jsonDecodeList(self: *Interpreter, span: Source.Span, json: Json.Value, target: Type, path: []const u8) Error!Value {
+    if (json.kind != .list) return self.raiseJsonDecodeKind(span, path, "a list", json);
+    const list = try self.heap.createList(kindOf(target.element.?.*), json.items.len);
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+    for (json.items, 0..) |item, index| {
+        const item_path = try self.jsonIndexPath(path, index);
+        defer self.gpa.free(item_path);
+        list.items.appendAssumeCapacity(try self.jsonDecodeValue(span, item, target.element.?.*, item_path));
+    }
+    return result;
+}
+
+fn jsonDecodeDictionary(self: *Interpreter, span: Source.Span, json: Json.Value, target: Type, path: []const u8) Error!Value {
+    if (json.kind != .object) return self.raiseJsonDecodeKind(span, path, "an object", json);
+    const map = try self.heap.createMap(.string, kindOf(target.element.?.*), false);
+    const result: Value = .{ .data = .{ .map = map } };
+    errdefer self.heap.release(result);
+    for (json.entries) |entry| {
+        const entry_path = try self.jsonObjectPath(path, entry.key);
+        defer self.gpa.free(entry_path);
+        const key = try self.heap.copyText(entry.key);
+        const hash = self.hashKey(span, key) catch |err| {
+            self.heap.release(key);
+            return err;
+        };
+        const value = self.jsonDecodeValue(span, entry.value, target.element.?.*, entry_path) catch |err| {
+            self.heap.release(key);
+            return err;
+        };
+        try self.heap.put(map, hash, key, value, self.equatable(span));
+    }
+    return result;
+}
+
+fn jsonDecodeStruct(self: *Interpreter, span: Source.Span, json: Json.Value, target: Type, path: []const u8) Error!Value {
+    const user = target.user.?;
+    if (std.mem.eql(u8, user.name, Resolver.preludeKey("Json"))) {
+        var builder = try JsonBuilder.init(self, span);
+        defer builder.deinit();
+        return builder.build(json);
+    }
+    if (user.enumeration) {
+        if (json.kind != .string) return self.raiseJsonDecodeKind(span, path, "text naming an enum value", json);
+        const descriptor = self.structs.get(user.name).?;
+        for (descriptor.values, 0..) |name, index| if (std.mem.eql(u8, name, json.string_value)) {
+            const instance = try self.heap.createStruct(descriptor, &.{});
+            instance.variant = @intCast(index);
+            return .{ .data = .{ .struct_value = instance } };
+        };
+        return self.raiseJsonDecodeMessage(span, path, "`{s}` is not a value of `{s}`", .{ json.string_value, user.display_name });
+    }
+    // Date and time values are represented as their ISO text. Their `_maybe`
+    // parsers retain JSON's own error type and path when the text is invalid.
+    if (jsonTextualType(user.name)) {
+        if (json.kind != .string) return self.raiseJsonDecodeKind(span, path, "ISO date or time text", json);
+        const text = try self.heap.copyText(json.string_value);
+        const key = try Resolver.methodKey(self.arena, user.name, "parse_maybe");
+        const decoded = try self.invoke(span, self.namedCallable(key), &.{text});
+        if (decoded.data != .nothing) return decoded;
+        return self.raiseJsonDecodeMessage(span, path, "this text is not a valid `{s}`", .{user.display_name});
+    }
+    if (json.kind != .object) return self.raiseJsonDecodeKind(span, path, "an object", json);
+    return self.jsonDecodePlainStruct(span, json, target, path);
+}
+
+fn jsonDecodePlainStruct(self: *Interpreter, span: Source.Span, json: Json.Value, target: Type, path: []const u8) Error!Value {
+    const user = target.user.?;
+    const descriptor = self.structs.get(user.name).?;
+    const fields = try self.gpa.alloc(Value, user.fields.len);
+    @memset(fields, Value.nothing);
+    const result: Value = .{ .data = .{ .struct_value = self.heap.createStruct(descriptor, fields) catch |err| {
+        self.gpa.free(fields);
+        return err;
+    } } };
+    errdefer self.heap.release(result);
+    const declaration = self.struct_infos.get(user.name).?.declaration;
+    for (user.fields, declaration.fields, 0..) |field, written, index| {
+        const child_path = try self.jsonObjectPath(path, field.name);
+        defer self.gpa.free(child_path);
+        if (json.get(field.name)) |source| {
+            fields[index] = try self.jsonDecodeValue(span, source, field.type, child_path);
+        } else if (field.type.optional) {
+            fields[index] = Value.nothing;
+        } else if (written.default != null) {
+            // Defaults are evaluated below, in their normal Emerald context.
+        } else {
+            return self.raiseJsonDecodeMessage(span, child_path, "a value is required here", .{});
+        }
+    }
+    const info = self.struct_infos.get(user.name).?;
+    if (info.any_default) return self.runFieldDefaults(span, user.name, result, info.has_default);
+    return result;
+}
+
+fn raiseJsonDecodeParse(self: *Interpreter, span: Source.Span, problem: Json.Problem) Error {
+    const message = std.fmt.allocPrint(self.gpa, "line {d}, column {d}: {s}", .{ problem.line, problem.column, problem.message() }) catch return error.OutOfMemory;
+    defer self.gpa.free(message);
+    return self.raiseJsonDecodeMessage(span, "", "{s}", .{message});
+}
+
+fn raiseJsonDecodeKind(self: *Interpreter, span: Source.Span, path: []const u8, expected: []const u8, json: Json.Value) Error {
+    return self.raiseJsonDecodeMessage(span, path, "expected {s}, found {s}", .{ expected, jsonKindName(json.kind) });
+}
+
+fn raiseJsonDecodeMessage(self: *Interpreter, span: Source.Span, path: []const u8, comptime format: []const u8, args: anytype) Error {
+    const detail = std.fmt.allocPrint(self.gpa, format, args) catch return error.OutOfMemory;
+    defer self.gpa.free(detail);
+    const message = std.fmt.allocPrint(self.gpa, "at {s}: {s}", .{ if (path.len == 0) "the document" else path, detail }) catch return error.OutOfMemory;
+    defer self.gpa.free(message);
+    self.raised_value = self.makeError(Resolver.preludeKey("JsonError"), message) catch return error.OutOfMemory;
+    return self.raiseTyped(span, "JsonError", message, "Correct the JSON value or decode it as a type that matches its shape.");
+}
+
+fn jsonKindName(kind: Json.Kind) []const u8 {
+    return switch (kind) {
+        .null => "null",
+        .bool => "true or false",
+        .number => "a number",
+        .string => "text",
+        .list => "a list",
+        .object => "an object",
+    };
+}
+
+fn jsonIndexPath(self: *Interpreter, path: []const u8, index: usize) std.mem.Allocator.Error![]u8 {
+    return std.fmt.allocPrint(self.gpa, "{s}[{d}]", .{ path, index });
+}
+
+fn jsonObjectPath(self: *Interpreter, path: []const u8, key: []const u8) std.mem.Allocator.Error![]u8 {
+    if (readsAsName(key)) {
+        return if (path.len == 0) std.fmt.allocPrint(self.gpa, "{s}", .{key}) else std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ path, key });
+    }
+    var out: std.Io.Writer.Allocating = .init(self.gpa);
+    defer out.deinit();
+    out.writer.writeAll(path) catch return error.OutOfMemory;
+    out.writer.writeByte('[') catch return error.OutOfMemory;
+    Json.write(.initString(key), .{}, &out.writer) catch return error.OutOfMemory;
+    out.writer.writeByte(']') catch return error.OutOfMemory;
+    return self.gpa.dupe(u8, out.written());
 }
 
 fn jsonFromTypedValue(self: *Interpreter, arena: std.mem.Allocator, span: Source.Span, value: Value, value_type: Type) Error!Json.Value {

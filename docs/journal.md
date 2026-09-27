@@ -2852,3 +2852,19 @@ The checker refuses unrepresentable types before execution. Most importantly, a 
 bad nested field identifies that field rather than hiding the cause behind the outer struct.
 Non-finite Float values are intentionally the one runtime check: their static type is valid,
 but their particular value has no JSON representation, so they raise `JsonError`.
+
+## JSON, slice 5: typed decoding, 2026-09-26
+
+`Json.decode(text, as: Type)` now turns JSON directly into the program's known shape. The
+`as:` value is deliberately type source syntax, not a runtime type object: the checker returns
+that type from the call and records it for the interpreter, which needs collection element types
+that ordinary runtime containers erase. The decoder accepts the same recursive type family as
+encoding, including enums, plain structs, and ISO date/time types. Structs use their generated
+constructors, so their ordinary field defaults still run; missing optional fields are `nothing`
+and extra object fields are ignored.
+
+Invalid target types fail at check time. Bad JSON text, missing required fields, and wrong kinds
+raise `JsonError` at the source call with a JSON path; paths now also quote keys that do not read
+as Emerald names, such as `["first name"]`. The slice's conformance covers nested collections,
+enum values, defaults, optional fields, ISO values, target rejection, and representative runtime
+failures.

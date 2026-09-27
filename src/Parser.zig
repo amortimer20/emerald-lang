@@ -322,7 +322,7 @@ fn node(self: *Parser, span: Source.Span, data: Ast.Expression.Data) Error!*cons
 
 fn deepestChild(data: Ast.Expression.Data) u32 {
     return switch (data) {
-        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .enum_value => 0,
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .type_literal, .enum_value => 0,
         .unary => |unary| unary.operand.depth,
         .binary => |binary| @max(binary.left.depth, binary.right.depth),
         .logical => |logical| @max(logical.left.depth, logical.right.depth),
@@ -3174,7 +3174,17 @@ fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Exp
                 any_named = true;
             }
             try names.append(self.arena, name);
-            try arguments.append(self.arena, try self.parseExpression());
+            // `Json.decode(text, as: List[Score])` is the one call shape that
+            // takes a source type rather than a runtime value. Keep it in the
+            // expression tree so formatting, navigation, and diagnostics see
+            // its real span; the checker refuses this node anywhere else.
+            const is_type_argument = if (name) |written| std.mem.eql(u8, written.text, "as") else false;
+            if (is_type_argument) {
+                const type_expression = try self.parseTypeExpression();
+                try arguments.append(self.arena, try self.node(type_expression.span, .{ .type_literal = type_expression }));
+            } else {
+                try arguments.append(self.arena, try self.parseExpression());
+            }
             if (self.match(.comma) == null) break;
         }
     }

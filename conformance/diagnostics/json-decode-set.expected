@@ -1,0 +1,4 @@
+diagnostics/json-decode-set.em:1:27: Set[Int] cannot be read from JSON
+  Json.decode("[1, 2]", as: Set[Int])
+                            ^^^^^^^^
+JSON can build strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.

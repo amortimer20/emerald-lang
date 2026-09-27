@@ -1,6 +1,6 @@
 # JSON: design and implementation plan
 
-Status: accepted, 2026-09-26; slices 1 through 4 done. The user accepted every recommendation,
+Status: accepted, 2026-09-26; slices 1 through 5 done. The user accepted every recommendation,
 including decision 3 (a): the checker types `Json.encode` and `Json.decode` specially.
 Rewrite-context 15.7 lists JSON as the next standard-library item. This plan sets out the
 API, how a statically typed language holds a document of unknown shape, errors, and the order
@@ -325,6 +325,15 @@ rewrite-context text written in the same change.
 5. **Decoding into the program's own types.** `Json.decode(text, as: Type)`: the checker
    types the result, the decoder builds values through generated constructors, with missing
    and extra fields per decision 4 and path errors; conformance and diagnostics cases.
+   Done: `Json.decode` takes source syntax after `as:` rather than a runtime type value, so
+   the checker can both return the requested type and refuse targets JSON cannot build. The
+   native decoder copies strings and containers into the Emerald heap, accepts the same
+   recursive type set as the encoder, and builds plain structs through their generated
+   constructors. A missing optional becomes `nothing`, a missing default is evaluated in its
+   ordinary constructor context, and extra object keys are ignored. Decode failures are
+   `JsonError`s whose paths use the same `items[0].name` and `["unusual key"]` spellings as
+   `Json` navigation. Conformance covers nested values, enums, defaults, optionals, ISO date
+   and time values, checker-time target rejection, required fields, and wrong kinds.
 6. **Documentation and integration.** `docs/library/json.md`, an inventory row,
    `examples/json.em` with the programs above, a new rewrite-context section and decision
    rows in 22, 15.7 updated, and a fuzz template.

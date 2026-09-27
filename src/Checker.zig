@@ -80,6 +80,8 @@ pub const Checked = struct {
     /// native encoder follows this shape instead of trying to rediscover it
     /// from erased runtime collection values.
     json_encodes: JsonEncodes,
+    /// The statically checked result type for each `Json.decode` call.
+    json_decodes: JsonDecodes,
     /// Every `super.name` that reads or sets a base class's property (10.7):
     /// a read by its member expression, mapped to the getter's key, and an
     /// assignment by its value, mapped to the setter's. Unlike `value.name`, which runs whatever
@@ -146,6 +148,7 @@ pub const OperatorCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []cons
 pub const OperatorAssignment = struct { file: u32, target_span: Source.Span };
 pub const OperatorAssignments = std.AutoHashMapUnmanaged(OperatorAssignment, []const u8);
 pub const JsonEncodes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
+pub const JsonDecodes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 pub const TypeTest = struct { value: Type, target: Type };
 pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
 
@@ -204,6 +207,7 @@ method_calls: MethodCalls = .empty,
 operator_calls: OperatorCalls = .empty,
 operator_assignments: OperatorAssignments = .empty,
 json_encodes: JsonEncodes = .empty,
+json_decodes: JsonDecodes = .empty,
 super_members: MethodCalls = .empty,
 type_tests: TypeTests = .empty,
 type_names: LiteralTypes = .empty,
@@ -513,6 +517,7 @@ pub fn check(
         .operator_calls = checker.operator_calls,
         .operator_assignments = checker.operator_assignments,
         .json_encodes = checker.json_encodes,
+        .json_decodes = checker.json_decodes,
         .super_members = checker.super_members,
         .type_tests = checker.type_tests,
         .type_names = checker.type_names,
@@ -4597,7 +4602,7 @@ fn caseBodyChangesSelf(self: *Checker, body: Ast.Case.Body, receiver: Type) Erro
 
 fn expressionChangesSelf(self: *Checker, expression: *const Ast.Expression, receiver: Type) Error!bool {
     return switch (expression.data) {
-        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .string_literal, .enum_value => false,
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .string_literal, .type_literal, .enum_value => false,
         .unary => |unary| self.expressionChangesSelf(unary.operand, receiver),
         .binary => |binary| try self.expressionChangesSelf(binary.left, receiver) or
             try self.expressionChangesSelf(binary.right, receiver),
@@ -5538,6 +5543,16 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
         .logical => |logical| self.typeOfLogical(logical),
         .comparison => |comparison| self.typeOfComparison(comparison),
         .call => |call| self.typeOfCall(expression, call),
+        .type_literal => |written| {
+            _ = try self.resolveTypeExpression(written);
+            try self.report(
+                expression.span,
+                "a type can only be passed as `as:` to `Json.decode`",
+                .{},
+                "Use a value here, or write `Json.decode(text, as: Type)` to decode JSON as a type.",
+            );
+            return .invalid;
+        },
         .list_literal => self.typeOfList(expression, null),
         .string_literal => .string,
         // Section 5.1: any value can be interpolated, displayed as `print`
@@ -9321,6 +9336,9 @@ fn typeOfCall(
     if (isJsonEncodeKey(key)) {
         return self.typeOfJsonEncode(call, name, key);
     }
+    if (isJsonDecodeKey(key)) {
+        return self.typeOfJsonDecode(call, name);
+    }
 
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
@@ -9422,6 +9440,55 @@ fn typeOfJsonEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8,
     return .string;
 }
 
+/// The `Json.decode(text, as: Type)` half of 15.9's checker-known conversion.
+/// The type after `as:` is source syntax, not a runtime value, so a written
+/// function signature cannot express this call shape.
+fn typeOfJsonDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8) Error!Type {
+    const parameters: Parameters = .{
+        .types = &.{ Type.string, Type.invalid },
+        .names = &.{ "text", "as" },
+        .has_default = &.{ false, false },
+        .arity_help = "Pass JSON text and name the type to build, as in `Json.decode(text, as: Score)`.",
+    };
+    const bound = try self.arena.alloc(?usize, parameters.names.len);
+    const problem = call_arguments.bind(call, parameters.names, parameters.has_default, bound);
+    try self.checkArguments(call, name, parameters);
+    if (problem != .none) return .invalid;
+
+    const target_expression = call.arguments[bound[1].?];
+    if (target_expression.data != .type_literal) {
+        try self.report(
+            target_expression.span,
+            "`Json.decode` needs a type after `as:`",
+            .{},
+            "Name the type to build, as in `Json.decode(text, as: Score)` or `Json.decode(text, as: List[Score])`.",
+        );
+        return .invalid;
+    }
+    const target = try self.resolveTypeExpression(target_expression.data.type_literal);
+    if (target.kind == .invalid) return .invalid;
+    if (try self.jsonDecodeIssue(target, "")) |issue| {
+        if (issue.field_path.len > 0) {
+            try self.report(
+                target_expression.span,
+                "field `{s}` of {f} cannot be read from JSON because it is {f}",
+                .{ issue.field_path, target, issue.type },
+                "JSON can build strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
+            );
+        } else {
+            try self.report(
+                target_expression.span,
+                "{f} cannot be read from JSON",
+                .{target},
+                "JSON can build strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
+            );
+        }
+        return .invalid;
+    }
+    try self.json_decodes.put(self.arena, call.callee, target);
+    return target;
+}
+
 /// The exact static set decision 3(a) gives `Json.encode`. `Nothing` alone is
 /// not included: an optional is what explicitly says a program value may be
 /// represented by JSON null.
@@ -9452,9 +9519,42 @@ fn jsonEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
     }
 }
 
+fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?JsonEncodeIssue {
+    if (value.optional) return self.jsonDecodeIssue(value.payload(), field_path);
+    switch (value.kind) {
+        .string, .int, .float, .bool => return null,
+        .list => return self.jsonDecodeIssue(value.element.?.*, field_path),
+        .dictionary => {
+            if (value.key.?.kind != .string or value.key.?.optional) return .{ .type = value, .field_path = field_path };
+            return self.jsonDecodeIssue(value.element.?.*, field_path);
+        },
+        .struct_value => {
+            const user = value.user.?;
+            if (user.enumeration or jsonTextualType(user.name)) return null;
+            if (user.class or user.trait or self.constructors.contains(user.name)) return .{ .type = value, .field_path = field_path };
+            const declaration = self.struct_declarations.get(user.name).?;
+            for (declaration.fields, user.fields) |field, resolved| {
+                const next = if (field_path.len == 0)
+                    resolved.name
+                else
+                    try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ field_path, resolved.name });
+                if (Resolver.isPrivate(resolved.name) and field.default == null) return .{ .type = resolved.type, .field_path = next };
+                if (try self.jsonDecodeIssue(resolved.type, next)) |issue| return issue;
+            }
+            return null;
+        },
+        .nothing, .bytes, .range, .tuple, .set, .function, .invalid => return .{ .type = value, .field_path = field_path },
+    }
+}
+
 fn isJsonEncodeKey(key: []const u8) bool {
     return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
         std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Json::encode");
+}
+
+fn isJsonDecodeKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
+        std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Json::decode");
 }
 
 fn jsonTextualType(key: []const u8) bool {
@@ -10041,6 +10141,10 @@ fn checkArguments(
 
     for (bound, parameters.types, parameters.names) |argument_index, expected, parameter_name| {
         const argument = call.arguments[argument_index orelse continue];
+        // `Json.decode` supplies its `as:` argument as a source type. The
+        // special checker case resolves it after ordinary argument binding;
+        // no runtime expression should be type-checked here.
+        if (expected.kind == .invalid and argument.data == .type_literal) continue;
         if (parameters.private_to) |owner| if (Resolver.isPrivate(parameter_name)) {
             const named = if (argument_index.? < call.names.len) call.names[argument_index.?] else null;
             const written = if (named) |label| label.span else argument.span;

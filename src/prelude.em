@@ -1595,6 +1595,12 @@ struct Json with Textual, Equatable {
         return Emerald.Json._write(value, pretty)
     }
 
+    # The checker recognizes `as:` as a source type and gives this call that
+    # type as its result. Its dummy written shape keeps the prelude declaration
+    # available to the resolver without pretending a type is a runtime value.
+    func Json.decode(text: String, as: Nothing): Nothing {
+    }
+
     # Whether this is JSON's null.
     func null?(): Bool {
         return self.kind == Emerald.Json.Kind.null

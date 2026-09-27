@@ -588,6 +588,7 @@ fn analyze(
         &checked.operator_calls,
         &checked.operator_assignments,
         &checked.json_encodes,
+        &checked.json_decodes,
         &checked.super_members,
         &checked.type_tests,
         &checked.type_names,

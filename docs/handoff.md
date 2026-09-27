@@ -125,8 +125,13 @@ Slice 4 is complete: `Json.encode` now accepts the settled encodable program val
 optionals, lists, string-keyed dictionaries, enums, dates/times, `Json`, and structs made from
 them — using the checker-recorded source type to preserve collection element types. It reports
 nonencodable values at check time, including the specific unsupported field of a struct; only a
-non-finite Float remains a catchable runtime `JsonError`. Focused run and diagnostic
-conformance covers the boundary. Slice 5 is next: `Json.decode(text, as: Type)`.
+non-finite Float remains a catchable runtime `JsonError`. Slice 5 is also complete:
+`Json.decode(text, as: Type)` is checker-typed and builds the same recursive set of ordinary
+types. It handles structs through generated constructors, uses field defaults and optional
+fields when JSON leaves them out, ignores extra JSON fields, and reports a path-rich
+`JsonError` for malformed text or a mismatched value. Focused run, diagnostic, and runtime-error
+conformance covers the boundary. Slice 6 — reference documentation, example, rewrite-context
+integration, and a fuzz template — is next.
 
 Other candidates, each needing the user's go-ahead:
 

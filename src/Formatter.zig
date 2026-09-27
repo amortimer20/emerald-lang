@@ -1057,6 +1057,8 @@ const Printer = struct {
             // field that holds one instead.
             .enum_value => unreachable,
 
+            .type_literal => |type_expression| try self.printType(type_expression),
+
             .case_expression => |c| try self.printCase(c, expr.span.end),
             .if_expression => |value| {
                 try self.write("if ");
