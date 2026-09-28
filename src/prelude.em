@@ -123,6 +123,9 @@ class Console {
     # Native: whether this execution emits ANSI SGR styling.
     func Console._color(): Bool { return false }
 
+    # Native: terminal columns occupied by text, ignoring complete SGR styling.
+    func Console._width(text: String): Int { return 0 }
+
     # Native: removes complete ANSI SGR sequences, leaving other control text alone.
     func Console.plain(text: String): String { return text }
 

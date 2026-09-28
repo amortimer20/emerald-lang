@@ -231,7 +231,11 @@ commits.
 - Expose it as the native `Console._width(text: String): Int`. It stays private to the prelude.
 - Unit tests in Zig for ASCII, CJK, Hangul, emoji with and without VS16, a family emoji (one
   grapheme, width 2), combining marks, and styled text.
-- Settled while building: (record here)
+- Settled while building: `Console._width` and `Console.plain` share one complete-SGR
+  recognizer, so their treatment of style sequences cannot diverge. Width removes those
+  sequences before walking grapheme clusters; this also preserves a grapheme separated by
+  styling. The generated tables use Unicode 17.0.0's East Asian Wide/Fullwidth,
+  Emoji_Presentation, and General_Category Cc/Cf data.
 
 ### Slice 2: `Console.panel` and text-row `Console.table`
 

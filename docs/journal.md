@@ -10,6 +10,14 @@ entry below may explain *why* a decision was made, but the decision itself is re
 
 Sections are in roughly the order the work happened, oldest first.
 
+## Console widgets: column width
+
+The first tables/panels/prompts slice adds terminal column measurement to the Unicode 17.0.0
+tables, including East Asian Wide/Fullwidth and emoji presentation data. The width function
+walks graphemes and ignores complete SGR sequences using the same recognizer as
+`Console.plain`. `Console._width` exposes it privately to the prelude's coming layout code.
+Unicode conformance found 0 failures across 20,034 cases and 1,094,978 unlisted code points.
+
 ## Base64, hashing, and hexadecimal
 
 The four-slice utilities milestone is complete. `Bytes` now has lowercase hexadecimal

@@ -3007,6 +3007,7 @@ fn evaluateCall(
     if (self.facts.qualified.get(call.callee)) |key| {
         if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callConsoleWidth(call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsolePlain(call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(.real));
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(.awake));
@@ -3077,18 +3078,24 @@ fn callConsolePlain(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
 
     var index: usize = 0;
     while (index < text.len) {
-        if (text[index] == 0x1b and index + 1 < text.len and text[index + 1] == '[') {
-            var end = index + 2;
-            while (end < text.len and (std.ascii.isDigit(text[end]) or text[end] == ';')) : (end += 1) {}
-            if (end < text.len and text[end] == 'm') {
-                index = end + 1;
-                continue;
-            }
+        if (unicode.sgrEnd(text, index)) |end| {
+            index = end;
+            continue;
         }
         try plain.append(self.gpa, text[index]);
         index += 1;
     }
     return .{ .data = .{ .string = try self.heap.createText(try plain.toOwnedSlice(self.gpa)) } };
+}
+
+fn callConsoleWidth(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
+    const values = try self.evaluateArguments(call.arguments);
+    defer {
+        for (values) |value| self.heap.release(value);
+        self.gpa.free(values);
+    }
+    const columns = try unicode.columnWidth(self.gpa, values[0].data.string.bytes);
+    return .initInt(@intCast(columns));
 }
 
 /// One of the prelude's functions (`Resolver.prelude`), reached bare or as

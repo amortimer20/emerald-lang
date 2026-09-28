@@ -43,6 +43,7 @@ pub fn main(init: std.process.Init) !void {
     const normalization = try read.file(arena, io, directory, "DerivedNormalizationProps.txt");
     const grapheme = try read.file(arena, io, directory, "GraphemeBreakProperty.txt");
     const emoji = try read.file(arena, io, directory, "emoji-data.txt");
+    const east_asian_width = try read.file(arena, io, directory, "EastAsianWidth.txt");
     const properties = try read.file(arena, io, directory, "PropList.txt");
     const special = try read.file(arena, io, directory, "SpecialCasing.txt");
     const folding = try read.file(arena, io, directory, "CaseFolding.txt");
@@ -86,6 +87,12 @@ pub fn main(init: std.process.Init) !void {
     );
     try writeValued(arena, out, "grapheme_break", "GraphemeBreak", grapheme, null, graphemeBreakName);
     try writeRanges(arena, out, "extended_pictographic", emoji, "Extended_Pictographic");
+    try writeRanges(arena, out, "emoji_presentation", emoji, "Emoji_Presentation");
+    var wide: std.ArrayList(Range) = .empty;
+    try wide.appendSlice(arena, try collectRanges(arena, east_asian_width, "W"));
+    try wide.appendSlice(arena, try collectRanges(arena, east_asian_width, "F"));
+    try writeRangeList(out, "east_asian_wide", try merge(arena, wide.items));
+    try writeRangeList(out, "control_or_format", try categoryRanges(arena, unicode_data, &.{ "Cc", "Cf" }));
     try out.writeAll(
         \\/// The Indic_Conjunct_Break property, which rule GB9c reads.
         \\pub const ConjunctBreak = enum(u8) { none, consonant, extend, linker };

@@ -222,6 +222,65 @@ pub fn graphemeCount(bytes: []const u8) usize {
     return count;
 }
 
+/// End of a complete ANSI SGR sequence, as Console.plain recognizes it.
+pub fn sgrEnd(bytes: []const u8, index: usize) ?usize {
+    if (index + 1 >= bytes.len or bytes[index] != 0x1b or bytes[index + 1] != '[') return null;
+    var end = index + 2;
+    while (end < bytes.len and (std.ascii.isDigit(bytes[end]) or bytes[end] == ';')) : (end += 1) {}
+    return if (end < bytes.len and bytes[end] == 'm') end + 1 else null;
+}
+
+/// Terminal columns occupied by valid UTF-8 text. Complete SGR styling has no width.
+pub fn columnWidth(gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!usize {
+    var visible: std.ArrayList(u8) = .empty;
+    defer visible.deinit(gpa);
+    var index: usize = 0;
+    while (index < text.len) {
+        if (sgrEnd(text, index)) |end| {
+            index = end;
+            continue;
+        }
+        try visible.append(gpa, text[index]);
+        index += 1;
+    }
+    var width: usize = 0;
+    var graphemes: Graphemes = .init(visible.items);
+    while (graphemes.next()) |cluster| {
+        const first, _ = decode(cluster, 0);
+        if (inRanges(&tables.east_asian_wide, first) or inRanges(&tables.emoji_presentation, first)) {
+            width += 2;
+            continue;
+        }
+        var only_controls = true;
+        var emoji_variant = false;
+        var scalar: usize = 0;
+        var preceding_pictographic = false;
+        while (scalar < cluster.len) {
+            const code_point, const length = decode(cluster, scalar);
+            if (preceding_pictographic and code_point == 0xfe0f) emoji_variant = true;
+            preceding_pictographic = inRanges(&tables.extended_pictographic, code_point);
+            if (!inRanges(&tables.control_or_format, code_point)) only_controls = false;
+            scalar += length;
+        }
+        width += if (emoji_variant) @as(usize, 2) else if (only_controls) @as(usize, 0) else @as(usize, 1);
+    }
+    return width;
+}
+
+test "terminal column width follows Unicode and ignores SGR" {
+    const gpa = std.testing.allocator;
+    try std.testing.expectEqual(@as(usize, 3), try columnWidth(gpa, "Ada"));
+    try std.testing.expectEqual(@as(usize, 2), try columnWidth(gpa, "中"));
+    try std.testing.expectEqual(@as(usize, 2), try columnWidth(gpa, "한"));
+    try std.testing.expectEqual(@as(usize, 2), try columnWidth(gpa, "😀"));
+    try std.testing.expectEqual(@as(usize, 2), try columnWidth(gpa, "♥️"));
+    try std.testing.expectEqual(@as(usize, 1), try columnWidth(gpa, "♥"));
+    try std.testing.expectEqual(@as(usize, 2), try columnWidth(gpa, "👨‍👩‍👧‍👦"));
+    try std.testing.expectEqual(@as(usize, 1), try columnWidth(gpa, "e\u{0301}"));
+    try std.testing.expectEqual(@as(usize, 0), try columnWidth(gpa, "\u{200d}"));
+    try std.testing.expectEqual(@as(usize, 3), try columnWidth(gpa, "\x1b[31m中a\x1b[39m"));
+}
+
 /// Whether `index` falls between two grapheme clusters of `bytes`, which is
 /// where section 9.1 allows a string to be divided.
 pub fn isGraphemeBoundary(bytes: []const u8, index: usize) bool {

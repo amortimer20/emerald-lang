@@ -132,9 +132,11 @@ Base64 and hashing followed the accepted
 hints, and added the plan's remaining known answers and a decoding differential. The plan's
 "Settled while building" notes record each decision.
 
-Emerald 0.6.0 is released. The next milestone is Console's remaining scope: tables, panels,
-and prompts, in [`console-design-plan.md`](console-design-plan.md), accepted with all six
-recommendations. Slice 1 (column width) is next.
+Emerald 0.6.0 is released. Console's tables, panels, and prompts milestone follows
+[`console-design-plan.md`](console-design-plan.md), accepted with all six recommendations.
+Slice 1 now adds Unicode 17.0.0 terminal column width through generated East Asian Width,
+emoji presentation, and control/format data. The private `Console._width` native is ready for
+the Emerald layout functions in slice 2.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS
