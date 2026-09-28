@@ -8273,8 +8273,8 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         .{ base, member.name },
         switch (base.kind) {
             .list => "A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.",
-            .dictionary => "A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.",
-            .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
+            .dictionary => "A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.",
+            .set => "A set has `count`, and methods including `contains?`, `add`, `remove`, `union`, `intersection`, `difference`, `subset?`, `filter`, `each`, and `map`; the Set reference lists them all.",
             .string => "A String has `count`, `empty?`, `blank?`, `chars`, `code_points`, `bytes`, `upper`, `lower`, `capitalize`, `trim`, `trim_start`, `trim_end`, `contains?`, `starts_with?`, `ends_with?`, `index_of`, `substring`, `split`, `lines`, `partition`, `replace`, `insert_at`, `remove_prefix`, `remove_suffix`, `reverse`, `repeat`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `to_int`, `to_int_or`, `to_int_maybe`, `to_float`, `to_float_or`, and `to_float_maybe`.",
             .int => "An Int has `times`, `up_to`, `down_to`, `even?`, `odd?`, `multiple_of?`, `zero?`, `positive?`, `negative?`, `abs`, `clamp`, `between?`, `to_string`, `format`, `digits`, `gcd`, `lcm`, `factorial`, and `to_float`.",
             .float => "A Float has `round`, `floor`, `ceil`, `truncate`, `round_to`, `format`, `to_string`, `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `square_root`, `to_radians`, `to_degrees`, `finite?`, `infinite?`, `nan?`, and `to_int`.",

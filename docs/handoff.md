@@ -210,10 +210,6 @@ on the roadmap.
   analysis and would leak its `prelude.em#` key into a diagnostic. The prelude avoids them
   for now; the checker should eventually leave prelude bindings out of that analysis.
 
-- The dictionary and set hints for an unknown member name only some of their methods
-  (`map`, `filter`, `each`, and others are missing). The String, Int, and Float hints are
-  complete, and the list hint names the common members and points to the List reference.
-  Fix the dictionary and set hints when their reference pages are written.
 
 ## Validation and repository state
 
