@@ -10,6 +10,16 @@ entry below may explain *why* a decision was made, but the decision itself is re
 
 Sections are in roughly the order the work happened, oldest first.
 
+## Base64, hashing, and hexadecimal
+
+The four-slice utilities milestone is complete. `Bytes` now has lowercase hexadecimal
+conversion, Base64 supports standard and URL-safe forms, and `Digest` exposes SHA-256 and
+HMAC-SHA256. Invalid encoding is consistently `EncodingError`; native arguments are bound by
+name. The final integration added separate reference pages, a runnable local example, prelude
+reachability coverage, and fuzz templates. Differential tools covered 2,000 Base64 outputs
+(1,000 cases, seed 1) and 2,000 digest outputs (1,000 cases, seed 1), both with zero
+differences from Python.
+
 ## HTTP native transport slice
 
 The first HTTP slice added `src/Http.zig`, with no Emerald-facing declarations yet. Its local
@@ -3165,3 +3175,48 @@ The remaining levers from `docs/startup-design-plan.md`, now removed as finished
 
 Resolving the prelude's names, about 1 ms, is now the largest part of a small program's
 startup, left in the handoff's rough edges.
+
+## Base64 and hashing, slice 1: EncodingError and hex, 2026-09-28
+
+The first small-utilities slice adds `EncodingError`, a `RuntimeError` for text encoding
+boundaries rather than filesystem access. In particular, `Bytes.to_string()` no longer raises
+`FileError` for invalid UTF-8: raw bytes may never have come from a file. `to_string_maybe()`
+continues to report that ordinary absence without raising.
+
+`Bytes.to_hex()` writes two lowercase digits for every byte, and `Bytes.from_hex()` accepts
+either ASCII case while `from_hex_maybe()` returns `nothing` for invalid text. The raising form
+names an odd digit count, or the invalid character and its zero-based Emerald character index.
+Conformance constructs every byte value 0 through 255 and round-trips it, checks mixed case and
+the optional form, and catches each new encoding failure. A checking case protects the ordinary
+type-level `Bytes.from_hex(text: String)` signature.
+
+Pinned Zig 0.16.0 passed the Debug and ReleaseSafe `zig build test -j1` suites, `zig build
+-j1`, the documentation-example check, formatter and whitespace checks, and Windows/macOS
+cross-builds.
+
+## Base64 and hashing, slice 2: Base64, 2026-09-28
+
+`Base64.encode` writes standard padded RFC 4648 text by default and URL-safe unpadded text
+with `url_safe: true`. The matching decode methods accept either padding form and copied,
+wrapped text, reject the other alphabet rather than guessing, reject impossible final bits, and
+offer `decode_maybe` for ordinary validity checks. The checker names Bytes explicitly and tells
+the reader of `Base64.encode("hi")` to use `"hi".to_bytes()`.
+
+## Base64 and hashing, slice 3: digests, 2026-09-28
+
+`Digest.sha256` and `Digest.hmac_sha256` return the raw 32-byte result, so `to_hex()` remains
+the deliberate display and comparison step. The implementation uses Zig's SHA-256 and HMAC
+primitives and copies their fixed result into immutable Bytes. FIPS SHA-256 and RFC 4231 HMAC
+known-answer vectors protect the public boundary; the differential tool compares random inputs
+with Python's `hashlib` and `hmac`.
+
+## Base64 and hashing, review, 2026-09-28
+
+Review found Base64 decoding walking bytes: `Base64.decode("Zm9vé")` quoted half of `é` as a
+broken UTF-8 byte, at a byte index, and `ZgB=` blamed the `=` rather than the `B`. Decoding now
+walks characters as hex does and keeps each character's original index. Padding that does not
+fit its last group has its own message, and a character from the other alphabet names
+`url_safe:` in its help. The checker's help had quoted `"hi".to_bytes()` for any argument and
+suggested `to_bytes()` for Bytes given to `decode`; `Digest` had no text hint at all. The plan's
+remaining known answers (one million `a`s; RFC 4231 cases 3, 4, 6, 7) and a decoding and
+corruption differential were added, with no differences from Python.

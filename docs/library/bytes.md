@@ -8,8 +8,12 @@ for construction, indexing, conversion, and streaming binary-file use.
 
 `Bytes.from_list(numbers: List[Int]) -> Bytes` builds bytes from integers 0 through 255 and
 raises for a value outside that range. `String.to_bytes() -> Bytes` returns a string's UTF-8
-encoding. `to_string() -> String` raises when the bytes are not valid UTF-8;
+encoding. `to_string() -> String` raises `EncodingError` when the bytes are not valid UTF-8;
 `to_string_maybe() -> String?` returns `nothing` instead.
+
+`to_hex() -> String` returns two lowercase hexadecimal digits per byte. `Bytes.from_hex(text)`
+accepts upper- or lowercase digits and raises `EncodingError` for an odd length or invalid
+digit; `Bytes.from_hex_maybe(text)` returns `nothing` for that invalid input.
 
 ## Reading and combining
 

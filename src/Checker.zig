@@ -8244,6 +8244,10 @@ fn typeOfBytesMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expr
         _ = try self.requireArity(member, call.arguments, 0, 0);
         return if (std.mem.eql(u8, member.name, "to_string_maybe")) Type.string.optionalOf() else .string;
     }
+    if (std.mem.eql(u8, member.name, "to_hex")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return .string;
+    }
     try self.reportUnknownMember(.bytes, member, "method");
     try self.typeArguments(call.arguments);
     return .invalid;
@@ -9516,6 +9520,8 @@ fn typeOfCall(
     if (isCsvDecodeKey(key)) {
         return self.typeOfTypedDecode(call, name, "Csv", true);
     }
+    if (isBase64Key(key)) return self.typeOfBase64(call, name, key);
+    if (isDigestKey(key)) return self.typeOfDigest(call, name, key);
 
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
@@ -9791,6 +9797,77 @@ fn isJsonDecodeKey(key: []const u8) bool {
 fn isCsvDecodeKey(key: []const u8) bool {
     return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
         std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Csv::decode");
+}
+
+fn isBase64Key(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
+        (std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Base64::encode") or
+            std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Base64::decode") or
+            std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Base64::decode_maybe"));
+}
+
+fn typeOfBase64(self: *Checker, call: Ast.Expression.Call, name: []const u8, key: []const u8) Error!Type {
+    const signature = try self.signatureFor(key);
+    var parameters = try self.parametersOf(signature, self.declarations.get(key).?.parameters, "Pass Bytes to encode or Base64 text to decode, and optionally name `url_safe: true`.");
+    const types = try self.arena.dupe(Type, parameters.types);
+    types[0] = .invalid;
+    parameters.types = types;
+    const bound = try self.arena.alloc(?usize, parameters.names.len);
+    const problem = call_arguments.bind(call, parameters.names, parameters.has_default, bound);
+    try self.checkArguments(call, name, parameters);
+    if (problem != .none) return .invalid;
+    const value = try self.typeOf(call.arguments[bound[0].?]);
+    const encoding = std.mem.eql(u8, key[key.len - "encode".len ..], "encode");
+    const wanted: Type = if (encoding) .bytes else .string;
+    if (value.kind != .invalid and (value.kind != wanted.kind or value.optional)) {
+        const method = if (encoding) "Base64.encode" else "Base64.decode";
+        // Text given to encode wants converting; Bytes given to decode most
+        // likely means the program wanted the other direction.
+        const help = if (encoding and value.kind == .string)
+            to_bytes_help
+        else if (!encoding and value.kind == .bytes)
+            "`Base64.decode` reads Base64 text. To turn Bytes into Base64 text, use `Base64.encode`."
+        else
+            "Pass Bytes to encode, or Base64 text to decode.";
+        try self.report(call.arguments[bound[0].?].span, "{s} takes {f}, but this is {f}", .{ method, wanted, value }, help);
+    }
+    if (value.kind == .invalid or value.kind != wanted.kind or value.optional) return .invalid;
+    return if (std.mem.endsWith(u8, key, "decode_maybe")) Type.bytes.optionalOf() else if (encoding) .string else .bytes;
+}
+
+const to_bytes_help = "Convert text to Bytes first, with `to_bytes()`.";
+
+fn isDigestKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Digest::");
+}
+
+/// `Digest` takes Bytes only. Text is the likely mistake, so it gets its own
+/// help rather than the general parameter-type message.
+fn typeOfDigest(self: *Checker, call: Ast.Expression.Call, name: []const u8, key: []const u8) Error!Type {
+    const signature = try self.signatureFor(key);
+    var parameters = try self.parametersOf(signature, self.declarations.get(key).?.parameters, "Pass Bytes to digest.");
+    const types = try self.arena.alloc(Type, parameters.types.len);
+    @memset(types, .invalid);
+    parameters.types = types;
+    const bound = try self.arena.alloc(?usize, parameters.names.len);
+    const problem = call_arguments.bind(call, parameters.names, parameters.has_default, bound);
+    try self.checkArguments(call, name, parameters);
+    if (problem != .none) return .invalid;
+    var valid = true;
+    for (bound) |slot| {
+        const argument = call.arguments[slot.?];
+        const value = try self.typeOf(argument);
+        if (value.kind == .invalid) {
+            valid = false;
+        } else if (value.kind != .bytes or value.optional) {
+            valid = false;
+            const help = if (value.kind == .string) to_bytes_help else "Pass Bytes to digest.";
+            const shown = key[Resolver.prelude_namespace.len + 1 ..];
+            const method = try std.mem.replaceOwned(u8, self.arena, shown, "::", ".");
+            try self.report(argument.span, "{s} takes Bytes, but this is {f}", .{ method, value }, help);
+        }
+    }
+    return if (valid) .bytes else .invalid;
 }
 
 fn csvDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?JsonEncodeIssue {
