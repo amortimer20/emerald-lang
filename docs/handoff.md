@@ -14,7 +14,7 @@ diagnostics, symbols, format-on-save, hover, go to definition, find references, 
 completion are complete.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
-name always wins over a built-in, with a warning, and the built-in stays reachable as
+name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
 `Emerald.File`, `Emerald.print`, or `Emerald.Math.pi`. `Emerald` is the one reserved name.
 
 Nested types (14.3) are implemented: a struct, class, or enum can declare types inside its

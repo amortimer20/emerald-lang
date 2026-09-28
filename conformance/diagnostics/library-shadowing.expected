@@ -1,0 +1,4 @@
+diagnostics/library-shadowing.em:8:7: `File` has no type-level member named `read`
+  print(File.read("notes.txt"))
+        ^^^^^^^^^
+`File` here is the program's own, which hides Emerald's `File`. Write `Emerald.File.read` to use Emerald's, or give the program's type a different name.
