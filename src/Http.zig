@@ -393,7 +393,11 @@ pub const TestServer = struct {
                 request.respond("echo mismatch", .{ .status = .bad_request, .keep_alive = false }) catch {};
             }
         } else if (std.mem.eql(u8, request.head.target, "/slow")) {
-            std.Io.sleep(io, .fromMilliseconds(250), .awake) catch return;
+            // Far longer than any test's timeout: on a loaded CI machine the
+            // client's deadline task can start late, and at 250 ms the reply
+            // sometimes won the race. The client abandons a timed-out request,
+            // so the wait never delays a test.
+            std.Io.sleep(io, .fromSeconds(2), .awake) catch return;
             request.respond("too late", .{ .keep_alive = false }) catch {};
         } else if (std.mem.eql(u8, request.head.target, "/redirect")) {
             request.respond("", .{ .status = .found, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = "/ok" }} }) catch {};
