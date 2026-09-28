@@ -133,8 +133,8 @@ hints, and added the plan's remaining known answers and a decoding differential.
 "Settled while building" notes record each decision.
 
 Emerald 0.6.0 is released. The next milestone is Console's remaining scope: tables, panels,
-and prompts, in [`console-design-plan.md`](console-design-plan.md), which is proposed and
-awaits the user's six decisions. Codex builds it once they are made.
+and prompts, in [`console-design-plan.md`](console-design-plan.md), accepted with all six
+recommendations. Slice 1 (column width) is next.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS

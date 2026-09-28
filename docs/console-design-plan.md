@@ -1,10 +1,10 @@
 # Console tables, panels, and prompts: design and implementation plan
 
-Status: proposed, 2026-09-28, awaiting the user's decisions below. Rewrite-context 15.6 and 24
-leave two pieces of `Console` for later slices of the same library: layout widgets (`Table`,
-`Panel`) and line-oriented prompts (confirm, text input, single and multiple choice). This plan
-designs both. A full-screen terminal library stays parked (24): nothing here needs raw-mode
-input or a redraw loop.
+Status: accepted, 2026-09-28. The user accepted all six recommendations below. Rewrite-context
+15.6 and 24 leave two pieces of `Console` for later slices of the same library: layout widgets
+(`Table`, `Panel`) and line-oriented prompts (confirm, text input, single and multiple choice).
+This plan designs both. A full-screen terminal library stays parked (24): nothing here needs
+raw-mode input or a redraw loop. Slice 1 is next.
 
 The executor makes the remaining judgement calls within a slice and records each one under that
 slice's "Settled while building" note. At the start of each slice, reread `git status`, the
@@ -183,7 +183,7 @@ Console.choose_many(question: String, options: List[String]): List[String]
 
 ## Decisions
 
-Each has a recommendation; the user decides.
+All six were accepted as recommended on 2026-09-28. The alternatives are kept for the record.
 
 1. **Widgets return a `String` (recommended),** matching the styling helpers, so they compose
    (a table inside a panel) and can be written to a file. Alternative: widgets print directly,
