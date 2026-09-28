@@ -246,7 +246,10 @@ commits.
     cells, and styled cells lining up (with color off, the default in conformance), and each
     error.
   - `color/console-layout.em`: a colored border with styling forced on.
-- Settled while building: (record here)
+- Settled while building: the header counts as row 1 for error positions, so a malformed first
+  data row is row 2 when a header is present. Panels reuse `String.lines()` and therefore do
+  not add an empty row after a final newline. The table's shared private row/rule helpers
+  leave a clear entry point for the typed struct path in slice 3.
 
 ### Slice 3: Struct-row `Console.table`
 

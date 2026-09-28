@@ -18,6 +18,14 @@ walks graphemes and ignores complete SGR sequences using the same recognizer as
 `Console.plain`. `Console._width` exposes it privately to the prelude's coming layout code.
 Unicode conformance found 0 failures across 20,034 cases and 1,094,978 unlisted code points.
 
+## Console widgets: panels and text tables
+
+The second slice builds `Console.panel` and `Console.table` for text rows in Emerald. They
+measure through the private Unicode width native, preserve styled cell text, and make exact
+Unicode borders. Conformance covers nesting, titles, multiline text, empty/header-only
+tables, CJK and emoji widths, forced color, and the error messages for malformed rows and
+cells.
+
 ## Base64, hashing, and hexadecimal
 
 The four-slice utilities milestone is complete. `Bytes` now has lowercase hexadecimal

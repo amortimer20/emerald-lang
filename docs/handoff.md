@@ -137,6 +137,9 @@ Emerald 0.6.0 is released. Console's tables, panels, and prompts milestone follo
 Slice 1 now adds Unicode 17.0.0 terminal column width through generated East Asian Width,
 emoji presentation, and control/format data. The private `Console._width` native is ready for
 the Emerald layout functions in slice 2.
+Slice 2 adds `Console.panel` and text-row `Console.table` in the prelude, with exact border
+output, Unicode column alignment, optional panel title/color, and row/column errors.
+Struct rows and prompts are the next slices.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS

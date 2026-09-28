@@ -196,6 +196,113 @@ class Console {
     func Console.dim(text: String): String { return Emerald.Console.style(text, dim: true) }
     func Console.italic(text: String): String { return Emerald.Console.style(text, italic: true) }
     func Console.underline(text: String): String { return Emerald.Console.style(text, underline: true) }
+
+    func Console._pad(text: String, width: Int): String {
+        return text + " ".repeat(width - Emerald.Console._width(text))
+    }
+
+    func Console._table_rule(widths: List[Int], left: String, middle: String, right: String): String {
+        var rule = left
+        var index = 0
+        while index < widths.count {
+            if index > 0 {
+                rule += middle
+            }
+            rule += "─".repeat(widths[index] + 2)
+            index += 1
+        }
+        return rule + right
+    }
+
+    func Console._table_row(cells: List[String], widths: List[Int]): String {
+        var line = "│"
+        var index = 0
+        while index < cells.count {
+            line += " #{Emerald.Console._pad(cells[index], widths[index])} │"
+            index += 1
+        }
+        return line
+    }
+
+    func Console.table(rows: List[List[String]], header: List[String] = []): String {
+        if rows.count == 0 and header.count == 0 {
+            return ""
+        }
+        const columns = if header.count > 0 then header.count else rows[0].count
+        var widths: List[Int] = []
+        var column = 0
+        while column < columns {
+            widths.append(0)
+            column += 1
+        }
+        if header.count > 0 {
+            column = 0
+            while column < columns {
+                if header[column].contains?("\n") or header[column].contains?("\r") {
+                    raise RuntimeError("row 1, column #{column + 1} contains a line break")
+                }
+                widths[column] = Emerald.Console._width(header[column])
+                column += 1
+            }
+        }
+        var row_index = 0
+        while row_index < rows.count {
+            const row = rows[row_index]
+            const number = row_index + 1 + (if header.count > 0 then 1 else 0)
+            if row.count != columns {
+                raise RuntimeError("row #{number} has #{row.count} cells, but row 1 has #{columns}")
+            }
+            column = 0
+            while column < columns {
+                if row[column].contains?("\n") or row[column].contains?("\r") {
+                    raise RuntimeError("row #{number}, column #{column + 1} contains a line break")
+                }
+                const width = Emerald.Console._width(row[column])
+                if width > widths[column] {
+                    widths[column] = width
+                }
+                column += 1
+            }
+            row_index += 1
+        }
+        var result = Emerald.Console._table_rule(widths, "┌", "┬", "┐")
+        if header.count > 0 {
+            result += "\n" + Emerald.Console._table_row(header, widths)
+            result += "\n" + Emerald.Console._table_rule(widths, "├", "┼", "┤")
+        }
+        row_index = 0
+        while row_index < rows.count {
+            result += "\n" + Emerald.Console._table_row(rows[row_index], widths)
+            row_index += 1
+        }
+        return result + "\n" + Emerald.Console._table_rule(widths, "└", "┴", "┘")
+    }
+
+    func Console.panel(text: String, title: String? = nothing, color: Emerald.Console.Color? = nothing): String {
+        var lines = text.lines()
+        if lines.count == 0 {
+            lines.append("")
+        }
+        var width = 0
+        for line in lines {
+            const columns = Emerald.Console._width(line)
+            if columns > width {
+                width = columns
+            }
+        }
+        if title != nothing and Emerald.Console._width(title) + 1 > width {
+            width = Emerald.Console._width(title) + 1
+        }
+        var top = "┌" + "─".repeat(width + 2) + "┐"
+        if title != nothing {
+            top = "┌─ #{title} " + "─".repeat(width - Emerald.Console._width(title) - 1) + "┐"
+        }
+        var result = Emerald.Console.style(top, foreground: color)
+        for line in lines {
+            result += "\n" + Emerald.Console.style("│", foreground: color) + " #{Emerald.Console._pad(line, width)} " + Emerald.Console.style("│", foreground: color)
+        }
+        return result + "\n" + Emerald.Console.style("└" + "─".repeat(width + 2) + "┘", foreground: color)
+    }
 }
 
 # Section 9.3's repeatable randomness source. Its state is private and the
