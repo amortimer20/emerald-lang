@@ -1,5 +1,5 @@
-//! Section 15.7's JSON: a strict RFC 8259 parser and writer, without any
-//! Emerald-facing type yet (docs/json-design-plan.md, slice 1). The parser is
+//! Section 15.9's JSON: a strict RFC 8259 parser and writer, independent of
+//! the interpreter, which builds `Json` values from it. The parser is
 //! one pass and iterative: an explicit stack of open containers stands in
 //! for recursion, so nesting depth is checked directly rather than by
 //! however deep Zig's own call stack happens to go, the same way `Regex`'s

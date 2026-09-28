@@ -3180,18 +3180,23 @@ visible as Floats) and refuses `NaN` and infinity.
 `Json.encode(value, pretty: false)` writes compact text by default or two-space-indented text
 with `pretty: true`. It accepts `Json`, `String`, `Int`, `Float`, `Bool`, an optional (absent
 as JSON null), `List`, `Dict[String, _]`, an enum (as its value name), `Date`, `Time`,
-`DateTime`, `Instant`, or a plain struct whose stored fields are all encodable. Dictionary
-insertion order and struct declaration order become object key order. A `Set`, class, function,
+`DateTime`, `Instant`, or a plain struct whose public stored fields are all encodable,
+including a struct that holds itself, such as a tree. Dictionary insertion order and struct
+declaration order become object key order. A private field (10.5) is the struct's own
+business and is never written. A `Set`, class, function,
 byte data, non-string-keyed dictionary, or unsupported struct field is a checking error; a
 non-finite Float is a runtime `JsonError` because only its value is invalid.
 
 `Json.decode(text, as: Type)` has the matching accepted type family: `String`, `Int`, `Float`,
 `Bool`, optionals, `List`, `Dict[String, _]`, an enum, `Json`, `Date`, `Time`, `DateTime`,
 `Instant`, or a plain struct made from those values. The type after `as:` is source type syntax,
-not a runtime type object, and the checker gives the call that type. Decoded structs must use
-their generated constructor. A missing optional field is `nothing`; a missing field with a
-default evaluates that default; extra object keys are ignored. Other target types are checking
-errors.
+not a runtime type object, and the checker gives the call that type; it is recognized only in a
+call written `Json.decode` (or `Emerald.Json.decode`), so `as:` names an ordinary argument in
+every other call. Neither function can be taken as a value. Decoded structs must use their
+generated constructor. A field the document gives is read from it; a missing field takes its
+default, or `nothing` when it is optional and has none; extra object keys are ignored. A
+private field is never read from JSON and must have a default, which it always takes. Other
+target types are checking errors.
 
 `JsonError` extends `RuntimeError`. Invalid text names its line and column, including common
 mistakes such as a trailing comma, single quotes, an unquoted key, a comment, `NaN`, or an
@@ -3855,8 +3860,9 @@ recorded in their normative sections:
 | Decision | Resolution | Reasoning |
 | --- | --- | --- |
 | JSON's two conversion paths (15.9) | `parse` produces a navigable `Json`; checker-known `encode` and `decode(text, as: Type)` convert a program's known types | An API response and a program's own saved `Score` have opposite information available. One dynamic value type and one static conversion spell the distinction without asking a beginner to build a serialization framework. |
-| JSON decoded structs (15.9) | Only a plain struct using its generated constructor is decodable; missing optionals are `nothing`, missing defaults run, and extra JSON keys are ignored | A custom constructor can enforce an invariant or interpret fields differently, so pretending the runtime knows how to call it would be a hidden second construction path. Defaults make hand-edited settings forward-compatible, while ignored extras make readers tolerant of a newer writer. |
+| JSON decoded structs (15.9) | Only a plain struct using its generated constructor is decodable; a missing field takes its default, or `nothing` when it is optional and has none, and extra JSON keys are ignored | A custom constructor can enforce an invariant or interpret fields differently, so pretending the runtime knows how to call it would be a hidden second construction path. Defaults make hand-edited settings forward-compatible, while ignored extras make readers tolerant of a newer writer. |
 | `as:` for JSON decoding (15.9) | The type is source syntax accepted only as `Json.decode`'s named `as:` argument | Emerald has no runtime type objects. Keeping this one checker-known call shape local avoids introducing a broad type-as-value feature for a single conversion operation. |
+| Private fields and JSON (15.9, 10.5) | Never written by `encode`, never read by `decode`; a decodable struct's private fields need defaults | A private field is the struct's own business: writing it would publish internal state, and reading it would let a hand-edited file set what the struct's own code guards. Taking the default keeps a decoded value exactly what the generated constructor could have built. |
 | Ordering (5.2) | Only numbers and strings are ordered; every type has `==` and `!=` | `true < false` has no meaning a reader would guess, so it is rejected rather than given one. |
 | Uninitialized `const` (4.1) | Rejected at the declaration | A `const` can never be assigned afterward, so it would stay unassigned forever. |
 | Descending literal ranges (6.4) | `5..1` is an error, not a warning | It can only be empty, so it can only be a mistake, and an error cannot be scrolled past. Computed endpoints are never reported. |

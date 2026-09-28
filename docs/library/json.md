@@ -53,9 +53,14 @@ print(settings.volume, settings.note)    # 5 nothing
 
 The target may be `String`, `Int`, `Float`, `Bool`, an optional, `List`, `Dict[String, V]`,
 an enum, `Json`, `Date`, `Time`, `DateTime`, `Instant`, or a plain struct made from those
-types. A struct must use its generated constructor. Missing optional fields become `nothing`;
-missing fields with defaults use their defaults; extra object keys are ignored. A target outside
-that set is a checking error before the program runs.
+types, including a struct that holds itself, such as a tree. A struct must use its generated
+constructor. A field the document gives is read from it; a missing field takes its default, or
+`nothing` when it is optional and has none; extra object keys are ignored. A private field is
+never read from JSON: it must have a default, and always takes it. A target outside that set
+is a checking error before the program runs.
+
+`Json.decode` must be called by that name (or `Emerald.Json.decode`): that is how `as:` is
+recognized as a type. Neither `Json.decode` nor `Json.encode` can be kept as a value.
 
 **Raises** `JsonError` for invalid text, a missing required field, or a JSON value of the
 wrong kind. Its message identifies the value's path, such as `players[2].score` or
@@ -67,9 +72,9 @@ Writes JSON. With `pretty: false` (the default), the result is compact; `pretty:
 two spaces per indentation level.
 
 `value` may be a `Json`, `String`, `Int`, `Float`, `Bool`, optional, `List`,
-`Dict[String, V]`, enum, `Date`, `Time`, `DateTime`, `Instant`, or a plain struct whose fields
-are all among those types. Object keys follow dictionary insertion order and struct fields
-follow declaration order. Enums write their value names, and absent optionals write `null`.
+`Dict[String, V]`, enum, `Date`, `Time`, `DateTime`, `Instant`, or a plain struct whose public
+fields are all among those types. Private fields are never written. Object keys follow
+dictionary insertion order and struct fields follow declaration order. Enums write their value names, and absent optionals write `null`.
 
 **Raises** `JsonError` when a `Float` value is `NaN` or infinite. Other types JSON cannot
 represent — such as `Set`, `Bytes`, a function, a class, or a bad struct field — are checking

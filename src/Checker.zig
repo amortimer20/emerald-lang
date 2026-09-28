@@ -208,6 +208,9 @@ operator_calls: OperatorCalls = .empty,
 operator_assignments: OperatorAssignments = .empty,
 json_encodes: JsonEncodes = .empty,
 json_decodes: JsonDecodes = .empty,
+/// The structs `jsonEncodeIssue` and `jsonDecodeIssue` are inside, so a type
+/// that holds itself, such as a tree's `children: List[Node]`, is checked once.
+json_visiting: std.ArrayList([]const u8) = .empty,
 super_members: MethodCalls = .empty,
 type_tests: TypeTests = .empty,
 type_names: LiteralTypes = .empty,
@@ -6253,6 +6256,19 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         );
         return .invalid;
     }
+    // Section 15.9: `Json.encode` and `Json.decode` are checked specially at
+    // each call, which no function value could carry.
+    if (isJsonEncodeKey(reference.key) or isJsonDecodeKey(reference.key)) {
+        const which = if (isJsonEncodeKey(reference.key)) "encode" else "decode";
+        try self.reportWithHelp(
+            expression.span,
+            "`Json.{s}` has to be called",
+            .{which},
+            "It checks the type of what it is given at each call, so it cannot be kept as a value. Call it where it is needed, or wrap the call in a block.",
+            .{},
+        );
+        return .invalid;
+    }
     // `Emerald.print` as a value: a built-in function, which can only be called.
     if (Resolver.builtinFunctionName(reference.key) != null) return self.typeOfFunctionValue(expression, reference);
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
@@ -9461,7 +9477,7 @@ fn typeOfJsonDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8)
             target_expression.span,
             "`Json.decode` needs a type after `as:`",
             .{},
-            "Name the type to build, as in `Json.decode(text, as: Score)` or `Json.decode(text, as: List[Score])`.",
+            "Name the type to build, as in `Json.decode(text, as: Score)` or `Json.decode(text, as: List[Score])`. The type is recognized only in a call written `Json.decode(...)`.",
         );
         return .invalid;
     }
@@ -9506,7 +9522,13 @@ fn jsonEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
             if (user.enumeration) return null;
             if (user.class or user.trait) return .{ .type = value, .field_path = field_path };
             if (jsonTextualType(user.name)) return null;
+            if (self.jsonVisiting(user.name)) return null;
+            try self.json_visiting.append(self.arena, user.name);
+            defer _ = self.json_visiting.pop();
             for (user.fields) |field| {
+                // A private field is the struct's own business and is never
+                // written (15.9).
+                if (Resolver.isPrivate(field.name)) continue;
                 const next = if (field_path.len == 0)
                     field.name
                 else
@@ -9532,19 +9554,34 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
             const user = value.user.?;
             if (user.enumeration or jsonTextualType(user.name)) return null;
             if (user.class or user.trait or self.constructors.contains(user.name)) return .{ .type = value, .field_path = field_path };
+            if (self.jsonVisiting(user.name)) return null;
+            try self.json_visiting.append(self.arena, user.name);
+            defer _ = self.json_visiting.pop();
             const declaration = self.struct_declarations.get(user.name).?;
             for (declaration.fields, user.fields) |field, resolved| {
                 const next = if (field_path.len == 0)
                     resolved.name
                 else
                     try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ field_path, resolved.name });
-                if (Resolver.isPrivate(resolved.name) and field.default == null) return .{ .type = resolved.type, .field_path = next };
+                // A private field is never read from JSON, so it needs a
+                // default to start from (15.9).
+                if (Resolver.isPrivate(resolved.name)) {
+                    if (field.default == null) return .{ .type = resolved.type, .field_path = next };
+                    continue;
+                }
                 if (try self.jsonDecodeIssue(resolved.type, next)) |issue| return issue;
             }
             return null;
         },
         .nothing, .bytes, .range, .tuple, .set, .function, .invalid => return .{ .type = value, .field_path = field_path },
     }
+}
+
+fn jsonVisiting(self: *Checker, key: []const u8) bool {
+    for (self.json_visiting.items) |visiting| {
+        if (std.mem.eql(u8, visiting, key)) return true;
+    }
+    return false;
 }
 
 fn isJsonEncodeKey(key: []const u8) bool {

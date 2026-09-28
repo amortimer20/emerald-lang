@@ -3697,7 +3697,12 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
         ));
     }
     if (native == .decode) {
-        const text = try self.evaluate(call.arguments[0]);
+        // The checker has bound `text` and `as`, in either order; `as` is
+        // the one argument that is a type.
+        const text_argument = for (call.arguments) |argument| {
+            if (argument.data != .type_literal) break argument;
+        } else unreachable;
+        const text = try self.evaluate(text_argument);
         defer self.heap.release(text);
         var problem: Json.Problem = .{};
         var document = Json.parse(self.gpa, text.data.string.bytes, &problem) catch |err| switch (err) {
@@ -3989,6 +3994,10 @@ fn jsonDecodeStruct(self: *Interpreter, span: Source.Span, json: Json.Value, tar
     return self.jsonDecodePlainStruct(span, json, target, path);
 }
 
+/// Decision 4 of the JSON plan: a field the document gives is read from it; a
+/// missing one takes its default, or else `nothing` when it is optional; any
+/// other missing field is an error. A private field is never read from JSON
+/// and always takes its default, which the checker has required it to have.
 fn jsonDecodePlainStruct(self: *Interpreter, span: Source.Span, json: Json.Value, target: Type, path: []const u8) Error!Value {
     const user = target.user.?;
     const descriptor = self.structs.get(user.name).?;
@@ -3998,24 +4007,37 @@ fn jsonDecodePlainStruct(self: *Interpreter, span: Source.Span, json: Json.Value
         self.gpa.free(fields);
         return err;
     } } };
-    errdefer self.heap.release(result);
+    // `runFieldDefaults` takes over `result`, so it is released here only
+    // until then.
+    var owned = true;
+    errdefer if (owned) self.heap.release(result);
+    const defaulted = try self.gpa.alloc(bool, user.fields.len);
+    defer self.gpa.free(defaulted);
+    @memset(defaulted, false);
+    var any_defaulted = false;
     const declaration = self.struct_infos.get(user.name).?.declaration;
     for (user.fields, declaration.fields, 0..) |field, written, index| {
-        const child_path = try self.jsonObjectPath(path, field.name);
-        defer self.gpa.free(child_path);
-        if (json.get(field.name)) |source| {
-            fields[index] = try self.jsonDecodeValue(span, source, field.type, child_path);
+        const private = Resolver.isPrivate(field.name);
+        const source = if (private) null else json.get(field.name);
+        if (source) |given| {
+            const child_path = try self.jsonObjectPath(path, field.name);
+            defer self.gpa.free(child_path);
+            fields[index] = try self.jsonDecodeValue(span, given, field.type, child_path);
+        } else if (written.default != null) {
+            // Evaluated below, in their normal Emerald context.
+            defaulted[index] = true;
+            any_defaulted = true;
         } else if (field.type.optional) {
             fields[index] = Value.nothing;
-        } else if (written.default != null) {
-            // Defaults are evaluated below, in their normal Emerald context.
         } else {
-            return self.raiseJsonDecodeMessage(span, child_path, "a value is required here", .{});
+            const child_path = try self.jsonObjectPath(path, field.name);
+            defer self.gpa.free(child_path);
+            return self.raiseJsonDecodeMessage(span, child_path, "this value is missing", .{});
         }
     }
-    const info = self.struct_infos.get(user.name).?;
-    if (info.any_default) return self.runFieldDefaults(span, user.name, result, info.has_default);
-    return result;
+    if (!any_defaulted) return result;
+    owned = false;
+    return self.runFieldDefaults(span, user.name, result, defaulted);
 }
 
 fn raiseJsonDecodeParse(self: *Interpreter, span: Source.Span, problem: Json.Problem) Error {
@@ -4025,7 +4047,38 @@ fn raiseJsonDecodeParse(self: *Interpreter, span: Source.Span, problem: Json.Pro
 }
 
 fn raiseJsonDecodeKind(self: *Interpreter, span: Source.Span, path: []const u8, expected: []const u8, json: Json.Value) Error {
-    return self.raiseJsonDecodeMessage(span, path, "expected {s}, found {s}", .{ expected, jsonKindName(json.kind) });
+    const found = try jsonDescribe(self.gpa, json);
+    defer self.gpa.free(found);
+    return self.raiseJsonDecodeMessage(span, path, "expected {s}, found {s}", .{ expected, found });
+}
+
+/// A JSON value in a few words, the same way `Json`'s own conversions name
+/// what they found: `the text "12"`, `the number 3.5`, `a list`.
+fn jsonDescribe(gpa: std.mem.Allocator, json: Json.Value) std.mem.Allocator.Error![]u8 {
+    return switch (json.kind) {
+        .null => gpa.dupe(u8, "null"),
+        .bool => gpa.dupe(u8, if (json.bool_value) "true" else "false"),
+        .number => blk: {
+            var out: std.Io.Writer.Allocating = .init(gpa);
+            defer out.deinit();
+            out.writer.writeAll("the number ") catch return error.OutOfMemory;
+            Json.write(json, .{}, &out.writer) catch return error.OutOfMemory;
+            break :blk gpa.dupe(u8, out.written());
+        },
+        .string => blk: {
+            const limit = 40;
+            if (unicode.graphemeCount(json.string_value) <= limit) break :blk std.fmt.allocPrint(gpa, "the text \"{s}\"", .{json.string_value});
+            var end: usize = 0;
+            var counted: usize = 0;
+            while (counted < limit) : (counted += 1) {
+                end += 1;
+                while (end < json.string_value.len and !unicode.isGraphemeBoundary(json.string_value, end)) end += 1;
+            }
+            break :blk std.fmt.allocPrint(gpa, "the text \"{s}\u{2026}\"", .{json.string_value[0..end]});
+        },
+        .list => gpa.dupe(u8, "a list"),
+        .object => gpa.dupe(u8, "an object"),
+    };
 }
 
 fn raiseJsonDecodeMessage(self: *Interpreter, span: Source.Span, path: []const u8, comptime format: []const u8, args: anytype) Error {
@@ -4035,17 +4088,6 @@ fn raiseJsonDecodeMessage(self: *Interpreter, span: Source.Span, path: []const u
     defer self.gpa.free(message);
     self.raised_value = self.makeError(Resolver.preludeKey("JsonError"), message) catch return error.OutOfMemory;
     return self.raiseTyped(span, "JsonError", message, "Correct the JSON value or decode it as a type that matches its shape.");
-}
-
-fn jsonKindName(kind: Json.Kind) []const u8 {
-    return switch (kind) {
-        .null => "null",
-        .bool => "true or false",
-        .number => "a number",
-        .string => "text",
-        .list => "a list",
-        .object => "an object",
-    };
 }
 
 fn jsonIndexPath(self: *Interpreter, path: []const u8, index: usize) std.mem.Allocator.Error![]u8 {
@@ -4108,13 +4150,17 @@ fn jsonFromStructValue(self: *Interpreter, arena: std.mem.Allocator, span: Sourc
         return .initString(try arena.dupe(u8, text.data.string.bytes));
     }
 
+    // A private field is the struct's own business and is never written.
     const fields = value.data.struct_value.fields;
-    const entries = try arena.alloc(Json.Entry, user.fields.len);
-    for (user.fields, fields, entries) |field, source, *entry| entry.* = .{
-        .key = field.name,
-        .value = try self.jsonFromTypedValue(arena, span, source, field.type),
-    };
-    return .initObject(entries);
+    var entries: std.ArrayList(Json.Entry) = .empty;
+    for (user.fields, fields) |field, source| {
+        if (Resolver.isPrivate(field.name)) continue;
+        try entries.append(arena, .{
+            .key = field.name,
+            .value = try self.jsonFromTypedValue(arena, span, source, field.type),
+        });
+    }
+    return .initObject(entries.items);
 }
 
 fn jsonTextualType(key: []const u8) bool {

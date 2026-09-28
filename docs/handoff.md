@@ -112,7 +112,7 @@ method changes only ordinary identifier uses.
 JSON is complete. The user chose to finish the standard library (JSON, then an HTTP client,
 then the smaller items in rewrite-context 15.7), then make small optimizations such as startup
 time, and eventually build a native compiler.
-[`json-design-plan.md`](json-design-plan.md) is accepted with every recommendation, including
+The JSON design plan was accepted with every recommendation, including
 decision 3 (a): the checker types `Json.encode` and `Json.decode(text, as: Type)` specially,
 as it does `print`. Slices 1 (the native parser and writer, `src/Json.zig`), 2 (the `Json`
 value in the prelude: `parse`, `parse_maybe`, `kind`, navigation, conversions, paths in
@@ -137,6 +137,12 @@ fuzzer. JSON's milestone is complete; the next approved library design is a sync
 client. Slice 6 validation passed with the pinned toolchain, Debug and ReleaseSafe tests,
 `zig build`, documentation examples, a 1,000-case ReleaseSafe fuzz campaign (seed 24), Zig
 format checks, and `git diff --check`.
+
+A review of slices 3–6 then fixed six defects (see the journal): an `as:` argument to any
+function was parsed as a type; a struct that holds itself hung the checker; field defaults
+overwrote values the document gave; private fields were written and read; naming `text:` and
+`as:` in the other order crashed; and `Json.decode` could be kept as a value. Private fields
+are now never written or read, and a missing field's default wins over `nothing`.
 
 Other candidates, each needing the user's go-ahead:
 

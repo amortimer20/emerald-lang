@@ -1,4 +1,4 @@
-runtime-errors/json-decode-wrong-kind.em:1:1: JsonError: at ["first name"]: expected a whole number, found text
+runtime-errors/json-decode-wrong-kind.em:1:1: JsonError: at ["first name"]: expected a whole number, found the text "one"
   Json.decode("{\"first name\": \"one\"}", as: Dict[String, Int])
   ^^^^^^^^^^^
 Correct the JSON value or decode it as a type that matches its shape.

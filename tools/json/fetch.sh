@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Downloads Nicolas Seriot's JSONTestSuite (MIT-licensed), 318 small files
 # that say by name whether a strict RFC 8259 parser must accept or reject
-# them: docs/json-design-plan.md's slice 1 checks against them, the way
-# slice 1 of the Unicode work checked against a full database download.
+# them: src/Json.zig is checked against them, the way the Unicode tables
+# are checked against a full database download.
 # They are not committed; run `zig build json-conformance` after fetching.
 #
 #   bash tools/json/fetch.sh .jsontestsuite

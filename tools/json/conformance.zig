@@ -6,7 +6,7 @@
 //!
 //! Two `y_` files are a deliberate, documented exception: JSONTestSuite
 //! counts a duplicate key as something a parser may accept (most do, the
-//! last value winning), but docs/json-design-plan.md refuses one instead,
+//! last value winning), but Emerald (rewrite-context 15.9) refuses one instead,
 //! since in a file edited by hand it is almost always a mistake that would
 //! otherwise silently discard data.
 //!

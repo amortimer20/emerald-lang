@@ -1,4 +1,4 @@
-runtime-errors/json-decode-missing-field.em:6:1: JsonError: at points: a value is required here
+runtime-errors/json-decode-missing-field.em:6:1: JsonError: at points: this value is missing
   Json.decode("{\"name\": \"Ada\"}", as: Score)
   ^^^^^^^^^^^
 Correct the JSON value or decode it as a type that matches its shape.

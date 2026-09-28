@@ -10,8 +10,8 @@ refuse it.
 Two kinds of documents are excluded, both a deliberate, documented
 difference from Python's `json`, which is more permissive than RFC 8259 in
 these two ways: `NaN`/`Infinity`/`-Infinity`, which Python accepts as an
-extension (docs/json-design-plan.md refuses them by name), and a duplicate
-key, which Python keeps the last of (the plan refuses it, since in a
+extension (Emerald refuses them by name, rewrite-context 15.9), and a duplicate
+key, which Python keeps the last of (Emerald refuses it, since in a
 hand-written file that is almost always a mistake that would otherwise
 silently discard data). The generator gives every key a running number, so
 it never produces one on its own.

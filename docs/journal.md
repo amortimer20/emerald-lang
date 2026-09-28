@@ -2881,3 +2881,35 @@ The bounded execution fuzzer also gained a typed struct list that it encodes, pa
 decodes. That is not a replacement for the focused conformance cases; it puts the new parser,
 checker special case, and interpreter conversion into the existing randomized frontend and
 execution cleanup path.
+
+## JSON slices 3–6 review, 2026-09-27
+
+Reviewing the builders, typed encoding and decoding, and integration found six defects, each
+now fixed with conformance (`run/json-decode-fields`, `run/as-argument`,
+`diagnostics/json-encode-decode-as-values`):
+
+- **`as:` was a type in every call.** The parser read any `as:` argument as a type, so
+  `describe(3, as: "feet")` failed to parse. It is now a type only in a call written
+  `Json.decode` or `Emerald.Json.decode`; the parser cannot resolve names, and the checker's
+  help says so when a type is missing.
+- **A struct holding itself hung the checker.** `jsonEncodeIssue` and `jsonDecodeIssue`
+  recursed through `children: List[Node]` forever. A stack of structs being checked stops
+  the second visit; trees now round-trip.
+- **Defaults overwrote the document.** Decoding ran every field default after reading the
+  fields, so `"volume": 9` came back as the default 5. Defaults now run only for fields the
+  document leaves out, the same mask the generated constructor uses, and a default wins over
+  `nothing` for a missing optional field.
+- **Private fields leaked both ways.** `encode` wrote `_balance`, and `decode` read it (only
+  the defaults bug hid that). A private field is now never written and never read; the
+  decision row in 22 gives the reasoning.
+- **Naming the arguments in the other order crashed.** `Json.decode(as: Int, text: "3")`
+  evaluated the type. The text argument is now found by kind.
+- **`Json.decode` could be kept as a value**, exposing its placeholder signature. Both
+  `encode` and `decode` now report that they have to be called.
+
+Typed decoding's wrong-kind messages now describe the value they found (`found the text
+"loud"`), as `Json`'s own conversions do, and a missing field says "this value is missing".
+
+With JSON complete and its behavior in rewrite-context 15.9, `docs/json-design-plan.md` is
+removed, as the finished date and regex plans were; `git log -- docs/json-design-plan.md`
+finds it. References in `src/Json.zig` and `tools/json/` now cite 15.9.
