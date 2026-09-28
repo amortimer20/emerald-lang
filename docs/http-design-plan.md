@@ -1,7 +1,7 @@
 # HTTP client: design and implementation plan
 
 Status: accepted, 2026-09-27. The user accepted every recommendation, including decision 2
-(a): an error status raises `HttpError` by default. Slices 1 and 2 are complete; slice 3 is next. Rewrite-context 15.7
+(a): an error status raises `HttpError` by default. Slices 1 through 3 are complete; slice 4 is next. Rewrite-context 15.7
 lists a synchronous HTTP client as the next standard-library item after JSON. This plan sets
 out the API, what an HTTP failure looks like to a beginner, how the work is tested without
 the internet, and the order of work. The executor makes the remaining judgement calls
@@ -168,10 +168,12 @@ All five were accepted as recommended on 2026-09-27.
    - **(b) Never raise for a status,** as Python's `requests`, JavaScript's `fetch`, and
      Ruby's `Net::HTTP` do. It is familiar to experienced programmers, but it makes every
      beginner program's first mistake silent.
-3. **Certificates are always verified,** with no option to turn that off. An untrusted,
-   expired, or mismatched certificate is a `HttpError` explaining which it is. Alternative:
-   an `insecure: true` escape hatch, as many libraries have. It is also what gets copied
-   from forums and left in, and a beginner has no way to judge when it is safe.
+3. **Certificates are always verified,** with no option to turn that off. A certificate
+   validation failure is a `HttpError` explaining that the server's identity could not be
+   verified. Zig 0.16 does not preserve whether it was untrusted, expired, or mismatched, so
+   the message does not guess. Alternative: an `insecure: true` escape hatch, as many libraries
+   have. It is also what gets copied from forums and left in, and a beginner has no way to judge
+   when it is safe.
 4. **Proxies come from the environment.** `HTTP_PROXY`, `HTTPS_PROXY`, and their lowercase
    forms are honored, through Zig's `initDefaultProxies`, because school networks often
    require a proxy and a student cannot change the program's code to reach one. There is no
@@ -194,7 +196,7 @@ wording, not necessarily word for word:
 | Unknown host | `could not find the server "api.exmple.com"; check the spelling of the address` |
 | Refused | `could not connect to api.example.com: nothing is accepting connections on port 443` |
 | Timed out | `https://api.example.com/slow did not answer within 30 seconds; pass a longer timeout: if it is expected to be slow` |
-| Certificate | `could not verify the identity of api.example.com: its certificate has expired` (or: is not trusted, is for a different address) |
+| Certificate | `could not verify the identity of api.example.com: its certificate is not trusted` (Zig 0.16 reports expired, self-signed, and wrong-host validation failures through one transport error, so Emerald does not guess which cause applies) |
 | Error status | `the server answered 404 Not Found for https://api.example.com/users/404` |
 | Too large | `the response from https://example.com/huge is larger than 64 MB` |
 | Not text | `the response from https://example.com/logo.png is not UTF-8 text; read it with .bytes instead` |
@@ -262,6 +264,19 @@ rewrite-context text written in the same change.
    `zig build test` or CI) that fetches a few real HTTPS addresses, including badssl.com's
    expired, self-signed, and wrong-host certificates, and checks each message; plus unknown
    host and proxy behavior. Record the run in the journal. Fix whatever it finds.
+
+   **Settled while building (2026-09-28):** `Http.Client.initDefaultProxies` is explicitly
+   initialized from the host process environment and retains parsed values by pointer, so the
+   client owns an arena for their full lifetime. The runtime passes that environment privately
+   through `run`, `test`, and the REPL; Emerald programs still cannot inspect environment
+   variables. The live check found that Zig's resolver can report an unknown name as
+   `NoAddressReturned`, not only `UnknownHostName`, so both are now `unknown_host`. Zig 0.16's
+   HTTP client condenses expired, self-signed, and wrong-host TLS validation failures into
+   `TlsInitializationFailed`; Emerald therefore gives one accurate generic certificate message
+   rather than guessing the cause. On 2026-09-28, with no proxy configured, the manual check
+   accepted `https://example.com`, rejected all three badssl certificate hosts, and rejected
+   the reserved nonexistent `.invalid` host. It also ran those failures through Emerald and
+   verified the public `HttpError` wording.
 4. **Documentation and integration.** `docs/library/http.md`, an inventory row, an example,
    a new rewrite-context section (15.10) with decision rows in 22, and 15.7 updated. The
    example needs a network, so check how `tools/check-doc-examples.sh` runs linked examples

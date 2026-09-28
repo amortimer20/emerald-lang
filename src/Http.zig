@@ -17,6 +17,9 @@ pub const Problem = struct {
         invalid_url,
         unsupported_scheme,
         connection_failed,
+        unknown_host,
+        certificate_failed,
+        certificate_store_failed,
         timed_out,
         too_many_redirects,
         response_too_large,
@@ -75,18 +78,28 @@ pub const Client = struct {
     allocator: Allocator,
     threaded: std.Io.Threaded,
     inner: std.http.Client,
+    /// `std.http.Client.initDefaultProxies` stores parsed environment values
+    /// by pointer, so this arena must outlive every request the client makes.
+    proxy_arena: std.heap.ArenaAllocator,
 
     /// Initializes in place because `std.Io.Threaded.io()` retains a pointer
     /// to its owning `Threaded`; returning a copied `Threaded` would leave the
     /// HTTP client pointing at the old stack address.
-    pub fn init(self: *Client, allocator: Allocator) void {
+    pub fn init(self: *Client, allocator: Allocator, environment: std.process.Environ) !void {
         self.allocator = allocator;
         self.threaded = std.Io.Threaded.init(allocator, .{});
+        self.proxy_arena = .init(allocator);
         self.inner = .{ .allocator = allocator, .io = self.threaded.io() };
+        errdefer self.deinit();
+
+        var map = try std.process.Environ.createMap(environment, allocator);
+        defer map.deinit();
+        try self.inner.initDefaultProxies(self.proxy_arena.allocator(), &map);
     }
 
     pub fn deinit(self: *Client) void {
         self.inner.deinit();
+        self.proxy_arena.deinit();
         self.threaded.deinit();
         self.* = undefined;
     }
@@ -266,13 +279,27 @@ fn freeHeaders(allocator: Allocator, headers: []Header) void {
 
 fn mapError(err: anyerror) Problem {
     return switch (err) {
-        error.InvalidFormat, error.InvalidCharacter, error.InvalidEnd, error.InvalidPort, error.UnexpectedCharacter => .{ .kind = .invalid_url, .message = "the URL is not valid" },
+        error.InvalidFormat, error.InvalidCharacter, error.InvalidEnd, error.InvalidPort, error.UnexpectedCharacter, error.UriMissingHost => .{ .kind = .invalid_url, .message = "the URL is not valid" },
         error.UnsupportedUriScheme => .{ .kind = .unsupported_scheme, .message = "the URL must use `http` or `https`" },
         error.TooManyHttpRedirects => .{ .kind = .too_many_redirects, .message = "the HTTP request followed too many redirects" },
+        error.UnknownHostName, error.NoAddressReturned => .{ .kind = .unknown_host, .message = "the server name could not be found" },
         error.ConnectionRefused, error.ConnectionTimedOut, error.NetworkUnreachable, error.HostUnreachable, error.NameServerFailure => .{ .kind = .connection_failed, .message = "the HTTP server could not be reached" },
+        error.TlsInitializationFailed => .{ .kind = .certificate_failed, .message = "the server's certificate could not be verified" },
+        error.CertificateBundleLoadFailure => .{ .kind = .certificate_store_failed, .message = "this machine's trusted certificates could not be read" },
         error.Canceled => .{ .kind = .timed_out, .message = "the HTTP request timed out" },
         else => .{ .kind = .request_failed, .message = "the HTTP request failed" },
     };
+}
+
+test "HTTP maps DNS and certificate failures to teachable problems" {
+    try std.testing.expectEqual(Problem.Kind.unknown_host, mapError(error.UnknownHostName).kind);
+    // Zig's resolver also uses this when a lookup succeeds but returns no
+    // usable addresses, as the live check demonstrated.
+    try std.testing.expectEqual(Problem.Kind.unknown_host, mapError(error.NoAddressReturned).kind);
+    // Zig 0.16's client deliberately condenses individual TLS validation
+    // failures to this one transport error; Emerald explains it generically.
+    try std.testing.expectEqual(Problem.Kind.certificate_failed, mapError(error.TlsInitializationFailed).kind);
+    try std.testing.expectEqual(Problem.Kind.certificate_store_failed, mapError(error.CertificateBundleLoadFailure).kind);
 }
 
 test "the interpreter global I/O cannot support a deadline race" {
@@ -404,7 +431,7 @@ test "local HTTP transport handles responses, redirects, limits, and deadlines" 
     const server = try TestServer.start(allocator);
     defer server.deinit();
     var client: Client = undefined;
-    client.init(allocator);
+    try client.init(allocator, .empty);
     defer client.deinit();
 
     const ok_url = try server.url(allocator, "/ok");

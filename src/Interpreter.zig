@@ -27,6 +27,7 @@
 //! reservation runs out.
 
 const std = @import("std");
+const version_options = @import("version_options");
 const Ast = @import("Ast.zig");
 const Checker = @import("Checker.zig");
 const Diagnostic = @import("Diagnostic.zig");
@@ -168,6 +169,9 @@ out: *std.Io.Writer,
 in: *std.Io.Reader,
 /// The execution-owned Console styling policy.
 color: bool,
+/// The host environment is private runtime configuration. HTTP reads only
+/// proxy variables from it; Emerald programs have no environment API.
+environment: std.process.Environ,
 /// Section 15.8's `TimeZone.local`, resolved once for the whole execution.
 local_zone: TimeZone.Local,
 /// The built-in zone database, decompressed the first time a program names a
@@ -310,6 +314,7 @@ pub fn run(
     in: *std.Io.Reader,
     arguments: []const []const u8,
     color: bool,
+    process_environment: std.process.Environ,
     local_zone: TimeZone.Local,
     stack: StackLimit,
     test_mode: bool,
@@ -345,6 +350,7 @@ pub fn run(
         .out = out,
         .in = in,
         .color = color,
+        .environment = process_environment,
         .local_zone = local_zone,
         .arguments = arguments,
         .signatures = signatures,
@@ -3885,9 +3891,12 @@ fn httpRequest(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call,
         try headers.append(self.gpa, .{ .name = header_name, .value = entry.value.data.string.bytes });
     }
     if (content_type) |default_type| if (!supplied_content_type) try headers.append(self.gpa, .{ .name = "content-type", .value = default_type });
-    if (!containsHeader(headers.items, "user-agent")) try headers.append(self.gpa, .{ .name = "user-agent", .value = "Emerald/0.4.1" });
+    if (!containsHeader(headers.items, "user-agent")) {
+        const user_agent = try std.fmt.allocPrint(self.arena, "Emerald/{s}", .{version_options.version});
+        try headers.append(self.gpa, .{ .name = "user-agent", .value = user_agent });
+    }
 
-    const client = try self.httpClient();
+    const client = try self.httpClient(span);
     var response = switch (client.request(requested_url, .{ .method = method, .body = body, .headers = headers.items, .timeout = timeout })) {
         .problem => |problem| return self.raiseHttpProblem(span, requested_url, problem),
         .response => |answer| answer,
@@ -3969,11 +3978,16 @@ fn httpTimeout(self: *Interpreter, span: Source.Span, value: Value) Error!std.Io
     return .fromNanoseconds(@intCast(total));
 }
 
-fn httpClient(self: *Interpreter) RunError!*Http.Client {
+fn httpClient(self: *Interpreter, span: Source.Span) Error!*Http.Client {
     if (self.http_client) |client| return client;
     const client = try self.gpa.create(Http.Client);
     errdefer self.gpa.destroy(client);
-    client.init(self.gpa);
+    client.init(self.gpa, self.environment) catch return self.raiseHttp(
+        span,
+        "could not read this machine's proxy settings",
+        null,
+        "Check that HTTP_PROXY or HTTPS_PROXY is a web address, or remove it if no proxy is needed.",
+    );
     self.http_client = client;
     return client;
 }
@@ -4052,7 +4066,10 @@ fn raiseHttpProblem(self: *Interpreter, span: Source.Span, url: []const u8, prob
         .timed_out => std.fmt.allocPrint(self.arena, "`{s}` did not answer before its timeout", .{url}),
         .too_many_redirects => std.fmt.allocPrint(self.arena, "`{s}` redirected more than 5 times", .{url}),
         .response_too_large => std.fmt.allocPrint(self.arena, "the response from `{s}` is larger than 64 MB", .{url}),
+        .unknown_host => std.fmt.allocPrint(self.arena, "could not find the server in `{s}`; check the spelling of the address", .{url}),
         .connection_failed => std.fmt.allocPrint(self.arena, "could not reach the server for `{s}`", .{url}),
+        .certificate_failed => std.fmt.allocPrint(self.arena, "could not verify the identity of the server for `{s}`; its certificate is not trusted", .{url}),
+        .certificate_store_failed => std.fmt.allocPrint(self.arena, "could not read this machine's trusted certificates while reaching `{s}`", .{url}),
         .request_failed => std.fmt.allocPrint(self.arena, "could not complete the request to `{s}`", .{url}),
     } catch return error.OutOfMemory;
     return self.raiseHttp(span, message, null, "Check the address and that the server is reachable.");

@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-26. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-28. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -119,8 +119,14 @@ and a local test server) is complete. Slice 2 now exposes the planned `Http` req
 bytes, JSON, and header access. The offline `conformance/http/` cases start the loopback server
 per case and receive its generated base address through `Program.arguments[0]`; they cover every
 request form, named arguments, query encoding, redirects, status behavior, and the local error
-paths. The interpreter keeps one worker-backed transport client for each program run. Slice 3,
-the opt-in live-network check, is next; no automatic test reaches the internet.
+paths. The interpreter keeps one worker-backed transport client for each program run. Slice 3
+adds `zig build http-live`, an opt-in check that alone reaches public HTTPS hosts; no automatic
+test reaches the internet. It verifies a trusted request, each badssl certificate failure, an
+unknown host, proxy initialization, and the actual Emerald `HttpError` messages. Proxy settings
+now flow privately through `run`, `test`, and the REPL without becoming a program-visible
+environment API. Zig 0.16 reports the three certificate causes as one validation failure, so
+the public message accurately says the certificate is not trusted rather than guessing its cause.
+Slice 4, documentation and integration, is next.
 
 Other candidates, each needing the user's go-ahead:
 

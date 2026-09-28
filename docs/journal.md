@@ -2939,3 +2939,22 @@ arguments, query percent encoding, headers, redirects, strict mode, UTF-8 and JS
 timeouts, redirect loops, and invalid addresses without reaching the internet. The lower-level
 Zig request API was needed because `fetch` drops the response metadata the Emerald API exposes;
 the finished body is transferred directly into existing immutable `Bytes` storage.
+
+## HTTP client, slice 3: opt-in live HTTPS verification, 2026-09-28
+
+`zig build http-live` is now the sole manually invoked network check. It is not a dependency of
+`zig build test` or CI. It reads the host's proxy settings through Zig's standard
+`initDefaultProxies` API, while keeping the process environment private to the runtime; `run`,
+`test`, and the REPL all supply that configuration consistently.
+
+The manual run on 2026-09-28 found no configured proxy. It received HTTP 200 from
+`https://example.com`, rejected expired, self-signed, and wrong-host certificates at badssl.com,
+and classified the reserved nonexistent `.invalid` host as unknown. The resolver returned
+`NoAddressReturned` for that host, so it now shares the `unknown_host` mapping with
+`UnknownHostName`. The check also evaluates small Emerald programs to verify that the resulting
+`HttpError` messages are clear.
+
+Zig 0.16's HTTP client collapses the distinct certificate-validation failures into
+`TlsInitializationFailed`. Emerald consequently reports the accurate common fact — the server's
+certificate is not trusted — instead of claiming whether it is expired, self-signed, or for a
+different address.

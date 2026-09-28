@@ -126,9 +126,10 @@ const ReplayReader = struct {
 /// `color` is the execution's resolved Console styling policy
 /// (rewrite-context 15.6): `main.zig` resolves it the same way it does for
 /// `run`/`test`, since the REPL has no `--color` flag of its own.
-/// `local_zone` is the machine's time zone, resolved the same way
-/// too (15.8).
-pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer, color: bool, local_zone: emerald.TimeZone.Local) !void {
+/// `environment` is private host configuration for native libraries such as
+/// `Http`; Emerald code still has no environment-variable API. `local_zone`
+/// is the machine's time zone, resolved the same way too (15.8).
+pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer, color: bool, environment: std.process.Environ, local_zone: emerald.TimeZone.Local) !void {
     var session: Session = .{};
     defer session.deinit(gpa);
 
@@ -197,9 +198,9 @@ pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer, colo
                         try wrapped.appendSlice(gpa, "print(");
                         try wrapped.appendSlice(gpa, trimmed);
                         try wrapped.appendSlice(gpa, ")\n");
-                        try tryEntry(gpa, &session, wrapped.items, in, out, color, local_zone);
+                        try tryEntry(gpa, &session, wrapped.items, in, out, color, environment, local_zone);
                     } else {
-                        try tryEntry(gpa, &session, pending.items, in, out, color, local_zone);
+                        try tryEntry(gpa, &session, pending.items, in, out, color, environment, local_zone);
                     }
                     continue :entries;
                 },
@@ -344,6 +345,7 @@ fn tryEntry(
     live_in: *std.Io.Reader,
     out: *std.Io.Writer,
     color: bool,
+    environment: std.process.Environ,
     local_zone: emerald.TimeZone.Local,
 ) !void {
     var scratch_text: std.ArrayList(u8) = .empty;
@@ -362,7 +364,7 @@ fn tryEntry(
     var reader_buffer: [256]u8 = undefined;
     var replay = ReplayReader.init(session.recorded_input.items, live_in, &newly_read, gpa, &reader_buffer);
 
-    var report = try emerald.run(gpa, &source, .{ .out = &captured.writer, .in = &replay.interface, .color = color, .local_zone = local_zone });
+    var report = try emerald.run(gpa, &source, .{ .out = &captured.writer, .in = &replay.interface, .color = color, .environment = environment, .local_zone = local_zone });
     defer report.deinit();
 
     const sources = [_]Source{source};
