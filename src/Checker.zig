@@ -2075,7 +2075,20 @@ fn find(self: *Checker, name: []const u8) ?*Binding {
             if (self.scopes.items[index].getPtr(qualified)) |binding| return binding;
         }
     }
+    self.requireInView(name, key);
     return self.moduleFallback(&.{ name, key });
+}
+
+/// A body sees only the module variables the resolver recorded it using
+/// (`moduleViewFor`). Reaching one it did not record would be a gap in that
+/// record, never the program's mistake, so it stops at once rather than
+/// checking the body without the variable's state.
+fn requireInView(self: *const Checker, name: []const u8, key: ?[]const u8) void {
+    for ([_]?[]const u8{ name, key }) |maybe| {
+        const binding = self.module.get(maybe orelse continue) orelse continue;
+        if (binding.is_function or binding.is_type) continue;
+        std.debug.panic("the module variable {s} was used in a body the resolver did not record it in", .{maybe.?});
+    }
 }
 
 fn findKey(self: *Checker, key: []const u8) ?*Binding {
@@ -3904,6 +3917,30 @@ fn moduleView(self: *Checker) Error!*Scope {
     return view;
 }
 
+/// `moduleView` for a body whose module uses the resolver recorded
+/// (`Resolver.Facts.body_module_uses`): only those variables, each a copy that
+/// counts as assigned. Copying every module variable for every body made each
+/// body, and each branch snapshot inside it, cost as much as all of the
+/// program's variables. A body the resolver did not walk gets the whole view.
+fn moduleViewFor(self: *Checker, statements: []const Ast.Statement) Error!*Scope {
+    // Field defaults are checked in a body with no statements of its own, so
+    // an empty body, like one the resolver did not walk, gets the whole view.
+    if (statements.len == 0) return self.moduleView();
+    const uses = self.facts.body_module_uses.get(@intFromPtr(statements.ptr)) orelse return self.moduleView();
+    const view = try self.arena.create(Scope);
+    view.* = .empty;
+    try view.ensureTotalCapacity(self.arena, uses.count());
+    var names = uses.keyIterator();
+    while (names.next()) |name| {
+        // A program name shadows a prelude one, as at the top level.
+        var binding = self.module.get(name.*) orelse self.prelude.get(name.*) orelse continue;
+        if (binding.is_function or binding.is_type) continue;
+        binding.assigned = true;
+        view.putAssumeCapacity(name.*, binding);
+    }
+    return view;
+}
+
 const ViewKey = struct {
     key: []const u8,
     from_module: bool,
@@ -3995,7 +4032,7 @@ fn checkBodyWithSelf(
     constructing: ?Constructing,
     receiver: ?Type,
 ) Error!void {
-    const view = try self.moduleView();
+    const view = try self.moduleViewFor(statements);
     return self.checkBodyWithSelfIn(&.{view}, parameter_list, parameter_types, statements, expected_return_type, constructing, receiver);
 }
 
