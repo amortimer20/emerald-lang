@@ -139,3 +139,10 @@ jobs:
             dist/emerald-*.tar.gz
             dist/emerald-*.zip
             dist/SHA256SUMS
+
+  install-check:
+    name: Check the install scripts
+    needs: publish
+    uses: ./.github/workflows/install.yml
+    with:
+      version: ${{ github.ref_name }}

@@ -84,6 +84,12 @@ Release preparation now also packages and smokes the binary's version, `help`, `
 `test`, `format --check`, `explain`, and clean REPL exit on every release platform. A manual
 release-workflow dispatch builds and verifies artifacts but cannot publish them; publishing
 requires a `vX.Y.Z` tag.
+Students install with one command per platform: `install.ps1` (PowerShell, `irm … | iex`)
+and `install.sh` (`curl … | sh`) at the repository root download the latest release, check
+`SHA256SUMS`, install without administrator rights, add Emerald to the user `PATH`, and
+uninstall cleanly. `.github/workflows/install.yml` runs both against a real release on Ubuntu,
+macOS, and Windows PowerShell 5.1 and 7, when the scripts change and after each release; it is
+kept out of ordinary CI because it reaches the network.
 The root README is now a user-facing entry point: a first program, installation, common
 commands, source build, and learning links. It uses the shared Emerald SVG mark and leaves
 implementation history, agent instructions, and source-tree inventory to their proper docs.

@@ -23,15 +23,45 @@ details may change between releases.
 
 ## Install
 
-The easiest way to install a released binary is [Mise](https://mise.jdx.dev/):
+On **Windows**, open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.ps1 | iex
+```
+
+On **macOS** (Apple silicon) or **Linux** (x86-64), open a terminal and run:
 
 ```bash
-mise use -g "github:amortimer20/emerald-lang@latest"
+curl -fsSL https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.sh | sh
+```
+
+Then open a new terminal and check it worked:
+
+```bash
 emerald --version
 ```
 
-Released packages are available for Linux x86_64, macOS ARM64, and Windows x86_64. See the
-[installation guide](docs/mise-install.md) for pinned-version installation and troubleshooting.
+The script downloads the latest release, checks it against the release's checksums, and adds
+Emerald to your `PATH`. It needs no administrator rights. Emerald goes in
+`%LOCALAPPDATA%\Programs\Emerald` on Windows and `~/.emerald/bin` elsewhere. Run the same
+command again to update. Editors such as VS Code find Emerald once they are restarted.
+
+To install a particular release, or to uninstall:
+
+```powershell
+# Windows
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.ps1))) -Version v0.5.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.ps1))) -Uninstall
+```
+
+```bash
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.sh | sh -s -- --version v0.5.0
+curl -fsSL https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.sh | sh -s -- --uninstall
+```
+
+If you already use [Mise](https://mise.jdx.dev/), it can install Emerald instead; see the
+[Mise guide](docs/mise-install.md).
 
 ## Try it
 
