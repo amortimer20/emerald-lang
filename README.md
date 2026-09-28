@@ -50,13 +50,13 @@ To install a particular release, or to uninstall:
 
 ```powershell
 # Windows
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.ps1))) -Version v0.5.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.ps1))) -Version v0.6.0
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.ps1))) -Uninstall
 ```
 
 ```bash
 # macOS and Linux
-curl -fsSL https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.sh | sh -s -- --version v0.5.0
+curl -fsSL https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.sh | sh -s -- --version v0.6.0
 curl -fsSL https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.sh | sh -s -- --uninstall
 ```
 
