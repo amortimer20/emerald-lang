@@ -35,3 +35,6 @@ print(events[0].on.weekday)
 # CSV's typed path reaches the same Date parser through an ordinary record.
 const csv_events = Csv.decode("title,on\nLaunch,2026-09-28", as: List[Event])
 print(csv_events[0].on)
+
+print(Base64.encode("reach".to_bytes()))
+print(Digest.sha256("reach".to_bytes()).count)

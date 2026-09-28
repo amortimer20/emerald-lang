@@ -3006,8 +3006,8 @@ as Ruby's.
 - **CSV** is done (15.11). It gives a spreadsheet-shaped text table both a dynamic path for
   unknown columns and a checker-known path for a program's own plain records, without making a
   beginner write one string conversion per cell.
-- **Small utilities**: `Base64` and one or two hash/digest functions. Narrow vocabulary, no
-  open design question, safe to add whenever there is time.
+- **Small utilities** are done (15.12): `Base64`, SHA-256/HMAC-SHA256 digests, and hex on
+  `Bytes`.
 
 **Worth doing before too long, still needing no concurrency or package manager:**
 
@@ -3302,6 +3302,23 @@ before execution, rather than attempting an implicit serialization convention.
 retain their physical line where known; typed conversion failures name both line and column.
 Writing and reading use the same one-grapheme separator rule, so an invalid separator is also a
 catchable `CsvError`.
+
+### 15.12 Base64, hashing, and hexadecimal
+
+`Base64.encode(bytes, url_safe: false)` and `Base64.decode(text, url_safe: false)` convert
+between immutable `Bytes` and RFC 4648 text. Standard encoding uses `+` and `/` with padding;
+URL-safe encoding uses `-` and `_` without padding. Decoding accepts either padding form and
+ignores spaces, tabs, and line endings, but rejects mixed alphabets, malformed padding, and
+non-zero leftover bits. `decode_maybe` returns `nothing` instead of raising.
+
+`bytes.to_hex()` writes two lowercase digits per byte. `Bytes.from_hex` accepts either case,
+and its `_maybe` companion returns `nothing` for invalid or odd-length input. All Base64 and
+hex failures, and invalid UTF-8 passed to `Bytes.to_string()`, raise `EncodingError`, a
+`RuntimeError` subclass.
+
+`Digest.sha256(bytes)` and `Digest.hmac_sha256(bytes, key)` return stable 32-byte digests.
+They are deliberately distinct from `Hashable.hash()`, whose value is a runtime detail and
+must not be persisted or displayed. These functions are not password hashing.
 
 ## 16. Annotations, assertions, and tests
 

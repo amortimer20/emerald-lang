@@ -129,13 +129,15 @@ variables it uses, and starts with the prelude already parsed, since `tools/prel
 parses it when Emerald is built. The journal's startup entries record the measurements,
 including a lever that was tried and reverted.
 
-The Base64 and hashing milestone is under way, following the accepted
+The Base64 and hashing milestone is complete, following the accepted
 [`base64-hashing-design-plan.md`](base64-hashing-design-plan.md): `Base64`, `Digest.sha256` and
 `hmac_sha256`, hex on `Bytes`, and one `EncodingError`. Slice 1 delivers `EncodingError`,
 `Bytes.to_hex`, and `Bytes.from_hex`/`from_hex_maybe`; invalid UTF-8 Bytes now correctly raise
 `EncodingError` rather than `FileError`. Slice 2 adds standard and URL-safe Base64 encoding and
-decoding. Slice 3 adds SHA-256 and HMAC-SHA256 over Bytes; the final slice documents and
-integrates the milestone.
+decoding. Slice 3 adds SHA-256 and HMAC-SHA256 over Bytes; slice 4 adds the reference pages,
+runnable encoding example, prelude reachability coverage, and valid-program fuzz templates.
+Native arguments are bound by their public names, so named arguments can be written in any
+order.
 
 The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
@@ -148,6 +150,14 @@ Other candidates, each needing the user's go-ahead:
 
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
+
+The Base64/hashing integration validation passed pinned Zig 0.16.0 Debug and ReleaseSafe
+`zig build test -j1`, `zig build -j1`, the documentation example check, formatting and diff
+checks, and Windows/macOS cross-builds. Base64 and digest differential tools reported zero
+differences (1,000 random cases each, seed 1). An alternating 10-run ReleaseSafe startup
+comparison against the pre-milestone baseline measured the current binary at 97.5% for
+`print(1)` and 102.4% for the JSON program; the language-only case was 98.3%, with no
+measurable regression for programs that do not use these namespaces.
 
 Before each release, refresh the time-zone data with `python3 tools/update-tzdata.py` (see
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than

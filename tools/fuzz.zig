@@ -65,7 +65,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // campaign rather than only by its unit test.
     if (random.uintLessThan(u8, 8) == 0) {
         const count = random.uintLessThan(u8, 16);
-        return switch (random.uintLessThan(u8, 9)) {
+        return switch (random.uintLessThan(u8, 11)) {
             0 => std.fmt.allocPrint(gpa,
                 \\var i = 0
                 \\while i < {d} {{
@@ -152,6 +152,15 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\const scores = Csv.decode(text: written, separator: ";", as: List[Score])
                 \\const records = Csv.parse_records(written, separator: ";")
                 \\print(scores[0].name, scores[0].points, scores[0].note, records[0]["active"])
+            , .{count}),
+            8 => std.fmt.allocPrint(gpa,
+                \\const data = "fuzz {d}".to_bytes()
+                \\const encoded = Base64.encode(data, url_safe: {s})
+                \\print(Base64.decode(encoded, url_safe: {s}).count, data.to_hex())
+            , .{ count, if (count % 2 == 0) "true" else "false", if (count % 2 == 0) "true" else "false" }),
+            9 => std.fmt.allocPrint(gpa,
+                \\const data = "fuzz {d}".to_bytes()
+                \\print(Digest.sha256(data).to_hex(), Digest.hmac_sha256(data, "key".to_bytes()).count)
             , .{count}),
             else => std.fmt.allocPrint(gpa,
                 \\const score = {d}

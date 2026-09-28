@@ -261,7 +261,11 @@ commits.
 - A fuzz template for valid programs using `Base64`, `Digest`, and hex, and a
   `run/prelude-reach` line for each namespace.
 - Update docs/handoff.md and add a journal entry.
-- Settled while building: (record here)
+- Settled while building: the public reference is split into Base64, Digest, and Bytes pages;
+  the runnable integration example uses only fixed local text and bytes, so documentation
+  checks never require a network or fixture file. Digest natives bind their arguments by the
+  declared names (`bytes` and `key`), matching the named-argument rule used by Base64 and the
+  other native namespaces.
 
 ## Validation
 

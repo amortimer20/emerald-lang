@@ -26,7 +26,7 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | [`Float`](float.md) | Rounding, classification, conversion, angles, square root | `conformance/run/float-methods.em` |
 | [`Math`](math.md) | Constants, trigonometry, logarithms, powers | `conformance/run/math.em` |
 | [`String`](string.md) | Unicode-aware queries, editing, splitting, conversion | `conformance/run/string-methods.em` |
-| [`Bytes`](bytes.md) | Raw binary construction, conversion, indexing, slicing | `conformance/run/bytes-binary-file.em` |
+| [`Bytes`](bytes.md) | Raw binary construction, conversion, indexing, slicing, hex encoding | `conformance/run/bytes-hex.em` |
 | [`List[T]`](list.md) | Properties, reading, changing, higher-order, and shape methods | `conformance/run/lists.em` |
 | [`Dict[K, V]`](dict.md) | Lookup, entries, keys/values, set-like operations, callbacks | `examples/dictionaries.em` |
 | [`Set[T]`](set.md) | Membership, set algebra, callbacks | `conformance/run/set-operations.em` |
@@ -38,6 +38,7 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | [`Console`](console.md) | Color/style helpers, `Console.style`, `Console.plain`, the color policy | `conformance/color/console-style.em` |
 | [`Json`](json.md) | Strict parsing, navigation, typed encoding and decoding, builders, `JsonError` | `examples/json.em` |
 | [`Csv`](csv.md) | Text rows and records, typed decoding and encoding, `CsvError` | `examples/csv.em` |
+| [`Base64`](base64.md), [`Digest`](digest.md) | Base64 conversion and SHA-256/HMAC-SHA256 digests | `examples/encoding.em` |
 | [`Http`, `Http.Response`](http.md) | Synchronous web requests, headers, JSON/text/binary responses, `HttpError` | `examples/http.em` |
 | [Dates and times](dates-and-times.md) | Choosing a type, calendar vs. exact arithmetic, text, zones, errors | `examples/dates.em` |
 | [`Date`, `Weekday`](date.md) | Calendar dates, weekdays, month arithmetic, differences, parsing | `conformance/run/date-basics.em` |

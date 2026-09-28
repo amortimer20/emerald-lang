@@ -10,6 +10,16 @@ entry below may explain *why* a decision was made, but the decision itself is re
 
 Sections are in roughly the order the work happened, oldest first.
 
+## Base64, hashing, and hexadecimal
+
+The four-slice utilities milestone is complete. `Bytes` now has lowercase hexadecimal
+conversion, Base64 supports standard and URL-safe forms, and `Digest` exposes SHA-256 and
+HMAC-SHA256. Invalid encoding is consistently `EncodingError`; native arguments are bound by
+name. The final integration added separate reference pages, a runnable local example, prelude
+reachability coverage, and fuzz templates. Differential tools covered 2,000 Base64 outputs
+(1,000 cases, seed 1) and 2,000 digest outputs (1,000 cases, seed 1), both with zero
+differences from Python.
+
 ## HTTP native transport slice
 
 The first HTTP slice added `src/Http.zig`, with no Emerald-facing declarations yet. Its local

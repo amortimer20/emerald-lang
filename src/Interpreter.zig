@@ -3569,16 +3569,18 @@ fn callBase64(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast
 }
 
 fn callDigest(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!Value {
-    const values = try self.evaluateArguments(call.arguments);
+    const hmac = std.mem.eql(u8, name, "hmac_sha256");
+    const bound = try self.evaluateBound(call, if (hmac) &.{ "bytes", "key" } else &.{ "bytes" }, if (hmac) &.{ false, false } else &.{false});
     defer {
-        for (values) |value| self.heap.release(value);
-        self.gpa.free(values);
+        self.releaseBound(bound);
+        self.gpa.free(bound.values);
+        if (bound.omitted) |omitted| self.gpa.free(omitted);
     }
     var out: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
-    if (std.mem.eql(u8, name, "sha256")) {
-        std.crypto.hash.sha2.Sha256.hash(values[0].data.bytes.bytes, &out, .{});
+    if (!hmac) {
+        std.crypto.hash.sha2.Sha256.hash(bound.values[0].data.bytes.bytes, &out, .{});
     } else {
-        std.crypto.auth.hmac.sha2.HmacSha256.create(&out, values[0].data.bytes.bytes, values[1].data.bytes.bytes);
+        std.crypto.auth.hmac.sha2.HmacSha256.create(&out, bound.values[0].data.bytes.bytes, bound.values[1].data.bytes.bytes);
     }
     return self.heap.copyBytes(&out);
 }
