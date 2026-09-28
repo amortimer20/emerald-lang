@@ -139,7 +139,13 @@ emoji presentation, and control/format data. The private `Console._width` native
 the Emerald layout functions in slice 2.
 Slice 2 adds `Console.panel` and text-row `Console.table` in the prelude, with exact border
 output, Unicode column alignment, optional panel title/color, and row/column errors.
-Struct rows and prompts are the next slices.
+Slice 3 adds struct rows to `Console.table`, using CSV's exact eligible-field checks and
+shared record-to-cell conversion. Public fields become the header in declaration order, and
+numeric fields align right. Prompts are blocked on a plan/source mismatch: the accepted plan
+requires `InputError` at end of input and says `input` already raises it, but the current
+prelude has no `InputError` and the interpreter raises `RuntimeError`. The rewrite context
+also incorrectly claims `InputError` exists. The next step is to settle that error-model
+correction before slice 4; do not substitute a different prompt API implicitly.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS

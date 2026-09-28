@@ -214,17 +214,22 @@ class Console {
         return rule + right
     }
 
-    func Console._table_row(cells: List[String], widths: List[Int]): String {
+    func Console._table_row(cells: List[String], widths: List[Int], right: List[Bool]): String {
         var line = "│"
         var index = 0
         while index < cells.count {
-            line += " #{Emerald.Console._pad(cells[index], widths[index])} │"
+            const cell = if index < right.count and right[index] then " ".repeat(widths[index] - Emerald.Console._width(cells[index])) + cells[index] else Emerald.Console._pad(cells[index], widths[index])
+            line += " #{cell} │"
             index += 1
         }
         return line
     }
 
     func Console.table(rows: List[List[String]], header: List[String] = []): String {
+        return Emerald.Console._table_impl(rows, header, [])
+    }
+
+    func Console._table_impl(rows: List[List[String]], header: List[String], right: List[Bool]): String {
         if rows.count == 0 and header.count == 0 {
             return ""
         }
@@ -267,12 +272,12 @@ class Console {
         }
         var result = Emerald.Console._table_rule(widths, "┌", "┬", "┐")
         if header.count > 0 {
-            result += "\n" + Emerald.Console._table_row(header, widths)
+            result += "\n" + Emerald.Console._table_row(header, widths, [])
             result += "\n" + Emerald.Console._table_rule(widths, "├", "┼", "┤")
         }
         row_index = 0
         while row_index < rows.count {
-            result += "\n" + Emerald.Console._table_row(rows[row_index], widths)
+            result += "\n" + Emerald.Console._table_row(rows[row_index], widths, right)
             row_index += 1
         }
         return result + "\n" + Emerald.Console._table_rule(widths, "└", "┴", "┘")

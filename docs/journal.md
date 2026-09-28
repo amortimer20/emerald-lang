@@ -26,6 +26,14 @@ Unicode borders. Conformance covers nesting, titles, multiline text, empty/heade
 tables, CJK and emoji widths, forced color, and the error messages for malformed rows and
 cells.
 
+## Console widgets: struct tables
+
+The third slice accepts a List of plain records, using CSV's existing checker rule for
+text-compatible fields and the same runtime conversion of public fields to cells. The
+prelude's table layout handles both row shapes; numeric struct columns align right.
+Conformance covers mixed numeric/optional values, private-field omission, empty typed
+records, invalid fields, and rejection of an explicit header with struct rows.
+
 ## Base64, hashing, and hexadecimal
 
 The four-slice utilities milestone is complete. `Bytes` now has lowercase hexadecimal

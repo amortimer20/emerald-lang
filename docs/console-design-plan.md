@@ -258,7 +258,12 @@ commits.
   columns right-aligned.
 - A diagnostics case for a struct with a field that cannot be a cell, and one for `header:`
   given with struct rows.
-- Settled while building: (record here)
+- Settled while building: the checker reuses `csvEncodeIssue` for the exact CSV scalar/enum/
+  date-time cell vocabulary. At runtime, CSV and Console share one declaration-order record
+  walk; Console uses print's display rule for each cell, while CSV keeps its file format.
+  The struct table then invokes the prelude's private table layout
+  with right-alignment flags for numeric fields. An empty text-row literal retains its
+  contextual `List[List[String]]` type, while an empty typed record list gets a struct header.
 
 ### Slice 4: Prompts
 
@@ -269,7 +274,11 @@ commits.
   - defaults, bounds, and `choose_many` with repeats, spaces, and none;
   - end of input as an `InputError` in `runtime-errors/`;
   - each bad-argument error.
-- Settled while building: (record here)
+- Blocked before implementation: the plan's premise that `input` raises `InputError` at
+  end of input is not true in the source. `src/prelude.em` has no `InputError`, and
+  `Interpreter.evaluateInput` calls `raise`, which constructs `RuntimeError`. The same
+  incorrect claim appears in rewrite-context 15.2. Per the executor rule, do not invent a
+  different prompt error API here; settle the input-error design before this slice resumes.
 
 ### Slice 5: Documentation and integration
 

@@ -1,0 +1,4 @@
+diagnostics/console-table-field.em:4:15: field `values` of List[BadRow] cannot be shown in a table because it is List[Int]
+  Console.table([BadRow([1, 2])])
+                ^^^^^^^^^^^^^^^^
+Table columns can show text, whole numbers, numbers, true or false, enums, dates and times, and optional values.
