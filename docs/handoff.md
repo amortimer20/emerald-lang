@@ -111,46 +111,19 @@ method changes only ordinary identifier uses.
 
 JSON is complete. The user chose to finish the standard library (JSON, then an HTTP client,
 then the smaller items in rewrite-context 15.7), then make small optimizations such as startup
-time, and eventually build a native compiler.
-The JSON design plan was accepted with every recommendation, including
-decision 3 (a): the checker types `Json.encode` and `Json.decode(text, as: Type)` specially,
-as it does `print`. Slices 1 (the native parser and writer, `src/Json.zig`), 2 (the `Json`
-value in the prelude: `parse`, `parse_maybe`, `kind`, navigation, conversions, paths in
-errors, display, equality, and `JsonError`), and 3 are done. Slice 3 adds `Json.null`, the
-`from_string`/`from_int`/`from_float`/`from_bool`/`from_list`/`from_object` builders, and
-`Json.encode` for already-built `Json` values, compact and pretty, with round-trip
-conformance. `from_float` refuses NaN and infinity as `JsonError`; the native writer also
-defensively reports malformed internal non-finite values as `JsonError` rather than crashing.
-Slice 4 is complete: `Json.encode` now accepts the settled encodable program values — scalars,
-optionals, lists, string-keyed dictionaries, enums, dates/times, `Json`, and structs made from
-them — using the checker-recorded source type to preserve collection element types. It reports
-nonencodable values at check time, including the specific unsupported field of a struct; only a
-non-finite Float remains a catchable runtime `JsonError`. Slice 5 is also complete:
-`Json.decode(text, as: Type)` is checker-typed and builds the same recursive set of ordinary
-types. It handles structs through generated constructors, uses field defaults and optional
-fields when JSON leaves them out, ignores extra JSON fields, and reports a path-rich
-`JsonError` for malformed text or a mismatched value. Focused run, diagnostic, and runtime-error
-conformance covers the boundary. Slice 6 completes the integration: [`docs/library/json.md`](library/json.md),
-an inventory row, a zero-argument [`examples/json.em`](../examples/json.em), the settled
-rewrite-context rules and decision rows, and a typed JSON round-trip in the bounded execution
-fuzzer. JSON's milestone is complete; the next approved library design is a synchronous HTTP
-client. Slice 6 validation passed with the pinned toolchain, Debug and ReleaseSafe tests,
-`zig build`, documentation examples, a 1,000-case ReleaseSafe fuzz campaign (seed 24), Zig
-format checks, and `git diff --check`.
-
-A review of slices 3–6 then fixed six defects (see the journal): an `as:` argument to any
-function was parsed as a type; a struct that holds itself hung the checker; field defaults
-overwrote values the document gave; private fields were written and read; naming `text:` and
-`as:` in the other order crashed; and `Json.decode` could be kept as a value. Private fields
-are now never written or read, and a missing field's default wins over `nothing`.
+time, and eventually build a native compiler. The HTTP client's plan is
+[`http-design-plan.md`](http-design-plan.md), proposed and awaiting the user's five decisions;
+once they are recorded there, slice 1 (the native request and a local test server) is next.
+Codex is expected to carry out most of it; the plan's "Working notes for the executor" are
+for whoever does.
 
 Other candidates, each needing the user's go-ahead:
 
-- A **synchronous HTTP client**, after JSON, with its own design plan.
-- **Startup performance.** Every run type-checks every prelude body, and the date and time
-  work took a ReleaseSafe `print(1)` from about 5 ms to about 8.3 ms. Checking only the
+- **Startup performance**, queued right after the HTTP client. Every run type-checks every
+  prelude body, and a ReleaseSafe `print(1)` has grown from about 5.6 ms to about 9.3 ms. Checking only the
   prelude bodies a program can reach needs the interpreter to stop relying on facts recorded
   for every body; measure before and after, as the date slices did.
+- **Base64 and hashing**, small utilities that could follow the HTTP client.
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
 
