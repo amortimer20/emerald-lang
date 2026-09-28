@@ -143,7 +143,8 @@ Other candidates, each needing the user's go-ahead:
   prelude body, and a ReleaseSafe `print(1)` has grown from about 5.6 ms to about 9.3 ms. Checking only the
   prelude bodies a program can reach needs the interpreter to stop relying on facts recorded
   for every body; measure before and after, as the date slices did.
-- **Base64 and hashing**, small utilities that could follow the HTTP client.
+- **Base64 and hashing**: [`base64-hashing-design-plan.md`](base64-hashing-design-plan.md)
+  is proposed and awaits the user's five decisions. It starts after CSV is merged.
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
 
