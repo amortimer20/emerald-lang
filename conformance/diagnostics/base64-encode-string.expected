@@ -1,0 +1,4 @@
+diagnostics/base64-encode-string.em:1:15: Base64.encode takes Bytes, but this is String
+  Base64.encode("hi")
+                ^^^^
+Convert text with `"hi".to_bytes()`.

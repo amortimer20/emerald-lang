@@ -225,7 +225,10 @@ commits.
   - decoding of random valid and corrupted text, compared against `base64.b64decode(...,
     validate=True)` after the documented whitespace removal.
   - Report the case count and seed, as the JSON and CSV differentials do.
-- Settled while building: (record here)
+- Settled while building: decoding removes ASCII spaces, tabs, and line endings before
+  validation, then uses Zig's no-padding codec after explicitly accepting and checking a
+  standard padding suffix. This makes the accepted padded and unpadded forms one path while
+  keeping a character-indexed Emerald error before Zig sees malformed input.
 
 ### Slice 3: Digests
 

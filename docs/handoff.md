@@ -133,7 +133,8 @@ The Base64 and hashing milestone is under way, following the accepted
 [`base64-hashing-design-plan.md`](base64-hashing-design-plan.md): `Base64`, `Digest.sha256` and
 `hmac_sha256`, hex on `Bytes`, and one `EncodingError`. Slice 1 delivers `EncodingError`,
 `Bytes.to_hex`, and `Bytes.from_hex`/`from_hex_maybe`; invalid UTF-8 Bytes now correctly raise
-`EncodingError` rather than `FileError`. The next slice is Base64.
+`EncodingError` rather than `FileError`. Slice 2 adds standard and URL-safe Base64 encoding and
+decoding; the next slice is SHA-256 and HMAC-SHA256.
 
 The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig

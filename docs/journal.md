@@ -3183,3 +3183,11 @@ type-level `Bytes.from_hex(text: String)` signature.
 Pinned Zig 0.16.0 passed the Debug and ReleaseSafe `zig build test -j1` suites, `zig build
 -j1`, the documentation-example check, formatter and whitespace checks, and Windows/macOS
 cross-builds.
+
+## Base64 and hashing, slice 2: Base64, 2026-09-28
+
+`Base64.encode` writes standard padded RFC 4648 text by default and URL-safe unpadded text
+with `url_safe: true`. The matching decode methods accept either padding form and copied,
+wrapped text, reject the other alphabet rather than guessing, reject impossible final bits, and
+offer `decode_maybe` for ordinary validity checks. The checker names Bytes explicitly and tells
+the reader of `Base64.encode("hi")` to use `"hi".to_bytes()`.

@@ -3027,6 +3027,9 @@ fn evaluateCall(
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Http::")) {
             if (try self.callHttp(expression.span, key[(Resolver.prelude_namespace ++ ".Http::").len..], call)) |result| return result;
         }
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Base64::")) {
+            return self.callBase64(expression.span, key[(Resolver.prelude_namespace ++ ".Base64::").len..], call);
+        }
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
@@ -3540,6 +3543,88 @@ fn raiseFile(self: *Interpreter, span: Source.Span, verb: []const u8) Error {
 fn raiseFileMessage(self: *Interpreter, span: Source.Span, message: []const u8) Error {
     self.raised_value = self.makeError(Resolver.preludeKey("FileError"), message) catch return error.OutOfMemory;
     return self.raiseTyped(span, "FileError", message, "Check that the path exists and that this program may access it.");
+}
+
+fn callBase64(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!Value {
+    const encode = std.mem.eql(u8, name, "encode");
+    const maybe = std.mem.eql(u8, name, "decode_maybe");
+    const bound = try self.evaluateBound(call, if (encode) &.{ "bytes", "url_safe" } else &.{ "text", "url_safe" }, &.{ false, true });
+    defer {
+        self.releaseBound(bound);
+        self.gpa.free(bound.values);
+        if (bound.omitted) |omitted| self.gpa.free(omitted);
+    }
+    const url_safe = if (bound.omitted != null and bound.omitted.?[1]) false else bound.values[1].data.bool;
+    if (encode) {
+        const source = bound.values[0].data.bytes.bytes;
+        const codec = if (url_safe) std.base64.url_safe_no_pad.Encoder else std.base64.standard.Encoder;
+        const out = try self.gpa.alloc(u8, codec.calcSize(source.len));
+        _ = codec.encode(out, source);
+        return .{ .data = .{ .string = try self.heap.createText(out) } };
+    }
+    return self.base64Decode(span, bound.values[0].data.string.bytes, url_safe, maybe);
+}
+
+fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_safe: bool, maybe: bool) Error!Value {
+    var clean: std.ArrayList(u8) = .empty;
+    defer clean.deinit(self.gpa);
+    const alphabet = if (url_safe) std.base64.url_safe_alphabet_chars else std.base64.standard_alphabet_chars;
+    var first_padding: ?usize = null;
+    for (text, 0..) |character, index| {
+        if (character == ' ' or character == '\n' or character == '\r' or character == '\t') continue;
+        if (character == '=') {
+            first_padding = first_padding orelse index;
+            try clean.append(self.gpa, character);
+            continue;
+        }
+        if (first_padding != null) {
+            if (maybe) return Value.nothing;
+            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text has `=` at index {d}, before its end", .{first_padding.?}));
+        }
+        if (base64Index(alphabet, character) == null) {
+            if (maybe) return Value.nothing;
+            if ((!url_safe and (character == '-' or character == '_')) or (url_safe and (character == '+' or character == '/'))) {
+                const mode = if (url_safe) "standard" else "URL-safe";
+                return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text has `{c}` at index {d}, which belongs to {s} Base64", .{ character, index, mode }));
+            }
+            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text has `{c}` at index {d}, which is not a Base64 character", .{ character, index }));
+        }
+        try clean.append(self.gpa, character);
+    }
+    var padding: usize = 0;
+    while (padding < clean.items.len and clean.items[clean.items.len - 1 - padding] == '=') : (padding += 1) {}
+    if (padding > 2 or (padding > 0 and clean.items.len % 4 != 0)) {
+        if (maybe) return Value.nothing;
+        return self.raiseEncodingMessage(span, "Base64 text ends partway through a group: it has 1 character too many, or is missing some");
+    }
+    const encoded = clean.items[0 .. clean.items.len - padding];
+    if (encoded.len % 4 == 1) {
+        if (maybe) return Value.nothing;
+        return self.raiseEncodingMessage(span, "Base64 text ends partway through a group: it has 1 character too many, or is missing some");
+    }
+    if (padding > 0 and ((padding == 1 and encoded.len % 4 != 3) or (padding == 2 and encoded.len % 4 != 2))) {
+        if (maybe) return Value.nothing;
+        return self.raiseEncodingMessage(span, "Base64 text ends partway through a group: it has 1 character too many, or is missing some");
+    }
+    if (encoded.len % 4 != 0 and encoded.len > 0) {
+        const value = base64Index(alphabet, encoded[encoded.len - 1]).?;
+        const mask: u8 = if (encoded.len % 4 == 2) 0x0f else 0x03;
+        if ((value & mask) != 0) {
+            if (maybe) return Value.nothing;
+            const canonical = alphabet[value & ~mask];
+            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text's last character, `{c}` at index {d}, is not a possible final character; write `{c}` instead", .{ encoded[encoded.len - 1], text.len - 1, canonical }));
+        }
+    }
+    const decoder = if (url_safe) std.base64.url_safe_no_pad.Decoder else std.base64.standard_no_pad.Decoder;
+    const size = decoder.calcSizeForSlice(encoded) catch unreachable;
+    const out = try self.gpa.alloc(u8, size);
+    decoder.decode(out, encoded) catch unreachable;
+    return .{ .data = .{ .bytes = try self.heap.createText(out) } };
+}
+
+fn base64Index(alphabet: [64]u8, character: u8) ?u8 {
+    for (alphabet, 0..) |candidate, index| if (candidate == character) return @intCast(index);
+    return null;
 }
 
 fn raiseEncodingMessage(self: *Interpreter, span: Source.Span, message: []const u8) Error {

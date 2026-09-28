@@ -82,6 +82,12 @@ class Bytes {
     func Bytes.from_hex_maybe(text: String): Bytes? { return nothing }
 }
 
+class Base64 {
+    func Base64.encode(bytes: Bytes, url_safe: Bool = false): String { return "" }
+    func Base64.decode(text: String, url_safe: Bool = false): Bytes { return Bytes.from_list([]) }
+    func Base64.decode_maybe(text: String, url_safe: Bool = false): Bytes? { return nothing }
+}
+
 class Directory {
     func Directory.exists?(path: String): Bool { return false }
     func Directory.create(path: String) {}
