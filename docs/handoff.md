@@ -126,7 +126,10 @@ as one validation failure, so Emerald accurately reports a generic untrusted cer
 
 The user chose to finish the standard library, then make small optimizations such as startup
 time, and eventually build a native compiler. Startup performance is the next proposed task:
-every run still checks every prelude body. Base64/hashing, CSV, and the remaining Console scope
+every run still checks every prelude body. Its measurements and plan are in
+[`startup-design-plan.md`](startup-design-plan.md), awaiting the user's go-ahead: checking
+function bodies is half of a 9.8 ms `print(1)`, and memory (about 2,500 page faults) is a
+large part of the cost. Base64/hashing, CSV, and the remaining Console scope
 need separate user go-ahead.
 
 HTTP slice 4 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test`,
@@ -184,11 +187,10 @@ on the roadmap.
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
-- Every run type-checks all of the prelude's bodies. A ReleaseSafe `print(1)` starts in
-  about 9.3 ms with JSON slice 2, against 7.5 ms before it (measured together on one
-  machine); the date work had already taken it from about 5.6 ms. Checking only the prelude bodies a program can reach would need the
-  interpreter to stop relying on facts recorded for every body. It is the next performance
-  task once dates and times are finished.
+- A run checks only the prelude bodies its program reaches (startup slice 2): a ReleaseSafe
+  `print(1)` takes about 5.1 ms, against 9.9 ms before. Slices 3–5 of
+  [`startup-design-plan.md`](startup-design-plan.md) (fewer allocations, teardown, parsing
+  the prelude at build time) remain.
 - On Windows, a local zone whose key name CLDR does not map (rare) falls back to Windows's
   current yearly rule, which can give the wrong offset for dates before the zone last
   changed its rules.
