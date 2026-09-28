@@ -3191,3 +3191,11 @@ with `url_safe: true`. The matching decode methods accept either padding form an
 wrapped text, reject the other alphabet rather than guessing, reject impossible final bits, and
 offer `decode_maybe` for ordinary validity checks. The checker names Bytes explicitly and tells
 the reader of `Base64.encode("hi")` to use `"hi".to_bytes()`.
+
+## Base64 and hashing, slice 3: digests, 2026-09-28
+
+`Digest.sha256` and `Digest.hmac_sha256` return the raw 32-byte result, so `to_hex()` remains
+the deliberate display and comparison step. The implementation uses Zig's SHA-256 and HMAC
+primitives and copies their fixed result into immutable Bytes. FIPS SHA-256 and RFC 4231 HMAC
+known-answer vectors protect the public boundary; the differential tool compares random inputs
+with Python's `hashlib` and `hmac`.

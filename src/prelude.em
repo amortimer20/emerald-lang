@@ -88,6 +88,11 @@ class Base64 {
     func Base64.decode_maybe(text: String, url_safe: Bool = false): Bytes? { return nothing }
 }
 
+class Digest {
+    func Digest.sha256(bytes: Bytes): Bytes { return Bytes.from_list([]) }
+    func Digest.hmac_sha256(bytes: Bytes, key: Bytes): Bytes { return Bytes.from_list([]) }
+}
+
 class Directory {
     func Directory.exists?(path: String): Bool { return false }
     func Directory.create(path: String) {}

@@ -240,7 +240,9 @@ commits.
     block size.
 - Extend the differential tool (or add `tools/digest/differential.py`) against `hashlib` and
   `hmac` for random inputs.
-- Settled while building: (record here)
+- Settled while building: Zig's one-shot SHA-256 and HMAC-SHA256 APIs return their fixed
+  32-byte results directly into a stack buffer, copied into the ordinary immutable Bytes heap
+  representation before the native call returns.
 
 ### Slice 4: Documentation and integration
 

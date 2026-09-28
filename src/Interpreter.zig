@@ -3030,6 +3030,9 @@ fn evaluateCall(
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Base64::")) {
             return self.callBase64(expression.span, key[(Resolver.prelude_namespace ++ ".Base64::").len..], call);
         }
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Digest::")) {
+            return self.callDigest(key[(Resolver.prelude_namespace ++ ".Digest::").len..], call);
+        }
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
@@ -3563,6 +3566,21 @@ fn callBase64(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast
         return .{ .data = .{ .string = try self.heap.createText(out) } };
     }
     return self.base64Decode(span, bound.values[0].data.string.bytes, url_safe, maybe);
+}
+
+fn callDigest(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!Value {
+    const values = try self.evaluateArguments(call.arguments);
+    defer {
+        for (values) |value| self.heap.release(value);
+        self.gpa.free(values);
+    }
+    var out: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    if (std.mem.eql(u8, name, "sha256")) {
+        std.crypto.hash.sha2.Sha256.hash(values[0].data.bytes.bytes, &out, .{});
+    } else {
+        std.crypto.auth.hmac.sha2.HmacSha256.create(&out, values[0].data.bytes.bytes, values[1].data.bytes.bytes);
+    }
+    return self.heap.copyBytes(&out);
 }
 
 fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_safe: bool, maybe: bool) Error!Value {
