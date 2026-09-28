@@ -3138,3 +3138,30 @@ passed. The new example and its inline reference snippet were each run against t
 Against slice 4, a 10-run ReleaseSafe startup comparison measured 100.3% (`print(1)`), 101.6%
 (structs), 94.9% (dates), 102.4% (regex), and 98.8% (JSON): normal host variation, not a
 measurable change to programs that do not use CSV.
+
+## Startup performance, finished: 9.9 ms to 3.5 ms, 2026-09-28
+
+The remaining levers from `docs/startup-design-plan.md`, now removed as finished:
+
+- **Each body gets only the module variables it uses.** The resolver records, per function
+  body (keyed by its statements), every module variable used anywhere inside it, read or
+  assigned, including its lambdas and nested functions; the checker's `moduleViewFor` copies
+  only those, where it had copied every module variable for every body and again for every
+  branch snapshot. `Checker.requireInView` panics if a body ever reaches a variable its
+  record lacks, and on its first run it caught field defaults, which are checked as a body
+  with no statements and so now get the whole view. Programs using a library: dates 85%,
+  regular expressions 84%, JSON 94% of before.
+- **Skipping cleanup at exit gained nothing** and was reverted. The frees measured 0.27 ms,
+  but leaving them to the operating system measured 99–101% of the build before: reclaiming
+  the same pages at exit costs about what freeing them did.
+- **The prelude is parsed when Emerald is built.** `tools/prelude_ast.zig`, a build step,
+  parses `src/prelude.em` with the real lexer and parser (through `src/front.zig`, which
+  exposes the front end without the rest of Emerald) and writes the syntax tree as Zig
+  constant data, using only anonymous literals so the generated file needs no type names;
+  one reflective `emit` covers every AST type. The file is about 800 KB. A unit test checks
+  it equals a fresh parse. Compile cost measured on the development machine: about 0.6 s
+  more for a Debug build and about 19 s more for ReleaseSafe. Every benchmark program took
+  66–76% of its time before; `print(1)` 5.27 → 3.51 ms, page faults 1,060 → 717.
+
+Resolving the prelude's names, about 1 ms, is now the largest part of a small program's
+startup, left in the handoff's rough edges.

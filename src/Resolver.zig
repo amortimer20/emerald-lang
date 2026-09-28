@@ -123,6 +123,11 @@ pub const Facts = struct {
     /// name to use as a `module_reads` key, but a module binding can later be
     /// called through its value, so the checker needs its capture set there.
     lambda_reads: std.AutoHashMapUnmanaged(*const Ast.Expression, NameSet) = .empty,
+    /// For each function body, keyed by the address of its statements, every
+    /// module-level variable used anywhere inside it: read or assigned, in its
+    /// own statements, its lambdas, or the functions nested in it. The checker
+    /// gives a body a private copy of only these (`Checker.moduleView`).
+    body_module_uses: std.AutoHashMapUnmanaged(usize, NameSet) = .empty,
     /// For each function, the other program functions its own body calls.
     /// Calls to prelude functions are not recorded; they read no program state.
     calls: std.StringHashMapUnmanaged(NameSet) = .empty,
@@ -373,6 +378,8 @@ file: u32 = 0,
 const FunctionScope = struct {
     scope: usize,
     key: []const u8,
+    /// The `body_module_uses` key of its body, or 0 for an empty body.
+    body: usize,
     /// What `current_function` was around it, which for a nested function is
     /// the method, constructor, or type code it is written in.
     enclosing: ?[]const u8,
@@ -574,16 +581,21 @@ fn reportBuiltinShadowing(self: *Resolver) Error!void {
     }
 }
 
-/// Whether `name` is one of the built-ins: a prelude function, `Math` or
-/// `Program`, or a public declaration of `prelude.em`.
-fn isBuiltinName(self: *Resolver, name: []const u8) bool {
+/// Whether `name` is one of the language's own built-ins (15.1), which a
+/// program declaring the same name almost certainly means to use: a prelude
+/// function, `Bytes`, a trait the language relies on, or a base error.
+/// Standard-library names such as `Date`, `File`, or `Console` are left out:
+/// a teacher's "write your own `Date`" is not a mistake, and a program that
+/// then reaches for the library's version is told at that use.
+fn isBuiltinName(_: *Resolver, name: []const u8) bool {
     for (prelude) |builtin| {
         if (std.mem.eql(u8, name, builtin)) return true;
     }
-    if (std.mem.eql(u8, name, "Math") or std.mem.eql(u8, name, "Program")) return true;
-    var buffer: [256]u8 = undefined;
-    const key = std.fmt.bufPrint(&buffer, prelude_namespace ++ ".{s}", .{name}) catch return false;
-    return self.facts.declarations.contains(key);
+    const language = [_][]const u8{ "Bytes", "Equatable", "Hashable", "Ordered", "Textual", "Error", "RuntimeError", "AssertionError" };
+    for (language) |builtin| {
+        if (std.mem.eql(u8, name, builtin)) return true;
+    }
+    return false;
 }
 
 /// The directory, as its files' paths spell it, that section 14.2 derives
@@ -1541,11 +1553,23 @@ fn namespaceFor(self: *Resolver, name: []const u8) []const u8 {
     return self.namespace_aliases[self.file].get(name) orelse name;
 }
 
+/// Records a use of a module-level variable, read or assigned, in every body
+/// being walked, the enclosing ones included: a nested function or lambda is
+/// checked inside its enclosing body's view of the module.
+fn noteModuleUse(self: *Resolver, found: Found) Error!void {
+    if (found.scope != module_scope or found.binding.kind != .variable) return;
+    for (self.function_scopes.items) |function| {
+        if (function.body == 0) continue;
+        try self.facts.body_module_uses.getPtr(function.body).?.put(self.arena, found.key, {});
+    }
+}
+
 /// Records that the current function reads `name`, if `name` resolved to a
 /// module-level variable. Reads of the function's own parameters and locals,
 /// and anything at the top level, are not captures.
 fn noteRead(self: *Resolver, found: Found) Error!void {
     if (found.scope != module_scope or found.binding.kind != .variable) return;
+    try self.noteModuleUse(found);
     if (self.current_lambda) |lambda| {
         try self.facts.lambda_reads.getPtr(lambda).?.put(self.arena, found.key, {});
         return;
@@ -1811,6 +1835,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     "Declare it first with `var`, or check the spelling.",
                 );
             };
+            try self.noteModuleUse(found);
             if (!try self.declaredAbove(found, assignment.name_span)) return;
 
             try self.facts.assignment_targets.put(self.arena, .{ .file = self.file, .start = assignment.name_span.start }, .{ .file = targetFileFor(self, found), .span = found.binding.span });
@@ -1913,6 +1938,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     );
                     continue;
                 };
+                try self.noteModuleUse(found);
                 if (!try self.declaredAbove(found, name.span)) continue;
                 try self.facts.assignment_targets.put(self.arena, .{ .file = self.file, .start = name.span.start }, .{ .file = targetFileFor(self, found), .span = found.binding.span });
                 if (self.lambda_depth > 0) {
@@ -2287,6 +2313,22 @@ fn qualifyTypeMember(
             return .reported;
         }
     }
+    // The program's own type may be hiding a standard-library one that has
+    // this member (14.2): say so here, where it matters, rather than warning
+    // at every declaration that shares a library type's name.
+    if (!isPreludeKey(type_key)) {
+        const library_member = try std.fmt.allocPrint(self.arena, prelude_namespace ++ ".{s}" ++ method_separator ++ "{s}", .{ written, member });
+        if (self.facts.declarations.contains(library_member)) {
+            try self.reportWithHelpFmt(
+                span,
+                "`{s}` has no type-level member named `{s}`",
+                .{ written, member },
+                "`{s}` here is the program's own, which hides Emerald's `{s}`. Write `" ++ prelude_namespace ++ ".{s}.{s}` to use Emerald's, or give the program's type a different name.",
+                .{ written, written, written, member },
+            );
+            return .reported;
+        }
+    }
     try self.reportWithHelpFmt(
         span,
         "`{s}` has no type-level member named `{s}`",
@@ -2329,9 +2371,15 @@ fn walkBody(
     // A nested function assigning a variable around it can do so between a
     // test and a use, exactly as a block can (4.5).
     self.lambda_depth = if (nested) outer_lambda_depth + 1 else 0;
+    const body: usize = if (statements.len == 0) 0 else @intFromPtr(statements.ptr);
+    if (body != 0) {
+        const uses = try self.facts.body_module_uses.getOrPut(self.arena, body);
+        if (!uses.found_existing) uses.value_ptr.* = .empty;
+    }
     try self.function_scopes.append(self.arena, .{
         .scope = self.scopes.items.len - 1,
         .key = key,
+        .body = body,
         .enclosing = outer_function,
     });
     defer {

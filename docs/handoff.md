@@ -14,7 +14,7 @@ diagnostics, symbols, format-on-save, hover, go to definition, find references, 
 completion are complete.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
-name always wins over a built-in, with a warning, and the built-in stays reachable as
+name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
 `Emerald.File`, `Emerald.print`, or `Emerald.Math.pi`. `Emerald` is the one reserved name.
 
 Nested types (14.3) are implemented: a struct, class, or enum can declare types inside its
@@ -122,9 +122,14 @@ accepts spreadsheet-style quoting, BOMs, Unix/Windows line endings, and one-grap
 writing is minimal-quoted LF text. The native parser's 3,000 generated cases (seed 1) had no
 differences from Python.
 
-There is no active implementation milestone. The user chose to finish standard-library slices
-before small startup work and, later, a native compiler. Base64/hashing and Console's remaining
-scope need separate user go-ahead.
+There is no active implementation milestone. The user chose to finish the standard library,
+then make small optimizations such as startup time, and eventually build a native compiler.
+Startup performance is complete: a ReleaseSafe `print(1)` went from 9.9 ms to 3.5 ms. A run
+checks only the prelude bodies its program reaches, gives each function body only the module
+variables it uses, and starts with the prelude already parsed, since `tools/prelude_ast.zig`
+parses it when Emerald is built. The journal's startup entries record the measurements,
+including a lever that was tried and reverted. Base64/hashing and the remaining Console scope
+need separate user go-ahead.
 
 The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
@@ -135,10 +140,6 @@ validation.
 
 Other candidates, each needing the user's go-ahead:
 
-- **Startup performance**, queued right after the HTTP client. Every run type-checks every
-  prelude body, and a ReleaseSafe `print(1)` has grown from about 5.6 ms to about 9.3 ms. Checking only the
-  prelude bodies a program can reach needs the interpreter to stop relying on facts recorded
-  for every body; measure before and after, as the date slices did.
 - **Base64 and hashing**, small utilities that could follow the HTTP client.
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
@@ -174,19 +175,19 @@ on the roadmap.
   `DateTimeError`, `RegexError`, and `HttpError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
-- A problem inside the prelude stops `emerald.analyze` with a panic naming its
-  `prelude.em` line, column, and message, rather than printing as a diagnostic; it is always
-  Emerald's own bug.
+- A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses
+  it then, naming the `prelude.em` line and column. A later problem inside the prelude stops
+  `emerald.analyze` with a panic naming its line, column, and message; it is always
+  Emerald's own bug, and the whole-prelude unit test finds it in bodies no program reaches.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
   remain unsupported.
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
-- A run checks only the prelude bodies its program reaches (startup slice 2): a ReleaseSafe
-  `print(1)` takes about 5.1 ms, against 9.9 ms before. Slices 3–5 of
-  [`startup-design-plan.md`](startup-design-plan.md) (fewer allocations, teardown, parsing
-  the prelude at build time) remain.
+- Resolving the prelude's names is now the largest part of a small program's startup (about
+  1 ms of 3.5). Doing that at build time too would need the resolver's facts serialized the
+  way `tools/prelude_ast.zig` serializes the syntax tree.
 - On Windows, a local zone whose key name CLDR does not map (rare) falls back to Windows's
   current yearly rule, which can give the wrong offset for dates before the zone last
   changed its rules.
