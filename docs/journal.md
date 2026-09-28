@@ -3039,3 +3039,19 @@ branch snapshot copies it again. Giving a body only the variables it uses needs 
 definite-assignment analysis, so it is written up in the plan rather than changed here.
 Teardown measured 0.24 ms. The recorded measurements and options are in
 `docs/startup-design-plan.md`.
+
+## CSV, slice 1: native parser and writer, 2026-09-28
+
+The first CSV slice adds `src/Csv.zig`, independently of Emerald values: it parses a leading
+UTF-8 BOM, RFC-style quoted fields (including doubled quotes and embedded line breaks), Unix and
+Windows line endings, and a one-grapheme separator. It retains each row’s physical starting line
+for the later `CsvError` layer. The writer uses `\n`, omits a terminal line ending, and quotes
+only text that would otherwise change meaning. There is deliberately no prelude declaration or
+Emerald API in this commit.
+
+`tools/csv/differential.py` generated 3,000 tables (seed 1) using Python’s writer and compared
+the native parser’s JSON probe results against Python’s reader: no cases differed. An alternating
+startup comparison against the binary built before this slice measured the new binary at
+98.3–99.0% of the old one across five programs, ordinary machine noise rather than a startup
+cost. Debug and ReleaseSafe tests, build, doc examples, formatting and whitespace checks, and
+Windows/macOS cross-builds all passed with Zig 0.16.0.

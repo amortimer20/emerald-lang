@@ -125,19 +125,22 @@ REPL without becoming an Emerald environment API. Zig 0.16 reports the three cer
 as one validation failure, so Emerald accurately reports a generic untrusted certificate.
 
 The user chose to finish the standard library, then make small optimizations such as startup
-time, and eventually build a native compiler. Startup performance is the next proposed task:
-every run still checks every prelude body. Its measurements and plan are in
-[`startup-design-plan.md`](startup-design-plan.md), awaiting the user's go-ahead: checking
-function bodies is half of a 9.8 ms `print(1)`, and memory (about 2,500 page faults) is a
-large part of the cost. CSV's plan is [`csv-design-plan.md`](csv-design-plan.md),
-accepted with every recommendation, for Codex to carry out; slice 1 (the native parser and
-writer) is next. Base64/hashing and
-the remaining Console scope need separate user go-ahead.
+time, and eventually build a native compiler. CSV is the active milestone. Its accepted plan is
+[`csv-design-plan.md`](csv-design-plan.md): slice 1 adds the native parser and writer, Zig unit
+tests, and a differential tool checked against Python's `csv` reader. It accepts BOMs, Unix and
+Windows line endings, RFC quoting, and one-grapheme separators; its writer uses `\n` and minimal
+quoting. It has no Emerald-facing API yet. Slice 2 (`Csv.parse`, `parse_records`, `format`, and
+`CsvError`) is next.
 
-HTTP slice 4 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test`,
-`zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, `git diff --check`,
-and Windows/macOS cross-builds. The manual `zig build http-live` check passed in slice 3; it is
-not part of ordinary validation.
+The parser's 3,000 generated cases (seed 1) had no differences from Python. An alternating
+startup comparison against the pre-CSV binary was within ordinary noise (the new binary was
+98.3–99.0% of the old across the five programs), so an unused CSV module adds no measured
+startup cost. Base64/hashing and the remaining Console scope need separate user go-ahead.
+
+CSV slice 1 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test
+-j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
+tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. The HTTP client’s
+manual `zig build http-live` check passed in its slice 3; it is not part of ordinary validation.
 
 Other candidates, each needing the user's go-ahead:
 

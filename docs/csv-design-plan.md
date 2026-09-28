@@ -1,7 +1,8 @@
 # CSV: design and implementation plan
 
-Status: accepted, 2026-09-28. The user accepted every recommendation, including decision 2:
-`Csv.decode` and `Csv.encode` are typed by the checker, as JSON's are. Slice 1 is next.
+Status: in progress, 2026-09-28. The user accepted every recommendation, including decision 2:
+`Csv.decode` and `Csv.encode` are typed by the checker, as JSON's are. Slice 1 is complete;
+slice 2 is next.
 Rewrite-context 15.7
 lists CSV as a small library that pairs with `File`. This plan sets out the API, how a
 table of text becomes the program's own types, errors, and the order of work. The executor
@@ -185,6 +186,11 @@ rewrite-context text written in the same change.
    quoting case and error, and `tools/csv/differential.py` checking the parser against
    Python's `csv` module on generated tables, including separators, quoted separators,
    quotes, line breaks inside fields, and both line endings.
+
+   **Settled while building (2026-09-28):** A separator is one Emerald character, measured as
+   one grapheme rather than one byte or code point. The parser compares its UTF-8 bytes and
+   preserves each row's physical starting line. The differential tool ran 3,000 generated
+   cases (seed 1) against Python's reader with no differences.
 2. **Untyped reading and writing.** `Csv.parse`, `parse_records`, `format`, and `CsvError`,
    with conformance for each and for every text error in the table.
 3. **`Csv.decode`.** The checker special case (parser `as:` recognition included), the field
