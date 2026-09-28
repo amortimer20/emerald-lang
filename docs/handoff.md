@@ -114,15 +114,13 @@ then the smaller items in rewrite-context 15.7), then make small optimizations s
 time, and eventually build a native compiler. The HTTP client's plan is
 [`http-design-plan.md`](http-design-plan.md), accepted with every recommendation, including
 decision 2 (a): an error status raises `HttpError` by default. Slice 1 (the native request
-and a local test server) is complete. `src/Http.zig` has no Emerald-facing API yet, but owns
-a worker-backed Zig HTTP client with a whole-request deadline, failure kinds with plain
-messages, and a cross-platform local server test covering POST echo, statuses, redirects,
-gzip, chunked and binary bodies, size limits, and a slow response. The interpreter's normal
-single-threaded I/O cannot run the deadline race, so the client uses its own `Io.Threaded`;
-the accepted plan records that choice. Slice 2, the Emerald API and local-server conformance
-cases, is next.
-Codex is expected to carry out most of it; the plan's "Working notes for the executor" are
-for whoever does.
+and a local test server) is complete. Slice 2 now exposes the planned `Http` request functions,
+`Http.Response`, `HttpError`, percent encoding, strict status behavior, and response text,
+bytes, JSON, and header access. The offline `conformance/http/` cases start the loopback server
+per case and receive its generated base address through `Program.arguments[0]`; they cover every
+request form, named arguments, query encoding, redirects, status behavior, and the local error
+paths. The interpreter keeps one worker-backed transport client for each program run. Slice 3,
+the opt-in live-network check, is next; no automatic test reaches the internet.
 
 Other candidates, each needing the user's go-ahead:
 
@@ -162,7 +160,7 @@ on the roadmap.
 ## Active rough edges
 
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`,
-  `DateTimeError`, and `RegexError`.
+  `DateTimeError`, `RegexError`, and `HttpError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
 - A problem inside the prelude stops `emerald.analyze` with a panic naming its

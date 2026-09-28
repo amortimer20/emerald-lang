@@ -24,7 +24,7 @@ pub const Problem = struct {
     };
 };
 
-pub const Method = enum { get, post };
+pub const Method = enum { get, post, put, patch, delete };
 
 pub const Options = struct {
     method: Method = .get,
@@ -36,13 +36,32 @@ pub const Options = struct {
 
 pub const Response = struct {
     status: u16,
+    reason: []u8,
+    url: []u8,
+    headers: []Header,
     body: []u8,
 
     pub fn deinit(self: *Response, allocator: Allocator) void {
+        self.deinitMetadata(allocator);
         allocator.free(self.body);
         self.* = undefined;
     }
+
+    /// Releases everything except the body. The interpreter transfers the body
+    /// into its GC-tracked Bytes storage, while response metadata remains a
+    /// transport allocation.
+    pub fn deinitMetadata(self: *Response, allocator: Allocator) void {
+        allocator.free(self.reason);
+        allocator.free(self.url);
+        for (self.headers) |header| {
+            allocator.free(header.name);
+            allocator.free(header.value);
+        }
+        allocator.free(self.headers);
+    }
 };
+
+pub const Header = struct { name: []u8, value: []u8 };
 
 pub const Outcome = union(enum) {
     response: Response,
@@ -76,12 +95,25 @@ pub const Client = struct {
     /// on the worker I/O; `cancelDiscard` asks the losing operation to stop and
     /// waits for it before this function returns.
     pub fn request(self: *Client, url: []const u8, options: Options) Outcome {
-        const Race = union(enum) { request: Outcome, deadline: u8 };
+        const Race = union(enum) { request: u8, deadline: u8 };
+        var outcome: ?Outcome = null;
         var results: [2]Race = undefined;
         var race = std.Io.Select(Race).init(self.threaded.io(), &results);
-        defer race.cancelDiscard();
+        // A timed-out request may finish while cancellation is joining it. In
+        // that case `cancel` returns its owned response, which must be freed;
+        // `cancelDiscard` is only correct for tasks that cannot allocate.
+        defer {
+            while (race.cancel()) |_| {}
+            if (outcome) |discarded_outcome| switch (discarded_outcome) {
+                .response => |response| {
+                    var owned = response;
+                    owned.deinit(self.allocator);
+                },
+                .problem => {},
+            };
+        }
 
-        race.concurrent(.request, perform, .{ self, url, options }) catch {
+        race.concurrent(.request, performInto, .{ self, url, options, &outcome }) catch {
             return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP request could not be started" } };
         };
         race.concurrent(.deadline, wait, .{ self.threaded.io(), options.timeout }) catch {
@@ -91,7 +123,11 @@ pub const Client = struct {
         return switch (race.await() catch {
             return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP request was interrupted" } };
         }) {
-            .request => |outcome| outcome,
+            .request => blk: {
+                const result = outcome orelse return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP request ended without a response" } };
+                outcome = null;
+                break :blk result;
+            },
             .deadline => .{ .problem = .{ .kind = .timed_out, .message = "the HTTP request timed out" } },
         };
     }
@@ -99,6 +135,11 @@ pub const Client = struct {
 
 fn wait(io: std.Io, duration: std.Io.Duration) u8 {
     std.Io.sleep(io, duration, .awake) catch {};
+    return 0;
+}
+
+fn performInto(client: *Client, url: []const u8, options: Options, result: *?Outcome) u8 {
+    result.* = perform(client, url, options);
     return 0;
 }
 
@@ -111,22 +152,84 @@ fn perform(client: *Client, url: []const u8, options: Options) Outcome {
     };
     var output = std.Io.Writer.fixed(storage);
 
-    const result = client.inner.fetch(.{
-        .location = .{ .url = url },
-        .method = switch (options.method) {
-            .get => .GET,
-            .post => .POST,
-        },
-        .payload = options.body,
+    const uri = std.Uri.parse(url) catch |err| {
+        client.allocator.free(storage);
+        return .{ .problem = mapError(err) };
+    };
+
+    var request = client.inner.request(switch (options.method) {
+        .get => .GET,
+        .post => .POST,
+        .put => .PUT,
+        .patch => .PATCH,
+        .delete => .DELETE,
+    }, uri, .{
+        .redirect_behavior = if (options.body == null) .init(5) else .unhandled,
         .extra_headers = options.headers,
-        .response_writer = &output,
     }) catch |err| {
         client.allocator.free(storage);
-        // `std.http.Client.fetch` intentionally collapses a response-writer
-        // failure to `WriteFailed`; this writer can fail only at our limit.
-        if (err == error.NoSpaceLeft or err == error.WriteFailed) {
-            return .{ .problem = .{ .kind = .response_too_large, .message = "the HTTP response is larger than the allowed limit" } };
-        }
+        return .{ .problem = mapError(err) };
+    };
+    defer request.deinit();
+    if (options.body) |body| request.sendBodyComplete(@constCast(body)) catch |err| {
+        client.allocator.free(storage);
+        return .{ .problem = mapError(err) };
+    } else request.sendBodiless() catch |err| {
+        client.allocator.free(storage);
+        return .{ .problem = mapError(err) };
+    };
+
+    var redirect_buffer: [8 * 1024]u8 = undefined;
+    var response = request.receiveHead(&redirect_buffer) catch |err| {
+        client.allocator.free(storage);
+        return .{ .problem = mapError(err) };
+    };
+    const reason = client.allocator.dupe(u8, response.head.reason) catch {
+        client.allocator.free(storage);
+        return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP response could not be stored" } };
+    };
+    errdefer client.allocator.free(reason);
+    var rendered_url: std.Io.Writer.Allocating = .init(client.allocator);
+    defer rendered_url.deinit();
+    request.uri.format(&rendered_url.writer) catch {
+        client.allocator.free(storage);
+        return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP response address could not be stored" } };
+    };
+    const final_url = rendered_url.toOwnedSlice() catch {
+        client.allocator.free(storage);
+        return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP response address could not be stored" } };
+    };
+    errdefer client.allocator.free(final_url);
+    const headers = copyHeaders(client.allocator, response.head.iterateHeaders()) catch {
+        client.allocator.free(storage);
+        return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP response headers could not be stored" } };
+    };
+    errdefer freeHeaders(client.allocator, headers);
+
+    var transfer_buffer: [64]u8 = undefined;
+    var decompress: std.http.Decompress = undefined;
+    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+        .identity => &.{},
+        .zstd => client.allocator.alloc(u8, std.compress.zstd.default_window_len) catch {
+            client.allocator.free(storage);
+            return .{ .problem = .{ .kind = .request_failed, .message = "there is not enough memory for the HTTP response" } };
+        },
+        .deflate, .gzip => client.allocator.alloc(u8, std.compress.flate.max_window_len) catch {
+            client.allocator.free(storage);
+            return .{ .problem = .{ .kind = .request_failed, .message = "there is not enough memory for the HTTP response" } };
+        },
+        .compress => {
+            client.allocator.free(storage);
+            return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP response uses an unsupported compression format" } };
+        },
+    };
+    defer if (decompress_buffer.len != 0) client.allocator.free(decompress_buffer);
+    _ = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer).streamRemaining(&output) catch |err| {
+        client.allocator.free(storage);
+        client.allocator.free(reason);
+        client.allocator.free(final_url);
+        freeHeaders(client.allocator, headers);
+        if (err == error.NoSpaceLeft or err == error.WriteFailed) return .{ .problem = .{ .kind = .response_too_large, .message = "the HTTP response is larger than the allowed limit" } };
         return .{ .problem = mapError(err) };
     };
 
@@ -134,7 +237,31 @@ fn perform(client: *Client, url: []const u8, options: Options) Outcome {
         client.allocator.free(storage);
         return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP response could not be stored" } };
     };
-    return .{ .response = .{ .status = @intFromEnum(result.status), .body = body } };
+    return .{ .response = .{ .status = @intFromEnum(response.head.status), .reason = reason, .url = final_url, .headers = headers, .body = body } };
+}
+
+fn copyHeaders(allocator: Allocator, iterator: std.http.HeaderIterator) Allocator.Error![]Header {
+    var headers: std.ArrayList(Header) = .empty;
+    errdefer {
+        for (headers.items) |header| {
+            allocator.free(header.name);
+            allocator.free(header.value);
+        }
+        headers.deinit(allocator);
+    }
+    var it = iterator;
+    while (it.next()) |header| {
+        try headers.append(allocator, .{ .name = try allocator.dupe(u8, header.name), .value = try allocator.dupe(u8, header.value) });
+    }
+    return headers.toOwnedSlice(allocator);
+}
+
+fn freeHeaders(allocator: Allocator, headers: []Header) void {
+    for (headers) |header| {
+        allocator.free(header.name);
+        allocator.free(header.value);
+    }
+    allocator.free(headers);
 }
 
 fn mapError(err: anyerror) Problem {
@@ -160,14 +287,17 @@ fn immediate() u8 {
     return 0;
 }
 
-const TestServer = struct {
+/// The deterministic loopback server shared by native and end-to-end tests.
+/// It deliberately has no network-facing API: conformance receives only its
+/// generated base URL as a program argument.
+pub const TestServer = struct {
     io: std.Io.Threaded,
     listener: std.Io.net.Server,
     thread: std.Thread,
     allocator: Allocator,
     stopping: std.atomic.Value(bool) = .init(false),
 
-    fn start(allocator: Allocator) !*TestServer {
+    pub fn start(allocator: Allocator) !*TestServer {
         const server = try allocator.create(TestServer);
         errdefer allocator.destroy(server);
         server.io = std.Io.Threaded.init(allocator, .{});
@@ -178,7 +308,7 @@ const TestServer = struct {
         return server;
     }
 
-    fn deinit(server: *TestServer) void {
+    pub fn deinit(server: *TestServer) void {
         server.stopping.store(true, .release);
         // Waking `accept` with an ordinary loopback connection is portable.
         // Closing its descriptor while another thread is accepting is not:
@@ -192,7 +322,7 @@ const TestServer = struct {
         server.allocator.destroy(server);
     }
 
-    fn url(server: *const TestServer, allocator: Allocator, path: []const u8) ![]u8 {
+    pub fn url(server: *const TestServer, allocator: Allocator, path: []const u8) ![]u8 {
         return std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}{s}", .{ server.listener.socket.address.getPort(), path });
     }
 
@@ -200,15 +330,20 @@ const TestServer = struct {
         const io = server.io.io();
         while (true) {
             var stream = server.listener.accept(io) catch break;
-            defer stream.close(io);
-            if (server.stopping.load(.acquire)) break;
-            var input_buffer: [4096]u8 = undefined;
-            var output_buffer: [4096]u8 = undefined;
-            var input = stream.reader(io, &input_buffer);
-            var output = stream.writer(io, &output_buffer);
-            var http_server = std.http.Server.init(&input.interface, &output.interface);
-            var request = http_server.receiveHead() catch continue;
-            serveRequest(io, &request);
+            if (server.stopping.load(.acquire)) {
+                stream.close(io);
+                break;
+            }
+            {
+                defer stream.close(io);
+                var input_buffer: [4096]u8 = undefined;
+                var output_buffer: [4096]u8 = undefined;
+                var input = stream.reader(io, &input_buffer);
+                var output = stream.writer(io, &output_buffer);
+                var http_server = std.http.Server.init(&input.interface, &output.interface);
+                var request = http_server.receiveHead() catch continue;
+                serveRequest(io, &request);
+            }
         }
     }
 
@@ -223,8 +358,10 @@ const TestServer = struct {
             }
             const reader = request.readerExpectNone(&.{});
             reader.readSliceAll(body[0..length]) catch return;
-            if (request.head.method == .POST and header_seen) {
-                request.respond(body[0..length], .{ .keep_alive = false }) catch {};
+            if (header_seen) {
+                var reply: [160]u8 = undefined;
+                const text = std.fmt.bufPrint(&reply, "{s}:{s}", .{ @tagName(request.head.method), body[0..length] }) catch return;
+                request.respond(text, .{ .keep_alive = false }) catch {};
             } else {
                 request.respond("echo mismatch", .{ .status = .bad_request, .keep_alive = false }) catch {};
             }
@@ -241,6 +378,17 @@ const TestServer = struct {
             request.respond("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\xcb\x48\xcd\xc9\xc9\x07\x00\x86\xa6\x10\x36\x05\x00\x00\x00", .{ .keep_alive = false, .extra_headers = &.{.{ .name = "content-encoding", .value = "gzip" }} }) catch {};
         } else if (std.mem.eql(u8, request.head.target, "/binary")) {
             request.respond("\xff\x00\x7f", .{ .keep_alive = false }) catch {};
+        } else if (std.mem.eql(u8, request.head.target, "/headers")) {
+            request.respond("headers", .{ .keep_alive = false, .extra_headers = &.{
+                .{ .name = "x-answer", .value = "first" },
+                .{ .name = "x-answer", .value = "second" },
+                .{ .name = "set-cookie", .value = "one=1" },
+                .{ .name = "set-cookie", .value = "two=2" },
+            } }) catch {};
+        } else if (std.mem.eql(u8, request.head.target, "/json")) {
+            request.respond("{\"answer\": 42}", .{ .keep_alive = false }) catch {};
+        } else if (std.mem.eql(u8, request.head.target, "/not-json")) {
+            request.respond("not json", .{ .keep_alive = false }) catch {};
         } else if (std.mem.eql(u8, request.head.target, "/large")) {
             request.respond("0123456789012345678901234567890123456789", .{ .keep_alive = false }) catch {};
         } else if (std.mem.eql(u8, request.head.target, "/missing")) {
@@ -280,7 +428,7 @@ test "local HTTP transport handles responses, redirects, limits, and deadlines" 
         .problem => return std.testing.expect(false),
     };
     defer echo.deinit(allocator);
-    try std.testing.expectEqualStrings("posted body", echo.body);
+    try std.testing.expectEqualStrings("POST:posted body", echo.body);
 
     const redirect_url = try server.url(allocator, "/redirect");
     defer allocator.free(redirect_url);

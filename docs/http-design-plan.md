@@ -1,7 +1,7 @@
 # HTTP client: design and implementation plan
 
 Status: accepted, 2026-09-27. The user accepted every recommendation, including decision 2
-(a): an error status raises `HttpError` by default. Slice 1 is complete; slice 2 is next. Rewrite-context 15.7
+(a): an error status raises `HttpError` by default. Slices 1 and 2 are complete; slice 3 is next. Rewrite-context 15.7
 lists a synchronous HTTP client as the next standard-library item after JSON. This plan sets
 out the API, what an HTTP failure looks like to a beginner, how the work is tested without
 the internet, and the order of work. The executor makes the remaining judgement calls
@@ -251,6 +251,13 @@ rewrite-context text written in the same change.
    `conformance/README.md` beside `color/` and `local-zone/`. Cases for each request form,
    each response member, `strict` both ways, and every row of the errors table the local
    server can produce.
+
+   **Settled while building (2026-09-27):** `std.http.Client.fetch` does not retain response
+   metadata, so the transport uses its lower-level `request` flow to copy the final address,
+   reason phrase, and received headers before streaming the body. The interpreter owns one
+   transport client for its whole run and transfers a completed body into Emerald's existing
+   immutable `Bytes` storage. `conformance/http/` starts the same loopback server as the Zig
+   tests for each case and passes only its generated base address as `Program.arguments[0]`.
 3. **The real internet, checked by hand.** An opt-in `zig build http-live` (never part of
    `zig build test` or CI) that fetches a few real HTTPS addresses, including badssl.com's
    expired, self-signed, and wrong-host certificates, and checks each message; plus unknown

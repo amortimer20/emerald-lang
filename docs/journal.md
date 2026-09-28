@@ -2925,3 +2925,17 @@ Typed decoding's wrong-kind messages now describe the value they found (`found t
 With JSON complete and its behavior in rewrite-context 15.9, `docs/json-design-plan.md` is
 removed, as the finished date and regex plans were; `git log -- docs/json-design-plan.md`
 finds it. References in `src/Json.zig` and `tools/json/` now cite 15.9.
+
+## HTTP client, slice 2: Emerald API and offline conformance, 2026-09-27
+
+`Http.get`, `delete`, `post`, `put`, and `patch` now provide the accepted synchronous request
+surface. A completed `Http.Response` exposes status, reason, final address, normalized headers,
+raw `Bytes`, UTF-8 text, and JSON; error statuses raise `HttpError` by default and retain their
+numeric status. The interpreter creates one timeout-bounded transport client per program run.
+
+`conformance/http/` starts the cross-platform loopback server from `Http.zig` for each case and
+passes its address only through `Program.arguments[0]`. It covers request forms, named
+arguments, query percent encoding, headers, redirects, strict mode, UTF-8 and JSON failures,
+timeouts, redirect loops, and invalid addresses without reaching the internet. The lower-level
+Zig request API was needed because `fetch` drops the response metadata the Emerald API exposes;
+the finished body is transferred directly into existing immutable `Bytes` storage.
