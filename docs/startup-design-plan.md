@@ -167,6 +167,16 @@ checking everything if they need to, since neither is on the startup path of `em
    its own careful slice, with conformance aimed at definite assignment and narrowing in
    lambdas, nested functions, and assignments to module variables. It is worth about a
    millisecond for programs that use a library, and nothing for `print(1)`.
+   Done in a later session. The resolver now records, per function body (keyed by its
+   statements), every module variable used anywhere inside it: read or assigned, in its own
+   statements, its lambdas, or its nested functions, recorded in every enclosing body.
+   `moduleViewFor` copies only those. A body with no statements (field defaults are checked
+   as one) or one the resolver did not walk still gets the whole view. If a body ever reaches
+   a module variable its record lacks, `Checker.requireInView` panics, naming it; that net
+   caught the field-default case on its first run. `run/module-variables-in-bodies` covers
+   reads, assignments, narrowing, a lambda, a nested function, and destructuring. Against
+   `main` (`18d0c9b`): dates 85%, regular expressions 84%, JSON 94%, `print(1)` unchanged;
+   the regular-expression program's page faults fell from 1,996 to 1,472.
 4. **Teardown** (lever 3), measured.
    Measured: 0.24 ms for `print(1)` (about 5%), so skipping it is a small gain.
 5. **Decide on lever 4** from fresh measurements, and record the decision.
