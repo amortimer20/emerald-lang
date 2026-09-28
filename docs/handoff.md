@@ -187,9 +187,10 @@ on the roadmap.
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
-- Every run type-checks all of the prelude's bodies. A ReleaseSafe `print(1)` takes about
-  9.8 ms (2026-09-28, with HTTP), against 5.6 ms before the date work; see
-  [`startup-design-plan.md`](startup-design-plan.md) for where the time goes.
+- A run checks only the prelude bodies its program reaches (startup slice 2): a ReleaseSafe
+  `print(1)` takes about 5.1 ms, against 9.9 ms before. Slices 3–5 of
+  [`startup-design-plan.md`](startup-design-plan.md) (fewer allocations, teardown, parsing
+  the prelude at build time) remain.
 - On Windows, a local zone whose key name CLDR does not map (rare) falls back to Windows's
   current yearly rule, which can give the wrong offset for dates before the zone last
   changed its rules.

@@ -131,6 +131,19 @@ checking everything if they need to, since neither is on the startup path of `em
 2. **Reachable prelude bodies** (lever 1), with both safety nets, conformance showing a
    program reaching dates, regular expressions, JSON, HTTP, and a trait default, and the
    benchmark before and after.
+   Done. `Checker.reachKey` marks the top-level prelude type or function a key belongs to;
+   `typeOf` reaches every prelude type an expression's type holds (walking struct fields and
+   base classes once each), and calls, qualified names, and method calls reach their owners.
+   The program's own structs are walked before its statements are checked, since printing or
+   encoding one runs its fields' bodies. The prelude's traits declare only abstract methods,
+   so no trait default needed handling. The interpreter stops with a panic naming the body if
+   a prelude function, constructor, or field default outside the reached set would run, and a
+   unit test checks the whole prelude, which was shown to catch an error planted in a body
+   `print(1)` does not reach. `run/prelude-reach` exercises each indirect way in: a field's
+   type, a base class, a type-level function returning `String`, an enum value, sorting, and
+   decoding. Against `main` (`c3b830b`), alternating runs: `print(1)` 9.87 → 5.09 ms (52%),
+   page faults 2,508 → 1,056, system time 4.2 → 1.2 ms; a language-only program 55%; JSON
+   62%; dates 77%; regular expressions 81%.
 3. **Fewer allocations while checking** (lever 2), guided by a counting allocator, with the
    largest sources recorded in the journal and the benchmark before and after.
 4. **Teardown** (lever 3), measured.

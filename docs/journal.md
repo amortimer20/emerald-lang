@@ -3007,3 +3007,24 @@ build. Something on the host slows the whole WSL2 machine at times. Given two bi
 tool alternates their runs, so drift affects both alike, and reports the second as a share of
 the first; two builds of nearly the same code came out within about 5% of each other during
 the slow period. Every later slice records such a comparison against the build before it.
+
+## Startup performance, slice 2: checking only reachable prelude bodies, 2026-09-28
+
+Every run checked every prelude body, half of a `print(1)`. Now a run checks only the bodies
+its program can reach. The rule is deliberately coarse: reaching anything inside a top-level
+prelude type (`Emerald.Regex::Match::group` reaches `Emerald.Regex`) checks all of that type,
+which keeps the reasoning simple while still skipping every type a program never touches.
+Values reach through `typeOf`, which every checked expression passes through; names reach
+through calls and qualified names; and the program's own structs are walked first, since
+printing or encoding one runs the bodies of what its fields hold, which no expression names.
+
+Two safety nets keep the coarse rule honest. The interpreter panics, naming the body, if it
+would run a prelude function, constructor, or field default the checker never saw; and a unit
+test checks the whole prelude and names any problem. Planting a type error in `Stopwatch`'s
+`to_string` showed both halves: `print(1)` ran without noticing, and the test failed at the
+planted line.
+
+`print(1)` went from 9.87 ms to 5.09 ms in alternating runs against `main`, and page faults
+from 2,508 to 1,056: most of the time saved was the operating system's, handing out memory
+that checking unreached bodies never needed. Programs that use a library keep most of the
+gain (JSON 62%, dates 77%, regular expressions 81% of before).

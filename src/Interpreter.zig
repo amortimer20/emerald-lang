@@ -258,6 +258,9 @@ json_encodes: *const Checker.JsonEncodes,
 json_decodes: *const Checker.JsonDecodes,
 /// Every `super.name` that reaches a base class's property (10.7).
 super_members: *const Checker.MethodCalls,
+/// The prelude declarations whose bodies were checked, or null when all were
+/// (`Checker.Checked.prelude_reached`).
+prelude_reached: ?*const Resolver.NameSet,
 /// Section 4.4's type tests and `type_name` reads, with the static types they
 /// need.
 type_tests: *const Checker.TypeTests,
@@ -306,6 +309,7 @@ pub fn run(
     json_encodes: *const Checker.JsonEncodes,
     json_decodes: *const Checker.JsonDecodes,
     super_members: *const Checker.MethodCalls,
+    prelude_reached: ?*const Resolver.NameSet,
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
     trait_calls: *const Checker.MethodCalls,
@@ -361,6 +365,7 @@ pub fn run(
         .json_encodes = json_encodes,
         .json_decodes = json_decodes,
         .super_members = super_members,
+        .prelude_reached = prelude_reached,
         .type_tests = type_tests,
         .type_names = type_names,
         .trait_calls = trait_calls,
@@ -4876,6 +4881,7 @@ fn constructStruct(
         try self.buildPart(call_span, key, instance, call);
         return instance;
     }
+    self.requireChecked(key);
     const constructor = self.constructors.get(key) orelse {
         const bound = try self.evaluateBound(call, info.field_names, info.has_default);
         for (bound.values, descriptor.fields) |*field, metadata| field.* = widen(field.*, metadata.kind);
@@ -4970,6 +4976,7 @@ fn buildPart(
 ) Error!void {
     const info = self.struct_infos.get(key).?;
     const object = instance.data.struct_value;
+    self.requireChecked(key);
     if (self.constructors.get(key)) |constructor| {
         const declared = constructor.declaration.parameters;
         const bound = if (call) |arguments| try self.evaluateBoundParameters(arguments, declared) else try self.omittedBound(declared.len);
@@ -5145,6 +5152,7 @@ fn runFieldDefaults(
     instance: Value,
     which: []const bool,
 ) Error!Value {
+    self.requireChecked(key);
     const info = self.struct_infos.get(key).?;
     const outer_scopes = self.scopes;
     self.scopes = .empty;
@@ -5185,6 +5193,18 @@ fn runFieldDefaults(
         building.fields[info.offset + position] = widen(value, building.descriptor.fields[info.offset + position].kind);
     }
     return Heap.retain(frame.bindings.get("self").?.value.?);
+}
+
+/// The checker checks only the prelude bodies a program can reach, and the
+/// facts this interpreter relies on exist only for those. Running any other
+/// would be a gap in `Checker.reachKey`, never the program's mistake, so it
+/// stops at once, in every build, rather than running without them.
+fn requireChecked(self: *const Interpreter, key: []const u8) void {
+    const reached = self.prelude_reached orelse return;
+    const top = if (std.mem.indexOf(u8, key, Resolver.method_separator)) |at| key[0..at] else key;
+    const owner = self.facts.owner.get(top) orelse return;
+    if (!self.inPrelude(owner) or reached.contains(top)) return;
+    std.debug.panic("the prelude body {s} ran without being checked; Checker.reachKey missed it", .{key});
 }
 
 /// A call's arguments, evaluated left to right as written and then placed in
@@ -5438,6 +5458,7 @@ fn callFunction(
 }
 
 fn namedCallable(self: *Interpreter, key: []const u8) Callable {
+    self.requireChecked(key);
     const declaration = self.functions.get(key).?;
     // Section 7.3: an override uses the defaults of the declaration it
     // replaces, which are written with that declaration's parameters.
