@@ -210,6 +210,10 @@ on the roadmap.
   analysis and would leak its `prelude.em#` key into a diagnostic. The prelude avoids them
   for now; the checker should eventually leave prelude bindings out of that analysis.
 
+- The list, dictionary, and set hints for an unknown member name only some of their
+  methods (`map`, `filter`, `each`, and others are missing); the String, Int, and Float hints
+  are complete. Fix the collection hints when their reference pages are written.
+
 ## Validation and repository state
 
 The regular-expression milestone is merged to `main`

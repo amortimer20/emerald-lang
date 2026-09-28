@@ -46,6 +46,9 @@ cd conformance
 ../zig-out/bin/emerald run runtime-errors/your-case.em 2> runtime-errors/your-case.expected
 ```
 
+The command line labels some diagnostics with a code, such as `[E4001]`, which the suite does
+not compare; remove it from a `diagnostics/` expectation (`sed -i -E 's/: \[E[0-9]+\] /: /'`).
+
 A `format/` case's `.em` file is its own input; write it exactly as you want the formatter to
 leave it if it is already canonical, or deliberately un-canonically if you want to see it
 rewritten. Either way, generate its `.expected` the same way:
