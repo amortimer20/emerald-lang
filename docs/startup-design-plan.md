@@ -179,6 +179,14 @@ checking everything if they need to, since neither is on the startup path of `em
    the regular-expression program's page faults fell from 1,996 to 1,472.
 4. **Teardown** (lever 3), measured.
    Measured: 0.24 ms for `print(1)` (about 5%), so skipping it is a small gain.
+   Tried in a later session and reverted. Timing marks split the cleanup into about 0.17 ms
+   inside `emerald.analyze` (tokens, syntax trees, resolver and checker results, and the
+   interpreter's heap) and 0.10 ms after it (the report and project). A `skip_cleanup`
+   option in `emerald.Streams`, set by release builds of `run` and `test` and still closing
+   files and connections, left all of it to the operating system, but alternating runs
+   against the build before showed 99–101% on every benchmark program: the operating system
+   reclaiming the same pages at exit costs about what freeing them did. It is not worth
+   the code, or the risk to a writer's last bytes.
 5. **Decide on lever 4** from fresh measurements, and record the decision.
    Measured: lexing and parsing the prelude are now about 1.6 ms of `print(1)`'s 5.1 ms,
    and resolving it about another 1.0 ms, so the prelude's front end is now the largest cost
