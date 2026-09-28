@@ -129,8 +129,9 @@ time, and eventually build a native compiler. Startup performance is the next pr
 every run still checks every prelude body. Its measurements and plan are in
 [`startup-design-plan.md`](startup-design-plan.md), awaiting the user's go-ahead: checking
 function bodies is half of a 9.8 ms `print(1)`, and memory (about 2,500 page faults) is a
-large part of the cost. Base64/hashing, CSV, and the remaining Console scope
-need separate user go-ahead.
+large part of the cost. CSV's plan is [`csv-design-plan.md`](csv-design-plan.md),
+proposed and awaiting the user's five decisions, for Codex to carry out. Base64/hashing and
+the remaining Console scope need separate user go-ahead.
 
 HTTP slice 4 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test`,
 `zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, `git diff --check`,
