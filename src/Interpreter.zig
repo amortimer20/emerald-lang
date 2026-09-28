@@ -30,6 +30,7 @@ const std = @import("std");
 const version_options = @import("version_options");
 const Ast = @import("Ast.zig");
 const Checker = @import("Checker.zig");
+const Csv = @import("Csv.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Heap = @import("Heap.zig");
 const Http = @import("Http.zig");
@@ -3019,6 +3020,9 @@ fn evaluateCall(
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Json::")) {
             if (try self.callJson(key[(Resolver.prelude_namespace ++ ".Json::").len..], call)) |result| return result;
         }
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Csv::")) {
+            if (try self.callCsv(expression.span, key[(Resolver.prelude_namespace ++ ".Csv::").len..], call)) |result| return result;
+        }
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Http::")) {
             if (try self.callHttp(expression.span, key[(Resolver.prelude_namespace ++ ".Http::").len..], call)) |result| return result;
         }
@@ -3757,6 +3761,153 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
         .encode => unreachable,
         .decode => unreachable,
     }
+}
+
+/// Section 15.11's untyped CSV boundary. The public prelude functions bind
+/// their defaults before reaching these positional helpers, while this layer
+/// turns parser failures into the ordinary, typed `CsvError` values programs
+/// can catch.
+fn callCsv(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!?Value {
+    const Native = enum { _parse, _parse_records, _format };
+    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    const parameter_names: []const []const u8 = switch (native) {
+        ._parse, ._parse_records => &.{ "text", "separator" },
+        ._format => &.{ "rows", "separator" },
+    };
+    const bound = try self.evaluateBound(call, parameter_names, &.{ false, false });
+    defer {
+        for (bound.values) |value| self.heap.release(value);
+        self.gpa.free(bound.values);
+        if (bound.omitted) |omitted| self.gpa.free(omitted);
+    }
+    return switch (native) {
+        ._parse => @as(?Value, try self.csvRows(span, bound.values[0].data.string.bytes, bound.values[1].data.string.bytes)),
+        ._parse_records => @as(?Value, try self.csvRecords(span, bound.values[0].data.string.bytes, bound.values[1].data.string.bytes)),
+        ._format => @as(?Value, try self.csvFormat(span, bound.values[0].data.list, bound.values[1].data.string.bytes)),
+    };
+}
+
+fn csvRows(self: *Interpreter, span: Source.Span, text: []const u8, separator: []const u8) Error!Value {
+    var problem: Csv.Problem = .{};
+    var document = Csv.parse(self.gpa, text, separator, &problem) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidCsv => return self.raiseCsvProblem(span, problem),
+    };
+    defer document.deinit();
+
+    const rows = try self.heap.createList(.list, document.rows.len);
+    const result: Value = .{ .data = .{ .list = rows } };
+    errdefer self.heap.release(result);
+    for (document.rows) |row| {
+        const fields = try self.heap.createList(.string, row.fields.len);
+        const value: Value = .{ .data = .{ .list = fields } };
+        errdefer self.heap.release(value);
+        for (row.fields) |field| fields.items.appendAssumeCapacity(try self.heap.copyText(field));
+        rows.items.appendAssumeCapacity(value);
+    }
+    return result;
+}
+
+fn csvRecords(self: *Interpreter, span: Source.Span, text: []const u8, separator: []const u8) Error!Value {
+    var problem: Csv.Problem = .{};
+    var document = Csv.parse(self.gpa, text, separator, &problem) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidCsv => return self.raiseCsvProblem(span, problem),
+    };
+    defer document.deinit();
+    if (document.rows.len == 0) {
+        return .{ .data = .{ .list = try self.heap.createList(.map, 0) } };
+    }
+
+    const header = document.rows[0];
+    for (header.fields, 0..) |name, index| {
+        if (name.len == 0) return self.raiseCsv(span, "the header has an empty column name", header.line);
+        for (header.fields[0..index]) |earlier| {
+            if (std.mem.eql(u8, name, earlier)) {
+                const message = try std.fmt.allocPrint(self.arena, "the header names the column \"{s}\" twice", .{name});
+                return self.raiseCsv(span, message, header.line);
+            }
+        }
+    }
+
+    const records = try self.heap.createList(.map, document.rows.len - 1);
+    const result: Value = .{ .data = .{ .list = records } };
+    errdefer self.heap.release(result);
+    for (document.rows[1..]) |row| {
+        if (row.fields.len != header.fields.len) {
+            const message = try std.fmt.allocPrint(self.arena, "line {d} has {d} fields, but the header has {d}", .{ row.line, row.fields.len, header.fields.len });
+            return self.raiseCsv(span, message, row.line);
+        }
+        const record = try self.heap.createMap(.string, .string, false);
+        const value: Value = .{ .data = .{ .map = record } };
+        errdefer self.heap.release(value);
+        for (header.fields, row.fields) |name, field| {
+            const key = try self.heap.copyText(name);
+            const field_value = try self.heap.copyText(field);
+            const hash = try self.hashKey(span, key);
+            try self.heap.put(record, hash, key, field_value, self.equatable(span));
+        }
+        records.items.appendAssumeCapacity(value);
+    }
+    return result;
+}
+
+fn csvFormat(self: *Interpreter, span: Source.Span, rows: *const Heap.List, separator: []const u8) Error!Value {
+    const row_slices = try self.gpa.alloc([]const []const u8, rows.items.items.len);
+    defer self.gpa.free(row_slices);
+    var field_count: usize = 0;
+    for (rows.items.items) |row| field_count += row.data.list.items.items.len;
+    const fields = try self.gpa.alloc([]const u8, field_count);
+    defer self.gpa.free(fields);
+    var at: usize = 0;
+    for (rows.items.items, row_slices) |row, *out| {
+        const items = row.data.list.items.items;
+        out.* = fields[at .. at + items.len];
+        for (items) |item| {
+            fields[at] = item.data.string.bytes;
+            at += 1;
+        }
+    }
+    var out: std.Io.Writer.Allocating = .init(self.gpa);
+    defer out.deinit();
+    Csv.write(row_slices, separator, &out.writer) catch |err| switch (err) {
+        error.InvalidSeparator => return self.raiseCsvSeparator(span, separator),
+        error.WriteFailed => return error.OutOfMemory,
+    };
+    return .{ .data = .{ .string = try self.heap.createText(try out.toOwnedSlice()) } };
+}
+
+fn raiseCsvProblem(self: *Interpreter, span: Source.Span, problem: Csv.Problem) Error {
+    const message = if (problem.line) |line|
+        std.fmt.allocPrint(self.arena, "line {d}: {s}", .{ line, problem.message() }) catch return error.OutOfMemory
+    else
+        problem.message();
+    return self.raiseCsv(span, message, problem.line);
+}
+
+fn raiseCsvSeparator(self: *Interpreter, span: Source.Span, separator: []const u8) Error {
+    const message = std.fmt.allocPrint(self.arena, "a separator must be one character, not \"{s}\"", .{separator}) catch return error.OutOfMemory;
+    return self.raiseCsv(span, message, null);
+}
+
+fn raiseCsv(self: *Interpreter, span: Source.Span, message: []const u8, line: ?u32) Error {
+    self.raised_value = self.makeCsvError(message, line) catch return error.OutOfMemory;
+    return self.raiseTyped(span, "CsvError", message, "Correct the CSV text or use a one-character separator.");
+}
+
+fn makeCsvError(self: *Interpreter, message: []const u8, line: ?u32) RunError!Value {
+    const descriptor = self.structs.get(Resolver.preludeKey("CsvError")).?;
+    const fields = try self.gpa.alloc(Value, descriptor.fields.len);
+    @memset(fields, Value.nothing);
+    errdefer {
+        for (fields) |field| self.heap.release(field);
+        self.gpa.free(fields);
+    }
+    for (descriptor.fields, fields) |field, *value| {
+        if (std.mem.eql(u8, field.name, "message")) value.* = try self.heap.copyText(message);
+        if (std.mem.eql(u8, field.name, "line")) value.* = if (line) |number| .initInt(number) else .nothing;
+    }
+    return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
 }
 
 /// Section 15.10's HTTP boundary. The public functions in the prelude bind

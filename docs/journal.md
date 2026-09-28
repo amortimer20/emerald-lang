@@ -3055,3 +3055,19 @@ startup comparison against the binary built before this slice measured the new b
 98.3–99.0% of the old one across five programs, ordinary machine noise rather than a startup
 cost. Debug and ReleaseSafe tests, build, doc examples, formatting and whitespace checks, and
 Windows/macOS cross-builds all passed with Zig 0.16.0.
+
+## CSV, slice 2: untyped tables, 2026-09-28
+
+`Csv.parse` now returns the table's rows as `List[List[String]]`; `Csv.parse_records` turns the
+first row into ordered `Dict[String, String]` records; and `Csv.format` writes text rows. Every
+CSV failure is a catchable `CsvError`, with its physical line in the `line` field whenever one
+exists. Empty documents give no records. A blank header is refused as `the header has an empty
+column name`; both it and duplicate headers retain line 1 without changing their approved
+message wording. Conformance covers parsing, records, formatting, Unicode separators, each text
+failure, and an uncaught error's diagnostic.
+
+The pinned Zig 0.16.0 Debug and ReleaseSafe suites, build, doc examples, formatting and
+whitespace checks, and Windows/macOS cross-builds passed. In an alternating 60-run comparison
+with slice 1, `print(1)` was 100.6% of its former median; the language-only and dates programs
+were 101.2% and 99.9%. That is ordinary host noise, not a measurable cost for a program that
+does not use CSV.

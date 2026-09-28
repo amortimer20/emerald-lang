@@ -1,8 +1,8 @@
 # CSV: design and implementation plan
 
 Status: in progress, 2026-09-28. The user accepted every recommendation, including decision 2:
-`Csv.decode` and `Csv.encode` are typed by the checker, as JSON's are. Slice 1 is complete;
-slice 2 is next.
+`Csv.decode` and `Csv.encode` are typed by the checker, as JSON's are. Slices 1 and 2 are
+complete; slice 3 is next.
 Rewrite-context 15.7
 lists CSV as a small library that pairs with `File`. This plan sets out the API, how a
 table of text becomes the program's own types, errors, and the order of work. The executor
@@ -193,6 +193,10 @@ rewrite-context text written in the same change.
    cases (seed 1) against Python's reader with no differences.
 2. **Untyped reading and writing.** `Csv.parse`, `parse_records`, `format`, and `CsvError`,
    with conformance for each and for every text error in the table.
+
+   **Settled while building (2026-09-28):** An empty document has no records. A blank or
+   repeated header is on line 1, so `CsvError.line` is set even though the approved messages do
+   not repeat that line number. A blank header says `the header has an empty column name`.
 3. **`Csv.decode`.** The checker special case (parser `as:` recognition included), the field
    rule, empty cells, missing and extra columns, and every value error, with diagnostics
    conformance for refused field types.

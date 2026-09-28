@@ -129,15 +129,17 @@ time, and eventually build a native compiler. CSV is the active milestone. Its a
 [`csv-design-plan.md`](csv-design-plan.md): slice 1 adds the native parser and writer, Zig unit
 tests, and a differential tool checked against Python's `csv` reader. It accepts BOMs, Unix and
 Windows line endings, RFC quoting, and one-grapheme separators; its writer uses `\n` and minimal
-quoting. It has no Emerald-facing API yet. Slice 2 (`Csv.parse`, `parse_records`, `format`, and
-`CsvError`) is next.
+quoting. Slice 2 adds `Csv.parse`, `parse_records`, `format`, and catchable `CsvError`;
+conformance covers their success paths and every untyped text failure. An empty document has no
+records, and `CsvError.line` is present whenever a physical row is known, including a malformed
+header on line 1. Slice 3 (`Csv.decode`) is next.
 
 The parser's 3,000 generated cases (seed 1) had no differences from Python. An alternating
 startup comparison against the pre-CSV binary was within ordinary noise (the new binary was
 98.3–99.0% of the old across the five programs), so an unused CSV module adds no measured
 startup cost. Base64/hashing and the remaining Console scope need separate user go-ahead.
 
-CSV slice 1 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test
+CSV slices 1–2 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
 tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. The HTTP client’s
 manual `zig build http-live` check passed in its slice 3; it is not part of ordinary validation.

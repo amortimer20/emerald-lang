@@ -1,0 +1,12 @@
+line 2: a quoted field that starts here never closes
+2
+line 2: a quoted field must end at a separator or the end of the line, not "x"
+2
+a separator must be one character, not ";;"
+-1
+line 2 has 1 fields, but the header has 2
+2
+the header names the column "name" twice
+1
+the header has an empty column name
+1
