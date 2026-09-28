@@ -146,8 +146,34 @@ checking everything if they need to, since neither is on the startup path of `em
    62%; dates 77%; regular expressions 81%.
 3. **Fewer allocations while checking** (lever 2), guided by a counting allocator, with the
    largest sources recorded in the journal and the benchmark before and after.
+   Investigated, not yet changed. After slice 2, `print(1)`'s stages are: loading sources
+   0.42 ms, lexing 0.62, parsing 0.96, resolving 1.00, checking 0.68, running 0.28, and
+   teardown 0.24, plus about 0.5 ms of process start and exit. Checking now matters for
+   programs that use a library: `examples/regex.em` spends 3.5 ms and about 1,050 page faults
+   in it. A counting allocator over the checker's arena (Debug build, stack traces resolved
+   with `addr2line -f`, since it cannot read Zig's line tables but does recover function
+   names) found 4.3 MB in 5,723 allocations for that program. The largest sources:
+   - `moduleView`, 1.45 MB in 151 allocations: every body checked gets a fresh map copying
+     every module-level variable of the program, about 9.6 KB each here. Its cost grows with
+     the product of a program's functions and its globals.
+   - `snapshotOf`, 860 KB in 888 allocations: every branch and loop copies the state of
+     every scope in view, the copied module view included.
+   - Growing hash maps in `registerStruct` (376 KB) and the expression-type maps.
+
+   The fix is to give each body only the module variables it uses. The resolver's
+   `module_reads` records a body's direct reads, but not reads inside its lambdas
+   (`lambda_reads`), and the view's contents feed definite-assignment and narrowing, whose
+   snapshots are positional, so a variable cannot be copied lazily on first use. It needs
+   its own careful slice, with conformance aimed at definite assignment and narrowing in
+   lambdas, nested functions, and assignments to module variables. It is worth about a
+   millisecond for programs that use a library, and nothing for `print(1)`.
 4. **Teardown** (lever 3), measured.
+   Measured: 0.24 ms for `print(1)` (about 5%), so skipping it is a small gain.
 5. **Decide on lever 4** from fresh measurements, and record the decision.
+   Measured: lexing and parsing the prelude are now about 1.6 ms of `print(1)`'s 5.1 ms,
+   and resolving it about another 1.0 ms, so the prelude's front end is now the largest cost
+   for small programs, larger than any remaining checker work. Doing it once when Emerald
+   is built is the remaining big lever for them; it needs a design pass of its own.
 
 ## Risks
 

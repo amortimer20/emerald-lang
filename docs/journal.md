@@ -3028,3 +3028,14 @@ planted line.
 from 2,508 to 1,056: most of the time saved was the operating system's, handing out memory
 that checking unreached bodies never needed. Programs that use a library keep most of the
 gain (JSON 62%, dates 77%, regular expressions 81% of before).
+
+## Startup performance, slices 3–5: measured, 2026-09-28
+
+After slice 2, the prelude's front end (lexing, parsing, and resolving, about 2.6 ms) is the
+largest part of a `print(1)`'s 5.1 ms, and checking only 0.68 ms. A counting allocator over
+the checker's arena showed where checking's memory goes in a program that uses a library:
+`moduleView` copies every module variable into a fresh map for every body checked, and every
+branch snapshot copies it again. Giving a body only the variables it uses needs care in the
+definite-assignment analysis, so it is written up in the plan rather than changed here.
+Teardown measured 0.24 ms. The recorded measurements and options are in
+`docs/startup-design-plan.md`.
