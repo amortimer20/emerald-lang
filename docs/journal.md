@@ -3071,3 +3071,22 @@ whitespace checks, and Windows/macOS cross-builds passed. In an alternating 60-r
 with slice 1, `print(1)` was 100.6% of its former median; the language-only and dates programs
 were 101.2% and 99.9%. That is ordinary host noise, not a measurable cost for a program that
 does not use CSV.
+
+## CSV, slice 3: typed decoding, 2026-09-28
+
+`Csv.decode(text, as: List[Record], separator: ",")` is now a checker-recognized conversion;
+the parser recognizes `Csv.decode` and `Emerald.Csv.decode` only. CSV validates the target as a
+list of plain structs with scalar, enum, date/time, or optional fields. Cells are converted to
+primitive JSON values and sent through JSON's existing recursive decoder, preserving generated
+construction, defaults, optionals, private fields, enums, and date/time parsing without a second
+copy of that machinery. Empty cells become optional absence, or a default by omission; unknown
+columns are ignored. Conformance covers scalar conversions, bool capitalization, missing and
+extra columns, defaults, optionals, dates, every listed value error, and an unsupported-field
+diagnostic. JSON conformance remained unchanged.
+
+The pinned Zig 0.16.0 Debug and ReleaseSafe suites, build, doc examples, formatting and
+whitespace checks, and Windows/macOS cross-builds passed. The full test target includes the
+unchanged JSON conformance cases. In a 10-run startup comparison with slice 2, `print(1)` was
+98.8%, the language-only program 102.2%, dates 100.2%, regex 99.8%, and JSON 99.8% of the
+previous medians—normal host variation rather than a measurable cost to programs that do not
+decode CSV.

@@ -1,8 +1,8 @@
 # CSV: design and implementation plan
 
 Status: in progress, 2026-09-28. The user accepted every recommendation, including decision 2:
-`Csv.decode` and `Csv.encode` are typed by the checker, as JSON's are. Slices 1 and 2 are
-complete; slice 3 is next.
+`Csv.decode` and `Csv.encode` are typed by the checker, as JSON's are. Slices 1–3 are complete;
+slice 4 is next.
 Rewrite-context 15.7
 lists CSV as a small library that pairs with `File`. This plan sets out the API, how a
 table of text becomes the program's own types, errors, and the order of work. The executor
@@ -200,6 +200,12 @@ rewrite-context text written in the same change.
 3. **`Csv.decode`.** The checker special case (parser `as:` recognition included), the field
    rule, empty cells, missing and extra columns, and every value error, with diagnostics
    conformance for refused field types.
+
+   **Settled while building (2026-09-28):** CSV cells are converted to primitive JSON values,
+   then passed through JSON's existing recursive decoder for constructors, defaults, optionals,
+   private fields, enums, and date/time parsing. A missing column for an optional or defaulted
+   field is omitted so the shared decoder supplies its ordinary value; a struct's unknown CSV
+   columns are ignored.
 4. **`Csv.encode`.** The checker special case and the writer for records, with a round trip
    through `decode`.
 5. **Documentation and integration.** `docs/library/csv.md`, an inventory row, an example, a

@@ -6371,13 +6371,13 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         );
         return .invalid;
     }
-    // Section 15.9: `Json.encode` and `Json.decode` are checked specially at
+    // Section 15.9/15.11: typed JSON and CSV calls are checked specially at
     // each call, which no function value could carry.
-    if (isJsonEncodeKey(reference.key) or isJsonDecodeKey(reference.key)) {
-        const which = if (isJsonEncodeKey(reference.key)) "encode" else "decode";
+    if (isJsonEncodeKey(reference.key) or isJsonDecodeKey(reference.key) or isCsvDecodeKey(reference.key)) {
+        const which = if (isJsonEncodeKey(reference.key)) "Json.encode" else if (isJsonDecodeKey(reference.key)) "Json.decode" else "Csv.decode";
         try self.reportWithHelp(
             expression.span,
-            "`Json.{s}` has to be called",
+            "`{s}` has to be called",
             .{which},
             "It checks the type of what it is given at each call, so it cannot be kept as a value. Call it where it is needed, or wrap the call in a block.",
             .{},
@@ -9471,7 +9471,10 @@ fn typeOfCall(
         return self.typeOfJsonEncode(call, name, key);
     }
     if (isJsonDecodeKey(key)) {
-        return self.typeOfJsonDecode(call, name);
+        return self.typeOfTypedDecode(call, name, "Json", false);
+    }
+    if (isCsvDecodeKey(key)) {
+        return self.typeOfTypedDecode(call, name, "Csv", true);
     }
 
     // A prelude function. Section 15.2's `print` and `write` accept any number
@@ -9574,11 +9577,18 @@ fn typeOfJsonEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8,
     return .string;
 }
 
-/// The `Json.decode(text, as: Type)` half of 15.9's checker-known conversion.
+/// The typed `Json.decode`/`Csv.decode` conversion. Both share argument
+/// binding and target construction; CSV adds a separator and a narrower field
+/// vocabulary.
 /// The type after `as:` is source syntax, not a runtime value, so a written
 /// function signature cannot express this call shape.
-fn typeOfJsonDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8) Error!Type {
-    const parameters: Parameters = .{
+fn typeOfTypedDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8, api: []const u8, csv: bool) Error!Type {
+    const parameters: Parameters = if (csv) .{
+        .types = &.{ Type.string, Type.invalid, Type.string },
+        .names = &.{ "text", "as", "separator" },
+        .has_default = &.{ false, false, true },
+        .arity_help = "Pass CSV text and name the type to build, as in `Csv.decode(text, as: Score)`.",
+    } else .{
         .types = &.{ Type.string, Type.invalid },
         .names = &.{ "text", "as" },
         .has_default = &.{ false, false },
@@ -9591,30 +9601,32 @@ fn typeOfJsonDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8)
 
     const target_expression = call.arguments[bound[1].?];
     if (target_expression.data != .type_literal) {
-        try self.report(
+        try self.reportWithHelp(
             target_expression.span,
-            "`Json.decode` needs a type after `as:`",
-            .{},
-            "Name the type to build, as in `Json.decode(text, as: Score)` or `Json.decode(text, as: List[Score])`. The type is recognized only in a call written `Json.decode(...)`.",
+            "`{s}.decode` needs a type after `as:`",
+            .{api},
+            "Name the type to build after `as:`, using a call written `{s}.decode(...)`.",
+            .{api},
         );
         return .invalid;
     }
     const target = try self.resolveTypeExpression(target_expression.data.type_literal);
     if (target.kind == .invalid) return .invalid;
-    if (try self.jsonDecodeIssue(target, "")) |issue| {
-        if (issue.field_path.len > 0) {
+    const issue = if (csv) try self.csvDecodeIssue(target, "") else try self.jsonDecodeIssue(target, "");
+    if (issue) |found_issue| {
+        if (found_issue.field_path.len > 0) {
             try self.report(
                 target_expression.span,
-                "field `{s}` of {f} cannot be read from JSON because it is {f}",
-                .{ issue.field_path, target, issue.type },
-                "JSON can build strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
+                "field `{s}` of {f} cannot be read from {s} because it is {f}",
+                .{ found_issue.field_path, target, api, found_issue.type },
+                if (csv) "CSV cells can build text, whole numbers, numbers, true or false, enums, dates and times, and optional values." else "JSON can build strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
             );
         } else {
             try self.report(
                 target_expression.span,
-                "{f} cannot be read from JSON",
-                .{target},
-                "JSON can build strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
+                "{f} cannot be read from {s}",
+                .{ target, api },
+                if (csv) "Csv.decode needs a List of a plain struct whose fields are text-compatible." else "JSON can build strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
             );
         }
         return .invalid;
@@ -9710,6 +9722,50 @@ fn isJsonEncodeKey(key: []const u8) bool {
 fn isJsonDecodeKey(key: []const u8) bool {
     return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
         std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Json::decode");
+}
+
+fn isCsvDecodeKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
+        std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Csv::decode");
+}
+
+fn csvDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?JsonEncodeIssue {
+    if (value.kind != .list or value.optional) return .{ .type = value, .field_path = field_path };
+    const element = value.element.?.*;
+    if (element.kind != .struct_value or element.optional) return .{ .type = element, .field_path = field_path };
+    const user = element.user.?;
+    if (user.class or user.trait or user.enumeration) return .{ .type = element, .field_path = field_path };
+    const declaration = self.struct_declarations.get(user.name).?;
+    for (declaration.fields, user.fields) |written, resolved| {
+        if (Resolver.isPrivate(resolved.name)) {
+            if (written.default == null) return .{ .type = resolved.type, .field_path = resolved.name };
+            continue;
+        }
+        if (try self.csvDecodeFieldIssue(resolved.type, resolved.name)) |issue| return issue;
+    }
+    return null;
+}
+
+fn csvDecodeFieldIssue(self: *Checker, value: Type, field_path: []const u8) Error!?JsonEncodeIssue {
+    if (value.optional) return self.csvDecodeFieldIssue(value.payload(), field_path);
+    switch (value.kind) {
+        .string, .int, .float, .bool => return null,
+        .struct_value => {
+            const user = value.user.?;
+            if (user.enumeration or csvTextualType(user.name)) return null;
+            return .{ .type = value, .field_path = field_path };
+        },
+        else => return .{ .type = value, .field_path = field_path },
+    }
+}
+
+fn csvTextualType(key: []const u8) bool {
+    if (!std.mem.startsWith(u8, key, Resolver.prelude_namespace)) return false;
+    const short = key[Resolver.prelude_namespace.len..];
+    return std.mem.eql(u8, short, ".Date") or
+        std.mem.eql(u8, short, ".Time") or
+        std.mem.eql(u8, short, ".DateTime") or
+        std.mem.eql(u8, short, ".Instant");
 }
 
 fn jsonTextualType(key: []const u8) bool {

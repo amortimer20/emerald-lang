@@ -1513,6 +1513,8 @@ class Csv {
         return Csv._parse_records(text, separator)
     }
 
+    func Csv.decode(text: String, as: Nothing, separator: String = ","): Nothing {}
+
     func Csv.format(rows: List[List[String]], separator: String = ","): String {
         return Csv._format(rows, separator)
     }
