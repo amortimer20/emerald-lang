@@ -1,0 +1,106 @@
+name: Install scripts
+
+# Runs install.sh and install.ps1 against a real GitHub release, on each
+# platform they support. It reaches the network, so it runs only when the
+# scripts change, after a release is published (called from release.yml), or
+# by hand, never as part of ordinary CI.
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - install.sh
+      - install.ps1
+      - .github/workflows/install.yml
+  pull_request:
+    paths:
+      - install.sh
+      - install.ps1
+      - .github/workflows/install.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to install, or "latest"
+        default: latest
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: latest
+
+jobs:
+  unix:
+    name: install.sh / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            startup: -ic   # bash reads .bashrc in an interactive shell
+          - os: macos-latest
+            startup: -lc   # and .bash_profile in a login shell on macOS
+    env:
+      VERSION: ${{ inputs.version || 'latest' }}
+      SHELL: /bin/bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install
+        run: sh install.sh --version "$VERSION"
+
+      - name: A new shell finds emerald
+        run: bash ${{ matrix.startup }} 'emerald --version'
+
+      - name: Installing again adds no second PATH line
+        run: |
+          sh install.sh --version "$VERSION"
+          test "$(cat ~/.bashrc ~/.bash_profile 2>/dev/null | grep -c 'Added by the Emerald installer')" = 1
+
+      - name: Uninstall
+        run: |
+          sh install.sh --uninstall
+          test ! -e ~/.emerald
+          ! grep -q 'Added by the Emerald installer' ~/.bashrc ~/.bash_profile 2>/dev/null
+
+  windows:
+    name: install.ps1 / ${{ matrix.shell }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]   # Windows PowerShell 5.1 and PowerShell 7
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      VERSION: ${{ inputs.version || 'latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install, as a student would through iex
+        run: |
+          if ($env:VERSION -eq 'latest') {
+            Get-Content install.ps1 -Raw | Invoke-Expression
+          } else {
+            & ([scriptblock]::Create((Get-Content install.ps1 -Raw))) -Version $env:VERSION
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # The script also puts Emerald on this window's PATH.
+          emerald --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: The user PATH names the install folder
+        run: |
+          $folder = Join-Path $env:LOCALAPPDATA 'Programs\Emerald'
+          $path = (Get-Item 'HKCU:\Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          if (-not (($path -split ';') -contains $folder)) { throw "user PATH lacks $folder" }
+
+      - name: Uninstall
+        run: |
+          & ([scriptblock]::Create((Get-Content install.ps1 -Raw))) -Uninstall
+          $folder = Join-Path $env:LOCALAPPDATA 'Programs\Emerald'
+          if (Test-Path $folder) { throw "$folder is still there" }
+          $path = (Get-Item 'HKCU:\Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          if (($path -split ';') -contains $folder) { throw "user PATH still has $folder" }
