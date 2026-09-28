@@ -1,0 +1,4 @@
+diagnostics/list-unknown-member.em:2:14: List[Int] has no method `shout`
+  print([1, 2].shout())
+               ^^^^^
+A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.

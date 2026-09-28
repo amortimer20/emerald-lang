@@ -1,0 +1,4 @@
+diagnostics/list-plus.em:2:7: addition needs numbers, but this is List[Int] and List[Int]
+  print([1, 2] + [3])
+        ^^^^^^^^^^^^
+Join two lists with `chain`, as in `first.chain(second)`.

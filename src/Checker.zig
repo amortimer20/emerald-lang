@@ -8272,7 +8272,7 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
         switch (base.kind) {
-            .list => "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, `clear`, `take`, `drop`, `reverse`, and `unique`.",
+            .list => "A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.",
             .dictionary => "A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.",
             .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
             .string => "A String has `count`, `empty?`, `blank?`, `chars`, `code_points`, `bytes`, `upper`, `lower`, `capitalize`, `trim`, `trim_start`, `trim_end`, `contains?`, `starts_with?`, `ends_with?`, `index_of`, `substring`, `split`, `lines`, `partition`, `replace`, `insert_at`, `remove_prefix`, `remove_suffix`, `reverse`, `repeat`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `to_int`, `to_int_or`, `to_int_maybe`, `to_float`, `to_float_or`, and `to_float_maybe`.",
@@ -8687,6 +8687,8 @@ fn arithmetic(
             // different fix from a value that is the wrong kind entirely.
             if ((left.optional and left.payload().isNumber()) or (right.optional and right.payload().isNumber()))
                 "One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first."
+            else if (operator == .add and left.kind == .list and right.kind == .list and !left.optional and !right.optional)
+                "Join two lists with `chain`, as in `first.chain(second)`."
             else if (left.kind == .struct_value and !left.optional)
                 "Register `+`, `-`, `*`, or `/` on this type with `@operator(\"...\")`, or write a named method instead."
             else if (right.kind == .struct_value and !right.optional and switch (operator) {
