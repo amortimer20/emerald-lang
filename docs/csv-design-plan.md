@@ -1,7 +1,8 @@
 # CSV: design and implementation plan
 
-Status: proposed, 2026-09-28. The five decisions below await the user. Once they are
-accepted, record the answers here and in the handoff, and start slice 1. Rewrite-context 15.7
+Status: accepted, 2026-09-28. The user accepted every recommendation, including decision 2:
+`Csv.decode` and `Csv.encode` are typed by the checker, as JSON's are. Slice 1 is next.
+Rewrite-context 15.7
 lists CSV as a small library that pairs with `File`. This plan sets out the API, how a
 table of text becomes the program's own types, errors, and the order of work. The executor
 makes the remaining judgement calls within a slice, and records each one under that slice's
@@ -120,6 +121,8 @@ class CsvError extends RuntimeError {
 - **Line endings:** reading accepts `\n` and `\r\n`; writing uses `\n` (decision 4).
 
 ## Decisions
+
+All five were accepted as recommended on 2026-09-28.
 
 1. **Name: `Csv`,** matching `Json` and `Http`. Alternative: `CSV`.
 2. **Typed reading and writing through the checker, as JSON does (the main decision).**
