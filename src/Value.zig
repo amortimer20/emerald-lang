@@ -233,7 +233,9 @@ pub fn writeThrough(self: Value, writer: *std.Io.Writer, quoted: bool, textual: 
             if (range.step_size == 1) {
                 try writer.print("{d}..{d}", .{ range.first, range.last });
             } else {
-                try writer.print("{d}..{d}.step({d})", .{ range.first, range.last, range.step_size });
+                // Parenthesized, as it must be written: `1..10.step(3)` would
+                // mean `1..(10.step(3))`.
+                try writer.print("({d}..{d}).step({d})", .{ range.first, range.last, range.step_size });
             }
         },
         .list => |list| {
