@@ -26,7 +26,7 @@ The two special values, for building or comparing against them directly. NaN ans
 
 ## abs() -> Float
 
-The absolute value. `(-0.0).abs()` is `0.0`.
+The absolute value. `-0.0.abs()` is `0.0`.
 
 ## clamp(minimum: Float, maximum: Float) -> Float
 

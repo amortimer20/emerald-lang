@@ -672,6 +672,15 @@ Arithmetic uses ordinary precedence. Exponentiation binds more tightly than unar
 and is right-associative, so `2 ** 3 ** 2` means `2 ** (3 ** 2)` and `-2 ** 2` means
 `-(2 ** 2)`.
 
+A `-` written directly against a number, with no space between them, is part of the
+number: `-3` is one negative literal, so `-3.abs()` is `3` and `-3.positive?()` is `false`,
+as a reader means them. The exception is a number that `**` follows, whose sign stays apart
+so that `-2 ** 2` keeps its mathematical meaning; `(-2) ** 2` squares negative two. Anywhere
+else, a `-` negates everything after it: `-x.abs()` negates `x`'s absolute value, and
+`- 3.abs()`, with a space, is `-(3.abs())`. The formatter writes `-3.abs()` without
+parentheses, keeps them in `(-2) ** 2`, and prints a spaced negation of a call on a number
+as `-(3.abs())`. A `-` after a value is always subtraction: `x -3` is `x - 3`.
+
 The operators are:
 
 - `+`, `-`, `*`
@@ -961,6 +970,13 @@ error too, and a computed one raises when the loop begins. Computed endpoints ar
 reported, since an empty `0..count - 1` is the point of the rule.
 
 Equal inclusive endpoints visit once, in every form. An equal half-open range is empty.
+
+A Range prints the way it would be written, in its inclusive form: `0..<24` prints as
+`0..23`, `(1..10).step(3)` keeps its parentheses, and a descending count prints with
+`down_to`. An empty range prints with the bounds that made it empty, as written (`0..<0`,
+`1..0`, `0.down_to(1)`), so a program that counted nothing can see why; it never prints as
+`[]`, which is an empty list. Every empty range is equal to every other, since each visits
+the same numbers, none, whatever bounds made it empty.
 
 The Int block forms run the same Range semantics immediately and return `Nothing`:
 
@@ -3944,6 +3960,7 @@ recorded in their normative sections:
 | Capturing a built-in (7.5) | `print`, `write`, and `input` can only be called | They take any number of arguments of any type, which no written function type describes. The diagnostic suggests wrapping one in a lambda. |
 | `each` and the unused result (5.2, 8.5) | `each` ignores what its block produces, except a one-expression body that is not a call, which is reported | That shape is section 5.2's unused result and is almost always a `map` written as an `each`. A block body that happens to return is left alone. |
 | Blocks in a statement header (7.4) | The `{` after an `if`, `while`, or `for` condition opens the body, and a trailing block written there is reported against its own `{` | The rule was already stated; without a diagnostic naming it, the parameters were read as statements and produced errors that named nothing relevant. |
+| Negative number literals (5.3) | A `-` written against a number is part of it, except before `**` | `-3.abs()` read as `-(3.abs())` gave `-3`, and `-3.positive?()` reported a misleading type error; a student writing `-3` means the number. Ruby reads it the same way, with the same `**` exception, which mathematics itself makes (−2² is −4). The alternative, keeping `-` a separate operator and rejecting a call on a negated literal, matched Python and Rust but made the student write parentheses the language could infer. |
 | Keywords after `.` (3.4, 4.5) | A member may be reached for by a keyword name, though a member is still declared with an ordinary identifier | 3.4 reserved keywords after `.` while 4.5 wrote `maybe.or(0)` twice; one had to give. Only a member name can follow a `.`, so allowing a keyword there makes nothing ambiguous, and 3.4's stated reason — that member declarations not create a second identifier grammar — is untouched. The alternative was renaming `or`, which would have broken step with `to_int_or`. |
 | Narrowing a `var` (4.5) | A `var` that any lambda assigns to is never narrowed; a `const` and a parameter always are | 4.5 says a narrowed mutable binding loses the proof when "a called closure could reassign its captured binding", and which names those are is exactly what the resolver already sees. Refusing to narrow them at all is the rule a reader can check by eye, and the alternative — tracking which calls could reach such a block — would be both slower and harder to explain. |
 | Narrowing after assignment (4.5) | Assigning a value that is certainly there proves it is, until something un-proves it | Otherwise `x = 5` followed by `x + 1` is an error with no way to read it as anything but a compiler failing to notice. It falls out of tracking the narrowed type in the same state a branch snapshots and restores. |

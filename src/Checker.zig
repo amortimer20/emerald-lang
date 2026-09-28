@@ -8272,12 +8272,12 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
         switch (base.kind) {
-            .list => "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, `clear`, `take`, `drop`, `reverse`, and `unique`.",
-            .dictionary => "A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.",
-            .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
-            .string => "A String has `count`, `empty?`, `blank?`, `contains?`, `starts_with?`, `ends_with?`, `trim`, `upper`, `lower`, `capitalize`, `reverse`, `repeat`, `replace`, `insert_at`, `substring`, `remove_prefix`, `remove_suffix`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `split`, `partition`, `lines`, `chars`, `code_points`, `bytes`, `to_int`, and `to_float`.",
-            .int => "An Int has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `to_float`, `to_string`, and `format`.",
-            .float => "A Float has `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `floor`, `ceil`, `round`, `round_to`, `truncate`, `finite?`, `infinite?`, `nan?`, `to_int`, `to_string`, and `format`.",
+            .list => "A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.",
+            .dictionary => "A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.",
+            .set => "A set has `count`, and methods including `contains?`, `add`, `remove`, `union`, `intersection`, `difference`, `subset?`, `filter`, `each`, and `map`; the Set reference lists them all.",
+            .string => "A String has `count`, `empty?`, `blank?`, `chars`, `code_points`, `bytes`, `upper`, `lower`, `capitalize`, `trim`, `trim_start`, `trim_end`, `contains?`, `starts_with?`, `ends_with?`, `index_of`, `substring`, `split`, `lines`, `partition`, `replace`, `insert_at`, `remove_prefix`, `remove_suffix`, `reverse`, `repeat`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `to_int`, `to_int_or`, `to_int_maybe`, `to_float`, `to_float_or`, and `to_float_maybe`.",
+            .int => "An Int has `times`, `up_to`, `down_to`, `even?`, `odd?`, `multiple_of?`, `zero?`, `positive?`, `negative?`, `abs`, `clamp`, `between?`, `to_string`, `format`, `digits`, `gcd`, `lcm`, `factorial`, and `to_float`.",
+            .float => "A Float has `round`, `floor`, `ceil`, `truncate`, `round_to`, `format`, `to_string`, `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `square_root`, `to_radians`, `to_degrees`, `finite?`, `infinite?`, `nan?`, and `to_int`.",
             else => "Check the spelling, or what kind of value this is.",
         },
     );
@@ -8687,6 +8687,8 @@ fn arithmetic(
             // different fix from a value that is the wrong kind entirely.
             if ((left.optional and left.payload().isNumber()) or (right.optional and right.payload().isNumber()))
                 "One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first."
+            else if (operator == .add and left.kind == .list and right.kind == .list and !left.optional and !right.optional)
+                "Join two lists with `chain`, as in `first.chain(second)`."
             else if (left.kind == .struct_value and !left.optional)
                 "Register `+`, `-`, `*`, or `/` on this type with `@operator(\"...\")`, or write a named method instead."
             else if (right.kind == .struct_value and !right.optional and switch (operator) {
@@ -9179,7 +9181,7 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
                 pair,
                 "`{s}` needs numbers, but these are {f} values",
                 .{ operator.lexeme(), left },
-                "Only numbers are ordered. Use `==` or `!=` to compare other values.",
+                "Only numbers and Strings are ordered. Use `==` or `!=` to compare other values.",
             );
         }
         left = right;

@@ -9,6 +9,11 @@
 //! unary expression rather than as another power. That makes the operator
 //! right-associative and simultaneously lets `2 ** -3` parse, while a leading
 //! `-` still wraps the whole power because unary sits above it.
+//!
+//! A `-` written directly against a number, with no space, is part of the
+//! number instead (5.3), so `-3.abs()` calls `abs` on -3, as a reader means it.
+//! The exception is a number that `**` follows, which keeps `-2 ** 2` as
+//! `-(2 ** 2)`.
 
 const std = @import("std");
 const Ast = @import("Ast.zig");
@@ -3089,6 +3094,9 @@ fn parseMultiplicative(self: *Parser) Error!*const Ast.Expression {
 
 fn parseUnary(self: *Parser) Error!*const Ast.Expression {
     if (self.match(.minus)) |token| {
+        if (try self.negativeLiteral(token)) |literal| {
+            return self.parsePowerFrom(try self.parsePostfixFrom(literal));
+        }
         if (self.matchMinimumIntMagnitude()) |literal| {
             return self.node(spanning(token.span, literal.span), .{ .int_literal = std.math.minInt(i64) });
         }
@@ -3107,7 +3115,10 @@ fn parseUnary(self: *Parser) Error!*const Ast.Expression {
 /// choice gives `**` its right associativity and lets `2 ** -3` parse, while
 /// leaving `-2 ** 2` to mean `-(2 ** 2)` because unary minus sits above this.
 fn parsePower(self: *Parser) Error!*const Ast.Expression {
-    const left = try self.parsePostfix();
+    return self.parsePowerFrom(try self.parsePostfix());
+}
+
+fn parsePowerFrom(self: *Parser, left: *const Ast.Expression) Error!*const Ast.Expression {
     if (!self.check(.star_star)) return left;
     const operator = self.advance();
     try self.recurse(operator.span);
@@ -3124,7 +3135,11 @@ fn parsePower(self: *Parser) Error!*const Ast.Expression {
 /// Calls, indexing, and member access, which all bind tighter than any
 /// operator and chain left to right: `grid[0].count`, `list.contains?(3)`.
 fn parsePostfix(self: *Parser) Error!*const Ast.Expression {
-    var base = try self.parsePrimary();
+    return self.parsePostfixFrom(try self.parsePrimary());
+}
+
+fn parsePostfixFrom(self: *Parser, first: *const Ast.Expression) Error!*const Ast.Expression {
+    var base = first;
     while (true) {
         base = switch (self.peek().kind) {
             .left_paren => try self.finishCall(base),
@@ -4193,6 +4208,32 @@ fn unescape(arena: std.mem.Allocator, raw: []const u8) Error![]const u8 {
     return result.toOwnedSlice(arena);
 }
 
+/// Section 5.3's negative number: the literal right after `minus`, with no
+/// space between them, read as one negative literal, unless `**` follows it.
+/// Null, consuming nothing, when this `-` is an ordinary negation.
+fn negativeLiteral(self: *Parser, minus: Token) Error!?*const Ast.Expression {
+    const literal = self.peek();
+    if (literal.kind != .int_literal and literal.kind != .float_literal) return null;
+    if (literal.span.start != minus.span.end) return null;
+    if (self.peekAfterNext().kind == .star_star) return null;
+    _ = self.advance();
+    const span = spanning(minus.span, literal.span);
+    if (literal.kind == .float_literal) {
+        return try self.node(span, .{ .float_literal = -(try self.parseFloatLiteral(literal)) });
+    }
+    // The minimum Int's magnitude is one past the maximum, so it cannot be
+    // read as a positive Int first.
+    var buffer: [32]u8 = undefined;
+    if (self.stripSeparators(self.text(literal), &buffer)) |digits| {
+        if (std.fmt.parseInt(u64, digits, 10)) |magnitude| {
+            if (magnitude == @as(u64, std.math.maxInt(i64)) + 1) {
+                return try self.node(span, .{ .int_literal = std.math.minInt(i64) });
+            }
+        } else |_| {}
+    }
+    return try self.node(span, .{ .int_literal = -(try self.parseIntLiteral(literal)) });
+}
+
 /// The minimum `Int` is written `-9223372036854775808`, but its digits alone
 /// are one past the maximum, because the range is asymmetric. A literal is
 /// read before the minus is applied to it, so the pair is taken together here.
@@ -4201,6 +4242,9 @@ fn unescape(arena: std.mem.Allocator, raw: []const u8) Error![]const u8 {
 /// ** 2` it applies to the power, which binds tighter, so the literal stands
 /// by itself and is out of range, as it would be anywhere else. Calling the
 /// literal is excluded for the same reason, although it is an error anyway.
+///
+/// Reached only when a space separates the minus from the digits; written
+/// together, `negativeLiteral` has already taken them.
 fn matchMinimumIntMagnitude(self: *Parser) ?Token {
     const literal = self.peek();
     if (literal.kind != .int_literal) return null;

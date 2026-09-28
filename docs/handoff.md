@@ -107,6 +107,10 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
+A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
+`-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
+project loader's, and range's unit tests now run in `zig build test`; they had been left out.
+
 ## Next step
 
 The HTTP client is complete (15.10): `Http` makes timeout-bounded, certificate-checked,
@@ -191,6 +195,7 @@ on the roadmap.
 - A module-level variable in the prelude takes part in a program's module-setup ordering
   analysis and would leak its `prelude.em#` key into a diagnostic. The prelude avoids them
   for now; the checker should eventually leave prelude bindings out of that analysis.
+
 
 ## Validation and repository state
 

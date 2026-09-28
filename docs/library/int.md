@@ -44,7 +44,7 @@ The three sign predicates. `0` answers `zero?` true and both sign predicates fal
 The receiver's text in `base`: decimal by default, the same text `print` and interpolation
 display. A named `base` from 2 through 36 spells the receiver in that base instead, digits
 `0`-`9` then lowercase `a`-`z`, with a leading `-` for a negative receiver
-(`255.to_string(base: 16)` is `"ff"`; `(-255).to_string(base: 16)` is `"-ff"`).
+(`255.to_string(base: 16)` is `"ff"`; `-255.to_string(base: 16)` is `"-ff"`).
 
 **Raises** for a `base` outside 2 through 36.
 
