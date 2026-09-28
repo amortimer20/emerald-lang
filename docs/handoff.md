@@ -179,6 +179,16 @@ on the roadmap.
 
 ## Active rough edges
 
+- Some Emerald files write `} catch` and `} finally` on one line, against 3.4's convention that
+  `else`, `catch`, and `finally` start their own lines. The formatter already writes them
+  correctly, but nothing checks that these files are formatted. The JSON, CSV, and HTTP
+  conformance files have most of them (`conformance/http/http-errors.em`,
+  `conformance/run/csv-*.em`, `json-*.em`, `prelude-reach.em`, `top-level-return.em`,
+  `runtime-errors/file-writer-streaming-closed.em`), plus `docs/library/http.md` and a test
+  snippet in `src/emerald.zig`. To do: format them, and add a check that example,
+  conformance, and documentation Emerald code is formatter-clean, so the convention holds
+  without anyone watching for it. A conformance file that is deliberately unformatted
+  would need marking as such.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`,
   `DateTimeError`, `RegexError`, and `HttpError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
