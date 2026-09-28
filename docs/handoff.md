@@ -144,7 +144,7 @@ Other candidates, each needing the user's go-ahead:
   prelude bodies a program can reach needs the interpreter to stop relying on facts recorded
   for every body; measure before and after, as the date slices did.
 - **Base64 and hashing**: [`base64-hashing-design-plan.md`](base64-hashing-design-plan.md)
-  is proposed and awaits the user's five decisions. It starts after CSV is merged.
+  is accepted with all five recommendations; slice 1 is next.
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
 

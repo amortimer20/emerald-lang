@@ -1,9 +1,9 @@
 # Base64 and hashing: design and implementation plan
 
-Status: proposed, 2026-09-28, awaiting the user's decisions below. Rewrite-context 15.7 lists
-"`Base64` and one or two hash/digest functions" as small utilities with no open design
-question. Writing the plan turned up a few, so they are settled here first. The work starts
-after the CSV milestone is merged to `main`.
+Status: accepted, 2026-09-28. The user accepted all five recommendations below. Rewrite-context
+15.7 lists "`Base64` and one or two hash/digest functions" as small utilities with no open
+design question; writing the plan turned up a few, and they are settled here. Slice 1 is next,
+once the CSV milestone is on `main`.
 
 The executor makes the remaining judgement calls within a slice and records each one under
 that slice's "Settled while building" note. At the start of each slice, reread `git status`,
@@ -128,7 +128,7 @@ class EncodingError extends RuntimeError {}
 
 ## Decisions
 
-Each has a recommendation; the user decides.
+All five were accepted as recommended on 2026-09-28. The alternatives are kept for the record.
 
 1. **The digest namespace is `Digest` (recommended),** because `Hash` would read as the
    dictionary `hash()` of `Hashable`, whose values are deliberately unstable (8.4, "Hash
