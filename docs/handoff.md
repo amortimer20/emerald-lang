@@ -113,14 +113,44 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-No milestone is in progress. The regular-expression milestone is finished; choosing the next
-piece of work is the user's call.
+JSON is complete. The user chose to finish the standard library (JSON, then an HTTP client,
+then the smaller items in rewrite-context 15.7), then make small optimizations such as startup
+time, and eventually build a native compiler.
+The JSON design plan was accepted with every recommendation, including
+decision 3 (a): the checker types `Json.encode` and `Json.decode(text, as: Type)` specially,
+as it does `print`. Slices 1 (the native parser and writer, `src/Json.zig`), 2 (the `Json`
+value in the prelude: `parse`, `parse_maybe`, `kind`, navigation, conversions, paths in
+errors, display, equality, and `JsonError`), and 3 are done. Slice 3 adds `Json.null`, the
+`from_string`/`from_int`/`from_float`/`from_bool`/`from_list`/`from_object` builders, and
+`Json.encode` for already-built `Json` values, compact and pretty, with round-trip
+conformance. `from_float` refuses NaN and infinity as `JsonError`; the native writer also
+defensively reports malformed internal non-finite values as `JsonError` rather than crashing.
+Slice 4 is complete: `Json.encode` now accepts the settled encodable program values — scalars,
+optionals, lists, string-keyed dictionaries, enums, dates/times, `Json`, and structs made from
+them — using the checker-recorded source type to preserve collection element types. It reports
+nonencodable values at check time, including the specific unsupported field of a struct; only a
+non-finite Float remains a catchable runtime `JsonError`. Slice 5 is also complete:
+`Json.decode(text, as: Type)` is checker-typed and builds the same recursive set of ordinary
+types. It handles structs through generated constructors, uses field defaults and optional
+fields when JSON leaves them out, ignores extra JSON fields, and reports a path-rich
+`JsonError` for malformed text or a mismatched value. Focused run, diagnostic, and runtime-error
+conformance covers the boundary. Slice 6 completes the integration: [`docs/library/json.md`](library/json.md),
+an inventory row, a zero-argument [`examples/json.em`](../examples/json.em), the settled
+rewrite-context rules and decision rows, and a typed JSON round-trip in the bounded execution
+fuzzer. JSON's milestone is complete; the next approved library design is a synchronous HTTP
+client. Slice 6 validation passed with the pinned toolchain, Debug and ReleaseSafe tests,
+`zig build`, documentation examples, a 1,000-case ReleaseSafe fuzz campaign (seed 24), Zig
+format checks, and `git diff --check`.
 
-Candidates, each needing the user's go-ahead:
+A review of slices 3–6 then fixed six defects (see the journal): an `as:` argument to any
+function was parsed as a type; a struct that holds itself hung the checker; field defaults
+overwrote values the document gave; private fields were written and read; naming `text:` and
+`as:` in the other order crashed; and `Json.decode` could be kept as a value. Private fields
+are now never written or read, and a missing field's default wins over `nothing`.
 
-- **JSON** or a **synchronous HTTP client**, the next items on rewrite-context 15.7's
-  standard-library backlog; each needs its own design plan first, as dates and regular
-  expressions had.
+Other candidates, each needing the user's go-ahead:
+
+- A **synchronous HTTP client**, after JSON, with its own design plan.
 - **Startup performance.** Every run type-checks every prelude body, and the date and time
   work took a ReleaseSafe `print(1)` from about 5 ms to about 8.3 ms. Checking only the
   prelude bodies a program can reach needs the interpreter to stop relying on facts recorded
@@ -159,18 +189,18 @@ on the roadmap.
   `DateTimeError`, and `RegexError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
-- A diagnostic the checker reports inside the prelude trips an assertion in
-  `emerald.analyze` rather than printing. While editing the prelude, temporarily print
-  `diagnostic.message` for any diagnostic whose file is past the program's files.
+- A problem inside the prelude stops `emerald.analyze` with a panic naming its
+  `prelude.em` line, column, and message, rather than printing as a diagnostic; it is always
+  Emerald's own bug.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
   remain unsupported.
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
-- Every run type-checks all of the prelude's bodies. With slices 1–4, a ReleaseSafe
-  `print(1)` starts in about 9.8 ms, against 5.6 ms before the date work (measured together
-  on one machine). Checking only the prelude bodies a program can reach would need the
+- Every run type-checks all of the prelude's bodies. A ReleaseSafe `print(1)` starts in
+  about 9.3 ms with JSON slice 2, against 7.5 ms before it (measured together on one
+  machine); the date work had already taken it from about 5.6 ms. Checking only the prelude bodies a program can reach would need the
   interpreter to stop relying on facts recorded for every body. It is the next performance
   task once dates and times are finished.
 - On Windows, a local zone whose key name CLDR does not map (rare) falls back to Windows's
@@ -183,15 +213,37 @@ on the roadmap.
 ## Validation and repository state
 
 The regular-expression milestone is merged to `main`
-([amortimer20/emerald-lang#2](https://github.com/amortimer20/emerald-lang/pull/2)). Since
-then, the six completed design plans have been removed from `docs/` (see the journal); a new
-milestone's plan lives in `docs/` while it is in progress and goes once its behavior is in
-rewrite-context. After that change, with pinned Zig 0.16.0, Debug and ReleaseSafe
-`zig build test`, `zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`, and
-`git diff --check` passed.
+([amortimer20/emerald-lang#2](https://github.com/amortimer20/emerald-lang/pull/2)), and so is
+the design-plan cleanup ([amortimer20/emerald-lang#3](https://github.com/amortimer20/emerald-lang/pull/3)).
+JSON slice 1 is committed on top of that: `src/Json.zig`, `tools/json/fetch.sh`,
+`tools/json/conformance.zig` (`zig build json-conformance`), `tools/json/probe.zig`, and
+`tools/json/differential.py`. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`,
+`zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`, `git diff --check`, fuzz
+(seed 12, 300 cases), and Windows and macOS cross-builds passed. Against JSONTestSuite's 318
+files, only the two documented duplicate-key exceptions differ. `tools/json/differential.py`
+found 0 differences from Python's `json` over 25,000 generated cases (seeds 1–5). A 1 MB
+generated document parses in about 38 ms and writes back in about 6 ms (ReleaseSafe); a
+document nested 200,000 levels deep is refused cleanly, confirming the parser's explicit
+stack, not Zig's own call stack, is what bounds recursion.
+A review of slice 1 then fixed four defects (a crash on a whole number at 2^63, quadratic
+duplicate-key checking, one miscopied message, and message truncation that could split a
+UTF-8 character; see the journal). Slice 2 followed. After it, Debug and ReleaseSafe
+`zig build test`, `zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`,
+`git diff --check`, fuzz (seed 13, 300 cases), Windows and macOS cross-builds,
+`zig build json-conformance` (0 mismatches), and 8,000 more differential cases (seeds 12 and
+13) passed.
 
-All of this work is pushed to `claude/adoring-pasteur-wz5l0h`. Each earlier slice's validation
+Slices 1 and 2 and the review fixes are pushed to `claude/adoring-pasteur-wz5l0h`. Work continues in a local session; the cloud session is no longer in use. Each earlier slice's validation
 is recorded in [`journal.md`](journal.md) and its commit message.
+
+Slice 3's Debug and ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`,
+`bash tools/check-doc-examples.sh`, and `git diff --check` pass. The manually read new
+`json-building` and `json-non-finite` conformance outputs match the built CLI exactly; the
+standalone JSONTestSuite check reports 95 accepted, 188 refused, 35 implementation-defined,
+2 known duplicate-key exceptions, and 0 mismatches.
+
+Slice 4's pinned-toolchain check, Debug and ReleaseSafe `zig build test`, `zig build`,
+`bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, and `git diff --check` pass.
 
 Cloud sessions cannot reach ziglang.org. The pinned Zig 0.16.0 comes from the `ziglang==0.16.0`
 PyPI wheel instead (`pip download ziglang==0.16.0 --no-deps`, unzip, and put `ziglang/` on

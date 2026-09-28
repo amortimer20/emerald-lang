@@ -1,0 +1,5 @@
+runtime-errors/json-wrong-kind.em:4:12: JsonError: at scores[1]: expected a whole number, found the text "12"
+      return Json.parse(text).get("scores").at(1).int()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.
+in `score`, called at runtime-errors/json-wrong-kind.em:7:7

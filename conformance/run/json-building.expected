@@ -1,0 +1,19 @@
+{"name":"Ada","age":42,"score":3.0,"active":true,"note":null,"items":["new",false]}
+Json.Kind.object 6
+Ada 42 3.0 true true
+new false
+{"name":"Ada","age":42,"score":3.0,"active":true,"note":null,"items":["new",false]}
+{
+  "name": "Ada",
+  "age": 42,
+  "score": 3.0,
+  "active": true,
+  "note": null,
+  "items": [
+    "new",
+    false
+  ]
+}
+true true
+-0.0 3 nothing
+at [0]: expected a whole number, found the text "text"

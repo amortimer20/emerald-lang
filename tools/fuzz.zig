@@ -65,7 +65,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // campaign rather than only by its unit test.
     if (random.uintLessThan(u8, 8) == 0) {
         const count = random.uintLessThan(u8, 16);
-        return switch (random.uintLessThan(u8, 7)) {
+        return switch (random.uintLessThan(u8, 8)) {
             0 => std.fmt.allocPrint(gpa,
                 \\var i = 0
                 \\while i < {d} {{
@@ -128,6 +128,18 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\    print(found.named("letter"), found.group_maybe(2), found)
                 \\}}
             , .{ count, count + 1, if (count % 2 == 0) "true" else "false" }),
+            6 => std.fmt.allocPrint(gpa,
+                \\struct Score {{
+                \\    const name: String
+                \\    const points: Int
+                \\    const note: String?
+                \\}}
+                \\
+                \\const written = Json.encode([Score("Ada", {d}, nothing)], pretty: {s})
+                \\const scores = Json.decode(written, as: List[Score])
+                \\const document = Json.parse(written)
+                \\print(scores[0].name, scores[0].points, document.at(0).get("note").null?())
+            , .{ count, if (count % 2 == 0) "true" else "false" }),
             else => std.fmt.allocPrint(gpa,
                 \\const score = {d}
                 \\const result = if score > 5 then score * 2 else if score == 0 then 1 else score

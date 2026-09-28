@@ -456,6 +456,10 @@ pub const Expression = struct {
         /// Section 4.2's `nothing`, the single value of the absence-only type.
         nothing_literal: void,
         name: []const u8,
+        /// A type supplied to the one call shape that needs one as an
+        /// argument: `Json.decode(text, as: List[Score])` (15.9). It is not a
+        /// runtime value; the checker consumes it before interpretation.
+        type_literal: TypeExpression,
         /// Section 12's enum value, built once when its enum's type-level
         /// fields are set up. Never written by a program: `Direction.north`
         /// reads the field that holds it.

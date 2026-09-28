@@ -1,0 +1,35 @@
+{"player":"Ada","volume":7,"ratio":0.5,"fullscreen":false,"theme":null,"scores":[120,95.5,3.0,100.0],"window":{"width":800,"height":600}}
+Json.Kind.object 7
+["player", "volume", "ratio", "fullscreen", "theme", "scores", "window"]
+Ada
+7 7.0
+0.5
+false
+true false
+120 Json.Kind.number 120 120.0
+95.5 Json.Kind.number nothing 95.5
+3.0 Json.Kind.number 3 3.0
+100.0 Json.Kind.number 100 100.0
+95.5
+nothing nothing
+nothing nothing
+nothing nothing
+nothing nothing
+nothing
+7
+5
+width 800
+height 600
+null Json.Kind.null
+true Json.Kind.bool
+0 Json.Kind.number
+-0.0 Json.Kind.number
+"hi" Json.Kind.string
+[] Json.Kind.list
+{} Json.Kind.object
+[[],{}] Json.Kind.list
+true true
+true
+false false
+true
+nothing [1,2]

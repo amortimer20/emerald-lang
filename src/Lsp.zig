@@ -1151,6 +1151,7 @@ fn findAssignmentInStatement(statement: Ast.Statement, file: u32, offset: u32, t
 fn findAssignmentInExpression(expression: *const Ast.Expression, file: u32, offset: u32, targets: *const std.AutoHashMapUnmanaged(Resolver.Site, Resolver.Target)) ?Resolver.Target {
     if (offset < expression.span.start or offset > expression.span.end) return null;
     switch (expression.data) {
+        .type_literal => {},
         .unary => |value| return findAssignmentInExpression(value.operand, file, offset, targets),
         .binary => |value| {
             if (findAssignmentInExpression(value.left, file, offset, targets)) |target| return target;
@@ -1447,6 +1448,7 @@ fn findTypeInStatement(statement: Ast.Statement, file: u32, offset: u32, analysi
 fn findTypeInExpression(expression: *const Ast.Expression, file: u32, offset: u32, analysis: *const emerald.Analysis) ?Resolver.Target {
     if (offset < expression.span.start or offset > expression.span.end) return null;
     switch (expression.data) {
+        .type_literal => |type_expression| return checkTypeExpr(type_expression, file, offset, analysis),
         .unary => |value| return findTypeInExpression(value.operand, file, offset, analysis),
         .binary => |value| {
             if (findTypeInExpression(value.left, file, offset, analysis)) |target| return target;
@@ -1634,6 +1636,7 @@ fn findDeclNameInStatement(statement: Ast.Statement, file: u32, offset: u32) ?Re
 fn findDeclNameInExpression(expression: *const Ast.Expression, file: u32, offset: u32) ?Resolver.Target {
     if (offset < expression.span.start or offset > expression.span.end) return null;
     switch (expression.data) {
+        .type_literal => {},
         .unary => |value| return findDeclNameInExpression(value.operand, file, offset),
         .binary => |value| {
             if (findDeclNameInExpression(value.left, file, offset)) |target| return target;
@@ -2030,6 +2033,7 @@ fn collectReferencesInExpression(
 ) std.mem.Allocator.Error!void {
     switch (expr.data) {
         .int_literal, .float_literal, .bool_literal, .nothing_literal, .enum_value, .string_literal => {},
+        .type_literal => |type_expression| try collectReferencesInTypeExpression(gpa, analysis, target, file, type_expression, out),
         .name => {
             if (analysis.resolved.facts.expression_targets.get(expr)) |found| {
                 if (targetEql(found, target)) try out.append(gpa, .{ .file = file, .span = expr.span });

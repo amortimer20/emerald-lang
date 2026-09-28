@@ -1,0 +1,4 @@
+diagnostics/json-encode-dictionary-key.em:2:13: this is Dict[Int, String], which `Json.encode` cannot write as JSON
+  Json.encode(scores)
+              ^^^^^^
+JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.

@@ -1,0 +1,54 @@
+line 1, column 1: the document is empty
+line 1, column 4: the document is empty
+line 1, column 7: JSON does not allow a comma before "]"
+line 1, column 9: JSON does not allow a comma before "}"
+line 1, column 2: JSON strings use double quotes, not single quotes
+line 1, column 2: JSON strings use double quotes, not single quotes
+line 1, column 2: JSON object keys need double quotes: write "name"
+line 1, column 1: JSON has no comments
+line 1, column 5: JSON has no comments
+line 1, column 1: NaN is not a JSON number
+line 1, column 2: Infinity is not a JSON number
+line 1, column 1: -Infinity is not a JSON number
+line 1, column 1: "True" is not a JSON value
+line 1, column 1: a number cannot have a leading zero
+line 1, column 1: a number needs a digit before the decimal point; write 0.5
+line 1, column 3: a number needs a digit after the decimal point
+line 1, column 3: a number needs a digit in its exponent
+line 1, column 1: "+" here does not start a value: JSON values are an object, an array, a string, a number, true, false, or null
+line 1, column 1: this number is too large for a Float
+line 1, column 14: this text ends inside a string that started at line 1, column 1
+line 2, column 7: this text ends inside a string that started at line 2, column 2
+line 1, column 3: "\q" is not a JSON escape; use \", \\, \/, \b, \f, \n, \r, \t, or \u
+line 1, column 2: a "\u" escape needs four hex digits
+line 1, column 2: a "\u" escape here names half of a surrogate pair without the other half
+line 1, column 5: a string cannot contain a tab; write \t instead
+line 1, column 10: the key "a" is already used in this object
+line 1, column 6: expected ":" after this key
+line 1, column 4: expected "," or "]" after this value
+line 1, column 9: expected "," or "}" after this value
+line 1, column 5: the document has more after this value; JSON allows only one value
+line 1, column 1: "]" here does not start a value: JSON values are an object, an array, a string, a number, true, false, or null
+at players[0].score: expected a whole number, found the text "12"
+at players[1].score: expected a whole number, found the number 3.5
+at players[2].score: this is the number 1e+20, which is too large for an Int
+at title: expected a number, found the text "a very long title that goes on for more …"
+at note: expected text, found null
+at players: expected true or false, found a list
+at empty: expected a list, found an object
+at title: expected an object, found the text "a very long title that goes on for more …"
+expected the document to be true or false, found an object
+the document is an object, not a list, so it has no item 0
+at players: this is a list, not an object, so it has no key "name"
+the document has no key "volume"; its keys are "players", "title", "empty" and "note"
+at empty: there is no key "x"; the object is empty
+at players[0]: there is no key "points"; its keys are "name" and "score"
+at players: there is no item 3; the list has 3 items
+at players: there is no item -1; the list has 3 items
+[]
+at players: this is a list, not an object, so it has no keys
+at title: this is the text "a very long title that goes on for more …"; only a list or an object has a count
+the document has no item 0; the list is empty
+the document has no item 1; the list has 1 item
+the document has no key "k"; its keys are "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10", and 2 more
+JsonError line 1, column 1: "nope" is not a JSON value

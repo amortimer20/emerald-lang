@@ -327,7 +327,7 @@ fn node(self: *Parser, span: Source.Span, data: Ast.Expression.Data) Error!*cons
 
 fn deepestChild(data: Ast.Expression.Data) u32 {
     return switch (data) {
-        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .enum_value => 0,
+        .int_literal, .float_literal, .bool_literal, .nothing_literal, .name, .type_literal, .enum_value => 0,
         .unary => |unary| unary.operand.depth,
         .binary => |binary| @max(binary.left.depth, binary.right.depth),
         .logical => |logical| @max(logical.left.depth, logical.right.depth),
@@ -3155,6 +3155,21 @@ fn parsePostfixFrom(self: *Parser, first: *const Ast.Expression) Error!*const As
     }
 }
 
+/// Section 15.9's `Json.decode`, written `Json.decode` or `Emerald.Json.decode`.
+/// The parser cannot resolve names, so the call is recognized by its spelling;
+/// the checker explains the rule when a type is missing after `as:`.
+fn isJsonDecodeCallee(callee: *const Ast.Expression) bool {
+    if (callee.data != .member) return false;
+    const member = callee.data.member;
+    if (!std.mem.eql(u8, member.name, "decode")) return false;
+    return switch (member.base.data) {
+        .name => |base| std.mem.eql(u8, base, "Json"),
+        .member => |base| std.mem.eql(u8, base.name, "Json") and base.base.data == .name and
+            std.mem.eql(u8, base.base.data.name, "Emerald"),
+        else => false,
+    };
+}
+
 fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Expression {
     try self.nest(self.peek().span);
     defer self.unnest();
@@ -3189,7 +3204,19 @@ fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Exp
                 any_named = true;
             }
             try names.append(self.arena, name);
-            try arguments.append(self.arena, try self.parseExpression());
+            // `Json.decode(text, as: List[Score])` is the one call shape that
+            // takes a source type rather than a runtime value. Keep it in the
+            // expression tree so formatting, navigation, and diagnostics see
+            // its real span; the checker refuses this node anywhere else. Only
+            // a call written as `Json.decode` qualifies, so an `as:` argument
+            // to any other function is an ordinary value.
+            const is_type_argument = if (name) |written| std.mem.eql(u8, written.text, "as") and isJsonDecodeCallee(callee) else false;
+            if (is_type_argument) {
+                const type_expression = try self.parseTypeExpression();
+                try arguments.append(self.arena, try self.node(type_expression.span, .{ .type_literal = type_expression }));
+            } else {
+                try arguments.append(self.arena, try self.parseExpression());
+            }
             if (self.match(.comma) == null) break;
         }
     }
