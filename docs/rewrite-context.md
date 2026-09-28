@@ -3003,12 +3003,15 @@ as Ruby's.
 - **A synchronous HTTP client** is done (15.10). It is deliberately one finished request at a
   time: a beginner can fetch an API response, decode JSON, or save binary data without learning
   connections, callbacks, or concurrency first.
+- **CSV** is done (15.11). It gives a spreadsheet-shaped text table both a dynamic path for
+  unknown columns and a checker-known path for a program's own plain records, without making a
+  beginner write one string conversion per cell.
 - **Small utilities**: `Base64` and one or two hash/digest functions. Narrow vocabulary, no
   open design question, safe to add whenever there is time.
 
 **Worth doing before too long, still needing no concurrency or package manager:**
 
-- **CSV.** Small, and pairs directly with 15.3's `File`.
+- Nothing currently. A concrete program should earn the next library slice.
 
 **Deliberately not planned, rather than left ambiguous:**
 
@@ -3264,6 +3267,41 @@ guessing a more specific cause. The full reference and a runnable guarded exampl
 Deferred (24): sockets and servers, WebSockets, HTTP/2, streaming request or response bodies,
 cookies and sessions, multipart forms, authentication helpers beyond an `Authorization` header,
 other character sets, a `Url` type, and asynchronous or concurrent requests.
+
+### 15.11 CSV
+
+`Csv` reads and writes UTF-8 CSV text: a dynamic table when the columns are not known yet, or
+typed plain records when they are. The full reference and runnable example are in
+[`docs/library/csv.md`](library/csv.md) and [`examples/csv.em`](../examples/csv.em).
+
+`Csv.parse(text, separator: ",")` produces `List[List[String]]`, including every row as it was
+read. `parse_records` instead uses the first row as names and gives each later row as a
+`Dict[String, String]`; it requires non-empty, non-repeated headers and rows with the same
+number of fields. An empty document gives no records. Both accept a leading UTF-8 BOM, `\n` or
+`\r\n` line endings, RFC-style quotes (including doubled quotes and line breaks in fields), and
+one grapheme as `separator:`. `Csv.format(rows, separator:)` writes text rows with minimal
+quoting and `\n` line endings, without a final newline.
+
+`Csv.decode(text, as: List[Record], separator:)` reads a known plain struct. Its public fields
+match header names and may be `String`, `Int`, `Float`, `Bool`, an enum, `Date`, `Time`,
+`DateTime`, `Instant`, or an optional of one of those. Extra columns are ignored; a missing
+column or empty cell takes a field default or optional absence when it has one, while an empty
+`String` is `""`; another missing or empty required field is a `CsvError`. Bool cells accept
+any capitalization of `true` or `false`. Private fields are never read and must have defaults.
+The `as:` type is checker-known source syntax only for a call written `Csv.decode` or
+`Emerald.Csv.decode`; neither typed conversion function can be taken as a value.
+
+`Csv.encode(records, separator:)` is the matching checked writer: it accepts a `List` of a plain
+struct using that same one-cell field vocabulary, writes public declaration-order field names
+and values, and never writes private fields. An absent optional becomes an empty cell; enums
+write their value names; date/time values use their ISO text; and `Float` keeps its normal
+spelling, so `2.0` remains visibly a Float. Both typed paths reject other target or field shapes
+before execution, rather than attempting an implicit serialization convention.
+
+`CsvError` extends `RuntimeError` and has `line: Int?`. Syntax, header, and row-shape failures
+retain their physical line where known; typed conversion failures name both line and column.
+Writing and reading use the same one-grapheme separator rule, so an invalid separator is also a
+catchable `CsvError`.
 
 ## 16. Annotations, assertions, and tests
 
@@ -3923,6 +3961,9 @@ recorded in their normative sections:
 | JSON decoded structs (15.9) | Only a plain struct using its generated constructor is decodable; a missing field takes its default, or `nothing` when it is optional and has none, and extra JSON keys are ignored | A custom constructor can enforce an invariant or interpret fields differently, so pretending the runtime knows how to call it would be a hidden second construction path. Defaults make hand-edited settings forward-compatible, while ignored extras make readers tolerant of a newer writer. |
 | `as:` for JSON decoding (15.9) | The type is source syntax accepted only as `Json.decode`'s named `as:` argument | Emerald has no runtime type objects. Keeping this one checker-known call shape local avoids introducing a broad type-as-value feature for a single conversion operation. |
 | Private fields and JSON (15.9, 10.5) | Never written by `encode`, never read by `decode`; a decodable struct's private fields need defaults | A private field is the struct's own business: writing it would publish internal state, and reading it would let a hand-edited file set what the struct's own code guards. Taking the default keeps a decoded value exactly what the generated constructor could have built. |
+| CSV's two table paths (15.11) | `parse`/`parse_records` leave unknown columns as text; checker-known `decode`/`encode` move plain records through CSV | A survey export with unpredictable columns and a program's own `Score` file start with opposite information. Both should be one short call, without a new general serialization framework. |
+| CSV cells and blanks (15.11) | A typed cell is one scalar/enum/date-time value; an empty cell means a default, optional absence, or empty `String` | Spreadsheet blanks are common. This rule lets an absent optional be ordinary `nothing` while refusing an ambiguous blank required number at the cell that needs correction. |
+| CSV writing (15.11) | Public fields are declaration-order columns; writing uses minimal quoting and `\n`, with no final newline | A spreadsheet needs a predictable header, and source field order is the one order a reader can already see. The native writer owns escaping once so `format` and `encode` never diverge. |
 | HTTP request shape (15.10) | `Http` has one synchronous completed-request call per verb; no program-visible client, session, or connection | `Http.get` must be useful in a first program, and resources a beginner must close would distract from fetching and using one answer. A private client still reuses connections for the whole program run. |
 | HTTP error status (15.10) | `strict: true` by default raises `HttpError` for 4xx and 5xx; `strict: false` returns the response | An unchecked error page is otherwise easy to parse as data or save as a successful download. Strict mode puts the explanation at the request; opt-out supports programs that intentionally inspect a 404 or similar answer. |
 | HTTP safety and binary response data (15.10) | Certificates always verify; host proxy settings are private; `.bytes` is content-decoded binary data and `.text` separately validates UTF-8 | An insecure switch teaches copying an unsafe workaround. Proxies must work on managed school networks without teaching environment configuration. HTTP content decoding is transport behavior, while making UTF-8 explicit preserves the distinction between a downloaded binary and text. |
@@ -4141,9 +4182,9 @@ for working Emerald programs, implementation measurements, or a dedicated design
   control" is allowed to mean here;
 - project templates and the eventual build, distribution, and package commands;
 - generated documentation and its searchable reference interface;
-- serialization more broadly (beyond JSON, itself recorded in 15.7) and filesystem encoding
-  policy remain open. 15.7 records the rest of the standard-library backlog: regular
-  expressions, JSON, a synchronous networking client, and what is deliberately not planned.
+- serialization more broadly (beyond JSON and CSV, both recorded in 15.7) and filesystem
+  encoding policy remain open. 15.7 records the rest of the standard-library backlog: regular
+  expressions, JSON, CSV, a synchronous networking client, and what is deliberately not planned.
   Dates and times are designed in 15.8;
 - the runtime error taxonomy, expanded alongside the operations that need it. Existing
   named requirements include `RecursionError` for the recursion boundary and `InputError`

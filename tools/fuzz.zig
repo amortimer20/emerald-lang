@@ -65,7 +65,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // campaign rather than only by its unit test.
     if (random.uintLessThan(u8, 8) == 0) {
         const count = random.uintLessThan(u8, 16);
-        return switch (random.uintLessThan(u8, 8)) {
+        return switch (random.uintLessThan(u8, 9)) {
             0 => std.fmt.allocPrint(gpa,
                 \\var i = 0
                 \\while i < {d} {{
@@ -140,6 +140,19 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\const document = Json.parse(written)
                 \\print(scores[0].name, scores[0].points, document.at(0).get("note").null?())
             , .{ count, if (count % 2 == 0) "true" else "false" }),
+            7 => std.fmt.allocPrint(gpa,
+                \\struct Score {{
+                \\    const name: String
+                \\    const points: Int
+                \\    const active: Bool
+                \\    const note: String?
+                \\}}
+                \\
+                \\const written = Csv.encode(records: [Score("Ada", {d}, true, nothing)], separator: ";")
+                \\const scores = Csv.decode(text: written, separator: ";", as: List[Score])
+                \\const records = Csv.parse_records(written, separator: ";")
+                \\print(scores[0].name, scores[0].points, scores[0].note, records[0]["active"])
+            , .{count}),
             else => std.fmt.allocPrint(gpa,
                 \\const score = {d}
                 \\const result = if score > 5 then score * 2 else if score == 0 then 1 else score

@@ -1,0 +1,4 @@
+runtime-errors/csv-invalid-text.em:2:1: CsvError: line 2: a quoted field that starts here never closes
+  Csv.parse("name\n\"Ada")
+  ^^^^^^^^^^^^^^^^^^^^^^^^
+Correct the CSV text or use a one-character separator.

@@ -1,0 +1,10 @@
+line 2, column "points": expected a whole number, found "twelve"
+2
+line 2, column "points": this cell is empty
+2
+line 2, column "active": expected true or false, found "many"
+2
+there is no column "active"; the columns are "name" and "points"
+-1
+line 3 has 4 fields, but the header has 3
+3

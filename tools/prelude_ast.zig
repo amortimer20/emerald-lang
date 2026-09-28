@@ -42,7 +42,7 @@ pub fn main(init: std.process.Init) !void {
         \\
         \\pub fn Prelude(comptime Ast: type) type {
         \\    return struct {
-        \\        pub const program: Ast.Program = 
+        \\        pub const program: Ast.Program =
     );
     try emit(writer, parsed.program);
     try writer.writeAll(";\n    };\n}\n");

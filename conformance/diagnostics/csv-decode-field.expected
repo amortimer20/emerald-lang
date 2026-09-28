@@ -1,0 +1,4 @@
+diagnostics/csv-decode-field.em:6:31: field `tags` of List[Bad] cannot be read from Csv because it is List[String]
+      Csv.decode("tags\na", as: List[Bad])
+                                ^^^^^^^^^
+CSV cells can build text, whole numbers, numbers, true or false, enums, dates and times, and optional values.

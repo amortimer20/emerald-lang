@@ -1492,6 +1492,40 @@ struct Regex with Textual {
     }
 }
 
+# CSV (15.11). Its parser and writer are native (src/Csv.zig). The public
+# functions keep the small API ordinary Emerald code; their private helpers
+# are the only native boundary.
+class CsvError extends RuntimeError {
+    const line: Int?
+
+    constructor(message: String, line: Int? = nothing) {
+        super(message)
+        self.line = line
+    }
+}
+
+class Csv {
+    func Csv.parse(text: String, separator: String = ","): List[List[String]] {
+        return Csv._parse(text, separator)
+    }
+
+    func Csv.parse_records(text: String, separator: String = ","): List[Dict[String, String]] {
+        return Csv._parse_records(text, separator)
+    }
+
+    func Csv.decode(text: String, as: Nothing, separator: String = ","): Nothing {}
+
+    func Csv.encode(records: Nothing, separator: String = ","): String { return "" }
+
+    func Csv.format(rows: List[List[String]], separator: String = ","): String {
+        return Csv._format(rows, separator)
+    }
+
+    func Csv._parse(text: String, separator: String): List[List[String]] { return [] }
+    func Csv._parse_records(text: String, separator: String): List[Dict[String, String]] { return [] }
+    func Csv._format(rows: List[List[String]], separator: String): String { return "" }
+}
+
 # JSON (15.9). The parser and writer are native (src/Json.zig); a parsed
 # document is a tree of these values, and navigating and converting it is
 # Emerald over their fields. A value knows its path in the document, so a

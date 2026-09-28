@@ -113,36 +113,33 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-The HTTP client is complete (15.10): `Http` makes timeout-bounded, certificate-checked,
-synchronous requests and returns finished `Http.Response` values with text, binary, JSON,
-headers, redirects, and strict-by-default status handling. `HttpError` explains failure and
-preserves a strict error status. The reference is [`library/http.md`](library/http.md), with
-the guarded [`examples/http.em`](../examples/http.em) and offline `conformance/http/` coverage.
-`zig build http-live` is the sole opt-in public-network check; ordinary tests and CI never reach
-the internet. It verifies trusted HTTPS, the three badssl certificate failures, an unknown host,
-and the public `HttpError` messages. Proxy settings flow privately through `run`, `test`, and the
-REPL without becoming an Emerald environment API. Zig 0.16 reports the three certificate causes
-as one validation failure, so Emerald accurately reports a generic untrusted certificate.
+The CSV milestone is complete (15.11). `Csv.parse` and `parse_records` cover unknown text
+tables; `decode` and `encode` cover a program's own plain records; and `CsvError` keeps CSV
+problems catchable and locatable. The reference is [`library/csv.md`](library/csv.md), with the
+runnable [`examples/csv.em`](../examples/csv.em), focused conformance, a parser differential
+against Python's `csv` reader, a reachability fixture, and a valid-program fuzz template. CSV
+accepts spreadsheet-style quoting, BOMs, Unix/Windows line endings, and one-grapheme separators;
+writing is minimal-quoted LF text. The native parser's 3,000 generated cases (seed 1) had no
+differences from Python.
 
-The user chose to finish the standard library, then make small optimizations such as startup
-time, and eventually build a native compiler. Startup performance is complete: a ReleaseSafe
-`print(1)` went from 9.9 ms to 3.5 ms. A run checks only the prelude bodies its program
-reaches, gives each function body only the module variables it uses, and starts with the
-prelude already parsed, since `tools/prelude_ast.zig` parses it when Emerald is built. The
-journal's startup entries record the measurements, including a lever that was tried and
-reverted. Base64/hashing and the remaining Console scope need separate user go-ahead.
+There is no active implementation milestone. The user chose to finish the standard library,
+then make small optimizations such as startup time, and eventually build a native compiler.
+Startup performance is complete: a ReleaseSafe `print(1)` went from 9.9 ms to 3.5 ms. A run
+checks only the prelude bodies its program reaches, gives each function body only the module
+variables it uses, and starts with the prelude already parsed, since `tools/prelude_ast.zig`
+parses it when Emerald is built. The journal's startup entries record the measurements,
+including a lever that was tried and reverted. Base64/hashing and the remaining Console scope
+need separate user go-ahead.
 
-HTTP slice 4 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test`,
-`zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, `git diff --check`,
-and Windows/macOS cross-builds. The manual `zig build http-live` check passed in slice 3; it is
-not part of ordinary validation.
+The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
+-j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
+tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. An alternating
+ReleaseSafe startup comparison found no measurable cost for programs that do not use CSV. The
+HTTP client's manual `zig build http-live` check passed in its slice 3; it is not part of ordinary
+validation.
 
 Other candidates, each needing the user's go-ahead:
 
-- **Startup performance**, queued right after the HTTP client. Every run type-checks every
-  prelude body, and a ReleaseSafe `print(1)` has grown from about 5.6 ms to about 9.3 ms. Checking only the
-  prelude bodies a program can reach needs the interpreter to stop relying on facts recorded
-  for every body; measure before and after, as the date slices did.
 - **Base64 and hashing**, small utilities that could follow the HTTP client.
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
@@ -159,9 +156,9 @@ on the roadmap.
 - Expanded `emerald.toml`, bounded implementation limits, concurrency, generics, enum
   payloads, wider general overloading, and package management each need a separate design
   pass or a concrete program that motivates them.
-- The standard-library backlog is recorded in rewrite-context 15.7: date/time and regular
-  expressions (both done), JSON, a synchronous networking client, and what is deliberately
-  not planned.
+- The standard-library backlog is recorded in rewrite-context 15.7: date/time, regular
+  expressions, JSON, HTTP, and CSV are done; what remains deliberately needs a separate design
+  pass or a concrete program.
 - Braceless type bodies (10.6) are deferred, not rejected: 24 records what a proposal must
   answer (one canonical formatter output, one parsing mode, one way to teach a declaration).
 - `Console`'s remaining scope — `Table`/`Panel` layout widgets and line-oriented interaction
