@@ -1,0 +1,4 @@
+diagnostics/csv-encode-field.em:6:12: field `tags` of List[Bad] cannot be written as CSV because it is List[String]
+  Csv.encode(values)
+             ^^^^^^
+CSV columns can write text, whole numbers, numbers, true or false, enums, dates and times, and optional values.

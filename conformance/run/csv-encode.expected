@@ -1,0 +1,11 @@
+name,points,ratio,active,team,played_on,note
+Ada,120,2.0,true,red,2026-09-28,
+"Hopper, Grace",88,1.5,false,blue,2026-10-01,"said ""hi"""
+true
+said "hi"
+name;points;ratio;active;team;played_on;note
+A;1;0.0;true;red;2026-01-02;x
+name,points,ratio,active,team,played_on,note
+name,points,ratio,active,team,played_on,note
+a separator must be one character, not ";;"
+-1

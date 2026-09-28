@@ -3040,6 +3040,105 @@ definite-assignment analysis, so it is written up in the plan rather than change
 Teardown measured 0.24 ms. The recorded measurements and options are in
 `docs/startup-design-plan.md`.
 
+## CSV, slice 1: native parser and writer, 2026-09-28
+
+The first CSV slice adds `src/Csv.zig`, independently of Emerald values: it parses a leading
+UTF-8 BOM, RFC-style quoted fields (including doubled quotes and embedded line breaks), Unix and
+Windows line endings, and a one-grapheme separator. It retains each row’s physical starting line
+for the later `CsvError` layer. The writer uses `\n`, omits a terminal line ending, and quotes
+only text that would otherwise change meaning. There is deliberately no prelude declaration or
+Emerald API in this commit.
+
+`tools/csv/differential.py` generated 3,000 tables (seed 1) using Python’s writer and compared
+the native parser’s JSON probe results against Python’s reader: no cases differed. An alternating
+startup comparison against the binary built before this slice measured the new binary at
+98.3–99.0% of the old one across five programs, ordinary machine noise rather than a startup
+cost. Debug and ReleaseSafe tests, build, doc examples, formatting and whitespace checks, and
+Windows/macOS cross-builds all passed with Zig 0.16.0.
+
+## CSV, slice 2: untyped tables, 2026-09-28
+
+`Csv.parse` now returns the table's rows as `List[List[String]]`; `Csv.parse_records` turns the
+first row into ordered `Dict[String, String]` records; and `Csv.format` writes text rows. Every
+CSV failure is a catchable `CsvError`, with its physical line in the `line` field whenever one
+exists. Empty documents give no records. A blank header is refused as `the header has an empty
+column name`; both it and duplicate headers retain line 1 without changing their approved
+message wording. Conformance covers parsing, records, formatting, Unicode separators, each text
+failure, and an uncaught error's diagnostic.
+
+The pinned Zig 0.16.0 Debug and ReleaseSafe suites, build, doc examples, formatting and
+whitespace checks, and Windows/macOS cross-builds passed. In an alternating 60-run comparison
+with slice 1, `print(1)` was 100.6% of its former median; the language-only and dates programs
+were 101.2% and 99.9%. That is ordinary host noise, not a measurable cost for a program that
+does not use CSV.
+
+## CSV, slice 3: typed decoding, 2026-09-28
+
+`Csv.decode(text, as: List[Record], separator: ",")` is now a checker-recognized conversion;
+the parser recognizes `Csv.decode` and `Emerald.Csv.decode` only. CSV validates the target as a
+list of plain structs with scalar, enum, date/time, or optional fields. Cells are converted to
+primitive JSON values and sent through JSON's existing recursive decoder, preserving generated
+construction, defaults, optionals, private fields, enums, and date/time parsing without a second
+copy of that machinery. Empty cells become optional absence, or a default by omission; unknown
+columns are ignored. Conformance covers scalar conversions, bool capitalization, missing and
+extra columns, defaults, optionals, dates, every listed value error, and an unsupported-field
+diagnostic. JSON conformance remained unchanged.
+
+The pinned Zig 0.16.0 Debug and ReleaseSafe suites, build, doc examples, formatting and
+whitespace checks, and Windows/macOS cross-builds passed. The full test target includes the
+unchanged JSON conformance cases. In a 10-run startup comparison with slice 2, `print(1)` was
+98.8%, the language-only program 102.2%, dates 100.2%, regex 99.8%, and JSON 99.8% of the
+previous medians—normal host variation rather than a measurable cost to programs that do not
+decode CSV.
+
+## CSV, slice 4: typed encoding, 2026-09-28
+
+`Csv.encode(records, separator: ",")` now has the same checker-recognized boundary as JSON
+encoding, but deliberately accepts only `List` values of plain structs whose public fields each
+fit one text cell: text, whole numbers, numbers, booleans, enums, date/time values, or those
+values made optional. The checker and runtime reuse JSON's recorded static source type map rather
+than attempting to reconstruct erased list element types. The encoder writes the public field
+names and values in declaration order, leaves private fields out, writes optional `nothing` as an
+empty cell, and delegates quoting, LF line endings, and separator validation to `Csv.write`.
+`Float` uses Emerald's existing display rules, preserving `2.0` rather than quietly turning it
+into an integer-looking cell.
+
+The focused conformance case covers enum/date/optional values, quotes and separators, private
+fields, a `decode` round trip, named arguments in either order, the qualified `Emerald.Csv`
+entry point, an empty typed list's header, and a catchable bad-separator error. A diagnostic case
+refuses a collection-valued field. While running the full suite, the prior slice was found to
+carry two stale diagnostic expectations: its file path had an extra `conformance/` prefix, and a
+JSON decoder message said `Json` instead of the established `JSON`. Correcting those shared
+typed-decoder expectations left JSON's cases unchanged and made the complete suite pass.
+
+With Zig 0.16.0, Debug and ReleaseSafe tests, build, doc examples, formatting and whitespace
+checks, and Windows/macOS cross-builds passed. In a 10-run ReleaseSafe comparison with slice 3,
+the new binary measured 97.8–100.1% of the prior medians across `print(1)`, structs, dates,
+regex, and JSON: ordinary host noise, with no measurable startup cost for programs that do not
+use CSV.
+
+## CSV, slice 5: documentation and integration, 2026-09-28
+
+The CSV milestone is complete. `docs/library/csv.md` now documents the dynamic text-table path,
+the checker-known record path, field vocabulary, blank-cell rules, line-aware `CsvError`, quoting,
+separators, and output endings. `examples/csv.em` demonstrates typed spreadsheet records and
+unknown columns without needing a file or command-line argument, so the documentation checker can
+run it directly. The inventory, rewrite context 15.7/15.11, and its implementation decision table
+now make CSV part of the settled public library rather than a plan.
+
+`run/prelude-reach` reaches `Csv.decode` into a record containing a `Date`, proving the startup
+reachability analysis includes the native-to-prelude parse path. The valid-program fuzzer also has
+a CSV template that writes a typed record with named arguments, decodes it with `as:`, reads it
+as string records, and executes the result under the ordinary bounded step limit. The completed
+plan was removed, as the JSON and HTTP plans were once their references became normative docs.
+
+The pinned 0.16.0 Debug and ReleaseSafe suites, build, documentation-example check, formatter
+and whitespace checks, Windows/macOS cross-builds, and a 1,000-case bounded fuzz campaign all
+passed. The new example and its inline reference snippet were each run against the built binary.
+Against slice 4, a 10-run ReleaseSafe startup comparison measured 100.3% (`print(1)`), 101.6%
+(structs), 94.9% (dates), 102.4% (regex), and 98.8% (JSON): normal host variation, not a
+measurable change to programs that do not use CSV.
+
 ## Startup performance, finished: 9.9 ms to 3.5 ms, 2026-09-28
 
 The remaining levers from `docs/startup-design-plan.md`, now removed as finished:

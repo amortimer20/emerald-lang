@@ -33,6 +33,7 @@ pub const Formatter = @import("Formatter.zig");
 pub const unicode = @import("unicode.zig");
 pub const strings = @import("strings.zig");
 pub const ColorPolicy = @import("ColorPolicy.zig");
+pub const Csv = @import("Csv.zig");
 pub const TimeZone = @import("TimeZone.zig");
 pub const Regex = @import("Regex.zig");
 pub const Json = @import("Json.zig");

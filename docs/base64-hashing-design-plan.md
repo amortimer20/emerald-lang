@@ -2,8 +2,7 @@
 
 Status: accepted, 2026-09-28. The user accepted all five recommendations below. Rewrite-context
 15.7 lists "`Base64` and one or two hash/digest functions" as small utilities with no open
-design question; writing the plan turned up a few, and they are settled here. Slice 1 is next,
-once the CSV milestone is on `main`.
+design question; writing the plan turned up a few, and they are settled here. Slice 1 is next.
 
 The executor makes the remaining judgement calls within a slice and records each one under
 that slice's "Settled while building" note. At the start of each slice, reread `git status`,
