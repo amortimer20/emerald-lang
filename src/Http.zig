@@ -183,7 +183,18 @@ fn perform(client: *Client, url: []const u8, options: Options) Outcome {
         client.allocator.free(storage);
         return .{ .problem = mapError(err) };
     };
-    defer request.deinit();
+    // A request that ends before its whole response is read must not return
+    // its connection to the pool. Zig's client keeps one whose request was
+    // canceled while still being sent, with the request's bytes waiting in its
+    // buffer; the next request to that host then sent them ahead of its own and
+    // read the server's reply to the abandoned request as its own.
+    var completed = false;
+    defer {
+        if (!completed) if (request.connection) |connection| {
+            connection.closing = true;
+        };
+        request.deinit();
+    }
     if (options.body) |body| request.sendBodyComplete(@constCast(body)) catch |err| {
         client.allocator.free(storage);
         return .{ .problem = mapError(err) };
@@ -246,6 +257,7 @@ fn perform(client: *Client, url: []const u8, options: Options) Outcome {
         return .{ .problem = mapError(err) };
     };
 
+    completed = true;
     const body = client.allocator.realloc(storage, output.buffered().len) catch {
         client.allocator.free(storage);
         return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP response could not be stored" } };
@@ -393,11 +405,7 @@ pub const TestServer = struct {
                 request.respond("echo mismatch", .{ .status = .bad_request, .keep_alive = false }) catch {};
             }
         } else if (std.mem.eql(u8, request.head.target, "/slow")) {
-            // Far longer than any test's timeout: on a loaded CI machine the
-            // client's deadline task can start late, and at 250 ms the reply
-            // sometimes won the race. The client abandons a timed-out request,
-            // so the wait never delays a test.
-            std.Io.sleep(io, .fromSeconds(2), .awake) catch return;
+            std.Io.sleep(io, .fromMilliseconds(250), .awake) catch return;
             request.respond("too late", .{ .keep_alive = false }) catch {};
         } else if (std.mem.eql(u8, request.head.target, "/redirect")) {
             request.respond("", .{ .status = .found, .keep_alive = false, .extra_headers = &.{.{ .name = "location", .value = "/ok" }} }) catch {};
@@ -538,4 +546,21 @@ test "local HTTP transport handles responses, redirects, limits, and deadlines" 
             return std.testing.expect(false);
         },
     }
+    // After a timeout, the next request to the same server must read its own
+    // reply. (The case that failed, a timeout while the request is still being
+    // sent, is too narrow to hit reliably here; this checks the guarantee.)
+    switch (client.request(slow_url, .{ .timeout = .fromMilliseconds(100) })) {
+        .problem => |problem| try std.testing.expectEqual(Problem.Kind.timed_out, problem.kind),
+        .response => |response| {
+            var owned = response;
+            defer owned.deinit(allocator);
+            return std.testing.expect(false);
+        },
+    }
+    var after = switch (client.request(ok_url, .{})) {
+        .response => |response| response,
+        .problem => return std.testing.expect(false),
+    };
+    defer after.deinit(allocator);
+    try std.testing.expectEqualStrings("hello", after.body);
 }
