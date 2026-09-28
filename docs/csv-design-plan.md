@@ -1,8 +1,8 @@
 # CSV: design and implementation plan
 
 Status: in progress, 2026-09-28. The user accepted every recommendation, including decision 2:
-`Csv.decode` and `Csv.encode` are typed by the checker, as JSON's are. Slices 1–3 are complete;
-slice 4 is next.
+`Csv.decode` and `Csv.encode` are typed by the checker, as JSON's are. Slices 1–4 are complete;
+slice 5 is next.
 Rewrite-context 15.7
 lists CSV as a small library that pairs with `File`. This plan sets out the API, how a
 table of text becomes the program's own types, errors, and the order of work. The executor
@@ -208,6 +208,15 @@ rewrite-context text written in the same change.
    columns are ignored.
 4. **`Csv.encode`.** The checker special case and the writer for records, with a round trip
    through `decode`.
+
+   **Settled while building (2026-09-28):** `Csv.encode` shares JSON's recorded static source
+   type map and common typed-call argument checking; it accepts a `List` of a plain struct and
+   writes its public fields in declaration order. `nothing` in an optional field writes an empty
+   cell, enum and date/time values use their existing text forms, and `Float` uses Emerald's
+   normal display so `2.0` stays visibly a Float. The native writer remains the one place that
+   applies minimal quoting and validates the separator. The shared typed-decoder validation also
+   corrected two stale slice-3 conformance expectations (a path prefix and `JSON` spelling);
+   JSON's conformance cases then passed unchanged.
 5. **Documentation and integration.** `docs/library/csv.md`, an inventory row, an example, a
    new rewrite-context section with decision rows in 22, 15.7 updated, a fuzz template, and a
    line in `run/prelude-reach`. Then remove this plan, as the

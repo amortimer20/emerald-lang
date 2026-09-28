@@ -3090,3 +3090,29 @@ unchanged JSON conformance cases. In a 10-run startup comparison with slice 2, `
 98.8%, the language-only program 102.2%, dates 100.2%, regex 99.8%, and JSON 99.8% of the
 previous medians—normal host variation rather than a measurable cost to programs that do not
 decode CSV.
+
+## CSV, slice 4: typed encoding, 2026-09-28
+
+`Csv.encode(records, separator: ",")` now has the same checker-recognized boundary as JSON
+encoding, but deliberately accepts only `List` values of plain structs whose public fields each
+fit one text cell: text, whole numbers, numbers, booleans, enums, date/time values, or those
+values made optional. The checker and runtime reuse JSON's recorded static source type map rather
+than attempting to reconstruct erased list element types. The encoder writes the public field
+names and values in declaration order, leaves private fields out, writes optional `nothing` as an
+empty cell, and delegates quoting, LF line endings, and separator validation to `Csv.write`.
+`Float` uses Emerald's existing display rules, preserving `2.0` rather than quietly turning it
+into an integer-looking cell.
+
+The focused conformance case covers enum/date/optional values, quotes and separators, private
+fields, a `decode` round trip, named arguments in either order, the qualified `Emerald.Csv`
+entry point, an empty typed list's header, and a catchable bad-separator error. A diagnostic case
+refuses a collection-valued field. While running the full suite, the prior slice was found to
+carry two stale diagnostic expectations: its file path had an extra `conformance/` prefix, and a
+JSON decoder message said `Json` instead of the established `JSON`. Correcting those shared
+typed-decoder expectations left JSON's cases unchanged and made the complete suite pass.
+
+With Zig 0.16.0, Debug and ReleaseSafe tests, build, doc examples, formatting and whitespace
+checks, and Windows/macOS cross-builds passed. In a 10-run ReleaseSafe comparison with slice 3,
+the new binary measured 97.8–100.1% of the prior medians across `print(1)`, structs, dates,
+regex, and JSON: ordinary host noise, with no measurable startup cost for programs that do not
+use CSV.

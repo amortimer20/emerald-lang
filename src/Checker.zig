@@ -80,9 +80,9 @@ pub const Checked = struct {
     /// Every compound assignment that selected an annotated arithmetic method,
     /// keyed by the source location its interpreter execution reaches.
     operator_assignments: OperatorAssignments,
-    /// The statically checked source type for each `Json.encode` call.  The
-    /// native encoder follows this shape instead of trying to rediscover it
-    /// from erased runtime collection values.
+    /// The statically checked source type for each typed `Json.encode` or
+    /// `Csv.encode` call. The native encoder follows this shape instead of
+    /// trying to rediscover it from erased runtime collection values.
     json_encodes: JsonEncodes,
     /// The statically checked result type for each `Json.decode` call.
     json_decodes: JsonDecodes,
@@ -6371,10 +6371,10 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         );
         return .invalid;
     }
-    // Section 15.9/15.11: typed JSON and CSV calls are checked specially at
+    // Sections 15.9 and 15.11: typed JSON and CSV calls are checked specially at
     // each call, which no function value could carry.
-    if (isJsonEncodeKey(reference.key) or isJsonDecodeKey(reference.key) or isCsvDecodeKey(reference.key)) {
-        const which = if (isJsonEncodeKey(reference.key)) "Json.encode" else if (isJsonDecodeKey(reference.key)) "Json.decode" else "Csv.decode";
+    if (isJsonEncodeKey(reference.key) or isCsvEncodeKey(reference.key) or isJsonDecodeKey(reference.key) or isCsvDecodeKey(reference.key)) {
+        const which = if (isJsonEncodeKey(reference.key)) "Json.encode" else if (isCsvEncodeKey(reference.key)) "Csv.encode" else if (isJsonDecodeKey(reference.key)) "Json.decode" else "Csv.decode";
         try self.reportWithHelp(
             expression.span,
             "`{s}` has to be called",
@@ -9462,13 +9462,16 @@ fn typeOfCall(
     const key = binding.function_key orelse reference.key;
     if (binding.function_key != null) try self.checkNestedUse(call.callee);
 
-    // Section 15.9: no written Emerald signature can say "every value which
-    // JSON can represent".  Keep that one exception at this boundary, as
-    // `print` does: ordinary argument binding still supplies its familiar
-    // named/default diagnostics, while the first argument is checked by the
-    // small, explicit JSON-encodable set below.
+    // Sections 15.9 and 15.11: no written Emerald signature can say every
+    // value its typed encoder accepts. Keep each exception at this boundary,
+    // as `print` does: ordinary argument binding still supplies its familiar
+    // named/default diagnostics, while the first argument is checked by its
+    // small, explicit encodable set below.
     if (isJsonEncodeKey(key)) {
-        return self.typeOfJsonEncode(call, name, key);
+        return self.typeOfTypedEncode(call, name, key, false);
+    }
+    if (isCsvEncodeKey(key)) {
+        return self.typeOfTypedEncode(call, name, key, true);
     }
     if (isJsonDecodeKey(key)) {
         return self.typeOfTypedDecode(call, name, "Json", false);
@@ -9532,15 +9535,15 @@ const JsonEncodeIssue = struct {
     field_path: []const u8 = "",
 };
 
-/// The checker half of `Json.encode(value, pretty:)` (15.9). It deliberately
-/// retains the declaration's argument names and default so this special case
+/// The checker half of `Json.encode` and `Csv.encode` (15.9, 15.11). It
+/// retains each declaration's argument names and defaults so a typed encoder
 /// behaves like every other type-level function at the call site.
-fn typeOfJsonEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8, key: []const u8) Error!Type {
+fn typeOfTypedEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8, key: []const u8, csv: bool) Error!Type {
     const signature = try self.signatureFor(key);
     var parameters = try self.parametersOf(
         signature,
         self.declarations.get(key).?.parameters,
-        "Pass a JSON value to write, and optionally `pretty: true` for indented text.",
+        if (csv) "Pass a List of records to write, and optionally name a one-character separator." else "Pass a JSON value to write, and optionally `pretty: true` for indented text.",
     );
 
     // Let the first argument infer itself (a list literal must remain a
@@ -9555,21 +9558,40 @@ fn typeOfJsonEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8,
 
     const value = try self.typeOf(call.arguments[bound[0].?]);
     if (value.kind == .invalid) return .string;
-    if (try self.jsonEncodeIssue(value, "")) |issue| {
-        if (issue.field_path.len > 0) {
-            try self.report(
-                call.arguments[bound[0].?].span,
-                "field `{s}` of {f} cannot be written as JSON because it is {f}",
-                .{ issue.field_path, value, issue.type },
-                "JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
-            );
+    const issue = if (csv) try self.csvEncodeIssue(value, "") else try self.jsonEncodeIssue(value, "");
+    if (issue) |found_issue| {
+        if (found_issue.field_path.len > 0) {
+            if (csv) {
+                try self.report(
+                    call.arguments[bound[0].?].span,
+                    "field `{s}` of {f} cannot be written as CSV because it is {f}",
+                    .{ found_issue.field_path, value, found_issue.type },
+                    "CSV columns can write text, whole numbers, numbers, true or false, enums, dates and times, and optional values.",
+                );
+            } else {
+                try self.report(
+                    call.arguments[bound[0].?].span,
+                    "field `{s}` of {f} cannot be written as JSON because it is {f}",
+                    .{ found_issue.field_path, value, found_issue.type },
+                    "JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
+                );
+            }
         } else {
-            try self.report(
-                call.arguments[bound[0].?].span,
-                "this is {f}, which `Json.encode` cannot write as JSON",
-                .{value},
-                "JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
-            );
+            if (csv) {
+                try self.report(
+                    call.arguments[bound[0].?].span,
+                    "this is {f}, which `Csv.encode` cannot write as CSV",
+                    .{value},
+                    "Csv.encode needs a List of a plain struct whose fields are text-compatible.",
+                );
+            } else {
+                try self.report(
+                    call.arguments[bound[0].?].span,
+                    "this is {f}, which `Json.encode` cannot write as JSON",
+                    .{value},
+                    "JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
+                );
+            }
         }
         return .string;
     }
@@ -9625,7 +9647,7 @@ fn typeOfTypedDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8
             try self.report(
                 target_expression.span,
                 "{f} cannot be read from {s}",
-                .{ target, api },
+                .{ target, if (csv) api else "JSON" },
                 if (csv) "Csv.decode needs a List of a plain struct whose fields are text-compatible." else "JSON can build strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.",
             );
         }
@@ -9719,6 +9741,11 @@ fn isJsonEncodeKey(key: []const u8) bool {
         std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Json::encode");
 }
 
+fn isCsvEncodeKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
+        std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Csv::encode");
+}
+
 fn isJsonDecodeKey(key: []const u8) bool {
     return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
         std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Json::decode");
@@ -9741,13 +9768,15 @@ fn csvDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?Js
             if (written.default == null) return .{ .type = resolved.type, .field_path = resolved.name };
             continue;
         }
-        if (try self.csvDecodeFieldIssue(resolved.type, resolved.name)) |issue| return issue;
+        if (try self.csvCellFieldIssue(resolved.type, resolved.name)) |issue| return issue;
     }
     return null;
 }
 
-fn csvDecodeFieldIssue(self: *Checker, value: Type, field_path: []const u8) Error!?JsonEncodeIssue {
-    if (value.optional) return self.csvDecodeFieldIssue(value.payload(), field_path);
+/// The scalar vocabulary shared by CSV's typed reader and writer. Each cell
+/// carries one text value, so nested collections and structs cannot appear.
+fn csvCellFieldIssue(self: *Checker, value: Type, field_path: []const u8) Error!?JsonEncodeIssue {
+    if (value.optional) return self.csvCellFieldIssue(value.payload(), field_path);
     switch (value.kind) {
         .string, .int, .float, .bool => return null,
         .struct_value => {
@@ -9757,6 +9786,20 @@ fn csvDecodeFieldIssue(self: *Checker, value: Type, field_path: []const u8) Erro
         },
         else => return .{ .type = value, .field_path = field_path },
     }
+}
+
+fn csvEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?JsonEncodeIssue {
+    if (value.kind != .list or value.optional) return .{ .type = value, .field_path = field_path };
+    const element = value.element.?.*;
+    if (element.kind != .struct_value or element.optional) return .{ .type = element, .field_path = field_path };
+    const user = element.user.?;
+    if (user.class or user.trait or user.enumeration) return .{ .type = element, .field_path = field_path };
+    for (user.fields) |field| {
+        // A private field is the struct's own business and is never written.
+        if (Resolver.isPrivate(field.name)) continue;
+        if (try self.csvCellFieldIssue(field.type, field.name)) |issue| return issue;
+    }
+    return null;
 }
 
 fn csvTextualType(key: []const u8) bool {

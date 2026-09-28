@@ -134,17 +134,24 @@ conformance covers their success paths and every untyped text failure. An empty 
 records, and `CsvError.line` is present whenever a physical row is known, including a malformed
 header on line 1. Slice 3 adds `Csv.decode`: checker-recognized `as:` targets, scalar/enum/date
 conversions, empty-cell rules, missing/defaulted fields, ignored extra columns, and CsvError value
-diagnostics. It reuses JSON's recursive typed decoder. Slice 4 (`Csv.encode`) is next.
+diagnostics. It reuses JSON's recursive typed decoder. Slice 4 adds `Csv.encode`: a checked
+`List` of plain structs becomes declaration-order public columns, with optional absences as empty
+cells and existing enum/date/time text forms. It shares JSON's recorded source-type machinery and
+the native CSV writer, so minimal quoting and `Float`'s visible `.0` remain consistent. Slice 5
+(documentation and integration) is next.
 
 The parser's 3,000 generated cases (seed 1) had no differences from Python. An alternating
 startup comparison against the pre-CSV binary was within ordinary noise (the new binary was
 98.3–99.0% of the old across the five programs), so an unused CSV module adds no measured
 startup cost. Base64/hashing and the remaining Console scope need separate user go-ahead.
 
-CSV slices 1–3 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test
+CSV slices 1–4 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
-tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. The HTTP client’s
-manual `zig build http-live` check passed in its slice 3; it is not part of ordinary validation.
+tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. The slice-4 check also
+found and corrected two stale slice-3 diagnostic expectations (a `conformance/` path prefix and
+`Json` where the settled diagnostic says `JSON`); JSON's conformance cases then passed unchanged.
+The HTTP client’s manual `zig build http-live` check passed in its slice 3; it is not part of
+ordinary validation.
 
 Other candidates, each needing the user's go-ahead:
 
