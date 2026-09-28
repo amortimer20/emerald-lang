@@ -3248,3 +3248,18 @@ passed with `install.sh` on Ubuntu and macOS and `install.ps1` in Windows PowerS
 The notes, set on the GitHub release, cover everything since 0.5.0: dates and times, regular
 expressions, Console, JSON, HTTP, CSV, Base64 and digests, nested types, the `Emerald`
 namespace, negative literals, and startup (9.9 ms to 3.5 ms). Development moved to `0.7.0-dev`.
+
+## HTTP: a timed-out request's reply reached the next request, 2026-09-28
+
+`conformance/http/http-errors.em` failed now and then in CI, first on macOS and then on
+Ubuntu: its `/redirect-loop` request returned `200 too late`, the reply of the `/slow` request
+that had just timed out. A 2-second server delay did not help, because the cause was not a
+late timer. A standalone reproduction (a Python server logging each request, the 0.6.0 binary,
+400 runs under CPU load) failed 5 to 8 times per 400, and in every failure `/slow` reached the
+server only when `/redirect-loop` should have, and `/redirect-loop` never arrived. A timeout
+that canceled `/slow` while it was still being sent left its bytes in the connection's buffer,
+and Zig's client returned that connection to its pool; the next request sent the stale bytes
+ahead of its own and read the reply to them. `perform` now marks a connection as closing
+unless its response was read completely. The fixed binary had no failures in 1,200 runs, and
+`/slow` never reached the server. The unit test checks that a request after a timeout gets its
+own reply; the failing window is too narrow to hit on purpose there.
