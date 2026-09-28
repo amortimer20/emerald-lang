@@ -140,6 +140,11 @@ The next milestone is Base64 and hashing, following the accepted
 `hmac_sha256`, hex on `Bytes`, and one `EncodingError`. Slice 1 (`EncodingError` and hex) is
 next.
 
+Once that milestone is merged, Emerald 0.6.0 is released (the user's decision, 2026-09-28):
+format the same-line `catch` files (see the rough edges), refresh the time-zone data, write
+the release notes, tag `v0.6.0` on `main`, confirm the release and its install check pass,
+then move the development version to `0.7.0-dev` in `build.zig`.
+
 The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
 tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. An alternating
