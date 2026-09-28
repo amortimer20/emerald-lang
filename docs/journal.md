@@ -3220,3 +3220,22 @@ fit its last group has its own message, and a character from the other alphabet 
 suggested `to_bytes()` for Bytes given to `decode`; `Digest` had no text hint at all. The plan's
 remaining known answers (one million `a`s; RFC 4231 cases 3, 4, 6, 7) and a decoding and
 corruption differential were added, with no differences from Python.
+
+## Release preparation for 0.6.0, 2026-09-28
+
+Section 3.4 starts `else`, `catch`, and `finally` on their own lines, and the formatter writes
+them so, but 36 lines in runnable conformance cases, one reference page, one plan, and a Zig
+test snippet had them after the closing brace. Formatting those files wholesale was not an
+option: many cases exercise layouts the formatter changes on purpose (`- 3.abs()`, `(2,)`,
+parenthesized negative receivers). The lines were split by hand instead, and two tests in
+`src/conformance.zig` now hold the line: one rejects `} else {`, `} catch`, and `} finally` in
+runnable cases, examples, and the documentation's `emerald` blocks (an inline `if`'s
+`} else value` after a block stays legal), and one requires every `examples/` file to be exactly
+as the formatter writes it.
+
+CI had failed twice on macOS Debug in `http/http-errors.em`: its 10 ms timeout request returned
+the slow endpoint's reply, since on a loaded runner the client's deadline task can start more
+than the reply's 250 ms late. The test server's slow reply now waits 2 s; the client abandons a
+timed-out request, so the suite takes no longer.
+
+The time-zone data was refreshed and is already IANA's latest release, 2026d.

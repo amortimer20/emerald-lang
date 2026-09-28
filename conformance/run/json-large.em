@@ -38,6 +38,7 @@ print(levels)
 
 try {
     Json.parse(nested(513))
-} catch error: JsonError {
+}
+catch error: JsonError {
     print(error.message)
 }

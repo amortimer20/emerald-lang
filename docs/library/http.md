@@ -123,7 +123,8 @@ or an HTTPS certificate that cannot be verified:
 ```emerald
 try {
     Http.get("https://api.example.com/users/404")
-} catch error: HttpError {
+}
+catch error: HttpError {
     print(error.message)
     if error.status == 404 {
         print("That user does not exist.")

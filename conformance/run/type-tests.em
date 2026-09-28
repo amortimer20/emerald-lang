@@ -98,7 +98,8 @@ var current: Animal = Dog("Current")
 const report = { =>
     if current is Dog {
         print("#{current.name} knows #{current.tricks} trick(s)")
-    } else {
+    }
+    else {
         print("#{current.name} is not a dog")
     }
 }

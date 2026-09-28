@@ -2,7 +2,8 @@
 func show(block: func()) {
     try {
         block()
-    } catch error: CsvError {
+    }
+    catch error: CsvError {
         print(error.message)
         print(error.line.or(-1))
     }

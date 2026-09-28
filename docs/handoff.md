@@ -132,10 +132,12 @@ Base64 and hashing followed the accepted
 hints, and added the plan's remaining known answers and a decoding differential. The plan's
 "Settled while building" notes record each decision.
 
-**Next: release Emerald 0.6.0** (the user's decision, 2026-09-28). Format the same-line `catch`
-files and add the formatter-clean check (see the rough edges), refresh the time-zone data,
-write the release notes and show them to the user, tag `v0.6.0` on `main`, confirm the release
-and its install check pass, then move the development version to `0.7.0-dev` in `build.zig`.
+**Next: release Emerald 0.6.0** (the user's decision, 2026-09-28). Preparation is done: the
+same-line `catch`, `finally`, and `else` lines are fixed, and `zig build test` now keeps them
+fixed; the time-zone data is the latest release (2026d); and the release notes are drafted for
+the user. What remains is the user's approval of the notes, then: tag `v0.6.0` on `main`, set the
+notes on the GitHub release, confirm the release and its install check pass, and move the
+development version to `0.7.0-dev` in `build.zig`.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS
@@ -177,18 +179,8 @@ on the roadmap.
 
 ## Active rough edges
 
-- Some Emerald files write `} catch` and `} finally` on one line, against 3.4's convention that
-  `else`, `catch`, and `finally` start their own lines. The formatter already writes them
-  correctly, but nothing checks that these files are formatted. The JSON, CSV, and HTTP
-  conformance files have most of them (`conformance/http/http-errors.em`,
-  `conformance/run/csv-*.em`, `json-*.em`, `prelude-reach.em`, `top-level-return.em`,
-  `runtime-errors/file-writer-streaming-closed.em`), plus `docs/library/http.md` and a test
-  snippet in `src/emerald.zig`. To do: format them, and add a check that example,
-  conformance, and documentation Emerald code is formatter-clean, so the convention holds
-  without anyone watching for it. A conformance file that is deliberately unformatted
-  would need marking as such.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`,
-  `DateTimeError`, `RegexError`, and `HttpError`.
+  `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and `EncodingError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
 - A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses

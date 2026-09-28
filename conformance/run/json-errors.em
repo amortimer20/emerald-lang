@@ -3,7 +3,8 @@
 func show(text: String) {
     try {
         print(Json.parse(text))
-    } catch error: JsonError {
+    }
+    catch error: JsonError {
         print(error.message)
     }
 }
@@ -80,7 +81,8 @@ const attempts: List[func(): String] = [
 for attempt in attempts {
     try {
         print(attempt())
-    } catch error: JsonError {
+    }
+    catch error: JsonError {
         print(error.message)
     }
 }
@@ -88,6 +90,7 @@ for attempt in attempts {
 # A JsonError is a RuntimeError.
 try {
     Json.parse("nope")
-} catch error: RuntimeError {
+}
+catch error: RuntimeError {
     print(error.type_name, error.message)
 }

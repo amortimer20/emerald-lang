@@ -10,7 +10,8 @@ try {
         return
     }
     print("not reached")
-} finally {
+}
+finally {
     print("cleanup always runs")
 }
 

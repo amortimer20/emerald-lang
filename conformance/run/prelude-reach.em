@@ -17,7 +17,8 @@ class LateError extends RuntimeError {
 }
 try {
     raise LateError("too late")
-} catch error: RuntimeError {
+}
+catch error: RuntimeError {
     print(error.message)
 }
 

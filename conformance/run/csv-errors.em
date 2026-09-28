@@ -2,42 +2,48 @@
 # untyped failure is catchable as that one error type.
 try {
     Csv.parse("name\n\"Ada")
-} catch error: CsvError {
+}
+catch error: CsvError {
     print(error.message)
     print(error.line.or(-1))
 }
 
 try {
     Csv.parse("name\n\"Ada\"x")
-} catch error: CsvError {
+}
+catch error: CsvError {
     print(error.message)
     print(error.line.or(-1))
 }
 
 try {
     Csv.parse("name", separator: ";;")
-} catch error: CsvError {
+}
+catch error: CsvError {
     print(error.message)
     print(error.line.or(-1))
 }
 
 try {
     Csv.parse_records("name,score\nAda")
-} catch error: CsvError {
+}
+catch error: CsvError {
     print(error.message)
     print(error.line.or(-1))
 }
 
 try {
     Csv.parse_records("name,name\nAda,Grace")
-} catch error: CsvError {
+}
+catch error: CsvError {
     print(error.message)
     print(error.line.or(-1))
 }
 
 try {
     Csv.parse_records("\nAda")
-} catch error: CsvError {
+}
+catch error: CsvError {
     print(error.message)
     print(error.line.or(-1))
 }
