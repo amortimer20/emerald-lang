@@ -971,6 +971,13 @@ reported, since an empty `0..count - 1` is the point of the rule.
 
 Equal inclusive endpoints visit once, in every form. An equal half-open range is empty.
 
+A Range prints the way it would be written, in its inclusive form: `0..<24` prints as
+`0..23`, `(1..10).step(3)` keeps its parentheses, and a descending count prints with
+`down_to`. An empty range prints with the bounds that made it empty, as written (`0..<0`,
+`1..0`, `0.down_to(1)`), so a program that counted nothing can see why; it never prints as
+`[]`, which is an empty list. Every empty range is equal to every other, since each visits
+the same numbers, none, whatever bounds made it empty.
+
 The Int block forms run the same Range semantics immediately and return `Nothing`:
 
 ```emerald

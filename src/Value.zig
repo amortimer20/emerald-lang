@@ -218,8 +218,22 @@ pub fn writeThrough(self: Value, writer: *std.Io.Writer, quoted: bool, textual: 
         .string => |text| if (quoted) try writeQuoted(text.bytes, writer) else try writer.writeAll(text.bytes),
         .bytes => |bytes| try writeBytes(bytes.bytes, writer),
         .range => |range| {
+            // An empty range prints as it was written, so the bounds that made
+            // it empty show: `0..<0` or `1..0`, not a `[]` that looks like a list.
             if (range.is_empty) {
-                try writer.writeAll("[]");
+                const stepped = range.step_size != 1;
+                const grouped = !range.descending and (stepped or range.reversed);
+                if (grouped) try writer.writeAll("(");
+                if (range.descending) {
+                    try writer.print("{d}.down_to({d})", .{ range.first, range.last });
+                } else if (range.exclusive) {
+                    try writer.print("{d}..<{d}", .{ range.first, range.last });
+                } else {
+                    try writer.print("{d}..{d}", .{ range.first, range.last });
+                }
+                if (grouped) try writer.writeAll(")");
+                if (stepped) try writer.print(".step({d})", .{range.step_size});
+                if (range.reversed) try writer.writeAll(".reverse()");
                 return;
             }
             if (range.descending) {
@@ -394,11 +408,13 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash, hash
         },
         .bytes => |bytes| hasher.update(bytes.bytes),
         .range => |range| {
+            // Every empty range is equal, so they hash alike too.
+            hasher.update(&.{@intFromBool(range.is_empty)});
+            if (range.is_empty) return;
             hasher.update(std.mem.asBytes(&range.first));
             hasher.update(std.mem.asBytes(&range.last));
             hasher.update(std.mem.asBytes(&range.step_size));
             hasher.update(&.{@intFromBool(range.descending)});
-            hasher.update(&.{@intFromBool(range.is_empty)});
         },
         .tuple => |tuple| for (tuple.items) |item| try hashInto(gpa, item, hasher, hashable),
         .struct_value => |instance| {
@@ -500,7 +516,12 @@ pub fn equals(gpa: std.mem.Allocator, left: Value, right: Value, equatable: anyt
             else => false,
         },
         .range => |a| switch (right.data) {
-            .range => |b| a.first == b.first and a.last == b.last and a.step_size == b.step_size and a.descending == b.descending and a.is_empty == b.is_empty,
+            // An empty range visits no numbers, whatever bounds made it empty,
+            // so every empty range is equal, as every empty list is.
+            .range => |b| if (a.is_empty or b.is_empty)
+                a.is_empty and b.is_empty
+            else
+                a.first == b.first and a.last == b.last and a.step_size == b.step_size and a.descending == b.descending,
             else => false,
         },
         .closure => |a| switch (right.data) {
