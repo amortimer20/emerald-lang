@@ -574,16 +574,21 @@ fn reportBuiltinShadowing(self: *Resolver) Error!void {
     }
 }
 
-/// Whether `name` is one of the built-ins: a prelude function, `Math` or
-/// `Program`, or a public declaration of `prelude.em`.
-fn isBuiltinName(self: *Resolver, name: []const u8) bool {
+/// Whether `name` is one of the language's own built-ins (15.1), which a
+/// program declaring the same name almost certainly means to use: a prelude
+/// function, `Bytes`, a trait the language relies on, or a base error.
+/// Standard-library names such as `Date`, `File`, or `Console` are left out:
+/// a teacher's "write your own `Date`" is not a mistake, and a program that
+/// then reaches for the library's version is told at that use.
+fn isBuiltinName(_: *Resolver, name: []const u8) bool {
     for (prelude) |builtin| {
         if (std.mem.eql(u8, name, builtin)) return true;
     }
-    if (std.mem.eql(u8, name, "Math") or std.mem.eql(u8, name, "Program")) return true;
-    var buffer: [256]u8 = undefined;
-    const key = std.fmt.bufPrint(&buffer, prelude_namespace ++ ".{s}", .{name}) catch return false;
-    return self.facts.declarations.contains(key);
+    const language = [_][]const u8{ "Bytes", "Equatable", "Hashable", "Ordered", "Textual", "Error", "RuntimeError", "AssertionError" };
+    for (language) |builtin| {
+        if (std.mem.eql(u8, name, builtin)) return true;
+    }
+    return false;
 }
 
 /// The directory, as its files' paths spell it, that section 14.2 derives
@@ -2283,6 +2288,22 @@ fn qualifyTypeMember(
                 .{ written, member },
                 "Check the spelling. The types nested in `{s}` are {s}.",
                 .{ written, listing.items },
+            );
+            return .reported;
+        }
+    }
+    // The program's own type may be hiding a standard-library one that has
+    // this member (14.2): say so here, where it matters, rather than warning
+    // at every declaration that shares a library type's name.
+    if (!isPreludeKey(type_key)) {
+        const library_member = try std.fmt.allocPrint(self.arena, prelude_namespace ++ ".{s}" ++ method_separator ++ "{s}", .{ written, member });
+        if (self.facts.declarations.contains(library_member)) {
+            try self.reportWithHelpFmt(
+                span,
+                "`{s}` has no type-level member named `{s}`",
+                .{ written, member },
+                "`{s}` here is the program's own, which hides Emerald's `{s}`. Write `" ++ prelude_namespace ++ ".{s}.{s}` to use Emerald's, or give the program's type a different name.",
+                .{ written, written, written, member },
             );
             return .reported;
         }

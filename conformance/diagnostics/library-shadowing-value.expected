@@ -1,0 +1,8 @@
+diagnostics/library-shadowing-value.em:8:13: Date has no field named `weekday`
+  print(today.weekday)
+              ^^^^^^^
+`Date` here is the program's own, which hides Emerald's `Date`. Write `Emerald.Date` to use Emerald's, or give the program's type a different name.
+diagnostics/library-shadowing-value.em:9:13: Date has no field named `year`
+  print(today.year)
+              ^^^^
+`Date` here is the program's own, which hides Emerald's `Date`. Write `Emerald.Date` to use Emerald's, or give the program's type a different name.

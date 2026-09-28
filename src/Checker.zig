@@ -9775,10 +9775,30 @@ fn isSelf(expression: *const Ast.Expression) bool {
     return expression.data == .name and std.mem.eql(u8, expression.data.name, "self");
 }
 
+/// When the program's own type hides a standard-library type of the same name
+/// (14.2) that has `name`, the correction that reaches the library's: the
+/// shadowing itself is not reported, since a program may well mean its own.
+fn libraryMemberHelp(self: *Checker, base: Type, name: []const u8) Error!?[]const u8 {
+    const user = base.user orelse return null;
+    if (std.mem.startsWith(u8, user.name, Resolver.prelude_namespace ++ ".")) return null;
+    const library_key = try std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{user.display_name});
+    const library = self.structs.get(library_key) orelse return null;
+    const has = library.user.?.field(name) != null or
+        (try self.memberOwner(library, name)) != null or
+        (try self.propertyOf(library, name)) != null;
+    if (!has) return null;
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` here is the program's own, which hides Emerald's `{s}`. Write `" ++ Resolver.prelude_namespace ++ ".{s}` to use Emerald's, or give the program's type a different name.",
+        .{ user.display_name, user.display_name, user.display_name },
+    );
+}
+
 /// The correction for a member a class does not have: when a class extending
 /// it does, how `is` reaches it (4.4), and for a name that cannot be narrowed,
 /// why not.
 fn subclassMemberHelp(self: *Checker, base: Type, member: Ast.Expression.Member, general: []const u8) Error![]const u8 {
+    if (try self.libraryMemberHelp(base, member.name)) |help| return help;
     if (!isClass(base)) return general;
     // The first declared, so the correction does not depend on hash order.
     var found: ?*const Type.User = null;
