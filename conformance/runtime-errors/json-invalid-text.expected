@@ -1,0 +1,4 @@
+runtime-errors/json-invalid-text.em:3:18: JsonError: line 4, column 1: JSON does not allow a comma before "}"
+  const settings = Json.parse("""
+                   ^^^^^^^^^^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.

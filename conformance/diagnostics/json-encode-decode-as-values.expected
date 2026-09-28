@@ -1,0 +1,8 @@
+diagnostics/json-encode-decode-as-values.em:1:16: `Json.decode` has to be called
+  const decode = Json.decode
+                 ^^^^^^^^^^^
+It checks the type of what it is given at each call, so it cannot be kept as a value. Call it where it is needed, or wrap the call in a block.
+diagnostics/json-encode-decode-as-values.em:2:16: `Json.encode` has to be called
+  const encode = Json.encode
+                 ^^^^^^^^^^^
+It checks the type of what it is given at each call, so it cannot be kept as a value. Call it where it is needed, or wrap the call in a block.

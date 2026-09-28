@@ -1491,3 +1491,390 @@ struct Regex with Textual {
         return text
     }
 }
+
+# JSON (15.9). The parser and writer are native (src/Json.zig); a parsed
+# document is a tree of these values, and navigating and converting it is
+# Emerald over their fields. A value knows its path in the document, so a
+# mistake found deep inside it says where.
+
+# Text that is not JSON, or a part of a document that is not what the program
+# asked for. The message gives the line and column, or the path in the
+# document.
+class JsonError extends RuntimeError {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
+struct Json with Textual, Equatable {
+    enum Kind { null, bool, number, string, list, object }
+
+    const kind: Emerald.Json.Kind
+    const _bool: Bool
+    # Every number as a Float; `_whole` when it also reads exactly as `_int`,
+    # which `3`, `3.0`, and `3e2` all do. `_decimal` when it was written with
+    # a decimal point or exponent, so it writes back that way.
+    const _number: Float
+    const _whole: Bool
+    const _int: Int
+    const _decimal: Bool
+    const _text: String
+    const _items: List[Emerald.Json]
+    const _entries: Dict[String, Emerald.Json]
+    # Where this value is in the document it came from, as `players[2].score`,
+    # or "" for the document itself. Not part of equality or display.
+    var _path: String
+
+    # JSON's one null value. Like enum values, this is a type-level value, not
+    # a function call, so building a document reads naturally.
+    const Json.null: Emerald.Json = Emerald.Json._built(Emerald.Json.Kind.null, false, 0.0, false, 0, false, "", [], [])
+
+    # Build a value with no document path. Public `from_` functions below are
+    # deliberately small wrappers around this one shape, so every new value
+    # starts as a document root rather than retaining where an input value was
+    # found.
+    func Json._built(kind: Emerald.Json.Kind, bool: Bool, number: Float, whole: Bool, integer: Int, decimal: Bool, text: String, items: List[Emerald.Json], entries: Dict[String, Emerald.Json]): Emerald.Json {
+        return Emerald.Json(kind, bool, number, whole, integer, decimal, text, items, entries, "")
+    }
+
+    # The document `text` holds. A JsonError at the line and column of the
+    # first mistake when it is not JSON.
+    func Json.parse(text: String): Emerald.Json {
+        const parsed = Emerald.Json._parse(text)
+        if parsed == nothing {
+            raise Emerald.JsonError(Emerald.Json._problem(text))
+        }
+        return parsed
+    }
+
+    # The document `text` holds, or nothing when it is not JSON.
+    func Json.parse_maybe(text: String): Emerald.Json? {
+        return Emerald.Json._parse(text)
+    }
+
+    # A JSON text value.
+    func Json.from_string(text: String): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.string, false, 0.0, false, 0, false, text, [], [])
+    }
+
+    # A JSON whole number.
+    func Json.from_int(value: Int): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.number, false, value, true, value, false, "", [], [])
+    }
+
+    # A JSON number from a Float. JSON has no spelling for NaN or infinity.
+    func Json.from_float(value: Float): Emerald.Json {
+        if not value.finite?() {
+            raise Emerald.JsonError("#{value} cannot be written as JSON")
+        }
+        const whole = value >= -9223372036854775808.0 and value < 9223372036854775808.0 and value == value.to_int().to_float()
+        const integer = if whole then value.to_int() else 0
+        return Emerald.Json._built(Emerald.Json.Kind.number, false, value, whole, integer, true, "", [], [])
+    }
+
+    # A JSON true or false value.
+    func Json.from_bool(value: Bool): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.bool, value, 0.0, false, 0, false, "", [], [])
+    }
+
+    # A JSON list. Its items must already be Json values, which makes nested
+    # documents explicit and keeps this first builder slice statically small.
+    func Json.from_list(items: List[Emerald.Json]): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.list, false, 0.0, false, 0, false, "", items, [])
+    }
+
+    # A JSON object. Dictionary insertion order becomes the object's key
+    # order, as it does for a parsed document.
+    func Json.from_object(entries: Dict[String, Emerald.Json]): Emerald.Json {
+        return Emerald.Json._built(Emerald.Json.Kind.object, false, 0.0, false, 0, false, "", [], entries)
+    }
+
+    # JSON text for an already-built Json value. Encoding the program's own
+    # structs and collections follows in the next JSON slice.
+    func Json.encode(value: Emerald.Json, pretty: Bool = false): String {
+        return Emerald.Json._write(value, pretty)
+    }
+
+    # The checker recognizes `as:` as a source type and gives this call that
+    # type as its result. Its dummy written shape keeps the prelude declaration
+    # available to the resolver without pretending a type is a runtime value.
+    func Json.decode(text: String, as: Nothing): Nothing {
+    }
+
+    # Whether this is JSON's null.
+    func null?(): Bool {
+        return self.kind == Emerald.Json.Kind.null
+    }
+
+    # The value under `key` in this object. A JsonError when this is not an
+    # object, or it has no such key.
+    func get(key: String): Emerald.Json {
+        if self.kind != Emerald.Json.Kind.object {
+            raise Emerald.JsonError("#{self._subject()} #{self._describe()}, not an object, so it has no key \"#{key}\"")
+        }
+        const found = self.get_maybe(key)
+        if found == nothing {
+            raise Emerald.JsonError("#{self._where()} no key \"#{key}\"; #{self._listed_keys()}")
+        }
+        return found
+    }
+
+    # The value under `key`, or nothing when this is not an object or has no
+    # such key.
+    func get_maybe(key: String): Emerald.Json? {
+        if self.kind != Emerald.Json.Kind.object {
+            return nothing
+        }
+        const found = self._entries[key]
+        if found == nothing {
+            return nothing
+        }
+        return self._placed(found, Emerald.Json._key_path(self._path, key))
+    }
+
+    # Item `index` of this list, counting from 0. A JsonError when this is not
+    # a list, or it has no such item.
+    func at(index: Int): Emerald.Json {
+        if self.kind != Emerald.Json.Kind.list {
+            raise Emerald.JsonError("#{self._subject()} #{self._describe()}, not a list, so it has no item #{index}")
+        }
+        const found = self.at_maybe(index)
+        if found == nothing {
+            const items = if self._items.count == 0 then "the list is empty" else if self._items.count == 1 then "the list has 1 item" else "the list has #{self._items.count} items"
+            raise Emerald.JsonError("#{self._where()} no item #{index}; #{items}")
+        }
+        return found
+    }
+
+    # Item `index` of this list, or nothing when this is not a list or has no
+    # such item.
+    func at_maybe(index: Int): Emerald.Json? {
+        if self.kind != Emerald.Json.Kind.list or index < 0 or index >= self._items.count {
+            return nothing
+        }
+        return self._placed(self._items[index], "#{self._path}[#{index}]")
+    }
+
+    # This object's keys, in the order the document gives them. A JsonError
+    # when this is not an object.
+    func keys(): List[String] {
+        if self.kind != Emerald.Json.Kind.object {
+            raise Emerald.JsonError("#{self._subject()} #{self._describe()}, not an object, so it has no keys")
+        }
+        return self._entries.keys()
+    }
+
+    # How many items this list has, or entries this object has. A JsonError
+    # for any other kind of value.
+    const count: Int {
+        if self.kind == Emerald.Json.Kind.list {
+            return self._items.count
+        }
+        if self.kind == Emerald.Json.Kind.object {
+            return self._entries.count
+        }
+        raise Emerald.JsonError("#{self._subject()} #{self._describe()}; only a list or an object has a count")
+    }
+
+    # This text. A JsonError when this is not text.
+    func string(): String {
+        const text = self.string_maybe()
+        if text == nothing {
+            raise Emerald.JsonError(self._expected("text"))
+        }
+        return text
+    }
+
+    # This text, or nothing when this is not text.
+    func string_maybe(): String? {
+        return if self.kind == Emerald.Json.Kind.string then self._text else nothing
+    }
+
+    # This whole number, which may be written `3`, `3.0`, or `3e0`. A
+    # JsonError when this is not a whole number, or is too large for an Int.
+    func int(): Int {
+        const number = self.int_maybe()
+        if number == nothing {
+            if self.kind == Emerald.Json.Kind.number and (self._number >= 9223372036854775808.0 or self._number < -9223372036854775808.0) {
+                raise Emerald.JsonError("#{self._subject()} the number #{self}, which is too large for an Int")
+            }
+            raise Emerald.JsonError(self._expected("a whole number"))
+        }
+        return number
+    }
+
+    # This whole number, or nothing when this is not one that fits in an Int.
+    func int_maybe(): Int? {
+        return if self.kind == Emerald.Json.Kind.number and self._whole then self._int else nothing
+    }
+
+    # This number, whole or not. A JsonError when this is not a number.
+    func float(): Float {
+        const number = self.float_maybe()
+        if number == nothing {
+            raise Emerald.JsonError(self._expected("a number"))
+        }
+        return number
+    }
+
+    # This number, or nothing when this is not a number.
+    func float_maybe(): Float? {
+        return if self.kind == Emerald.Json.Kind.number then self._number else nothing
+    }
+
+    # This true or false. A JsonError when this is neither.
+    func bool(): Bool {
+        const value = self.bool_maybe()
+        if value == nothing {
+            raise Emerald.JsonError(self._expected("true or false"))
+        }
+        return value
+    }
+
+    # This true or false, or nothing when this is neither.
+    func bool_maybe(): Bool? {
+        return if self.kind == Emerald.Json.Kind.bool then self._bool else nothing
+    }
+
+    # This list's items. A JsonError when this is not a list.
+    func list(): List[Emerald.Json] {
+        const items = self.list_maybe()
+        if items == nothing {
+            raise Emerald.JsonError(self._expected("a list"))
+        }
+        return items
+    }
+
+    # This list's items, or nothing when this is not a list.
+    func list_maybe(): List[Emerald.Json]? {
+        if self.kind != Emerald.Json.Kind.list {
+            return nothing
+        }
+        var items: List[Emerald.Json] = []
+        for index in 0..<self._items.count {
+            items.append(self._placed(self._items[index], "#{self._path}[#{index}]"))
+        }
+        return items
+    }
+
+    # This object's entries, in order. A JsonError when this is not an object.
+    func object(): Dict[String, Emerald.Json] {
+        const entries = self.object_maybe()
+        if entries == nothing {
+            raise Emerald.JsonError(self._expected("an object"))
+        }
+        return entries
+    }
+
+    # This object's entries, or nothing when this is not an object.
+    func object_maybe(): Dict[String, Emerald.Json]? {
+        if self.kind != Emerald.Json.Kind.object {
+            return nothing
+        }
+        var entries: Dict[String, Emerald.Json] = []
+        for (key, value) in self._entries {
+            entries[key] = self._placed(value, Emerald.Json._key_path(self._path, key))
+        }
+        return entries
+    }
+
+    # The same JSON: numbers compare by value, so 1 equals 1.0, and an
+    # object's keys may come in any order. Where each value came from does
+    # not matter.
+    @override
+    func equals(other: Emerald.Json): Bool {
+        if self.kind != other.kind {
+            return false
+        }
+        return case self.kind {
+            when Emerald.Json.Kind.null then true
+            when Emerald.Json.Kind.bool then self._bool == other._bool
+            when Emerald.Json.Kind.number then if self._whole and other._whole then self._int == other._int else self._number == other._number
+            when Emerald.Json.Kind.string then self._text == other._text
+            when Emerald.Json.Kind.list then self._items == other._items
+            when Emerald.Json.Kind.object then self._entries == other._entries
+        }
+    }
+
+    # Compact JSON text.
+    @override
+    func to_string(): String {
+        return Emerald.Json._write(self, false)
+    }
+
+    func _placed(child: Emerald.Json, path: String): Emerald.Json {
+        var placed = child
+        placed._path = path
+        return placed
+    }
+
+    # "the document is", or "at players[2]: this is": what a message says
+    # about this value before describing it.
+    func _subject(): String {
+        return if self._path == "" then "the document is" else "at #{self._path}: this is"
+    }
+
+    # "the document has", or "at players[2]: there is": the same, before
+    # saying what it lacks.
+    func _where(): String {
+        return if self._path == "" then "the document has" else "at #{self._path}: there is"
+    }
+
+    func _expected(wanted: String): String {
+        const expected = if self._path == "" then "expected the document to be #{wanted}" else "at #{self._path}: expected #{wanted}"
+        return "#{expected}, found #{self._describe()}"
+    }
+
+    # This value in a few words, for messages: `the text "12"`, `a list`.
+    func _describe(): String {
+        return case self.kind {
+            when Emerald.Json.Kind.null then "null"
+            when Emerald.Json.Kind.bool then "#{self._bool}"
+            when Emerald.Json.Kind.number then "the number #{self}"
+            when Emerald.Json.Kind.string then if self._text.count > 40 then "the text \"#{self._text[0..<40]}…\"" else "the text \"#{self._text}\""
+            when Emerald.Json.Kind.list then "a list"
+            when Emerald.Json.Kind.object then "an object"
+        }
+    }
+
+    # "its keys are "a" and "b"", listing up to ten.
+    func _listed_keys(): String {
+        const keys = self._entries.keys()
+        if keys.count == 0 {
+            return "the object is empty"
+        }
+        if keys.count == 1 {
+            return "its only key is \"#{keys[0]}\""
+        }
+        const shown = if keys.count > 10 then 10 else keys.count
+        var listed = "\"#{keys[0]}\""
+        for index in 1..<shown {
+            listed += if index == shown - 1 and shown == keys.count then " and \"#{keys[index]}\"" else ", \"#{keys[index]}\""
+        }
+        if shown < keys.count {
+            listed += ", and #{keys.count - shown} more"
+        }
+        return "its keys are #{listed}"
+    }
+
+    # Native: the document `text` holds, or nothing when it is not JSON.
+    func Json._parse(text: String): Emerald.Json? {
+        return nothing
+    }
+
+    # Native: where and why `text` is not JSON, as "line 3, column 18: ...".
+    func Json._problem(text: String): String {
+        return ""
+    }
+
+    # Native: `value` as JSON text, compact or indented two spaces a level.
+    func Json._write(value: Emerald.Json, pretty: Bool): String {
+        return ""
+    }
+
+    # Native: the path to `key` inside the value at `path`: `.name` when the
+    # key reads as a name, and `["first name"]` when it does not.
+    func Json._key_path(path: String, key: String): String {
+        return path
+    }
+}

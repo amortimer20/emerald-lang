@@ -2743,3 +2743,173 @@ end of 15.8, matching 15.4's. Code comments that cited a console plan decision b
 now cite rewrite-context 15.6, which states the same precedence. Earlier entries in this
 journal still name the plans; those names are history, and `git log -- docs/<name>` finds
 the files.
+
+## JSON, slice 1: the parser and writer, 2026-09-26
+
+`src/Json.zig` is a strict RFC 8259 parser and writer, native Zig, with no Emerald-facing type
+yet. It parses in one pass and is genuinely iterative: an explicit stack of open containers
+(`Parser.stack`) stands in for recursion, the same way `Regex`'s own matcher uses an explicit
+stack instead of recursion, so nesting depth is bounded by that stack, not by how deep Zig's
+own call stack happens to go. A document nested 200,000 levels deep is refused cleanly rather
+than crashing, well past the 512-level limit that ordinary documents are held to. Every common
+mistake gets its own message: a trailing comma, single quotes, an unquoted key, a comment,
+`NaN`, `Infinity`, and a string that never closes or names half a surrogate pair. Positions are
+one-based lines and Unicode scalar-value columns, the same counting `Source.Location` uses.
+
+A number keeps two readings and one writing flag, not one boolean doing both jobs: `is_integer`
+(with `int_value`) decides whether a future `int()` accessor should succeed, following the
+plan's rule that `3`, `3.0`, and `3e2` all count as whole numbers; `is_float_literal` decides
+only how the writer formats the number, so a parsed `3.0` writes back as `3.0`, not `3` — the
+plan's "nothing surprising" principle, applied to the parser and writer themselves before any
+Emerald-facing type exists to apply it to. The first draft conflated the two, which silently
+turned every whole `Float` into an `Int`-looking number on the way back out; the round-trip
+unit test caught it.
+
+JSONTestSuite (`tools/json/fetch.sh`, cloned with `git` since this session's GitHub access is
+scoped to specific repositories over the REST API and codeload.github.com, but not over the
+plain git protocol or raw.githubusercontent.com) checks 318 files
+(`zig build json-conformance`). Two disagree, both the plan's own documented exception: it
+refuses a duplicate key, where JSONTestSuite counts either answer acceptable, since most
+parsers take the last value. `tools/json/differential.py` generates random documents, and
+documents with one common mistake introduced, and checks agreement with Python's `json`;
+0 differences over 25,000 cases (seeds 1–5), once its generator gave every key a running
+number so it never produces a duplicate on its own. A 1 MB generated document parses in about
+38 ms and writes back in about 6 ms (ReleaseSafe).
+
+## JSON, slice 1 review fixes, 2026-09-26
+
+Reviewing slice 1 found four defects in `src/Json.zig`, each now fixed with a unit test:
+
+- **A whole number at 2^63 crashed.** `Int`'s upper bound, 2^63 - 1, is not representable as
+  an `f64` and rounds to 2^63, so an inclusive `<=` check let `9223372036854775808` (or
+  `9223372036854775807.0`) reach `@intFromFloat` and panic. The bound is now an exclusive
+  2^63. `Value.initFloat`, the future `Json.from_float`, shared the bug.
+- **Duplicate-key checking was quadratic.** Each key was compared with every earlier key in
+  its object, so a flat 40,000-key object took 1.1 s to parse; a per-object hash set brings it
+  to 25 ms (ReleaseSafe).
+- **A string ending in a backslash** said "a pattern cannot end with a single backslash",
+  copied from `Regex`; it now gets the unterminated-string message.
+- **A message too long for `Problem`'s 400-byte buffer** (a duplicate key hundreds of
+  characters long) was cut wherever the buffer ended, possibly inside a UTF-8 sequence. It is
+  now cut at a character boundary and ends with an ellipsis.
+
+## JSON, slice 2: the `Json` value, 2026-09-26
+
+`Json.parse`, `Json.parse_maybe`, `JsonError`, and the `Json` value are in the prelude:
+`kind`, `null?()`, `count`, `keys()`, `get`/`at` and their `_maybe` forms, and the six
+conversions with theirs. Display is compact JSON text, and `Equatable` makes equality JSON's
+own: `1 == 1.0`, objects equal in any key order, the path ignored. The value is an ordinary
+struct over private fields, built natively by `Interpreter.JsonBuilder`; its path is a
+private `var` field the navigation methods set on the copy they return, so a parsed tree
+stores no paths at all and navigation needs no native call.
+
+Refusing a document is where the parser and Emerald met. A `Dict` compares keys after
+normalization (9.2), so the parser's duplicate check now normalizes too; otherwise a
+document with a precomposed and a decomposed "café" would have silently lost one value when
+it became a `Dict`. A number too large for a `Float` is now refused rather than read as
+Infinity, which `Json.write` cannot write back. JSONTestSuite's invalid-UTF-8 files then
+crashed the normalizer, which assumes valid text, so `Json.parse` validates UTF-8 first;
+no Emerald program can reach that, since its strings are always valid, but `src/Json.zig`
+is meant to stand alone for a future backend.
+
+Writing the prelude code hit the handoff's rough edge — a checker diagnostic inside the
+prelude tripped an assertion instead of printing — four times in a row. `emerald.analyze`
+now panics with `the prelude has a problem at prelude.em:LINE:COLUMN: MESSAGE` after each
+stage instead, which is still a crash (a prelude problem is always Emerald's own bug) but
+says what and where. The rough edge is closed.
+
+Two messages from slice 1 were reworded once seen in context: an unterminated string is
+reported where the text ends rather than where it began (the message already names that),
+and an unescaped control character suggests JSON's own escape (`\t`, or `\u0001`) rather
+than Emerald's `\u{0009}`.
+
+A 1.28 MB document of 9,000 records parses in about 150 ms (ReleaseSafe). Startup for
+`print(1)` rose from about 7.5 ms to 9.3 ms (median of 60, same machine), the largest single
+jump yet; the startup task queued after the standard library now matters more.
+
+## JSON, slice 3: building and writing Json values, 2026-09-26
+
+`Json.null`, the six `from_` builders, and `Json.encode` now complete the manual Json-value
+workflow. The builders remain ordinary prelude code: a single private helper fills the same
+fields the native parser does, and `Json.encode` delegates to the existing native writer.
+That preserves Float-shaped numbers such as `3.0` and `-0.0`, dictionary insertion order, and
+the writer's established compact and two-space-pretty forms without duplicating serialization
+logic. `from_float` refuses `NaN` and both infinities as `JsonError`; the native writer now
+also makes its formerly unreachable non-finite case a catchable `JsonError` as a defensive
+boundary check. New end-to-end coverage builds a nested value, tests compact and pretty output
+and round trips, verifies fresh paths in built containers, and exercises all three non-finite
+spellings.
+
+## JSON, slice 4: encoding program values, 2026-09-26
+
+`Json.encode` now accepts the small recursive set established in the JSON plan: scalar text
+and numbers, Bool, optionals, lists, string-keyed dictionaries, enums, date/time values,
+`Json`, and structs made from those values. The checker records the source type at each call;
+the native encoder uses it to retain element types that a runtime `List` or `Dict` does not
+carry. Struct fields and dictionary keys keep their declared and insertion order respectively.
+
+The checker refuses unrepresentable types before execution. Most importantly, a struct with a
+bad nested field identifies that field rather than hiding the cause behind the outer struct.
+Non-finite Float values are intentionally the one runtime check: their static type is valid,
+but their particular value has no JSON representation, so they raise `JsonError`.
+
+## JSON, slice 5: typed decoding, 2026-09-26
+
+`Json.decode(text, as: Type)` now turns JSON directly into the program's known shape. The
+`as:` value is deliberately type source syntax, not a runtime type object: the checker returns
+that type from the call and records it for the interpreter, which needs collection element types
+that ordinary runtime containers erase. The decoder accepts the same recursive type family as
+encoding, including enums, plain structs, and ISO date/time types. Structs use their generated
+constructors, so their ordinary field defaults still run; missing optional fields are `nothing`
+and extra object fields are ignored.
+
+Invalid target types fail at check time. Bad JSON text, missing required fields, and wrong kinds
+raise `JsonError` at the source call with a JSON path; paths now also quote keys that do not read
+as Emerald names, such as `["first name"]`. The slice's conformance covers nested collections,
+enum values, defaults, optional fields, ISO values, target rejection, and representative runtime
+failures.
+
+## JSON, slice 6: documentation and integration, 2026-09-26
+
+JSON's public page now distinguishes the two deliberately different workflows: `Json.parse`
+and navigation for a document whose shape arrives at runtime, and `Json.encode`/`Json.decode`
+for a program's own known types. `examples/json.em` demonstrates both without requiring files
+or arguments, so the documentation check can run it safely. The inventory links the page and
+example, and the rewrite context now contains the settled rather than in-progress 15.9 rules.
+
+The bounded execution fuzzer also gained a typed struct list that it encodes, parses, and
+decodes. That is not a replacement for the focused conformance cases; it puts the new parser,
+checker special case, and interpreter conversion into the existing randomized frontend and
+execution cleanup path.
+
+## JSON slices 3–6 review, 2026-09-27
+
+Reviewing the builders, typed encoding and decoding, and integration found six defects, each
+now fixed with conformance (`run/json-decode-fields`, `run/as-argument`,
+`diagnostics/json-encode-decode-as-values`):
+
+- **`as:` was a type in every call.** The parser read any `as:` argument as a type, so
+  `describe(3, as: "feet")` failed to parse. It is now a type only in a call written
+  `Json.decode` or `Emerald.Json.decode`; the parser cannot resolve names, and the checker's
+  help says so when a type is missing.
+- **A struct holding itself hung the checker.** `jsonEncodeIssue` and `jsonDecodeIssue`
+  recursed through `children: List[Node]` forever. A stack of structs being checked stops
+  the second visit; trees now round-trip.
+- **Defaults overwrote the document.** Decoding ran every field default after reading the
+  fields, so `"volume": 9` came back as the default 5. Defaults now run only for fields the
+  document leaves out, the same mask the generated constructor uses, and a default wins over
+  `nothing` for a missing optional field.
+- **Private fields leaked both ways.** `encode` wrote `_balance`, and `decode` read it (only
+  the defaults bug hid that). A private field is now never written and never read; the
+  decision row in 22 gives the reasoning.
+- **Naming the arguments in the other order crashed.** `Json.decode(as: Int, text: "3")`
+  evaluated the type. The text argument is now found by kind.
+- **`Json.decode` could be kept as a value**, exposing its placeholder signature. Both
+  `encode` and `decode` now report that they have to be called.
+
+Typed decoding's wrong-kind messages now describe the value they found (`found the text
+"loud"`), as `Json`'s own conversions do, and a missing field says "this value is missing".
+
+With JSON complete and its behavior in rewrite-context 15.9, `docs/json-design-plan.md` is
+removed, as the finished date and regex plans were; `git log -- docs/json-design-plan.md`
+finds it. References in `src/Json.zig` and `tools/json/` now cite 15.9.

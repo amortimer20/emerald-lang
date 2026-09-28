@@ -2658,6 +2658,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             }
         },
 
+        .type_literal => {},
         .unary => |unary| try self.walkExpression(unary.operand),
         .binary => |binary| {
             try self.walkExpression(binary.left);

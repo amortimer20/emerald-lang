@@ -32,6 +32,7 @@ pub const strings = @import("strings.zig");
 pub const ColorPolicy = @import("ColorPolicy.zig");
 pub const TimeZone = @import("TimeZone.zig");
 pub const Regex = @import("Regex.zig");
+pub const Json = @import("Json.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -517,6 +518,7 @@ fn analyze(
         tokenized[lexed] = try Lexer.tokenize(gpa, &files[lexed].source);
         try appendFrom(arena, &found, tokenized[lexed].diagnostics, @intCast(lexed));
     }
+    panicOnPreludeProblem(found.items, &prelude_source, project.files.len);
     if (found.items.len > bad_directory_count) {
         return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
@@ -531,6 +533,7 @@ fn analyze(
         parsed[parsed_count] = try Parser.parse(gpa, &files[parsed_count].source, tokenized[parsed_count].tokens);
         try appendFrom(arena, &found, parsed[parsed_count].diagnostics, @intCast(parsed_count));
     }
+    panicOnPreludeProblem(found.items, &prelude_source, project.files.len);
     if (found.items.len > bad_directory_count) {
         return .{ .arena_state = arena_state, .diagnostics = try found.toOwnedSlice(arena) };
     }
@@ -543,7 +546,7 @@ fn analyze(
     // because a name in one file can only be understood against the rest.
     var resolved = try Resolver.resolve(gpa, files, programs, project.enclosing_project);
     defer resolved.deinit();
-    for (resolved.diagnostics) |diagnostic| std.debug.assert(diagnostic.file < project.files.len);
+    panicOnPreludeProblem(resolved.diagnostics, &prelude_source, project.files.len);
     // Only bad directories can be in `found` by now. They are errors, reported
     // with the later stages' diagnostics rather than dropped, and the project
     // never runs with one.
@@ -559,7 +562,7 @@ fn analyze(
     // this function returns.
     var checked = try Checker.check(gpa, files, programs, resolved.facts);
     defer checked.deinit();
-    for (checked.diagnostics) |diagnostic| std.debug.assert(diagnostic.file < project.files.len);
+    panicOnPreludeProblem(checked.diagnostics, &prelude_source, project.files.len);
     // Only warnings can remain from the resolver here; they join the
     // checker's report in source order, whatever it holds.
     const combined = try mergeDiagnostics(arena, directories, try mergeDiagnostics(arena, resolved.diagnostics, checked.diagnostics));
@@ -584,6 +587,8 @@ fn analyze(
         &checked.method_calls,
         &checked.operator_calls,
         &checked.operator_assignments,
+        &checked.json_encodes,
+        &checked.json_decodes,
         &checked.super_members,
         &checked.type_tests,
         &checked.type_names,
@@ -630,6 +635,17 @@ fn earlierInProgram(_: void, a: Diagnostic, b: Diagnostic) bool {
 /// Copies one file's diagnostics into the report's arena, stamping the file
 /// they came from. A stage that works on one file at a time does not know its
 /// index, so it is filled in here, where the loop does.
+/// A problem in the prelude is Emerald's own bug, never the program's, and
+/// the program's report has no file to show it against: stop, saying where
+/// in the prelude it is, so editing the prelude does not mean guessing.
+fn panicOnPreludeProblem(diagnostics: []const Diagnostic, prelude_source: *const Source, prelude_file: usize) void {
+    for (diagnostics) |diagnostic| {
+        if (diagnostic.file < prelude_file) continue;
+        const at = prelude_source.location(diagnostic.span.start);
+        std.debug.panic("the prelude has a problem at prelude.em:{d}:{d}: {s}", .{ at.line, at.column, diagnostic.message });
+    }
+}
+
 fn appendFrom(
     arena: std.mem.Allocator,
     into: *std.ArrayList(Diagnostic),
@@ -779,6 +795,7 @@ test {
     _ = ColorPolicy;
     _ = TimeZone;
     _ = Regex;
+    _ = Json;
 }
 
 /// Runs a program and returns what it printed. The caller owns the result.
@@ -827,6 +844,51 @@ fn expectFailure(text: []const u8, expected_message: []const u8) !void {
     const problem = report.failure orelse
         if (report.diagnostics.len != 0) report.diagnostics[0] else return error.ExpectedAFailure;
     try testing.expectEqualStrings(expected_message, problem.message);
+}
+
+test "JSON builders and encoding preserve JSON's values and refuse non-finite Float values" {
+    try expectOutput(
+        \\const document = Json.from_object(["name": Json.from_string("Ada"), "items": Json.from_list([Json.from_int(1), Json.null]), "ratio": Json.from_float(2.0)])
+        \\print(Json.encode(document))
+        \\print(Json.encode(document, pretty: true))
+        \\print(Json.parse(Json.encode(document)) == document)
+    ,
+        "{\"name\":\"Ada\",\"items\":[1,null],\"ratio\":2.0}\n" ++
+            "{\n  \"name\": \"Ada\",\n  \"items\": [\n    1,\n    null\n  ],\n  \"ratio\": 2.0\n}\n" ++
+            "true\n",
+    );
+    try expectFailure("Json.from_float(Float.nan)", "JsonError: NaN cannot be written as JSON");
+    try expectFailure("Json.from_float(Float.infinity)", "JsonError: Infinity cannot be written as JSON");
+}
+
+test "Json.encode writes ordinary checked values and rejects values JSON cannot represent" {
+    try expectOutput(
+        \\enum State { ready, done }
+        \\struct Score {
+        \\    const name: String
+        \\    const points: Int
+        \\    const note: String?
+        \\    const state: State
+        \\}
+        \\const score = Score("Ada", 42, nothing, State.ready)
+        \\print(Json.encode(score))
+        \\print(Json.encode(["first": score]))
+        \\try {
+        \\    print(Json.encode(Float.nan))
+        \\} catch error: JsonError {
+        \\    print(error.message)
+        \\}
+    ,
+        "{\"name\":\"Ada\",\"points\":42,\"note\":null,\"state\":\"ready\"}\n" ++
+            "{\"first\":{\"name\":\"Ada\",\"points\":42,\"note\":null,\"state\":\"ready\"}}\n" ++
+            "a non-finite Float cannot be written as JSON\n",
+    );
+    try expectFailure(
+        \\struct Save { const seen: Set[String] }
+        \\Json.encode(Save(["Ada"].to_set()))
+    ,
+        "field `seen` of Save cannot be written as JSON because it is Set[String]",
+    );
 }
 
 test "File read methods reject invalid UTF-8 as FileError" {

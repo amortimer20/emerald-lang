@@ -1,0 +1,8 @@
+9 nothing hi
+5 dark nothing
+{"owner":"Ada"}
+Account(owner: "Ada", _balance: 100)
+{"name":"root","children":[{"name":"left","children":[]},{"name":"right","children":[{"name":"leaf","children":[]}]}]}
+true
+[1, 2]
+at volume: expected a whole number, found the text "loud"
