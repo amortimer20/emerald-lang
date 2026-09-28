@@ -2913,3 +2913,20 @@ Typed decoding's wrong-kind messages now describe the value they found (`found t
 With JSON complete and its behavior in rewrite-context 15.9, `docs/json-design-plan.md` is
 removed, as the finished date and regex plans were; `git log -- docs/json-design-plan.md`
 finds it. References in `src/Json.zig` and `tools/json/` now cite 15.9.
+
+## Negative number literals, 2026-09-26
+
+Writing the website's `Int` and `Float` pages meant telling readers to write `(-3).abs()`,
+because `-3.abs()` read as `-(3.abs())` and gave `-3`, and `-3.positive?()` reported "`-`
+needs a number, but this is Bool — use `not`". The user called that a bug and chose Ruby's
+rule (5.3): a `-` written against a number is part of it, except before `**`, so `-2 ** 2`
+stays `-(2 ** 2)`. `Parser.negativeLiteral` folds the sign into the literal and continues
+the postfix chain from it; `x -3` is untouched because a `-` after a value is parsed as
+subtraction before `parseUnary` sees it. The formatter now prints `-3.abs()` bare, keeps
+`(-2) ** 2`, and prints a spaced `- 3.abs()` as `-(3.abs())`, since writing it back as
+`-3.abs()` would change its meaning.
+
+Updating the formatter's own test for the minimum Int showed that `Formatter`, `Project`,
+and `Range` were never in `emerald.zig`'s test list, so their 24 unit tests had not run in
+`zig build test`. One had gone stale: it expected a blank line inserted between top-level
+declarations, which 19's formatter rules never do. All three modules are in the list now.
