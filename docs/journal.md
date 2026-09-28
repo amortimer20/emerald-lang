@@ -3165,3 +3165,21 @@ The remaining levers from `docs/startup-design-plan.md`, now removed as finished
 
 Resolving the prelude's names, about 1 ms, is now the largest part of a small program's
 startup, left in the handoff's rough edges.
+
+## Base64 and hashing, slice 1: EncodingError and hex, 2026-09-28
+
+The first small-utilities slice adds `EncodingError`, a `RuntimeError` for text encoding
+boundaries rather than filesystem access. In particular, `Bytes.to_string()` no longer raises
+`FileError` for invalid UTF-8: raw bytes may never have come from a file. `to_string_maybe()`
+continues to report that ordinary absence without raising.
+
+`Bytes.to_hex()` writes two lowercase digits for every byte, and `Bytes.from_hex()` accepts
+either ASCII case while `from_hex_maybe()` returns `nothing` for invalid text. The raising form
+names an odd digit count, or the invalid character and its zero-based Emerald character index.
+Conformance constructs every byte value 0 through 255 and round-trips it, checks mixed case and
+the optional form, and catches each new encoding failure. A checking case protects the ordinary
+type-level `Bytes.from_hex(text: String)` signature.
+
+Pinned Zig 0.16.0 passed the Debug and ReleaseSafe `zig build test -j1` suites, `zig build
+-j1`, the documentation-example check, formatter and whitespace checks, and Windows/macOS
+cross-builds.

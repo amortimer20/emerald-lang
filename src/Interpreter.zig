@@ -3164,6 +3164,9 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         }
         return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
     }
+    if (std.mem.eql(u8, suffix, "Bytes::from_hex") or std.mem.eql(u8, suffix, "Bytes::from_hex_maybe")) {
+        return self.bytesFromHex(span, values[0].data.string.bytes, std.mem.eql(u8, suffix, "Bytes::from_hex_maybe"));
+    }
     if (std.mem.eql(u8, suffix, "File::open")) return self.openFileHandle(span, cwd, io, values[0].data.string.bytes);
     if (std.mem.eql(u8, suffix, "File::with_open")) {
         const handle = try self.openFileHandle(span, cwd, io, values[0].data.string.bytes);
@@ -3537,6 +3540,11 @@ fn raiseFile(self: *Interpreter, span: Source.Span, verb: []const u8) Error {
 fn raiseFileMessage(self: *Interpreter, span: Source.Span, message: []const u8) Error {
     self.raised_value = self.makeError(Resolver.preludeKey("FileError"), message) catch return error.OutOfMemory;
     return self.raiseTyped(span, "FileError", message, "Check that the path exists and that this program may access it.");
+}
+
+fn raiseEncodingMessage(self: *Interpreter, span: Source.Span, message: []const u8) Error {
+    self.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
+    return self.raiseTyped(span, "EncodingError", message, "Check that this text uses the expected encoding.");
 }
 
 fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {
@@ -8563,8 +8571,54 @@ fn bytesMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: [
     if (std.mem.eql(u8, name, "to_string_maybe")) {
         return if (std.unicode.utf8ValidateSlice(bytes)) self.heap.copyText(bytes) else Value.nothing;
     }
-    if (!std.unicode.utf8ValidateSlice(bytes)) return self.raiseFileMessage(span, "these Bytes are not valid UTF-8 text");
+    if (std.mem.eql(u8, name, "to_hex")) return self.bytesToHex(bytes);
+    if (!std.unicode.utf8ValidateSlice(bytes)) return self.raiseEncodingMessage(span, "these Bytes are not valid UTF-8 text");
     return self.heap.copyText(bytes);
+}
+
+fn bytesToHex(self: *Interpreter, bytes: []const u8) std.mem.Allocator.Error!Value {
+    const length = std.math.mul(usize, bytes.len, 2) catch return error.OutOfMemory;
+    const out = try self.gpa.alloc(u8, length);
+    const digits = "0123456789abcdef";
+    for (bytes, 0..) |byte, index| {
+        out[index * 2] = digits[byte >> 4];
+        out[index * 2 + 1] = digits[byte & 0x0f];
+    }
+    return .{ .data = .{ .string = try self.heap.createText(out) } };
+}
+
+fn bytesFromHex(self: *Interpreter, span: Source.Span, text: []const u8, maybe: bool) Error!Value {
+    const characters = try strings.characters(self.gpa, text);
+    defer self.gpa.free(characters);
+    if (characters.len % 2 != 0) {
+        if (maybe) return Value.nothing;
+        return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "hex text has {d} digits, but every byte takes two", .{characters.len}));
+    }
+
+    const bytes = try self.gpa.alloc(u8, characters.len / 2);
+    for (characters, 0..) |character, index| {
+        const digit = hexValue(character) orelse {
+            self.gpa.free(bytes);
+            if (maybe) return Value.nothing;
+            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "hex text has `{s}` at index {d}, which is not a hex digit", .{ character, index }));
+        };
+        if (index % 2 == 0) {
+            bytes[index / 2] = digit << 4;
+        } else {
+            bytes[index / 2] |= digit;
+        }
+    }
+    return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
+}
+
+fn hexValue(character: []const u8) ?u8 {
+    if (character.len != 1) return null;
+    return switch (character[0]) {
+        '0'...'9' => character[0] - '0',
+        'a'...'f' => character[0] - 'a' + 10,
+        'A'...'F' => character[0] - 'A' + 10,
+        else => null,
+    };
 }
 
 /// Section 9.1's advanced conversions. A String is always valid UTF-8, so

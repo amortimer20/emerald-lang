@@ -8244,6 +8244,10 @@ fn typeOfBytesMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expr
         _ = try self.requireArity(member, call.arguments, 0, 0);
         return if (std.mem.eql(u8, member.name, "to_string_maybe")) Type.string.optionalOf() else .string;
     }
+    if (std.mem.eql(u8, member.name, "to_hex")) {
+        _ = try self.requireArity(member, call.arguments, 0, 0);
+        return .string;
+    }
     try self.reportUnknownMember(.bytes, member, "method");
     try self.typeArguments(call.arguments);
     return .invalid;

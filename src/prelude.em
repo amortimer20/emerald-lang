@@ -24,6 +24,14 @@ class FileError extends RuntimeError {
     }
 }
 
+# Text encodings are distinct from filesystem failures: raw Bytes can be
+# invalid UTF-8 even when they never came from a file.
+class EncodingError extends RuntimeError {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
 # Whole-file filesystem namespaces. Their bodies establish the ordinary
 # type-level signatures; the interpreter supplies the native operation.
 class File {
@@ -70,6 +78,8 @@ class FileWriter {
 # methods; this class only gives its type-level constructor a resolver key.
 class Bytes {
     func Bytes.from_list(numbers: List[Int]): Bytes { return Bytes.from_list([]) }
+    func Bytes.from_hex(text: String): Bytes { return Bytes.from_list([]) }
+    func Bytes.from_hex_maybe(text: String): Bytes? { return nothing }
 }
 
 class Directory {

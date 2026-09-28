@@ -1,0 +1,8 @@
+
+0aff
+true
+true
+true
+hex text has 7 digits, but every byte takes two
+hex text has `g` at index 5, which is not a hex digit
+these Bytes are not valid UTF-8 text

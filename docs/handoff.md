@@ -129,10 +129,11 @@ variables it uses, and starts with the prelude already parsed, since `tools/prel
 parses it when Emerald is built. The journal's startup entries record the measurements,
 including a lever that was tried and reverted.
 
-The next milestone is Base64 and hashing, following the accepted
+The Base64 and hashing milestone is under way, following the accepted
 [`base64-hashing-design-plan.md`](base64-hashing-design-plan.md): `Base64`, `Digest.sha256` and
-`hmac_sha256`, hex on `Bytes`, and one `EncodingError`. Slice 1 (`EncodingError` and hex) is
-next.
+`hmac_sha256`, hex on `Bytes`, and one `EncodingError`. Slice 1 delivers `EncodingError`,
+`Bytes.to_hex`, and `Bytes.from_hex`/`from_hex_maybe`; invalid UTF-8 Bytes now correctly raise
+`EncodingError` rather than `FileError`. The next slice is Base64.
 
 The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig

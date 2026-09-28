@@ -200,7 +200,12 @@ commits.
 - Conformance: `conformance/run/bytes-hex.em` covers the empty value, every byte value
   round-tripping, mixed case, and each error; `conformance/diagnostics/` covers a wrong
   argument type.
-- Settled while building: (record here)
+- Settled while building: hex input is walked as Emerald grapheme characters, not UTF-8
+  bytes, so a non-ASCII invalid character receives the same index a program would see with
+  string indexing. `to_hex` allocates its ordinary String result directly in the shared
+  immutable text storage, as `Bytes` itself already does. `EncodingError`'s uncaught
+  diagnostic help is deliberately general ("Check that this text uses the expected
+  encoding."), because the caught message gives the precise Base64, hex, or UTF-8 cause.
 
 ### Slice 2: Base64
 

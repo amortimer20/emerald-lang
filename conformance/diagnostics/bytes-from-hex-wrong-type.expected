@@ -1,0 +1,4 @@
+diagnostics/bytes-from-hex-wrong-type.em:1:16: this is Int, but parameter `text` of `Emerald.Bytes.from_hex` needs String
+  Bytes.from_hex(1)
+                 ^
+Pass a value of the expected type, or convert it first.
