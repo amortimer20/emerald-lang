@@ -122,14 +122,17 @@ accepts spreadsheet-style quoting, BOMs, Unix/Windows line endings, and one-grap
 writing is minimal-quoted LF text. The native parser's 3,000 generated cases (seed 1) had no
 differences from Python.
 
-There is no active implementation milestone. The user chose to finish the standard library,
-then make small optimizations such as startup time, and eventually build a native compiler.
-Startup performance is complete: a ReleaseSafe `print(1)` went from 9.9 ms to 3.5 ms. A run
+The user chose to finish the standard library, then make small optimizations such as startup
+time, and eventually build a native compiler. Startup performance is complete: a ReleaseSafe `print(1)` went from 9.9 ms to 3.5 ms. A run
 checks only the prelude bodies its program reaches, gives each function body only the module
 variables it uses, and starts with the prelude already parsed, since `tools/prelude_ast.zig`
 parses it when Emerald is built. The journal's startup entries record the measurements,
-including a lever that was tried and reverted. Base64/hashing and the remaining Console scope
-need separate user go-ahead.
+including a lever that was tried and reverted.
+
+The next milestone is Base64 and hashing, following the accepted
+[`base64-hashing-design-plan.md`](base64-hashing-design-plan.md): `Base64`, `Digest.sha256` and
+`hmac_sha256`, hex on `Bytes`, and one `EncodingError`. Slice 1 (`EncodingError` and hex) is
+next.
 
 The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
@@ -140,7 +143,6 @@ validation.
 
 Other candidates, each needing the user's go-ahead:
 
-- **Base64 and hashing**, small utilities that could follow the HTTP client.
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
 
