@@ -113,45 +113,25 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-The HTTP client is complete (15.10): `Http` makes timeout-bounded, certificate-checked,
-synchronous requests and returns finished `Http.Response` values with text, binary, JSON,
-headers, redirects, and strict-by-default status handling. `HttpError` explains failure and
-preserves a strict error status. The reference is [`library/http.md`](library/http.md), with
-the guarded [`examples/http.em`](../examples/http.em) and offline `conformance/http/` coverage.
-`zig build http-live` is the sole opt-in public-network check; ordinary tests and CI never reach
-the internet. It verifies trusted HTTPS, the three badssl certificate failures, an unknown host,
-and the public `HttpError` messages. Proxy settings flow privately through `run`, `test`, and the
-REPL without becoming an Emerald environment API. Zig 0.16 reports the three certificate causes
-as one validation failure, so Emerald accurately reports a generic untrusted certificate.
+The CSV milestone is complete (15.11). `Csv.parse` and `parse_records` cover unknown text
+tables; `decode` and `encode` cover a program's own plain records; and `CsvError` keeps CSV
+problems catchable and locatable. The reference is [`library/csv.md`](library/csv.md), with the
+runnable [`examples/csv.em`](../examples/csv.em), focused conformance, a parser differential
+against Python's `csv` reader, a reachability fixture, and a valid-program fuzz template. CSV
+accepts spreadsheet-style quoting, BOMs, Unix/Windows line endings, and one-grapheme separators;
+writing is minimal-quoted LF text. The native parser's 3,000 generated cases (seed 1) had no
+differences from Python.
 
-The user chose to finish the standard library, then make small optimizations such as startup
-time, and eventually build a native compiler. CSV is the active milestone. Its accepted plan is
-[`csv-design-plan.md`](csv-design-plan.md): slice 1 adds the native parser and writer, Zig unit
-tests, and a differential tool checked against Python's `csv` reader. It accepts BOMs, Unix and
-Windows line endings, RFC quoting, and one-grapheme separators; its writer uses `\n` and minimal
-quoting. Slice 2 adds `Csv.parse`, `parse_records`, `format`, and catchable `CsvError`;
-conformance covers their success paths and every untyped text failure. An empty document has no
-records, and `CsvError.line` is present whenever a physical row is known, including a malformed
-header on line 1. Slice 3 adds `Csv.decode`: checker-recognized `as:` targets, scalar/enum/date
-conversions, empty-cell rules, missing/defaulted fields, ignored extra columns, and CsvError value
-diagnostics. It reuses JSON's recursive typed decoder. Slice 4 adds `Csv.encode`: a checked
-`List` of plain structs becomes declaration-order public columns, with optional absences as empty
-cells and existing enum/date/time text forms. It shares JSON's recorded source-type machinery and
-the native CSV writer, so minimal quoting and `Float`'s visible `.0` remain consistent. Slice 5
-(documentation and integration) is next.
+There is no active implementation milestone. The user chose to finish standard-library slices
+before small startup work and, later, a native compiler. Base64/hashing and Console's remaining
+scope need separate user go-ahead.
 
-The parser's 3,000 generated cases (seed 1) had no differences from Python. An alternating
-startup comparison against the pre-CSV binary was within ordinary noise (the new binary was
-98.3–99.0% of the old across the five programs), so an unused CSV module adds no measured
-startup cost. Base64/hashing and the remaining Console scope need separate user go-ahead.
-
-CSV slices 1–4 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test
+The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
-tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. The slice-4 check also
-found and corrected two stale slice-3 diagnostic expectations (a `conformance/` path prefix and
-`Json` where the settled diagnostic says `JSON`); JSON's conformance cases then passed unchanged.
-The HTTP client’s manual `zig build http-live` check passed in its slice 3; it is not part of
-ordinary validation.
+tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. An alternating
+ReleaseSafe startup comparison found no measurable cost for programs that do not use CSV. The
+HTTP client's manual `zig build http-live` check passed in its slice 3; it is not part of ordinary
+validation.
 
 Other candidates, each needing the user's go-ahead:
 
@@ -175,9 +155,9 @@ on the roadmap.
 - Expanded `emerald.toml`, bounded implementation limits, concurrency, generics, enum
   payloads, wider general overloading, and package management each need a separate design
   pass or a concrete program that motivates them.
-- The standard-library backlog is recorded in rewrite-context 15.7: date/time and regular
-  expressions (both done), JSON, a synchronous networking client, and what is deliberately
-  not planned.
+- The standard-library backlog is recorded in rewrite-context 15.7: date/time, regular
+  expressions, JSON, HTTP, and CSV are done; what remains deliberately needs a separate design
+  pass or a concrete program.
 - Braceless type bodies (10.6) are deferred, not rejected: 24 records what a proposal must
   answer (one canonical formatter output, one parsing mode, one way to teach a declaration).
 - `Console`'s remaining scope — `Table`/`Panel` layout widgets and line-oriented interaction

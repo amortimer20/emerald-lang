@@ -31,3 +31,7 @@ print([Date(2026, 9, 30), Date(2026, 1, 2)].sort())
 # Decoding into the program's own type, which holds a Date.
 const events = Json.decode("[{\"title\": \"Launch\", \"on\": \"2026-09-28\"}]", as: List[Event])
 print(events[0].on.weekday)
+
+# CSV's typed path reaches the same Date parser through an ordinary record.
+const csv_events = Csv.decode("title,on\nLaunch,2026-09-28", as: List[Event])
+print(csv_events[0].on)

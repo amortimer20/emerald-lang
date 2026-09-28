@@ -3116,3 +3116,25 @@ checks, and Windows/macOS cross-builds passed. In a 10-run ReleaseSafe compariso
 the new binary measured 97.8–100.1% of the prior medians across `print(1)`, structs, dates,
 regex, and JSON: ordinary host noise, with no measurable startup cost for programs that do not
 use CSV.
+
+## CSV, slice 5: documentation and integration, 2026-09-28
+
+The CSV milestone is complete. `docs/library/csv.md` now documents the dynamic text-table path,
+the checker-known record path, field vocabulary, blank-cell rules, line-aware `CsvError`, quoting,
+separators, and output endings. `examples/csv.em` demonstrates typed spreadsheet records and
+unknown columns without needing a file or command-line argument, so the documentation checker can
+run it directly. The inventory, rewrite context 15.7/15.11, and its implementation decision table
+now make CSV part of the settled public library rather than a plan.
+
+`run/prelude-reach` reaches `Csv.decode` into a record containing a `Date`, proving the startup
+reachability analysis includes the native-to-prelude parse path. The valid-program fuzzer also has
+a CSV template that writes a typed record with named arguments, decodes it with `as:`, reads it
+as string records, and executes the result under the ordinary bounded step limit. The completed
+plan was removed, as the JSON and HTTP plans were once their references became normative docs.
+
+The pinned 0.16.0 Debug and ReleaseSafe suites, build, documentation-example check, formatter
+and whitespace checks, Windows/macOS cross-builds, and a 1,000-case bounded fuzz campaign all
+passed. The new example and its inline reference snippet were each run against the built binary.
+Against slice 4, a 10-run ReleaseSafe startup comparison measured 100.3% (`print(1)`), 101.6%
+(structs), 94.9% (dates), 102.4% (regex), and 98.8% (JSON): normal host variation, not a
+measurable change to programs that do not use CSV.
