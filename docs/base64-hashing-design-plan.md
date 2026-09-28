@@ -31,7 +31,8 @@ const expected = File.read("emerald.zip.sha256").split(" ")[0].trim()
 const actual = Digest.sha256(File.read_binary("emerald.zip")).to_hex()
 if actual == expected {
     print("The download is intact.")
-} else {
+}
+else {
     print("The download is damaged: try again.")
 }
 

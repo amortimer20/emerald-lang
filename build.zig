@@ -46,6 +46,9 @@ pub fn build(b: *std.Build) void {
     // told where they are rather than depending on the working directory.
     const test_options = b.addOptions();
     test_options.addOptionPath("conformance_dir", b.path("conformance"));
+    // The house-style checks also read the examples and the documentation.
+    test_options.addOptionPath("examples_dir", b.path("examples"));
+    test_options.addOptionPath("docs_dir", b.path("docs"));
 
     const conformance_module = b.createModule(.{
         .root_source_file = b.path("src/conformance.zig"),

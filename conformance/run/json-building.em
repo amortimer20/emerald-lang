@@ -23,6 +23,7 @@ print(Json.from_float(-0.0), Json.from_float(3.0).int(), Json.from_float(3.5).in
 # this document rather than where a value may have come from before building.
 try {
     Json.from_list([Json.parse("{\"old\": \"text\"}").get("old")]).at(0).int()
-} catch error: JsonError {
+}
+catch error: JsonError {
     print(error.message)
 }

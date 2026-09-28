@@ -4,6 +4,7 @@ try {
     writer.close()
     writer.close()
     writer.write("no")
-} finally {
+}
+finally {
     File.delete(path)
 }

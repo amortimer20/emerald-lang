@@ -11,7 +11,8 @@ const words = ["Emerald", "is", "expressive"]
 const sentence = words.reduce("") { text, word =>
     if text.empty?() {
         return word
-    } else {
+    }
+    else {
         return "#{text} #{word}"
     }
 }

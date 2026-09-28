@@ -32,7 +32,8 @@ if maybe != nothing {
 }
 if maybe == nothing {
     print("absent")
-} else {
+}
+else {
     print(maybe + 1)
 }
 

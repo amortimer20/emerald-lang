@@ -36,7 +36,8 @@ print(Emerald.Csv.encode(none))
 # Writer-side separator failures stay the same catchable CsvError as parsing.
 try {
     Csv.encode(scores, separator: ";;")
-} catch error: CsvError {
+}
+catch error: CsvError {
     print(error.message)
     print(error.line.or(-1))
 }

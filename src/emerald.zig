@@ -898,7 +898,8 @@ test "Json.encode writes ordinary checked values and rejects values JSON cannot 
         \\print(Json.encode(["first": score]))
         \\try {
         \\    print(Json.encode(Float.nan))
-        \\} catch error: JsonError {
+        \\}
+        \\catch error: JsonError {
         \\    print(error.message)
         \\}
     ,

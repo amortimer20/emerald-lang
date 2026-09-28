@@ -179,7 +179,8 @@ class Clamped extends Temperature {
         set {
             if value > 100 {
                 super.reading = 100
-            } else {
+            }
+            else {
                 super.reading = value
             }
         }
@@ -230,7 +231,8 @@ for kennel in kennels {
     const resident = kennel.resident()
     if resident != nothing {
         print(resident.speak())
-    } else {
+    }
+    else {
         print("empty")
     }
 }

@@ -10,7 +10,8 @@ print(document)
 for key in ["first name", "名前", "_id", "2nd", ""] {
     try {
         Json.parse("{\"#{key}\": {}}").get(key).get("missing")
-    } catch error: JsonError {
+    }
+    catch error: JsonError {
         print(error.message)
     }
 }
@@ -19,7 +20,8 @@ for key in ["first name", "名前", "_id", "2nd", ""] {
 # would be in a Dict.
 try {
     Json.parse("{\"caf\\u00e9\": 1, \"cafe\\u0301\": 2}")
-} catch error: JsonError {
+}
+catch error: JsonError {
     print(error.message)
 }
 print(Json.parse("{\"caf\\u00e9\": 1}").get("cafe\u{301}").int())
@@ -27,7 +29,8 @@ print(Json.parse("{\"caf\\u00e9\": 1}").get("cafe\u{301}").int())
 # Columns count characters, not bytes.
 try {
     Json.parse("{\"émoji 😀\": 1,}")
-} catch error: JsonError {
+}
+catch error: JsonError {
     print(error.message)
 }
 

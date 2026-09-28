@@ -37,6 +37,7 @@ print(Json.decode(as: List[Int], text: "[1, 2]"))
 # A value of the wrong kind is described, as `Json`'s own conversions describe it.
 try {
     Json.decode("{\"name\": \"Ada\", \"volume\": \"loud\"}", as: Settings)
-} catch error: JsonError {
+}
+catch error: JsonError {
     print(error.message)
 }

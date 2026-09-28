@@ -204,6 +204,118 @@ test "conformance suite" {
     }
 }
 
+// Section 3.4 starts `else`, `catch`, and `finally` on their own lines, in
+// both brace styles. The formatter writes them that way, but most conformance
+// cases are never formatted, because many exercise layouts the formatter would
+// change on purpose. This keeps the convention wherever a reader learns from
+// Emerald code: runnable cases, examples, and the documentation's `emerald`
+// blocks.
+test "else, catch, and finally start their own lines" {
+    const gpa = testing.allocator;
+
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const Place = struct { path: []const u8, extension: []const u8 };
+    const places = [_]Place{
+        .{ .path = build_options.conformance_dir, .extension = ".em" },
+        .{ .path = build_options.examples_dir, .extension = ".em" },
+        .{ .path = build_options.docs_dir, .extension = ".md" },
+    };
+
+    var problems: usize = 0;
+    for (places) |place| {
+        var dir = try std.Io.Dir.cwd().openDir(io, place.path, .{ .iterate = true });
+        defer dir.close(io);
+        var walker = try dir.walk(gpa);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, place.extension)) continue;
+            // These hold malformed or unformatted input on purpose.
+            if (place.path.ptr == build_options.conformance_dir.ptr and deliberatelyUnformatted(entry.path)) continue;
+            const text = try dir.readFileAlloc(io, entry.path, gpa, .limited(Source.max_bytes));
+            defer gpa.free(text);
+            problems += sameLineContinuations(place.path, entry.path, text, std.mem.eql(u8, place.extension, ".md"));
+        }
+    }
+    if (problems != 0) {
+        std.debug.print("\n{d} `}} else`, `}} catch`, or `}} finally` lines; start each keyword on its own line (3.4)\n", .{problems});
+        return error.StyleFailed;
+    }
+}
+
+/// `diagnostics/`, `lexical/`, and `format/` cases are inputs, not models.
+fn deliberatelyUnformatted(path: []const u8) bool {
+    const end = std.mem.indexOfAny(u8, path, "/\\") orelse path.len;
+    const top = path[0..end];
+    return std.mem.eql(u8, top, "diagnostics") or std.mem.eql(u8, top, "lexical") or std.mem.eql(u8, top, "format");
+}
+
+/// Counts, and prints, lines that continue a closing brace with `else`,
+/// `catch`, or `finally`. In Markdown only `emerald` code blocks are read.
+fn sameLineContinuations(place: []const u8, path: []const u8, text: []const u8, markdown: bool) usize {
+    var count: usize = 0;
+    var in_emerald = !markdown;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    var number: usize = 0;
+    while (lines.next()) |raw| {
+        number += 1;
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (markdown and std.mem.startsWith(u8, line, "```")) {
+            in_emerald = !in_emerald and std.mem.eql(u8, std.mem.trim(u8, line[3..], " "), "emerald");
+            continue;
+        }
+        if (!in_emerald or !std.mem.startsWith(u8, line, "}")) continue;
+        const rest = std.mem.trimStart(u8, line[1..], " \t");
+        for ([_][]const u8{ "else", "catch", "finally" }) |keyword| {
+            if (!std.mem.startsWith(u8, rest, keyword)) continue;
+            const after = rest[keyword.len..];
+            if (after.len != 0 and after[0] != ' ' and after[0] != '{') continue;
+            // An inline `if`'s `else` may follow a block that ends its
+            // `then` value: `} else "skipped"` is canonical.
+            const next = std.mem.trimStart(u8, after, " ");
+            if (std.mem.eql(u8, keyword, "else") and next.len != 0 and next[0] != '{' and !std.mem.startsWith(u8, next, "if ")) continue;
+            std.debug.print("\n{s}/{s}:{d}: {s}", .{ place, path, number, line });
+            count += 1;
+        }
+    }
+    return count;
+}
+
+// Examples are what a reader copies, so each must already be exactly as the
+// formatter writes it.
+test "examples are formatted" {
+    const gpa = testing.allocator;
+
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var dir = try std.Io.Dir.cwd().openDir(io, build_options.examples_dir, .{ .iterate = true });
+    defer dir.close(io);
+    var walker = try dir.walk(gpa);
+    defer walker.deinit();
+
+    var problems: usize = 0;
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".em")) continue;
+        const text = try dir.readFileAlloc(io, entry.path, gpa, .limited(Source.max_bytes));
+        defer gpa.free(text);
+        var source = try Source.init(gpa, entry.path, text);
+        defer source.deinit(gpa);
+        var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+        const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+        var report = try emerald.formatProject(gpa, &project);
+        defer report.deinit();
+        if (report.diagnostics.len != 0 or !std.mem.eql(u8, report.files[0].text, text)) {
+            std.debug.print("\nexamples/{s}: not formatted; run `emerald format` on it\n", .{entry.path});
+            problems += 1;
+        }
+    }
+    if (problems != 0) return error.StyleFailed;
+}
+
 /// Returns 1 when the case failed. Every case runs even after one fails, so a
 /// single run reports the whole picture rather than only the first problem.
 fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !usize {

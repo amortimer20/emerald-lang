@@ -3,7 +3,8 @@
 for value in [Float.nan, Float.infinity, -Float.infinity] {
     try {
         Json.from_float(value)
-    } catch error: JsonError {
+    }
+    catch error: JsonError {
         print(error.message)
     }
 }
