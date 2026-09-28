@@ -3239,3 +3239,12 @@ than the reply's 250 ms late. The test server's slow reply now waits 2 s; the cl
 timed-out request, so the suite takes no longer.
 
 The time-zone data was refreshed and is already IANA's latest release, 2026d.
+
+## Emerald 0.6.0 released, 2026-09-28
+
+The user approved the release notes, and `v0.6.0` was tagged at `51c01cc`. The release workflow
+built, smoke-tested, and published the three archives with `SHA256SUMS`, and its install check
+passed with `install.sh` on Ubuntu and macOS and `install.ps1` in Windows PowerShell 5.1 and 7.
+The notes, set on the GitHub release, cover everything since 0.5.0: dates and times, regular
+expressions, Console, JSON, HTTP, CSV, Base64 and digests, nested types, the `Emerald`
+namespace, negative literals, and startup (9.9 ms to 3.5 ms). Development moved to `0.7.0-dev`.

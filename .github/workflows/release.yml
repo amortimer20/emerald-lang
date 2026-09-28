@@ -63,7 +63,7 @@ jobs:
         # it, which can include instruction sets (AVX-512, etc.) that are
         # absent on a user's machine and crash with "Illegal instruction".
         run: |
-          version="0.6.0-dev"
+          version="0.7.0-dev"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
           fi
@@ -84,7 +84,7 @@ jobs:
           fi
           test -f smoke/LICENSE
           test -f smoke/THIRD_PARTY_NOTICES.md
-          version="0.6.0-dev"
+          version="0.7.0-dev"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
           fi

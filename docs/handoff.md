@@ -75,9 +75,9 @@ failed tests. The CLI has concise global and command-specific help, specific rec
 bad invocations, formatter change reporting, and REPL `:help`/`:quit`; `lsp` remains available
 through its dedicated help but is intentionally absent from the interactive command list.
 Their substantive REPL and LSP protocol behavior remains covered in their own Zig modules.
-Emerald 0.5.0 is published (tag `v0.5.0` at `c0dea26`, released 2026-09-24); it includes
-inline `if` expressions and the Random dispatch fix.
-Development binaries now identify themselves as `Emerald 0.6.0-dev`;
+Emerald 0.6.0 is published (tag `v0.6.0` at `51c01cc`, released 2026-09-28), with release
+notes on its GitHub release; its install check passed on every platform.
+Development binaries now identify themselves as `Emerald 0.7.0-dev`;
 release automation passes the pushed `vX.Y.Z` tag through the build so a distributed binary
 reports that exact version.
 Release preparation now also packages and smokes the binary's version, `help`, `check`, `run`,
@@ -132,12 +132,8 @@ Base64 and hashing followed the accepted
 hints, and added the plan's remaining known answers and a decoding differential. The plan's
 "Settled while building" notes record each decision.
 
-**Next: release Emerald 0.6.0** (the user's decision, 2026-09-28). Preparation is done: the
-same-line `catch`, `finally`, and `else` lines are fixed, and `zig build test` now keeps them
-fixed; the time-zone data is the latest release (2026d); and the release notes are drafted for
-the user. What remains is the user's approval of the notes, then: tag `v0.6.0` on `main`, set the
-notes on the GitHub release, confirm the release and its install check pass, and move the
-development version to `0.7.0-dev` in `build.zig`.
+There is no active implementation milestone. Emerald 0.6.0 is released; the next milestone
+needs the user's go-ahead.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS
