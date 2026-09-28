@@ -109,24 +109,26 @@ method changes only ordinary identifier uses.
 
 ## Next step
 
-JSON is complete. The user chose to finish the standard library (JSON, then an HTTP client,
-then the smaller items in rewrite-context 15.7), then make small optimizations such as startup
-time, and eventually build a native compiler. The HTTP client's plan is
-[`http-design-plan.md`](http-design-plan.md), accepted with every recommendation, including
-decision 2 (a): an error status raises `HttpError` by default. Slice 1 (the native request
-and a local test server) is complete. Slice 2 now exposes the planned `Http` request functions,
-`Http.Response`, `HttpError`, percent encoding, strict status behavior, and response text,
-bytes, JSON, and header access. The offline `conformance/http/` cases start the loopback server
-per case and receive its generated base address through `Program.arguments[0]`; they cover every
-request form, named arguments, query encoding, redirects, status behavior, and the local error
-paths. The interpreter keeps one worker-backed transport client for each program run. Slice 3
-adds `zig build http-live`, an opt-in check that alone reaches public HTTPS hosts; no automatic
-test reaches the internet. It verifies a trusted request, each badssl certificate failure, an
-unknown host, proxy initialization, and the actual Emerald `HttpError` messages. Proxy settings
-now flow privately through `run`, `test`, and the REPL without becoming a program-visible
-environment API. Zig 0.16 reports the three certificate causes as one validation failure, so
-the public message accurately says the certificate is not trusted rather than guessing its cause.
-Slice 4, documentation and integration, is next.
+The HTTP client is complete (15.10): `Http` makes timeout-bounded, certificate-checked,
+synchronous requests and returns finished `Http.Response` values with text, binary, JSON,
+headers, redirects, and strict-by-default status handling. `HttpError` explains failure and
+preserves a strict error status. The reference is [`library/http.md`](library/http.md), with
+the guarded [`examples/http.em`](../examples/http.em) and offline `conformance/http/` coverage.
+`zig build http-live` is the sole opt-in public-network check; ordinary tests and CI never reach
+the internet. It verifies trusted HTTPS, the three badssl certificate failures, an unknown host,
+and the public `HttpError` messages. Proxy settings flow privately through `run`, `test`, and the
+REPL without becoming an Emerald environment API. Zig 0.16 reports the three certificate causes
+as one validation failure, so Emerald accurately reports a generic untrusted certificate.
+
+The user chose to finish the standard library, then make small optimizations such as startup
+time, and eventually build a native compiler. Startup performance is the next proposed task:
+every run still checks every prelude body. Base64/hashing, CSV, and the remaining Console scope
+need separate user go-ahead.
+
+HTTP slice 4 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test`,
+`zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, `git diff --check`,
+and Windows/macOS cross-builds. The manual `zig build http-live` check passed in slice 3; it is
+not part of ordinary validation.
 
 Other candidates, each needing the user's go-ahead:
 

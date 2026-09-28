@@ -2958,3 +2958,21 @@ Zig 0.16's HTTP client collapses the distinct certificate-validation failures in
 `TlsInitializationFailed`. Emerald consequently reports the accurate common fact — the server's
 certificate is not trusted — instead of claiming whether it is expired, self-signed, or for a
 different address.
+
+## HTTP client, slice 4: documentation and integration, 2026-09-28
+
+The completed client is now settled in rewrite-context 15.10 and the library inventory. Its
+reference page documents every request, response, error, redirect, body, header, timeout,
+certificate, and proxy rule, with an offline-safe [`examples/http.em`](../examples/http.em): no
+argument prints its usage, while an explicitly supplied address makes one request. The finished
+design plan is removed, as earlier completed-library plans were.
+
+Documentation records one transport-level correction from the original plan: `response.bytes`
+has no UTF-8 conversion, but it follows normal HTTP content decoding, so a gzip response yields
+its decompressed binary bytes rather than literal compressed wire bytes. The 64 MB limit applies
+after decoding.
+
+The pinned-toolchain check, Debug and ReleaseSafe `zig build test`, `zig build`, documentation
+example check, Zig formatting check, diff whitespace check, and Windows/macOS cross-builds all
+passed. The cross-builds were followed by a native build before the final documentation example
+run, so `zig-out/bin/emerald` remains usable on the development host.
