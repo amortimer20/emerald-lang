@@ -13,6 +13,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const version_options = b.addOptions();
+    version_options.addOption([]const u8, "version", version);
+    // Native library code also needs the version: Http sends it as its
+    // default User-Agent, just as the executable prints it for --version.
+    emerald_module.addOptions("version_options", version_options);
+
     // The conformance suite reads Emerald files at test time, so it needs to be
     // told where they are rather than depending on the working directory.
     const test_options = b.addOptions();
@@ -32,10 +38,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{.{ .name = "emerald", .module = emerald_module }},
     });
-    const version_options = b.addOptions();
-    version_options.addOption([]const u8, "version", version);
-    exe_module.addOptions("version_options", version_options);
-
     const exe = b.addExecutable(.{
         .name = "emerald",
         .root_module = exe_module,
@@ -136,6 +138,21 @@ pub fn build(b: *std.Build) void {
     const run_fuzz = b.addRunArtifact(fuzz);
     if (b.args) |args| run_fuzz.addArgs(args);
     b.step("fuzz", "Run deterministic bounded execution fuzz cases").dependOn(&run_fuzz.step);
+
+    // This is deliberately separate from `test`: it contacts public HTTPS
+    // hosts to verify certificate, DNS, and proxy behavior that a loopback
+    // server cannot reproduce. Run it by hand when the network is available.
+    const http_live = b.addExecutable(.{
+        .name = "emerald-http-live",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/http/live.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "emerald", .module = emerald_module }},
+        }),
+    });
+    const run_http_live = b.addRunArtifact(http_live);
+    b.step("http-live", "Manually verify HTTP against public HTTPS hosts").dependOn(&run_http_live.step);
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);

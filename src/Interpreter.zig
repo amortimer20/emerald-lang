@@ -27,10 +27,12 @@
 //! reservation runs out.
 
 const std = @import("std");
+const version_options = @import("version_options");
 const Ast = @import("Ast.zig");
 const Checker = @import("Checker.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Heap = @import("Heap.zig");
+const Http = @import("Http.zig");
 const Json = @import("Json.zig");
 const Project = @import("Project.zig");
 const Range = @import("Range.zig").Range;
@@ -167,6 +169,9 @@ out: *std.Io.Writer,
 in: *std.Io.Reader,
 /// The execution-owned Console styling policy.
 color: bool,
+/// The host environment is private runtime configuration. HTTP reads only
+/// proxy variables from it; Emerald programs have no environment API.
+environment: std.process.Environ,
 /// Section 15.8's `TimeZone.local`, resolved once for the whole execution.
 local_zone: TimeZone.Local,
 /// The built-in zone database, decompressed the first time a program names a
@@ -193,6 +198,7 @@ arguments: []const []const u8 = &.{},
 /// allocate.
 literal_texts: std.AutoHashMapUnmanaged(*const Ast.Expression, *Heap.Text) = .empty,
 random_engine: ?std.Random.DefaultPrng = null,
+http_client: ?*Http.Client = null,
 /// Open FileHandles, keyed by the private ID stored in their class instance.
 /// States are deliberately separate from the GC heap: an explicit `close`
 /// releases the operating-system resource immediately, and interpreter
@@ -308,6 +314,7 @@ pub fn run(
     in: *std.Io.Reader,
     arguments: []const []const u8,
     color: bool,
+    process_environment: std.process.Environ,
     local_zone: TimeZone.Local,
     stack: StackLimit,
     test_mode: bool,
@@ -343,6 +350,7 @@ pub fn run(
         .out = out,
         .in = in,
         .color = color,
+        .environment = process_environment,
         .local_zone = local_zone,
         .arguments = arguments,
         .signatures = signatures,
@@ -369,6 +377,7 @@ pub fn run(
     defer interpreter.literal_texts.deinit(gpa);
     defer interpreter.deinitFileHandles();
     defer interpreter.deinitFileWriters();
+    defer interpreter.deinitHttpClient();
 
     // Hoisted, matching the resolver and checker. Every file's functions are
     // in place before anything runs, so a call into another file never depends
@@ -3005,6 +3014,9 @@ fn evaluateCall(
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Json::")) {
             if (try self.callJson(key[(Resolver.prelude_namespace ++ ".Json::").len..], call)) |result| return result;
         }
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Http::")) {
+            if (try self.callHttp(expression.span, key[(Resolver.prelude_namespace ++ ".Http::").len..], call)) |result| return result;
+        }
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
@@ -3740,6 +3752,342 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
         .encode => unreachable,
         .decode => unreachable,
     }
+}
+
+/// Section 15.10's HTTP boundary. The public functions in the prelude bind
+/// their beginner-facing defaults; these few private helpers own transport,
+/// conversion to Emerald values, and the error vocabulary.
+fn callHttp(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!?Value {
+    const Native = enum { _request, _body_request, _header, _text, _json, encode_component };
+    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    switch (native) {
+        .encode_component => {
+            const values = try self.evaluateArguments(call.arguments);
+            defer {
+                for (values) |value| self.heap.release(value);
+                self.gpa.free(values);
+            }
+            const encoded = try percentEncode(self.gpa, values[0].data.string.bytes);
+            return @as(?Value, .{ .data = .{ .string = try self.heap.createText(encoded) } });
+        },
+        ._header => {
+            const values = try self.evaluateBound(call, &.{ "headers", "name" }, &.{ false, false });
+            defer {
+                self.releaseBound(values);
+                self.gpa.free(values.values);
+                if (values.omitted) |omitted| self.gpa.free(omitted);
+            }
+            return @as(?Value, try self.httpHeader(span, values.values[0].data.map, values.values[1].data.string.bytes));
+        },
+        ._text => {
+            const values = try self.evaluateBound(call, &.{ "bytes", "url" }, &.{ false, false });
+            defer {
+                self.releaseBound(values);
+                self.gpa.free(values.values);
+                if (values.omitted) |omitted| self.gpa.free(omitted);
+            }
+            const bytes = values.values[0].data.bytes.bytes;
+            if (!std.unicode.utf8ValidateSlice(bytes)) return self.raiseHttp(
+                span,
+                try std.fmt.allocPrint(self.arena, "the response from `{s}` is not UTF-8 text; read it with `.bytes` instead", .{values.values[1].data.string.bytes}),
+                null,
+                "Read a binary response with `.bytes` instead of `.text`.",
+            );
+            return @as(?Value, try self.heap.copyText(bytes));
+        },
+        ._json => {
+            const values = try self.evaluateBound(call, &.{ "bytes", "url" }, &.{ false, false });
+            defer {
+                self.releaseBound(values);
+                self.gpa.free(values.values);
+                if (values.omitted) |omitted| self.gpa.free(omitted);
+            }
+            const bytes = values.values[0].data.bytes.bytes;
+            const url = values.values[1].data.string.bytes;
+            if (!std.unicode.utf8ValidateSlice(bytes)) return self.raiseHttp(
+                span,
+                try std.fmt.allocPrint(self.arena, "the response from `{s}` is not UTF-8 text; read it with `.bytes` instead", .{url}),
+                null,
+                "Read a binary response with `.bytes` instead of `.json`.",
+            );
+            var problem: Json.Problem = .{};
+            var document = Json.parse(self.gpa, bytes, &problem) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.InvalidJson => {
+                    const message = try std.fmt.allocPrint(self.arena, "the response from `{s}` is not JSON: line {d}, column {d}: {s}", .{ url, problem.line, problem.column, problem.message() });
+                    self.raised_value = try self.makeError(Resolver.preludeKey("JsonError"), message);
+                    return self.raiseTyped(span, "JsonError", message, "Read the response as `.text` or check the server's JSON.");
+                },
+            };
+            defer document.deinit();
+            var builder = try JsonBuilder.init(self, span);
+            defer builder.deinit();
+            return @as(?Value, try builder.build(document.root));
+        },
+        ._request => return @as(?Value, try self.httpRequest(span, call, false)),
+        ._body_request => return @as(?Value, try self.httpRequest(span, call, true)),
+    }
+}
+
+fn httpRequest(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, has_body: bool) Error!Value {
+    const names: []const []const u8 = if (has_body)
+        &.{ "method", "url", "body", "json", "bytes", "query", "headers", "timeout", "strict" }
+    else
+        &.{ "method", "url", "unused", "query", "headers", "timeout", "strict" };
+    const defaults: []const bool = if (has_body)
+        &.{ false, false, true, true, true, true, true, true, true }
+    else
+        &.{ false, false, false, true, true, true, true };
+    const bound = try self.evaluateBound(call, names, defaults);
+    defer {
+        self.releaseBound(bound);
+        self.gpa.free(bound.values);
+        if (bound.omitted) |omitted| self.gpa.free(omitted);
+    }
+
+    const method = methodFromText(bound.values[0].data.string.bytes) orelse unreachable;
+    const url = bound.values[1].data.string.bytes;
+    const body_index: ?usize = if (has_body) 2 else null;
+    const query_index: usize = if (has_body) 5 else 3;
+    const headers_index: usize = if (has_body) 6 else 4;
+    const timeout_index: usize = if (has_body) 7 else 5;
+    const strict_index: usize = if (has_body) 8 else 6;
+
+    var body: ?[]const u8 = null;
+    var content_type: ?[]const u8 = null;
+    if (body_index) |first| {
+        var count: usize = 0;
+        if (bound.values[first].data != .nothing) {
+            count += 1;
+            body = bound.values[first].data.string.bytes;
+            content_type = "text/plain; charset=utf-8";
+        }
+        if (bound.values[first + 1].data != .nothing) {
+            count += 1;
+            body = bound.values[first + 1].data.string.bytes;
+            content_type = "application/json";
+        }
+        if (bound.values[first + 2].data != .nothing) {
+            count += 1;
+            body = bound.values[first + 2].data.bytes.bytes;
+            content_type = null;
+        }
+        if (count > 1) return self.raiseHttp(span, "pass only one of body:, json:, and bytes:", null, "Choose the one representation this request should send.");
+    }
+
+    const requested_url = appendHttpQuery(self.gpa, url, bound.values[query_index].data.map) catch return error.OutOfMemory;
+    defer self.gpa.free(requested_url);
+    const timeout = self.httpTimeout(span, bound.values[timeout_index]) catch |err| switch (err) {
+        error.Raised => return err,
+        else => return err,
+    };
+
+    var headers: std.ArrayList(std.http.Header) = .empty;
+    defer headers.deinit(self.gpa);
+    var supplied_content_type = false;
+    for (bound.values[headers_index].data.map.entries.items) |entry| {
+        const header_name = entry.key.data.string.bytes;
+        if (std.ascii.eqlIgnoreCase(header_name, "content-type")) supplied_content_type = true;
+        try headers.append(self.gpa, .{ .name = header_name, .value = entry.value.data.string.bytes });
+    }
+    if (content_type) |default_type| if (!supplied_content_type) try headers.append(self.gpa, .{ .name = "content-type", .value = default_type });
+    if (!containsHeader(headers.items, "user-agent")) {
+        const user_agent = try std.fmt.allocPrint(self.arena, "Emerald/{s}", .{version_options.version});
+        try headers.append(self.gpa, .{ .name = "user-agent", .value = user_agent });
+    }
+
+    const client = try self.httpClient(span);
+    var response = switch (client.request(requested_url, .{ .method = method, .body = body, .headers = headers.items, .timeout = timeout })) {
+        .problem => |problem| return self.raiseHttpProblem(span, requested_url, problem),
+        .response => |answer| answer,
+    };
+    if (bound.values[strict_index].data.bool and response.status >= 400) {
+        defer response.deinit(self.gpa);
+        return self.raiseHttp(
+            span,
+            try std.fmt.allocPrint(self.arena, "the server answered {d} {s} for `{s}`", .{ response.status, response.reason, response.url }),
+            response.status,
+            "Pass `strict: false` when the program needs to inspect an error response itself.",
+        );
+    }
+    return self.httpResponse(span, &response);
+}
+
+fn methodFromText(text: []const u8) ?Http.Method {
+    if (std.mem.eql(u8, text, "get")) return .get;
+    if (std.mem.eql(u8, text, "post")) return .post;
+    if (std.mem.eql(u8, text, "put")) return .put;
+    if (std.mem.eql(u8, text, "patch")) return .patch;
+    if (std.mem.eql(u8, text, "delete")) return .delete;
+    return null;
+}
+
+fn containsHeader(headers: []const std.http.Header, wanted: []const u8) bool {
+    for (headers) |header| if (std.ascii.eqlIgnoreCase(header.name, wanted)) return true;
+    return false;
+}
+
+fn percentEncode(allocator: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error![]u8 {
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+    for (text) |byte| {
+        if (std.ascii.isAlphanumeric(byte) or byte == '-' or byte == '.' or byte == '_' or byte == '~') {
+            try result.append(allocator, byte);
+        } else {
+            try result.append(allocator, '%');
+            try result.append(allocator, hexDigit(byte >> 4));
+            try result.append(allocator, hexDigit(byte & 0x0f));
+        }
+    }
+    return result.toOwnedSlice(allocator);
+}
+
+fn hexDigit(value: u8) u8 {
+    return if (value < 10) '0' + value else 'A' + (value - 10);
+}
+
+fn appendHttpQuery(allocator: std.mem.Allocator, url: []const u8, query: *const Heap.Map) std.mem.Allocator.Error![]u8 {
+    if (query.entries.items.len == 0) return allocator.dupe(u8, url);
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+    const fragment = std.mem.indexOfScalar(u8, url, '#') orelse url.len;
+    try result.appendSlice(allocator, url[0..fragment]);
+    var separator: u8 = if (std.mem.indexOfScalar(u8, url[0..fragment], '?') == null) '?' else '&';
+    for (query.entries.items) |entry| {
+        try result.append(allocator, separator);
+        separator = '&';
+        const key = try percentEncode(allocator, entry.key.data.string.bytes);
+        defer allocator.free(key);
+        const value = try percentEncode(allocator, entry.value.data.string.bytes);
+        defer allocator.free(value);
+        try result.appendSlice(allocator, key);
+        try result.append(allocator, '=');
+        try result.appendSlice(allocator, value);
+    }
+    try result.appendSlice(allocator, url[fragment..]);
+    return result.toOwnedSlice(allocator);
+}
+
+fn httpTimeout(self: *Interpreter, span: Source.Span, value: Value) Error!std.Io.Duration {
+    const object = value.data.struct_value;
+    const seconds = object.fields[fieldPosition(object, "_seconds").?].data.int;
+    const nanoseconds = object.fields[fieldPosition(object, "_nanoseconds").?].data.int;
+    if (seconds < 0) return self.raiseHttp(span, "an HTTP timeout cannot be negative", null, "Pass a Duration of zero or more.");
+    const total = @as(i96, seconds) * std.time.ns_per_s + nanoseconds;
+    if (total > std.math.maxInt(i64)) return self.raiseHttp(span, "this HTTP timeout is too large", null, "Pass a shorter Duration.");
+    return .fromNanoseconds(@intCast(total));
+}
+
+fn httpClient(self: *Interpreter, span: Source.Span) Error!*Http.Client {
+    if (self.http_client) |client| return client;
+    const client = try self.gpa.create(Http.Client);
+    errdefer self.gpa.destroy(client);
+    client.init(self.gpa, self.environment) catch return self.raiseHttp(
+        span,
+        "could not read this machine's proxy settings",
+        null,
+        "Check that HTTP_PROXY or HTTPS_PROXY is a web address, or remove it if no proxy is needed.",
+    );
+    self.http_client = client;
+    return client;
+}
+
+fn deinitHttpClient(self: *Interpreter) void {
+    if (self.http_client) |client| {
+        client.deinit();
+        self.gpa.destroy(client);
+    }
+    self.http_client = null;
+}
+
+fn httpResponse(self: *Interpreter, span: Source.Span, response: *Http.Response) Error!Value {
+    const fields = try self.gpa.alloc(Value, 6);
+    @memset(fields, .nothing);
+    var fields_transferred = false;
+    errdefer {
+        if (!fields_transferred) {
+            for (fields) |field| self.heap.release(field);
+            self.gpa.free(fields);
+        }
+    }
+    var body_transferred = false;
+    var metadata_released = false;
+    errdefer {
+        if (!metadata_released) response.deinitMetadata(self.gpa);
+        if (!body_transferred) self.gpa.free(response.body);
+    }
+    fields[0] = .nothing;
+    fields[1] = .initInt(response.status);
+    fields[2] = try self.heap.copyText(response.reason);
+    fields[3] = try self.heap.copyText(response.url);
+    fields[4] = .{ .data = .{ .map = try self.httpHeaders(span, response.headers) } };
+    const body = response.body;
+    body_transferred = true;
+    fields[5] = .{ .data = .{ .bytes = try self.heap.createText(body) } };
+    response.deinitMetadata(self.gpa);
+    metadata_released = true;
+    fields_transferred = true;
+    return .{ .data = .{ .struct_value = try self.heap.createStruct(self.structs.get(Resolver.preludeKey("Http::Response")).?, fields) } };
+}
+
+fn httpHeaders(self: *Interpreter, span: Source.Span, raw: []const Http.Header) Error!*Heap.Map {
+    const headers = try self.heap.createMap(.string, .string, false);
+    errdefer self.heap.release(.{ .data = .{ .map = headers } });
+    for (raw) |header| {
+        const lowered = try std.ascii.allocLowerString(self.gpa, header.name);
+        defer self.gpa.free(lowered);
+        const key = try self.heap.copyText(lowered);
+        const hash = try self.hashKey(span, key);
+        const existing = try Heap.lookupIn(self.gpa, headers, hash, key, self.equatable(span));
+        const value: Value = if (existing) |old| blk: {
+            const separator = if (std.mem.eql(u8, lowered, "set-cookie")) "\n" else ", ";
+            const joined = try std.mem.concat(self.gpa, u8, &.{ old.value.data.string.bytes, separator, header.value });
+            break :blk Value{ .data = .{ .string = try self.heap.createText(joined) } };
+        } else try self.heap.copyText(header.value);
+        try self.heap.put(headers, hash, key, value, self.equatable(span));
+    }
+    return headers;
+}
+
+fn httpHeader(self: *Interpreter, span: Source.Span, headers: *const Heap.Map, name: []const u8) Error!Value {
+    const lowered = try std.ascii.allocLowerString(self.gpa, name);
+    defer self.gpa.free(lowered);
+    const key = try self.heap.copyText(lowered);
+    defer self.heap.release(key);
+    const hash = try self.hashKey(span, key);
+    const found = try Heap.lookupIn(self.gpa, headers, hash, key, self.equatable(span)) orelse return .nothing;
+    return Heap.retain(found.value);
+}
+
+fn raiseHttpProblem(self: *Interpreter, span: Source.Span, url: []const u8, problem: Http.Problem) Error {
+    const message = switch (problem.kind) {
+        .invalid_url => std.fmt.allocPrint(self.arena, "`{s}` is not a web address; write the whole address, as in `https://example.com/weather`", .{url}),
+        .unsupported_scheme => std.fmt.allocPrint(self.arena, "Http can only use http:// and https:// addresses, not `{s}`", .{url}),
+        .timed_out => std.fmt.allocPrint(self.arena, "`{s}` did not answer before its timeout", .{url}),
+        .too_many_redirects => std.fmt.allocPrint(self.arena, "`{s}` redirected more than 5 times", .{url}),
+        .response_too_large => std.fmt.allocPrint(self.arena, "the response from `{s}` is larger than 64 MB", .{url}),
+        .unknown_host => std.fmt.allocPrint(self.arena, "could not find the server in `{s}`; check the spelling of the address", .{url}),
+        .connection_failed => std.fmt.allocPrint(self.arena, "could not reach the server for `{s}`", .{url}),
+        .certificate_failed => std.fmt.allocPrint(self.arena, "could not verify the identity of the server for `{s}`; its certificate is not trusted", .{url}),
+        .certificate_store_failed => std.fmt.allocPrint(self.arena, "could not read this machine's trusted certificates while reaching `{s}`", .{url}),
+        .request_failed => std.fmt.allocPrint(self.arena, "could not complete the request to `{s}`", .{url}),
+    } catch return error.OutOfMemory;
+    return self.raiseHttp(span, message, null, "Check the address and that the server is reachable.");
+}
+
+fn raiseHttp(self: *Interpreter, span: Source.Span, message: []const u8, status: ?u16, help: []const u8) Error {
+    self.raised_value = self.makeHttpError(message, status) catch return error.OutOfMemory;
+    return self.raiseTyped(span, "HttpError", message, help);
+}
+
+fn makeHttpError(self: *Interpreter, message: []const u8, status: ?u16) RunError!Value {
+    const descriptor = self.structs.get(Resolver.preludeKey("HttpError")).?;
+    const fields = try self.gpa.alloc(Value, descriptor.fields.len);
+    errdefer self.gpa.free(fields);
+    for (descriptor.fields, fields) |field, *value| {
+        value.* = if (std.mem.eql(u8, field.name, "message")) try self.heap.copyText(message) else if (std.mem.eql(u8, field.name, "status")) if (status) |number| .initInt(number) else .nothing else .nothing;
+    }
+    return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
 }
 
 /// Where each of the prelude `Json` struct's fields is.

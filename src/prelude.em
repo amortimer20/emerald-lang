@@ -1878,3 +1878,88 @@ struct Json with Textual, Equatable {
         return path
     }
 }
+
+# A failed web request. `status` is present only when a server answered with
+# an error status; connection, timeout, and text-decoding failures have none.
+class HttpError extends RuntimeError {
+    const status: Int?
+
+    constructor(message: String, status: Int? = nothing) {
+        super(message)
+        self.status = status
+    }
+}
+
+# Finished HTTP requests. Emerald builds these values; programs receive them
+# from Http's request functions and cannot construct one themselves.
+class Http {
+    struct Response {
+        const _native: Nothing
+        const status: Int
+        const reason: String
+        const url: String
+        const headers: Dict[String, String]
+        const bytes: Bytes
+
+        func ok?(): Bool {
+            return self.status >= 200 and self.status < 300
+        }
+
+        func header(name: String): String? {
+            return Emerald.Http._header(self.headers, name)
+        }
+
+        const text: String {
+            return Emerald.Http._text(self.bytes, self.url)
+        }
+
+        func json(): Emerald.Json {
+            return Emerald.Http._json(self.bytes, self.url)
+        }
+    }
+
+    func Http.get(url: String, query: Dict[String, String] = [], headers: Dict[String, String] = [], timeout: Emerald.Duration = Emerald.Duration(seconds: 30), strict: Bool = true): Emerald.Http.Response {
+        return Emerald.Http._request("get", url, nothing, query, headers, timeout, strict)
+    }
+
+    func Http.delete(url: String, query: Dict[String, String] = [], headers: Dict[String, String] = [], timeout: Emerald.Duration = Emerald.Duration(seconds: 30), strict: Bool = true): Emerald.Http.Response {
+        return Emerald.Http._request("delete", url, nothing, query, headers, timeout, strict)
+    }
+
+    func Http.post(url: String, body: String? = nothing, json: String? = nothing, bytes: Bytes? = nothing, query: Dict[String, String] = [], headers: Dict[String, String] = [], timeout: Emerald.Duration = Emerald.Duration(seconds: 30), strict: Bool = true): Emerald.Http.Response {
+        return Emerald.Http._body_request("post", url, body, json, bytes, query, headers, timeout, strict)
+    }
+
+    func Http.put(url: String, body: String? = nothing, json: String? = nothing, bytes: Bytes? = nothing, query: Dict[String, String] = [], headers: Dict[String, String] = [], timeout: Emerald.Duration = Emerald.Duration(seconds: 30), strict: Bool = true): Emerald.Http.Response {
+        return Emerald.Http._body_request("put", url, body, json, bytes, query, headers, timeout, strict)
+    }
+
+    func Http.patch(url: String, body: String? = nothing, json: String? = nothing, bytes: Bytes? = nothing, query: Dict[String, String] = [], headers: Dict[String, String] = [], timeout: Emerald.Duration = Emerald.Duration(seconds: 30), strict: Bool = true): Emerald.Http.Response {
+        return Emerald.Http._body_request("patch", url, body, json, bytes, query, headers, timeout, strict)
+    }
+
+    func Http.encode_component(text: String): String {
+        return text
+    }
+
+    func Http._request(method: String, url: String, unused: Nothing, query: Dict[String, String], headers: Dict[String, String], timeout: Emerald.Duration, strict: Bool): Emerald.Http.Response {
+        raise Emerald.HttpError("HTTP requests are implemented by Emerald")
+    }
+
+    func Http._body_request(method: String, url: String, body: String?, json: String?, bytes: Bytes?, query: Dict[String, String], headers: Dict[String, String], timeout: Emerald.Duration, strict: Bool): Emerald.Http.Response {
+        raise Emerald.HttpError("HTTP requests are implemented by Emerald")
+    }
+
+    func Http._header(headers: Dict[String, String], name: String): String? {
+        return nothing
+    }
+
+    func Http._text(bytes: Bytes, url: String): String {
+        return ""
+    }
+
+    # Native: the response body as JSON, with its address in a parse failure.
+    func Http._json(bytes: Bytes, url: String): Emerald.Json {
+        raise Emerald.JsonError("HTTP JSON is implemented by Emerald")
+    }
+}

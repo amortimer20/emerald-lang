@@ -13,6 +13,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+/// The version chosen by the build, shared by the CLI and native libraries.
+pub const build_version = @import("version_options").version;
+
 pub const Source = @import("Source.zig");
 pub const Project = @import("Project.zig");
 pub const Diagnostic = @import("Diagnostic.zig");
@@ -33,6 +36,7 @@ pub const ColorPolicy = @import("ColorPolicy.zig");
 pub const TimeZone = @import("TimeZone.zig");
 pub const Regex = @import("Regex.zig");
 pub const Json = @import("Json.zig");
+pub const Http = @import("Http.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -236,6 +240,9 @@ pub const Streams = struct {
     /// Whether this execution emits Console's ANSI SGR styling. The default
     /// keeps every existing caller deterministic until policy resolution.
     color: bool = false,
+    /// Private host configuration for libraries such as Http. Programs retain
+    /// no way to enumerate or read environment variables themselves.
+    environment: std.process.Environ = .empty,
     /// Section 15.8's `TimeZone.local`. UTC unless the caller resolves the
     /// machine's own zone, so every other caller stays deterministic.
     local_zone: TimeZone.Local = .utc,
@@ -598,6 +605,7 @@ fn analyze(
         running.in,
         running.arguments,
         running.color,
+        running.environment,
         running.local_zone,
         stack,
         test_mode,

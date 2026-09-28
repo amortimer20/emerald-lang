@@ -13,6 +13,7 @@
 //!   conformance/diagnostics/     `check` reports exactly its `.expected`
 //!   conformance/run/             runs, and prints exactly its `.expected`
 //!   conformance/color/           runs with Console styling forced on
+//!   conformance/http/            runs against Emerald's local HTTP test server
 //!   conformance/local-zone/      runs with `TimeZone.local` set to `EST5EDT`
 //!   conformance/runtime-errors/  runs, then fails with exactly its `.expected`
 //!
@@ -129,6 +130,7 @@ const Kind = enum {
     diagnostics,
     run,
     color,
+    http,
     local_zone,
     runtime_errors,
     format,
@@ -140,6 +142,7 @@ const Kind = enum {
         if (std.mem.eql(u8, directory, "diagnostics")) return .diagnostics;
         if (std.mem.eql(u8, directory, "run")) return .run;
         if (std.mem.eql(u8, directory, "color")) return .color;
+        if (std.mem.eql(u8, directory, "http")) return .http;
         if (std.mem.eql(u8, directory, "local-zone")) return .local_zone;
         if (std.mem.eql(u8, directory, "runtime-errors")) return .runtime_errors;
         if (std.mem.eql(u8, directory, "format")) return .format;
@@ -229,7 +232,16 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
     };
     defer gpa.free(input);
 
-    const actual = try produce(gpa, &project, sources, kind, input) orelse return 1;
+    var http_server: ?*emerald.Http.TestServer = null;
+    var http_base: ?[]u8 = null;
+    if (kind == .http) {
+        http_server = try emerald.Http.TestServer.start(gpa);
+        http_base = try http_server.?.url(gpa, "");
+    }
+    defer if (http_base) |base| gpa.free(base);
+    defer if (http_server) |server| server.deinit();
+
+    const actual = try produce(gpa, &project, sources, kind, input, if (http_base) |base| &.{base} else &.{}) orelse return 1;
     defer gpa.free(actual);
 
     if (kind == .lexical) {
@@ -252,6 +264,7 @@ fn produce(
     sources: []const Source,
     kind: Kind,
     input: []const u8,
+    arguments: []const []const u8,
 ) !?[]u8 {
     const entry = &project.files[project.entry].source;
     switch (kind) {
@@ -265,7 +278,7 @@ fn produce(
             defer report.deinit();
             return try renderDiagnostics(gpa, sources, report.diagnostics);
         },
-        .run, .color, .local_zone, .runtime_errors => {
+        .run, .color, .http, .local_zone, .runtime_errors => {
             var out: std.Io.Writer.Allocating = .init(gpa);
             defer out.deinit();
 
@@ -275,6 +288,7 @@ fn produce(
                 .in = &in,
                 .color = kind == .color,
                 .local_zone = if (kind == .local_zone) eastern else .utc,
+                .arguments = arguments,
             });
             defer report.deinit();
 
@@ -293,7 +307,7 @@ fn produce(
                 return null;
             }
 
-            if (kind == .run or kind == .color or kind == .local_zone) {
+            if (kind == .run or kind == .color or kind == .http or kind == .local_zone) {
                 if (report.failure) |failure| {
                     const rendered = try renderDiagnostics(gpa, sources, &.{failure});
                     defer gpa.free(rendered);

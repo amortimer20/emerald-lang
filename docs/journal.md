@@ -10,6 +10,18 @@ entry below may explain *why* a decision was made, but the decision itself is re
 
 Sections are in roughly the order the work happened, oldest first.
 
+## HTTP native transport slice
+
+The first HTTP slice added `src/Http.zig`, with no Emerald-facing declarations yet. Its local
+Zig test server binds only `127.0.0.1` on an ephemeral port and scripts success, POST/header/body
+echoing, error status, redirects and a loop, gzip, chunked data, a large body, binary data, and
+a slow response; automatic tests never contact the internet. The interpreter's
+`std.Io.Threaded.global_single_threaded` explicitly cannot run concurrent or cancellable work,
+which a direct test confirmed. `Http.Client` therefore owns a worker-backed `Io.Threaded` and
+races each request against `Io.sleep` on Zig 0.16's monotonic `.awake` clock, cancelling and
+joining the loser before returning. This is the plan's first timeout fallback, selected before
+any Emerald API could depend on an unbounded request.
+
 ## Operator-annotation design and implementation
 
 The extended operator-design discussion was retired from the live handoff once implementation
@@ -2914,6 +2926,56 @@ With JSON complete and its behavior in rewrite-context 15.9, `docs/json-design-p
 removed, as the finished date and regex plans were; `git log -- docs/json-design-plan.md`
 finds it. References in `src/Json.zig` and `tools/json/` now cite 15.9.
 
+## HTTP client, slice 2: Emerald API and offline conformance, 2026-09-27
+
+`Http.get`, `delete`, `post`, `put`, and `patch` now provide the accepted synchronous request
+surface. A completed `Http.Response` exposes status, reason, final address, normalized headers,
+raw `Bytes`, UTF-8 text, and JSON; error statuses raise `HttpError` by default and retain their
+numeric status. The interpreter creates one timeout-bounded transport client per program run.
+
+`conformance/http/` starts the cross-platform loopback server from `Http.zig` for each case and
+passes its address only through `Program.arguments[0]`. It covers request forms, named
+arguments, query percent encoding, headers, redirects, strict mode, UTF-8 and JSON failures,
+timeouts, redirect loops, and invalid addresses without reaching the internet. The lower-level
+Zig request API was needed because `fetch` drops the response metadata the Emerald API exposes;
+the finished body is transferred directly into existing immutable `Bytes` storage.
+
+## HTTP client, slice 3: opt-in live HTTPS verification, 2026-09-28
+
+`zig build http-live` is now the sole manually invoked network check. It is not a dependency of
+`zig build test` or CI. It reads the host's proxy settings through Zig's standard
+`initDefaultProxies` API, while keeping the process environment private to the runtime; `run`,
+`test`, and the REPL all supply that configuration consistently.
+
+The manual run on 2026-09-28 found no configured proxy. It received HTTP 200 from
+`https://example.com`, rejected expired, self-signed, and wrong-host certificates at badssl.com,
+and classified the reserved nonexistent `.invalid` host as unknown. The resolver returned
+`NoAddressReturned` for that host, so it now shares the `unknown_host` mapping with
+`UnknownHostName`. The check also evaluates small Emerald programs to verify that the resulting
+`HttpError` messages are clear.
+
+Zig 0.16's HTTP client collapses the distinct certificate-validation failures into
+`TlsInitializationFailed`. Emerald consequently reports the accurate common fact — the server's
+certificate is not trusted — instead of claiming whether it is expired, self-signed, or for a
+different address.
+
+## HTTP client, slice 4: documentation and integration, 2026-09-28
+
+The completed client is now settled in rewrite-context 15.10 and the library inventory. Its
+reference page documents every request, response, error, redirect, body, header, timeout,
+certificate, and proxy rule, with an offline-safe [`examples/http.em`](../examples/http.em): no
+argument prints its usage, while an explicitly supplied address makes one request. The finished
+design plan is removed, as earlier completed-library plans were.
+
+Documentation records one transport-level correction from the original plan: `response.bytes`
+has no UTF-8 conversion, but it follows normal HTTP content decoding, so a gzip response yields
+its decompressed binary bytes rather than literal compressed wire bytes. The 64 MB limit applies
+after decoding.
+
+The pinned-toolchain check, Debug and ReleaseSafe `zig build test`, `zig build`, documentation
+example check, Zig formatting check, diff whitespace check, and Windows/macOS cross-builds all
+passed. The cross-builds were followed by a native build before the final documentation example
+run, so `zig-out/bin/emerald` remains usable on the development host.
 ## Negative number literals, 2026-09-26
 
 Writing the website's `Int` and `Float` pages meant telling readers to write `(-3).abs()`,
