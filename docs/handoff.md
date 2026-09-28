@@ -125,12 +125,12 @@ REPL without becoming an Emerald environment API. Zig 0.16 reports the three cer
 as one validation failure, so Emerald accurately reports a generic untrusted certificate.
 
 The user chose to finish the standard library, then make small optimizations such as startup
-time, and eventually build a native compiler. Startup performance is the next proposed task:
-every run still checks every prelude body. Its measurements and plan are in
-[`startup-design-plan.md`](startup-design-plan.md), awaiting the user's go-ahead: checking
-function bodies is half of a 9.8 ms `print(1)`, and memory (about 2,500 page faults) is a
-large part of the cost. Base64/hashing, CSV, and the remaining Console scope
-need separate user go-ahead.
+time, and eventually build a native compiler. Startup performance is complete: a ReleaseSafe
+`print(1)` went from 9.9 ms to 3.5 ms. A run checks only the prelude bodies its program
+reaches, gives each function body only the module variables it uses, and starts with the
+prelude already parsed, since `tools/prelude_ast.zig` parses it when Emerald is built. The
+journal's startup entries record the measurements, including a lever that was tried and
+reverted. Base64/hashing and the remaining Console scope need separate user go-ahead.
 
 HTTP slice 4 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test`,
 `zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, `git diff --check`,
@@ -178,19 +178,19 @@ on the roadmap.
   `DateTimeError`, `RegexError`, and `HttpError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
-- A problem inside the prelude stops `emerald.analyze` with a panic naming its
-  `prelude.em` line, column, and message, rather than printing as a diagnostic; it is always
-  Emerald's own bug.
+- A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses
+  it then, naming the `prelude.em` line and column. A later problem inside the prelude stops
+  `emerald.analyze` with a panic naming its line, column, and message; it is always
+  Emerald's own bug, and the whole-prelude unit test finds it in bodies no program reaches.
 - Capture and definite-assignment analysis remains conservative in several known ways.
 - Assignment through a call result and assignment to a type-level field through a namespace
   remain unsupported.
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
-- A run checks only the prelude bodies its program reaches (startup slice 2): a ReleaseSafe
-  `print(1)` takes about 5.1 ms, against 9.9 ms before. Slices 3–5 of
-  [`startup-design-plan.md`](startup-design-plan.md) (fewer allocations, teardown, parsing
-  the prelude at build time) remain.
+- Resolving the prelude's names is now the largest part of a small program's startup (about
+  1 ms of 3.5). Doing that at build time too would need the resolver's facts serialized the
+  way `tools/prelude_ast.zig` serializes the syntax tree.
 - On Windows, a local zone whose key name CLDR does not map (rare) falls back to Windows's
   current yearly rule, which can give the wrong offset for dates before the zone last
   changed its rules.

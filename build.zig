@@ -13,6 +13,29 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // The prelude's syntax tree is parsed when Emerald is built and compiled
+    // in as constant data, so no run lexes or parses the prelude again
+    // (the startup entries in docs/journal.md). The generator runs on the
+    // building machine, whatever the target.
+    const front_module = b.createModule(.{
+        .root_source_file = b.path("src/front.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    const prelude_ast_tool = b.addExecutable(.{
+        .name = "prelude-ast",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/prelude_ast.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+            .imports = &.{.{ .name = "front", .module = front_module }},
+        }),
+    });
+    const generate_prelude_ast = b.addRunArtifact(prelude_ast_tool);
+    generate_prelude_ast.addFileArg(b.path("src/prelude.em"));
+    const prelude_ast = generate_prelude_ast.addOutputFileArg("prelude_ast.zig");
+    emerald_module.addAnonymousImport("prelude_ast", .{ .root_source_file = prelude_ast });
+
     const version_options = b.addOptions();
     version_options.addOption([]const u8, "version", version);
     // Native library code also needs the version: Http sends it as its
