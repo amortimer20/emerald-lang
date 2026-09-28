@@ -10,23 +10,22 @@ texts.each { text =>
 print(Base64.decode("Zm9v\nYmFy").to_string())
 print(Base64.decode_maybe("%") == nothing)
 
+# Each malformed text, and the index its message names.
+const malformed = ["A", "Zm9v=YmFy", "Zm9v-", "ZgB", "ZgB=", "Zm9v\u{e9}", "Zg=", "Zm9v===", "Zm9v="]
+for text in malformed {
+    try {
+        Base64.decode(text)
+    }
+    catch error: EncodingError {
+        print(error.message)
+    }
+}
+
 try {
-    Base64.decode("A")
-} catch error: EncodingError {
+    Base64.decode("Zm9v+", url_safe: true)
+}
+catch error: EncodingError {
     print(error.message)
 }
-try {
-    Base64.decode("Zm9v=YmFy")
-} catch error: EncodingError {
-    print(error.message)
-}
-try {
-    Base64.decode("Zm9v-")
-} catch error: EncodingError {
-    print(error.message)
-}
-try {
-    Base64.decode("ZgB")
-} catch error: EncodingError {
-    print(error.message)
-}
+print(Base64.decode("Zm9v\r\nYmFy\n").to_string())
+print(Base64.decode("  Zg==  ").to_string())

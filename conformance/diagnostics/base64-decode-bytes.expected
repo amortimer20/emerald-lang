@@ -1,0 +1,4 @@
+diagnostics/base64-decode-bytes.em:1:15: Base64.decode takes String, but this is Bytes
+  Base64.decode("hi".to_bytes())
+                ^^^^^^^^^^^^^^^
+`Base64.decode` reads Base64 text. To turn Bytes into Base64 text, use `Base64.encode`.

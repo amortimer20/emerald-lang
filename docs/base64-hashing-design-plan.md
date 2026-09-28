@@ -266,6 +266,21 @@ commits.
   checks never require a network or fixture file. Digest natives bind their arguments by the
   declared names (`bytes` and `key`), matching the named-argument rule used by Base64 and the
   other native namespaces.
+- Fixed in review:
+  - Base64 decoding walked bytes, so a non-ASCII character was quoted as a broken byte at a
+    byte index. It now walks characters, as hex does, and keeps each Base64 character's
+    original index, so a bad final character is named at its own index, not the padding's.
+  - Padding that does not fit its last group says so (``ends with 1 `=`, but its last group
+    needs 2``) instead of the length message.
+  - A character from the other alphabet names the fix in its help (``Decode it with
+    `url_safe: true`.``), as the plan's table asked.
+  - The checker's help quoted `"hi".to_bytes()` whatever the argument was, and suggested
+    `to_bytes()` for Bytes given to `decode`. Text now gets ``Convert text to Bytes first,
+    with `to_bytes()`.``; Bytes given to `decode` points to `Base64.encode`.
+  - `Digest` gets the same text hint instead of the general parameter message.
+  - The known-answer tests now include one million `a`s and RFC 4231 cases 3, 4, 6, and 7.
+    The Base64 differential also checks decoding (wrapped, padded or not) and that
+    corrupted text is refused.
 
 ## Validation
 

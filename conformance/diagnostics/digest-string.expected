@@ -1,0 +1,4 @@
+diagnostics/digest-string.em:1:15: Digest.sha256 takes Bytes, but this is String
+  Digest.sha256("hi")
+                ^^^^
+Convert text to Bytes first, with `to_bytes()`.

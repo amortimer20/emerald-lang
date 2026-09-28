@@ -32,3 +32,11 @@ Base64 text ends partway through a group: it has 1 character too many, or is mis
 Base64 text has `=` at index 4, before its end
 Base64 text has `-` at index 4, which belongs to URL-safe Base64
 Base64 text's last character, `B` at index 2, is not a possible final character; write `A` instead
+Base64 text's last character, `B` at index 2, is not a possible final character; write `A` instead
+Base64 text has `é` at index 4, which is not a Base64 character
+Base64 text ends with 1 `=`, but its last group needs 2
+Base64 text ends with 3 `=`, but its last group is already complete and needs none
+Base64 text ends with 1 `=`, but its last group is already complete and needs none
+Base64 text has `+` at index 4, which belongs to standard Base64
+foobar
+f

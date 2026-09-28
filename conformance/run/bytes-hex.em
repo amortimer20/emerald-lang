@@ -16,18 +16,21 @@ print(Bytes.from_hex(every_byte.to_hex()) == every_byte)
 
 try {
     Bytes.from_hex("0123456")
-} catch error: EncodingError {
+}
+catch error: EncodingError {
     print(error.message)
 }
 
 try {
     Bytes.from_hex("01234g")
-} catch error: EncodingError {
+}
+catch error: EncodingError {
     print(error.message)
 }
 
 try {
     Bytes.from_list([255]).to_string()
-} catch error: EncodingError {
+}
+catch error: EncodingError {
     print(error.message)
 }
