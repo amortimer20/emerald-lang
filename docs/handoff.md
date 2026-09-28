@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-26. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-28. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -113,48 +113,37 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-JSON is complete. The user chose to finish the standard library (JSON, then an HTTP client,
-then the smaller items in rewrite-context 15.7), then make small optimizations such as startup
-time, and eventually build a native compiler.
-The JSON design plan was accepted with every recommendation, including
-decision 3 (a): the checker types `Json.encode` and `Json.decode(text, as: Type)` specially,
-as it does `print`. Slices 1 (the native parser and writer, `src/Json.zig`), 2 (the `Json`
-value in the prelude: `parse`, `parse_maybe`, `kind`, navigation, conversions, paths in
-errors, display, equality, and `JsonError`), and 3 are done. Slice 3 adds `Json.null`, the
-`from_string`/`from_int`/`from_float`/`from_bool`/`from_list`/`from_object` builders, and
-`Json.encode` for already-built `Json` values, compact and pretty, with round-trip
-conformance. `from_float` refuses NaN and infinity as `JsonError`; the native writer also
-defensively reports malformed internal non-finite values as `JsonError` rather than crashing.
-Slice 4 is complete: `Json.encode` now accepts the settled encodable program values — scalars,
-optionals, lists, string-keyed dictionaries, enums, dates/times, `Json`, and structs made from
-them — using the checker-recorded source type to preserve collection element types. It reports
-nonencodable values at check time, including the specific unsupported field of a struct; only a
-non-finite Float remains a catchable runtime `JsonError`. Slice 5 is also complete:
-`Json.decode(text, as: Type)` is checker-typed and builds the same recursive set of ordinary
-types. It handles structs through generated constructors, uses field defaults and optional
-fields when JSON leaves them out, ignores extra JSON fields, and reports a path-rich
-`JsonError` for malformed text or a mismatched value. Focused run, diagnostic, and runtime-error
-conformance covers the boundary. Slice 6 completes the integration: [`docs/library/json.md`](library/json.md),
-an inventory row, a zero-argument [`examples/json.em`](../examples/json.em), the settled
-rewrite-context rules and decision rows, and a typed JSON round-trip in the bounded execution
-fuzzer. JSON's milestone is complete; the next approved library design is a synchronous HTTP
-client. Slice 6 validation passed with the pinned toolchain, Debug and ReleaseSafe tests,
-`zig build`, documentation examples, a 1,000-case ReleaseSafe fuzz campaign (seed 24), Zig
-format checks, and `git diff --check`.
+The HTTP client is complete (15.10): `Http` makes timeout-bounded, certificate-checked,
+synchronous requests and returns finished `Http.Response` values with text, binary, JSON,
+headers, redirects, and strict-by-default status handling. `HttpError` explains failure and
+preserves a strict error status. The reference is [`library/http.md`](library/http.md), with
+the guarded [`examples/http.em`](../examples/http.em) and offline `conformance/http/` coverage.
+`zig build http-live` is the sole opt-in public-network check; ordinary tests and CI never reach
+the internet. It verifies trusted HTTPS, the three badssl certificate failures, an unknown host,
+and the public `HttpError` messages. Proxy settings flow privately through `run`, `test`, and the
+REPL without becoming an Emerald environment API. Zig 0.16 reports the three certificate causes
+as one validation failure, so Emerald accurately reports a generic untrusted certificate.
 
-A review of slices 3–6 then fixed six defects (see the journal): an `as:` argument to any
-function was parsed as a type; a struct that holds itself hung the checker; field defaults
-overwrote values the document gave; private fields were written and read; naming `text:` and
-`as:` in the other order crashed; and `Json.decode` could be kept as a value. Private fields
-are now never written or read, and a missing field's default wins over `nothing`.
+The user chose to finish the standard library, then make small optimizations such as startup
+time, and eventually build a native compiler. Startup performance is the next proposed task:
+every run still checks every prelude body. Its measurements and plan are in
+[`startup-design-plan.md`](startup-design-plan.md), awaiting the user's go-ahead: checking
+function bodies is half of a 9.8 ms `print(1)`, and memory (about 2,500 page faults) is a
+large part of the cost. Base64/hashing, CSV, and the remaining Console scope
+need separate user go-ahead.
+
+HTTP slice 4 validation passed with the pinned toolchain: Debug and ReleaseSafe `zig build test`,
+`zig build`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, `git diff --check`,
+and Windows/macOS cross-builds. The manual `zig build http-live` check passed in slice 3; it is
+not part of ordinary validation.
 
 Other candidates, each needing the user's go-ahead:
 
-- A **synchronous HTTP client**, after JSON, with its own design plan.
-- **Startup performance.** Every run type-checks every prelude body, and the date and time
-  work took a ReleaseSafe `print(1)` from about 5 ms to about 8.3 ms. Checking only the
+- **Startup performance**, queued right after the HTTP client. Every run type-checks every
+  prelude body, and a ReleaseSafe `print(1)` has grown from about 5.6 ms to about 9.3 ms. Checking only the
   prelude bodies a program can reach needs the interpreter to stop relying on facts recorded
   for every body; measure before and after, as the date slices did.
+- **Base64 and hashing**, small utilities that could follow the HTTP client.
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
 
@@ -186,7 +175,7 @@ on the roadmap.
 ## Active rough edges
 
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`,
-  `DateTimeError`, and `RegexError`.
+  `DateTimeError`, `RegexError`, and `HttpError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
 - A problem inside the prelude stops `emerald.analyze` with a panic naming its
@@ -198,11 +187,10 @@ on the roadmap.
 - Display/recursive dictionary-key checks have a 256-path limit; character indexing is linear;
   repeated dictionary or set deletion is quadratic.
 - `emerald.toml` currently recognizes only `brace_style` with a deliberately small scanner.
-- Every run type-checks all of the prelude's bodies. A ReleaseSafe `print(1)` starts in
-  about 9.3 ms with JSON slice 2, against 7.5 ms before it (measured together on one
-  machine); the date work had already taken it from about 5.6 ms. Checking only the prelude bodies a program can reach would need the
-  interpreter to stop relying on facts recorded for every body. It is the next performance
-  task once dates and times are finished.
+- A run checks only the prelude bodies its program reaches (startup slice 2): a ReleaseSafe
+  `print(1)` takes about 5.1 ms, against 9.9 ms before. Slices 3–5 of
+  [`startup-design-plan.md`](startup-design-plan.md) (fewer allocations, teardown, parsing
+  the prelude at build time) remain.
 - On Windows, a local zone whose key name CLDR does not map (rare) falls back to Windows's
   current yearly rule, which can give the wrong offset for dates before the zone last
   changed its rules.
@@ -210,9 +198,6 @@ on the roadmap.
   analysis and would leak its `prelude.em#` key into a diagnostic. The prelude avoids them
   for now; the checker should eventually leave prelude bindings out of that analysis.
 
-- The list, dictionary, and set hints for an unknown member name only some of their
-  methods (`map`, `filter`, `each`, and others are missing); the String, Int, and Float hints
-  are complete. Fix the collection hints when their reference pages are written.
 
 ## Validation and repository state
 

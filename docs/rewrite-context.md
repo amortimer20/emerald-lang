@@ -971,6 +971,13 @@ reported, since an empty `0..count - 1` is the point of the rule.
 
 Equal inclusive endpoints visit once, in every form. An equal half-open range is empty.
 
+A Range prints the way it would be written, in its inclusive form: `0..<24` prints as
+`0..23`, `(1..10).step(3)` keeps its parentheses, and a descending count prints with
+`down_to`. An empty range prints with the bounds that made it empty, as written (`0..<0`,
+`1..0`, `0.down_to(1)`), so a program that counted nothing can see why; it never prints as
+`[]`, which is an empty list. Every empty range is equal to every other, since each visits
+the same numbers, none, whatever bounds made it empty.
+
 The Int block forms run the same Range semantics immediately and return `Nothing`:
 
 ```emerald
@@ -2993,16 +3000,14 @@ as Ruby's.
 - **JSON** is done (15.9). It maps directly onto `Dict`, `List`, `String`, `Int`, `Float`,
   and `Bool` with no new representation to invent; a beginner's most common reason to want it
   is reading or writing an API response, or saving a program's own state to a file.
+- **A synchronous HTTP client** is done (15.10). It is deliberately one finished request at a
+  time: a beginner can fetch an API response, decode JSON, or save binary data without learning
+  connections, callbacks, or concurrency first.
 - **Small utilities**: `Base64` and one or two hash/digest functions. Narrow vocabulary, no
   open design question, safe to add whenever there is time.
 
 **Worth doing before too long, still needing no concurrency or package manager:**
 
-- **A synchronous HTTP client.** This needs sockets and TLS, not concurrency: every
-  filesystem and `input()` operation is already blocking and single-threaded, so a
-  synchronous `Http.get(url)`-shaped API fits the existing model directly. Likely the
-  single highest-value gap after date/time: fetching a URL is one of the most common things
-  a beginner wants to do that Emerald cannot do at all today.
 - **CSV.** Small, and pairs directly with 15.3's `File`.
 
 **Deliberately not planned, rather than left ambiguous:**
@@ -3220,6 +3225,45 @@ unclosed string. Parsing refuses duplicate keys (including keys equal after Unic
 normalization), nesting deeper than 512 levels, and a number too large for a `Float`. Strict
 navigation and typed decode errors name the path — `players[2].score` or `["first name"]` —
 and say whether an entry is missing or has the wrong kind.
+
+### 15.10 HTTP
+
+`Http` makes synchronous finished web requests. `Http.get` and `Http.delete` take an address,
+optional `query:` and `headers:` dictionaries, a `timeout:` (30 seconds by default), and
+`strict:` (true by default); `post`, `put`, and `patch` add one optional body chosen from
+`body: String`, `json: String`, or `bytes: Bytes`. Only one body may be passed. The text and
+JSON forms supply sensible content types unless `headers:` already supplies one; a program
+writes `json: Json.encode(value)` when sending an ordinary Emerald value. Query names and
+values are percent-encoded in dictionary order, and `Http.encode_component` exposes the same
+encoding for one component.
+
+Every call either raises `HttpError` or returns a complete `Http.Response`; there are no
+public clients, sessions, connections, or handles to close. `get` and `delete` follow at most
+five redirects and report the final address; a body-bearing request never resends its body to a
+new address. In the default strict mode, a 4xx or 5xx answer raises and preserves its status on
+`HttpError.status`; `strict: false` returns that response so the program can inspect
+`response.ok?()` or `response.status` itself. Network failures, invalid addresses, certificate
+failures, timeouts, oversized responses, and non-UTF-8 text always raise.
+
+`Http.Response` exposes `status`, `reason`, `url`, lowercase `headers`, binary `bytes`, and
+UTF-8 `text`, plus `ok?()`, case-insensitive `header(name)`, and `json()`. Repeated headers join
+with `", "`, except `set-cookie`, which joins with a newline. `bytes` is binary data after normal
+HTTP content decoding (including gzip, deflate, or zstd) and has no character conversion;
+`text` checks UTF-8 and `json()` parses it as `Json`, naming the response address when parsing
+fails. A response is at most 64 MB after that content decoding.
+
+Only `http://` and `https://` addresses are accepted. HTTPS certificates are always verified:
+there is no insecure switch. Host proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, and their
+lowercase forms) apply privately when the host provides them, but Emerald code cannot read or
+alter environment variables. Every request has a whole-request deadline. The transport reports
+expired, self-signed, and wrong-address certificates through one validation failure, so its
+plain `HttpError` says accurately that the server identity could not be verified rather than
+guessing a more specific cause. The full reference and a runnable guarded example are in
+[`docs/library/http.md`](library/http.md) and [`examples/http.em`](../examples/http.em).
+
+Deferred (24): sockets and servers, WebSockets, HTTP/2, streaming request or response bodies,
+cookies and sessions, multipart forms, authentication helpers beyond an `Authorization` header,
+other character sets, a `Url` type, and asynchronous or concurrent requests.
 
 ## 16. Annotations, assertions, and tests
 
@@ -3879,6 +3923,9 @@ recorded in their normative sections:
 | JSON decoded structs (15.9) | Only a plain struct using its generated constructor is decodable; a missing field takes its default, or `nothing` when it is optional and has none, and extra JSON keys are ignored | A custom constructor can enforce an invariant or interpret fields differently, so pretending the runtime knows how to call it would be a hidden second construction path. Defaults make hand-edited settings forward-compatible, while ignored extras make readers tolerant of a newer writer. |
 | `as:` for JSON decoding (15.9) | The type is source syntax accepted only as `Json.decode`'s named `as:` argument | Emerald has no runtime type objects. Keeping this one checker-known call shape local avoids introducing a broad type-as-value feature for a single conversion operation. |
 | Private fields and JSON (15.9, 10.5) | Never written by `encode`, never read by `decode`; a decodable struct's private fields need defaults | A private field is the struct's own business: writing it would publish internal state, and reading it would let a hand-edited file set what the struct's own code guards. Taking the default keeps a decoded value exactly what the generated constructor could have built. |
+| HTTP request shape (15.10) | `Http` has one synchronous completed-request call per verb; no program-visible client, session, or connection | `Http.get` must be useful in a first program, and resources a beginner must close would distract from fetching and using one answer. A private client still reuses connections for the whole program run. |
+| HTTP error status (15.10) | `strict: true` by default raises `HttpError` for 4xx and 5xx; `strict: false` returns the response | An unchecked error page is otherwise easy to parse as data or save as a successful download. Strict mode puts the explanation at the request; opt-out supports programs that intentionally inspect a 404 or similar answer. |
+| HTTP safety and binary response data (15.10) | Certificates always verify; host proxy settings are private; `.bytes` is content-decoded binary data and `.text` separately validates UTF-8 | An insecure switch teaches copying an unsafe workaround. Proxies must work on managed school networks without teaching environment configuration. HTTP content decoding is transport behavior, while making UTF-8 explicit preserves the distinction between a downloaded binary and text. |
 | Ordering (5.2) | Only numbers and strings are ordered; every type has `==` and `!=` | `true < false` has no meaning a reader would guess, so it is rejected rather than given one. |
 | Uninitialized `const` (4.1) | Rejected at the declaration | A `const` can never be assigned afterward, so it would stay unassigned forever. |
 | Descending literal ranges (6.4) | `5..1` is an error, not a warning | It can only be empty, so it can only be a mistake, and an error cannot be scrolled past. Computed endpoints are never reported. |

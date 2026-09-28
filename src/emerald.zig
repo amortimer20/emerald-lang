@@ -13,6 +13,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+/// The version chosen by the build, shared by the CLI and native libraries.
+pub const build_version = @import("version_options").version;
+
 pub const Source = @import("Source.zig");
 pub const Project = @import("Project.zig");
 pub const Diagnostic = @import("Diagnostic.zig");
@@ -33,6 +36,7 @@ pub const ColorPolicy = @import("ColorPolicy.zig");
 pub const TimeZone = @import("TimeZone.zig");
 pub const Regex = @import("Regex.zig");
 pub const Json = @import("Json.zig");
+pub const Http = @import("Http.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -236,6 +240,9 @@ pub const Streams = struct {
     /// Whether this execution emits Console's ANSI SGR styling. The default
     /// keeps every existing caller deterministic until policy resolution.
     color: bool = false,
+    /// Private host configuration for libraries such as Http. Programs retain
+    /// no way to enumerate or read environment variables themselves.
+    environment: std.process.Environ = .empty,
     /// Section 15.8's `TimeZone.local`. UTC unless the caller resolves the
     /// machine's own zone, so every other caller stays deterministic.
     local_zone: TimeZone.Local = .utc,
@@ -590,6 +597,7 @@ fn analyze(
         &checked.json_encodes,
         &checked.json_decodes,
         &checked.super_members,
+        checked.prelude_reached,
         &checked.type_tests,
         &checked.type_names,
         &checked.trait_calls,
@@ -598,6 +606,7 @@ fn analyze(
         running.in,
         running.arguments,
         running.color,
+        running.environment,
         running.local_zone,
         stack,
         test_mode,
@@ -3501,4 +3510,44 @@ test "section 3.4: a keyword may name a member, which is what `.or` needs" {
     try expectOutput("var n: Int? = nothing\nprint(n.or(7))\n", "7\n");
     // Declaring one is still an ordinary name.
     try expectFailure("func or(): Int {\n    return 1\n}\n", "expected a name after `func`, found or");
+}
+
+test "every prelude body checks cleanly, reached or not" {
+    // A run checks only the prelude bodies its program reaches
+    // (`Checker.reachKey`), so a mistake in one no program reaches would go
+    // unnoticed. This checks all of them, and fails on any problem, naming it.
+    const gpa = testing.allocator;
+    var program_source = try Source.init(gpa, "main.em", "print(1)\n");
+    defer program_source.deinit(gpa);
+    var prelude_source = try Source.init(gpa, "prelude.em", prelude_text);
+    defer prelude_source.deinit(gpa);
+    const files = [_]Project.File{
+        .{ .source = program_source, .namespace = "", .entry = true },
+        .{ .source = prelude_source, .namespace = Resolver.prelude_namespace, .entry = false },
+    };
+    var tokenized: [files.len]Lexer.Tokenized = undefined;
+    var parsed: [files.len]Parser.Parsed = undefined;
+    var programs: [files.len]Ast.Program = undefined;
+    for (files, 0..) |file, index| {
+        tokenized[index] = try Lexer.tokenize(gpa, &file.source);
+        try testing.expectEqual(0, tokenized[index].diagnostics.len);
+        parsed[index] = try Parser.parse(gpa, &file.source, tokenized[index].tokens);
+        try testing.expectEqual(0, parsed[index].diagnostics.len);
+        programs[index] = parsed[index].program;
+    }
+    defer for (&tokenized, &parsed) |*one_tokenized, *one_parsed| {
+        one_parsed.deinit();
+        one_tokenized.deinit(gpa);
+    };
+    var resolved = try Resolver.resolve(gpa, &files, &programs, null);
+    defer resolved.deinit();
+    try testing.expect(resolved.ok());
+    var checked = try Checker.checkWithOptions(gpa, &files, &programs, resolved.facts, .{ .whole_prelude = true });
+    defer checked.deinit();
+    for (checked.diagnostics) |diagnostic| {
+        const at = prelude_source.location(diagnostic.span.start);
+        std.debug.print("prelude.em:{d}:{d}: {s}\n", .{ at.line, at.column, diagnostic.message });
+    }
+    try testing.expectEqual(0, checked.diagnostics.len);
+    try testing.expectEqual(null, checked.prelude_reached);
 }

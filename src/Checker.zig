@@ -48,6 +48,10 @@ const Checker = @This();
 pub const Checked = struct {
     arena_state: std.heap.ArenaAllocator,
     diagnostics: []const Diagnostic,
+    /// The top-level prelude types and functions whose bodies were checked,
+    /// or null when every prelude body was. A prelude body outside this set
+    /// was never checked, so the interpreter must never run it.
+    prelude_reached: ?*const Resolver.NameSet,
     /// Every function's checked signature, for the interpreter.
     signatures: Type.Signatures,
     /// The type of every list literal. A literal can be built as a `[Float]`
@@ -239,6 +243,19 @@ inferring: Resolver.NameSet = .empty,
 /// Bodies already checked, so each is checked exactly once whichever of
 /// inference or the deferred pass reaches it first.
 bodies_checked: Resolver.NameSet = .empty,
+/// Which prelude declarations the program can reach: top-level prelude types
+/// and functions, whose bodies are checked (see `reachKey`). Every run
+/// otherwise checked every prelude body, which was half of a `print(1)`.
+prelude_reached: Resolver.NameSet = .empty,
+/// Reached prelude declarations whose bodies are still to be checked.
+reach_queue: std.ArrayList([]const u8) = .empty,
+/// Struct types whose fields and bases have been walked by `reachType`.
+reach_walked: Resolver.NameSet = .empty,
+/// Whether references mark prelude declarations as reached. Off while the
+/// prelude's own declarations are registered, which mention nearly all of it.
+reaching: bool = false,
+/// The prelude's path, which prefixes its private declarations' keys.
+prelude_path: []const u8 = "",
 /// Memoized by `capturesOf`.
 captures: std.StringHashMapUnmanaged(Resolver.NameSet) = .empty,
 /// Module bindings initialized with a lambda literal. Their capture set is
@@ -365,11 +382,27 @@ const Loop = struct {
     exits: ?Snapshot = null,
 };
 
+pub const Options = struct {
+    /// Check every prelude body, reached or not, as the tests do so that a
+    /// mistake in a body no program reaches is still found.
+    whole_prelude: bool = false,
+};
+
 pub fn check(
     gpa: std.mem.Allocator,
     files: []const Project.File,
     programs: []const Ast.Program,
     facts: Resolver.Facts,
+) !Checked {
+    return checkWithOptions(gpa, files, programs, facts, .{});
+}
+
+pub fn checkWithOptions(
+    gpa: std.mem.Allocator,
+    files: []const Project.File,
+    programs: []const Ast.Program,
+    facts: Resolver.Facts,
+    options: Options,
 ) !Checked {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
@@ -384,6 +417,11 @@ pub fn check(
     module.* = .empty;
 
     var checker: Checker = .{ .arena = arena, .prelude = prelude, .module = module, .facts = facts, .files = files };
+    // The prelude joins every analysis as the last file (`emerald.analyze`).
+    const prelude_file: ?usize = for (files, 0..) |file, index| {
+        if (std.mem.eql(u8, file.namespace, Resolver.prelude_namespace)) break index;
+    } else null;
+    if (prelude_file) |index| checker.prelude_path = files[index].source.path;
     try checker.scopes.append(arena, prelude);
     try checker.scopes.append(arena, module);
     var struct_sites: std.ArrayList(StructSite) = .empty;
@@ -459,6 +497,16 @@ pub fn check(
         }
     }
 
+    // From here on, whatever checked code mentions of the prelude is reached
+    // (`reachKey`). The program's own types reach what their fields hold and
+    // what they extend: printing or encoding one runs those types' bodies
+    // without the program naming them.
+    checker.reaching = true;
+    for (struct_sites.items) |site| {
+        if (prelude_file) |index| if (checker.facts.owner.get(site.key) == @as(u32, @intCast(index))) continue;
+        if (checker.structs.get(site.key)) |declared| try checker.reachType(declared);
+    }
+
     // Section 14.1: a file that is not the entry has no statements that run,
     // and its bindings are initialized before anything can reach them, so they
     // are in place and assigned before the entry file is looked at.
@@ -477,8 +525,10 @@ pub fn check(
     }
 
     // Every body, in the order written. Most were not needed during the walk
-    // above; those that were have already been checked and are skipped.
+    // above; those that were have already been checked and are skipped. The
+    // prelude's are checked only as the program reaches them, below.
     for (programs, 0..) |program, index| {
+        if (!options.whole_prelude and index == prelude_file) continue;
         checker.file = @intCast(index);
         for (program.statements) |statement| {
             switch (statement.data) {
@@ -494,6 +544,17 @@ pub fn check(
                 .struct_declaration => |declaration| try checker.checkStructBodies(declaration, checker.keyOf(declaration.name)),
                 else => {},
             }
+        }
+    }
+
+    // Each reached prelude declaration's bodies, until checking them reaches
+    // nothing new.
+    while (checker.reach_queue.pop()) |key| {
+        if (prelude_file) |index| checker.file = @intCast(index);
+        if (checker.struct_declarations.get(key)) |declaration| {
+            try checker.checkStructBodies(declaration, key);
+        } else if (checker.declarations.contains(key)) {
+            try checker.ensureBodyChecked(key);
         }
     }
 
@@ -522,10 +583,61 @@ pub fn check(
         .json_encodes = checker.json_encodes,
         .json_decodes = checker.json_decodes,
         .super_members = checker.super_members,
+        .prelude_reached = if (options.whole_prelude) null else reached: {
+            const reached = try arena.create(Resolver.NameSet);
+            reached.* = checker.prelude_reached;
+            break :reached reached;
+        },
         .type_tests = checker.type_tests,
         .type_names = checker.type_names,
         .trait_calls = checker.trait_calls,
     };
+}
+
+/// Marks the prelude declaration `key` belongs to as reached, so its bodies are
+/// checked: the top-level type that holds it (`Emerald.Regex` for
+/// `Emerald.Regex::Match::group`), or the top-level function itself. A whole
+/// top-level type is reached at once, which is simple and still skips every
+/// type a program never touches. A key outside the prelude is ignored.
+fn reachKey(self: *Checker, key: []const u8) Error!void {
+    if (!self.reaching) return;
+    const inside = std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".") or
+        (self.prelude_path.len > 0 and std.mem.startsWith(u8, key, self.prelude_path) and
+            key.len > self.prelude_path.len and key[self.prelude_path.len] == Resolver.private_separator[0]);
+    if (!inside) return;
+    const top = if (std.mem.indexOf(u8, key, Resolver.method_separator)) |at| key[0..at] else key;
+    if (self.prelude_reached.contains(top)) return;
+    try self.prelude_reached.put(self.arena, top, {});
+    try self.reach_queue.append(self.arena, top);
+}
+
+/// Reaches every prelude type `value` holds, anywhere inside it. A struct's
+/// fields and base class are followed too, once each, since displaying,
+/// comparing, or encoding a value runs the bodies of what it holds.
+fn reachType(self: *Checker, value: Type) Error!void {
+    if (!self.reaching) return;
+    switch (value.kind) {
+        .list, .set => if (value.element) |element| try self.reachType(element.*),
+        .dictionary => {
+            if (value.key) |key| try self.reachType(key.*);
+            if (value.element) |element| try self.reachType(element.*);
+        },
+        .tuple => for (value.elements) |element| try self.reachType(element),
+        .function => if (value.signature) |signature| {
+            for (signature.parameters) |parameter| try self.reachType(parameter);
+            try self.reachType(signature.return_type);
+        },
+        .struct_value => if (value.user) |user| try self.reachUser(user),
+        else => {},
+    }
+}
+
+fn reachUser(self: *Checker, user: *const Type.User) Error!void {
+    if (self.reach_walked.contains(user.name)) return;
+    try self.reach_walked.put(self.arena, user.name, {});
+    try self.reachKey(user.name);
+    if (user.base) |base| try self.reachUser(base);
+    for (user.fields) |field| try self.reachType(field.type);
 }
 
 /// What a member of a type is, for the diagnostics that compare two.
@@ -4803,6 +4915,7 @@ fn typeOfStructMethodCall(
         return .invalid;
     }
     try self.method_calls.put(self.arena, call.callee, key);
+    try self.reachKey(key);
 
     const declared = try self.signatureFor(key);
     if (takesSelf(declared, base)) {
@@ -5500,6 +5613,7 @@ fn markAllAssigned(self: *Checker) void {
 fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
     const result = try self.typeOfUnrecorded(expression);
     try self.expression_types.put(self.arena, expression, .{ .file = self.file, .type = result });
+    try self.reachType(result);
     return result;
 }
 
@@ -6242,6 +6356,7 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// Section 14.2's `Shapes.area` used as a value rather than called. It is the
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+    try self.reachKey(reference.key);
     if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
         std.mem.eql(u8, reference.key, Resolver.float_nan_key) or
         std.mem.eql(u8, reference.key, Resolver.math_pi_key) or
@@ -8272,9 +8387,9 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
         switch (base.kind) {
-            .list => "A list has `count`, `empty?`, `contains?`, `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, `clear`, `take`, `drop`, `reverse`, and `unique`.",
-            .dictionary => "A dictionary has `count`, `empty?`, `each`, `map`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, and `merge`, and is looked up with `[key]`.",
-            .set => "A set has `count`, `empty?`, `each`, `map`, `contains?`, `add`, and `remove`.",
+            .list => "A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.",
+            .dictionary => "A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.",
+            .set => "A set has `count`, and methods including `contains?`, `add`, `remove`, `union`, `intersection`, `difference`, `subset?`, `filter`, `each`, and `map`; the Set reference lists them all.",
             .string => "A String has `count`, `empty?`, `blank?`, `chars`, `code_points`, `bytes`, `upper`, `lower`, `capitalize`, `trim`, `trim_start`, `trim_end`, `contains?`, `starts_with?`, `ends_with?`, `index_of`, `substring`, `split`, `lines`, `partition`, `replace`, `insert_at`, `remove_prefix`, `remove_suffix`, `reverse`, `repeat`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `to_int`, `to_int_or`, `to_int_maybe`, `to_float`, `to_float_or`, and `to_float_maybe`.",
             .int => "An Int has `times`, `up_to`, `down_to`, `even?`, `odd?`, `multiple_of?`, `zero?`, `positive?`, `negative?`, `abs`, `clamp`, `between?`, `to_string`, `format`, `digits`, `gcd`, `lcm`, `factorial`, and `to_float`.",
             .float => "A Float has `round`, `floor`, `ceil`, `truncate`, `round_to`, `format`, `to_string`, `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `square_root`, `to_radians`, `to_degrees`, `finite?`, `infinite?`, `nan?`, and `to_int`.",
@@ -8687,6 +8802,8 @@ fn arithmetic(
             // different fix from a value that is the wrong kind entirely.
             if ((left.optional and left.payload().isNumber()) or (right.optional and right.payload().isNumber()))
                 "One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first."
+            else if (operator == .add and left.kind == .list and right.kind == .list and !left.optional and !right.optional)
+                "Join two lists with `chain`, as in `first.chain(second)`."
             else if (left.kind == .struct_value and !left.optional)
                 "Register `+`, `-`, `*`, or `/` on this type with `@operator(\"...\")`, or write a named method instead."
             else if (right.kind == .struct_value and !right.optional and switch (operator) {
@@ -9242,6 +9359,7 @@ fn typeOfCall(
     // `Emerald.print` is the built-in `print`, however the program's own
     // names have hidden it (14.2's built-in namespace).
     const builtin = Resolver.builtinFunctionName(reference.key);
+    try self.reachKey(reference.key);
     const name = builtin orelse reference.display;
     if (std.mem.eql(u8, reference.key, Resolver.program_sleep_key)) return self.typeOfSleep(call, name);
     if (Resolver.mathFunction(reference.key)) |function| {

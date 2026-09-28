@@ -12,13 +12,19 @@ pub const Range = struct {
     /// An empty range cannot be told apart from a single-value count by its
     /// endpoints alone, so this keeps the count semantics exact.
     is_empty: bool = false,
+    /// For an empty range only, what display needs to print it as written, so
+    /// the bounds that made it empty show: whether it was written `a..<b`
+    /// (`first` and `last` are then `a` and `b`), and whether it has been
+    /// reversed (which leaves it empty, so its direction is not flipped).
+    exclusive: bool = false,
+    reversed: bool = false,
 
     pub fn fromBounds(start: i64, end: i64, inclusive: bool) Range {
         if (inclusive) {
             if (start > end) return .{ .first = start, .last = end, .is_empty = true };
             return .{ .first = start, .last = end };
         }
-        if (start >= end) return .{ .first = start, .last = start, .is_empty = true };
+        if (start >= end) return .{ .first = start, .last = end, .exclusive = true, .is_empty = true };
         return .{ .first = start, .last = end - 1 };
     }
 
@@ -67,12 +73,20 @@ pub const Range = struct {
     }
 
     pub fn step(self: Range, distance: i64) Range {
-        if (self.is_empty) return .{ .first = self.first, .last = self.last, .step_size = distance, .descending = self.descending, .is_empty = true };
+        if (self.is_empty) {
+            var stepped = self;
+            stepped.step_size = distance;
+            return stepped;
+        }
         return reaching(self.first, self.last, distance, self.descending);
     }
 
     pub fn reverse(self: Range) Range {
-        if (self.is_empty) return .{ .first = self.first, .last = self.last, .step_size = self.step_size, .descending = !self.descending, .is_empty = true };
+        if (self.is_empty) {
+            var reversed = self;
+            reversed.reversed = !self.reversed;
+            return reversed;
+        }
         return .{ .first = self.last, .last = self.first, .step_size = self.step_size, .descending = !self.descending };
     }
 
@@ -103,4 +117,12 @@ test "reversing range swaps the visited sequence" {
     try std.testing.expectEqual(@as(i64, 10), range.first);
     try std.testing.expectEqual(@as(i64, 0), range.last);
     try std.testing.expect(range.descending);
+}
+
+test "an empty range keeps what display needs" {
+    const exclusive = Range.fromBounds(0, 0, false);
+    try std.testing.expect(exclusive.empty() and exclusive.exclusive);
+    try std.testing.expectEqual(@as(i64, 0), exclusive.last);
+    const reversed = Range.fromBounds(1, 0, true).reverse();
+    try std.testing.expect(reversed.empty() and reversed.reversed and !reversed.descending);
 }

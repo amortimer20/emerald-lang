@@ -7,7 +7,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const emerald = @import("emerald");
-const version_options = @import("version_options");
 const Repl = @import("Repl.zig");
 const Lsp = @import("Lsp.zig");
 const ColorPolicy = emerald.ColorPolicy;
@@ -96,7 +95,7 @@ pub fn main(init: std.process.Init) !u8 {
     if (command == .repl) {
         // Unlike every other command, `emerald repl` names no file (18.1).
         if (args.len != 2) return commandMisuse(io, command, "does not take arguments");
-        return executeRepl(gpa, io, init.environ_map);
+        return executeRepl(gpa, io, init.minimal.environ, init.environ_map);
     }
 
     if (command == .lsp) {
@@ -114,7 +113,7 @@ pub fn main(init: std.process.Init) !u8 {
     if (args.len < 3) return commandMisuse(io, command, "expects a `<file.em>` path");
     if (command == .check) {
         if (args.len != 3) return commandMisuse(io, command, "does not run a program, so it cannot take program arguments");
-        return execute(gpa, io, command, args[2], &.{}, false, .utc);
+        return execute(gpa, io, command, args[2], &.{}, false, init.minimal.environ, .utc);
     }
 
     // `run` and `test` accept an optional `--color=auto|always|never` flag
@@ -146,7 +145,7 @@ pub fn main(init: std.process.Init) !u8 {
     var zone_arena: std.heap.ArenaAllocator = .init(gpa);
     defer zone_arena.deinit();
     const local_zone = resolveLocalZone(zone_arena.allocator(), io, init.environ_map);
-    return execute(gpa, io, command, args[path_index], program_arguments, color, local_zone);
+    return execute(gpa, io, command, args[path_index], program_arguments, color, init.minimal.environ, local_zone);
 }
 
 /// Section 15.8's `TimeZone.local` for one invocation, allocated in `arena`.
@@ -278,7 +277,7 @@ fn printGlobalHelp(io: std.Io) !u8 {
 
 fn printVersion(io: std.Io) !u8 {
     var buffer: [128]u8 = undefined;
-    const text = std.fmt.bufPrint(&buffer, "Emerald {s}\n", .{version_options.version}) catch "Emerald\n";
+    const text = std.fmt.bufPrint(&buffer, "Emerald {s}\n", .{emerald.build_version}) catch "Emerald\n";
     try writeAll(io, .stdout, text);
     return @intFromEnum(ExitCode.success);
 }
@@ -400,7 +399,7 @@ fn commandMisuse(io: std.Io, command: ?Command, detail: []const u8) !u8 {
     return @intFromEnum(ExitCode.invalid_usage);
 }
 
-fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8, color: bool, local_zone: TimeZone.Local) !u8 {
+fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8, color: bool, environment: std.process.Environ, local_zone: TimeZone.Local) !u8 {
     // Section 14.1: the file alone, unless it sits beside a `main.em`, in which
     // case the whole project comes with it.
     var project = emerald.Project.load(gpa, io, path) catch |err| {
@@ -426,8 +425,8 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
 
     const analysis = switch (command) {
         .check => emerald.checkProject(gpa, &project),
-        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .local_zone = local_zone, .arguments = program_arguments }),
-        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .local_zone = local_zone, .arguments = program_arguments }),
+        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .environment = environment, .local_zone = local_zone, .arguments = program_arguments }),
+        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .environment = environment, .local_zone = local_zone, .arguments = program_arguments }),
         // `main` routes `format`, `repl`, `lsp`, and `help` to their own functions
         // before this is reached.
         .format, .repl, .lsp, .explain, .help => unreachable,
@@ -550,7 +549,7 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
 /// `emerald repl` (18.4). Both the REPL's own prompt-reading and any typed
 /// code's `input()` calls read from this one shared, long-lived stdin
 /// stream — see `Repl.run`'s doc comment.
-fn executeRepl(gpa: std.mem.Allocator, io: std.Io, environ_map: *const std.process.Environ.Map) !u8 {
+fn executeRepl(gpa: std.mem.Allocator, io: std.Io, environment: std.process.Environ, environ_map: *const std.process.Environ.Map) !u8 {
     var out_buffer: [4096]u8 = undefined;
     var out = std.Io.File.stdout().writerStreaming(io, &out_buffer);
     var in_buffer: [4096]u8 = undefined;
@@ -563,7 +562,7 @@ fn executeRepl(gpa: std.mem.Allocator, io: std.Io, environ_map: *const std.proce
     defer zone_arena.deinit();
     const local_zone = resolveLocalZone(zone_arena.allocator(), io, environ_map);
 
-    Repl.run(gpa, &in.interface, &out.interface, color, local_zone) catch |err| switch (err) {
+    Repl.run(gpa, &in.interface, &out.interface, color, environment, local_zone) catch |err| switch (err) {
         error.OutOfMemory => return internalFailure(io, error.OutOfMemory),
         error.WriteFailed => return internalFailure(io, error.WriteFailed),
         error.ReadFailed => {
