@@ -1,7 +1,7 @@
 # HTTP client: design and implementation plan
 
-Status: proposed, 2026-09-27. The five decisions below await the user. Once they are
-accepted, record the answers here and in the handoff, and start slice 1. Rewrite-context 15.7
+Status: accepted, 2026-09-27. The user accepted every recommendation, including decision 2
+(a): an error status raises `HttpError` by default. Slice 1 is next. Rewrite-context 15.7
 lists a synchronous HTTP client as the next standard-library item after JSON. This plan sets
 out the API, what an HTTP failure looks like to a beginner, how the work is tested without
 the internet, and the order of work. The executor makes the remaining judgement calls
@@ -148,6 +148,8 @@ class HttpError extends RuntimeError {
   `HttpError` naming what was wrong with it.
 
 ## Decisions
+
+All five were accepted as recommended on 2026-09-27.
 
 1. **Name: `Http`,** not `HTTP` or `Net::HTTP`, matching `Json` (15.9) and the planned
    `Csv`: Emerald writes type names as words. Alternative: `HTTP`, which Swift and Go use,

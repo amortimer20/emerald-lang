@@ -112,8 +112,9 @@ method changes only ordinary identifier uses.
 JSON is complete. The user chose to finish the standard library (JSON, then an HTTP client,
 then the smaller items in rewrite-context 15.7), then make small optimizations such as startup
 time, and eventually build a native compiler. The HTTP client's plan is
-[`http-design-plan.md`](http-design-plan.md), proposed and awaiting the user's five decisions;
-once they are recorded there, slice 1 (the native request and a local test server) is next.
+[`http-design-plan.md`](http-design-plan.md), accepted with every recommendation, including
+decision 2 (a): an error status raises `HttpError` by default. Slice 1 (the native request
+and a local test server) is next.
 Codex is expected to carry out most of it; the plan's "Working notes for the executor" are
 for whoever does.
 
