@@ -10,6 +10,18 @@ entry below may explain *why* a decision was made, but the decision itself is re
 
 Sections are in roughly the order the work happened, oldest first.
 
+## HTTP native transport slice
+
+The first HTTP slice added `src/Http.zig`, with no Emerald-facing declarations yet. Its local
+Zig test server binds only `127.0.0.1` on an ephemeral port and scripts success, POST/header/body
+echoing, error status, redirects and a loop, gzip, chunked data, a large body, binary data, and
+a slow response; automatic tests never contact the internet. The interpreter's
+`std.Io.Threaded.global_single_threaded` explicitly cannot run concurrent or cancellable work,
+which a direct test confirmed. `Http.Client` therefore owns a worker-backed `Io.Threaded` and
+races each request against `Io.sleep` on Zig 0.16's monotonic `.awake` clock, cancelling and
+joining the loser before returning. This is the plan's first timeout fallback, selected before
+any Emerald API could depend on an unbounded request.
+
 ## Operator-annotation design and implementation
 
 The extended operator-design discussion was retired from the live handoff once implementation

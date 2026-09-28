@@ -114,7 +114,13 @@ then the smaller items in rewrite-context 15.7), then make small optimizations s
 time, and eventually build a native compiler. The HTTP client's plan is
 [`http-design-plan.md`](http-design-plan.md), accepted with every recommendation, including
 decision 2 (a): an error status raises `HttpError` by default. Slice 1 (the native request
-and a local test server) is next.
+and a local test server) is complete. `src/Http.zig` has no Emerald-facing API yet, but owns
+a worker-backed Zig HTTP client with a whole-request deadline, failure kinds with plain
+messages, and a cross-platform local server test covering POST echo, statuses, redirects,
+gzip, chunked and binary bodies, size limits, and a slow response. The interpreter's normal
+single-threaded I/O cannot run the deadline race, so the client uses its own `Io.Threaded`;
+the accepted plan records that choice. Slice 2, the Emerald API and local-server conformance
+cases, is next.
 Codex is expected to carry out most of it; the plan's "Working notes for the executor" are
 for whoever does.
 

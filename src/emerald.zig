@@ -33,6 +33,7 @@ pub const ColorPolicy = @import("ColorPolicy.zig");
 pub const TimeZone = @import("TimeZone.zig");
 pub const Regex = @import("Regex.zig");
 pub const Json = @import("Json.zig");
+pub const Http = @import("Http.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");

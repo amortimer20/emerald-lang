@@ -1,7 +1,7 @@
 # HTTP client: design and implementation plan
 
 Status: accepted, 2026-09-27. The user accepted every recommendation, including decision 2
-(a): an error status raises `HttpError` by default. Slice 1 is next. Rewrite-context 15.7
+(a): an error status raises `HttpError` by default. Slice 1 is complete; slice 2 is next. Rewrite-context 15.7
 lists a synchronous HTTP client as the next standard-library item after JSON. This plan sets
 out the API, what an HTTP failure looks like to a beginner, how the work is tested without
 the internet, and the order of work. The executor makes the remaining judgement calls
@@ -235,6 +235,15 @@ rewrite-context text written in the same change.
    method, headers, and body, redirects and a redirect loop, a slow route, a gzip body, a
    chunked body, a large body, and a non-UTF-8 body. Zig unit tests of `Http.zig` against it.
    No Emerald-facing API yet.
+
+   **Settled while building (2026-09-27):** the interpreter's
+   `std.Io.Threaded.global_single_threaded` rejects `Io.Select.concurrent` with
+   `error.ConcurrencyUnavailable`, exactly as its source documents. The first fallback is
+   therefore used: `Http.Client` owns a worker-backed `std.Io.Threaded`, races every request
+   against `Io.sleep` on its monotonic `.awake` clock, and calls `cancelDiscard` before it
+   returns. This gives the deadline cancellation path a real test rather than trusting a
+   connect-only timeout. Zig 0.16 calls its monotonic clock `.awake`, not `.monotonic` as the
+   prose shorthand above did.
 2. **The Emerald API.** `Http.get`, `delete`, `post`, `put`, `patch`, `Http.Response`,
    `Http.encode_component`, `HttpError`, and every parameter above. A new
    `conformance/http/` directory whose cases run with the test server started and its base
