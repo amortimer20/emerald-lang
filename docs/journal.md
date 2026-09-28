@@ -3209,3 +3209,14 @@ the deliberate display and comparison step. The implementation uses Zig's SHA-25
 primitives and copies their fixed result into immutable Bytes. FIPS SHA-256 and RFC 4231 HMAC
 known-answer vectors protect the public boundary; the differential tool compares random inputs
 with Python's `hashlib` and `hmac`.
+
+## Base64 and hashing, review, 2026-09-28
+
+Review found Base64 decoding walking bytes: `Base64.decode("Zm9vé")` quoted half of `é` as a
+broken UTF-8 byte, at a byte index, and `ZgB=` blamed the `=` rather than the `B`. Decoding now
+walks characters as hex does and keeps each character's original index. Padding that does not
+fit its last group has its own message, and a character from the other alphabet names
+`url_safe:` in its help. The checker's help had quoted `"hi".to_bytes()` for any argument and
+suggested `to_bytes()` for Bytes given to `decode`; `Digest` had no text hint at all. The plan's
+remaining known answers (one million `a`s; RFC 4231 cases 3, 4, 6, 7) and a decoding and
+corruption differential were added, with no differences from Python.

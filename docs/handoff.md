@@ -119,56 +119,36 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-The CSV milestone is complete (15.11). `Csv.parse` and `parse_records` cover unknown text
-tables; `decode` and `encode` cover a program's own plain records; and `CsvError` keeps CSV
-problems catchable and locatable. The reference is [`library/csv.md`](library/csv.md), with the
-runnable [`examples/csv.em`](../examples/csv.em), focused conformance, a parser differential
-against Python's `csv` reader, a reachability fixture, and a valid-program fuzz template. CSV
-accepts spreadsheet-style quoting, BOMs, Unix/Windows line endings, and one-grapheme separators;
-writing is minimal-quoted LF text. The native parser's 3,000 generated cases (seed 1) had no
-differences from Python.
-
 The user chose to finish the standard library, then make small optimizations such as startup
-time, and eventually build a native compiler. Startup performance is complete: a ReleaseSafe `print(1)` went from 9.9 ms to 3.5 ms. A run
-checks only the prelude bodies its program reaches, gives each function body only the module
-variables it uses, and starts with the prelude already parsed, since `tools/prelude_ast.zig`
-parses it when Emerald is built. The journal's startup entries record the measurements,
-including a lever that was tried and reverted.
+time, and eventually build a native compiler. Startup performance is complete: a ReleaseSafe
+`print(1)` went from 9.9 ms to 3.5 ms. CSV (15.11) and Base64 and hashing (15.12) are complete;
+the journal records both.
 
-The Base64 and hashing milestone is complete, following the accepted
+Base64 and hashing followed the accepted
 [`base64-hashing-design-plan.md`](base64-hashing-design-plan.md): `Base64`, `Digest.sha256` and
-`hmac_sha256`, hex on `Bytes`, and one `EncodingError`. Slice 1 delivers `EncodingError`,
-`Bytes.to_hex`, and `Bytes.from_hex`/`from_hex_maybe`; invalid UTF-8 Bytes now correctly raise
-`EncodingError` rather than `FileError`. Slice 2 adds standard and URL-safe Base64 encoding and
-decoding. Slice 3 adds SHA-256 and HMAC-SHA256 over Bytes; slice 4 adds the reference pages,
-runnable encoding example, prelude reachability coverage, and valid-program fuzz templates.
-Native arguments are bound by their public names, so named arguments can be written in any
-order.
+`hmac_sha256`, hex on `Bytes`, and one `EncodingError`, which invalid UTF-8 given to
+`Bytes.to_string()` now raises instead of `FileError`. Review fixed Base64's error positions
+(character indexes, never a broken byte), its padding messages, and the checker's `to_bytes()`
+hints, and added the plan's remaining known answers and a decoding differential. The plan's
+"Settled while building" notes record each decision.
 
-Once that milestone is merged, Emerald 0.6.0 is released (the user's decision, 2026-09-28):
-format the same-line `catch` files (see the rough edges), refresh the time-zone data, write
-the release notes, tag `v0.6.0` on `main`, confirm the release and its install check pass,
-then move the development version to `0.7.0-dev` in `build.zig`.
+**Next: release Emerald 0.6.0** (the user's decision, 2026-09-28). Format the same-line `catch`
+files and add the formatter-clean check (see the rough edges), refresh the time-zone data,
+write the release notes and show them to the user, tag `v0.6.0` on `main`, confirm the release
+and its install check pass, then move the development version to `0.7.0-dev` in `build.zig`.
 
-The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
--j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
-tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. An alternating
-ReleaseSafe startup comparison found no measurable cost for programs that do not use CSV. The
-HTTP client's manual `zig build http-live` check passed in its slice 3; it is not part of ordinary
-validation.
+Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
+`zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS
+cross-builds. The Base64 differential (2,000 encodings, 1,000 decodings, about 1,000
+corruptions; seeds 1 and 7) and the digest differential (2,000 cases, seed 1) found no
+differences. An alternating ReleaseSafe startup comparison found no measurable cost for
+programs that do not use these namespaces. The HTTP client's manual `zig build http-live`
+check passed in its slice 3; it is not part of ordinary validation.
 
 Other candidates, each needing the user's go-ahead:
 
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
-
-The Base64/hashing integration validation passed pinned Zig 0.16.0 Debug and ReleaseSafe
-`zig build test -j1`, `zig build -j1`, the documentation example check, formatting and diff
-checks, and Windows/macOS cross-builds. Base64 and digest differential tools reported zero
-differences (1,000 random cases each, seed 1). An alternating 10-run ReleaseSafe startup
-comparison against the pre-milestone baseline measured the current binary at 97.5% for
-`print(1)` and 102.4% for the JSON program; the language-only case was 98.3%, with no
-measurable regression for programs that do not use these namespaces.
 
 Before each release, refresh the time-zone data with `python3 tools/update-tzdata.py` (see
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than
