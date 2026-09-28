@@ -140,6 +140,11 @@ The next milestone is Base64 and hashing, following the accepted
 `hmac_sha256`, hex on `Bytes`, and one `EncodingError`. Slice 1 (`EncodingError` and hex) is
 next.
 
+Once that milestone is merged, Emerald 0.6.0 is released (the user's decision, 2026-09-28):
+format the same-line `catch` files (see the rough edges), refresh the time-zone data, write
+the release notes, tag `v0.6.0` on `main`, confirm the release and its install check pass,
+then move the development version to `0.7.0-dev` in `build.zig`.
+
 The completed CSV milestone passed the pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test
 -j1`, `zig build -j1`, `bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig
 tools/csv/probe.zig`, `git diff --check`, and Windows/macOS cross-builds. An alternating
@@ -179,6 +184,16 @@ on the roadmap.
 
 ## Active rough edges
 
+- Some Emerald files write `} catch` and `} finally` on one line, against 3.4's convention that
+  `else`, `catch`, and `finally` start their own lines. The formatter already writes them
+  correctly, but nothing checks that these files are formatted. The JSON, CSV, and HTTP
+  conformance files have most of them (`conformance/http/http-errors.em`,
+  `conformance/run/csv-*.em`, `json-*.em`, `prelude-reach.em`, `top-level-return.em`,
+  `runtime-errors/file-writer-streaming-closed.em`), plus `docs/library/http.md` and a test
+  snippet in `src/emerald.zig`. To do: format them, and add a check that example,
+  conformance, and documentation Emerald code is formatter-clean, so the convention holds
+  without anyone watching for it. A conformance file that is deliberately unformatted
+  would need marking as such.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`,
   `DateTimeError`, `RegexError`, and `HttpError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
