@@ -1,6 +1,6 @@
 # Startup performance: design and implementation plan
 
-Status: proposed, 2026-09-28, awaiting the user's go-ahead. The measurements below were
+Status: accepted, 2026-09-28; the user asked Claude to carry it out. The measurements below were
 taken on `main` before and after the HTTP milestone merged (`b7440da`, `c3b830b`). The
 executor makes the remaining judgement calls within a slice, and records each one under that
 slice's "Settled while building" note. At the start of each slice, reread `git status`, the
@@ -109,11 +109,13 @@ checking everything if they need to, since neither is on the startup path of `em
 
 ## Measuring
 
-- **Add `tools/startup-benchmark.py`** (slice 1): runs a built binary on a few programs
-  (`print(1)`, `examples/json.em`, and a program using dates and regular expressions),
-  reporting the median wall time over 60 runs, user and system time, and page faults, with
-  the machine noted. Use it before and after every slice, and record the numbers in the
-  journal.
+- **`tools/startup-benchmark.py`** runs built binaries on five programs (`print(1)`, one
+  using only the language, and one each reaching dates, regular expressions, and JSON),
+  reporting the median wall time, user and system time, and page faults. Absolute times drift
+  badly on the development machine: the same binary measured 9.8 ms in one hour and 22 ms in
+  the next. So compare a change by passing two binaries (before and after); their runs
+  alternate, so drift affects both alike, and the tool reports the second as a share of the
+  first. Record the comparison in the journal after every slice.
 - **Stage timing** used temporary marks around each stage in `emerald.analyze` and each
   phase in `Checker.check`, printing elapsed time and `getrusage` page faults. Do not commit
   them; add them locally to find where a slice's time goes.
@@ -124,6 +126,8 @@ checking everything if they need to, since neither is on the startup path of `em
 
 1. **The benchmark tool and baseline.** `tools/startup-benchmark.py`, and the baseline
    recorded in the journal.
+   Done: the tool compares two binaries by alternating their runs, after an hour-to-hour
+   drift of more than two to one made absolute times useless for comparison.
 2. **Reachable prelude bodies** (lever 1), with both safety nets, conformance showing a
    program reaching dates, regular expressions, JSON, HTTP, and a trait default, and the
    benchmark before and after.

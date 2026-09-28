@@ -2992,3 +2992,18 @@ Updating the formatter's own test for the minimum Int showed that `Formatter`, `
 and `Range` were never in `emerald.zig`'s test list, so their 24 unit tests had not run in
 `zig build test`. One had gone stale: it expected a blank line inserted between top-level
 declarations, which 19's formatter rules never do. All three modules are in the list now.
+
+## Startup performance, slice 1: measuring, 2026-09-28
+
+`docs/startup-design-plan.md` records where a ReleaseSafe `print(1)` spends its 9.8 ms:
+checking prelude function bodies is half, spread across the library, and about 2,500 page
+faults per run make memory a large share. `tools/startup-benchmark.py` measures five programs
+(`print(1)`, a language-only program, and one each reaching dates, regular expressions, and
+JSON).
+
+The first baseline run showed why the tool compares rather than measures: the same binary
+that took 9.8 ms an hour earlier took 22 ms, with the machine idle, and so did an older
+build. Something on the host slows the whole WSL2 machine at times. Given two binaries, the
+tool alternates their runs, so drift affects both alike, and reports the second as a share of
+the first; two builds of nearly the same code came out within about 5% of each other during
+the slow period. Every later slice records such a comparison against the build before it.
