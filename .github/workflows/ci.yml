@@ -1,10 +1,17 @@
 name: CI
 
 on:
+  # A change to Markdown alone (plans, the handoff, reference pages) tests
+  # nothing new, so it does not start the whole matrix. Run `zig build test`
+  # locally before pushing one: its style check reads the docs' emerald blocks.
   push:
     branches:
       - "**"
+    paths-ignore:
+      - "**.md"
   pull_request:
+    paths-ignore:
+      - "**.md"
   workflow_dispatch:
 
 jobs:

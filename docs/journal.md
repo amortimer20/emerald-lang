@@ -3303,3 +3303,18 @@ over right-aligned numbers. `examples/console.em` had replaced the only runnable
 `Console.style`, so that example is back as `examples/console-style.em`. New conformance cases
 cover each fix. Known limits are documented rather than fixed: a tab has no width, and a keycap
 emoji counts as one column where most terminals draw two.
+
+## HTTP: a timed-out request's reply reached the next request, 2026-09-28
+
+`conformance/http/http-errors.em` failed now and then in CI, first on macOS and then on
+Ubuntu: its `/redirect-loop` request returned `200 too late`, the reply of the `/slow` request
+that had just timed out. A 2-second server delay did not help, because the cause was not a
+late timer. A standalone reproduction (a Python server logging each request, the 0.6.0 binary,
+400 runs under CPU load) failed 5 to 8 times per 400, and in every failure `/slow` reached the
+server only when `/redirect-loop` should have, and `/redirect-loop` never arrived. A timeout
+that canceled `/slow` while it was still being sent left its bytes in the connection's buffer,
+and Zig's client returned that connection to its pool; the next request sent the stale bytes
+ahead of its own and read the reply to them. `perform` now marks a connection as closing
+unless its response was read completely. The fixed binary had no failures in 1,200 runs, and
+`/slow` never reached the server. The unit test checks that a request after a timeout gets its
+own reply; the failing window is too narrow to hit on purpose there.
