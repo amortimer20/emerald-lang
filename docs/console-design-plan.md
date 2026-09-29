@@ -274,11 +274,13 @@ commits.
   - defaults, bounds, and `choose_many` with repeats, spaces, and none;
   - end of input as an `InputError` in `runtime-errors/`;
   - each bad-argument error.
-- Blocked before implementation: the plan's premise that `input` raises `InputError` at
-  end of input is not true in the source. `src/prelude.em` has no `InputError`, and
-  `Interpreter.evaluateInput` calls `raise`, which constructs `RuntimeError`. The same
-  incorrect claim appears in rewrite-context 15.2. Per the executor rule, do not invent a
-  different prompt error API here; settle the input-error design before this slice resumes.
+- Settled while building: the plan was correct about the intended API but the implementation
+  had lagged behind it. `InputError` is now a `RuntimeError` subclass; `input` constructs it
+  for EOF and invalid UTF-8 while `input_maybe` keeps returning `nothing` at EOF. Prompts use
+  `input`, so EOF is catchable without a prompt-specific native path. Invalid numeric answers
+  and choices print the specified yellow message and repeat; empty `ask` answers repeat unless
+  a default is present. `choose_many` normalizes commas and spaces, ignores duplicate indexes,
+  and returns options in declaration order.
 
 ### Slice 5: Documentation and integration
 

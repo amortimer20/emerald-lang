@@ -141,11 +141,11 @@ Slice 2 adds `Console.panel` and text-row `Console.table` in the prelude, with e
 output, Unicode column alignment, optional panel title/color, and row/column errors.
 Slice 3 adds struct rows to `Console.table`, using CSV's exact eligible-field checks and
 shared record-to-cell conversion. Public fields become the header in declaration order, and
-numeric fields align right. Prompts are blocked on a plan/source mismatch: the accepted plan
-requires `InputError` at end of input and says `input` already raises it, but the current
-prelude has no `InputError` and the interpreter raises `RuntimeError`. The rewrite context
-also incorrectly claims `InputError` exists. The next step is to settle that error-model
-correction before slice 4; do not substitute a different prompt API implicitly.
+numeric fields align right. Slice 4 adds `InputError` and the six prompts in Emerald, with
+defaults, bounds, choice validation, duplicate-insensitive multi-select, and specified
+yellow retry messages. `input` now raises `InputError` for EOF and invalid UTF-8; code that
+catches `RuntimeError` remains unaffected because `InputError` extends it. The final slice
+still needs documentation and integration.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS
@@ -187,8 +187,9 @@ on the roadmap.
 
 ## Active rough edges
 
-- Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`,
-  `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and `EncodingError`.
+- Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
+  `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
+  `EncodingError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
 - A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses

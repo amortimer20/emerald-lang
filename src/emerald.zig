@@ -2669,7 +2669,7 @@ test "the first program: input and interpolation" {
     try expectOutputWithInput("print(input().count, input().count)\n", "ab\r\n\n", "2 0\n");
     // The last line may end without a newline.
     try expectOutputWithInput("print(input())\n", "last", "last\n");
-    try expectFailure("var name = input()\n", "`input` reached the end of the input");
+    try expectFailure("var name = input()\n", "InputError: `input` reached the end of the input");
     try expectOutput("write(\"a\", \"b\")\nwrite(\"c\")\nprint()\n", "a bc\n");
 }
 

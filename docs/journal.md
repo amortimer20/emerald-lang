@@ -34,6 +34,15 @@ prelude's table layout handles both row shapes; numeric struct columns align rig
 Conformance covers mixed numeric/optional values, private-field omission, empty typed
 records, invalid fields, and rejection of an explicit header with struct rows.
 
+## Console widgets: prompts
+
+The fourth slice adds `InputError` and the six line-oriented prompts in the prelude. `input`
+now raises the specified subclass for end-of-input and invalid UTF-8, while `input_maybe`
+retains its optional EOF behavior. Prompts validate and retry with the plan's messages,
+support defaults and numeric bounds, and return multi-selections in option order after
+ignoring repeated indexes. Conformance feeds scripted answers end to end and catches
+`InputError`.
+
 ## Base64, hashing, and hexadecimal
 
 The four-slice utilities milestone is complete. `Bytes` now has lowercase hexadecimal

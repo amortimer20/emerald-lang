@@ -5885,19 +5885,25 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
         // Section 15.2: `input_maybe` reports the end of the input as absence,
         // which is how a program reads until there is nothing left.
         if (maybe) return Value.nothing;
-        return self.raise(
+        self.raised_value = try self.makeError(Resolver.preludeKey("InputError"), "`input` reached the end of the input");
+        return self.raiseTyped(
             span,
+            "InputError",
             "`input` reached the end of the input",
             "There are no more lines to read. Use `input_maybe`, which gives `nothing` instead, to read until the input ends.",
         );
     }
 
     const bytes = std.mem.trimEnd(u8, line.written(), "\r");
-    if (!std.unicode.utf8ValidateSlice(bytes)) return self.raise(
-        span,
-        "the line read by `input` is not valid UTF-8 text",
-        "Emerald strings hold Unicode text; check how the input was produced.",
-    );
+    if (!std.unicode.utf8ValidateSlice(bytes)) {
+        self.raised_value = try self.makeError(Resolver.preludeKey("InputError"), "the line read by `input` is not valid UTF-8 text");
+        return self.raiseTyped(
+            span,
+            "InputError",
+            "the line read by `input` is not valid UTF-8 text",
+            "Emerald strings hold Unicode text; check how the input was produced.",
+        );
+    }
     return self.heap.copyText(bytes);
 }
 

@@ -15,6 +15,12 @@ class AssertionError extends Error {
     }
 }
 
+class InputError extends RuntimeError {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
 # Section 15.3's filesystem failures. Native whole-file functions below build
 # this ordinary Error value, so callers can catch filesystem failures without
 # catching unrelated RuntimeErrors.
@@ -307,6 +313,140 @@ class Console {
             result += "\n" + Emerald.Console.style("│", foreground: color) + " #{Emerald.Console._pad(line, width)} " + Emerald.Console.style("│", foreground: color)
         }
         return result + "\n" + Emerald.Console.style("└" + "─".repeat(width + 2) + "┘", foreground: color)
+    }
+
+    func Console.ask(question: String, default: String? = nothing): String {
+        while true {
+            const prompt = if default != nothing then "#{question} [#{default}] " else "#{question} "
+            const answer = Emerald.input(prompt).trim()
+            if answer != "" {
+                return answer
+            }
+            if default != nothing {
+                return default
+            }
+            print(Emerald.Console.yellow("Please enter an answer."))
+        }
+    }
+
+    func Console.ask_int(question: String, minimum: Int? = nothing, maximum: Int? = nothing): Int {
+        if minimum != nothing and maximum != nothing and minimum > maximum {
+            raise RuntimeError("minimum cannot be greater than maximum")
+        }
+        while true {
+            const value = Emerald.input("#{question} ").trim().to_int_maybe()
+            if value == nothing {
+                print(Emerald.Console.yellow("Please enter a whole number."))
+                continue
+            }
+            if minimum != nothing and value < minimum {
+                const message = if maximum != nothing then "Please enter a whole number from #{minimum} to #{maximum}." else "Please enter a whole number at least #{minimum}."
+                print(Emerald.Console.yellow(message))
+                continue
+            }
+            if maximum != nothing and value > maximum {
+                const message = if minimum != nothing then "Please enter a whole number from #{minimum} to #{maximum}." else "Please enter a whole number at most #{maximum}."
+                print(Emerald.Console.yellow(message))
+                continue
+            }
+            return value
+        }
+    }
+
+    func Console.ask_float(question: String, minimum: Float? = nothing, maximum: Float? = nothing): Float {
+        if minimum != nothing and maximum != nothing and minimum > maximum {
+            raise RuntimeError("minimum cannot be greater than maximum")
+        }
+        while true {
+            const value = Emerald.input("#{question} ").trim().to_float_maybe()
+            if value == nothing {
+                print(Emerald.Console.yellow("Please enter a number."))
+                continue
+            }
+            if minimum != nothing and value < minimum {
+                const message = if maximum != nothing then "Please enter a number from #{minimum} to #{maximum}." else "Please enter a number at least #{minimum}."
+                print(Emerald.Console.yellow(message))
+                continue
+            }
+            if maximum != nothing and value > maximum {
+                const message = if minimum != nothing then "Please enter a number from #{minimum} to #{maximum}." else "Please enter a number at most #{maximum}."
+                print(Emerald.Console.yellow(message))
+                continue
+            }
+            return value
+        }
+    }
+
+    func Console.confirm(question: String, default: Bool? = nothing): Bool {
+        while true {
+            const suffix = if default == true then " (Y/n)" else if default == false then " (y/N)" else " (y/n)"
+            const answer = Emerald.input("#{question}#{suffix} ").trim().lower()
+            if answer == "y" or answer == "yes" {
+                return true
+            }
+            if answer == "n" or answer == "no" {
+                return false
+            }
+            if answer == "" and default != nothing {
+                return default
+            }
+            print(Emerald.Console.yellow("Please answer y or n."))
+        }
+    }
+
+    func Console.choose(question: String, options: List[String]): String {
+        if options.count == 0 {
+            raise RuntimeError("choose needs at least one option")
+        }
+        while true {
+            print(question)
+            for index in 0..<options.count {
+                print("  #{index + 1}. #{options[index]}")
+            }
+            const choice = Emerald.input("Choose 1-#{options.count}: ").trim().to_int_maybe()
+            if choice != nothing and choice >= 1 and choice <= options.count {
+                return options[choice - 1]
+            }
+            print(Emerald.Console.yellow("Please enter a number from 1 to #{options.count}."))
+        }
+    }
+
+    func Console.choose_many(question: String, options: List[String]): List[String] {
+        if options.count == 0 {
+            raise RuntimeError("choose_many needs at least one option")
+        }
+        while true {
+            print(question)
+            for index in 0..<options.count {
+                print("  #{index + 1}. #{options[index]}")
+            }
+            const answer = Emerald.input("Choose any of 1-#{options.count}, separated by commas, or press Enter for none: ").trim()
+            if answer == "" {
+                return []
+            }
+            const tokens = answer.replace(",", " ").split(" ").filter { token => token != "" }
+            var valid = true
+            for token in tokens {
+                const choice = token.to_int_maybe()
+                if choice == nothing or choice < 1 or choice > options.count {
+                    valid = false
+                }
+            }
+            if not valid {
+                print(Emerald.Console.yellow("Please enter numbers from 1 to #{options.count}."))
+                continue
+            }
+            var result: List[String] = []
+            for index in 1..options.count {
+                for token in tokens {
+                    if token.to_int() == index {
+                        result.append(options[index - 1])
+                        break
+                    }
+                }
+            }
+            return result
+        }
     }
 }
 
