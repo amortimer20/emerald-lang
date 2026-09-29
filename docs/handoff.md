@@ -148,6 +148,11 @@ catches `RuntimeError` remains unaffected because `InputError` extends it.
 Slice 5 completes the Console reference, inventory, rewrite-context status, and a runnable
 example combining a panel, struct table, styling, and defaulted prompts. The fuzz template
 also exercises text tables and panels. The Console widgets milestone is complete.
+Review then fixed what a student would notice: choice prompts reprint their options only once,
+the end of input inside a prompt names the prompt (`Console.ask` reached the end of the input)
+instead of `input`, `ask_float` rejects `NaN` and infinities, numeric table headers align over
+their numbers, and the styling example is back as `examples/console-style.em`. Tabs have no
+width and keycap emoji count as one column; both are documented limits.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS
