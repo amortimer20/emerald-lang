@@ -8,8 +8,9 @@ escape bytes count toward `count`, indexing, slicing, and searching, and travel 
 string to a file. Run [`conformance/color/console-style.em`](../../conformance/color/console-style.em)
 for exact sequences with styling forced on, and
 [`conformance/run/console-style-off.em`](../../conformance/run/console-style-off.em) for every
-helper's behavior with styling off; [`examples/console.em`](../../examples/console.em) is a
-runnable small program.
+helper's behavior with styling off; [`examples/console-style.em`](../../examples/console-style.em)
+tours the styling, and [`examples/console.em`](../../examples/console.em) is a small program
+that uses layout and prompts too.
 
 ## Color helpers
 
@@ -104,11 +105,12 @@ Text rows are shown left-aligned. Each cell has one space of padding, and border
 box-drawing characters. `header:` adds a header and a rule below it. Every row must have the
 same number of cells, and cells cannot contain line breaks; malformed rows raise a
 `RuntimeError` naming their row and column. Width is measured in terminal columns, so CJK
-characters and emoji occupy two columns while styling occupies none. An empty list returns an
+characters and emoji occupy two columns while styling occupies none. Tabs and other control
+characters occupy no columns, so replace a tab with spaces before laying out text that has one. An empty list returns an
 empty string, or just the header when one is supplied.
 
 The same method accepts a list of plain structs. Public fields become the header in declaration
-order, numeric columns are right-aligned, and values display as `print` would; `nothing` is an
+order, numeric columns (and their headers) are right-aligned, and values display as `print` would; `nothing` is an
 empty cell. A struct-row table cannot also receive `header:`. See
 [`conformance/run/console-struct-table.em`](../../conformance/run/console-struct-table.em).
 
@@ -136,7 +138,7 @@ answers. Bounds are inclusive; supplying a minimum greater than the maximum rais
 ### Console.ask_float(question: String, minimum: Float? = nothing, maximum: Float? = nothing) -> Float
 
 The floating-point counterpart to `ask_int`, with inclusive bounds and `Please enter a number.`
-for malformed answers.
+for malformed answers. `NaN` and the infinities are not accepted as answers.
 
 ### Console.confirm(question: String, default: Bool? = nothing) -> Bool
 
@@ -146,8 +148,9 @@ or `(y/N)` and makes an empty answer select that value; otherwise an invalid ans
 
 ### Console.choose(question: String, options: List[String]) -> String
 
-Prints numbered options and asks `Choose 1-N: `. It returns the selected option's text and
-repeats with `Please enter a number from 1 to N.` for a malformed or out-of-range answer. An
+Prints numbered options once and asks `Choose 1-N: `. It returns the selected option's text
+and, for a malformed or out-of-range answer, says `Please enter a number from 1 to N.` and asks
+`Choose 1-N: ` again without repeating the options. An
 empty option list raises a `RuntimeError` before printing.
 
 ### Console.choose_many(question: String, options: List[String]) -> List[String]
@@ -158,6 +161,7 @@ empty list. Invalid input says `Please enter numbers from 1 to N.` and repeats; 
 list raises a `RuntimeError` before printing.
 
 All prompt retry messages use `Console.yellow`, so they are colored only when the execution's
-color policy enables styling. End of input raises `InputError`, just as `input` does. See
+color policy enables styling. End of input raises `InputError`, and its message names the prompt:
+`` `Console.ask` reached the end of the input ``. See
 [`conformance/run/console-prompts.em`](../../conformance/run/console-prompts.em) and
 [`examples/console.em`](../../examples/console.em).

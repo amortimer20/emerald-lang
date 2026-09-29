@@ -13,3 +13,7 @@ print(Console.table(empty))
 enum Choice { yes, no }
 struct Answer { const choice: Choice }
 assert Console.table([Answer(Choice.yes)]) == "┌────────────┐\n│ choice     │\n├────────────┤\n│ Choice.yes │\n└────────────┘"
+
+# A numeric column's header sits over its numbers, at the right edge.
+struct Big { const n: Int }
+assert Console.table([Big(1234567)]) == "┌─────────┐\n│       n │\n├─────────┤\n│ 1234567 │\n└─────────┘"

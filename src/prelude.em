@@ -278,7 +278,7 @@ class Console {
         }
         var result = Emerald.Console._table_rule(widths, "┌", "┬", "┐")
         if header.count > 0 {
-            result += "\n" + Emerald.Console._table_row(header, widths, [])
+            result += "\n" + Emerald.Console._table_row(header, widths, right)
             result += "\n" + Emerald.Console._table_rule(widths, "├", "┼", "┤")
         }
         row_index = 0
@@ -315,10 +315,27 @@ class Console {
         return result + "\n" + Emerald.Console.style("└" + "─".repeat(width + 2) + "┘", foreground: color)
     }
 
+    # Reads one answer for a prompt. The end of the input names the prompt the
+    # program called, not the `input` underneath it.
+    func Console._answer(prompt: String, name: String): String {
+        const line = Emerald.input_maybe(prompt)
+        if line == nothing {
+            raise InputError("`#{name}` reached the end of the input")
+        }
+        return line
+    }
+
+    func Console._show_options(question: String, options: List[String]) {
+        print(question)
+        for index in 0..<options.count {
+            print("  #{index + 1}. #{options[index]}")
+        }
+    }
+
     func Console.ask(question: String, default: String? = nothing): String {
         while true {
             const prompt = if default != nothing then "#{question} [#{default}] " else "#{question} "
-            const answer = Emerald.input(prompt).trim()
+            const answer = Emerald.Console._answer(prompt, "Console.ask").trim()
             if answer != "" {
                 return answer
             }
@@ -334,7 +351,7 @@ class Console {
             raise RuntimeError("minimum cannot be greater than maximum")
         }
         while true {
-            const value = Emerald.input("#{question} ").trim().to_int_maybe()
+            const value = Emerald.Console._answer("#{question} ", "Console.ask_int").trim().to_int_maybe()
             if value == nothing {
                 print(Emerald.Console.yellow("Please enter a whole number."))
                 continue
@@ -358,8 +375,8 @@ class Console {
             raise RuntimeError("minimum cannot be greater than maximum")
         }
         while true {
-            const value = Emerald.input("#{question} ").trim().to_float_maybe()
-            if value == nothing {
+            const value = Emerald.Console._answer("#{question} ", "Console.ask_float").trim().to_float_maybe()
+            if value == nothing or not value.finite?() {
                 print(Emerald.Console.yellow("Please enter a number."))
                 continue
             }
@@ -380,7 +397,7 @@ class Console {
     func Console.confirm(question: String, default: Bool? = nothing): Bool {
         while true {
             const suffix = if default == true then " (Y/n)" else if default == false then " (y/N)" else " (y/n)"
-            const answer = Emerald.input("#{question}#{suffix} ").trim().lower()
+            const answer = Emerald.Console._answer("#{question}#{suffix} ", "Console.confirm").trim().lower()
             if answer == "y" or answer == "yes" {
                 return true
             }
@@ -398,12 +415,9 @@ class Console {
         if options.count == 0 {
             raise RuntimeError("choose needs at least one option")
         }
+        Emerald.Console._show_options(question, options)
         while true {
-            print(question)
-            for index in 0..<options.count {
-                print("  #{index + 1}. #{options[index]}")
-            }
-            const choice = Emerald.input("Choose 1-#{options.count}: ").trim().to_int_maybe()
+            const choice = Emerald.Console._answer("Choose 1-#{options.count}: ", "Console.choose").trim().to_int_maybe()
             if choice != nothing and choice >= 1 and choice <= options.count {
                 return options[choice - 1]
             }
@@ -415,12 +429,9 @@ class Console {
         if options.count == 0 {
             raise RuntimeError("choose_many needs at least one option")
         }
+        Emerald.Console._show_options(question, options)
         while true {
-            print(question)
-            for index in 0..<options.count {
-                print("  #{index + 1}. #{options[index]}")
-            }
-            const answer = Emerald.input("Choose any of 1-#{options.count}, separated by commas, or press Enter for none: ").trim()
+            const answer = Emerald.Console._answer("Choose any of 1-#{options.count}, separated by commas, or press Enter for none: ", "Console.choose_many").trim()
             if answer == "" {
                 return []
             }

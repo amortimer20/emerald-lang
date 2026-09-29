@@ -295,6 +295,23 @@ commits.
 - Settled while building: the example uses only prompts with defaults so the documentation
   smoke test's blank input remains a successful, non-interactive run. The fuzz template adds
   ordinary text-row table and panel programs; no new native path is needed for either.
+- Fixed in review:
+  - A bad answer to `choose` or `choose_many` reprinted the question and the whole option list
+    each time, which scrolls a long list away. The options are shown once, and only the
+    `Choose 1-N:` line repeats.
+  - The end of input inside a prompt raised `InputError` with the message for `input`, naming
+    `input` (which the student did not call) and suggesting `input_maybe`. The prompts now read
+    with `input_maybe` and raise ``InputError("`Console.ask` reached the end of the input")``,
+    naming the prompt.
+  - `ask_float` accepted `Infinity` (and would have handed back any non-finite value). It now
+    asks again.
+  - A numeric column's header was left-aligned over right-aligned numbers; it is right-aligned.
+  - `examples/console.em` was replaced wholesale, which dropped the only runnable tour of
+    `Console.style`, bright colors, nesting, and `plain`. That example is back as
+    `examples/console-style.em`.
+  - Known limits, documented: tabs and other control characters have no width, so a tab in a
+    panel or cell misaligns the box, and a keycap emoji such as 1️⃣ counts as one column where
+    most terminals draw two.
 
 ## Validation
 

@@ -3289,3 +3289,17 @@ passed with `install.sh` on Ubuntu and macOS and `install.ps1` in Windows PowerS
 The notes, set on the GitHub release, cover everything since 0.5.0: dates and times, regular
 expressions, Console, JSON, HTTP, CSV, Base64 and digests, nested types, the `Emerald`
 namespace, negative literals, and startup (9.9 ms to 3.5 ms). Development moved to `0.7.0-dev`.
+
+## Console widgets, review, 2026-09-28
+
+Review read all six commits and ran the widgets and prompts against real programs. The width
+function and the layout held up: CJK text, emoji, flags, a family emoji, and combining marks all
+line up, and struct tables match the plan. It fixed what a student would notice. A bad answer to
+`choose` or `choose_many` reprinted the whole option list each time. The end of input inside a
+prompt reported `input reached the end of the input` and suggested `input_maybe`, though the
+student had called `Console.ask`; prompts now read with `input_maybe` and raise an `InputError`
+that names the prompt. `ask_float` accepted `Infinity`. A numeric column's header sat at the left
+over right-aligned numbers. `examples/console.em` had replaced the only runnable tour of
+`Console.style`, so that example is back as `examples/console-style.em`. New conformance cases
+cover each fix. Known limits are documented rather than fixed: a tab has no width, and a keycap
+emoji counts as one column where most terminals draw two.
