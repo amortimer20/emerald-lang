@@ -302,7 +302,17 @@ commits.
   one `Interpreter.io` field, as "Keeping the seam" says. It is a mechanical change that keeps
   behavior and makes a later backend a swap.
 - Measure with `tools/startup-benchmark.py`: no measurable cost.
-- Settled while building: (record here)
+- Settled while building: `TaskState(State)` owns the listed execution fields as one typed
+  value; interpreter caches and resource registries remain on `Interpreter`. In particular,
+  `file_handles` and `file_writers` are live resource registries rather than caches: they stay
+  interpreter-owned so a class handle retains its identity when passed between tasks. The
+  single-task `Baton` records its owner and whether it is held; `save` and `load` enforce the
+  one-task hand-off invariant in `Scheduler.zig`. `Streams.io` defaults to the existing
+  single-threaded backend and is passed into `Interpreter.run`, preserving callers while
+  removing every hard-coded global-Io lookup from `Interpreter.zig`. `clockNanoseconds` takes
+  the interpreter's `Io` explicitly. No source/API mismatch blocked this slice. An alternating
+  30-run ReleaseSafe startup comparison on Linux found no measurable cost: `print(1)` was
+  3.88 ms on main and 3.97 ms here; all five samples were between 98.5% and 102.2% of main.
 
 ### Slice 2: Tasks that return values
 

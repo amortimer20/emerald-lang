@@ -46,6 +46,7 @@ const Value = @import("Value.zig");
 const strings = @import("strings.zig");
 const unicode = @import("unicode.zig");
 const call_arguments = @import("arguments.zig");
+const Scheduler = @import("Scheduler.zig");
 
 const Interpreter = @This();
 
@@ -161,13 +162,14 @@ module_failed_diagnostics: []?Diagnostic = &.{},
 test_mode: bool = false,
 test_binding_states: std.StringHashMapUnmanaged(ModuleState) = .empty,
 test_binding_failures: std.StringHashMapUnmanaged(struct { value: Value, diagnostic: Diagnostic }) = .empty,
-/// Which file the statement being executed was written in. It decides what a
-/// bare module-level name means and which file a diagnostic points into.
-file: u32 = 0,
+/// State that moves with the task holding the scheduler baton.
+task: Scheduler.TaskState(TaskData),
 facts: Resolver.Facts = .{},
 out: *std.Io.Writer,
 /// Where `input` reads lines from.
 in: *std.Io.Reader,
+/// The execution's I/O backend, shared by every native call in this task.
+io: std.Io,
 /// The execution-owned Console styling policy.
 color: bool,
 /// The host environment is private runtime configuration. HTTP reads only
@@ -183,13 +185,6 @@ zone_cache: std.StringHashMapUnmanaged(TimeZone.Rules) = .empty,
 /// `Regex` built again, as in a loop, is compiled once. They live in `arena`;
 /// past `regex_cache_limit` patterns, each is compiled for one call instead.
 regex_cache: std.StringHashMapUnmanaged(Regex.Program) = .empty,
-failure: ?Diagnostic = null,
-/// The typed Emerald value traveling with `error.Raised`.
-raised_value: ?Value = null,
-/// The error currently handled by the innermost catch, for bare `raise`.
-caught_value: ?Value = null,
-caught_failure: ?Diagnostic = null,
-exit_code: ?u8 = null,
 /// Section 14.1's `Program.arguments`: the program's own CLI arguments,
 /// excluding the Emerald executable and entry-file paths. Empty outside the
 /// CLI's `run`/`test` commands.
@@ -281,21 +276,6 @@ literal_types: *const Checker.LiteralTypes,
 /// every new holder of a list retains it, and every holder that ends releases
 /// it.
 heap: Heap,
-call_stack: std.ArrayList(Diagnostic.Frame) = .empty,
-/// Fields of objects whose struct a changing method or setter has taken out
-/// while it runs, innermost last (4.3, 10.1).
-taken_fields: std.ArrayList(TakenField) = .empty,
-/// Set by a `return` for `callFunction` to collect. `return` unwinds through
-/// `execute` as `error.Returned`, and this carries its value, the way
-/// `failure` carries `error.Raised`'s.
-return_value: ?Value = null,
-
-stack: StackLimit,
-/// Null for ordinary Emerald execution. A bounded caller decrements this at
-/// every statement and expression, which covers each loop iteration as well
-/// as recursive computation without assigning a cost to language constructs.
-steps_remaining: ?usize = null,
-step_limit: usize = 0,
 
 pub fn run(
     gpa: std.mem.Allocator,
@@ -318,6 +298,7 @@ pub fn run(
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
+    io: std.Io,
     arguments: []const []const u8,
     color: bool,
     process_environment: std.process.Environ,
@@ -351,10 +332,11 @@ pub fn run(
         .module_states = states,
         .module_failed_values = module_failed_values,
         .module_failed_diagnostics = module_failed_diagnostics,
-        .file = entry,
+        .task = .{ .state = .{ .file = entry, .stack = stack, .steps_remaining = step_limit, .step_limit = step_limit orelse 0 } },
         .facts = facts,
         .out = out,
         .in = in,
+        .io = io,
         .color = color,
         .environment = process_environment,
         .local_zone = local_zone,
@@ -373,11 +355,11 @@ pub fn run(
         .trait_calls = trait_calls,
         .literal_types = literal_types,
         .heap = .init(gpa),
-        .stack = stack,
-        .steps_remaining = step_limit,
-        .step_limit = step_limit orelse 0,
         .test_mode = test_mode,
     };
+    var baton = Scheduler.Baton.init(&interpreter.task);
+    interpreter.task.save(&baton);
+    interpreter.task.load(&baton);
     // Whatever the counts did not reclaim, including lists still held by
     // module bindings and anything an error skipped releasing.
     defer interpreter.heap.deinit();
@@ -390,7 +372,7 @@ pub fn run(
     // in place before anything runs, so a call into another file never depends
     // on that file having been reached yet.
     for (programs, 0..) |program, index| {
-        interpreter.file = @intCast(index);
+        interpreter.task.state.file = @intCast(index);
         for (program.statements) |statement| {
             if (statement.data == .struct_declaration) {
                 const declaration = statement.data.struct_declaration;
@@ -402,7 +384,7 @@ pub fn run(
             try interpreter.functions.put(interpreter.arena, interpreter.keyOf(function.name), function);
         }
     }
-    interpreter.file = entry;
+    interpreter.task.state.file = entry;
     // Section 10.7: a class that extends another has its base classes' properties
     // and methods too, which are known once every class is hoisted.
     {
@@ -420,17 +402,17 @@ pub fn run(
 
     // Each block and call frees its own scope as it ends, including while an
     // error unwinds through it, so only the lists themselves are left.
-    defer interpreter.scopes.deinit(gpa);
-    defer interpreter.call_stack.deinit(gpa);
-    defer interpreter.taken_fields.deinit(gpa);
+    defer interpreter.task.state.scopes.deinit(gpa);
+    defer interpreter.task.state.call_stack.deinit(gpa);
+    defer interpreter.task.state.taken_fields.deinit(gpa);
     // A recycled environment is out of the heap's live list, so it is this
     // list's to free.
     defer {
-        for (interpreter.spare_scopes.items) |environment| {
+        for (interpreter.task.state.spare_scopes.items) |environment| {
             environment.bindings.deinit(gpa);
             gpa.destroy(environment);
         }
-        interpreter.spare_scopes.deinit(gpa);
+        interpreter.task.state.spare_scopes.deinit(gpa);
     }
 
     if (test_mode) {
@@ -442,20 +424,20 @@ pub fn run(
                 const function = statement.data.function_declaration;
                 if (function.test_span == null) continue;
                 count += 1;
-                interpreter.file = @intCast(file_index);
+                interpreter.task.state.file = @intCast(file_index);
                 const key = interpreter.keyOf(function.name);
                 const result = interpreter.invoke(function.name_span, interpreter.namedCallable(key), &.{}) catch |err| switch (err) {
                     error.Raised => {
-                        var diagnostic = interpreter.failure.?;
+                        var diagnostic = interpreter.task.state.failure.?;
                         diagnostic.message = try std.fmt.allocPrint(interpreter.arena, "test `{s}` failed: {s}", .{ function.name, diagnostic.message });
                         try failures.append(interpreter.arena, diagnostic);
-                        if (interpreter.raised_value) |value| interpreter.heap.release(value);
-                        interpreter.raised_value = null;
-                        interpreter.failure = null;
+                        if (interpreter.task.state.raised_value) |value| interpreter.heap.release(value);
+                        interpreter.task.state.raised_value = null;
+                        interpreter.task.state.failure = null;
                         continue;
                     },
-                    error.Exited => return .{ .arena_state = arena_state, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.exit_code },
-                    error.StepLimit => return .{ .arena_state = arena_state, .failure = interpreter.failure, .test_failures = failures.items, .test_count = count },
+                    error.Exited => return .{ .arena_state = arena_state, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.task.state.exit_code },
+                    error.StepLimit => return .{ .arena_state = arena_state, .failure = interpreter.task.state.failure, .test_failures = failures.items, .test_count = count },
                     error.Returned, error.Broke, error.Continued => unreachable,
                     else => |other| return other,
                 };
@@ -478,8 +460,8 @@ pub fn run(
         else => |other| return other,
     };
 
-    const failure = interpreter.failure;
-    return .{ .arena_state = arena_state, .failure = failure, .exit_code = interpreter.exit_code };
+    const failure = interpreter.task.state.failure;
+    return .{ .arena_state = arena_state, .failure = failure, .exit_code = interpreter.task.state.exit_code };
 }
 
 /// Completes a class's descriptor with what it inherits, its base classes'
@@ -603,12 +585,12 @@ fn abstractKey(self: *Interpreter, key: []const u8, name: []const u8) RunError!?
 /// point where the evaluator recurses.
 fn guardStack(self: *Interpreter, span: Source.Span) Error!void {
     const address = @frameAddress();
-    const base = self.stack.base;
+    const base = self.task.state.stack.base;
     const used = if (base > address) base - address else address - base;
-    if (used <= self.stack.budget) return;
+    if (used <= self.task.state.stack.budget) return;
 
-    const innermost = if (self.call_stack.items.len > 0)
-        self.call_stack.items[self.call_stack.items.len - 1].function
+    const innermost = if (self.task.state.call_stack.items.len > 0)
+        self.task.state.call_stack.items[self.task.state.call_stack.items.len - 1].function
     else
         return self.raise(
             span,
@@ -622,19 +604,19 @@ fn guardStack(self: *Interpreter, span: Source.Span) Error!void {
 /// deliberately not `raise`: user `catch` handles Emerald errors, whereas a
 /// host-imposed execution budget must always reach the host.
 fn guardStep(self: *Interpreter, span: Source.Span) Error!void {
-    if (self.steps_remaining) |*count| {
+    if (self.task.state.steps_remaining) |*count| {
         if (count.* > 0) {
             count.* -= 1;
             return;
         }
-        const trace = try self.arena.alloc(Diagnostic.Frame, self.call_stack.items.len);
-        for (trace, 0..) |*frame, index| frame.* = self.call_stack.items[self.call_stack.items.len - 1 - index];
-        self.failure = .{
-            .message = try std.fmt.allocPrint(self.arena, "this run exceeded its execution limit of {d} steps", .{self.step_limit}),
+        const trace = try self.arena.alloc(Diagnostic.Frame, self.task.state.call_stack.items.len);
+        for (trace, 0..) |*frame, index| frame.* = self.task.state.call_stack.items[self.task.state.call_stack.items.len - 1 - index];
+        self.task.state.failure = .{
+            .message = try std.fmt.allocPrint(self.arena, "this run exceeded its execution limit of {d} steps", .{self.task.state.step_limit}),
             .span = span,
             .help = try self.arena.dupe(u8, "The host stopped this bounded run before it could keep executing."),
             .trace = trace,
-            .file = self.file,
+            .file = self.task.state.file,
         };
         return error.StepLimit;
     }
@@ -643,7 +625,7 @@ fn guardStep(self: *Interpreter, span: Source.Span) Error!void {
 // Statements.
 
 fn executeAll(self: *Interpreter, statements: []const Ast.Statement) Error!void {
-    if (self.scopes.items.len > 0) try self.hoistNestedFunctions(statements);
+    if (self.task.state.scopes.items.len > 0) try self.hoistNestedFunctions(statements);
     for (statements) |statement| try self.execute(statement);
 }
 
@@ -654,10 +636,10 @@ fn hoistNestedFunctions(self: *Interpreter, statements: []const Ast.Statement) E
     for (statements) |statement| {
         if (statement.data != .function_declaration) continue;
         const function = statement.data.function_declaration;
-        const key = self.facts.nested_keys.get(.{ .file = self.file, .start = function.name_span.start }).?;
-        const captured = try self.gpa.dupe(*Environment, self.scopes.items);
-        const closure = try self.heap.createClosure(.{ .named = key }, captured, self.file);
-        const current = &self.scopes.items[self.scopes.items.len - 1].bindings;
+        const key = self.facts.nested_keys.get(.{ .file = self.task.state.file, .start = function.name_span.start }).?;
+        const captured = try self.gpa.dupe(*Environment, self.task.state.scopes.items);
+        const closure = try self.heap.createClosure(.{ .named = key }, captured, self.task.state.file);
+        const current = &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings;
         current.put(self.gpa, function.name, .{ .kind = .closure, .value = .{ .data = .{ .closure = closure } } }) catch |err| {
             self.heap.release(.{ .data = .{ .closure = closure } });
             return err;
@@ -693,10 +675,10 @@ fn unpackInto(self: *Interpreter, pattern: Ast.Pattern, value: Value, how: Unpac
                 slot.value = widened;
             },
             .declare, .bind_loop => {
-                const in_block = self.scopes.items.len > 0;
+                const in_block = self.task.state.scopes.items.len > 0;
                 const key = if (in_block) name.text else self.keyOf(name.text);
                 const current = if (in_block)
-                    &self.scopes.items[self.scopes.items.len - 1].bindings
+                    &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings
                 else
                     &self.module;
                 const held = Heap.retain(item);
@@ -721,12 +703,12 @@ fn executeBlock(self: *Interpreter, block: Ast.Block) Error!void {
 }
 
 fn pushScope(self: *Interpreter) Error!*Environment {
-    const environment = if (self.spare_scopes.pop()) |recycled| blk: {
+    const environment = if (self.task.state.spare_scopes.pop()) |recycled| blk: {
         self.heap.reuseEnvironment(recycled);
         break :blk recycled;
     } else try self.heap.createEnvironment();
 
-    self.scopes.append(self.gpa, environment) catch |err| {
+    self.task.state.scopes.append(self.gpa, environment) catch |err| {
         self.heap.releaseEnvironment(environment);
         return err;
     };
@@ -737,13 +719,13 @@ fn pushScope(self: *Interpreter) Error!*Environment {
 /// variables stay alive and keep changing with the closure; otherwise the table
 /// is kept, emptied, for the next block.
 fn popScope(self: *Interpreter) void {
-    const environment = self.scopes.pop().?;
+    const environment = self.task.state.scopes.pop().?;
     if (environment.references > 1) {
         environment.references -= 1;
         return;
     }
     self.heap.recycleEnvironment(environment);
-    self.spare_scopes.append(self.gpa, environment) catch {
+    self.task.state.spare_scopes.append(self.gpa, environment) catch {
         environment.bindings.deinit(self.gpa);
         self.gpa.destroy(environment);
     };
@@ -771,8 +753,8 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
             else
                 .nothing;
 
-            const in_block = self.scopes.items.len > 0;
-            const current = if (in_block) &self.scopes.items[self.scopes.items.len - 1].bindings else &self.module;
+            const in_block = self.task.state.scopes.items.len > 0;
+            const current = if (in_block) &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings else &self.module;
             const name = if (in_block) declaration.name else self.keyOf(declaration.name);
             try current.put(if (in_block) self.gpa else self.arena, name, .{
                 .kind = kind,
@@ -798,7 +780,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
             // Section 10.4's `Player.count += 1`: `Player` and its first step
             // are one binding, found as `Player.count` (see the resolver).
             var assignment = written;
-            if (self.facts.type_assignments.get(.{ .file = self.file, .start = written.name_span.start })) |name| {
+            if (self.facts.type_assignments.get(.{ .file = self.task.state.file, .start = written.name_span.start })) |name| {
                 const first = written.steps[0].field;
                 assignment.name = name;
                 assignment.name_span = .{ .start = written.name_span.start, .end = first.span.end };
@@ -850,7 +832,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
         .struct_declaration => {},
 
         .return_statement => |return_statement| {
-            self.return_value = if (return_statement.value) |value|
+            self.task.state.return_value = if (return_statement.value) |value|
                 try self.evaluate(value)
             else
                 Value.nothing;
@@ -859,14 +841,14 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
         .raise_statement => |raised| {
             if (raised.value) |expression| {
                 const value = try self.evaluate(expression);
-                self.raised_value = value;
+                self.task.state.raised_value = value;
                 const object = value.data.struct_value;
                 const position = fieldPosition(object, "message").?;
                 const message = object.fields[position].data.string.bytes;
                 return self.raiseTyped(raised.keyword_span, value.typeName(), message, "Handle this error with `try` and `catch`, or correct the condition that raised it.");
             }
-            self.raised_value = if (self.caught_value) |value| Heap.retain(value) else unreachable;
-            self.failure = self.caught_failure;
+            self.task.state.raised_value = if (self.task.state.caught_value) |value| Heap.retain(value) else unreachable;
+            self.task.state.failure = self.task.state.caught_failure;
             return error.Raised;
         },
         .assert_statement => |assertion| {
@@ -904,9 +886,9 @@ fn executeAssert(self: *Interpreter, assertion: Ast.Assert) Error!void {
         if (actual_help) |actual| try std.fmt.allocPrint(self.arena, "{s} {s}", .{ written, actual }) else written
     else
         actual_help orelse "The condition was false.";
-    const expression = self.files[self.file].source.text[assertion.condition.span.start..assertion.condition.span.end];
+    const expression = self.files[self.task.state.file].source.text[assertion.condition.span.start..assertion.condition.span.end];
     const message = try std.fmt.allocPrint(self.arena, "assertion failed: `{s}`", .{expression});
-    self.raised_value = try self.makeError(Resolver.preludeKey("AssertionError"), user_help orelse message);
+    self.task.state.raised_value = try self.makeError(Resolver.preludeKey("AssertionError"), user_help orelse message);
     return self.raiseTyped(assertion.condition.span, "AssertionError", message, help);
 }
 
@@ -924,19 +906,19 @@ fn executeTry(self: *Interpreter, protected: Ast.Try) Error!void {
 
     const body_raised = if (pending) |err| err == error.Raised else false;
     if (body_raised) {
-        const raised = self.raised_value.?;
-        const original = self.failure.?;
-        self.raised_value = null;
-        self.failure = null;
+        const raised = self.task.state.raised_value.?;
+        const original = self.task.state.failure.?;
+        self.task.state.raised_value = null;
+        self.task.state.failure = null;
         var handled = false;
         for (protected.catches) |caught| {
             const key = if (caught.annotation) |annotation| try self.typeKeyOf(annotation.name) else Resolver.preludeKey("Error");
             if (!raised.data.struct_value.descriptor.isOrExtends(key)) continue;
             handled = true;
-            const previous_value = self.caught_value;
-            const previous_failure = self.caught_failure;
-            self.caught_value = raised;
-            self.caught_failure = original;
+            const previous_value = self.task.state.caught_value;
+            const previous_failure = self.task.state.caught_failure;
+            self.task.state.caught_value = raised;
+            self.task.state.caught_failure = original;
             const environment = try self.pushScope();
             environment.bindings.put(self.gpa, caught.name, .{ .kind = .struct_value, .value = Heap.retain(raised) }) catch |err| {
                 self.popScope();
@@ -947,25 +929,25 @@ fn executeTry(self: *Interpreter, protected: Ast.Try) Error!void {
                 pending = err;
             };
             self.popScope();
-            self.caught_value = previous_value;
-            self.caught_failure = previous_failure;
+            self.task.state.caught_value = previous_value;
+            self.task.state.caught_failure = previous_failure;
             break;
         }
         if (!handled) {
-            self.raised_value = raised;
-            self.failure = original;
+            self.task.state.raised_value = raised;
+            self.task.state.failure = original;
         } else self.heap.release(raised);
     }
 
     if (protected.finally_block) |cleanup| {
         const propagating_raised = if (pending) |previous| previous == error.Raised else false;
-        const propagating_value = if (propagating_raised) self.raised_value else null;
-        const propagating_failure = if (propagating_raised) self.failure else null;
+        const propagating_value = if (propagating_raised) self.task.state.raised_value else null;
+        const propagating_failure = if (propagating_raised) self.task.state.failure else null;
         if (propagating_raised) {
             // Keep the original failure aside so cleanup can raise and handle
             // its own errors without overwriting or leaking the first value.
-            self.raised_value = null;
-            self.failure = null;
+            self.task.state.raised_value = null;
+            self.task.state.failure = null;
         }
         var cleanup_error: ?Error = null;
         self.executeBlock(cleanup) catch |err| {
@@ -974,21 +956,21 @@ fn executeTry(self: *Interpreter, protected: Ast.Try) Error!void {
         if (cleanup_error) |err| {
             if (propagating_value) |value| self.heap.release(value);
             if (pending) |previous| if (previous == error.Returned) {
-                if (self.return_value) |value| self.heap.release(value);
-                self.return_value = null;
+                if (self.task.state.return_value) |value| self.heap.release(value);
+                self.task.state.return_value = null;
             };
             if (propagating_raised and err == error.Raised) {
                 if (propagating_failure) |earlier| {
                     const saved = try self.arena.create(Diagnostic);
                     saved.* = earlier;
-                    self.failure.?.related = saved;
+                    self.task.state.failure.?.related = saved;
                 }
             }
             return err;
         }
         if (propagating_raised) {
-            self.raised_value = propagating_value;
-            self.failure = propagating_failure;
+            self.task.state.raised_value = propagating_value;
+            self.task.state.failure = propagating_failure;
         }
     }
     if (pending) |err| return err;
@@ -1110,10 +1092,28 @@ const TakenField = struct {
     change: Heap.Binding.Change,
 };
 
+/// State that belongs to the task currently holding the scheduler baton.
+const TaskData = struct {
+    file: u32 = 0,
+    scopes: std.ArrayList(*Environment) = .empty,
+    spare_scopes: std.ArrayList(*Environment) = .empty,
+    call_stack: std.ArrayList(Diagnostic.Frame) = .empty,
+    taken_fields: std.ArrayList(TakenField) = .empty,
+    return_value: ?Value = null,
+    raised_value: ?Value = null,
+    caught_value: ?Value = null,
+    caught_failure: ?Diagnostic = null,
+    failure: ?Diagnostic = null,
+    exit_code: ?u8 = null,
+    stack: StackLimit = .{ .base = 0, .budget = 0 },
+    steps_remaining: ?usize = null,
+    step_limit: usize = 0,
+};
+
 /// Raises when the object field is taken by a running call.
 fn requireFieldFree(self: *Interpreter, span: Source.Span, instance: *const Heap.StructValue, position: usize) Error!void {
-    if (self.taken_fields.items.len == 0 or !instance.descriptor.class) return;
-    for (self.taken_fields.items) |taken| {
+    if (self.task.state.taken_fields.items.len == 0 or !instance.descriptor.class) return;
+    for (self.task.state.taken_fields.items) |taken| {
         if (taken.object == instance and taken.position == position) {
             return self.raiseChanging(span, instance.descriptor.fields[position].name, taken.change);
         }
@@ -1142,8 +1142,8 @@ fn changeInObject(
     var root = object.fields[position];
     object.fields[position] = Value.nothing;
     defer object.fields[position] = root;
-    try self.taken_fields.append(self.gpa, .{ .object = object, .position = position, .change = change });
-    defer _ = self.taken_fields.pop();
+    try self.task.state.taken_fields.append(self.gpa, .{ .object = object, .position = position, .change = change });
+    defer _ = self.task.state.taken_fields.pop();
 
     if (rest.len == 1) {
         callable.self_value = root;
@@ -1785,23 +1785,23 @@ fn kindOf(checked: Type) Value.Kind {
 /// The one name the whole program knows a module-level declaration by, as the
 /// resolver worked it out for the file being executed. A local is its own key.
 fn keyOf(self: *Interpreter, name: []const u8) []const u8 {
-    return self.facts.keyFor(self.file, name) orelse name;
+    return self.facts.keyFor(self.task.state.file, name) orelse name;
 }
 
 /// Resolves the same namespace alias at the front of a written type that the
 /// checker resolved, such as `using E = Errors` followed by `catch e: E.Bad`.
 fn typeKeyOf(self: *Interpreter, name: []const u8) RunError![]const u8 {
-    if (self.facts.keyFor(self.file, name)) |key| return key;
+    if (self.facts.keyFor(self.task.state.file, name)) |key| return key;
     const dot = std.mem.indexOfScalar(u8, name, '.') orelse return name;
-    const namespace = self.facts.namespaceAliasFor(self.file, name[0..dot]) orelse return name;
+    const namespace = self.facts.namespaceAliasFor(self.task.state.file, name[0..dot]) orelse return name;
     return std.fmt.allocPrint(self.arena, "{s}{s}", .{ namespace, name[dot..] });
 }
 
 fn find(self: *Interpreter, name: []const u8) ?*Binding {
-    var index = self.scopes.items.len;
+    var index = self.task.state.scopes.items.len;
     while (index > 0) {
         index -= 1;
-        if (self.scopes.items[index].bindings.getPtr(name)) |slot| return slot;
+        if (self.task.state.scopes.items[index].bindings.getPtr(name)) |slot| return slot;
     }
     return self.module.getPtr(self.keyOf(name));
 }
@@ -1851,8 +1851,8 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
         },
         .failed => {
             if (setup.failed_value) |value| {
-                self.raised_value = Heap.retain(value);
-                self.failure = setup.failed_diagnostic;
+                self.task.state.raised_value = Heap.retain(value);
+                self.task.state.failure = setup.failed_diagnostic;
                 return error.Raised;
             }
             return self.raiseFmt(span, "`{s}` could not be set up", .{setup.display_name}, "An earlier error stopped it. Fix that first.");
@@ -1863,27 +1863,27 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
     errdefer |setup_error| {
         setup.state = .failed;
         if (setup_error == error.Raised) {
-            setup.failed_value = if (self.raised_value) |value| Heap.retain(value) else null;
-            setup.failed_diagnostic = self.failure;
+            setup.failed_value = if (self.task.state.raised_value) |value| Heap.retain(value) else null;
+            setup.failed_diagnostic = self.task.state.failure;
         }
     }
-    try self.call_stack.append(self.gpa, .{
+    try self.task.state.call_stack.append(self.gpa, .{
         .function = setup.frame_name,
         .call_span = span,
-        .file = self.file,
+        .file = self.task.state.file,
         .named = false,
     });
-    defer _ = self.call_stack.pop();
+    defer _ = self.task.state.call_stack.pop();
     const owner = self.facts.owner.get(type_key).?;
-    const outer_file = self.file;
-    const outer_scopes = self.scopes;
-    self.file = owner;
-    self.scopes = .empty;
+    const outer_file = self.task.state.file;
+    const outer_scopes = self.task.state.scopes;
+    self.task.state.file = owner;
+    self.task.state.scopes = .empty;
     defer {
-        while (self.scopes.items.len > 0) self.popScope();
-        self.scopes.deinit(self.gpa);
-        self.scopes = outer_scopes;
-        self.file = outer_file;
+        while (self.task.state.scopes.items.len > 0) self.popScope();
+        self.task.state.scopes.deinit(self.gpa);
+        self.task.state.scopes = outer_scopes;
+        self.task.state.file = outer_file;
     }
 
     for (setup.fields) |field| {
@@ -1909,8 +1909,8 @@ fn reachFile(self: *Interpreter, key: []const u8, span: Source.Span) Error!void 
         .pending => return self.initializeModule(owner) catch |err| {
             self.module_states[owner] = .failed;
             if (err == error.Raised) {
-                self.module_failed_values[owner] = if (self.raised_value) |value| Heap.retain(value) else null;
-                self.module_failed_diagnostics[owner] = self.failure;
+                self.module_failed_values[owner] = if (self.task.state.raised_value) |value| Heap.retain(value) else null;
+                self.module_failed_diagnostics[owner] = self.task.state.failure;
             }
             return err;
         },
@@ -1936,8 +1936,8 @@ fn reachFile(self: *Interpreter, key: []const u8, span: Source.Span) Error!void 
         // same value and source diagnostic on every later access.
         .failed => {
             if (self.module_failed_values[owner]) |value| {
-                self.raised_value = Heap.retain(value);
-                self.failure = self.module_failed_diagnostics[owner];
+                self.task.state.raised_value = Heap.retain(value);
+                self.task.state.failure = self.module_failed_diagnostics[owner];
                 return error.Raised;
             }
             return self.raiseFmt(span, "`{s}` could not be set up", .{self.files[owner].source.path}, "An earlier error stopped it. Fix that first.");
@@ -1954,22 +1954,22 @@ fn initializeTestBinding(self: *Interpreter, file: u32, key: []const u8, span: S
         .running => return self.raiseFmt(span, "`{s}` is still being initialized", .{key}, "Two entry-file values are waiting on each other. Move one computation into a function to break the cycle."),
         .failed => {
             const failed = self.test_binding_failures.get(key).?;
-            self.raised_value = Heap.retain(failed.value);
-            self.failure = failed.diagnostic;
+            self.task.state.raised_value = Heap.retain(failed.value);
+            self.task.state.failure = failed.diagnostic;
             return error.Raised;
         },
         .pending => {},
     }
 
-    const outer_file = self.file;
-    const outer_scopes = self.scopes;
-    self.file = file;
-    self.scopes = .empty;
+    const outer_file = self.task.state.file;
+    const outer_scopes = self.task.state.scopes;
+    self.task.state.file = file;
+    self.task.state.scopes = .empty;
     defer {
-        while (self.scopes.items.len > 0) self.popScope();
-        self.scopes.deinit(self.gpa);
-        self.scopes = outer_scopes;
-        self.file = outer_file;
+        while (self.task.state.scopes.items.len > 0) self.popScope();
+        self.task.state.scopes.deinit(self.gpa);
+        self.task.state.scopes = outer_scopes;
+        self.task.state.file = outer_file;
     }
     for (self.programs[file].statements) |statement| {
         if (!self.statementDeclaresKey(statement, key)) continue;
@@ -1977,7 +1977,7 @@ fn initializeTestBinding(self: *Interpreter, file: u32, key: []const u8, span: S
         // begin, finish, or fail together, just as they do in ordinary mode.
         try self.markTestBindingStates(statement, file, .running);
         self.execute(statement) catch |err| {
-            if (err == error.Raised) try self.markTestBindingsFailed(statement, file, self.raised_value.?, self.failure.?);
+            if (err == error.Raised) try self.markTestBindingsFailed(statement, file, self.task.state.raised_value.?, self.task.state.failure.?);
             return err;
         };
         try self.markTestBindingStates(statement, file, .done);
@@ -1987,9 +1987,9 @@ fn initializeTestBinding(self: *Interpreter, file: u32, key: []const u8, span: S
 
 fn statementDeclaresKey(self: *Interpreter, statement: Ast.Statement, key: []const u8) bool {
     return switch (statement.data) {
-        .declaration => |declaration| std.mem.eql(u8, self.facts.keyFor(self.file, declaration.name) orelse declaration.name, key),
+        .declaration => |declaration| std.mem.eql(u8, self.facts.keyFor(self.task.state.file, declaration.name) orelse declaration.name, key),
         .destructuring => |destructuring| blk: {
-            for (destructuring.pattern.names) |name| if (std.mem.eql(u8, self.facts.keyFor(self.file, name.text) orelse name.text, key)) break :blk true;
+            for (destructuring.pattern.names) |name| if (std.mem.eql(u8, self.facts.keyFor(self.task.state.file, name.text) orelse name.text, key)) break :blk true;
             break :blk false;
         },
         else => false,
@@ -2024,15 +2024,15 @@ fn initializeModule(self: *Interpreter, file: u32) Error!void {
 
     // Its declarations run against the module scope alone, in the file they
     // were written in, whatever was executing when they were reached.
-    const outer_file = self.file;
-    const outer_scopes = self.scopes;
-    self.file = file;
-    self.scopes = .empty;
+    const outer_file = self.task.state.file;
+    const outer_scopes = self.task.state.scopes;
+    self.task.state.file = file;
+    self.task.state.scopes = .empty;
     defer {
-        while (self.scopes.items.len > 0) self.popScope();
-        self.scopes.deinit(self.gpa);
-        self.scopes = outer_scopes;
-        self.file = outer_file;
+        while (self.task.state.scopes.items.len > 0) self.popScope();
+        self.task.state.scopes.deinit(self.gpa);
+        self.task.state.scopes = outer_scopes;
+        self.task.state.file = outer_file;
     }
 
     // Declaration order, which is the order section 14.1 gives them.
@@ -2150,11 +2150,11 @@ fn evaluateEnumValue(self: *Interpreter, expression: *const Ast.Expression) Erro
 /// they hold, so a closure and the block around it keep sharing every variable.
 /// The module is not captured because it is visible from everywhere anyway.
 fn evaluateLambda(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
-    const captured = try self.gpa.dupe(*Environment, self.scopes.items);
+    const captured = try self.gpa.dupe(*Environment, self.task.state.scopes.items);
     // A block can be passed to another file and called there, so it remembers
     // where it was written: that is what its bare module-level names mean.
     return .{ .data = .{
-        .closure = try self.heap.createClosure(.{ .lambda = expression }, captured, self.file),
+        .closure = try self.heap.createClosure(.{ .lambda = expression }, captured, self.task.state.file),
     } };
 }
 
@@ -2188,7 +2188,7 @@ fn evaluateName(
 /// function's body can only see the module, which is always visible.
 fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
     const captured = try self.gpa.alloc(*Environment, 0);
-    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = name }, captured, self.file) } };
+    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = name }, captured, self.task.state.file) } };
 }
 
 /// Section 7.5's captured method: a closure holding its own copy of the
@@ -2203,7 +2203,7 @@ fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: [
         self.heap.release(receiver);
         return err;
     };
-    const closure = self.heap.createClosure(.{ .method = version }, captured, self.file) catch |err| {
+    const closure = self.heap.createClosure(.{ .method = version }, captured, self.task.state.file) catch |err| {
         self.heap.release(receiver);
         return err;
     };
@@ -2808,7 +2808,7 @@ fn evaluateBinary(
 }
 
 fn operatorAssignment(self: *Interpreter, assignment: Ast.Assignment) ?[]const u8 {
-    return self.operator_assignments.get(.{ .file = self.file, .target_span = assignment.target_span });
+    return self.operator_assignments.get(.{ .file = self.task.state.file, .target_span = assignment.target_span });
 }
 
 /// Shared by binary expressions and compound assignment, which section 5.3
@@ -3012,8 +3012,8 @@ fn evaluateCall(
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::table")) {
             if (self.json_encodes.get(call.callee)) |record_type| return self.callConsoleStructTable(expression.span, call, record_type);
         }
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(.real));
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(.awake));
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(self.io, .real));
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(self.io, .awake));
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.local_zone.name);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_known?")) return self.callZoneKnown(call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_offset_seconds")) return self.callZoneOffset(call);
@@ -3163,7 +3163,7 @@ fn callBuiltin(self: *Interpreter, expression: *const Ast.Expression, call: Ast.
     if (std.mem.eql(u8, name, "exit")) {
         const code: i64 = if (call.arguments.len == 0) 0 else (try self.evaluate(call.arguments[0])).data.int;
         if (code < 0 or code > 255) return self.raiseFmt(expression.span, "`exit` cannot use status {d}", .{code}, "Pass a whole number from 0 through 255.");
-        self.exit_code = @intCast(code);
+        self.task.state.exit_code = @intCast(code);
         return error.Exited;
     }
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
@@ -3210,7 +3210,7 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         for (values) |value| self.heap.release(value);
         self.gpa.free(values);
     }
-    const io = std.Io.Threaded.global_single_threaded.io();
+    const io = self.io;
     const cwd = std.Io.Dir.cwd();
     const suffix = key[(Resolver.prelude_namespace ++ ".").len..];
     if (std.mem.eql(u8, suffix, "Bytes::from_list")) {
@@ -3527,7 +3527,7 @@ fn closeFileHandle(self: *Interpreter, id: i64) void {
 }
 
 fn destroyFileHandle(self: *Interpreter, state: *FileHandleState) void {
-    state.file.close(std.Io.Threaded.global_single_threaded.io());
+    state.file.close(self.io);
     self.gpa.free(state.path);
     self.gpa.destroy(state);
 }
@@ -3544,7 +3544,7 @@ fn closeFileWriter(self: *Interpreter, id: i64) void {
 }
 
 fn destroyFileWriter(self: *Interpreter, state: *FileWriterState) void {
-    state.file.close(std.Io.Threaded.global_single_threaded.io());
+    state.file.close(self.io);
     self.gpa.free(state.path);
     self.gpa.destroy(state);
 }
@@ -3600,7 +3600,7 @@ fn raiseFile(self: *Interpreter, span: Source.Span, verb: []const u8) Error {
 }
 
 fn raiseFileMessage(self: *Interpreter, span: Source.Span, message: []const u8) Error {
-    self.raised_value = self.makeError(Resolver.preludeKey("FileError"), message) catch return error.OutOfMemory;
+    self.task.state.raised_value = self.makeError(Resolver.preludeKey("FileError"), message) catch return error.OutOfMemory;
     return self.raiseTyped(span, "FileError", message, "Check that the path exists and that this program may access it.");
 }
 
@@ -3678,7 +3678,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
                 const mode = if (url_safe) "standard" else "URL-safe";
                 const help = if (url_safe) "Decode it without `url_safe: true`." else "Decode it with `url_safe: true`.";
                 const message = try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which belongs to {s} Base64", .{ character, index, mode });
-                self.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
+                self.task.state.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
                 return self.raiseTyped(span, "EncodingError", message, help);
             }
             return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which is not a Base64 character", .{ character, index }));
@@ -3735,7 +3735,7 @@ fn base64Index(alphabet: [64]u8, character: u8) ?u8 {
 }
 
 fn raiseEncodingMessage(self: *Interpreter, span: Source.Span, message: []const u8) Error {
-    self.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
+    self.task.state.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
     return self.raiseTyped(span, "EncodingError", message, "Check that this text uses the expected encoding.");
 }
 
@@ -4325,7 +4325,7 @@ fn raiseCsvSeparator(self: *Interpreter, span: Source.Span, separator: []const u
 }
 
 fn raiseCsv(self: *Interpreter, span: Source.Span, message: []const u8, line: ?u32) Error {
-    self.raised_value = self.makeCsvError(message, line) catch return error.OutOfMemory;
+    self.task.state.raised_value = self.makeCsvError(message, line) catch return error.OutOfMemory;
     return self.raiseTyped(span, "CsvError", message, "Correct the CSV text or use a one-character separator.");
 }
 
@@ -4405,7 +4405,7 @@ fn callHttp(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.E
                 error.OutOfMemory => return error.OutOfMemory,
                 error.InvalidJson => {
                     const message = try std.fmt.allocPrint(self.arena, "the response from `{s}` is not JSON: line {d}, column {d}: {s}", .{ url, problem.line, problem.column, problem.message() });
-                    self.raised_value = try self.makeError(Resolver.preludeKey("JsonError"), message);
+                    self.task.state.raised_value = try self.makeError(Resolver.preludeKey("JsonError"), message);
                     return self.raiseTyped(span, "JsonError", message, "Read the response as `.text` or check the server's JSON.");
                 },
             };
@@ -4666,7 +4666,7 @@ fn raiseHttpProblem(self: *Interpreter, span: Source.Span, url: []const u8, prob
 }
 
 fn raiseHttp(self: *Interpreter, span: Source.Span, message: []const u8, status: ?u16, help: []const u8) Error {
-    self.raised_value = self.makeHttpError(message, status) catch return error.OutOfMemory;
+    self.task.state.raised_value = self.makeHttpError(message, status) catch return error.OutOfMemory;
     return self.raiseTyped(span, "HttpError", message, help);
 }
 
@@ -5024,7 +5024,7 @@ fn raiseJsonDecodeMessage(self: *Interpreter, span: Source.Span, path: []const u
     defer self.gpa.free(detail);
     const message = std.fmt.allocPrint(self.gpa, "at {s}: {s}", .{ if (path.len == 0) "the document" else path, detail }) catch return error.OutOfMemory;
     defer self.gpa.free(message);
-    self.raised_value = self.makeError(Resolver.preludeKey("JsonError"), message) catch return error.OutOfMemory;
+    self.task.state.raised_value = self.makeError(Resolver.preludeKey("JsonError"), message) catch return error.OutOfMemory;
     return self.raiseTyped(span, "JsonError", message, "Correct the JSON value or decode it as a type that matches its shape.");
 }
 
@@ -5111,7 +5111,7 @@ fn jsonTextualType(key: []const u8) bool {
 }
 
 fn raiseJson(self: *Interpreter, span: Source.Span, message: []const u8) Error {
-    self.raised_value = self.makeError(Resolver.preludeKey("JsonError"), message) catch return error.OutOfMemory;
+    self.task.state.raised_value = self.makeError(Resolver.preludeKey("JsonError"), message) catch return error.OutOfMemory;
     return self.raiseTyped(span, "JsonError", message, "JSON cannot represent NaN or infinity.");
 }
 
@@ -5405,8 +5405,7 @@ fn regexEscape(self: *Interpreter, bytes: []const u8) Error!Value {
 
 /// A clock reading in nanoseconds: since 1970 for `.real`, which fits `Int`
 /// until 2262, and since some unspecified start for the monotonic `.awake`.
-fn clockNanoseconds(clock: std.Io.Clock) i64 {
-    const io = std.Io.Threaded.global_single_threaded.io();
+fn clockNanoseconds(io: std.Io, clock: std.Io.Clock) i64 {
     return @intCast(clock.now(io).toNanoseconds());
 }
 
@@ -5419,12 +5418,12 @@ fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) E
     const seconds = object.fields[fieldPosition(object, "_seconds").?].data.int;
     const nanoseconds = object.fields[fieldPosition(object, "_nanoseconds").?].data.int;
     if (seconds < 0) {
-        self.raised_value = try self.makeError(Resolver.preludeKey("DateTimeError"), "`Program.sleep` cannot pause for a negative Duration");
+        self.task.state.raised_value = try self.makeError(Resolver.preludeKey("DateTimeError"), "`Program.sleep` cannot pause for a negative Duration");
         return self.raiseTyped(span, "DateTimeError", "`Program.sleep` cannot pause for a negative Duration", "Pass a Duration of zero or more.");
     }
     // At least the whole Duration on the monotonic clock `Stopwatch` reads:
     // a Windows timer can wake a little early, so any remainder is slept too.
-    const io = std.Io.Threaded.global_single_threaded.io();
+    const io = self.io;
     const total = @as(i96, seconds) * std.time.ns_per_s + nanoseconds;
     const deadline = std.Io.Clock.awake.now(io).toNanoseconds() + total;
     while (true) {
@@ -5508,7 +5507,7 @@ fn constructStruct(
     const result = self.invoke(call_span, .{
         .name = constructor.frame_name,
         .named = false,
-        .file = self.facts.owner.get(key) orelse self.file,
+        .file = self.facts.owner.get(key) orelse self.task.state.file,
         .signature = self.signatures.get(key).?,
         .body = .{ .statements = constructor.declaration.body.statements },
         .captured = &.{},
@@ -5581,7 +5580,7 @@ fn buildPart(
         const result = self.invoke(call_span, .{
             .name = constructor.frame_name,
             .named = false,
-            .file = self.facts.owner.get(key) orelse self.file,
+            .file = self.facts.owner.get(key) orelse self.task.state.file,
             .signature = self.signatures.get(key).?,
             .body = .{ .statements = constructor.declaration.body.statements },
             .captured = &.{},
@@ -5739,12 +5738,12 @@ fn runFieldDefaults(
 ) Error!Value {
     self.requireChecked(key);
     const info = self.struct_infos.get(key).?;
-    const outer_scopes = self.scopes;
-    self.scopes = .empty;
+    const outer_scopes = self.task.state.scopes;
+    self.task.state.scopes = .empty;
     defer {
-        while (self.scopes.items.len > 0) self.popScope();
-        self.scopes.deinit(self.gpa);
-        self.scopes = outer_scopes;
+        while (self.task.state.scopes.items.len > 0) self.popScope();
+        self.task.state.scopes.deinit(self.gpa);
+        self.task.state.scopes = outer_scopes;
     }
     const frame = self.pushScope() catch |err| {
         self.heap.release(instance);
@@ -5755,16 +5754,16 @@ fn runFieldDefaults(
         return err;
     };
 
-    try self.call_stack.append(self.gpa, .{
+    try self.task.state.call_stack.append(self.gpa, .{
         .function = info.defaults_frame,
         .call_span = call_span,
-        .file = self.file,
+        .file = self.task.state.file,
         .named = false,
     });
-    defer _ = self.call_stack.pop();
-    const outer_file = self.file;
-    self.file = self.facts.owner.get(key) orelse self.file;
-    defer self.file = outer_file;
+    defer _ = self.task.state.call_stack.pop();
+    const outer_file = self.task.state.file;
+    self.task.state.file = self.facts.owner.get(key) orelse self.task.state.file;
+    defer self.task.state.file = outer_file;
 
     for (info.declaration.fields, which, 0..) |field, runs, position| {
         if (!runs) continue;
@@ -5885,7 +5884,7 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
         // Section 15.2: `input_maybe` reports the end of the input as absence,
         // which is how a program reads until there is nothing left.
         if (maybe) return Value.nothing;
-        self.raised_value = try self.makeError(Resolver.preludeKey("InputError"), "`input` reached the end of the input");
+        self.task.state.raised_value = try self.makeError(Resolver.preludeKey("InputError"), "`input` reached the end of the input");
         return self.raiseTyped(
             span,
             "InputError",
@@ -5896,7 +5895,7 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
 
     const bytes = std.mem.trimEnd(u8, line.written(), "\r");
     if (!std.unicode.utf8ValidateSlice(bytes)) {
-        self.raised_value = try self.makeError(Resolver.preludeKey("InputError"), "the line read by `input` is not valid UTF-8 text");
+        self.task.state.raised_value = try self.makeError(Resolver.preludeKey("InputError"), "the line read by `input` is not valid UTF-8 text");
         return self.raiseTyped(
             span,
             "InputError",
@@ -6056,19 +6055,19 @@ fn namedCallable(self: *Interpreter, key: []const u8) Callable {
     if (self.overrides.get(key)) |original| {
         return .{
             .name = declaration.name,
-            .file = self.facts.owner.get(key) orelse self.file,
+            .file = self.facts.owner.get(key) orelse self.task.state.file,
             .signature = self.signatures.get(key).?,
             .body = .{ .statements = declaration.body.statements },
             .captured = &.{},
             .written = self.functions.get(original).?.parameters,
-            .defaults_file = self.facts.owner.get(original) orelse self.file,
+            .defaults_file = self.facts.owner.get(original) orelse self.task.state.file,
         };
     }
     return .{
         // The name as it was written, not the key: a stack trace should read
         // the way the file reads.
         .name = declaration.name,
-        .file = self.facts.owner.get(key) orelse self.file,
+        .file = self.facts.owner.get(key) orelse self.task.state.file,
         .signature = self.signatures.get(key).?,
         .body = .{ .statements = declaration.body.statements },
         .captured = &.{},
@@ -6183,7 +6182,7 @@ fn invoke(
     callable: Callable,
     arguments: []const Value,
 ) Error!Value {
-    if (self.call_stack.items.len >= max_call_depth) {
+    if (self.task.state.call_stack.items.len >= max_call_depth) {
         for (arguments) |argument| self.heap.release(argument);
         if (callable.self_value) |instance| {
             if (callable.self_out) |out| out.* = instance else self.heap.release(instance);
@@ -6194,14 +6193,14 @@ fn invoke(
     // The callee's own block scopes push onto and pop off this list, so by the
     // time it is restored only what it started with is left. The captured
     // scopes are held by the closure, not by this list, so they are left alone.
-    const outer_scopes = self.scopes;
-    self.scopes = .empty;
+    const outer_scopes = self.task.state.scopes;
+    self.task.state.scopes = .empty;
     defer {
-        while (self.scopes.items.len > callable.captured.len) self.popScope();
-        self.scopes.deinit(self.gpa);
-        self.scopes = outer_scopes;
+        while (self.task.state.scopes.items.len > callable.captured.len) self.popScope();
+        self.task.state.scopes.deinit(self.gpa);
+        self.task.state.scopes = outer_scopes;
     }
-    try self.scopes.appendSlice(self.gpa, callable.captured);
+    try self.task.state.scopes.appendSlice(self.gpa, callable.captured);
 
     const frame = try self.pushScope();
     if (callable.self_value) |instance| {
@@ -6245,25 +6244,25 @@ fn invoke(
         }
     };
 
-    try self.call_stack.append(self.gpa, .{
+    try self.task.state.call_stack.append(self.gpa, .{
         .function = callable.name,
         .call_span = call_span,
         // The call is in the caller's file; the body that follows is not.
-        .file = self.file,
+        .file = self.task.state.file,
         .named = callable.named,
     });
-    defer _ = self.call_stack.pop();
+    defer _ = self.task.state.call_stack.pop();
 
-    const outer_file = self.file;
-    self.file = callable.file;
-    defer self.file = outer_file;
+    const outer_file = self.task.state.file;
+    self.task.state.file = callable.file;
+    defer self.task.state.file = outer_file;
 
     // Section 7.3: "Explicit arguments evaluate left to right as written,
     // followed by omitted defaults in parameter order." A default sees the
     // parameters before it, which are already bound.
     if (callable.omitted) |omitted| {
-        if (callable.defaults_file) |file| self.file = file;
-        defer self.file = callable.file;
+        if (callable.defaults_file) |file| self.task.state.file = file;
+        defer self.task.state.file = callable.file;
         for (omitted, callable.written, callable.signature.parameters) |left, parameter, parameter_type| {
             if (!left) continue;
             const kind = kindOf(parameter_type);
@@ -6285,8 +6284,8 @@ fn invoke(
                 error.Returned => {},
                 else => return err,
             };
-            const returned = self.return_value orelse Value.nothing;
-            self.return_value = null;
+            const returned = self.task.state.return_value orelse Value.nothing;
+            self.task.state.return_value = null;
             // `self` as the body left it, which may no longer be the instance
             // it started with if copy-on-write replaced it. The frame's
             // binding still holds its own count, released when the frame ends.
@@ -8008,15 +8007,15 @@ fn takeReceiver(
     caller_scopes: std.ArrayList(*Environment),
     caller_file: u32,
 ) Error!void {
-    const callee_scopes = self.scopes;
-    const callee_file = self.file;
-    const callee_frame = self.call_stack.pop().?;
-    self.scopes = caller_scopes;
-    self.file = caller_file;
+    const callee_scopes = self.task.state.scopes;
+    const callee_file = self.task.state.file;
+    const callee_frame = self.task.state.call_stack.pop().?;
+    self.task.state.scopes = caller_scopes;
+    self.task.state.file = caller_file;
     defer {
-        self.scopes = callee_scopes;
-        self.file = callee_file;
-        self.call_stack.appendAssumeCapacity(callee_frame);
+        self.task.state.scopes = callee_scopes;
+        self.task.state.file = callee_file;
+        self.task.state.call_stack.appendAssumeCapacity(callee_frame);
     }
 
     const root_name = self.rootName(take.root);
@@ -9080,7 +9079,7 @@ const integer_range_help =
 /// Every runtime error carries the calls active when it was raised, innermost
 /// first, which is section 13.2's stack trace.
 fn raise(self: *Interpreter, span: Source.Span, message: []const u8, help: []const u8) Error {
-    self.raised_value = try self.makeError(Resolver.preludeKey("RuntimeError"), message);
+    self.task.state.raised_value = try self.makeError(Resolver.preludeKey("RuntimeError"), message);
     return self.raiseTyped(span, "", message, help);
 }
 
@@ -9092,22 +9091,22 @@ fn makeError(self: *Interpreter, key: []const u8, message: []const u8) RunError!
 }
 
 fn raiseTyped(self: *Interpreter, span: Source.Span, type_name: []const u8, message: []const u8, help: []const u8) Error {
-    const trace = try self.arena.alloc(Diagnostic.Frame, self.call_stack.items.len);
+    const trace = try self.arena.alloc(Diagnostic.Frame, self.task.state.call_stack.items.len);
     for (trace, 0..) |*frame, index| {
-        frame.* = self.call_stack.items[self.call_stack.items.len - 1 - index];
+        frame.* = self.task.state.call_stack.items[self.task.state.call_stack.items.len - 1 - index];
     }
     // A failure inside the prelude's own Emerald code, such as a `Date`
     // rejecting its day, points at the program's call instead: the prelude is
     // not one of the program's files, and its internals are not what the
     // reader needs to fix.
     var location_span = span;
-    var location_file = self.file;
+    var location_file = self.task.state.file;
     var skipped: usize = 0;
     while (self.inPrelude(location_file) and skipped < trace.len) : (skipped += 1) {
         location_span = trace[skipped].call_span;
         location_file = trace[skipped].file;
     }
-    self.failure = .{
+    self.task.state.failure = .{
         .message = if (type_name.len == 0) try self.arena.dupe(u8, message) else try std.fmt.allocPrint(self.arena, "{s}: {s}", .{ type_name, message }),
         .span = location_span,
         .help = try self.arena.dupe(u8, help),

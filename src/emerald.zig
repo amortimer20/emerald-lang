@@ -38,6 +38,7 @@ pub const TimeZone = @import("TimeZone.zig");
 pub const Regex = @import("Regex.zig");
 pub const Json = @import("Json.zig");
 pub const Http = @import("Http.zig");
+pub const Scheduler = @import("Scheduler.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -245,6 +246,9 @@ fn loneProject(files: []Project.File) Project {
 pub const Streams = struct {
     out: *std.Io.Writer,
     in: *std.Io.Reader,
+    /// The execution's I/O backend. Existing callers use the process-wide
+    /// single-threaded backend until a scheduler supplies its own.
+    io: std.Io = std.Io.Threaded.global_single_threaded.io(),
     /// Whether this execution emits Console's ANSI SGR styling. The default
     /// keeps every existing caller deterministic until policy resolution.
     color: bool = false,
@@ -615,6 +619,7 @@ fn analyze(
         resolved.facts,
         running.out,
         running.in,
+        running.io,
         running.arguments,
         running.color,
         running.environment,

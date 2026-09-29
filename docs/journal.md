@@ -3318,3 +3318,18 @@ ahead of its own and read the reply to them. `perform` now marks a connection as
 unless its response was read completely. The fixed binary had no failures in 1,200 runs, and
 `/slow` never reached the server. The unit test checks that a request after a timeout gets its
 own reply; the failing window is too narrow to hit on purpose there.
+
+## Concurrency, slice 1: a task's own state, 2026-09-29
+
+The interpreter's execution-local fields now live together in `Scheduler.TaskState`; its
+single-task baton checks that state is saved and loaded by its owner. `Streams.io` carries one
+execution I/O backend into `Interpreter.io`, and filesystem operations, file closure, clocks,
+and sleep use it rather than reaching for the global backend. Existing callers keep the
+single-threaded default. `file_handles` and `file_writers` stay on the interpreter because they
+are live resource registries whose class handles retain identity across tasks, not caches.
+
+On Linux, an alternating 30-run ReleaseSafe comparison against `main` showed no measurable
+startup cost: `print(1)` was 3.88 ms vs. 3.97 ms, and the language-only, dates, regex, and JSON
+samples were 99.0%, 100.2%, 98.5%, and 99.8% of main. Full validation passed with Zig
+0.16.0 `-j1` (Debug and ReleaseSafe tests, build, doc examples, formatting, whitespace, and
+Windows/macOS cross-builds).

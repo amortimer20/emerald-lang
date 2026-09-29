@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-28. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-29. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -114,6 +114,14 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
+Concurrency is in progress on `codex/concurrency`. Slice 1 moves interpreter execution state
+into `Scheduler.TaskState`, establishes a one-owner baton, and passes `Streams.io` into the
+interpreter so its blocking natives use one execution-owned backend. The 30-run ReleaseSafe
+startup comparison against `main` was flat (98.5–102.2% across the five samples). Slice 1's
+Debug and ReleaseSafe tests, native build, doc examples, formatting, whitespace, and Windows
+and macOS cross-builds passed with Zig 0.16.0 `-j1`. Slice 2 (task values and the OS-thread
+scheduler) follows.
+
 A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
 `-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
 project loader's, and range's unit tests now run in `zig build test`; they had been left out.
@@ -140,8 +148,8 @@ built:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - **Concurrency** (rewrite-context 21): structured tasks and channels, in
   [`concurrency-design-plan.md`](concurrency-design-plan.md), accepted with all nine
-  recommendations. Claude wrote the plan; Codex implements it, and slice 1 (each task's own
-  state) is next.
+  recommendations. Codex is implementing the plan on `codex/concurrency`; slice 1 is in
+  validation, then slice 2 adds task values and the OS-thread scheduler.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
