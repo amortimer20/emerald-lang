@@ -139,8 +139,9 @@ The two open pieces of work, each needing a design plan the user approves before
 built:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - **Concurrency** (rewrite-context 21): structured tasks and channels, in
-  [`concurrency-design-plan.md`](concurrency-design-plan.md), proposed and awaiting the user's
-  nine decisions. Claude wrote the plan; Codex implements it once it is accepted.
+  [`concurrency-design-plan.md`](concurrency-design-plan.md), accepted with all nine
+  recommendations. Claude wrote the plan; Codex implements it, and slice 1 (each task's own
+  state) is next.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The

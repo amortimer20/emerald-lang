@@ -1,6 +1,8 @@
 # Concurrency: design and implementation plan
 
-Status: proposed, 2026-09-29, awaiting the user's decisions below. Rewrite-context 21 calls
+Status: accepted, 2026-09-29. The user answered "I'll trust your judgement" to the design
+discussion, which is taken as accepting all nine recommendations below; if that was not meant,
+the status goes back to proposed. Slice 1 is next. Rewrite-context 21 calls
 concurrency "the nearest major post-runtime design pass" and says that until it is done,
 "Emerald callbacks obey the single-threaded language model". 15.7 says the same of "threads,
 fibers, and any other concurrency primitive". The user's notes list *concurrency* and
@@ -190,7 +192,7 @@ class DeadlockError extends RuntimeError { }
 
 ## Decisions
 
-Each has a recommendation; the user decides.
+All nine were accepted as recommended on 2026-09-29. The alternatives are kept for the record.
 
 1. **The model is structured tasks and channels (recommended),** as above. Alternatives:
    `async`/`await` (familiar from C# and JavaScript, but it splits every function into two
@@ -254,6 +256,35 @@ Each task thread records its own recursion budget (`StackLimit.here`) at its bas
 size is chosen deliberately (a large virtual reservation, committed only as used), so the
 recursion limit means the same thing in a task as at the top level.
 
+**Threads now, fibers possibly later.** A fiber would be cheaper (thousands or millions of tasks,
+no thread per task), but Zig 0.16's fiber-based `std.Io.Evented` is experimental and has no
+Windows backend, so it cannot be the language's foundation. The hand-off is the whole interface
+between the scheduler and the interpreter: park this task, run that one. Because only one task
+runs at a time and switches happen only there, a program cannot tell threads from fibers. A
+fiber backend (Windows has its own fiber API, and Zig's may grow one) can therefore replace
+the threads later without touching the language. Slice 2 measures what the threads cost.
+
+**Keeping the seam.** Adding a fiber backend later must not be a breaking change: no program,
+conformance case, or documented behavior may change, and the tasks cap in slice 2 may only rise.
+That holds if these stay true from the first slice:
+
+- All thread-specific code lives in one file, `src/Scheduler.zig`, behind a few operations (start
+  a task, park the current one, wake another, switch to the next). Nothing else in the
+  interpreter names a thread or a condition variable.
+- Blocking natives go through the runtime's own `std.Io`, not a hard-coded one. Today
+  `callFilesystem`, the file closes, `clockNanoseconds`, and `callSleep` in `src/Interpreter.zig`
+  each reach for `Io.Threaded.global_single_threaded`. A fiber-aware `Io` can suspend one task
+  where a blocking call would stall every task on the same thread, so slice 1 replaces those
+  with one `Interpreter.io` field. `Http` already owns a threaded `Io`; it is offloaded to a
+  helper thread instead.
+- The per-task state swap (slice 1) never depends on which kind of task is being switched.
+- The conformance suite stays backend-neutral (section 19.6): no case depends on thread
+  identity, real timing beyond the ordering of different sleeps, or the exact recursion depth at
+  which a task overflows its stack (assert the error, not the depth).
+- Both backends run the whole suite. Windows keeps the thread backend as long as Zig has no
+  fiber backend for it, so the honest picture is two backends behind one interface, not a
+  replacement.
+
 A blocking native releases the baton for the length of the wait and takes it back afterward.
 The clock (`Program.sleep`, timeouts) and input have to wake tasks: the scheduler owns a timer
 list, and the wait for input runs on the reading task's thread.
@@ -267,6 +298,9 @@ commits.
 
 - Move the per-task fields into one `TaskState`, with `save` and `load` operations, and the
   baton with a single task only. No behavior changes. Every existing test passes unchanged.
+- Replace the hard-coded `Io.Threaded.global_single_threaded` in the interpreter's natives with
+  one `Interpreter.io` field, as "Keeping the seam" says. It is a mechanical change that keeps
+  behavior and makes a later backend a swap.
 - Measure with `tools/startup-benchmark.py`: no measurable cost.
 - Settled while building: (record here)
 
@@ -278,6 +312,12 @@ commits.
 - The group semantics of decision 2 and the error rule under "Proposed API".
 - A stress test: many tasks allocate cyclic closures and lists while others wait, with the
   collector forced often, to prove the collector is safe across tasks.
+- A measurement, recorded here and in the journal, on Linux and on Windows CI: the time to create
+  1,000 and 10,000 tasks that each return a number, the time for two tasks to hand the baton
+  back and forth 100,000 times, and the peak memory of each. A limit on live tasks, chosen from
+  those numbers and documented, with a clear error (`Tasks.run` cannot start more than N tasks
+  at once) instead of an operating-system failure. The numbers decide whether a fiber backend is
+  worth building later.
 - Conformance: results from several tasks in order, an error from one task, an error from two
   (the first wins), a task that returns nothing, and each diagnostic.
 - Settled while building: (record here)
