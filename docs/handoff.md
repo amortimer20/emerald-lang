@@ -149,6 +149,37 @@ Other candidates, each needing the user's go-ahead:
 - **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
   design proposal (24).
 
+**Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
+user's weekly usage resets, and it needs a design plan with decisions for the user first). The
+goal is C#-level IntelliSense in VS Code. Investigation found that the editor already runs the
+current server (`emerald lsp --stdio` from the 0.6.0 install) and that diagnostics match
+`emerald check` exactly on every example, but completion and hover are shallow:
+- Member completion (`Lsp.zig` `onCompletion`) handles only user- and prelude-declared types.
+  `"abc".`, `[1, 2].`, `5.`, and `Math.` offer nothing, while `Date(...)` and `Json.` offer
+  their members. `String`, `List`, `Dict`, `Set`, `Int`, `Float`, `Bool`, `Range`, `Bytes`,
+  and `Tuple` have their methods written into the checker as name checks, and `Math` and
+  `Program` are native namespaces with no declarations. `Math`, `Program`, and the built-in
+  type names are also missing from bare-name completion.
+- Hover shows only an expression's type (`Float` for `Math.sin(1)`), never a signature or
+  description, and go to definition on `Math.sin` finds nothing.
+- Completion patches the text with a fake `placeholder()` call and re-analyzes the whole
+  project, twice, instead of analyzing unfinished code directly.
+- The extension's grammar highlights only `print`, `write`, `input`, and `input_maybe` as
+  built-in functions (not `random` or `exit`), and the extension never says which `emerald`
+  binary it started.
+- The user reports red "not defined" errors in the editor that could not be reproduced; an
+  example (the message and its line) is still needed.
+
+The proposed path, in order: (1) declare the built-in members as data (name, signature,
+summary) that completion, hover, the checker's "did you mean" hints, and a drift test all read,
+and from which the website reference and an `llms.txt` can be generated; (2) documentation in
+completion and hover, and definitions for built-ins; (3) error-tolerant analysis in place of
+the placeholder patch; (4) signature help and quick fixes from the diagnostics' hints;
+(5) an LSP conformance suite; (6) extension polish (show the binary and version, warn on a
+mismatch, complete the grammar). To probe the server by hand, speak JSON-RPC over stdio to
+`emerald lsp`: `initialize`, `initialized`, `textDocument/didOpen`, then `completion`,
+`hover`, or `definition` with a position.
+
 Before each release, refresh the time-zone data with `python3 tools/update-tzdata.py` (see
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than
 on the roadmap.
