@@ -138,8 +138,9 @@ building" notes record its decisions.
 The two open pieces of work, each needing a design plan the user approves before anything is
 built:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
-- **Concurrency** (rewrite-context 21). The user wants to start on it. Claude writes the design
-  and the implementation plan; Codex implements from the accepted plan.
+- **Concurrency** (rewrite-context 21): structured tasks and channels, in
+  [`concurrency-design-plan.md`](concurrency-design-plan.md), proposed and awaiting the user's
+  nine decisions. Claude wrote the plan; Codex implements it once it is accepted.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
