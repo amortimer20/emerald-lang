@@ -2980,8 +2980,10 @@ bare reset (`ESC[0m`) found inside input text reopens every enclosing layer the 
 a general escape-sequence sanitizer for untrusted terminal output.
 
 Table and panel layout widgets, and line-oriented prompts (confirm, text input,
-single/multi-select), remain later slices of Console itself (24) rather than a separate
-library. `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than on the roadmap (24).
+single/multi-select), are implemented slices of Console itself (24), not a separate library.
+They return ordinary strings for composition; prompts use standard input and raise `InputError`
+at end of input. `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than on the roadmap
+(24).
 
 ### 15.7 Roadmap: standard library backlog
 
@@ -4209,9 +4211,9 @@ for working Emerald programs, implementation measurements, or a dedicated design
   specific types when their producing APIs are implemented or revisited;
 - an official platform-library family, shipped with Emerald rather than acquired through
   packages, so beginners can make visible and interactive programs from one installation.
-  `Console`'s terminal styling is implemented (15.6); its remaining scope — layout widgets
-  such as `Table` and `Panel`, and prompts (confirm, text input, single/multi-select) — is
-  later slices of the same library. A separate `Tui`, and `Graphics`, `Gui`, `Audio`, and
+  `Console`'s styling, layout widgets (`Table` and `Panel`), and prompts (confirm, text input,
+  single/multi-select) are implemented slices of the same library. A separate `Tui`, and
+  `Graphics`, `Gui`, `Audio`, and
   `Game`, are parked rather than on the roadmap: a full-screen terminal library needs
   raw-mode input and a redraw loop Emerald does not have, and the other three need native
   platform bindings (rendering, audio devices) with no extension mechanism to plug them in,

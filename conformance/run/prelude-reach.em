@@ -24,6 +24,8 @@ catch error: RuntimeError {
 
 # A type-level function whose result is only a String.
 print(Console.plain(Console.style("hi", foreground: Console.Color.green)))
+print(Console.panel("reach", title: "Console"))
+print(Console.table([["Ada", "3"]], header: ["name", "score"]))
 
 # An enum value displayed, and values sorted by their Ordered comparison.
 print(Weekday.monday)

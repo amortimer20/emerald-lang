@@ -1,0 +1,4 @@
+diagnostics/console-table-header.em:4:35: `header:` cannot be given with struct rows
+  Console.table([Score(1)], header: ["Other"])
+                                    ^^^^^^^^^
+A struct table takes its header from the public field names.

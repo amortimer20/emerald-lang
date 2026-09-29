@@ -1,0 +1,10 @@
+Name? [Ada] Age? Please enter a whole number.
+Age? Level
+  1. Easy
+  2. Hard
+Choose 1-2: Toppings
+  1. Cheese
+  2. Olives
+Choose any of 1-2, separated by commas, or press Enter for none: Again? (Y/n) Ada 12 Hard ["Cheese", "Olives"] true
+Ratio? Please enter a number.
+Ratio? 1.5

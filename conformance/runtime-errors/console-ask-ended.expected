@@ -1,0 +1,4 @@
+runtime-errors/console-ask-ended.em:1:16: InputError: `Console.ask` reached the end of the input
+  const answer = Console.ask("Name?")
+                 ^^^^^^^^^^^^^^^^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.

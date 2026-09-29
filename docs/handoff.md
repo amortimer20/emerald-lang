@@ -132,9 +132,27 @@ Base64 and hashing followed the accepted
 hints, and added the plan's remaining known answers and a decoding differential. The plan's
 "Settled while building" notes record each decision.
 
-Emerald 0.6.0 is released. The next milestone is Console's remaining scope: tables, panels,
-and prompts, in [`console-design-plan.md`](console-design-plan.md), accepted with all six
-recommendations. Slice 1 (column width) is next.
+Emerald 0.6.0 is released. Console's tables, panels, and prompts milestone follows
+[`console-design-plan.md`](console-design-plan.md), accepted with all six recommendations.
+Slice 1 now adds Unicode 17.0.0 terminal column width through generated East Asian Width,
+emoji presentation, and control/format data. The private `Console._width` native is ready for
+the Emerald layout functions in slice 2.
+Slice 2 adds `Console.panel` and text-row `Console.table` in the prelude, with exact border
+output, Unicode column alignment, optional panel title/color, and row/column errors.
+Slice 3 adds struct rows to `Console.table`, using CSV's exact eligible-field checks and
+shared record-to-cell conversion. Public fields become the header in declaration order, and
+numeric fields align right. Slice 4 adds `InputError` and the six prompts in Emerald, with
+defaults, bounds, choice validation, duplicate-insensitive multi-select, and specified
+yellow retry messages. `input` now raises `InputError` for EOF and invalid UTF-8; code that
+catches `RuntimeError` remains unaffected because `InputError` extends it.
+Slice 5 completes the Console reference, inventory, rewrite-context status, and a runnable
+example combining a panel, struct table, styling, and defaulted prompts. The fuzz template
+also exercises text tables and panels. The Console widgets milestone is complete.
+Review then fixed what a student would notice: choice prompts reprint their options only once,
+the end of input inside a prompt names the prompt (`Console.ask` reached the end of the input)
+instead of `input`, `ask_float` rejects `NaN` and infinities, numeric table headers align over
+their numbers, and the styling example is back as `examples/console-style.em`. Tabs have no
+width and keycap emoji count as one column; both are documented limits.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS
@@ -144,10 +162,11 @@ differences. An alternating ReleaseSafe startup comparison found no measurable c
 programs that do not use these namespaces. The HTTP client's manual `zig build http-live`
 check passed in its slice 3; it is not part of ordinary validation.
 
-Other candidates, each needing the user's go-ahead:
+### Upgrading
 
-- **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
-  design proposal (24).
+`InputError` is a new specific subclass for `input` failures. Existing code that catches
+`RuntimeError` remains compatible because `InputError` extends it; release notes should call
+out the more precise type for code that wants to distinguish input failures.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
@@ -207,8 +226,9 @@ on the roadmap.
 
 ## Active rough edges
 
-- Runtime failures currently share `RuntimeError` except `AssertionError`, `FileError`,
-  `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and `EncodingError`.
+- Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
+  `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
+  `EncodingError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
 - A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses

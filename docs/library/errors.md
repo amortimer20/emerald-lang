@@ -24,7 +24,7 @@ ordinary constructor starting with `super(message)`, like any other class (10.7)
 subclass that adds required state but no constructor is a checking error (`needs a
 constructor, because building {base} takes arguments`).
 
-Five subclasses are built in: **`RuntimeError`**, raised by interpreter-detected failures
+Six subclasses are built in: **`RuntimeError`**, raised by interpreter-detected failures
 (overflow, division by zero, an out-of-range index, and every other **Raises** case
 documented on the other library pages), and **`AssertionError`**, raised by a failed
 `assert`. Both are ordinary `Error` subclasses a typed or untyped `catch` can handle like any
@@ -34,6 +34,8 @@ also handling unrelated runtime failures. **`DateTimeError`** extends `RuntimeEr
 is raised by [dates and times](dates-and-times.md) for a value that cannot exist, text in the
 wrong form, or an unknown time zone. **`EncodingError`** extends `RuntimeError` and is raised
 by Base64 and hexadecimal decoding, and by `Bytes.to_string()` for invalid UTF-8.
+**`InputError`** also extends `RuntimeError`; `input` raises it when input ends or contains
+invalid UTF-8, while `input_maybe` still returns `nothing` at end of input.
 
 `raise` accepts only an `Error` value.
 

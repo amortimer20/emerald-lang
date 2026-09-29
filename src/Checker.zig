@@ -6410,8 +6410,8 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
     }
     // Sections 15.9 and 15.11: typed JSON and CSV calls are checked specially at
     // each call, which no function value could carry.
-    if (isJsonEncodeKey(reference.key) or isCsvEncodeKey(reference.key) or isJsonDecodeKey(reference.key) or isCsvDecodeKey(reference.key)) {
-        const which = if (isJsonEncodeKey(reference.key)) "Json.encode" else if (isCsvEncodeKey(reference.key)) "Csv.encode" else if (isJsonDecodeKey(reference.key)) "Json.decode" else "Csv.decode";
+    if (isJsonEncodeKey(reference.key) or isCsvEncodeKey(reference.key) or isJsonDecodeKey(reference.key) or isCsvDecodeKey(reference.key) or isConsoleTableKey(reference.key)) {
+        const which = if (isJsonEncodeKey(reference.key)) "Json.encode" else if (isCsvEncodeKey(reference.key)) "Csv.encode" else if (isJsonDecodeKey(reference.key)) "Json.decode" else if (isCsvDecodeKey(reference.key)) "Csv.decode" else "Console.table";
         try self.reportWithHelp(
             expression.span,
             "`{s}` has to be called",
@@ -9514,6 +9514,7 @@ fn typeOfCall(
     if (isCsvEncodeKey(key)) {
         return self.typeOfTypedEncode(call, name, key, true);
     }
+    if (isConsoleTableKey(key)) return self.typeOfConsoleTable(call, name, key);
     if (isJsonDecodeKey(key)) {
         return self.typeOfTypedDecode(call, name, "Json", false);
     }
@@ -9636,6 +9637,45 @@ fn typeOfTypedEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8
                 );
             }
         }
+        return .string;
+    }
+    try self.json_encodes.put(self.arena, call.callee, value);
+    return .string;
+}
+
+/// Text rows use the prelude body; plain record rows reuse CSV's cell eligibility.
+fn typeOfConsoleTable(self: *Checker, call: Ast.Expression.Call, name: []const u8, key: []const u8) Error!Type {
+    const signature = try self.signatureFor(key);
+    var parameters = try self.parametersOf(signature, self.declarations.get(key).?.parameters, "Pass text rows, or a List of plain records.");
+    const bound = try self.arena.alloc(?usize, parameters.names.len);
+    const problem = call_arguments.bind(call, parameters.names, parameters.has_default, bound);
+    const types = try self.arena.dupe(Type, parameters.types);
+    var text_literal = false;
+    if (problem == .none) {
+        const rows = call.arguments[bound[0].?];
+        text_literal = rows.data == .list_literal and (rows.data.list_literal.len == 0 or rows.data.list_literal[0].data == .list_literal);
+        if (!text_literal) types[0] = .invalid;
+    }
+    parameters.types = types;
+    try self.checkArguments(call, name, parameters);
+    if (problem != .none) return .string;
+    const value = if (text_literal)
+        self.expression_types.get(call.arguments[bound[0].?]).?.type
+    else
+        try self.typeOf(call.arguments[bound[0].?]);
+    if (value.kind == .invalid) return .string;
+    const text_rows = value.kind == .list and value.element.?.kind == .list and value.element.?.element.?.kind == .string;
+    if (text_rows) return .string;
+    if (try self.csvEncodeIssue(value, "")) |issue| {
+        if (issue.field_path.len > 0) {
+            try self.report(call.arguments[bound[0].?].span, "field `{s}` of {f} cannot be shown in a table because it is {f}", .{ issue.field_path, value, issue.type }, "Table columns can show text, whole numbers, numbers, true or false, enums, dates and times, and optional values.");
+        } else {
+            try self.report(call.arguments[bound[0].?].span, "this is {f}, which `Console.table` cannot show", .{value}, "Pass text rows or a List of a plain struct whose fields are text-compatible.");
+        }
+        return .string;
+    }
+    if (bound[1] != null) {
+        try self.report(call.arguments[bound[1].?].span, "`header:` cannot be given with struct rows", .{}, "A struct table takes its header from the public field names.");
         return .string;
     }
     try self.json_encodes.put(self.arena, call.callee, value);
@@ -9787,6 +9827,11 @@ fn isJsonEncodeKey(key: []const u8) bool {
 fn isCsvEncodeKey(key: []const u8) bool {
     return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
         std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Csv::encode");
+}
+
+fn isConsoleTableKey(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, Resolver.prelude_namespace) and
+        std.mem.eql(u8, key[Resolver.prelude_namespace.len..], ".Console::table");
 }
 
 fn isJsonDecodeKey(key: []const u8) bool {

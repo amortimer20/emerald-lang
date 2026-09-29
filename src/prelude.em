@@ -15,6 +15,12 @@ class AssertionError extends Error {
     }
 }
 
+class InputError extends RuntimeError {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
 # Section 15.3's filesystem failures. Native whole-file functions below build
 # this ordinary Error value, so callers can catch filesystem failures without
 # catching unrelated RuntimeErrors.
@@ -123,6 +129,9 @@ class Console {
     # Native: whether this execution emits ANSI SGR styling.
     func Console._color(): Bool { return false }
 
+    # Native: terminal columns occupied by text, ignoring complete SGR styling.
+    func Console._width(text: String): Int { return 0 }
+
     # Native: removes complete ANSI SGR sequences, leaving other control text alone.
     func Console.plain(text: String): String { return text }
 
@@ -193,6 +202,263 @@ class Console {
     func Console.dim(text: String): String { return Emerald.Console.style(text, dim: true) }
     func Console.italic(text: String): String { return Emerald.Console.style(text, italic: true) }
     func Console.underline(text: String): String { return Emerald.Console.style(text, underline: true) }
+
+    func Console._pad(text: String, width: Int): String {
+        return text + " ".repeat(width - Emerald.Console._width(text))
+    }
+
+    func Console._table_rule(widths: List[Int], left: String, middle: String, right: String): String {
+        var rule = left
+        var index = 0
+        while index < widths.count {
+            if index > 0 {
+                rule += middle
+            }
+            rule += "─".repeat(widths[index] + 2)
+            index += 1
+        }
+        return rule + right
+    }
+
+    func Console._table_row(cells: List[String], widths: List[Int], right: List[Bool]): String {
+        var line = "│"
+        var index = 0
+        while index < cells.count {
+            const cell = if index < right.count and right[index] then " ".repeat(widths[index] - Emerald.Console._width(cells[index])) + cells[index] else Emerald.Console._pad(cells[index], widths[index])
+            line += " #{cell} │"
+            index += 1
+        }
+        return line
+    }
+
+    func Console.table(rows: List[List[String]], header: List[String] = []): String {
+        return Emerald.Console._table_impl(rows, header, [])
+    }
+
+    func Console._table_impl(rows: List[List[String]], header: List[String], right: List[Bool]): String {
+        if rows.count == 0 and header.count == 0 {
+            return ""
+        }
+        const columns = if header.count > 0 then header.count else rows[0].count
+        var widths: List[Int] = []
+        var column = 0
+        while column < columns {
+            widths.append(0)
+            column += 1
+        }
+        if header.count > 0 {
+            column = 0
+            while column < columns {
+                if header[column].contains?("\n") or header[column].contains?("\r") {
+                    raise RuntimeError("row 1, column #{column + 1} contains a line break")
+                }
+                widths[column] = Emerald.Console._width(header[column])
+                column += 1
+            }
+        }
+        var row_index = 0
+        while row_index < rows.count {
+            const row = rows[row_index]
+            const number = row_index + 1 + (if header.count > 0 then 1 else 0)
+            if row.count != columns {
+                raise RuntimeError("row #{number} has #{row.count} cells, but row 1 has #{columns}")
+            }
+            column = 0
+            while column < columns {
+                if row[column].contains?("\n") or row[column].contains?("\r") {
+                    raise RuntimeError("row #{number}, column #{column + 1} contains a line break")
+                }
+                const width = Emerald.Console._width(row[column])
+                if width > widths[column] {
+                    widths[column] = width
+                }
+                column += 1
+            }
+            row_index += 1
+        }
+        var result = Emerald.Console._table_rule(widths, "┌", "┬", "┐")
+        if header.count > 0 {
+            result += "\n" + Emerald.Console._table_row(header, widths, right)
+            result += "\n" + Emerald.Console._table_rule(widths, "├", "┼", "┤")
+        }
+        row_index = 0
+        while row_index < rows.count {
+            result += "\n" + Emerald.Console._table_row(rows[row_index], widths, right)
+            row_index += 1
+        }
+        return result + "\n" + Emerald.Console._table_rule(widths, "└", "┴", "┘")
+    }
+
+    func Console.panel(text: String, title: String? = nothing, color: Emerald.Console.Color? = nothing): String {
+        var lines = text.lines()
+        if lines.count == 0 {
+            lines.append("")
+        }
+        var width = 0
+        for line in lines {
+            const columns = Emerald.Console._width(line)
+            if columns > width {
+                width = columns
+            }
+        }
+        if title != nothing and Emerald.Console._width(title) + 1 > width {
+            width = Emerald.Console._width(title) + 1
+        }
+        var top = "┌" + "─".repeat(width + 2) + "┐"
+        if title != nothing {
+            top = "┌─ #{title} " + "─".repeat(width - Emerald.Console._width(title) - 1) + "┐"
+        }
+        var result = Emerald.Console.style(top, foreground: color)
+        for line in lines {
+            result += "\n" + Emerald.Console.style("│", foreground: color) + " #{Emerald.Console._pad(line, width)} " + Emerald.Console.style("│", foreground: color)
+        }
+        return result + "\n" + Emerald.Console.style("└" + "─".repeat(width + 2) + "┘", foreground: color)
+    }
+
+    # Reads one answer for a prompt. The end of the input names the prompt the
+    # program called, not the `input` underneath it.
+    func Console._answer(prompt: String, name: String): String {
+        const line = Emerald.input_maybe(prompt)
+        if line == nothing {
+            raise InputError("`#{name}` reached the end of the input")
+        }
+        return line
+    }
+
+    func Console._show_options(question: String, options: List[String]) {
+        print(question)
+        for index in 0..<options.count {
+            print("  #{index + 1}. #{options[index]}")
+        }
+    }
+
+    func Console.ask(question: String, default: String? = nothing): String {
+        while true {
+            const prompt = if default != nothing then "#{question} [#{default}] " else "#{question} "
+            const answer = Emerald.Console._answer(prompt, "Console.ask").trim()
+            if answer != "" {
+                return answer
+            }
+            if default != nothing {
+                return default
+            }
+            print(Emerald.Console.yellow("Please enter an answer."))
+        }
+    }
+
+    func Console.ask_int(question: String, minimum: Int? = nothing, maximum: Int? = nothing): Int {
+        if minimum != nothing and maximum != nothing and minimum > maximum {
+            raise RuntimeError("minimum cannot be greater than maximum")
+        }
+        while true {
+            const value = Emerald.Console._answer("#{question} ", "Console.ask_int").trim().to_int_maybe()
+            if value == nothing {
+                print(Emerald.Console.yellow("Please enter a whole number."))
+                continue
+            }
+            if minimum != nothing and value < minimum {
+                const message = if maximum != nothing then "Please enter a whole number from #{minimum} to #{maximum}." else "Please enter a whole number at least #{minimum}."
+                print(Emerald.Console.yellow(message))
+                continue
+            }
+            if maximum != nothing and value > maximum {
+                const message = if minimum != nothing then "Please enter a whole number from #{minimum} to #{maximum}." else "Please enter a whole number at most #{maximum}."
+                print(Emerald.Console.yellow(message))
+                continue
+            }
+            return value
+        }
+    }
+
+    func Console.ask_float(question: String, minimum: Float? = nothing, maximum: Float? = nothing): Float {
+        if minimum != nothing and maximum != nothing and minimum > maximum {
+            raise RuntimeError("minimum cannot be greater than maximum")
+        }
+        while true {
+            const value = Emerald.Console._answer("#{question} ", "Console.ask_float").trim().to_float_maybe()
+            if value == nothing or not value.finite?() {
+                print(Emerald.Console.yellow("Please enter a number."))
+                continue
+            }
+            if minimum != nothing and value < minimum {
+                const message = if maximum != nothing then "Please enter a number from #{minimum} to #{maximum}." else "Please enter a number at least #{minimum}."
+                print(Emerald.Console.yellow(message))
+                continue
+            }
+            if maximum != nothing and value > maximum {
+                const message = if minimum != nothing then "Please enter a number from #{minimum} to #{maximum}." else "Please enter a number at most #{maximum}."
+                print(Emerald.Console.yellow(message))
+                continue
+            }
+            return value
+        }
+    }
+
+    func Console.confirm(question: String, default: Bool? = nothing): Bool {
+        while true {
+            const suffix = if default == true then " (Y/n)" else if default == false then " (y/N)" else " (y/n)"
+            const answer = Emerald.Console._answer("#{question}#{suffix} ", "Console.confirm").trim().lower()
+            if answer == "y" or answer == "yes" {
+                return true
+            }
+            if answer == "n" or answer == "no" {
+                return false
+            }
+            if answer == "" and default != nothing {
+                return default
+            }
+            print(Emerald.Console.yellow("Please answer y or n."))
+        }
+    }
+
+    func Console.choose(question: String, options: List[String]): String {
+        if options.count == 0 {
+            raise RuntimeError("choose needs at least one option")
+        }
+        Emerald.Console._show_options(question, options)
+        while true {
+            const choice = Emerald.Console._answer("Choose 1-#{options.count}: ", "Console.choose").trim().to_int_maybe()
+            if choice != nothing and choice >= 1 and choice <= options.count {
+                return options[choice - 1]
+            }
+            print(Emerald.Console.yellow("Please enter a number from 1 to #{options.count}."))
+        }
+    }
+
+    func Console.choose_many(question: String, options: List[String]): List[String] {
+        if options.count == 0 {
+            raise RuntimeError("choose_many needs at least one option")
+        }
+        Emerald.Console._show_options(question, options)
+        while true {
+            const answer = Emerald.Console._answer("Choose any of 1-#{options.count}, separated by commas, or press Enter for none: ", "Console.choose_many").trim()
+            if answer == "" {
+                return []
+            }
+            const tokens = answer.replace(",", " ").split(" ").filter { token => token != "" }
+            var valid = true
+            for token in tokens {
+                const choice = token.to_int_maybe()
+                if choice == nothing or choice < 1 or choice > options.count {
+                    valid = false
+                }
+            }
+            if not valid {
+                print(Emerald.Console.yellow("Please enter numbers from 1 to #{options.count}."))
+                continue
+            }
+            var result: List[String] = []
+            for index in 1..options.count {
+                for token in tokens {
+                    if token.to_int() == index {
+                        result.append(options[index - 1])
+                        break
+                    }
+                }
+            }
+            return result
+        }
+    }
 }
 
 # Section 9.3's repeatable randomness source. Its state is private and the

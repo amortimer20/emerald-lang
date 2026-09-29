@@ -27,6 +27,7 @@ for file in \
     SpecialCasing.txt \
     CaseFolding.txt \
     NormalizationTest.txt \
+    EastAsianWidth.txt \
     auxiliary/GraphemeBreakProperty.txt \
     auxiliary/GraphemeBreakTest.txt \
     emoji/emoji-data.txt

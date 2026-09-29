@@ -10,6 +10,47 @@ entry below may explain *why* a decision was made, but the decision itself is re
 
 Sections are in roughly the order the work happened, oldest first.
 
+## Console widgets: column width
+
+The first tables/panels/prompts slice adds terminal column measurement to the Unicode 17.0.0
+tables, including East Asian Wide/Fullwidth and emoji presentation data. The width function
+walks graphemes and ignores complete SGR sequences using the same recognizer as
+`Console.plain`. `Console._width` exposes it privately to the prelude's coming layout code.
+Unicode conformance found 0 failures across 20,034 cases and 1,094,978 unlisted code points.
+
+## Console widgets: panels and text tables
+
+The second slice builds `Console.panel` and `Console.table` for text rows in Emerald. They
+measure through the private Unicode width native, preserve styled cell text, and make exact
+Unicode borders. Conformance covers nesting, titles, multiline text, empty/header-only
+tables, CJK and emoji widths, forced color, and the error messages for malformed rows and
+cells.
+
+## Console widgets: struct tables
+
+The third slice accepts a List of plain records, using CSV's existing checker rule for
+text-compatible fields and the same runtime conversion of public fields to cells. The
+prelude's table layout handles both row shapes; numeric struct columns align right.
+Conformance covers mixed numeric/optional values, private-field omission, empty typed
+records, invalid fields, and rejection of an explicit header with struct rows.
+
+## Console widgets: prompts
+
+The fourth slice adds `InputError` and the six line-oriented prompts in the prelude. `input`
+now raises the specified subclass for end-of-input and invalid UTF-8, while `input_maybe`
+retains its optional EOF behavior. Prompts validate and retry with the plan's messages,
+support defaults and numeric bounds, and return multi-selections in option order after
+ignoring repeated indexes. Conformance feeds scripted answers end to end and catches
+`InputError`.
+
+## Console widgets: integration
+
+The fifth slice completes the Console milestone's documentation and status updates. The
+official example now combines styling, a struct table, a panel, and prompts with defaults so
+the documentation smoke test remains non-interactive. The fuzz generator also exercises the
+ordinary text-row table and panel paths. The accepted Console design is now reflected in the
+rewrite context and library inventory.
+
 ## Base64, hashing, and hexadecimal
 
 The four-slice utilities milestone is complete. `Bytes` now has lowercase hexadecimal
@@ -3248,6 +3289,20 @@ passed with `install.sh` on Ubuntu and macOS and `install.ps1` in Windows PowerS
 The notes, set on the GitHub release, cover everything since 0.5.0: dates and times, regular
 expressions, Console, JSON, HTTP, CSV, Base64 and digests, nested types, the `Emerald`
 namespace, negative literals, and startup (9.9 ms to 3.5 ms). Development moved to `0.7.0-dev`.
+
+## Console widgets, review, 2026-09-28
+
+Review read all six commits and ran the widgets and prompts against real programs. The width
+function and the layout held up: CJK text, emoji, flags, a family emoji, and combining marks all
+line up, and struct tables match the plan. It fixed what a student would notice. A bad answer to
+`choose` or `choose_many` reprinted the whole option list each time. The end of input inside a
+prompt reported `input reached the end of the input` and suggested `input_maybe`, though the
+student had called `Console.ask`; prompts now read with `input_maybe` and raise an `InputError`
+that names the prompt. `ask_float` accepted `Infinity`. A numeric column's header sat at the left
+over right-aligned numbers. `examples/console.em` had replaced the only runnable tour of
+`Console.style`, so that example is back as `examples/console-style.em`. New conformance cases
+cover each fix. Known limits are documented rather than fixed: a tab has no width, and a keycap
+emoji counts as one column where most terminals draw two.
 
 ## HTTP: a timed-out request's reply reached the next request, 2026-09-28
 

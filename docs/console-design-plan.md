@@ -231,7 +231,11 @@ commits.
 - Expose it as the native `Console._width(text: String): Int`. It stays private to the prelude.
 - Unit tests in Zig for ASCII, CJK, Hangul, emoji with and without VS16, a family emoji (one
   grapheme, width 2), combining marks, and styled text.
-- Settled while building: (record here)
+- Settled while building: `Console._width` and `Console.plain` share one complete-SGR
+  recognizer, so their treatment of style sequences cannot diverge. Width removes those
+  sequences before walking grapheme clusters; this also preserves a grapheme separated by
+  styling. The generated tables use Unicode 17.0.0's East Asian Wide/Fullwidth,
+  Emoji_Presentation, and General_Category Cc/Cf data.
 
 ### Slice 2: `Console.panel` and text-row `Console.table`
 
@@ -242,7 +246,10 @@ commits.
     cells, and styled cells lining up (with color off, the default in conformance), and each
     error.
   - `color/console-layout.em`: a colored border with styling forced on.
-- Settled while building: (record here)
+- Settled while building: the header counts as row 1 for error positions, so a malformed first
+  data row is row 2 when a header is present. Panels reuse `String.lines()` and therefore do
+  not add an empty row after a final newline. The table's shared private row/rule helpers
+  leave a clear entry point for the typed struct path in slice 3.
 
 ### Slice 3: Struct-row `Console.table`
 
@@ -251,7 +258,12 @@ commits.
   columns right-aligned.
 - A diagnostics case for a struct with a field that cannot be a cell, and one for `header:`
   given with struct rows.
-- Settled while building: (record here)
+- Settled while building: the checker reuses `csvEncodeIssue` for the exact CSV scalar/enum/
+  date-time cell vocabulary. At runtime, CSV and Console share one declaration-order record
+  walk; Console uses print's display rule for each cell, while CSV keeps its file format.
+  The struct table then invokes the prelude's private table layout
+  with right-alignment flags for numeric fields. An empty text-row literal retains its
+  contextual `List[List[String]]` type, while an empty typed record list gets a struct header.
 
 ### Slice 4: Prompts
 
@@ -262,7 +274,13 @@ commits.
   - defaults, bounds, and `choose_many` with repeats, spaces, and none;
   - end of input as an `InputError` in `runtime-errors/`;
   - each bad-argument error.
-- Settled while building: (record here)
+- Settled while building: the plan was correct about the intended API but the implementation
+  had lagged behind it. `InputError` is now a `RuntimeError` subclass; `input` constructs it
+  for EOF and invalid UTF-8 while `input_maybe` keeps returning `nothing` at EOF. Prompts use
+  `input`, so EOF is catchable without a prompt-specific native path. Invalid numeric answers
+  and choices print the specified yellow message and repeat; empty `ask` answers repeat unless
+  a default is present. `choose_many` normalizes commas and spaces, ignores duplicate indexes,
+  and returns options in declaration order.
 
 ### Slice 5: Documentation and integration
 
@@ -274,7 +292,26 @@ commits.
   widgets and prompts done.
 - A valid-program fuzz template for `table` and `panel`, `run/prelude-reach` lines, the startup
   comparison, and the handoff and journal.
-- Settled while building: (record here)
+- Settled while building: the example uses only prompts with defaults so the documentation
+  smoke test's blank input remains a successful, non-interactive run. The fuzz template adds
+  ordinary text-row table and panel programs; no new native path is needed for either.
+- Fixed in review:
+  - A bad answer to `choose` or `choose_many` reprinted the question and the whole option list
+    each time, which scrolls a long list away. The options are shown once, and only the
+    `Choose 1-N:` line repeats.
+  - The end of input inside a prompt raised `InputError` with the message for `input`, naming
+    `input` (which the student did not call) and suggesting `input_maybe`. The prompts now read
+    with `input_maybe` and raise ``InputError("`Console.ask` reached the end of the input")``,
+    naming the prompt.
+  - `ask_float` accepted `Infinity` (and would have handed back any non-finite value). It now
+    asks again.
+  - A numeric column's header was left-aligned over right-aligned numbers; it is right-aligned.
+  - `examples/console.em` was replaced wholesale, which dropped the only runnable tour of
+    `Console.style`, bright colors, nesting, and `plain`. That example is back as
+    `examples/console-style.em`.
+  - Known limits, documented: tabs and other control characters have no width, so a tab in a
+    panel or cell misaligns the box, and a keycap emoji such as 1️⃣ counts as one column where
+    most terminals draw two.
 
 ## Validation
 

@@ -3007,7 +3007,11 @@ fn evaluateCall(
     if (self.facts.qualified.get(call.callee)) |key| {
         if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callConsoleWidth(call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsolePlain(call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::table")) {
+            if (self.json_encodes.get(call.callee)) |record_type| return self.callConsoleStructTable(expression.span, call, record_type);
+        }
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(.real));
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(.awake));
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.local_zone.name);
@@ -3077,18 +3081,70 @@ fn callConsolePlain(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
 
     var index: usize = 0;
     while (index < text.len) {
-        if (text[index] == 0x1b and index + 1 < text.len and text[index + 1] == '[') {
-            var end = index + 2;
-            while (end < text.len and (std.ascii.isDigit(text[end]) or text[end] == ';')) : (end += 1) {}
-            if (end < text.len and text[end] == 'm') {
-                index = end + 1;
-                continue;
-            }
+        if (unicode.sgrEnd(text, index)) |end| {
+            index = end;
+            continue;
         }
         try plain.append(self.gpa, text[index]);
         index += 1;
     }
     return .{ .data = .{ .string = try self.heap.createText(try plain.toOwnedSlice(self.gpa)) } };
+}
+
+fn callConsoleWidth(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
+    const values = try self.evaluateArguments(call.arguments);
+    defer {
+        for (values) |value| self.heap.release(value);
+        self.gpa.free(values);
+    }
+    const columns = try unicode.columnWidth(self.gpa, values[0].data.string.bytes);
+    return .initInt(@intCast(columns));
+}
+
+fn consoleStringList(self: *Interpreter, cells: []const []const u8) Error!Value {
+    const list = try self.heap.createList(.string, cells.len);
+    const result: Value = .{ .data = .{ .list = list } };
+    errdefer self.heap.release(result);
+    for (cells) |cell| list.items.appendAssumeCapacity(try self.heap.copyText(cell));
+    return result;
+}
+
+fn callConsoleStructTable(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, value_type: Type) Error!Value {
+    const bound = try self.evaluateBound(call, &.{ "rows", "header" }, &.{ false, true });
+    defer {
+        self.releaseBound(bound);
+        self.gpa.free(bound.values);
+        if (bound.omitted) |omitted| self.gpa.free(omitted);
+    }
+    var arena_state: std.heap.ArenaAllocator = .init(self.gpa);
+    defer arena_state.deinit();
+    const rows = try self.csvRecordRows(arena_state.allocator(), span, bound.values[0], value_type, true);
+    const row_list = try self.heap.createList(.list, rows.len - 1);
+    const row_value: Value = .{ .data = .{ .list = row_list } };
+    var transferred = false;
+    errdefer if (!transferred) self.heap.release(row_value);
+    for (rows[1..]) |row| row_list.items.appendAssumeCapacity(try self.consoleStringList(row));
+    const header_value = try self.consoleStringList(rows[0]);
+    errdefer if (!transferred) self.heap.release(header_value);
+
+    const user = value_type.element.?.user.?;
+    var numeric_count: usize = 0;
+    for (user.fields) |field| if (!Resolver.isPrivate(field.name)) {
+        numeric_count += 1;
+    };
+    const numeric = try self.heap.createList(.bool, numeric_count);
+    const numeric_value: Value = .{ .data = .{ .list = numeric } };
+    errdefer if (!transferred) self.heap.release(numeric_value);
+    for (user.fields) |field| {
+        if (Resolver.isPrivate(field.name)) continue;
+        const kind = if (field.type.optional) field.type.payload().kind else field.type.kind;
+        numeric.items.appendAssumeCapacity(.initBool(kind == .int or kind == .float));
+    }
+
+    const key = Resolver.preludeKey("Console::_table_impl");
+    try self.reach(key, span);
+    transferred = true;
+    return self.invoke(span, self.namedCallable(key), &.{ row_value, header_value, numeric_value });
 }
 
 /// One of the prelude's functions (`Resolver.prelude`), reached bare or as
@@ -3955,14 +4011,25 @@ fn csvEncodeRecords(self: *Interpreter, span: Source.Span, value: Value, value_t
     var arena_state: std.heap.ArenaAllocator = .init(self.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const records = value.data.list.items.items;
-    const record_type = value_type.element.?.*;
-    const user = record_type.user.?;
+    const rows = try self.csvRecordRows(arena, span, value, value_type, false);
 
+    var out: std.Io.Writer.Allocating = .init(self.gpa);
+    defer out.deinit();
+    Csv.write(rows, separator, &out.writer) catch |err| switch (err) {
+        error.InvalidSeparator => return self.raiseCsvSeparator(span, separator),
+        error.WriteFailed => return error.OutOfMemory,
+    };
+    return .{ .data = .{ .string = try self.heap.createText(try out.toOwnedSlice()) } };
+}
+
+/// The public declaration-order cells used by both CSV and Console tables.
+fn csvRecordRows(self: *Interpreter, arena: std.mem.Allocator, span: Source.Span, value: Value, value_type: Type, console: bool) Error![]const []const []const u8 {
+    const records = value.data.list.items.items;
+    const user = value_type.element.?.user.?;
     var column_count: usize = 0;
-    for (user.fields) |field| {
-        if (!Resolver.isPrivate(field.name)) column_count += 1;
-    }
+    for (user.fields) |field| if (!Resolver.isPrivate(field.name)) {
+        column_count += 1;
+    };
     const rows = try arena.alloc([]const []const u8, records.len + 1);
     const cells = try arena.alloc([]const u8, (records.len + 1) * column_count);
     var at: usize = 0;
@@ -3976,18 +4043,21 @@ fn csvEncodeRecords(self: *Interpreter, span: Source.Span, value: Value, value_t
         rows[row_index + 1] = cells[at .. at + column_count];
         for (user.fields, record.data.struct_value.fields) |field, source| {
             if (Resolver.isPrivate(field.name)) continue;
-            cells[at] = try self.csvEncodeCell(arena, span, source, field.type);
+            cells[at] = if (console)
+                try self.consoleTableCell(arena, span, source, field.type)
+            else
+                try self.csvEncodeCell(arena, span, source, field.type);
             at += 1;
         }
     }
+    return rows;
+}
 
-    var out: std.Io.Writer.Allocating = .init(self.gpa);
-    defer out.deinit();
-    Csv.write(rows, separator, &out.writer) catch |err| switch (err) {
-        error.InvalidSeparator => return self.raiseCsvSeparator(span, separator),
-        error.WriteFailed => return error.OutOfMemory,
-    };
-    return .{ .data = .{ .string = try self.heap.createText(try out.toOwnedSlice()) } };
+fn consoleTableCell(self: *Interpreter, arena: std.mem.Allocator, span: Source.Span, value: Value, value_type: Type) Error![]const u8 {
+    if (value_type.optional and value.data == .nothing) return "";
+    var out: std.Io.Writer.Allocating = .init(arena);
+    try value.writeThrough(&out.writer, false, TextualDisplay{ .interpreter = self, .span = span });
+    return out.toOwnedSlice();
 }
 
 fn csvEncodeCell(self: *Interpreter, arena: std.mem.Allocator, span: Source.Span, value: Value, value_type: Type) Error![]const u8 {
@@ -5815,19 +5885,25 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
         // Section 15.2: `input_maybe` reports the end of the input as absence,
         // which is how a program reads until there is nothing left.
         if (maybe) return Value.nothing;
-        return self.raise(
+        self.raised_value = try self.makeError(Resolver.preludeKey("InputError"), "`input` reached the end of the input");
+        return self.raiseTyped(
             span,
+            "InputError",
             "`input` reached the end of the input",
             "There are no more lines to read. Use `input_maybe`, which gives `nothing` instead, to read until the input ends.",
         );
     }
 
     const bytes = std.mem.trimEnd(u8, line.written(), "\r");
-    if (!std.unicode.utf8ValidateSlice(bytes)) return self.raise(
-        span,
-        "the line read by `input` is not valid UTF-8 text",
-        "Emerald strings hold Unicode text; check how the input was produced.",
-    );
+    if (!std.unicode.utf8ValidateSlice(bytes)) {
+        self.raised_value = try self.makeError(Resolver.preludeKey("InputError"), "the line read by `input` is not valid UTF-8 text");
+        return self.raiseTyped(
+            span,
+            "InputError",
+            "the line read by `input` is not valid UTF-8 text",
+            "Emerald strings hold Unicode text; check how the input was produced.",
+        );
+    }
     return self.heap.copyText(bytes);
 }
 
