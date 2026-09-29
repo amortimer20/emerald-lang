@@ -30,6 +30,12 @@ class FileError extends RuntimeError {
     }
 }
 
+class DeadlockError extends RuntimeError {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
 # Text encodings are distinct from filesystem failures: raw Bytes can be
 # invalid UTF-8 even when they never came from a file.
 class EncodingError extends RuntimeError {
@@ -50,6 +56,7 @@ class TaskGroup {
 
 class Tasks {
     func Tasks.run(body: func(TaskGroup)) {}
+    func Tasks.yield() {}
 }
 
 # Whole-file filesystem namespaces. Their bodies establish the ordinary

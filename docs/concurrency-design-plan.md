@@ -2,7 +2,9 @@
 
 Status: accepted, 2026-09-29. The user answered "I'll trust your judgement" to the design
 discussion, which is taken as accepting all nine recommendations below; if that was not meant,
-the status goes back to proposed. Slice 1 is committed; slice 2 is in progress.
+the status goes back to proposed. Slices 1–3 are implemented and locally validated;
+slice 4 (channels) is next. Windows runtime validation remains a CI gate.
+The user accepted the scheduling clarification in principle 5 on 2026-09-29.
 Rewrite-context 21 calls
 concurrency "the nearest major post-runtime design pass" and says that until it is done,
 "Emerald callbacks obey the single-threaded language model". 15.7 says the same of "threads,
@@ -28,6 +30,11 @@ Tasks.run { tasks =>
     print(news.result())
 }
 ```
+
+The requests may finish in either order. Printing from their results in the order wanted
+keeps the output fixed: weather first, then news. Printing from inside the tasks would show
+the order in which the network replies arrived, which can vary. A channel can also arrange
+the order in which results are printed.
 
 ```emerald
 # One task makes numbers and another uses them, through a channel.
@@ -100,8 +107,16 @@ Tasks.run { tasks =>
 4. **Structured.** A task can only be started inside a `Tasks.run` block, which does not return
    until every task it started has finished. No task is left running, and no task's error goes
    unseen.
-5. **Deterministic by default.** Given the same input and no clock-dependent waits, a program
-   prints the same output every time. A student, a test, and a bug report can all rely on it.
+5. **Defined scheduling order.** When tasks wait only on each other (`result`, `wait`), on
+   channels, or on `Tasks.yield()`, the same program with the same input produces the same
+   output every time. Ready tasks resume in the order they became ready.
+   A task whose sleep ends earlier resumes earlier; sleeps that end at the same moment
+   resume in the order the tasks started waiting. Deadlines come from the real clock, so
+   only sleeps of clearly different lengths have a reliable order. A timed `wait` that
+   expires also involves a real-clock deadline.
+   File, network, and input completions resume their tasks in the order they arrive, which
+   can vary from run to run. To print in a fixed order, print from the tasks' results in the
+   order wanted, or send through a channel, rather than printing inside I/O tasks.
 6. **Room for multicore.** Nothing in the semantics may require tasks to share memory. Running
    tasks on several cores later must not change what a correct program means.
 7. **Library over keywords.** No new statement syntax. `Tasks`, `Task[T]`, and `Channel[T]` are
@@ -363,7 +378,43 @@ commits.
 - Deadlock detection for the waits that exist so far, and `DeadlockError` with its message.
 - Conformance with deterministic output: tasks that sleep different lengths finish in order of
   their sleeps (using short sleeps), and tasks that only yield interleave in strict rotation.
-- Settled while building: (record here)
+- Settled while building: timers, `Tasks.yield`, `Task.wait(timeout)`,
+  `DeadlockError` with wait locations, and native I/O baton release are implemented and the
+  full local gate passes. The scheduler starts its sorted timer list's worker lazily. Native
+  operations return to the baton before touching the Emerald heap; input and each file
+  handle have FIFO resource gates, so reads and close cannot race. Closed handle records
+  stay until interpreter teardown so a queued operation never refers to freed native state.
+  Task executions wrap their backing allocator because native I/O can allocate while another
+  task evaluates; programs that do not reach `Tasks.run` keep their existing allocator.
+  HTTP's host request runs on the already-existing calling task thread while its baton is
+  released; it needs no additional helper thread. Deadlock detection runs at every handoff,
+  including when the last runnable task finishes, not just when a task begins waiting.
+  It snapshots wait locations before waking participants so group unwinding cannot replace
+  the original diagnostic locations. Focused cases cover caught and late-visible deadlocks.
+
+  **Scheduling clarification accepted by the user, 2026-09-29.** With the baton
+  released, two `File.read` operations can finish in either order. A standalone probe with
+  two tasks reading the same unchanged 1,000,000-byte file, then printing `a` or `b`, produced
+  `a, b` 94 times and `b, a` 6 times in 100 runs. It uses no timer, and its input is identical.
+  `tools/task-io-order-probe.em` preserves the reproduction. This is not a conformance case
+  whose output was retried until passing: it explicitly tested the plan's original promise.
+  A FIFO ready queue preserves the order of readiness, but cannot determine when host I/O
+  completes. Publishing all external completions in submission order would make output
+  reproducible, but can hold a completed network/file task behind another task still waiting
+  for interactive input. The accepted rule is reproducible scheduling when tasks wait only
+  on each other, channels, or yield; ready tasks resume in readiness order. Sleep deadlines
+  resume in deadline order, with equal deadlines ordered by when waiting began; only clearly
+  different sleep lengths have a reliable real-clock order. File, network, and input
+  completions publish readiness in arrival order, which may vary. The first example teaches
+  printing from results in the wanted order (or sending through a channel). Conformance
+  prints file-task results in explicit order and never depends on I/O completion order;
+  every task-using case still requires 50 matching runs before commit.
+
+  Validation: Zig 0.16.0, sequential `-j1` Debug and ReleaseSafe tests, native build,
+  documentation examples, changed-Zig formatting, whitespace, and Windows x86_64/macOS
+  aarch64 cross-builds passed. Eleven new or changed task-running conformance cases each
+  passed 50 consecutive runs (550 total), including HTTP against a loopback-only server.
+  Every expected file was read by hand. Windows execution remains for green PR CI.
 
 ### Slice 4: Channels
 

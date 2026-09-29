@@ -3869,6 +3869,17 @@ single-threaded interpreter and core runtime stabilize, before packages or advan
 metaprogramming. Native libraries may use threads internally, but Emerald callbacks obey
 the single-threaded language model until that pass defines otherwise.
 
+The accepted structured-task milestone defines scheduling as follows. When tasks wait only
+on each other (`result`, `wait`), on channels, or on `Tasks.yield()`, the same program with
+the same input produces the same output every time. Ready tasks resume in the order they
+became ready. Earlier sleep deadlines resume earlier; equal sleep deadlines resume in the
+order waiting began. Deadlines come from the real clock, so only sleeps of clearly different
+lengths have a reliable order; expiry of a timed `wait` is also a real-clock event. File,
+network, and input completions resume tasks in arrival order, which can vary from run to
+run. For fixed output order, print the tasks' results in the order wanted, or send through a
+channel, rather than printing inside the I/O tasks. Implementation status is in the
+concurrency plan and handoff; multicore execution remains a separate deferred design.
+
 ## 22. Reconstruction decisions and history
 
 ### Full-conversation recovery

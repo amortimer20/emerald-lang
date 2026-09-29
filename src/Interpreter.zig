@@ -58,6 +58,8 @@ const FileHandleState = struct {
     reader: std.Io.File.Reader,
     buffer: [4096]u8 = undefined,
     path: []const u8,
+    gate: Scheduler.Runtime.Gate = .{},
+    closed: bool = false,
 };
 
 /// The host state behind one write-only FileWriter. A zero-length streaming
@@ -67,6 +69,8 @@ const FileWriterState = struct {
     file: std.Io.File,
     writer: std.Io.File.Writer,
     path: []const u8,
+    gate: Scheduler.Runtime.Gate = .{},
+    closed: bool = false,
 };
 
 const TaskRecord = struct {
@@ -92,6 +96,7 @@ const TaskGroupRecord = struct {
 /// run; test mode collects one failure per test and continues discovery order.
 pub const Outcome = struct {
     arena_state: std.heap.ArenaAllocator,
+    shared_allocator: ?*Scheduler.SharedAllocator = null,
     failure: ?Diagnostic,
     test_failures: []const Diagnostic = &.{},
     test_count: usize = 0,
@@ -104,6 +109,7 @@ pub const Outcome = struct {
 
     pub fn deinit(self: *Outcome) void {
         self.arena_state.deinit();
+        if (self.shared_allocator) |allocator| allocator.child.destroy(allocator);
         self.* = undefined;
     }
 };
@@ -183,7 +189,9 @@ test_binding_states: std.StringHashMapUnmanaged(ModuleState) = .empty,
 test_binding_failures: std.StringHashMapUnmanaged(struct { value: Value, diagnostic: Diagnostic }) = .empty,
 /// State that moves with the task holding the scheduler baton.
 task: *Scheduler.TaskState(TaskData),
+root_task: *Scheduler.TaskState(TaskData),
 scheduler: *Scheduler.Runtime,
+input_gate: Scheduler.Runtime.Gate = .{},
 task_records: std.AutoHashMapUnmanaged(i64, *TaskRecord) = .empty,
 task_groups: std.AutoHashMapUnmanaged(i64, *TaskGroupRecord) = .empty,
 next_task_id: i64 = 1,
@@ -304,7 +312,7 @@ literal_types: *const Checker.LiteralTypes,
 heap: Heap,
 
 pub fn run(
-    gpa: std.mem.Allocator,
+    host_allocator: std.mem.Allocator,
     files: []const Project.File,
     programs: []const Ast.Program,
     signatures: *const Type.Signatures,
@@ -333,6 +341,11 @@ pub fn run(
     test_mode: bool,
     step_limit: ?usize,
 ) RunError!Outcome {
+    const uses_tasks = if (prelude_reached) |reached| reached.contains(Resolver.prelude_namespace ++ ".Tasks::run") else true;
+    const shared_allocator = if (uses_tasks) try host_allocator.create(Scheduler.SharedAllocator) else null;
+    if (shared_allocator) |allocator| allocator.* = .{ .child = host_allocator, .io = io };
+    errdefer if (shared_allocator) |allocator| host_allocator.destroy(allocator);
+    const gpa = if (shared_allocator) |allocator| allocator.allocator() else host_allocator;
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
 
@@ -368,6 +381,7 @@ pub fn run(
         .module_failed_values = module_failed_values,
         .module_failed_diagnostics = module_failed_diagnostics,
         .task = &root_task,
+        .root_task = &root_task,
         .scheduler = &scheduler,
         .facts = facts,
         .out = out,
@@ -470,15 +484,15 @@ pub fn run(
                         interpreter.task.state.failure = null;
                         continue;
                     },
-                    error.Exited => return .{ .arena_state = arena_state, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.task.state.exit_code },
-                    error.StepLimit => return .{ .arena_state = arena_state, .failure = interpreter.task.state.failure, .test_failures = failures.items, .test_count = count },
+                    error.Exited => return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.task.state.exit_code },
+                    error.StepLimit => return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = interpreter.task.state.failure, .test_failures = failures.items, .test_count = count },
                     error.Returned, error.Broke, error.Continued => unreachable,
                     else => |other| return other,
                 };
                 interpreter.heap.release(result);
             }
         }
-        return .{ .arena_state = arena_state, .failure = null, .test_failures = failures.items, .test_count = count };
+        return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = null, .test_failures = failures.items, .test_count = count };
     }
 
     interpreter.executeAll(programs[entry].statements) catch |err| switch (err) {
@@ -495,7 +509,7 @@ pub fn run(
     };
 
     const failure = interpreter.task.state.failure;
-    return .{ .arena_state = arena_state, .failure = failure, .exit_code = interpreter.task.state.exit_code };
+    return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = failure, .exit_code = interpreter.task.state.exit_code };
 }
 
 /// Completes a class's descriptor with what it inherits, its base classes'
@@ -3045,6 +3059,12 @@ fn evaluateCall(
     if (self.facts.qualified.get(call.callee)) |key| {
         if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::run")) return self.callTasksRun(expression.span, call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::yield")) {
+            const task = self.task;
+            self.scheduler.yield(task.state.job.?);
+            self.task = task;
+            return .nothing;
+        }
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callConsoleWidth(call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsolePlain(call);
@@ -3254,9 +3274,11 @@ fn taskMain(context: *anyopaque, job: *Scheduler.Runtime.Job) void {
 
 fn awaitTask(self: *Interpreter, span: Source.Span, task: *TaskRecord) Error!void {
     const parent = self.task;
+    parent.state.job.?.wait_site = .{ .file = parent.state.file, .start = span.start };
+    defer parent.state.job.?.wait_site = null;
     if (!self.scheduler.waitFor(parent.state.job.?, &task.job)) {
         self.task = parent;
-        return self.raise(span, "these tasks are waiting for each other", "Check the task results they wait for.");
+        return self.raiseDeadlock(span);
     }
     self.task = parent;
     self.scheduler.join(&task.job);
@@ -3272,20 +3294,97 @@ fn propagateTaskError(self: *Interpreter, task: *TaskRecord) Error {
     return err;
 }
 
-fn callTaskMethod(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member) Error!Value {
+fn callTaskMethod(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member, call: Ast.Expression.Call) Error!Value {
     const receiver = try self.evaluate(member.base);
     defer self.heap.release(receiver);
     const id = receiver.data.struct_value.fields[0].data.int;
     const task = self.task_records.get(id) orelse return self.raise(span, "this task does not belong to a running group", "Start a task inside `Tasks.run`.");
     if (std.mem.endsWith(u8, key, "::done?")) return .initBool(self.scheduler.isDone(&task.job));
+    if (std.mem.endsWith(u8, key, "::wait")) {
+        const bound = try self.evaluateBound(call, &.{"timeout"}, &.{false});
+        defer {
+            self.releaseBound(bound);
+            self.gpa.free(bound.values);
+            if (bound.omitted) |omitted| self.gpa.free(omitted);
+        }
+        const duration = bound.values[0].data.struct_value;
+        const seconds = duration.fields[fieldPosition(duration, "_seconds").?].data.int;
+        const nanoseconds = duration.fields[fieldPosition(duration, "_nanoseconds").?].data.int;
+        if (seconds < 0) return self.raise(span, "a task timeout cannot be negative", "Pass a Duration of zero or more.");
+        self.scheduler.prepareTimers() catch return self.raise(span, "the task scheduler could not wait for time", "Try starting fewer tasks at once.");
+        const deadline = std.Io.Clock.awake.now(self.io).toNanoseconds() + @as(i96, seconds) * std.time.ns_per_s + nanoseconds;
+        const parent = self.task;
+        parent.state.job.?.wait_site = .{ .file = parent.state.file, .start = span.start };
+        defer parent.state.job.?.wait_site = null;
+        const result = self.scheduler.waitForUntil(parent.state.job.?, &task.job, deadline);
+        self.task = parent;
+        return switch (result) {
+            .finished => .initBool(true),
+            .timed_out => .initBool(false),
+            .deadlocked => self.raiseDeadlock(span),
+        };
+    }
     try self.awaitTask(span, task);
     if (task.ended != null) return self.propagateTaskError(task);
     return Heap.retain(task.result.?);
 }
 
+fn raiseDeadlock(self: *Interpreter, span: Source.Span) Error {
+    const message = "these tasks are waiting for each other";
+    self.task.state.raised_value = self.makeError(Resolver.preludeKey("DeadlockError"), message) catch return error.OutOfMemory;
+    var details: std.Io.Writer.Allocating = .init(self.arena);
+    self.writeTaskWait(&details.writer, self.root_task, "the group") catch return error.OutOfMemory;
+    for (1..@as(usize, @intCast(self.next_task_id))) |id| {
+        const task = self.task_records.get(@intCast(id)) orelse continue;
+        self.writeTaskWait(&details.writer, &task.state, "a task") catch return error.OutOfMemory;
+    }
+    details.writer.writeAll("Check the task results they wait for.") catch return error.OutOfMemory;
+    return self.raiseTyped(span, "DeadlockError", message, details.written());
+}
+
+fn writeTaskWait(self: *Interpreter, writer: *std.Io.Writer, state: *Scheduler.TaskState(TaskData), description: []const u8) std.Io.Writer.Error!void {
+    const target = state.state.job.?.deadlock_target orelse return;
+    const location = state.state.job.?.deadlock_site orelse return;
+    var tasks = self.task_records.valueIterator();
+    while (tasks.next()) |task_ptr| {
+        const task = task_ptr.*;
+        if (&task.job != target) continue;
+        const waiting_source = self.files[location.file].source;
+        const target_source = self.files[task.block.data.closure.file].source;
+        try writer.print("At `{s}:{d}`, {s} is waiting for the task started at `{s}:{d}`.\n", .{
+            waiting_source.path, waiting_source.location(location.start).line, description,
+            target_source.path,  target_source.location(task.span.start).line,
+        });
+        return;
+    }
+}
+
+/// Only the host operation runs without the baton. The caller can inspect
+/// its result, raise an Emerald error, or change the heap after this returns.
+fn blocking(self: *Interpreter, comptime operation: anytype, args: std.meta.ArgsTuple(@TypeOf(operation))) @typeInfo(@TypeOf(operation)).@"fn".return_type.? {
+    if (self.task_records.count() == 0) return @call(.auto, operation, args);
+    const task = self.task;
+    self.scheduler.beginExternal(task.state.job.?);
+    const result = @call(.auto, operation, args);
+    self.scheduler.endExternal(task.state.job.?);
+    self.task = task;
+    return result;
+}
+
+fn acquireResource(self: *Interpreter, gate: *Scheduler.Runtime.Gate) void {
+    const task = self.task;
+    self.scheduler.acquire(task.state.job.?, gate);
+    self.task = task;
+}
+
+fn releaseResource(self: *Interpreter, gate: *Scheduler.Runtime.Gate) void {
+    self.scheduler.release(self.task.state.job.?, gate);
+}
+
 fn deinitTasks(self: *Interpreter) void {
     var tasks = self.task_records.valueIterator();
     while (tasks.next()) |task_ptr| self.scheduler.join(&task_ptr.*.job);
+    self.scheduler.deinit();
     tasks = self.task_records.valueIterator();
     while (tasks.next()) |task_ptr| {
         const task = task_ptr.*;
@@ -3495,8 +3594,8 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         self.heap.release(result);
         return Value.nothing;
     }
-    if (std.mem.eql(u8, suffix, "File::exists?")) return .{ .data = .{ .bool = fileKind(cwd, io, values[0].data.string.bytes, .file) } };
-    if (std.mem.eql(u8, suffix, "Directory::exists?")) return .{ .data = .{ .bool = fileKind(cwd, io, values[0].data.string.bytes, .directory) } };
+    if (std.mem.eql(u8, suffix, "File::exists?")) return .initBool(self.blocking(fileKind, .{ cwd, io, values[0].data.string.bytes, .file }));
+    if (std.mem.eql(u8, suffix, "Directory::exists?")) return .initBool(self.blocking(fileKind, .{ cwd, io, values[0].data.string.bytes, .directory }));
     if (std.mem.eql(u8, suffix, "Path::absolute?")) return .{ .data = .{ .bool = std.fs.path.isAbsolute(values[0].data.string.bytes) } };
     if (std.mem.eql(u8, suffix, "Path::name")) return self.heap.copyText(std.fs.path.basename(values[0].data.string.bytes));
     if (std.mem.eql(u8, suffix, "Path::stem")) return self.heap.copyText(std.fs.path.stem(values[0].data.string.bytes));
@@ -3514,25 +3613,25 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         return .{ .data = .{ .string = try self.heap.createText(joined) } };
     }
     if (std.mem.eql(u8, suffix, "Path::absolute")) {
-        const resolved = cwd.realPathFileAlloc(io, values[0].data.string.bytes, self.gpa) catch return self.raiseFilePath(span, values[0].data.string.bytes, "find");
+        const resolved = self.blocking(std.Io.Dir.realPathFileAlloc, .{ cwd, io, values[0].data.string.bytes, self.gpa }) catch return self.raiseFilePath(span, values[0].data.string.bytes, "find");
         defer self.gpa.free(resolved);
         const absolute = try self.gpa.dupe(u8, resolved);
         return .{ .data = .{ .string = try self.heap.createText(absolute) } };
     }
     if (std.mem.eql(u8, suffix, "File::read_binary")) {
         const path = values[0].data.string.bytes;
-        const bytes = cwd.readFileAlloc(io, path, self.gpa, .unlimited) catch return self.raiseFilePath(span, path, "read");
+        const bytes = self.blocking(std.Io.Dir.readFileAlloc, .{ cwd, io, path, self.gpa, .unlimited }) catch return self.raiseFilePath(span, path, "read");
         return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
     }
     if (std.mem.eql(u8, suffix, "File::write_binary")) {
         const path = values[0].data.string.bytes;
-        cwd.writeFile(io, .{ .sub_path = path, .data = values[1].data.bytes.bytes }) catch return self.raiseFilePath(span, path, "write");
+        self.blocking(std.Io.Dir.writeFile, .{ cwd, io, .{ .sub_path = path, .data = values[1].data.bytes.bytes } }) catch return self.raiseFilePath(span, path, "write");
         return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "File::read") or std.mem.eql(u8, suffix, "File::read_lines")) {
         const path = values[0].data.string.bytes;
-        const bytes = cwd.readFileAlloc(io, path, self.gpa, .unlimited) catch {
-            const stat = cwd.statFile(io, path, .{}) catch |err| switch (err) {
+        const bytes = self.blocking(std.Io.Dir.readFileAlloc, .{ cwd, io, path, self.gpa, .unlimited }) catch {
+            const stat = self.blocking(std.Io.Dir.statFile, .{ cwd, io, path, .{} }) catch |err| switch (err) {
                 error.FileNotFound => return self.raiseFileMessage(span, try std.fmt.allocPrint(self.arena, "the file `{s}` does not exist", .{path})),
                 else => return self.raiseFilePath(span, path, "read"),
             };
@@ -3551,37 +3650,37 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         const path = values[0].data.string.bytes;
         const contents = if (std.mem.eql(u8, suffix, "File::write")) values[1].data.string.bytes else try self.joinLines(values[1].data.list);
         defer if (std.mem.eql(u8, suffix, "File::write_lines")) self.gpa.free(contents);
-        cwd.writeFile(io, .{ .sub_path = path, .data = contents }) catch return self.raiseFilePath(span, path, "write");
+        self.blocking(std.Io.Dir.writeFile, .{ cwd, io, .{ .sub_path = path, .data = contents } }) catch return self.raiseFilePath(span, path, "write");
         return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "File::append")) {
         const path = values[0].data.string.bytes;
-        const old = cwd.readFileAlloc(io, path, self.gpa, .unlimited) catch return self.raiseFilePath(span, path, "append to");
+        const old = self.blocking(std.Io.Dir.readFileAlloc, .{ cwd, io, path, self.gpa, .unlimited }) catch return self.raiseFilePath(span, path, "append to");
         defer self.gpa.free(old);
         if (!std.unicode.utf8ValidateSlice(old)) return self.raiseFilePath(span, path, "append UTF-8 text to");
         const combined = std.mem.concat(self.gpa, u8, &.{ old, values[1].data.string.bytes }) catch return error.OutOfMemory;
         defer self.gpa.free(combined);
-        cwd.writeFile(io, .{ .sub_path = path, .data = combined }) catch return self.raiseFilePath(span, path, "append to");
+        self.blocking(std.Io.Dir.writeFile, .{ cwd, io, .{ .sub_path = path, .data = combined } }) catch return self.raiseFilePath(span, path, "append to");
         return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "File::copy")) {
-        cwd.copyFile(values[0].data.string.bytes, cwd, values[1].data.string.bytes, io, .{ .replace = true }) catch return self.raiseFilePath(span, values[0].data.string.bytes, "copy");
+        self.blocking(std.Io.Dir.copyFile, .{ cwd, values[0].data.string.bytes, cwd, values[1].data.string.bytes, io, .{ .replace = true } }) catch return self.raiseFilePath(span, values[0].data.string.bytes, "copy");
         return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "File::move")) {
-        cwd.rename(values[0].data.string.bytes, cwd, values[1].data.string.bytes, io) catch return self.raiseFilePath(span, values[0].data.string.bytes, "move");
+        self.blocking(std.Io.Dir.rename, .{ cwd, values[0].data.string.bytes, cwd, values[1].data.string.bytes, io }) catch return self.raiseFilePath(span, values[0].data.string.bytes, "move");
         return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "File::delete")) {
-        cwd.deleteFile(io, values[0].data.string.bytes) catch return self.raiseFilePath(span, values[0].data.string.bytes, "delete");
+        self.blocking(std.Io.Dir.deleteFile, .{ cwd, io, values[0].data.string.bytes }) catch return self.raiseFilePath(span, values[0].data.string.bytes, "delete");
         return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "Directory::create")) {
-        cwd.createDirPath(io, values[0].data.string.bytes) catch return self.raiseFilePath(span, values[0].data.string.bytes, "create");
+        self.blocking(std.Io.Dir.createDirPath, .{ cwd, io, values[0].data.string.bytes }) catch return self.raiseFilePath(span, values[0].data.string.bytes, "create");
         return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "Directory::delete")) {
-        cwd.deleteDir(io, values[0].data.string.bytes) catch |err| {
+        self.blocking(std.Io.Dir.deleteDir, .{ cwd, io, values[0].data.string.bytes }) catch |err| {
             if (err == error.DirNotEmpty) return self.raiseFileMessage(span, try std.fmt.allocPrint(self.arena, "`{s}` is not empty, so it cannot be deleted", .{values[0].data.string.bytes}));
             return self.raiseFilePath(span, values[0].data.string.bytes, "delete");
         };
@@ -3591,7 +3690,7 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         // Mirrors `Directory.create`'s idempotence: removing an
         // already-gone path is not a mistake worth raising over, and
         // `deleteTree` already treats a missing path this way.
-        cwd.deleteTree(io, values[0].data.string.bytes) catch return self.raiseFilePath(span, values[0].data.string.bytes, "delete");
+        self.blocking(std.Io.Dir.deleteTree, .{ cwd, io, values[0].data.string.bytes }) catch return self.raiseFilePath(span, values[0].data.string.bytes, "delete");
         return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "Directory::list")) return self.listDirectory(span, cwd, io, values[0].data.string.bytes);
@@ -3604,8 +3703,8 @@ fn fileKind(cwd: std.Io.Dir, io: std.Io, path: []const u8, kind: std.Io.File.Kin
 }
 
 fn openFileHandle(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: std.Io, path: []const u8) Error!Value {
-    const file = cwd.openFile(io, path, .{ .allow_directory = false }) catch {
-        const stat = cwd.statFile(io, path, .{}) catch |err| switch (err) {
+    const file = self.blocking(std.Io.Dir.openFile, .{ cwd, io, path, .{ .allow_directory = false } }) catch {
+        const stat = self.blocking(std.Io.Dir.statFile, .{ cwd, io, path, .{} }) catch |err| switch (err) {
             error.FileNotFound => return self.raiseFileMessage(span, try std.fmt.allocPrint(self.arena, "the file `{s}` does not exist", .{path})),
             else => return self.raiseFilePath(span, path, "open"),
         };
@@ -3613,12 +3712,12 @@ fn openFileHandle(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: st
         return self.raiseFilePath(span, path, "open");
     };
     const copied_path = self.gpa.dupe(u8, path) catch |err| {
-        file.close(io);
+        self.blocking(std.Io.File.close, .{ file, io });
         return err;
     };
     const state = self.gpa.create(FileHandleState) catch |err| {
         self.gpa.free(copied_path);
-        file.close(io);
+        self.blocking(std.Io.File.close, .{ file, io });
         return err;
     };
     state.* = .{
@@ -3652,14 +3751,14 @@ fn openFileHandle(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: st
 }
 
 fn createFileWriter(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: std.Io, path: []const u8) Error!Value {
-    const file = cwd.createFile(io, path, .{}) catch return self.raiseFilePath(span, path, "create");
+    const file = self.blocking(std.Io.Dir.createFile, .{ cwd, io, path, .{} }) catch return self.raiseFilePath(span, path, "create");
     const copied_path = self.gpa.dupe(u8, path) catch |err| {
-        file.close(io);
+        self.blocking(std.Io.File.close, .{ file, io });
         return err;
     };
     const state = self.gpa.create(FileWriterState) catch |err| {
         self.gpa.free(copied_path);
-        file.close(io);
+        self.blocking(std.Io.File.close, .{ file, io });
         return err;
     };
     state.* = .{
@@ -3698,30 +3797,25 @@ fn callFileHandle(self: *Interpreter, span: Source.Span, key: []const u8, member
         self.closeFileHandle(id);
         return Value.nothing;
     }
+    const count_value = if (std.mem.eql(u8, suffix, "read_bytes")) try self.evaluate(call.arguments[0]) else Value.nothing;
+    defer self.heap.release(count_value);
     const state = self.file_handles.get(id) orelse return self.raiseFileMessage(span, "cannot read from a closed file");
+    self.acquireResource(&state.gate);
+    defer self.releaseResource(&state.gate);
+    if (state.closed) return self.raiseFileMessage(span, "cannot read from a closed file");
     if (std.mem.eql(u8, suffix, "read_all_bytes")) {
-        const bytes = state.reader.interface.allocRemaining(self.gpa, .unlimited) catch return self.raiseFilePath(span, state.path, "read");
+        const bytes = self.blocking(std.Io.Reader.allocRemaining, .{ &state.reader.interface, self.gpa, .unlimited }) catch return self.raiseFilePath(span, state.path, "read");
         return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
     }
     if (std.mem.eql(u8, suffix, "read_bytes")) {
-        const count_value = try self.evaluate(call.arguments[0]);
-        defer self.heap.release(count_value);
         const count = count_value.data.int;
         if (count < 0) return self.raiseFmt(span, "a byte count cannot be negative, but this is {d}", .{count}, "Pass 0 or a larger count.");
-        var bytes: std.ArrayList(u8) = .empty;
-        errdefer bytes.deinit(self.gpa);
-        read_loop: for (0..@as(usize, @intCast(count))) |_| {
-            const byte = state.reader.interface.takeByte() catch |err| switch (err) {
-                error.EndOfStream => break :read_loop,
-                else => return self.raiseFilePath(span, state.path, "read"),
-            };
-            try bytes.append(self.gpa, byte);
-        }
-        if (bytes.items.len == 0 and count > 0) return Value.nothing;
-        return .{ .data = .{ .bytes = try self.heap.createText(try bytes.toOwnedSlice(self.gpa)) } };
+        const bytes = self.blocking(readStreamBytes, .{ &state.reader.interface, self.gpa, @as(?usize, @intCast(count)) }) catch return self.raiseFilePath(span, state.path, "read");
+        if (bytes) |present| return .{ .data = .{ .bytes = try self.heap.createText(present) } };
+        return Value.nothing;
     }
     if (std.mem.eql(u8, suffix, "read")) {
-        const bytes = state.reader.interface.allocRemaining(self.gpa, .unlimited) catch return self.raiseFilePath(span, state.path, "read");
+        const bytes = self.blocking(std.Io.Reader.allocRemaining, .{ &state.reader.interface, self.gpa, .unlimited }) catch return self.raiseFilePath(span, state.path, "read");
         if (!std.unicode.utf8ValidateSlice(bytes)) {
             self.gpa.free(bytes);
             return self.raiseFilePath(span, state.path, "read as UTF-8 text");
@@ -3729,25 +3823,34 @@ fn callFileHandle(self: *Interpreter, span: Source.Span, key: []const u8, member
         return .{ .data = .{ .string = try self.heap.createText(bytes) } };
     }
 
-    var line: std.ArrayList(u8) = .empty;
-    errdefer line.deinit(self.gpa);
-    var read_any = false;
-    while (true) {
-        const byte = state.reader.interface.takeByte() catch |err| switch (err) {
-            error.EndOfStream => break,
-            else => return self.raiseFilePath(span, state.path, "read"),
-        };
-        read_any = true;
-        if (byte == '\n') break;
-        try line.append(self.gpa, byte);
-    }
-    if (!read_any) return Value.nothing;
-    const bytes = try line.toOwnedSlice(self.gpa);
+    const bytes = (self.blocking(readStreamBytes, .{ &state.reader.interface, self.gpa, @as(?usize, null) }) catch return self.raiseFilePath(span, state.path, "read")) orelse return Value.nothing;
     if (!std.unicode.utf8ValidateSlice(bytes)) {
         self.gpa.free(bytes);
         return self.raiseFilePath(span, state.path, "read as UTF-8 text");
     }
     return .{ .data = .{ .string = try self.heap.createText(bytes) } };
+}
+
+/// Raw streaming work, isolated from the Emerald heap while the baton is out.
+/// A null count reads one line; a count reads at most that many bytes.
+fn readStreamBytes(reader: *std.Io.Reader, gpa: std.mem.Allocator, count: ?usize) error{ ReadFailed, OutOfMemory }!?[]u8 {
+    var bytes: std.ArrayList(u8) = .empty;
+    errdefer bytes.deinit(gpa);
+    var read_any = false;
+    while (count == null or bytes.items.len < count.?) {
+        const byte = reader.takeByte() catch |err| switch (err) {
+            error.EndOfStream => break,
+            error.ReadFailed => return error.ReadFailed,
+        };
+        read_any = true;
+        if (count == null and byte == '\n') break;
+        try bytes.append(gpa, byte);
+    }
+    if (!read_any and count != 0) {
+        bytes.deinit(gpa);
+        return null;
+    }
+    return try bytes.toOwnedSlice(gpa);
 }
 
 fn callFileWriter(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member, call: Ast.Expression.Call) Error!Value {
@@ -3759,21 +3862,28 @@ fn callFileWriter(self: *Interpreter, span: Source.Span, key: []const u8, member
         self.closeFileWriter(id);
         return Value.nothing;
     }
-    const state = self.file_writers.get(id) orelse return self.raiseFileMessage(span, "cannot write to a closed file");
     const value = try self.evaluate(call.arguments[0]);
     defer self.heap.release(value);
+    const state = self.file_writers.get(id) orelse return self.raiseFileMessage(span, "cannot write to a closed file");
+    self.acquireResource(&state.gate);
+    defer self.releaseResource(&state.gate);
+    if (state.closed) return self.raiseFileMessage(span, "cannot write to a closed file");
     const bytes = if (std.mem.eql(u8, suffix, "write_bytes")) value.data.bytes.bytes else value.data.string.bytes;
-    state.writer.interface.writeAll(bytes) catch return self.raiseFilePath(span, state.path, "write");
+    self.blocking(std.Io.Writer.writeAll, .{ &state.writer.interface, bytes }) catch return self.raiseFilePath(span, state.path, "write");
     return Value.nothing;
 }
 
 fn closeFileHandle(self: *Interpreter, id: i64) void {
-    const removed = self.file_handles.fetchRemove(id) orelse return;
-    self.destroyFileHandle(removed.value);
+    const state = self.file_handles.get(id) orelse return;
+    self.acquireResource(&state.gate);
+    defer self.releaseResource(&state.gate);
+    if (state.closed) return;
+    state.closed = true;
+    self.blocking(std.Io.File.close, .{ state.file, self.io });
 }
 
 fn destroyFileHandle(self: *Interpreter, state: *FileHandleState) void {
-    state.file.close(self.io);
+    if (!state.closed) self.blocking(std.Io.File.close, .{ state.file, self.io });
     self.gpa.free(state.path);
     self.gpa.destroy(state);
 }
@@ -3785,12 +3895,16 @@ fn deinitFileHandles(self: *Interpreter) void {
 }
 
 fn closeFileWriter(self: *Interpreter, id: i64) void {
-    const removed = self.file_writers.fetchRemove(id) orelse return;
-    self.destroyFileWriter(removed.value);
+    const state = self.file_writers.get(id) orelse return;
+    self.acquireResource(&state.gate);
+    defer self.releaseResource(&state.gate);
+    if (state.closed) return;
+    state.closed = true;
+    self.blocking(std.Io.File.close, .{ state.file, self.io });
 }
 
 fn destroyFileWriter(self: *Interpreter, state: *FileWriterState) void {
-    state.file.close(self.io);
+    if (!state.closed) self.blocking(std.Io.File.close, .{ state.file, self.io });
     self.gpa.free(state.path);
     self.gpa.destroy(state);
 }
@@ -3822,13 +3936,13 @@ fn joinLines(self: *Interpreter, lines: *Heap.List) Error![]u8 {
 }
 
 fn listDirectory(self: *Interpreter, span: Source.Span, cwd: std.Io.Dir, io: std.Io, path: []const u8) Error!Value {
-    var directory = cwd.openDir(io, path, .{ .iterate = true }) catch return self.raiseFilePath(span, path, "list");
-    defer directory.close(io);
+    var directory = self.blocking(std.Io.Dir.openDir, .{ cwd, io, path, .{ .iterate = true } }) catch return self.raiseFilePath(span, path, "list");
+    defer self.blocking(std.Io.Dir.close, .{ directory, io });
     var iterator = directory.iterate();
     var entries: std.ArrayList(Value) = .empty;
     defer entries.deinit(self.gpa);
     errdefer for (entries.items) |entry| self.heap.release(entry);
-    while (iterator.next(io) catch return self.raiseFilePath(span, path, "list")) |entry| {
+    while (self.blocking(std.Io.Dir.Iterator.next, .{ &iterator, io }) catch return self.raiseFilePath(span, path, "list")) |entry| {
         const full = joinPathParts(self.gpa, &.{ path, entry.name }) catch return error.OutOfMemory;
         entries.append(self.gpa, .{ .data = .{ .string = try self.heap.createText(full) } }) catch return error.OutOfMemory;
     }
@@ -4733,7 +4847,7 @@ fn httpRequest(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call,
     }
 
     const client = try self.httpClient(span);
-    var response = switch (client.request(requested_url, .{ .method = method, .body = body, .headers = headers.items, .timeout = timeout })) {
+    var response = switch (self.blocking(Http.Client.request, .{ client, requested_url, .{ .method = method, .body = body, .headers = headers.items, .timeout = timeout } })) {
         .problem => |problem| return self.raiseHttpProblem(span, requested_url, problem),
         .response => |answer| answer,
     };
@@ -5672,6 +5786,13 @@ fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) E
     const io = self.io;
     const total = @as(i96, seconds) * std.time.ns_per_s + nanoseconds;
     const deadline = std.Io.Clock.awake.now(io).toNanoseconds() + total;
+    if (self.task_records.count() != 0) {
+        self.scheduler.prepareTimers() catch return self.raise(span, "the task scheduler could not wait for time", "Try starting fewer tasks at once.");
+        const task = self.task;
+        self.scheduler.sleepUntil(task.state.job.?, deadline);
+        self.task = task;
+        return .nothing;
+    }
     while (true) {
         const remaining = deadline - std.Io.Clock.awake.now(io).toNanoseconds();
         if (remaining <= 0) break;
@@ -6107,8 +6228,7 @@ fn releaseBound(self: *Interpreter, bound: Bound) void {
 
 /// Section 15.2's `input(prompt)` and `input_maybe(prompt)`: writes the prompt,
 /// reads one line, and returns it without its line ending. Pressing Enter gives
-/// `""`. They differ only at the end of the input, where `input` raises — not
-/// catchable yet, as nothing is — and `input_maybe` reports absence (4.5).
+/// `""`. At the end, `input` raises InputError and `input_maybe` reports absence.
 fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, maybe: bool) Error!Value {
     if (call.arguments.len == 1) {
         const prompt = try self.evaluate(call.arguments[0]);
@@ -6118,15 +6238,14 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
     // A prompt has to be seen before the program waits for an answer.
     try self.out.flush();
 
-    var line: std.Io.Writer.Allocating = .init(self.gpa);
-    defer line.deinit();
-    const length = self.in.streamDelimiterEnding(&line.writer, '\n') catch |err| switch (err) {
-        error.WriteFailed => return error.OutOfMemory,
+    self.acquireResource(&self.input_gate);
+    defer self.releaseResource(&self.input_gate);
+    const line = self.blocking(readInputLine, .{ self.in, self.gpa }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
         error.ReadFailed => return self.raise(span, "the program's input could not be read", "Check how the program's input is being provided."),
     };
-    const at_end = self.in.bufferedLen() == 0;
-    if (!at_end) self.in.toss(1); // the newline
-    if (at_end and length == 0) {
+    defer self.gpa.free(line.bytes);
+    if (line.at_end and line.bytes.len == 0) {
         // Section 15.2: `input_maybe` reports the end of the input as absence,
         // which is how a program reads until there is nothing left.
         if (maybe) return Value.nothing;
@@ -6139,7 +6258,7 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
         );
     }
 
-    const bytes = std.mem.trimEnd(u8, line.written(), "\r");
+    const bytes = std.mem.trimEnd(u8, line.bytes, "\r");
     if (!std.unicode.utf8ValidateSlice(bytes)) {
         self.task.state.raised_value = try self.makeError(Resolver.preludeKey("InputError"), "the line read by `input` is not valid UTF-8 text");
         return self.raiseTyped(
@@ -6150,6 +6269,20 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
         );
     }
     return self.heap.copyText(bytes);
+}
+
+const InputLine = struct { bytes: []u8, at_end: bool };
+
+fn readInputLine(reader: *std.Io.Reader, gpa: std.mem.Allocator) error{ ReadFailed, OutOfMemory }!InputLine {
+    var line: std.Io.Writer.Allocating = .init(gpa);
+    defer line.deinit();
+    _ = reader.streamDelimiterEnding(&line.writer, '\n') catch |err| switch (err) {
+        error.WriteFailed => return error.OutOfMemory,
+        error.ReadFailed => return error.ReadFailed,
+    };
+    const at_end = reader.bufferedLen() == 0;
+    if (!at_end) reader.toss(1);
+    return .{ .bytes = try line.toOwnedSlice(), .at_end = at_end };
 }
 
 /// Every argument is evaluated before anything is written, as for any other
@@ -7406,7 +7539,7 @@ fn callMethod(
         if (isFileHandleKey(key)) return self.callFileHandle(expression.span, key, member, call);
         if (isFileWriterKey(key)) return self.callFileWriter(expression.span, key, member, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TaskGroup::start")) return self.callTaskStart(expression.span, member, call);
-        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Task::")) return self.callTaskMethod(expression.span, key, member);
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Task::")) return self.callTaskMethod(expression.span, key, member, call);
         // A resolved user method owns its name, including `next`, `choose`,
         // and `shuffle!`. Honor it before considering native operations.
         if (member.optional) {

@@ -114,21 +114,29 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
-Concurrency is in progress on `codex/concurrency`. Slice 1 moves interpreter execution state
-into `Scheduler.TaskState`, establishes a one-owner baton, and passes `Streams.io` into the
-interpreter so its blocking natives use one execution-owned backend. The 30-run ReleaseSafe
-startup comparison against `main` was flat (98.5–102.2% across the five samples). Slice 2
-adds `Task[T]`, `Tasks.run`, `TaskGroup.start`, `result()`, and `done?()` through a one-holder
-scheduler on OS threads, with a 64-live-task limit. Direct captures of outer `var` bindings in an
-inline task block (including nested lambdas) are rejected. The user approved requiring that
-inline block for `start`; stored function values cannot be checked for their captures with
-the current function type. The plan records two indirect-call gaps for a later multicore
-design: a named function called by the block may read a module `var`, and a function value
-called by the block may itself have captured a `var`. Slice 2 local validation passed with
-Zig 0.16.0 `-j1`: Debug and ReleaseSafe tests, native build, doc examples,
-formatting, whitespace, Windows and macOS cross-builds, and 50 repeated runs of each new
-task-using conformance case. Slice 3 waiting/timer behavior is next; it is not implemented
-yet. Windows runtime behavior and memory measurements remain for CI.
+Concurrency is in progress on `codex/concurrency`. Slices 1–3 are implemented and locally
+validated: per-task execution state, `Task[T]`, structured groups, results, a FIFO single-holder
+OS-thread scheduler (64 live children), yield, timers, timed waits, native-I/O baton release,
+and `DeadlockError` with original wait locations. Input and shared file handles use FIFO
+resource gates. Direct captures of outer `var` bindings, including nested lambdas, are
+rejected; `start` requires an inline block. Two indirect-call capture gaps remain for the
+multicore plan: called named functions reading module `var`s, and called function values
+that captured `var`s elsewhere. They are safe under the single baton.
+
+The user accepted the ordering clarification on 2026-09-29:
+task/channel/yield waits are reproducible; ready tasks resume in readiness order. Sleeps
+resume in deadline order, with equal deadlines ordered by when waiting began; only clearly
+different lengths have reliable real-clock ordering. File, network, and input completions
+resume in arrival order and can vary. Teach fixed output order by printing task results in
+the wanted order or sending through a channel. The two-file-read probe produced `a, b` 94
+times and `b, a` 6 times in 100 runs; the evidence and decision are in the slice 3 note.
+Conformance cases order their I/O results explicitly. Slice 3 passed the full local gate
+with Zig 0.16.0 `-j1`: Debug and ReleaseSafe tests, native build, documentation examples,
+formatting, whitespace, and Windows/macOS cross-builds. Eleven new or changed task-running
+cases each passed 50 consecutive runs (550 total), including loopback-only HTTP. The journal
+records completed slices and measurements. Next is slice 4: channels. Windows runtime
+behavior and memory measurements remain for CI; a slice is not fully done until its PR is
+green on Windows. This branch has not been pushed or merged.
 
 A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
 `-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
@@ -156,8 +164,9 @@ built:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - **Concurrency** (rewrite-context 21): structured tasks and channels, in
   [`concurrency-design-plan.md`](concurrency-design-plan.md), accepted with all nine
-  recommendations. Codex is implementing the plan on `codex/concurrency`; slice 2 passed
-  local validation, then slices 3–6 follow in order.
+  recommendations. Codex is implementing the plan on `codex/concurrency`; slices 1–3
+  have passed their local gate, including the accepted ordering correction above.
+  Continue with slice 4 (channels), then cancellation and documentation/integration.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The

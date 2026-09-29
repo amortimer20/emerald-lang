@@ -3356,3 +3356,35 @@ baton handoffs took 1.63 s / 1 MiB. Each live task reserves a 128 MiB virtual st
 64-bit host, committed only as used; the 64-task cap keeps that bounded. Windows timing
 and memory still need a CI runner. Automatic sibling cancellation arrives with slice 5's
 cancellation machinery; this slice drains children before propagating their errors.
+
+## Concurrency, slice 3: time and outside work, 2026-09-29
+
+`Tasks.yield()`, scheduler-managed sleeps, `Task.wait(timeout)`, and `DeadlockError` are
+implemented. A lazy timer worker keeps deadlines ordered and breaks ties by when waiting
+began. Input, filesystem operations, streamed handle operations, and HTTP release the baton
+only for their host work, then reacquire it before inspecting results or changing the Emerald
+heap. HTTP uses the calling task's existing thread, not an additional helper. Input and file
+handles have FIFO gates; closed native records survive until teardown so queued operations
+cannot refer to freed state. Task executions synchronize their backing allocator because
+host I/O can allocate while another task evaluates; non-task executions keep their allocator.
+
+A two-task probe reading the same unchanged 1,000,000-byte file, then printing inside each
+task, produced `a, b` 94 times and `b, a` 6 times in 100 runs. That disproved the original
+promise of reproducible output without clocks. The user approved the precise replacement:
+task/channel/yield scheduling is reproducible, with ready tasks resumed in readiness order;
+earlier sleep deadlines resume earlier, ties use waiting order, and only clearly different
+lengths give a reliable real-clock order. File/network/input completions arrive in variable
+order. The first example now teaches printing results in the wanted order (or using a channel).
+The probe is retained separately from conformance; conformance never assumes I/O arrival order.
+
+Review also found that a deadlock can become visible when the last runnable task finishes,
+not only when another task begins waiting. Detection now runs at every handoff and snapshots
+the original wait graph and locations before waking participants for error propagation.
+Focused cases cover caught deadlocks and this late-visible case.
+
+Full local validation passed with pinned Zig 0.16.0 and sequential `-j1`: Debug and ReleaseSafe
+tests, native build, documentation examples (23 executed, 112 linked conformance files),
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
+Eleven new or changed task-running cases each passed 50 consecutive runs (550 total), with
+HTTP using a loopback-only server; expected files were read by hand. Windows runtime behavior
+and measurements still require green PR CI. Channels are the next slice.

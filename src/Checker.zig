@@ -6818,7 +6818,8 @@ fn typeOfMethodCall(
         // arguments, matched the same way a declared method's are.
         const named_builtin = (base.kind == .int and
             (std.mem.eql(u8, member.name, "to_string") or std.mem.eql(u8, member.name, "format"))) or
-            (base.kind == .float and std.mem.eql(u8, member.name, "format"));
+            (base.kind == .float and std.mem.eql(u8, member.name, "format")) or
+            (base.kind == .task and std.mem.eql(u8, member.name, "wait"));
         // Nothing else about the call is checked, since a named value's
         // position means nothing here and would only report again.
         if (!named_builtin and try self.rejectNames(call)) {
@@ -6837,6 +6838,17 @@ fn typeOfMethodCall(
     }
 
     if (base.kind == .task) {
+        if (std.mem.eql(u8, member.name, "wait")) {
+            const duration = self.structs.get(Resolver.preludeKey("Duration")).?;
+            try self.checkArguments(call, "wait", .{
+                .types = &.{duration},
+                .names = &.{"timeout"},
+                .has_default = &.{false},
+                .arity_help = "Give `wait` one Duration for its timeout.",
+            });
+            try self.method_calls.put(self.arena, call.callee, try Resolver.methodKey(self.arena, Resolver.preludeKey("Task"), "wait"));
+            return .bool;
+        }
         const result: ?Type = if (std.mem.eql(u8, member.name, "result"))
             base.element.?.*
         else if (std.mem.eql(u8, member.name, "done?"))
@@ -6852,7 +6864,7 @@ fn typeOfMethodCall(
             member.name_span,
             "Task[{f}] has no method named `{s}`",
             .{ base.element.?.*, member.name },
-            "A task offers `result()` to wait for its value and `done?()` to check whether it finished.",
+            "A task offers `result()`, `wait(timeout)`, and `done?()`.",
         );
         try self.typeArguments(call.arguments);
         return .invalid;
