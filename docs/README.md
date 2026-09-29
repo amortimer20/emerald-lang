@@ -29,9 +29,11 @@ copy an example into a guide and treat it as independently authoritative.
 
 ## Site boundary
 
-A future Astro site may consume these Markdown sources or a generated form of them. Site
-navigation, styling, search, and deployment belong in that presentation project. Language
-semantics, API signatures, examples, and cross-links to executable conformance stay here.
+The public website (the separate `emerald-website` repository) does not consume these files.
+Its pages are written by hand, slowly and for learners, one page at a time with the user's
+review; the maintainer-style pages here are never synced or bulk-published. The two references
+can therefore drift, so change both when a library's behavior changes. Language semantics, API
+signatures, examples, and cross-links to executable conformance stay here.
 
 ## Initial work order
 

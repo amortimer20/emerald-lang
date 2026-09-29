@@ -9,9 +9,10 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 
 The Zig rewrite implements the current rewrite-context language surface: control flow,
 functions, optionals, collections, Unicode strings, structs, classes, inheritance, traits,
-enums, typed errors, projects/namespaces, ranges and slicing. The formatter, REPL, and LSP
-diagnostics, symbols, format-on-save, hover, go to definition, find references, rename, and
-completion are complete.
+enums, typed errors, projects/namespaces, ranges and slicing. The formatter and REPL are
+complete. The language server provides diagnostics (identical to `emerald check`), symbols,
+format-on-save, hover, go to definition, find references, rename, and completion, but the last
+two are shallow for the built-in types: see "Queued: editor intelligence" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
 name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
@@ -119,54 +120,26 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-The user chose to finish the standard library, then make small optimizations such as startup
-time, and eventually build a native compiler. Startup performance is complete: a ReleaseSafe
-`print(1)` went from 9.9 ms to 3.5 ms. CSV (15.11) and Base64 and hashing (15.12) are complete;
-the journal records both.
+There is no implementation milestone in progress. The standard-library slices the user chose to
+finish before optimizing are done (dates and times, regular expressions, Console styling,
+layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
+ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
+journal records each milestone, its review, and what was measured; each plan's "Settled while
+building" notes record its decisions.
 
-Base64 and hashing followed the accepted
-[`base64-hashing-design-plan.md`](base64-hashing-design-plan.md): `Base64`, `Digest.sha256` and
-`hmac_sha256`, hex on `Bytes`, and one `EncodingError`, which invalid UTF-8 given to
-`Bytes.to_string()` now raises instead of `FileError`. Review fixed Base64's error positions
-(character indexes, never a broken byte), its padding messages, and the checker's `to_bytes()`
-hints, and added the plan's remaining known answers and a decoding differential. The plan's
-"Settled while building" notes record each decision.
+**Since 0.6.0, for the 0.7.0 release notes:**
+- Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
+  `choose_many`).
+- `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
+  invalid UTF-8. Code that catches `RuntimeError` is unaffected.
+- A fix to HTTP connection reuse: a request after a timed-out one could receive the timed-out
+  request's reply.
 
-Emerald 0.6.0 is released. Console's tables, panels, and prompts milestone follows
-[`console-design-plan.md`](console-design-plan.md), accepted with all six recommendations.
-Slice 1 now adds Unicode 17.0.0 terminal column width through generated East Asian Width,
-emoji presentation, and control/format data. The private `Console._width` native is ready for
-the Emerald layout functions in slice 2.
-Slice 2 adds `Console.panel` and text-row `Console.table` in the prelude, with exact border
-output, Unicode column alignment, optional panel title/color, and row/column errors.
-Slice 3 adds struct rows to `Console.table`, using CSV's exact eligible-field checks and
-shared record-to-cell conversion. Public fields become the header in declaration order, and
-numeric fields align right. Slice 4 adds `InputError` and the six prompts in Emerald, with
-defaults, bounds, choice validation, duplicate-insensitive multi-select, and specified
-yellow retry messages. `input` now raises `InputError` for EOF and invalid UTF-8; code that
-catches `RuntimeError` remains unaffected because `InputError` extends it.
-Slice 5 completes the Console reference, inventory, rewrite-context status, and a runnable
-example combining a panel, struct table, styling, and defaulted prompts. The fuzz template
-also exercises text tables and panels. The Console widgets milestone is complete.
-Review then fixed what a student would notice: choice prompts reprint their options only once,
-the end of input inside a prompt names the prompt (`Console.ask` reached the end of the input)
-instead of `input`, `ask_float` rejects `NaN` and infinities, numeric table headers align over
-their numbers, and the styling example is back as `examples/console-style.em`. Tabs have no
-width and keycap emoji count as one column; both are documented limits.
-
-Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
-`zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS
-cross-builds. The Base64 differential (2,000 encodings, 1,000 decodings, about 1,000
-corruptions; seeds 1 and 7) and the digest differential (2,000 cases, seed 1) found no
-differences. An alternating ReleaseSafe startup comparison found no measurable cost for
-programs that do not use these namespaces. The HTTP client's manual `zig build http-live`
-check passed in its slice 3; it is not part of ordinary validation.
-
-### Upgrading
-
-`InputError` is a new specific subclass for `input` failures. Existing code that catches
-`RuntimeError` remains compatible because `InputError` extends it; release notes should call
-out the more precise type for code that wants to distinguish input failures.
+The two open pieces of work, each needing a design plan the user approves before anything is
+built:
+- **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
+- **Concurrency** (rewrite-context 21). The user wants to start on it. Claude writes the design
+  and the implementation plan; Codex implements from the accepted plan.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
@@ -254,39 +227,32 @@ on the roadmap.
 
 ## Validation and repository state
 
-The regular-expression milestone is merged to `main`
-([amortimer20/emerald-lang#2](https://github.com/amortimer20/emerald-lang/pull/2)), and so is
-the design-plan cleanup ([amortimer20/emerald-lang#3](https://github.com/amortimer20/emerald-lang/pull/3)).
-JSON slice 1 is committed on top of that: `src/Json.zig`, `tools/json/fetch.sh`,
-`tools/json/conformance.zig` (`zig build json-conformance`), `tools/json/probe.zig`, and
-`tools/json/differential.py`. With pinned Zig 0.16.0, Debug and ReleaseSafe `zig build test`,
-`zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`, `git diff --check`, fuzz
-(seed 12, 300 cases), and Windows and macOS cross-builds passed. Against JSONTestSuite's 318
-files, only the two documented duplicate-key exceptions differ. `tools/json/differential.py`
-found 0 differences from Python's `json` over 25,000 generated cases (seeds 1–5). A 1 MB
-generated document parses in about 38 ms and writes back in about 6 ms (ReleaseSafe); a
-document nested 200,000 levels deep is refused cleanly, confirming the parser's explicit
-stack, not Zig's own call stack, is what bounds recursion.
-A review of slice 1 then fixed four defects (a crash on a whole number at 2^63, quadratic
-duplicate-key checking, one miscopied message, and message truncation that could split a
-UTF-8 character; see the journal). Slice 2 followed. After it, Debug and ReleaseSafe
-`zig build test`, `zig build`, `zig fmt --check`, `bash tools/check-doc-examples.sh`,
-`git diff --check`, fuzz (seed 13, 300 cases), Windows and macOS cross-builds,
-`zig build json-conformance` (0 mismatches), and 8,000 more differential cases (seeds 12 and
-13) passed.
+`main` is the only long-lived branch and has no open pull requests. Work happens on
+`claude/*` and `codex/*` branches, merged by pull request once CI passes; see
+[AGENTS.md](../AGENTS.md) for the workflow.
 
-Slices 1 and 2 and the review fixes are pushed to `claude/adoring-pasteur-wz5l0h`. Work continues in a local session; the cloud session is no longer in use. Each earlier slice's validation
-is recorded in [`journal.md`](journal.md) and its commit message.
+**Full gate**, with the pinned Zig 0.16.0 and always `-j1` (the development machine has 7 GB,
+and parallel builds are OOM-killed): `zig build test -j1` in Debug and again with
+`-Doptimize=ReleaseSafe`, `zig build -j1`, `bash tools/check-doc-examples.sh`,
+`zig fmt --check src/*.zig tools/*.zig`, `git diff --check`, and Windows and macOS cross-builds
+(`zig build -j1 -Dtarget=x86_64-windows --prefix <dir outside zig-out>`, likewise
+`aarch64-macos`; without `--prefix` a cross-build overwrites the native binary).
 
-Slice 3's Debug and ReleaseSafe `zig build test`, `zig build`, `zig fmt --check`,
-`bash tools/check-doc-examples.sh`, and `git diff --check` pass. The manually read new
-`json-building` and `json-non-finite` conformance outputs match the built CLI exactly; the
-standalone JSONTestSuite check reports 95 accepted, 188 refused, 35 implementation-defined,
-2 known duplicate-key exceptions, and 0 mismatches.
+**Fast check while iterating:** `zig build -j1`, then `emerald run` or `emerald check` on the one
+`.em` file. To see a conformance case's exact output, run it and diff its `.expected`.
 
-Slice 4's pinned-toolchain check, Debug and ReleaseSafe `zig build test`, `zig build`,
-`bash tools/check-doc-examples.sh`, `zig fmt --check src/*.zig`, and `git diff --check` pass.
+**What CI covers:** Debug and ReleaseSafe `zig build test` on Ubuntu, macOS, and Windows, plus
+bounded execution fuzz. It skips Markdown-only pushes. It does not run
+`tools/check-doc-examples.sh`, `zig build unicode-conformance`, `zig build json-conformance`,
+`zig build http-live` (the only check that reaches the network), or the Python differential
+tools under `tools/*/differential.py`. Run those locally when a change touches what they check.
+The install scripts have their own workflow (`.github/workflows/install.yml`), which runs after
+each release and when they change.
 
-Cloud sessions cannot reach ziglang.org. The pinned Zig 0.16.0 comes from the `ziglang==0.16.0`
-PyPI wheel instead (`pip download ziglang==0.16.0 --no-deps`, unzip, and put `ziglang/` on
-`PATH`), and `bash tools/check-toolchain.sh` accepts it.
+**An intermittent test failure is a real bug until shown otherwise.** `http/http-errors.em`
+failed on and off in CI; the cause was a connection-reuse bug (journal, 2026-09-28), not slow
+runners, and padding its timing margins would have hidden it.
+
+Cloud sessions cannot reach ziglang.org. The pinned Zig comes from the `ziglang==0.16.0` PyPI
+wheel there (`pip download ziglang==0.16.0 --no-deps`, unzip, and put `ziglang/` on `PATH`), and
+`bash tools/check-toolchain.sh` accepts it.
