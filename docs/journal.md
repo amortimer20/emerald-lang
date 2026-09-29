@@ -43,6 +43,14 @@ support defaults and numeric bounds, and return multi-selections in option order
 ignoring repeated indexes. Conformance feeds scripted answers end to end and catches
 `InputError`.
 
+## Console widgets: integration
+
+The fifth slice completes the Console milestone's documentation and status updates. The
+official example now combines styling, a struct table, a panel, and prompts with defaults so
+the documentation smoke test remains non-interactive. The fuzz generator also exercises the
+ordinary text-row table and panel paths. The accepted Console design is now reflected in the
+rewrite context and library inventory.
+
 ## Base64, hashing, and hexadecimal
 
 The four-slice utilities milestone is complete. `Bytes` now has lowercase hexadecimal

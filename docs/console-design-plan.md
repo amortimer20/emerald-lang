@@ -292,7 +292,9 @@ commits.
   widgets and prompts done.
 - A valid-program fuzz template for `table` and `panel`, `run/prelude-reach` lines, the startup
   comparison, and the handoff and journal.
-- Settled while building: (record here)
+- Settled while building: the example uses only prompts with defaults so the documentation
+  smoke test's blank input remains a successful, non-interactive run. The fuzz template adds
+  ordinary text-row table and panel programs; no new native path is needed for either.
 
 ## Validation
 

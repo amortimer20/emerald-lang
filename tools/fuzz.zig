@@ -162,6 +162,11 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\const data = "fuzz {d}".to_bytes()
                 \\print(Digest.sha256(data).to_hex(), Digest.hmac_sha256(data, "key".to_bytes()).count)
             , .{count}),
+            10 => std.fmt.allocPrint(gpa,
+                \\const rows: List[List[String]] = [["name", "score"], ["Ada", "{d}"]]
+                \\print(Console.table(rows))
+                \\print(Console.panel("fuzz {d}", title: "case"))
+            , .{ count, count }),
             else => std.fmt.allocPrint(gpa,
                 \\const score = {d}
                 \\const result = if score > 5 then score * 2 else if score == 0 then 1 else score

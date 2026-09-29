@@ -144,8 +144,10 @@ shared record-to-cell conversion. Public fields become the header in declaration
 numeric fields align right. Slice 4 adds `InputError` and the six prompts in Emerald, with
 defaults, bounds, choice validation, duplicate-insensitive multi-select, and specified
 yellow retry messages. `input` now raises `InputError` for EOF and invalid UTF-8; code that
-catches `RuntimeError` remains unaffected because `InputError` extends it. The final slice
-still needs documentation and integration.
+catches `RuntimeError` remains unaffected because `InputError` extends it.
+Slice 5 completes the Console reference, inventory, rewrite-context status, and a runnable
+example combining a panel, struct table, styling, and defaulted prompts. The fuzz template
+also exercises text tables and panels. The Console widgets milestone is complete.
 
 Base64 and hashing passed pinned Zig 0.16.0 Debug and ReleaseSafe `zig build test -j1`,
 `zig build -j1`, the documentation example check, formatting and diff checks, and Windows/macOS
@@ -155,10 +157,11 @@ differences. An alternating ReleaseSafe startup comparison found no measurable c
 programs that do not use these namespaces. The HTTP client's manual `zig build http-live`
 check passed in its slice 3; it is not part of ordinary validation.
 
-Other candidates, each needing the user's go-ahead:
+### Upgrading
 
-- **Console's remaining scope**, `Table`/`Panel` widgets and prompts, which needs its own
-  design proposal (24).
+`InputError` is a new specific subclass for `input` failures. Existing code that catches
+`RuntimeError` remains compatible because `InputError` extends it; release notes should call
+out the more precise type for code that wants to distinguish input failures.
 
 Before each release, refresh the time-zone data with `python3 tools/update-tzdata.py` (see
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than

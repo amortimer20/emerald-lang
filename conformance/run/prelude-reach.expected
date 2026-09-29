@@ -1,6 +1,14 @@
 Event(title: "Launch", on: 2026-09-28)
 too late
 hi
+┌─ Console ┐
+│ reach    │
+└──────────┘
+┌──────┬───────┐
+│ name │ score │
+├──────┼───────┤
+│ Ada  │ 3     │
+└──────┴───────┘
 Monday
 [2026-01-02, 2026-09-30]
 Monday

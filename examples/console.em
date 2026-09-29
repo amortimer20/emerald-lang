@@ -1,26 +1,20 @@
-## Styled terminal output with Console.
+## A small terminal program using Console's styling, layout, and prompts.
 ##
-## Console.green and friends wrap a String in ANSI styling; they are ordinary
-## Strings themselves, so print, interpolation, and + all work on them
-## unchanged. Whether they actually show color is one policy for the whole
-## run, decided by the terminal, not by this program.
-##
-## Run it with `emerald run examples/console.em` to see it plain (redirected
-## output stays unstyled), or `emerald run --color=always examples/console.em`
-## to see it styled regardless of the terminal.
+## Run it with `emerald run examples/console.em` for plain output, or add
+## `--color=always` to see the ANSI styling even when output is redirected.
 
-print(Console.green("Passed") + ": " + "3 tests")
-print(Console.red("Failed") + ": " + "1 test")
+struct Score {
+    const name: String
+    const points: Int
+}
 
-## Console.style reaches backgrounds, bright colors, and combined attributes
-## that the eight-color/four-style helpers above cannot.
-print(Console.style("Warning", foreground: Console.Color.bright_yellow, bold: true))
+const scores = [Score("Ada", 120), Score("Grace", 95), Score("Hopper", 88)]
+print(Console.panel("Welcome to the score board!", title: "Emerald"))
+print(Console.table(scores))
+print(Console.green("All three players are ready."))
 
-## A style nests correctly inside another: the inner close reopens the
-## surrounding one rather than falling back to the terminal's default.
-print(Console.bold("Total: #{Console.green("20")} passed"))
-
-## plain removes Console's own styling, regardless of the color policy —
-## useful for logging or measuring text that was only styled for a terminal.
-const styled = Console.underline("plain-checked")
-print(Console.plain(styled))
+const player = Console.ask("What's your name?", default: "Ada")
+const play_again = Console.confirm("Play again?", default: true)
+if play_again {
+    print("Good luck, #{player}!")
+}
