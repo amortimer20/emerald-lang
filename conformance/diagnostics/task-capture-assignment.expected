@@ -1,0 +1,4 @@
+diagnostics/task-capture-assignment.em:4:9: a task block cannot capture the variable `shared`
+          shared += 1
+          ^^^^^^
+Return a value from the task or use a channel to share `shared`.

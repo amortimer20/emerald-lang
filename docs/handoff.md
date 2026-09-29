@@ -117,10 +117,18 @@ method changes only ordinary identifier uses.
 Concurrency is in progress on `codex/concurrency`. Slice 1 moves interpreter execution state
 into `Scheduler.TaskState`, establishes a one-owner baton, and passes `Streams.io` into the
 interpreter so its blocking natives use one execution-owned backend. The 30-run ReleaseSafe
-startup comparison against `main` was flat (98.5–102.2% across the five samples). Slice 1's
-Debug and ReleaseSafe tests, native build, doc examples, formatting, whitespace, and Windows
-and macOS cross-builds passed with Zig 0.16.0 `-j1`. Slice 2 (task values and the OS-thread
-scheduler) follows.
+startup comparison against `main` was flat (98.5–102.2% across the five samples). Slice 2
+adds `Task[T]`, `Tasks.run`, `TaskGroup.start`, `result()`, and `done?()` through a one-holder
+scheduler on OS threads, with a 64-live-task limit. Direct captures of outer `var` bindings in an
+inline task block (including nested lambdas) are rejected. The user approved requiring that
+inline block for `start`; stored function values cannot be checked for their captures with
+the current function type. The plan records two indirect-call gaps for a later multicore
+design: a named function called by the block may read a module `var`, and a function value
+called by the block may itself have captured a `var`. Slice 2 local validation passed with
+Zig 0.16.0 `-j1`: Debug and ReleaseSafe tests, native build, doc examples,
+formatting, whitespace, Windows and macOS cross-builds, and 50 repeated runs of each new
+task-using conformance case. Slice 3 waiting/timer behavior is next; it is not implemented
+yet. Windows runtime behavior and memory measurements remain for CI.
 
 A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
 `-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
@@ -128,7 +136,7 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-There is no implementation milestone in progress. The standard-library slices the user chose to
+The concurrency milestone is in progress. The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
@@ -148,8 +156,8 @@ built:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - **Concurrency** (rewrite-context 21): structured tasks and channels, in
   [`concurrency-design-plan.md`](concurrency-design-plan.md), accepted with all nine
-  recommendations. Codex is implementing the plan on `codex/concurrency`; slice 1 is in
-  validation, then slice 2 adds task values and the OS-thread scheduler.
+  recommendations. Codex is implementing the plan on `codex/concurrency`; slice 2 passed
+  local validation, then slices 3–6 follow in order.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The

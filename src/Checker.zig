@@ -281,6 +281,9 @@ finally_loop_depth: ?usize = null,
 /// How many scopes enclose the innermost block being checked, so a name found
 /// in one of them is one the block captures. Zero outside any block.
 block_scopes: usize = 0,
+/// The scopes outside a `tasks.start` block. Keep this boundary while checking
+/// lambdas nested in that block; their own `block_scopes` value changes.
+task_capture_scopes: ?usize = null,
 /// The `is` tests currently proven true, while their `then` block is being
 /// checked, innermost last. Lets a member-not-found message tell a narrowing
 /// an assignment already undid from one that never held here (4.4, 4.5).
@@ -617,7 +620,7 @@ fn reachKey(self: *Checker, key: []const u8) Error!void {
 fn reachType(self: *Checker, value: Type) Error!void {
     if (!self.reaching) return;
     switch (value.kind) {
-        .list, .set => if (value.element) |element| try self.reachType(element.*),
+        .list, .set, .task => if (value.element) |element| try self.reachType(element.*),
         .dictionary => {
             if (value.key) |key| try self.reachType(key.*);
             if (value.element) |element| try self.reachType(element.*);
@@ -2079,6 +2082,29 @@ fn find(self: *Checker, name: []const u8) ?*Binding {
     return self.moduleFallback(&.{ name, key });
 }
 
+/// A task block may name a variable declared inside itself, but not a `var`
+/// from an enclosing scope. The checker already has both the binding and its
+/// lexical scope at a name use, so this needs no second resolver capture pass.
+fn checkTaskCapture(self: *Checker, span: Source.Span, name: []const u8, binding: *Binding) Error!void {
+    const boundary = self.task_capture_scopes orelse return;
+    if (std.mem.eql(u8, name, "self")) return;
+    if (binding.mutability != .variable or binding.is_function or binding.is_type) return;
+    for (self.scopes.items[0..@min(boundary, self.scopes.items.len)]) |scope| {
+        var values = scope.valueIterator();
+        while (values.next()) |outer| {
+            if (outer != binding) continue;
+            try self.reportWithHelp(
+                span,
+                "a task block cannot capture the variable `{s}`",
+                .{name},
+                "Return a value from the task or use a channel to share `{s}`.",
+                .{name},
+            );
+            return;
+        }
+    }
+}
+
 /// A body sees only the module variables the resolver recorded it using
 /// (`moduleViewFor`). Reaching one it did not record would be a gap in that
 /// record, never the program's mistake, so it stops at once rather than
@@ -2942,6 +2968,7 @@ fn checkAssignmentTo(self: *Checker, assignment: Ast.Assignment) Error!void {
         _ = try self.typeOf(assignment.value);
         return;
     };
+    try self.checkTaskCapture(assignment.name_span, assignment.name, binding);
     if (try self.reportPrivateTypeMember(self.keyOf(assignment.name), assignment.name_span)) {
         _ = try self.typeOf(assignment.value);
         return;
@@ -3031,6 +3058,7 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         _ = try self.typeOf(assignment.value);
         return;
     };
+    try self.checkTaskCapture(assignment.name_span, assignment.name, binding);
     if (try self.reportPrivateTypeMember(self.keyOf(assignment.name), assignment.name_span)) {
         _ = try self.typeOf(assignment.value);
         return;
@@ -3800,7 +3828,7 @@ fn replaceSelf(self: *Checker, t: Type, receiver: Type) Error!Type {
             replaced.optional = t.optional;
             return replaced;
         },
-        .list, .set => {
+        .list, .set, .task => {
             const element = try self.arena.create(Type);
             element.* = try self.replaceSelf(t.element.?.*, receiver);
             var replaced = t;
@@ -3966,6 +3994,11 @@ fn checkKeyedBody(
     parameter_types: []const Type,
     expected_return_type: ?Type,
 ) Error!void {
+    // Named functions called from a task do not make their module reads
+    // direct captures of that task block in this milestone.
+    const outer_task_capture_scopes = self.task_capture_scopes;
+    self.task_capture_scopes = null;
+    defer self.task_capture_scopes = outer_task_capture_scopes;
     if (self.nested.get(key)) |depth| {
         return self.checkNestedBody(depth, declaration, parameter_types, expected_return_type);
     }
@@ -5287,6 +5320,11 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         return Type.setOf(self.arena, member);
     }
 
+    if (annotation.task) {
+        const result = try self.resolveTypeExpression(annotation.element.?.*);
+        return Type.taskOf(self.arena, result);
+    }
+
     if (annotation.element) |element| {
         const inner = try self.resolveTypeExpression(element.*);
         return Type.listOf(self.arena, inner);
@@ -5669,6 +5707,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
             // Missing only when the resolver already reported the name, or
             // while inferring early for a call that `checkCaptures` rejects.
             const binding = self.find(name) orelse break :blk .invalid;
+            try self.checkTaskCapture(expression.span, name, binding);
             // Section 3.4 and 7.5: a bare function name is its callable value.
             if (binding.is_type) {
                 try self.reportTypeAsValue(expression.span, name, binding.*);
@@ -6446,6 +6485,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         return self.module.get(reference.key).?.declared;
     }
     const binding = self.findKey(reference.key) orelse return .invalid;
+    try self.checkTaskCapture(expression.span, reference.display, binding);
     if (binding.is_type) {
         try self.reportTypeAsValue(expression.span, reference.display, binding.*);
         return .invalid;
@@ -6794,6 +6834,37 @@ fn typeOfMethodCall(
     if (!try self.requirePresent(base, member.base, member.name)) {
         try self.typeArguments(call.arguments);
         return .invalid;
+    }
+
+    if (base.kind == .task) {
+        const result: ?Type = if (std.mem.eql(u8, member.name, "result"))
+            base.element.?.*
+        else if (std.mem.eql(u8, member.name, "done?"))
+            Type.bool
+        else
+            null;
+        if (result) |method_result| {
+            if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
+            try self.method_calls.put(self.arena, call.callee, try Resolver.methodKey(self.arena, Resolver.preludeKey("Task"), member.name));
+            return method_result;
+        }
+        try self.report(
+            member.name_span,
+            "Task[{f}] has no method named `{s}`",
+            .{ base.element.?.*, member.name },
+            "A task offers `result()` to wait for its value and `done?()` to check whether it finished.",
+        );
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+
+    if (base.kind == .struct_value and std.mem.eql(u8, base.user.?.name, Resolver.preludeKey("TaskGroup")) and
+        std.mem.eql(u8, member.name, "start"))
+    {
+        const result = try self.typeOfTaskBlockCall(call, "start", &.{}, true);
+        if (result.kind == .invalid) return .invalid;
+        try self.method_calls.put(self.arena, call.callee, try Resolver.methodKey(self.arena, Resolver.preludeKey("TaskGroup"), "start"));
+        return Type.taskOf(self.arena, result);
     }
 
     if (base.kind == .struct_value and std.mem.eql(u8, base.user.?.name, Resolver.preludeKey("Random"))) {
@@ -9446,6 +9517,7 @@ fn typeOfCall(
         try self.typeArguments(call.arguments);
         return .invalid;
     };
+    try self.checkTaskCapture(call.callee.span, name, binding);
     if (try self.reportPrivateTypeMember(reference.key, call.callee.span)) {
         try self.typeArguments(call.arguments);
         return .invalid;
@@ -9523,6 +9595,10 @@ fn typeOfCall(
     }
     if (isBase64Key(key)) return self.typeOfBase64(call, name, key);
     if (isDigestKey(key)) return self.typeOfDigest(call, name, key);
+    if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::run")) {
+        const group = self.structs.get(Resolver.preludeKey("TaskGroup")).?;
+        return self.typeOfTaskBlockCall(call, "run", &.{group}, false);
+    }
 
     // A prelude function. Section 15.2's `print` and `write` accept any number
     // of values and have no result; `input` takes an optional prompt.
@@ -9569,6 +9645,40 @@ fn typeOfCall(
 
     if (!self.in_function) try self.checkCaptures(expression.span, key, name);
     return signature.return_type;
+}
+
+/// The two structured-task calls infer `T` from a block's result. A written
+/// prelude signature cannot express that relationship without general generics.
+fn typeOfTaskBlockCall(self: *Checker, call: Ast.Expression.Call, name: []const u8, parameters: []const Type, task_block: bool) Error!Type {
+    const expected = try Type.functionOf(self.arena, .{
+        .parameters = parameters,
+        .return_type = .invalid,
+    });
+    const nonliteral = task_block and call.arguments.len == 1 and call.arguments[0].data != .lambda;
+    const outer_capture = self.task_capture_scopes;
+    if (task_block) self.task_capture_scopes = self.scopes.items.len;
+    defer self.task_capture_scopes = outer_capture;
+    try self.checkArguments(call, name, .{
+        // Still type-check a nonliteral, but avoid a second function-shape
+        // complaint: the inline-block correction is the actionable error.
+        .types = &.{if (nonliteral) Type.invalid else expected},
+        .names = &.{if (task_block) "block" else "body"},
+        .has_default = &.{false},
+        .arity_help = if (task_block) "Give `start` one block with no parameters." else "Give `run` one block that takes a TaskGroup.",
+    });
+    if (nonliteral) {
+        try self.report(
+            call.arguments[0].span,
+            "`start` needs an inline block, not a function value",
+            .{},
+            "Wrap the call in a block, as in `tasks.start { => fetch_weather() }`.",
+        );
+        return .invalid;
+    }
+    if (call.arguments.len != 1) return .invalid;
+    const actual = self.expression_types.get(call.arguments[0]) orelse return .invalid;
+    if (actual.type.kind != .function) return .invalid;
+    return actual.type.signature.?.return_type;
 }
 
 const JsonEncodeIssue = struct {
@@ -9772,7 +9882,7 @@ fn jsonEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
             }
             return null;
         },
-        .nothing, .bytes, .range, .tuple, .set, .function, .invalid => return .{ .type = value, .field_path = field_path },
+        .nothing, .bytes, .range, .tuple, .set, .task, .function, .invalid => return .{ .type = value, .field_path = field_path },
     }
 }
 
@@ -9808,7 +9918,7 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
             }
             return null;
         },
-        .nothing, .bytes, .range, .tuple, .set, .function, .invalid => return .{ .type = value, .field_path = field_path },
+        .nothing, .bytes, .range, .tuple, .set, .task, .function, .invalid => return .{ .type = value, .field_path = field_path },
     }
 }
 

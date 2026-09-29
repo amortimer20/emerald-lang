@@ -38,6 +38,20 @@ class EncodingError extends RuntimeError {
     }
 }
 
+# Structured tasks. The generic Task result and TaskGroup operations are
+# checked at their call sites; their live state belongs to the interpreter.
+class Task {
+    var _id: Int = Program.arguments.count
+}
+
+class TaskGroup {
+    var _id: Int = Program.arguments.count
+}
+
+class Tasks {
+    func Tasks.run(body: func(TaskGroup)) {}
+}
+
 # Whole-file filesystem namespaces. Their bodies establish the ordinary
 # type-level signatures; the interpreter supplies the native operation.
 class File {

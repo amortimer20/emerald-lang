@@ -3333,3 +3333,26 @@ startup cost: `print(1)` was 3.88 ms vs. 3.97 ms, and the language-only, dates, 
 samples were 99.0%, 100.2%, 98.5%, and 99.8% of main. Full validation passed with Zig
 0.16.0 `-j1` (Debug and ReleaseSafe tests, build, doc examples, formatting, whitespace, and
 Windows/macOS cross-builds).
+
+## Concurrency, slice 2: tasks with results, 2026-09-29
+
+`Task[T]`, `Tasks.run`, `TaskGroup.start`, `result()`, and `done?()` now run through a FIFO
+single-owner baton, with one OS thread per live child. A group drains all children before it
+returns and propagates its first unobserved task error. Tests cover ordered results, errors,
+nested tasks, a 950-call child recursion, a 64-child limit, and cyclic allocations across
+suspended tasks. Task-using conformance cases were repeated 50 times each before commit.
+
+The plan's claim that `Checker.capturesOf` tracked lambda-local captures was false: it tracks
+transitive module reads of named declarations. The checker already knows a binding's
+mutability and which scopes surround the current block, so it enforces direct no-`var`
+capture there, including nested lambdas. The user approved requiring an inline block for
+`tasks.start`; stored function values would hide their captures without an effect type.
+Named calls that read a module `var`, and calls through a function value that captured a
+`var`, remain known gaps for the multicore plan. They cause no data race with one baton.
+
+ReleaseSafe measurements on Linux: 1,000 sequential tasks took 0.21 s / 11 MiB peak RSS;
+10,000 took 2.62 s / 52 MiB; 64 live tasks took 0.02 s / 24 MiB; 100,000 scheduler-only
+baton handoffs took 1.63 s / 1 MiB. Each live task reserves a 128 MiB virtual stack on a
+64-bit host, committed only as used; the 64-task cap keeps that bounded. Windows timing
+and memory still need a CI runner. Automatic sibling cancellation arrives with slice 5's
+cancellation machinery; this slice drains children before propagating their errors.

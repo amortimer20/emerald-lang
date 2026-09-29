@@ -1,0 +1,5 @@
+runtime-errors/task-self-wait.em:8:38: these tasks are waiting for each other
+      const waiting = tasks.start { => slot.current.or(fallback).result() }
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Check the task results they wait for.
+in a block, called at runtime-errors/task-self-wait.em:8:21

@@ -69,6 +69,25 @@ const FileWriterState = struct {
     path: []const u8,
 };
 
+const TaskRecord = struct {
+    interpreter: *Interpreter,
+    id: i64,
+    job: Scheduler.Runtime.Job = .{},
+    state: Scheduler.TaskState(TaskData),
+    block: Value,
+    span: Source.Span,
+    result: ?Value = null,
+    ended: ?Error = null,
+    completion_order: usize = 0,
+    observed_error: bool = false,
+};
+
+const TaskGroupRecord = struct {
+    id: i64,
+    tasks: std.ArrayList(*TaskRecord) = .empty,
+    active: bool = true,
+};
+
 /// What running a program produced. An unhandled Emerald error stops an ordinary
 /// run; test mode collects one failure per test and continues discovery order.
 pub const Outcome = struct {
@@ -163,7 +182,14 @@ test_mode: bool = false,
 test_binding_states: std.StringHashMapUnmanaged(ModuleState) = .empty,
 test_binding_failures: std.StringHashMapUnmanaged(struct { value: Value, diagnostic: Diagnostic }) = .empty,
 /// State that moves with the task holding the scheduler baton.
-task: Scheduler.TaskState(TaskData),
+task: *Scheduler.TaskState(TaskData),
+scheduler: *Scheduler.Runtime,
+task_records: std.AutoHashMapUnmanaged(i64, *TaskRecord) = .empty,
+task_groups: std.AutoHashMapUnmanaged(i64, *TaskGroupRecord) = .empty,
+next_task_id: i64 = 1,
+next_group_id: i64 = 1,
+next_completion_order: usize = 1,
+live_tasks: usize = 0,
 facts: Resolver.Facts = .{},
 out: *std.Io.Writer,
 /// Where `input` reads lines from.
@@ -324,6 +350,15 @@ pub fn run(
         if (file.entry) entry = @intCast(index);
     }
 
+    var root_job: Scheduler.Runtime.Job = undefined;
+    var scheduler = Scheduler.Runtime.init(io, &root_job);
+    var root_task: Scheduler.TaskState(TaskData) = .{ .state = .{
+        .file = entry,
+        .stack = stack,
+        .steps_remaining = step_limit,
+        .step_limit = step_limit orelse 0,
+        .job = &root_job,
+    } };
     var interpreter: Interpreter = .{
         .arena = arena_state.allocator(),
         .gpa = gpa,
@@ -332,7 +367,8 @@ pub fn run(
         .module_states = states,
         .module_failed_values = module_failed_values,
         .module_failed_diagnostics = module_failed_diagnostics,
-        .task = .{ .state = .{ .file = entry, .stack = stack, .steps_remaining = step_limit, .step_limit = step_limit orelse 0 } },
+        .task = &root_task,
+        .scheduler = &scheduler,
         .facts = facts,
         .out = out,
         .in = in,
@@ -357,12 +393,10 @@ pub fn run(
         .heap = .init(gpa),
         .test_mode = test_mode,
     };
-    var baton = Scheduler.Baton.init(&interpreter.task);
-    interpreter.task.save(&baton);
-    interpreter.task.load(&baton);
     // Whatever the counts did not reclaim, including lists still held by
     // module bindings and anything an error skipped releasing.
     defer interpreter.heap.deinit();
+    defer interpreter.deinitTasks();
     defer interpreter.literal_texts.deinit(gpa);
     defer interpreter.deinitFileHandles();
     defer interpreter.deinitFileWriters();
@@ -402,17 +436,17 @@ pub fn run(
 
     // Each block and call frees its own scope as it ends, including while an
     // error unwinds through it, so only the lists themselves are left.
-    defer interpreter.task.state.scopes.deinit(gpa);
-    defer interpreter.task.state.call_stack.deinit(gpa);
-    defer interpreter.task.state.taken_fields.deinit(gpa);
+    defer root_task.state.scopes.deinit(gpa);
+    defer root_task.state.call_stack.deinit(gpa);
+    defer root_task.state.taken_fields.deinit(gpa);
     // A recycled environment is out of the heap's live list, so it is this
     // list's to free.
     defer {
-        for (interpreter.task.state.spare_scopes.items) |environment| {
+        for (root_task.state.spare_scopes.items) |environment| {
             environment.bindings.deinit(gpa);
             gpa.destroy(environment);
         }
-        interpreter.task.state.spare_scopes.deinit(gpa);
+        root_task.state.spare_scopes.deinit(gpa);
     }
 
     if (test_mode) {
@@ -1094,6 +1128,7 @@ const TakenField = struct {
 
 /// State that belongs to the task currently holding the scheduler baton.
 const TaskData = struct {
+    job: ?*Scheduler.Runtime.Job = null,
     file: u32 = 0,
     scopes: std.ArrayList(*Environment) = .empty,
     spare_scopes: std.ArrayList(*Environment) = .empty,
@@ -1627,6 +1662,7 @@ fn widen(value: Value, kind: Value.Kind) Value {
 
 fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
     if (annotation.key != null or annotation.set) return .map;
+    if (annotation.task) return .struct_value;
     if (annotation.element != null) return .list;
     if (annotation.positions != null) return .tuple;
     if (annotation.signature != null) return .closure;
@@ -1777,6 +1813,7 @@ fn kindOf(checked: Type) Value.Kind {
         .list => .list,
         .tuple => .tuple,
         .dictionary, .set => .map,
+        .task => .struct_value,
         .function => .closure,
         .struct_value => .struct_value,
     };
@@ -2255,6 +2292,7 @@ fn evaluateTypeName(self: *Interpreter, member: Ast.Expression.Member, static: T
 fn writeTypeName(writer: *std.Io.Writer, value: Value, static: Type) std.Io.Writer.Error!void {
     if (value.data == .nothing) return writer.writeAll("Nothing");
     const present = static.payload();
+    if (present.kind == .task) return writer.print("{f}", .{present});
     switch (value.data) {
         .struct_value => |object| return writer.writeAll(object.descriptor.display_name),
         .tuple => |tuple| if (present.kind == .tuple) {
@@ -3006,6 +3044,7 @@ fn evaluateCall(
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
         if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::run")) return self.callTasksRun(expression.span, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callConsoleWidth(call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsolePlain(call);
@@ -3063,6 +3102,213 @@ fn evaluateCall(
     if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
     if (self.functions.contains(key)) return self.callFunction(expression.span, key, call);
     return self.callBuiltin(expression, call, name);
+}
+
+fn nativeTaskHandle(self: *Interpreter, comptime type_name: []const u8, id: i64) RunError!Value {
+    const fields = try self.gpa.alloc(Value, 1);
+    fields[0] = .initInt(id);
+    return .{ .data = .{ .struct_value = try self.heap.createStruct(self.structs.get(Resolver.preludeKey(type_name)).?, fields) } };
+}
+
+fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    const body = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(body);
+    const group = try self.gpa.create(TaskGroupRecord);
+    group.* = .{ .id = self.next_group_id };
+    self.next_group_id += 1;
+    self.task_groups.put(self.gpa, group.id, group) catch |err| {
+        self.gpa.destroy(group);
+        return err;
+    };
+    const handle = try self.nativeTaskHandle("TaskGroup", group.id);
+    const result = self.invokeClosure(span, body.data.closure, self.closureCallable(body.data.closure), &.{handle});
+    var block_result: ?Value = null;
+    var block_error: ?Error = null;
+    if (result) |value| block_result = value else |err| block_error = err;
+    defer if (block_result) |value| self.heap.release(value);
+    var block_raised: ?Value = null;
+    var block_failure: ?Diagnostic = null;
+    if (block_error) |err| if (err == error.Raised) {
+        block_raised = self.task.state.raised_value;
+        block_failure = self.task.state.failure;
+        self.task.state.raised_value = null;
+        self.task.state.failure = null;
+    };
+    defer if (block_raised) |value| self.heap.release(value);
+
+    // A child may start another child through this same group while the body
+    // waits. Re-read the length after each hand-off, not just once at entry.
+    var index: usize = 0;
+    var drain_error: ?Error = null;
+    var drain_raised: ?Value = null;
+    var drain_failure: ?Diagnostic = null;
+    defer if (drain_raised) |value| self.heap.release(value);
+    while (index < group.tasks.items.len) {
+        const target = group.tasks.items[index];
+        self.awaitTask(span, target) catch |err| {
+            if (drain_error == null) {
+                drain_error = err;
+                drain_raised = self.task.state.raised_value;
+                drain_failure = self.task.state.failure;
+            } else if (self.task.state.raised_value) |value| self.heap.release(value);
+            self.task.state.raised_value = null;
+            self.task.state.failure = null;
+        };
+        if (self.scheduler.isDone(&target.job)) index += 1;
+    }
+    group.active = false;
+
+    var first: ?*TaskRecord = null;
+    for (group.tasks.items) |task| {
+        if (task.ended == null or task.observed_error) continue;
+        if (first == null or task.completion_order < first.?.completion_order) first = task;
+    }
+    if (first) |failed| {
+        return self.propagateTaskError(failed);
+    }
+    if (drain_error) |err| {
+        self.task.state.raised_value = drain_raised;
+        self.task.state.failure = drain_failure;
+        drain_raised = null;
+        return err;
+    }
+    if (block_error) |err| {
+        self.task.state.raised_value = block_raised;
+        self.task.state.failure = block_failure;
+        block_raised = null;
+        return err;
+    }
+    const value = block_result.?;
+    block_result = null;
+    return value;
+}
+
+fn callTaskStart(self: *Interpreter, span: Source.Span, member: Ast.Expression.Member, call: Ast.Expression.Call) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const group_id = receiver.data.struct_value.fields[0].data.int;
+    const group = self.task_groups.get(group_id) orelse return self.raise(span, "this task group is not active", "Start tasks inside a `Tasks.run` block.");
+    if (!group.active) return self.raise(span, "this task group is not active", "Start tasks inside a `Tasks.run` block.");
+    if (self.live_tasks >= 64) return self.raise(span, "Tasks.run cannot start more than 64 tasks at once", "Wait for a task's result before starting more tasks.");
+
+    const block = try self.evaluate(call.arguments[0]);
+    const task = self.gpa.create(TaskRecord) catch |err| {
+        self.heap.release(block);
+        return err;
+    };
+    task.* = .{
+        .interpreter = self,
+        .id = self.next_task_id,
+        .state = .{ .state = .{
+            .file = block.data.closure.file,
+            .steps_remaining = self.task.state.steps_remaining,
+            .step_limit = self.task.state.step_limit,
+        } },
+        .block = block,
+        .span = span,
+    };
+    self.next_task_id += 1;
+    const handle = self.nativeTaskHandle("Task", task.id) catch |err| {
+        self.heap.release(block);
+        self.gpa.destroy(task);
+        return err;
+    };
+    group.tasks.append(self.gpa, task) catch |err| {
+        self.heap.release(handle);
+        self.heap.release(block);
+        self.gpa.destroy(task);
+        return err;
+    };
+    self.task_records.put(self.gpa, task.id, task) catch |err| {
+        _ = group.tasks.pop();
+        self.heap.release(handle);
+        self.heap.release(block);
+        self.gpa.destroy(task);
+        return err;
+    };
+    self.scheduler.start(&task.job, task, taskMain) catch {
+        _ = self.task_records.remove(task.id);
+        _ = group.tasks.pop();
+        self.heap.release(handle);
+        self.heap.release(block);
+        self.gpa.destroy(task);
+        return self.raise(span, "Tasks.run could not start another task", "Wait for a task to finish before starting more tasks.");
+    };
+    self.live_tasks += 1;
+    return handle;
+}
+
+fn taskMain(context: *anyopaque, job: *Scheduler.Runtime.Job) void {
+    const task: *TaskRecord = @ptrCast(@alignCast(context));
+    const self = task.interpreter;
+    task.state.state.job = job;
+    task.state.state.stack = StackLimit.here(Scheduler.Runtime.stack_size);
+    self.task = &task.state;
+    const closure = task.block.data.closure;
+    const result = self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{});
+    if (result) |value| task.result = value else |err| task.ended = err;
+    task.completion_order = self.next_completion_order;
+    self.next_completion_order += 1;
+    self.live_tasks -= 1;
+}
+
+fn awaitTask(self: *Interpreter, span: Source.Span, task: *TaskRecord) Error!void {
+    const parent = self.task;
+    if (!self.scheduler.waitFor(parent.state.job.?, &task.job)) {
+        self.task = parent;
+        return self.raise(span, "these tasks are waiting for each other", "Check the task results they wait for.");
+    }
+    self.task = parent;
+    self.scheduler.join(&task.job);
+}
+
+fn propagateTaskError(self: *Interpreter, task: *TaskRecord) Error {
+    task.observed_error = true;
+    const err = task.ended.?;
+    if (err == error.Raised) {
+        self.task.state.raised_value = Heap.retain(task.state.state.raised_value.?);
+        self.task.state.failure = task.state.state.failure;
+    }
+    return err;
+}
+
+fn callTaskMethod(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const id = receiver.data.struct_value.fields[0].data.int;
+    const task = self.task_records.get(id) orelse return self.raise(span, "this task does not belong to a running group", "Start a task inside `Tasks.run`.");
+    if (std.mem.endsWith(u8, key, "::done?")) return .initBool(self.scheduler.isDone(&task.job));
+    try self.awaitTask(span, task);
+    if (task.ended != null) return self.propagateTaskError(task);
+    return Heap.retain(task.result.?);
+}
+
+fn deinitTasks(self: *Interpreter) void {
+    var tasks = self.task_records.valueIterator();
+    while (tasks.next()) |task_ptr| self.scheduler.join(&task_ptr.*.job);
+    tasks = self.task_records.valueIterator();
+    while (tasks.next()) |task_ptr| {
+        const task = task_ptr.*;
+        self.heap.release(task.block);
+        if (task.result) |value| self.heap.release(value);
+        if (task.state.state.raised_value) |value| self.heap.release(value);
+        task.state.state.scopes.deinit(self.gpa);
+        task.state.state.call_stack.deinit(self.gpa);
+        task.state.state.taken_fields.deinit(self.gpa);
+        for (task.state.state.spare_scopes.items) |environment| {
+            environment.bindings.deinit(self.gpa);
+            self.gpa.destroy(environment);
+        }
+        task.state.state.spare_scopes.deinit(self.gpa);
+        self.gpa.destroy(task);
+    }
+    self.task_records.deinit(self.gpa);
+    var groups = self.task_groups.valueIterator();
+    while (groups.next()) |group_ptr| {
+        group_ptr.*.tasks.deinit(self.gpa);
+        self.gpa.destroy(group_ptr.*);
+    }
+    self.task_groups.deinit(self.gpa);
 }
 
 /// Removes only complete ANSI SGR sequences: ESC, `[`, zero or more decimal
@@ -4862,7 +5108,7 @@ fn jsonDecodeValue(self: *Interpreter, span: Source.Span, json: Json.Value, targ
         .list => self.jsonDecodeList(span, json, target, path),
         .dictionary => self.jsonDecodeDictionary(span, json, target, path),
         .struct_value => self.jsonDecodeStruct(span, json, target, path),
-        .nothing, .bytes, .range, .tuple, .set, .function, .invalid => unreachable,
+        .nothing, .bytes, .range, .tuple, .set, .task, .function, .invalid => unreachable,
     };
 }
 
@@ -5071,7 +5317,7 @@ fn jsonFromTypedValue(self: *Interpreter, arena: std.mem.Allocator, span: Source
             break :blk .initObject(entries);
         },
         .struct_value => self.jsonFromStructValue(arena, span, value, value_type),
-        .nothing, .bytes, .range, .tuple, .set, .function, .invalid => unreachable,
+        .nothing, .bytes, .range, .tuple, .set, .task, .function, .invalid => unreachable,
     };
 }
 
@@ -7159,6 +7405,8 @@ fn callMethod(
     if (self.method_calls.get(call.callee)) |key| {
         if (isFileHandleKey(key)) return self.callFileHandle(expression.span, key, member, call);
         if (isFileWriterKey(key)) return self.callFileWriter(expression.span, key, member, call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TaskGroup::start")) return self.callTaskStart(expression.span, member, call);
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Task::")) return self.callTaskMethod(expression.span, key, member);
         // A resolved user method owns its name, including `next`, `choose`,
         // and `shuffle!`. Honor it before considering native operations.
         if (member.optional) {

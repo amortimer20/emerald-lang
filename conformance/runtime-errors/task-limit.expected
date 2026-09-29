@@ -1,0 +1,5 @@
+runtime-errors/task-limit.em:3:9: Tasks.run cannot start more than 64 tasks at once
+          tasks.start { => i }
+          ^^^^^^^^^^^^^^^^^^^^
+Wait for a task's result before starting more tasks.
+in a block, called at runtime-errors/task-limit.em:1:1

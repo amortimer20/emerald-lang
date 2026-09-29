@@ -1,0 +1,8 @@
+diagnostics/task-inline-block.em:8:17: `start` needs an inline block, not a function value
+      tasks.start(stored)
+                  ^^^^^^
+Wrap the call in a block, as in `tasks.start { => fetch_weather() }`.
+diagnostics/task-inline-block.em:9:17: `start` needs an inline block, not a function value
+      tasks.start(work)
+                  ^^^^
+Wrap the call in a block, as in `tasks.start { => fetch_weather() }`.

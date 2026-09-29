@@ -41,3 +41,8 @@ print(csv_events[0].on)
 
 print(Base64.encode("reach".to_bytes()))
 print(Digest.sha256("reach".to_bytes()).count)
+
+Tasks.run { tasks =>
+    const result = tasks.start { => 7 }
+    print(result.result())
+}

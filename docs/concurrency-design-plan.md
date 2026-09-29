@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-09-29. The user answered "I'll trust your judgement" to the design
 discussion, which is taken as accepting all nine recommendations below; if that was not meant,
-the status goes back to proposed. Slice 1 is next. Rewrite-context 21 calls
+the status goes back to proposed. Slice 1 is committed; slice 2 is in progress.
+Rewrite-context 21 calls
 concurrency "the nearest major post-runtime design pass" and says that until it is done,
 "Emerald callbacks obey the single-threaded language model". 15.7 says the same of "threads,
 fibers, and any other concurrency primitive". The user's notes list *concurrency* and
@@ -127,8 +128,13 @@ Tasks.run { tasks =>
   outside the heap holds (`Heap.collect`). It does not enumerate roots, so a suspended task's
   temporaries are not at risk. Slice 2 must still prove this with a stress test.
 - **Closures capture variables by reference** (7.4), so a task block that captured a `var`
-  would share it with its parent. That is what the capture rule in decision 4 prevents. The
-  checker already computes what a block captures (`Checker.capturesOf`).
+  would share it with its parent. That is what the capture rule in decision 4 prevents.
+  Correction found during slice 2: `Checker.capturesOf` does **not** compute a lambda's local
+  captures. It walks transitive module reads for a named declaration. `Resolver.lambda_reads`
+  contains only module-level variables, while `Resolver.local_captures` records local captures
+  for nested named functions, not lambdas. The checker's existing scope stack and binding
+  mutability allow the direct-capture rule to be enforced at name resolution, without new
+  resolver facts; see slice 2's settled note.
 - **Blocking natives block everything today.** `Program.sleep` ("nothing else in the program
   runs meanwhile"), `input`, the filesystem, and `Http` are all synchronous. `Http` runs its
   request on its own threaded `std.Io` and waits for it (`Http.Client.request`).
@@ -330,7 +336,25 @@ commits.
   worth building later.
 - Conformance: results from several tasks in order, an error from one task, an error from two
   (the first wins), a task that returns nothing, and each diagnostic.
-- Settled while building: (record here)
+- Settled while building: `Checker.capturesOf` records transitive module reads for named
+  declarations, not lambda-local captures, contrary to the verified-constraints claim. The
+  checker's existing `block_scopes`, lexical scope stack, and binding mutability suffice:
+  while checking an inline task block, a name resolved to an outer `var` is rejected at that
+  name, including in nested lambdas and assignments. No new resolver facts are needed. The
+  user approved requiring `tasks.start` to receive an inline `{ => ... }` block in this
+  milestone; a stored lambda, named function, or any other function value is rejected at its
+  argument with a wrapping example. That restriction makes direct captures checkable without
+  introducing an effect type for function values. Two indirect-call gaps remain for the
+  multicore plan: a task block may call a named function that reads a module `var`, or call a
+  captured function value whose own closure holds a `var`. Neither creates a race while one
+  task runs Emerald code at a time; both must be closed before multicore execution.
+  The scheduler uses OS threads behind one baton and a global cap of 64 live children. On
+  Linux ReleaseSafe, 1,000 sequential tasks took 0.21 s and 11 MiB peak RSS; 10,000 took
+  2.62 s and 52 MiB; 64 live tasks took 0.02 s and 24 MiB; 100,000 scheduler-only baton
+  handoffs took 1.63 s and 1 MiB. A 64-bit host reserves up to 128 MiB of virtual stack per
+  live task, committing pages only as used. Windows runtime measurements remain for CI.
+  Slice 2 drains all children and propagates the first unobserved task error; automatic
+  sibling cancellation is implemented with cancellation in slice 5.
 
 ### Slice 3: Waiting for time and the outside world
 

@@ -976,6 +976,10 @@ const Printer = struct {
                 try self.write("Set[");
                 try self.printType(element.*);
                 try self.write("]");
+            } else if (t.task) {
+                try self.write("Task[");
+                try self.printType(element.*);
+                try self.write("]");
             } else {
                 try self.write("List[");
                 try self.printType(element.*);
