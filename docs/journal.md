@@ -3420,3 +3420,68 @@ changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-build
 `zig-out`. All seven standalone scheduler unit tests passed. Sixteen new or changed running
 cases passed 50 consecutive runs each (800 total); expected files were read by hand. Windows
 runtime validation remains for green PR CI. Cancellation is the next slice.
+
+## Concurrency, slice 5: cooperative cancellation, 2026-09-30
+
+`Task.cancel()` requests cancellation at a suspension point. `CancelledError` extends
+`Error` directly, so a RuntimeError catch cannot swallow it. Task/channel/input/timer
+waits are readied cooperatively; finally blocks and group draining mask cancellation so
+cleanup can itself wait. A real failure remembers the group's first error and cancels
+siblings and its owner once. An owner asking for that failing task's result observes its
+actual error, preserving typed catches without raising it again during draining. Other
+owner suspension points raise CancelledError; the group reports its original failure
+after joining all children. Explicitly cancelled children alone do not fail a group,
+but their result calls raise CancelledError. Tasks started by a sibling before reaching
+its checkpoint inherit the group's ongoing cancellation; otherwise a new long sleep
+could keep the draining group alive after its first error was handled. Program exit
+cancels and drains its tasks.
+Normal implicit joining remains interruptible, including for nested groups; it becomes
+protected draining only after an error or cancellation. A nested-group regression checks
+that cancelling its parent stops the nested sleep and runs both levels of cleanup.
+Two existing deadlock expectations now preserve the group's original failure site rather
+than replacing it with a child's later failure.
+
+Final review caught a repeated-cancellation edge: channel matching must keep a protected
+cleanup waiter, even with a new cancellation request pending. The regression case cancels
+again while `finally` waits to send its second message, then receives it and allows cleanup
+to finish. Group draining also clears pending cancellation before restoring its original
+error, so a late cleanup request cannot replace that error.
+
+Inspection found that the raw-thread host operations and arbitrary borrowed input readers
+could not be interrupted by simply readying a task. A bounded probe started an input task,
+yielded, then raised `RuntimeError("stop the group")` in the owner; it remained alive with
+stdin open and no data, and reported the child's InputError only after stdin closed.
+The user approved a narrower solution rather than a general custom-reader contract:
+Scheduler.zig owns one process-lifetime stdin reader and its allocations; a cancelled
+task abandons only its registered wait, leaving the in-flight read and eventual line
+for the next input call. Program exit does not join that blocked reader. Fixed services
+own finite buffers and join/free at teardown; caller position advances only on delivery.
+Other borrowed readers retain their previous host-read path, with no cancellation hook.
+
+The two-task input test found a FIFO bug during development: a later caller could steal
+a line promised to an earlier waiting caller. Explicit reservation fixes it, and releasing
+a cancelled reservation passes the intact line onward. All reader/runtime pointers are
+unregistered under the reader mutex before their task returns. The live-input driver
+checks both prompt exit with stdin held open and a line supplied only after cleanup and
+the first-error catch; CI runs it on every platform/build combination.
+
+HTTP cancellation signals the existing deadline worker early, using the existing Select
+race and transport cleanup instead of a second cancellation mechanism. A response that
+finished concurrently is freed before raising CancelledError. The signal is shared by
+child cancellation and cancellation of a group's owner after its child fails; the HTTP
+case covers both directions. File operations are not
+interrupted: cancellation arrives after they return, so named pipes/devices can delay it.
+These distinctions are documented in the rewrite context and library references.
+Managed file helpers also deliver cancellation after opening, before invoking a user
+block, and close their new handle. A tmpDir-backed Zig test checks both helpers, absence
+of user-block output, and subsequent file reuse.
+
+Full local validation passed with Zig 0.16.0 and sequential `-j1`: Debug and ReleaseSafe
+tests, native build, documentation examples (23 executed, 113 linked conformance files),
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds with
+prefixes outside `zig-out`. Nine scheduler unit tests pass. Fifteen new, changed, or
+directly affected task cases passed 50 consecutive runs each (750 checks), including HTTP
+against a loopback-only server. The live-input driver passed 50 prompt-exit and 50
+retained-line checks, and a local-file cancellation probe passed 50 runs. Every expectation
+was read by hand. Windows execution remains a green-PR-CI gate. Slice 6 is next; the branch
+has not been pushed or merged.

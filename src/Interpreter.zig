@@ -84,12 +84,16 @@ const TaskRecord = struct {
     ended: ?Error = null,
     completion_order: usize = 0,
     observed_error: bool = false,
+    group: *TaskGroupRecord,
 };
 
 const TaskGroupRecord = struct {
     id: i64,
     tasks: std.ArrayList(*TaskRecord) = .empty,
     active: bool = true,
+    owner: *Scheduler.TaskState(TaskData),
+    first_error: ?*TaskRecord = null,
+    cancelling: bool = false,
 };
 
 const ChannelWaiter = struct {
@@ -209,6 +213,8 @@ task: *Scheduler.TaskState(TaskData),
 root_task: *Scheduler.TaskState(TaskData),
 scheduler: *Scheduler.Runtime,
 input_gate: Scheduler.Runtime.Gate = .{},
+input_reader: ?*Scheduler.InputReader = null,
+standard_input: bool = false,
 task_records: std.AutoHashMapUnmanaged(i64, *TaskRecord) = .empty,
 task_groups: std.AutoHashMapUnmanaged(i64, *TaskGroupRecord) = .empty,
 next_task_id: i64 = 1,
@@ -354,6 +360,7 @@ pub fn run(
     io: std.Io,
     arguments: []const []const u8,
     color: bool,
+    standard_input: bool,
     process_environment: std.process.Environ,
     local_zone: TimeZone.Local,
     stack: StackLimit,
@@ -407,6 +414,7 @@ pub fn run(
         .in = in,
         .io = io,
         .color = color,
+        .standard_input = standard_input,
         .environment = process_environment,
         .local_zone = local_zone,
         .arguments = arguments,
@@ -431,6 +439,7 @@ pub fn run(
     defer interpreter.heap.deinit();
     defer interpreter.deinitChannels();
     defer interpreter.deinitTasks();
+    defer if (interpreter.input_reader) |reader| reader.deinit();
     defer interpreter.literal_texts.deinit(gpa);
     defer interpreter.deinitFileHandles();
     defer interpreter.deinitFileWriters();
@@ -1018,9 +1027,13 @@ fn executeTry(self: *Interpreter, protected: Ast.Try) Error!void {
             self.task.state.failure = null;
         }
         var cleanup_error: ?Error = null;
+        self.task.state.cancellation_mask += 1;
+        self.task.state.job.?.cancellation_protected = true;
         self.executeBlock(cleanup) catch |err| {
             cleanup_error = err;
         };
+        self.task.state.cancellation_mask -= 1;
+        self.task.state.job.?.cancellation_protected = self.task.state.cancellation_mask != 0;
         if (cleanup_error) |err| {
             if (propagating_value) |value| self.heap.release(value);
             if (pending) |previous| if (previous == error.Returned) {
@@ -1177,6 +1190,9 @@ const TaskData = struct {
     stack: StackLimit = .{ .base = 0, .budget = 0 },
     steps_remaining: ?usize = null,
     step_limit: usize = 0,
+    cancellation_mask: usize = 0,
+    external_cancel: ?*Http.CancelSignal = null,
+    external_completed: bool = false,
 };
 
 /// Raises when the object field is taken by a running call.
@@ -3080,6 +3096,22 @@ fn evaluateCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Value {
+    const result = self.evaluateCallInner(expression, call);
+    if (self.task.state.external_completed) {
+        self.task.state.external_completed = false;
+        self.cancellationPoint(expression.span) catch |err| {
+            if (result) |value| self.heap.release(value) else |_| {}
+            return err;
+        };
+    }
+    return result;
+}
+
+fn evaluateCallInner(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+) Error!Value {
     if (Checker.isCountingBlock(call)) return self.evaluateCountingBlock(expression, call);
     if (Checker.isCounting(expression)) return self.evaluateRangeCall(expression, call);
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
@@ -3090,9 +3122,11 @@ fn evaluateCall(
         if (std.mem.eql(u8, key, Resolver.preludeKey("Channel"))) return self.createChannel(expression, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::run")) return self.callTasksRun(expression.span, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::yield")) {
+            try self.cancellationPoint(expression.span);
             const task = self.task;
             self.scheduler.yield(task.state.job.?);
             self.task = task;
+            try self.cancellationPoint(expression.span);
             return .nothing;
         }
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
@@ -3165,7 +3199,7 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
     const body = try self.evaluate(call.arguments[0]);
     defer self.heap.release(body);
     const group = try self.gpa.create(TaskGroupRecord);
-    group.* = .{ .id = self.next_group_id };
+    group.* = .{ .id = self.next_group_id, .owner = self.task };
     self.next_group_id += 1;
     self.task_groups.put(self.gpa, group.id, group) catch |err| {
         self.gpa.destroy(group);
@@ -3176,6 +3210,12 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
     var block_result: ?Value = null;
     var block_error: ?Error = null;
     if (result) |value| block_result = value else |err| block_error = err;
+    if (block_error == null) self.cancellationPoint(span) catch |err| {
+        block_error = err;
+    };
+    const block_cancelled = if (block_error) |err| err == error.Raised and self.currentErrorCancelled() else false;
+    const block_failed_first = block_error != null and !block_cancelled and group.first_error == null;
+    if (block_error != null) self.cancelGroup(group, null);
     defer if (block_result) |value| self.heap.release(value);
     var block_raised: ?Value = null;
     var block_failure: ?Diagnostic = null;
@@ -3187,20 +3227,42 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
     };
     defer if (block_raised) |value| self.heap.release(value);
 
+    // Normal joining is a cancellation point. After an error or cancellation,
+    // draining becomes protected cleanup and must still join every child.
+    const owner = self.task;
+    var protecting_drain = block_error != null;
+    if (protecting_drain) {
+        _ = self.scheduler.takeCancellation(owner.state.job.?);
+        owner.state.cancellation_mask += 1;
+    }
+    owner.state.job.?.cancellation_protected = owner.state.cancellation_mask != 0;
+    defer {
+        if (protecting_drain) owner.state.cancellation_mask -= 1;
+        owner.state.job.?.cancellation_protected = owner.state.cancellation_mask != 0;
+    }
     // A child may start another child through this same group while the body
     // waits. Re-read the length after each hand-off, not just once at entry.
     var index: usize = 0;
     var drain_error: ?Error = null;
     var drain_raised: ?Value = null;
     var drain_failure: ?Diagnostic = null;
+    var drain_failed_first = false;
     defer if (drain_raised) |value| self.heap.release(value);
     while (index < group.tasks.items.len) {
         const target = group.tasks.items[index];
-        self.awaitTask(span, target) catch |err| {
+        self.awaitTask(span, target, false) catch |err| {
             if (drain_error == null) {
                 drain_error = err;
                 drain_raised = self.task.state.raised_value;
                 drain_failure = self.task.state.failure;
+                const cancelled = err == error.Raised and self.currentErrorCancelled();
+                drain_failed_first = !cancelled and group.first_error == null;
+                self.cancelGroup(group, null);
+                if (!protecting_drain) {
+                    protecting_drain = true;
+                    owner.state.cancellation_mask += 1;
+                    owner.state.job.?.cancellation_protected = true;
+                }
             } else if (self.task.state.raised_value) |value| self.heap.release(value);
             self.task.state.raised_value = null;
             self.task.state.failure = null;
@@ -3208,15 +3270,24 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
         if (self.scheduler.isDone(&target.job)) index += 1;
     }
     group.active = false;
+    _ = self.scheduler.takeCancellation(owner.state.job.?);
 
-    var first: ?*TaskRecord = null;
-    for (group.tasks.items) |task| {
-        if (task.ended == null or task.observed_error) continue;
-        if (first == null or task.completion_order < first.?.completion_order) first = task;
+    if (block_failed_first) {
+        self.task.state.raised_value = block_raised;
+        self.task.state.failure = block_failure;
+        block_raised = null;
+        return block_error.?;
     }
-    if (first) |failed| {
+    if (drain_failed_first) {
+        self.task.state.raised_value = drain_raised;
+        self.task.state.failure = drain_failure;
+        drain_raised = null;
+        return drain_error.?;
+    }
+    if (group.first_error) |failed| if (!failed.observed_error) {
+        _ = self.scheduler.takeCancellation(owner.state.job.?);
         return self.propagateTaskError(failed);
-    }
+    };
     if (drain_error) |err| {
         self.task.state.raised_value = drain_raised;
         self.task.state.failure = drain_failure;
@@ -3229,6 +3300,7 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
         block_raised = null;
         return err;
     }
+    _ = self.scheduler.takeCancellation(owner.state.job.?);
     const value = block_result.?;
     block_result = null;
     return value;
@@ -3257,6 +3329,7 @@ fn callTaskStart(self: *Interpreter, span: Source.Span, member: Ast.Expression.M
         } },
         .block = block,
         .span = span,
+        .group = group,
     };
     self.next_task_id += 1;
     const handle = self.nativeTaskHandle("Task", task.id) catch |err| {
@@ -3286,6 +3359,7 @@ fn callTaskStart(self: *Interpreter, span: Source.Span, member: Ast.Expression.M
         return self.raise(span, "Tasks.run could not start another task", "Wait for a task to finish before starting more tasks.");
     };
     self.live_tasks += 1;
+    if (group.cancelling) self.cancelTask(task);
     return handle;
 }
 
@@ -3298,20 +3372,31 @@ fn taskMain(context: *anyopaque, job: *Scheduler.Runtime.Job) void {
     const closure = task.block.data.closure;
     const result = self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{});
     if (result) |value| task.result = value else |err| task.ended = err;
+    if (task.ended != null and !self.taskCancelled(task)) {
+        if (task.group.first_error == null) {
+            task.group.first_error = task;
+            self.cancelGroup(task.group, task);
+        }
+    }
     task.completion_order = self.next_completion_order;
     self.next_completion_order += 1;
     self.live_tasks -= 1;
 }
 
-fn awaitTask(self: *Interpreter, span: Source.Span, task: *TaskRecord) Error!void {
+fn awaitTask(self: *Interpreter, span: Source.Span, task: *TaskRecord, for_result: bool) Error!void {
+    if (for_result) self.prepareTaskResult(task);
+    try self.cancellationPoint(span);
     const parent = self.task;
     parent.state.job.?.wait_site = .{ .file = parent.state.file, .start = span.start };
     defer parent.state.job.?.wait_site = null;
     if (!self.scheduler.waitFor(parent.state.job.?, &task.job)) {
         self.task = parent;
+        try self.cancellationPoint(span);
         return self.raiseDeadlock(span);
     }
     self.task = parent;
+    if (for_result) self.prepareTaskResult(task);
+    try self.cancellationPoint(span);
     self.scheduler.join(&task.job);
 }
 
@@ -3331,7 +3416,12 @@ fn callTaskMethod(self: *Interpreter, span: Source.Span, key: []const u8, member
     const id = receiver.data.struct_value.fields[0].data.int;
     const task = self.task_records.get(id) orelse return self.raise(span, "this task does not belong to a running group", "Start a task inside `Tasks.run`.");
     if (std.mem.endsWith(u8, key, "::done?")) return .initBool(self.scheduler.isDone(&task.job));
+    if (std.mem.endsWith(u8, key, "::cancel")) {
+        self.cancelTask(task);
+        return .nothing;
+    }
     if (std.mem.endsWith(u8, key, "::wait")) {
+        try self.cancellationPoint(span);
         const bound = try self.evaluateBound(call, &.{"timeout"}, &.{false});
         defer {
             self.releaseBound(bound);
@@ -3349,15 +3439,61 @@ fn callTaskMethod(self: *Interpreter, span: Source.Span, key: []const u8, member
         defer parent.state.job.?.wait_site = null;
         const result = self.scheduler.waitForUntil(parent.state.job.?, &task.job, deadline);
         self.task = parent;
+        try self.cancellationPoint(span);
         return switch (result) {
             .finished => .initBool(true),
             .timed_out => .initBool(false),
             .deadlocked => self.raiseDeadlock(span),
         };
     }
-    try self.awaitTask(span, task);
+    try self.awaitTask(span, task, true);
     if (task.ended != null) return self.propagateTaskError(task);
     return Heap.retain(task.result.?);
+}
+
+fn taskCancelled(_: *Interpreter, task: *TaskRecord) bool {
+    const value = task.state.state.raised_value orelse return false;
+    return (task.ended orelse return false) == error.Raised and value.data.struct_value.descriptor.isOrExtends(Resolver.preludeKey("CancelledError"));
+}
+
+fn currentErrorCancelled(self: *Interpreter) bool {
+    const value = self.task.state.raised_value orelse return false;
+    return value.data.struct_value.descriptor.isOrExtends(Resolver.preludeKey("CancelledError"));
+}
+
+fn cancelTask(self: *Interpreter, task: *TaskRecord) void {
+    self.requestCancellation(&task.job, &task.state);
+}
+
+fn requestCancellation(self: *Interpreter, job: *Scheduler.Runtime.Job, state: *Scheduler.TaskState(TaskData)) void {
+    self.scheduler.cancel(job);
+    if (state.state.cancellation_mask == 0) {
+        if (state.state.external_cancel) |signal| signal.request(self.http_client.?);
+    }
+}
+
+fn cancelGroup(self: *Interpreter, group: *TaskGroupRecord, failed: ?*TaskRecord) void {
+    group.cancelling = true;
+    for (group.tasks.items) |task| if (task != failed) self.cancelTask(task);
+    if (failed != null) self.requestCancellation(group.owner.state.job.?, group.owner);
+}
+
+fn cancellationPoint(self: *Interpreter, span: Source.Span) Error!void {
+    if (self.task.state.cancellation_mask != 0) return;
+    if (!self.scheduler.takeCancellation(self.task.state.job.?)) return;
+    if (self.task.state.raised_value) |value| self.heap.release(value);
+    self.task.state.raised_value = try self.makeError(Resolver.preludeKey("CancelledError"), "this task was cancelled");
+    return self.raiseTyped(span, "CancelledError", "this task was cancelled", "Wait for the task's result, or handle CancelledError when cancellation is expected.");
+}
+
+/// A result call observes its target's error directly. In the group's owner,
+/// that observation replaces the cancellation triggered by this same failure,
+/// preserving ordinary `try { task.result() } catch ...` without re-raising
+/// the error when the group later drains. Other waits still raise cancellation.
+fn prepareTaskResult(self: *Interpreter, task: *TaskRecord) void {
+    if (task.group.owner == self.task and task.group.first_error == task and !task.observed_error) {
+        _ = self.scheduler.takeCancellation(self.task.state.job.?);
+    }
 }
 
 fn raiseDeadlock(self: *Interpreter, span: Source.Span) Error {
@@ -3414,6 +3550,7 @@ fn blocking(self: *Interpreter, comptime operation: anytype, args: std.meta.Args
     const result = @call(.auto, operation, args);
     self.scheduler.endExternal(task.state.job.?);
     self.task = task;
+    task.state.external_completed = true;
     return result;
 }
 
@@ -3508,11 +3645,13 @@ fn removeChannelWaiter(waiters: *std.ArrayList(*ChannelWaiter), waiter: *Channel
 }
 
 fn waitChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, sending: bool) Error!void {
+    try self.cancellationPoint(span);
     const task = self.task;
     task.state.job.?.wait_site = .{ .file = task.state.file, .start = span.start };
     defer task.state.job.?.wait_site = null;
     const progressed = self.scheduler.parkChannel(task.state.job.?, .{ .id = channel.id, .sending = sending });
     self.task = task;
+    try self.cancellationPoint(span);
     if (!progressed) return self.raiseDeadlock(span);
 }
 
@@ -3780,6 +3919,10 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         const handle = try self.openFileHandle(span, cwd, io, values[0].data.string.bytes);
         const id = handle.data.struct_value.fields[0].data.int;
         defer self.closeFileHandle(id);
+        self.cancellationPoint(span) catch |err| {
+            self.heap.release(handle);
+            return err;
+        };
         const closure = values[1].data.closure;
         const result = try self.invokeClosure(span, closure, self.closureCallable(closure), &.{handle});
         self.heap.release(result);
@@ -3790,6 +3933,10 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         const writer = try self.createFileWriter(span, cwd, io, values[0].data.string.bytes);
         const id = writer.data.struct_value.fields[0].data.int;
         defer self.closeFileWriter(id);
+        self.cancellationPoint(span) catch |err| {
+            self.heap.release(writer);
+            return err;
+        };
         const closure = values[1].data.closure;
         const result = try self.invokeClosure(span, closure, self.closureCallable(closure), &.{writer});
         self.heap.release(result);
@@ -5048,7 +5195,20 @@ fn httpRequest(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call,
     }
 
     const client = try self.httpClient(span);
-    var response = switch (self.blocking(Http.Client.request, .{ client, requested_url, .{ .method = method, .body = body, .headers = headers.items, .timeout = timeout } })) {
+    try self.cancellationPoint(span);
+    var cancel_signal: Http.CancelSignal = .{};
+    const request_task = self.task;
+    request_task.state.external_cancel = &cancel_signal;
+    defer request_task.state.external_cancel = null;
+    const outcome = self.blocking(Http.Client.request, .{ client, requested_url, .{ .method = method, .body = body, .headers = headers.items, .timeout = timeout, .cancel_signal = &cancel_signal } });
+    self.cancellationPoint(span) catch |err| {
+        if (outcome == .response) {
+            var discarded = outcome.response;
+            discarded.deinit(self.gpa);
+        }
+        return err;
+    };
+    var response = switch (outcome) {
         .problem => |problem| return self.raiseHttpProblem(span, requested_url, problem),
         .response => |answer| answer,
     };
@@ -5988,10 +6148,12 @@ fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) E
     const total = @as(i96, seconds) * std.time.ns_per_s + nanoseconds;
     const deadline = std.Io.Clock.awake.now(io).toNanoseconds() + total;
     if (self.task_records.count() != 0) {
+        try self.cancellationPoint(span);
         self.scheduler.prepareTimers() catch return self.raise(span, "the task scheduler could not wait for time", "Try starting fewer tasks at once.");
         const task = self.task;
         self.scheduler.sleepUntil(task.state.job.?, deadline);
         self.task = task;
+        try self.cancellationPoint(span);
         return .nothing;
     }
     while (true) {
@@ -6439,11 +6601,10 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
     // A prompt has to be seen before the program waits for an answer.
     try self.out.flush();
 
-    self.acquireResource(&self.input_gate);
-    defer self.releaseResource(&self.input_gate);
-    const line = self.blocking(readInputLine, .{ self.in, self.gpa }) catch |err| switch (err) {
+    const line = self.inputLine(span) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ReadFailed => return self.raise(span, "the program's input could not be read", "Check how the program's input is being provided."),
+        else => return @errorCast(err),
     };
     defer self.gpa.free(line.bytes);
     if (line.at_end and line.bytes.len == 0) {
@@ -6473,6 +6634,33 @@ fn evaluateInput(self: *Interpreter, span: Source.Span, call: Ast.Expression.Cal
 }
 
 const InputLine = struct { bytes: []u8, at_end: bool };
+
+fn inputLine(self: *Interpreter, span: Source.Span) (Error || error{ReadFailed})!InputLine {
+    const fixed_reader: std.Io.Reader = .fixed("");
+    const scheduled = self.standard_input or (self.task_records.count() != 0 and self.in.vtable == fixed_reader.vtable);
+    if (!scheduled) {
+        self.acquireResource(&self.input_gate);
+        defer self.releaseResource(&self.input_gate);
+        return self.blocking(readInputLine, .{ self.in, self.gpa });
+    }
+    if (self.input_reader == null) {
+        self.input_reader = if (self.standard_input)
+            Scheduler.InputReader.standard() catch return error.OutOfMemory
+        else
+            Scheduler.InputReader.fixed(self.gpa, self.in) catch return error.OutOfMemory;
+    }
+    const input = self.input_reader.?;
+    const input_job = self.task.state.job.?;
+    defer input.abandon(input_job);
+    while (true) {
+        try self.cancellationPoint(span);
+        if (try input.take(self.gpa, input_job)) |line| return .{ .bytes = line.bytes, .at_end = line.at_end };
+        const task = self.task;
+        try self.scheduler.waitInput(task.state.job.?, input);
+        self.task = task;
+        try self.cancellationPoint(span);
+    }
+}
 
 fn readInputLine(reader: *std.Io.Reader, gpa: std.mem.Allocator) error{ ReadFailed, OutOfMemory }!InputLine {
     var line: std.Io.Writer.Allocating = .init(gpa);

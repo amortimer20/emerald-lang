@@ -114,13 +114,15 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
-Concurrency is in progress on `codex/concurrency`. Slices 1–4 are implemented and locally
+Concurrency is in progress on `codex/concurrency`. Slices 1–5 are implemented and locally
 validated: per-task execution state, `Task[T]`, structured groups, results, a FIFO single-holder
 OS-thread scheduler (64 live children), yield, timers, timed waits, native-I/O baton release,
 and `DeadlockError` with original wait locations. `Channel[T]` adds FIFO rendezvous and
-buffered messaging, receiving, idempotent close, and `for` iteration. Its invariant message
-type comes from ordinary expected-type context. Input and shared file handles use FIFO
-resource gates. Direct captures of outer `var` bindings, including nested lambdas, are
+buffered messaging, receiving, idempotent close, and `for` iteration. Cancellation adds
+`Task.cancel()` and `CancelledError`, automatic sibling/group cancellation, protected cleanup,
+and preservation of the group's first failure. Channel's invariant message
+type comes from ordinary expected-type context. Input readers and shared file handles
+serialize operations FIFO. Direct captures of outer `var` bindings, including nested lambdas, are
 rejected; `start` requires an inline block. Two indirect-call capture gaps remain for the
 multicore plan: called named functions reading module `var`s, and called function values
 that captured `var`s elsewhere. They are safe under the single baton.
@@ -132,12 +134,13 @@ different lengths have reliable real-clock ordering. File, network, and input co
 resume in arrival order and can vary. Teach fixed output order by printing task results in
 the wanted order or sending through a channel. The two-file-read probe produced `a, b` 94
 times and `b, a` 6 times in 100 runs; the evidence and decision are in the slice 3 note.
-Conformance cases order their I/O results explicitly. Slice 4 passed the full local gate
+Conformance cases order their I/O results explicitly. Slice 5 passed the full local gate
 with Zig 0.16.0 `-j1`: Debug and ReleaseSafe tests, native build, documentation examples,
-formatting, whitespace, and Windows/macOS cross-builds. Sixteen new or changed running cases
-each passed 50 consecutive runs (800 total), including channel deadlock recovery, cyclic
-closure messages, value-copy semantics, and prelude reach. The journal records completed
-slices and measurements. Next is slice 5: cancellation. Windows runtime
+formatting, whitespace, and Windows/macOS cross-builds. Fifteen new, changed, or directly
+affected task cases each passed 50 consecutive runs (750 checks). Live stdin passed 50
+prompt-exit and 50 retained-line checks; local-file cancellation passed another 50.
+The journal records completed slices and measurements. Next is slice 6:
+documentation and integration. Windows runtime
 behavior and memory measurements remain for CI; a slice is not fully done until its PR is
 green on Windows. This branch has not been pushed or merged.
 
@@ -146,6 +149,16 @@ and remain safe across collection; class instances remain shared references. Pub
 flattens optionals, while iteration still visits actual `nothing` messages. The slice 4 note
 records the implementation choices and caught-deadlock waiter cleanup; no accepted decision
 needed reopening.
+
+The accepted slice 5 I/O scope is implemented: CLI stdin uses a scheduler-owned reader
+that retains an in-flight line while cancellation interrupts the task's wait. Program exit
+does not join that process-owned reader; fixed input services join/free without leaks.
+HTTP cancellation advances its existing deadline race. Files are not interrupted:
+cancellation arrives when the operation returns, so named pipes/devices can delay it.
+Custom borrowed readers keep their existing host-read path; no general cancellation hook
+was added. The plan and journal record the original hanging probe, the FIFO reservation
+bug found while building, and the original-error/cleanup rules. The CI matrix now also runs
+the live-input driver; its platform runtime results are still pending.
 
 A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
 `-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
@@ -167,15 +180,17 @@ building" notes record its decisions.
   invalid UTF-8. Code that catches `RuntimeError` is unaffected.
 - A fix to HTTP connection reuse: a request after a timed-out one could receive the timed-out
   request's reply.
+- Structured tasks, FIFO channels, timers and timed waits, cooperative cancellation,
+  and deadlock diagnostics (concurrency integration and PR validation still pending).
 
 The two open pieces of work, each needing a design plan the user approves before anything is
 built:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - **Concurrency** (rewrite-context 21): structured tasks and channels, in
   [`concurrency-design-plan.md`](concurrency-design-plan.md), accepted with all nine
-  recommendations. Codex is implementing the plan on `codex/concurrency`; slices 1–4
+  recommendations. Codex is implementing the plan on `codex/concurrency`; slices 1–5
   have passed their local gate, including the accepted ordering correction above.
-  Continue with slice 5 (cancellation), then documentation/integration.
+  Continue with documentation/integration (slice 6), then push for review and CI.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
@@ -238,6 +253,8 @@ on the roadmap.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
   `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
   `EncodingError`, and `DeadlockError`.
+- Task cancellation uses `CancelledError`, which extends `Error` directly rather than
+  `RuntimeError`, so catching RuntimeError does not swallow cancellation.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
 - A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses

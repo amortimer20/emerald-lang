@@ -22,6 +22,11 @@ catch error: RuntimeError {
     print(error.message)
 }
 
+# Cancellation is deliberately outside RuntimeError's hierarchy.
+const cancelled: Error = CancelledError("cancelled")
+assert not (cancelled is RuntimeError)
+assert cancelled.message == "cancelled"
+
 # A type-level function whose result is only a String.
 print(Console.plain(Console.style("hi", foreground: Console.Color.green)))
 print(Console.panel("reach", title: "Console"))

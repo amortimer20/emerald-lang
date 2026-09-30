@@ -28,6 +28,11 @@ prose around a value. See [`examples/greeter.em`](../../examples/greeter.em) and
 
 ## input(prompt: String) -> String
 
+In a task, cancelling a standard-input wait raises `CancelledError` and runs cleanup
+without waiting for a line. The scheduler keeps the in-flight read; its eventual line
+goes to the next input call rather than being lost. Program exit does not wait for that
+reader. This applies to `input_maybe` as well.
+
 Writes the optional prompt with no trailing newline, reads one line from standard input, and
 returns it with its line ending removed but other whitespace intact. Pressing Enter with
 nothing else returns `""`.

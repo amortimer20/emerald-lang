@@ -425,8 +425,8 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
 
     const analysis = switch (command) {
         .check => emerald.checkProject(gpa, &project),
-        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .environment = environment, .local_zone = local_zone, .arguments = program_arguments }),
-        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .color = color, .environment = environment, .local_zone = local_zone, .arguments = program_arguments }),
+        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .standard_input = true, .color = color, .environment = environment, .local_zone = local_zone, .arguments = program_arguments }),
+        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .standard_input = true, .color = color, .environment = environment, .local_zone = local_zone, .arguments = program_arguments }),
         // `main` routes `format`, `repl`, `lsp`, and `help` to their own functions
         // before this is reached.
         .format, .repl, .lsp, .explain, .help => unreachable,

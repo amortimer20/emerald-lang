@@ -2,8 +2,8 @@
 
 Status: accepted, 2026-09-29. The user answered "I'll trust your judgement" to the design
 discussion, which is taken as accepting all nine recommendations below; if that was not meant,
-the status goes back to proposed. Slices 1–4 are implemented and locally validated;
-slice 5 (cancellation) is next. Windows runtime validation remains a CI gate.
+the status goes back to proposed. Slices 1–5 are implemented and locally validated;
+slice 6 (documentation and integration) is next. Windows runtime validation remains a CI gate.
 The user accepted the scheduling clarification in principle 5 on 2026-09-29.
 Rewrite-context 21 calls
 concurrency "the nearest major post-runtime design pass" and says that until it is done,
@@ -308,7 +308,8 @@ That holds if these stay true from the first slice:
 
 A blocking native releases the baton for the length of the wait and takes it back afterward.
 The clock (`Program.sleep`, timeouts) and input have to wake tasks: the scheduler owns a timer
-list, and the wait for input runs on the reading task's thread.
+list. As settled in slice 5, standard input uses a scheduler-owned reader thread, while its
+callers wait cooperatively; custom borrowed readers keep their existing host-read path.
 
 ## Slices
 
@@ -469,7 +470,96 @@ commits.
 - Conformance: cancel a sleeping task, a task waiting on a channel, and a task in a `finally`;
   a `catch error: RuntimeError` that must not stop a cancellation; a program that exits with
   tasks cancelled.
-- Settled while building: (record here)
+- Settled while building: source inspection first paused implementation for a native-I/O
+  decision (2026-09-30). `Interpreter.blocking` runs host work on the
+  calling task's raw scheduler thread. The default `Streams.io` is
+  `std.Io.Threaded.global_single_threaded`; Zig 0.16 explicitly documents that backend
+  as not supporting cancellation. More importantly, `Streams.in` is an arbitrary
+  `*std.Io.Reader`, whose interface has no cancellation hook and whose backing I/O is
+  supplied by the caller. Replacing `Interpreter.io` alone cannot make that reader
+  cancellable. `Http.Client.request` has a private request/deadline race, but exposes
+  no scheduler cancellation handle.
+
+  A bounded local probe started an `input` task, yielded to it, then raised
+  `RuntimeError("stop the group")` in the group body. With its stdin pipe open and no
+  data, the existing binary was still running after two seconds; closing stdin let
+  it exit, reporting the child's InputError instead of the group's original error.
+  This demonstrates the current gap, not a test of an implemented `cancel()`.
+  Waking an externally blocked task without stopping and joining its host operation
+  would allow that operation to keep accessing the reader, allocator, and resources
+  during cleanup. Killing the task thread or detaching its borrowed host operation
+  is not an acceptable workaround.
+
+  **Narrower scope approved by the user, 2026-09-30.** Do not add a general host-I/O
+  cancellation contract or a cancellation hook for custom readers. Standard input
+  uses one scheduler-owned reader thread in `Scheduler.zig`. Tasks wait for a line
+  like a channel receive; cancelling that wait raises CancelledError immediately
+  and runs cleanup. The in-flight host read continues, and its line is retained
+  for the next input call, never discarded. Program exit must not join a blocked
+  stdin reader. Fixed in-memory readers used by tests and `.input` cases follow
+  the same delivery semantics and finish at EOF without allocator leaks.
+  HTTP cancellation uses the existing request/deadline race, not a new mechanism.
+  File operations are not interrupted: cancellation is delivered when the operation
+  returns. Local files normally return promptly, but a named pipe or device may
+  delay cancellation. Add coverage for a failing group with another task waiting
+  on unavailable input: the first error wins promptly, and a later line reaches
+  the next input call. These rules replace the broader extension proposed above.
+
+  Implementation choices: the CLI marks its standard-input source explicitly; the
+  scheduler's single stdin service owns a file reader, buffer, and process-lifetime
+  allocations, so a detached, blocked reader never refers to an interpreter's stack
+  or allocator. Fixed-reader services own a copy, advance the caller's fixed reader
+  only on delivery, and join/free at teardown. Other borrowed custom readers keep
+  their existing host-read path; no generic cancellation hook was introduced.
+  Runtime/job pointers are registered only for the length of a wait and removed
+  under the reader mutex before the task returns. A pending line is reserved for
+  the oldest waiting caller; abandoning that reservation passes it to the next
+  caller without consuming the line. The existing two-task input case exposed
+  a later caller stealing an already-promised line; reservation fixes that bug.
+
+  CancelledError extends Error directly. Requests are consumed at suspension
+  boundaries, not during ordinary computation. Cleanup and group draining mask
+  cancellation so waits in `finally` still finish. Deliberately cancelled children
+  do not fail an otherwise successful group; their result calls still raise their
+  CancelledError. A real task failure triggers sibling/owner cancellation once.
+  The group remains in cancellation while draining: children started by another
+  child before it reaches its checkpoint inherit that request. A regression
+  catches the first error in the owner and still verifies prompt late-child cleanup.
+  Normal implicit group joins remain cancellation points, including nested groups.
+  They become protected draining only after an error/cancellation; cancelling a
+  parent then cancels and joins its nested children before its own cleanup runs.
+  The group remembers that first failure. Directly asking for that failing task's
+  result in the owner observes its actual error, preserving existing typed catches
+  and avoiding a second raise during draining. Other owner suspension points raise
+  CancelledError, so a RuntimeError catch cannot swallow automatic cancellation.
+  Repeated cancellation must not remove a protected cleanup's channel waiter;
+  readiness checks keep those waiters matchable. A regression case cancels again
+  while `finally` is sending its second message, then receives that message and
+  lets cleanup finish. Group draining consumes pending cancellation before
+  restoring an original error, so a late cleanup request cannot replace it.
+  Two existing deadlock expectations now name the group's original failure site,
+  rather than replacing it with a child's later failure during draining.
+
+  HTTP's deadline worker can be signalled early; the same Select race stops and
+  joins the request, retaining the transport's connection cleanup. Cancellation
+  frees a response that finished concurrently before raising CancelledError.
+  The same signal applies to a group's owner waiting on HTTP when its child fails,
+  not only to explicitly cancelled child requests; the HTTP case checks both.
+  No host HTTP cancellation machinery was duplicated. File/resource waits are
+  allowed to return before cancellation is delivered. Live held-open-pipe checks
+  are in `tools/task-input-cancellation.py` and the CI matrix; they exercise prompt
+  group exit and preservation of a line supplied only after cancellation.
+  Managed file helpers check cancellation after opening and before invoking their
+  user block, closing the new handle on that path. A tmpDir-backed Zig test checks
+  both helpers, absence of user-block output, and subsequent reuse of the file.
+  Validation: pinned Zig 0.16.0, sequential `-j1` Debug and ReleaseSafe tests,
+  native build, documentation examples (23 executed, 113 linked conformance files),
+  changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+  outside `zig-out` passed. Fifteen new, changed, or directly affected task cases
+  each passed 50 consecutive runs (750 checks), including HTTP against a loopback-only
+  server. The live stdin driver passed 50 prompt-exit and 50 retained-line checks;
+  a local-file cancellation probe passed 50 runs. All expected files were read by
+  hand. Nine scheduler unit tests pass. Windows execution remains for green PR CI.
 
 ### Slice 6: Documentation and integration
 

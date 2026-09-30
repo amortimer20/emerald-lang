@@ -56,6 +56,12 @@ jobs:
         shell: bash
         run: zig build test -Doptimize=${{ matrix.optimize }}
 
+      - name: Check cancellation with live standard input
+        shell: bash
+        run: |
+          zig build -j1 -Doptimize=${{ matrix.optimize }}
+          python tools/task-input-cancellation.py
+
   fuzz:
     name: bounded execution fuzz
     runs-on: ubuntu-latest

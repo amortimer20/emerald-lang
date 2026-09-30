@@ -36,6 +36,12 @@ class DeadlockError extends RuntimeError {
     }
 }
 
+class CancelledError extends Error {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
 # Text encodings are distinct from filesystem failures: raw Bytes can be
 # invalid UTF-8 even when they never came from a file.
 class EncodingError extends RuntimeError {

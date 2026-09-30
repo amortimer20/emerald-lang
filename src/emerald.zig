@@ -246,6 +246,9 @@ fn loneProject(files: []Project.File) Project {
 pub const Streams = struct {
     out: *std.Io.Writer,
     in: *std.Io.Reader,
+    /// The CLI's stdin uses a process-owned scheduler reader. This is not
+    /// a cancellation hook for an arbitrary embedding reader.
+    standard_input: bool = false,
     /// The execution's I/O backend. Existing callers use the process-wide
     /// single-threaded backend until a scheduler supplies its own.
     io: std.Io = std.Io.Threaded.global_single_threaded.io(),
@@ -622,6 +625,7 @@ fn analyze(
         running.io,
         running.arguments,
         running.color,
+        running.standard_input,
         running.environment,
         running.local_zone,
         stack,
@@ -942,6 +946,47 @@ test "File read methods reject invalid UTF-8 as FileError" {
         const program = try std.fmt.allocPrint(testing.allocator, "{s}(\"{s}\")", .{ method, literal });
         defer testing.allocator.free(program);
         try expectFailure(program, expected);
+    }
+}
+
+test "cancelled file opening closes the resource before invoking its block" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "cancel.txt", .data = "text" });
+    const relative = try std.fmt.allocPrint(testing.allocator, ".zig-cache/tmp/{s}/cancel.txt", .{tmp.sub_path});
+    defer testing.allocator.free(relative);
+    const absolute = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, relative, testing.allocator);
+    defer testing.allocator.free(absolute);
+    const literal = try escapeAsEmeraldStringLiteral(testing.allocator, absolute);
+    defer testing.allocator.free(literal);
+    for ([_][]const u8{ "with_open", "with_writer" }) |method| {
+        const program = try std.fmt.allocPrint(testing.allocator,
+            \\const path = "{s}"
+            \\Tasks.run {{ tasks =>
+            \\    const task = tasks.start {{ =>
+            \\        try {{
+            \\            File.{s}(path) {{ resource =>
+            \\                print("unexpected file block")
+            \\            }}
+            \\        }}
+            \\        finally {{
+            \\            print("file cleanup")
+            \\        }}
+            \\    }}
+            \\    Tasks.yield()
+            \\    task.cancel()
+            \\    try {{
+            \\        task.result()
+            \\    }}
+            \\    catch error: CancelledError {{
+            \\        print("cancelled")
+            \\    }}
+            \\}}
+            \\File.write(path, "closed")
+            \\assert File.read(path) == "closed"
+        , .{ literal, method });
+        defer testing.allocator.free(program);
+        try expectOutput(program, "file cleanup\ncancelled\n");
     }
 }
 

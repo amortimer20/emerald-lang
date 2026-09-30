@@ -6878,6 +6878,8 @@ fn typeOfMethodCall(
             base.element.?.*
         else if (std.mem.eql(u8, member.name, "done?"))
             Type.bool
+        else if (std.mem.eql(u8, member.name, "cancel"))
+            Type.nothing
         else
             null;
         if (result) |method_result| {
@@ -6889,7 +6891,7 @@ fn typeOfMethodCall(
             member.name_span,
             "Task[{f}] has no method named `{s}`",
             .{ base.element.?.*, member.name },
-            "A task offers `result()`, `wait(timeout)`, and `done?()`.",
+            "A task offers `result()`, `wait(timeout)`, `done?()`, and `cancel()`.",
         );
         try self.typeArguments(call.arguments);
         return .invalid;

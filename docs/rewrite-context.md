@@ -3892,6 +3892,20 @@ flattens its optional result. Transmitted collections and structs keep value sem
 class instances remain shared references. Channel waits participate in deadlock detection,
 with diagnostics naming their channel, direction, and source location.
 
+`Task.cancel()` requests cooperative cancellation at the next suspension point. It is
+idempotent, and requesting cancellation of an already finished task does nothing.
+Cancellation raises `CancelledError`, a direct `Error` subclass rather than a
+`RuntimeError`, and `finally` still runs, including cleanup that itself waits. A failing
+task cancels its siblings and the group's block; the group drains all children and reports
+its first error once. Deliberately cancelled children do not make a group fail merely by
+being cancelled; asking for their `result()` raises their CancelledError.
+Cancelling a standard-input wait does not discard input: one scheduler-owned reader keeps
+the in-flight read and delivers its eventual line to the next input call. Program exit
+does not join that process-owned reader. HTTP cancellation uses the request's existing
+deadline race. File operations are not interrupted: cancellation arrives after the host
+operation returns. Local files normally return promptly, but a named pipe or device can
+delay cancellation. There is no new cancellation hook for custom embedding readers.
+
 ## 22. Reconstruction decisions and history
 
 ### Full-conversation recovery

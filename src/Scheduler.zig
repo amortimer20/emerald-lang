@@ -131,6 +131,10 @@ pub const Runtime = struct {
         timer_next: ?*Job = null,
         gate_next: ?*Job = null,
         timed_out: bool = false,
+        cancel_requested: bool = false,
+        gate: ?*Gate = null,
+        cancellation_protected: bool = false,
+        input_wait: bool = false,
         context: ?*anyopaque = null,
         run: ?*const fn (*anyopaque, *Job) void = null,
     };
@@ -296,7 +300,29 @@ pub const Runtime = struct {
     pub fn channelWaiting(self: *Runtime, job: *Job) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        return job.status == .waiting and job.channel_wait != null;
+        return job.status == .waiting and job.channel_wait != null and
+            (!job.cancel_requested or job.cancellation_protected);
+    }
+
+    /// Cancellation readies cooperative waits, but never interrupts a raw
+    /// file operation. Its caller checks the request after reacquiring the baton.
+    pub fn cancel(self: *Runtime, job: *Job) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (job.status == .done) return;
+        job.cancel_requested = true;
+        if (job.status != .waiting or job.cancellation_protected or job.gate != null) return;
+        self.removeTimer(job);
+        job.waiting_on = null;
+        self.enqueue(job);
+    }
+
+    pub fn takeCancellation(self: *Runtime, job: *Job) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const requested = job.cancel_requested;
+        job.cancel_requested = false;
+        return requested;
     }
 
     fn now(self: *Runtime) i96 {
@@ -374,7 +400,7 @@ pub const Runtime = struct {
         if (self.timers != null) return true;
         var item: ?*Job = self.all;
         while (item) |job| : (item = job.all_next) {
-            if (job.status == .external) return true;
+            if (job.status == .external or (job.status == .waiting and job.input_wait)) return true;
         }
         return false;
     }
@@ -398,10 +424,12 @@ pub const Runtime = struct {
         std.debug.assert(gate.owner != current);
         current.status = .waiting;
         current.gate_next = null;
+        current.gate = gate;
         if (gate.tail) |tail| tail.gate_next = current else gate.head = current;
         gate.tail = current;
         _ = self.dispatch();
         while (current.status != .running) current.condition.waitUncancelable(self.io, &self.mutex);
+        current.gate = null;
         std.debug.assert(gate.owner == current);
     }
 
@@ -454,11 +482,200 @@ pub const Runtime = struct {
         return job.status == .done;
     }
 
+    /// Input has an independent lifetime. Unregister this stack waiter before
+    /// returning, including after cancellation, so a late line cannot touch a
+    /// destroyed runtime. The line itself stays on the reader until taken.
+    pub fn waitInput(self: *Runtime, current: *Job, input: *InputReader) std.mem.Allocator.Error!void {
+        var waiter: InputReader.Waiter = .{ .runtime = self, .job = current };
+        input.mutex.lockUncancelable(input.io);
+        if ((input.line != null and (input.claim == null or input.claim == current)) or input.failure != null or (input.eof and input.line == null)) {
+            input.mutex.unlock(input.io);
+            return;
+        }
+        input.waiters.append(input.gpa, &waiter) catch |err| {
+            input.mutex.unlock(input.io);
+            return err;
+        };
+        self.mutex.lockUncancelable(self.io);
+        current.status = .waiting;
+        current.input_wait = true;
+        input.request.set(input.io);
+        input.mutex.unlock(input.io);
+        _ = self.dispatch();
+        while (current.status != .running) current.condition.waitUncancelable(self.io, &self.mutex);
+        current.input_wait = false;
+        self.mutex.unlock(self.io);
+        input.mutex.lockUncancelable(input.io);
+        defer input.mutex.unlock(input.io);
+        for (input.waiters.items, 0..) |item, index| if (item == &waiter) {
+            _ = input.waiters.orderedRemove(index);
+            break;
+        };
+        if (input.claim == null and (input.line != null or input.failure != null or input.eof)) input.wakeFirst();
+    }
+
+    fn wakeInput(self: *Runtime, job: *Job) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (job.status != .waiting or !job.input_wait) return;
+        self.enqueue(job);
+        if (self.current == null) _ = self.dispatch();
+    }
+
     /// Every started thread must be joined, including a completed task whose
     /// Emerald handle escaped its group.
     pub fn join(_: *Runtime, job: *Job) void {
         if (job.thread) |thread| thread.join();
         job.thread = null;
+    }
+};
+
+/// One owned reader and one pending line. Stdin's service has process lifetime:
+/// it owns its file reader, buffer, and allocator, never a caller's stack or an
+/// interpreter's arena. Fixed-reader services are joined and freed at teardown.
+pub const InputReader = struct {
+    const Waiter = struct { runtime: *Runtime, job: *Runtime.Job };
+    pub const Line = struct { bytes: []u8, at_end: bool };
+    pub const ReadError = error{ ReadFailed, OutOfMemory };
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    mutex: std.Io.Mutex = .init,
+    request: std.Io.Event = .unset,
+    thread: ?std.Thread = null,
+    waiters: std.ArrayList(*Waiter) = .empty,
+    reader: std.Io.Reader = undefined,
+    original: ?*std.Io.Reader = null,
+    file_reader: std.Io.File.Reader = undefined,
+    buffer: []u8,
+    line: ?Line = null,
+    claim: ?*Runtime.Job = null,
+    failure: ?ReadError = null,
+    eof: bool = false,
+    stopping: bool = false,
+    persistent: bool,
+
+    var standard_mutex: std.Io.Mutex = .init;
+    var standard_reader: ?*InputReader = null;
+
+    pub fn standard() !*InputReader {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        standard_mutex.lockUncancelable(io);
+        defer standard_mutex.unlock(io);
+        if (standard_reader) |reader| return reader;
+        const gpa = std.heap.page_allocator;
+        const self = try gpa.create(InputReader);
+        errdefer gpa.destroy(self);
+        const buffer = try gpa.alloc(u8, 4096);
+        errdefer gpa.free(buffer);
+        self.* = .{ .gpa = gpa, .io = io, .buffer = buffer, .persistent = true };
+        self.file_reader = std.Io.File.stdin().readerStreaming(io, buffer);
+        self.thread = try std.Thread.spawn(.{}, worker, .{self});
+        // No join on program exit: everything accessed by this thread is
+        // process-owned, even when it is blocked waiting for a terminal line.
+        self.thread.?.detach();
+        self.thread = null;
+        standard_reader = self;
+        return self;
+    }
+
+    pub fn fixed(gpa: std.mem.Allocator, reader: *std.Io.Reader) !*InputReader {
+        const self = try gpa.create(InputReader);
+        errdefer gpa.destroy(self);
+        const buffer = try gpa.dupe(u8, reader.buffer[reader.seek..reader.end]);
+        errdefer gpa.free(buffer);
+        self.* = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io(), .buffer = buffer, .persistent = false, .reader = .fixed(buffer), .original = reader };
+        self.thread = try std.Thread.spawn(.{}, worker, .{self});
+        return self;
+    }
+
+    fn worker(self: *InputReader) void {
+        while (true) {
+            self.request.waitUncancelable(self.io);
+            self.mutex.lockUncancelable(self.io);
+            self.request.reset();
+            if (self.stopping) {
+                self.mutex.unlock(self.io);
+                return;
+            }
+            if (self.line != null or self.failure != null or self.eof) {
+                self.mutex.unlock(self.io);
+                continue;
+            }
+            self.mutex.unlock(self.io);
+            const result = readLine(if (self.persistent) &self.file_reader.interface else &self.reader, self.gpa);
+            self.mutex.lockUncancelable(self.io);
+            if (result) |line| {
+                self.line = line;
+                self.eof = line.at_end;
+            } else |err| self.failure = err;
+            self.wakeFirst();
+            const finished = self.eof or self.failure != null;
+            self.mutex.unlock(self.io);
+            if (finished) return;
+        }
+    }
+
+    fn wakeFirst(self: *InputReader) void {
+        // Queue entries are removed while this same mutex is held before a
+        // task leaves input, so worker callbacks never refer to stale stacks.
+        for (self.waiters.items) |waiter| {
+            if (self.line != null) self.claim = waiter.job;
+            waiter.runtime.wakeInput(waiter.job);
+            break;
+        }
+    }
+
+    pub fn take(self: *InputReader, gpa: std.mem.Allocator, job: *Runtime.Job) ReadError!?Line {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.failure) |err| return err;
+        if (self.line) |line| {
+            if (self.claim != null and self.claim != job) return null;
+            const bytes = try gpa.dupe(u8, line.bytes);
+            if (self.original) |reader| reader.toss(line.bytes.len + @intFromBool(!line.at_end));
+            self.gpa.free(line.bytes);
+            self.line = null;
+            self.claim = null;
+            if (self.eof) self.wakeFirst() else if (self.waiters.items.len != 0) self.request.set(self.io);
+            return .{ .bytes = bytes, .at_end = line.at_end };
+        }
+        if (self.eof) return .{ .bytes = try gpa.alloc(u8, 0), .at_end = true };
+        return null;
+    }
+
+    pub fn abandon(self: *InputReader, job: *Runtime.Job) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.claim == job) {
+            self.claim = null;
+            self.wakeFirst();
+        }
+    }
+
+    pub fn deinit(self: *InputReader) void {
+        if (self.persistent) return;
+        self.mutex.lockUncancelable(self.io);
+        self.stopping = true;
+        self.request.set(self.io);
+        self.mutex.unlock(self.io);
+        // This reader owns a finite memory buffer, never a blocking device.
+        if (self.thread) |thread| thread.join();
+        if (self.line) |line| self.gpa.free(line.bytes);
+        self.waiters.deinit(self.gpa);
+        self.gpa.free(self.buffer);
+        self.gpa.destroy(self);
+    }
+
+    fn readLine(reader: *std.Io.Reader, gpa: std.mem.Allocator) ReadError!Line {
+        var line: std.Io.Writer.Allocating = .init(gpa);
+        defer line.deinit();
+        _ = reader.streamDelimiterEnding(&line.writer, '\n') catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            error.ReadFailed => return error.ReadFailed,
+        };
+        const at_end = reader.bufferedLen() == 0;
+        if (!at_end) reader.toss(1);
+        return .{ .bytes = try line.toOwnedSlice(), .at_end = at_end };
     }
 };
 
@@ -592,4 +809,49 @@ test "channel wakeups join the ready queue in readiness order" {
     runtime.join(&first);
     runtime.join(&second);
     try std.testing.expectEqualSlices(usize, &.{ 2, 1 }, &order);
+}
+
+test "cancellation wakes a sleeping task and removes its timer" {
+    const Probe = struct {
+        runtime: *Runtime,
+        cancelled: bool = false,
+
+        fn run(context: *anyopaque, job: *Runtime.Job) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.runtime.sleepUntil(job, self.runtime.now() + std.time.ns_per_s);
+            self.cancelled = self.runtime.takeCancellation(job);
+        }
+    };
+    var root: Runtime.Job = undefined;
+    var runtime = Runtime.init(std.Io.Threaded.global_single_threaded.io(), &root);
+    defer runtime.deinit();
+    try runtime.prepareTimers();
+    var child: Runtime.Job = undefined;
+    var probe: Probe = .{ .runtime = &runtime };
+    try runtime.start(&child, &probe, Probe.run);
+    runtime.yield(&root);
+    runtime.cancel(&child);
+    try std.testing.expect(runtime.waitFor(&root, &child));
+    runtime.join(&child);
+    try std.testing.expect(probe.cancelled);
+    try std.testing.expect(runtime.timers == null);
+}
+
+test "a fixed input line stays available after its waiter abandons it" {
+    var reader: std.Io.Reader = .fixed("alpha\nbeta\n");
+    const input = try InputReader.fixed(std.testing.allocator, &reader);
+    defer input.deinit();
+    var root: Runtime.Job = undefined;
+    var runtime = Runtime.init(std.Io.Threaded.global_single_threaded.io(), &root);
+    defer runtime.deinit();
+    try runtime.waitInput(&root, input);
+    // Do not take the reserved line: this is the cancellation handoff.
+    input.abandon(&root);
+    const line = (try input.take(std.testing.allocator, &root)).?;
+    defer std.testing.allocator.free(line.bytes);
+    try std.testing.expectEqualStrings("alpha", line.bytes);
+    try runtime.waitInput(&root, input);
+    const next = (try input.take(std.testing.allocator, &root)).?;
+    defer std.testing.allocator.free(next.bytes);
+    try std.testing.expectEqualStrings("beta", next.bytes);
 }
