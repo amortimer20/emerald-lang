@@ -29,10 +29,13 @@ Tasks.run { tasks =>
     receiving.close()
     print(consumer.result() == nothing)
 }
-const optional: Channel[Int?] = Channel(capacity: 2)
-optional.send(nothing)
-optional.send(7)
-optional.close()
-for value in optional {
-    print(value)
+struct Message {
+    const value: Int?
+}
+const messages: Channel[Message] = Channel(capacity: 2)
+messages.send(Message(nothing))
+messages.send(Message(7))
+messages.close()
+for message in messages {
+    print(message.value)
 }

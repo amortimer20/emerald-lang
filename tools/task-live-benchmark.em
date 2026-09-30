@@ -5,6 +5,7 @@ Tasks.run { tasks =>
     for i in 0..<count {
         pending.append(tasks.start { => i })
     }
+    print("started: #{pending.count}")
     var total = 0
     for task in pending {
         total += task.result()

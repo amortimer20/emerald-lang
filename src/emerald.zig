@@ -744,6 +744,18 @@ test "analyzeProject exposes every expression's type, keyed by expression and it
     try testing.expect(found_int_literal);
 }
 
+test "a native Tasks.run call reaches the prelude and activates task allocation" {
+    const gpa = testing.allocator;
+    var source = try Source.init(gpa, "test.em", "Tasks.run { tasks => print(tasks.start { => 7 }.result()) }\n");
+    defer source.deinit(gpa);
+    var files = [_]Project.File{lone(&source)};
+    const project = loneProject(&files);
+    var analysis = (try analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.ok());
+    try testing.expect(analysis.checked.prelude_reached.?.contains(Resolver.preludeKey("Tasks")));
+}
+
 test "analyzeProject returns null rather than checked detail when an earlier stage fails" {
     const gpa = testing.allocator;
 

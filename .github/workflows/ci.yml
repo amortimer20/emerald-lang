@@ -67,7 +67,7 @@ jobs:
         shell: pwsh
         run: |
           $scheduler = Join-Path $env:RUNNER_TEMP 'emerald-scheduler-benchmark.exe'
-          zig build-exe -O ReleaseSafe --dep Scheduler -Mroot=tools/scheduler-benchmark.zig -O ReleaseSafe -MScheduler=src/Scheduler.zig "-femit-bin=$scheduler"
+          zig build-exe -O ReleaseSafe --dep Scheduler "-Mroot=tools/scheduler-benchmark.zig" -O ReleaseSafe "-MScheduler=src/Scheduler.zig" "-femit-bin=$scheduler"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tools/measure-windows-tasks.ps1 -Scheduler $scheduler
 

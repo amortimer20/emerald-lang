@@ -5328,6 +5328,10 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
 
     if (annotation.channel) {
         const element = try self.resolveTypeExpression(annotation.element.?.*);
+        if (element.optional) {
+            try self.report(annotation.element.?.span, "a channel's items can't be optional", .{}, "Wrap the value in a struct.");
+            return .invalid;
+        }
         return Type.channelOf(self.arena, element);
     }
 
@@ -9636,6 +9640,9 @@ fn typeOfCall(
     if (isBase64Key(key)) return self.typeOfBase64(call, name, key);
     if (isDigestKey(key)) return self.typeOfDigest(call, name, key);
     if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::run")) {
+        // Besides checking the native signature, reachability activates the
+        // task-safe allocator. This special call bypasses signatureFor below.
+        try self.reachKey(key);
         const group = self.structs.get(Resolver.preludeKey("TaskGroup")).?;
         return self.typeOfTaskBlockCall(call, "run", &.{group}, false);
     }

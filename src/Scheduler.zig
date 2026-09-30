@@ -5,6 +5,7 @@
 //! their implementation without changing language code.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 /// Host I/O can allocate while another task evaluates Emerald. Keep that
 /// safe even when the embedding caller supplied a non-thread-safe allocator.
@@ -12,6 +13,25 @@ pub const SharedAllocator = struct {
     child: std.mem.Allocator,
     io: std.Io,
     mutex: std.Io.Mutex = .init,
+    // The ReleaseSafe host allocator has thread-local freelists. A new task
+    // thread cannot reliably reuse buffers freed by another thread. Share
+    // small pools under this existing mutex, bounded by peak live allocations.
+    pools: PoolSet() = .{ .empty, .empty, .empty, .empty, .empty, .empty, .empty, .empty, .empty },
+
+    fn PoolSet() type {
+        var types: [9]type = undefined;
+        for (&types, 0..) |*item, index| item.* = std.heap.MemoryPoolAligned([16 << index]u8, .fromByteUnits(16));
+        return std.meta.Tuple(&types);
+    }
+
+    fn poolSize(len: usize, alignment: std.mem.Alignment) ?usize {
+        if (len > 4096 or alignment.toByteUnits() > 16) return null;
+        return std.math.ceilPowerOfTwo(usize, @max(len, 16)) catch unreachable;
+    }
+
+    pub fn deinit(self: *SharedAllocator) void {
+        inline for (0..9) |index| self.pools[index].deinit(self.child);
+    }
 
     pub fn allocator(self: *SharedAllocator) std.mem.Allocator {
         return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
@@ -21,6 +41,12 @@ pub const SharedAllocator = struct {
         const self: *SharedAllocator = @ptrCast(@alignCast(context));
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
+        if (poolSize(len, alignment)) |size| {
+            inline for (0..9) |index| if (size == 16 << index) {
+                return @ptrCast(self.pools[index].create(self.child) catch return null);
+            };
+            unreachable;
+        }
         return self.child.rawAlloc(len, alignment, ret_addr);
     }
 
@@ -28,6 +54,8 @@ pub const SharedAllocator = struct {
         const self: *SharedAllocator = @ptrCast(@alignCast(context));
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
+        if (poolSize(memory.len, alignment)) |size| return poolSize(len, alignment) == size;
+        if (poolSize(len, alignment) != null) return false;
         return self.child.rawResize(memory, alignment, len, ret_addr);
     }
 
@@ -35,6 +63,8 @@ pub const SharedAllocator = struct {
         const self: *SharedAllocator = @ptrCast(@alignCast(context));
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
+        if (poolSize(memory.len, alignment)) |size| return if (poolSize(len, alignment) == size) memory.ptr else null;
+        if (poolSize(len, alignment) != null) return null;
         return self.child.rawRemap(memory, alignment, len, ret_addr);
     }
 
@@ -42,6 +72,13 @@ pub const SharedAllocator = struct {
         const self: *SharedAllocator = @ptrCast(@alignCast(context));
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
+        if (poolSize(memory.len, alignment)) |size| {
+            inline for (0..9) |index| if (size == 16 << index) {
+                self.pools[index].destroy(@ptrCast(@alignCast(memory.ptr)));
+                return;
+            };
+            unreachable;
+        }
         self.child.rawFree(memory, alignment, ret_addr);
     }
 };
@@ -116,7 +153,8 @@ pub const Runtime = struct {
     pub const Job = struct {
         condition: std.Io.Condition = .init,
         status: enum { running, ready, waiting, external, done } = .running,
-        thread: ?std.Thread = null,
+        thread: ?TaskThread = null,
+        runtime: ?*Runtime = null,
         ready_next: ?*Job = null,
         all_next: ?*Job = null,
         waiting_on: ?*Job = null,
@@ -208,8 +246,8 @@ pub const Runtime = struct {
     pub fn start(self: *Runtime, job: *Job, context: *anyopaque, run: *const fn (*anyopaque, *Job) void) std.Thread.SpawnError!void {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        job.* = .{ .status = .ready, .context = context, .run = run };
-        const thread = try std.Thread.spawn(.{ .stack_size = stack_size }, worker, .{ self, job });
+        job.* = .{ .status = .ready, .context = context, .run = run, .runtime = self };
+        const thread = try TaskThread.spawn(self, job);
         job.thread = thread;
         job.all_next = self.all.all_next;
         self.all.all_next = job;
@@ -524,9 +562,64 @@ pub const Runtime = struct {
 
     /// Every started thread must be joined, including a completed task whose
     /// Emerald handle escaped its group.
-    pub fn join(_: *Runtime, job: *Job) void {
-        if (job.thread) |thread| thread.join();
+    pub fn join(self: *Runtime, job: *Job) void {
+        const thread = job.thread orelse return;
+        thread.join();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         job.thread = null;
+        std.debug.assert(job.status == .done);
+        var previous = self.all;
+        while (previous.all_next) |next| {
+            if (next == job) {
+                previous.all_next = job.all_next;
+                job.all_next = null;
+                return;
+            }
+            previous = next;
+        }
+        unreachable;
+    }
+};
+
+/// Zig 0.16's Windows spawn passes stack_size as the *commit* size to
+/// NtCreateThreadEx. Reserve the same recursion budget without committing it
+/// up front. Keep this platform detail entirely behind the scheduler seam.
+const TaskThread = struct {
+    handle: if (builtin.os.tag == .windows) std.os.windows.HANDLE else std.Thread,
+
+    extern "kernel32" fn CreateThread(
+        attributes: ?*std.os.windows.SECURITY_ATTRIBUTES,
+        stack_bytes: usize,
+        start_routine: *const std.os.windows.THREAD_START_ROUTINE,
+        argument: ?*anyopaque,
+        flags: u32,
+        id: ?*u32,
+    ) callconv(.winapi) ?std.os.windows.HANDLE;
+
+    fn entry(argument: std.os.windows.LPVOID) callconv(.winapi) u32 {
+        const job: *Runtime.Job = @ptrCast(@alignCast(argument));
+        Runtime.worker(job.runtime.?, job);
+        return 0;
+    }
+
+    fn spawn(runtime: *Runtime, job: *Runtime.Job) std.Thread.SpawnError!TaskThread {
+        if (builtin.os.tag == .windows) {
+            const stack_size_param_is_a_reservation = 0x00010000;
+            const handle = CreateThread(null, Runtime.stack_size, entry, job, stack_size_param_is_a_reservation, null) orelse return error.SystemResources;
+            return .{ .handle = handle };
+        }
+        return .{ .handle = try std.Thread.spawn(.{ .stack_size = Runtime.stack_size }, Runtime.worker, .{ runtime, job }) };
+    }
+
+    fn join(self: TaskThread) void {
+        if (builtin.os.tag == .windows) {
+            const windows = std.os.windows;
+            const forever: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
+            const status = windows.ntdll.NtWaitForSingleObject(self.handle, .FALSE, &forever);
+            std.debug.assert(status == windows.NTSTATUS.WAIT_0);
+            windows.CloseHandle(self.handle);
+        } else self.handle.join();
     }
 };
 
@@ -854,4 +947,52 @@ test "a fixed input line stays available after its waiter abandons it" {
     const next = (try input.take(std.testing.allocator, &root)).?;
     defer std.testing.allocator.free(next.bytes);
     try std.testing.expectEqualStrings("beta", next.bytes);
+}
+
+test "joining finished jobs removes them from scheduling scans" {
+    const Probe = struct {
+        fn run(_: *anyopaque, _: *Runtime.Job) void {}
+    };
+    var root: Runtime.Job = undefined;
+    var runtime = Runtime.init(std.Io.Threaded.global_single_threaded.io(), &root);
+    defer runtime.deinit();
+    var context: u8 = 0;
+    for (0..100) |_| {
+        var job: Runtime.Job = undefined;
+        try runtime.start(&job, &context, Probe.run);
+        try std.testing.expect(runtime.waitFor(&root, &job));
+        runtime.join(&job);
+        try std.testing.expect(root.all_next == null);
+        runtime.join(&job);
+    }
+}
+
+test "task allocator reuses small buffers across host threads" {
+    var shared: SharedAllocator = .{ .child = std.testing.allocator, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer shared.deinit();
+    const allocator = shared.allocator();
+    const bytes = try allocator.alloc(u8, 128);
+    const address = @intFromPtr(bytes.ptr);
+    allocator.free(bytes);
+    const Probe = struct {
+        allocator: std.mem.Allocator,
+        address: usize,
+        reused: bool = false,
+
+        fn run(self: *@This()) void {
+            const other = self.allocator.alloc(u8, 128) catch unreachable;
+            defer self.allocator.free(other);
+            self.reused = @intFromPtr(other.ptr) == self.address;
+        }
+    };
+    var probe: Probe = .{ .allocator = allocator, .address = address };
+    const thread = try std.Thread.spawn(.{}, Probe.run, .{&probe});
+    thread.join();
+    try std.testing.expect(probe.reused);
+    const large = try allocator.alloc(u8, 4097);
+    try std.testing.expect(!allocator.resize(large, 128));
+    allocator.free(large);
+    const aligned = try allocator.alignedAlloc(u8, .fromByteUnits(32), 128);
+    try std.testing.expect(@intFromPtr(aligned.ptr) % 32 == 0);
+    allocator.free(aligned);
 }

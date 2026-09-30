@@ -113,7 +113,17 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
-All six concurrency slices are implemented and locally validated on `codex/concurrency`:
+All six concurrency slices are implemented on `codex/concurrency`; their initial local
+gates passed, but review found four merge blockers. All four corrections pass local validation:
+quote Windows compiler module arguments, reserve task stacks instead of committing
+128 MiB each, reclaim joined jobs and unreachable completed handles, and reject
+optional channel item types (wrap optional contents in a struct). Reachability also
+used the wrong key to activate the task allocator; that is fixed, with bounded shared
+small-allocation pools. ReleaseSafe's corrected 2,000/20,000-task measurement is
+0.36/3.57 s with identical 7.19 MiB peak RSS. Windows runtime CI and commit measurements
+remain required before merge; cross-builds are not runtime measurements.
+
+Implemented:
 per-task execution state,
 `Task[T]`, structured groups, results, a FIFO single-holder
 OS-thread scheduler (64 live children), yield, timers, timed waits, native-I/O baton release,
@@ -137,6 +147,12 @@ in the plan and journal, not repeated here. The full reference is
 [`library/tasks.md`](library/tasks.md), with a runnable `examples/tasks.em` tour.
 Rewrite-context 15.13 records the settled design. Formatter/LSP tests cover task blocks
 and generic type names/elements; built-in member completion remains queued below.
+The review-correction gate passed Debug and ReleaseSafe tests, native build, documentation
+examples (24 executed, 126 linked conformance cases), formatting, whitespace, Windows/macOS
+cross-builds, and the standalone Windows ReleaseSafe scheduler probe cross-build. All 33
+task/channel run cases passed 50 executions each; the live-input driver passed 50 prompt
+exits and 50 retained-line checks. ReleaseSafe fuzz seed 12648430 passed 1,000 cases,
+136 executed. Results are recorded in the plan and journal.
 Slice 6 passed Debug and ReleaseSafe tests, native build, documentation examples
 (24 executed, 124 linked conformance files), formatting, whitespace, and Windows/macOS
 cross-builds, with Zig 0.16.0 and sequential `-j1`. Its example and prelude-reach case

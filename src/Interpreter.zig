@@ -84,7 +84,8 @@ const TaskRecord = struct {
     ended: ?Error = null,
     completion_order: usize = 0,
     observed_error: bool = false,
-    group: *TaskGroupRecord,
+    group: ?*TaskGroupRecord,
+    handle: *Heap.StructValue = undefined,
 };
 
 const TaskGroupRecord = struct {
@@ -130,7 +131,10 @@ pub const Outcome = struct {
 
     pub fn deinit(self: *Outcome) void {
         self.arena_state.deinit();
-        if (self.shared_allocator) |allocator| allocator.child.destroy(allocator);
+        if (self.shared_allocator) |allocator| {
+            allocator.deinit();
+            allocator.child.destroy(allocator);
+        }
         self.* = undefined;
     }
 };
@@ -367,10 +371,14 @@ pub fn run(
     test_mode: bool,
     step_limit: ?usize,
 ) RunError!Outcome {
-    const uses_tasks = if (prelude_reached) |reached| reached.contains(Resolver.prelude_namespace ++ ".Tasks::run") else true;
+    // reachKey records top-level prelude types, not their method keys.
+    const uses_tasks = if (prelude_reached) |reached| reached.contains(Resolver.preludeKey("Tasks")) else true;
     const shared_allocator = if (uses_tasks) try host_allocator.create(Scheduler.SharedAllocator) else null;
     if (shared_allocator) |allocator| allocator.* = .{ .child = host_allocator, .io = io };
-    errdefer if (shared_allocator) |allocator| host_allocator.destroy(allocator);
+    errdefer if (shared_allocator) |allocator| {
+        allocator.deinit();
+        host_allocator.destroy(allocator);
+    };
     const gpa = if (shared_allocator) |allocator| allocator.allocator() else host_allocator;
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
@@ -3270,6 +3278,7 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
         if (self.scheduler.isDone(&target.job)) index += 1;
     }
     group.active = false;
+    defer self.finishTaskGroup(group);
     _ = self.scheduler.takeCancellation(owner.state.job.?);
 
     if (block_failed_first) {
@@ -3337,6 +3346,14 @@ fn callTaskStart(self: *Interpreter, span: Source.Span, member: Ast.Expression.M
         self.gpa.destroy(task);
         return err;
     };
+    task.handle = handle.data.struct_value;
+    task.handle.native_values = self.gpa.alloc(Value, 2) catch |err| {
+        self.heap.release(handle);
+        self.heap.release(block);
+        self.gpa.destroy(task);
+        return err;
+    };
+    @memset(task.handle.native_values, .nothing);
     group.tasks.append(self.gpa, task) catch |err| {
         self.heap.release(handle);
         self.heap.release(block);
@@ -3359,6 +3376,10 @@ fn callTaskStart(self: *Interpreter, span: Source.Span, member: Ast.Expression.M
         return self.raise(span, "Tasks.run could not start another task", "Wait for a task to finish before starting more tasks.");
     };
     self.live_tasks += 1;
+    // The group roots this handle until every job is joined. After that only
+    // actual Emerald references keep its managed result/error payload alive.
+    _ = Heap.retain(handle);
+    task.handle.finalizer = .{ .context = task, .run = finalizeTask };
     if (group.cancelling) self.cancelTask(task);
     return handle;
 }
@@ -3373,9 +3394,9 @@ fn taskMain(context: *anyopaque, job: *Scheduler.Runtime.Job) void {
     const result = self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{});
     if (result) |value| task.result = value else |err| task.ended = err;
     if (task.ended != null and !self.taskCancelled(task)) {
-        if (task.group.first_error == null) {
-            task.group.first_error = task;
-            self.cancelGroup(task.group, task);
+        if (task.group.?.first_error == null) {
+            task.group.?.first_error = task;
+            self.cancelGroup(task.group.?, task);
         }
     }
     task.completion_order = self.next_completion_order;
@@ -3491,7 +3512,8 @@ fn cancellationPoint(self: *Interpreter, span: Source.Span) Error!void {
 /// preserving ordinary `try { task.result() } catch ...` without re-raising
 /// the error when the group later drains. Other waits still raise cancellation.
 fn prepareTaskResult(self: *Interpreter, task: *TaskRecord) void {
-    if (task.group.owner == self.task and task.group.first_error == task and !task.observed_error) {
+    const group = task.group orelse return;
+    if (group.owner == self.task and group.first_error == task and !task.observed_error) {
         _ = self.scheduler.takeCancellation(self.task.state.job.?);
     }
 }
@@ -3564,24 +3586,71 @@ fn releaseResource(self: *Interpreter, gate: *Scheduler.Runtime.Gate) void {
     self.scheduler.release(self.task.state.job.?, gate);
 }
 
+/// Transfer completed values into collector-visible edges, drop the active
+/// group's roots, and discard its registry entry. Escaped Task handles still
+/// own their records; cyclic results can now be collected normally.
+fn finishTaskGroup(self: *Interpreter, group: *TaskGroupRecord) void {
+    for (group.tasks.items) |task| {
+        // A cancellation checkpoint can interrupt awaitTask after the target
+        // finished but before joining its host thread. Draining still owns
+        // the job until that last host frame has returned.
+        self.scheduler.join(&task.job);
+        std.debug.assert(task.job.thread == null);
+        task.group = null;
+        task.handle.native_values[0] = task.result orelse .nothing;
+        task.handle.native_values[1] = task.state.state.raised_value orelse .nothing;
+        self.heap.release(task.block);
+        task.block = .nothing;
+        self.freeTaskState(task);
+    }
+    // All transfers precede any release: an escaped result can refer to a
+    // sibling handle, and finalizers can remove task records from the map.
+    for (group.tasks.items) |task| self.heap.release(.{ .data = .{ .struct_value = task.handle } });
+    _ = self.task_groups.remove(group.id);
+    group.tasks.deinit(self.gpa);
+    self.gpa.destroy(group);
+}
+
+fn freeTaskState(self: *Interpreter, task: *TaskRecord) void {
+    task.state.state.scopes.deinit(self.gpa);
+    task.state.state.call_stack.deinit(self.gpa);
+    task.state.state.taken_fields.deinit(self.gpa);
+    for (task.state.state.spare_scopes.items) |environment| {
+        environment.bindings.deinit(self.gpa);
+        self.gpa.destroy(environment);
+    }
+    task.state.state.spare_scopes.deinit(self.gpa);
+    task.state.state.scopes = .empty;
+    task.state.state.call_stack = .empty;
+    task.state.state.taken_fields = .empty;
+    task.state.state.spare_scopes = .empty;
+}
+
+fn finalizeTask(context: *anyopaque) void {
+    const task: *TaskRecord = @ptrCast(@alignCast(context));
+    const self = task.interpreter;
+    std.debug.assert(task.group == null and task.job.thread == null);
+    _ = self.task_records.remove(task.id);
+    self.gpa.destroy(task);
+}
+
 fn deinitTasks(self: *Interpreter) void {
     var tasks = self.task_records.valueIterator();
-    while (tasks.next()) |task_ptr| self.scheduler.join(&task_ptr.*.job);
+    while (tasks.next()) |task_ptr| {
+        self.scheduler.join(&task_ptr.*.job);
+        task_ptr.*.handle.finalizer = null;
+    }
     self.scheduler.deinit();
     tasks = self.task_records.valueIterator();
     while (tasks.next()) |task_ptr| {
         const task = task_ptr.*;
-        self.heap.release(task.block);
-        if (task.result) |value| self.heap.release(value);
-        if (task.state.state.raised_value) |value| self.heap.release(value);
-        task.state.state.scopes.deinit(self.gpa);
-        task.state.state.call_stack.deinit(self.gpa);
-        task.state.state.taken_fields.deinit(self.gpa);
-        for (task.state.state.spare_scopes.items) |environment| {
-            environment.bindings.deinit(self.gpa);
-            self.gpa.destroy(environment);
+        task.handle.finalizer = null;
+        if (task.group != null) {
+            self.heap.release(task.block);
+            if (task.result) |value| self.heap.release(value);
+            if (task.state.state.raised_value) |value| self.heap.release(value);
         }
-        task.state.state.spare_scopes.deinit(self.gpa);
+        self.freeTaskState(task);
         self.gpa.destroy(task);
     }
     self.task_records.deinit(self.gpa);

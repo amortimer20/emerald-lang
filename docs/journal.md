@@ -3544,3 +3544,52 @@ cross-builds with prefixes outside `zig-out`. No accepted API decision needed ch
 All six implementation slices are ready for Claude's whole-branch review and PR; green
 Windows runtime CI and its measurement results remain required before the milestone is
 fully done. Codex pushes the branch, but does not merge it.
+
+## Concurrency: required review corrections, 2026-09-30
+
+The user identified four merge blockers after slice 6. The Windows measurement command
+now quotes both module arguments and the emitted binary argument, rather than letting
+PowerShell split a `.zig` path. Task threads use Windows `CreateThread` with
+`STACK_SIZE_PARAM_IS_A_RESERVATION`, preserving the 128 MiB recursion budget without
+committing it up front. That detail stays inside Scheduler.zig. The driver now reports
+peak commit as well as working set, confirms all 64 task threads started before a child
+ran, and rejects a live-task commit above 1 GiB. Actual Windows measurements await CI;
+a cross-build is not a Windows runtime result.
+
+Joined jobs leave the scheduler's active list. On group completion, results and errors
+become collector-visible edges on the Task handle. A native bookkeeping finalizer removes
+the record when the handle becomes unreachable; it never releases managed values while
+sweeping. Active groups root handles, while escaped handles continue to provide repeated
+results and errors. Group records, closures, and execution buffers are no longer retained
+until interpreter teardown. Tests cover unlinking, escaped handles, and cycles through
+managed native payloads. The final drain also joins a completed job when cancellation
+interrupted its ordinary wait before the host thread was joined.
+
+Measurements exposed an additional issue: the task allocator activation looked for a
+method key, but prelude reachability stores the top-level `Emerald.Tasks` key. That is
+corrected and tested. Simply enabling the existing allocator mutex did not stop
+ReleaseSafe's host allocator retaining small buffers in separate thread-local freelists.
+Nine shared size-class pools under that mutex now allow cross-thread reuse, with backing
+storage bounded by peak live allocations and released at outcome teardown. Larger and
+over-aligned allocations keep the caller's allocator. Tests verify reuse, alignment, and
+refusal to resize across pooled/unpooled allocation classes.
+
+Three alternating Linux ReleaseSafe samples per count measured 2,000 tasks at 0.36 s /
+7.19 MiB peak RSS and 20,000 at 3.57 s / 7.19 MiB: 9.92x time, 1.00x memory. Before
+pooling, reclaimed records already made execution linear, but RSS grew from about 8 to
+18 MiB (about 62 MiB at 100,000 tasks); Debug was flat at 19,868 vs. 19,884 KiB. These
+measurements separated allocator retention from live task state. Windows CI also checks
+the 2,000/20,000 ratio for time, physical memory, and commit.
+
+Optional channel item types now fail checking with `a channel's items can't be optional`
+and `Wrap the value in a struct.` A diagnostics case protects both lines. The previous
+optional-message case now uses a struct with an optional field; its expected output is
+unchanged. The new expected files were read by hand.
+
+Pinned Zig 0.16.0 local validation passed: Debug and ReleaseSafe tests with `-j1`, native
+build, documentation examples (24 executed, 126 linked conformance cases), changed-Zig
+formatting, whitespace, Windows x86_64 and macOS aarch64 cross-builds outside `zig-out`,
+and the standalone ReleaseSafe Windows scheduler probe cross-build. All 33 task/channel
+run cases passed 50 executions each. The live-input driver passed 50 prompt-exit and 50
+retained-line checks. The ReleaseSafe fuzz campaign passed seed 12648430, 1,000 cases,
+136 executed. Windows runtime CI and its new measurements still gate merging.

@@ -368,7 +368,9 @@ commits.
   Linux ReleaseSafe, 1,000 sequential tasks took 0.21 s and 11 MiB peak RSS; 10,000 took
   2.62 s and 52 MiB; 64 live tasks took 0.02 s and 24 MiB; 100,000 scheduler-only baton
   handoffs took 1.63 s and 1 MiB. A 64-bit host reserves up to 128 MiB of virtual stack per
-  live task, committing pages only as used. Windows runtime measurements remain for CI.
+  live task. The original claim that Windows committed pages only as used was wrong:
+  Zig 0.16 passes this as commit size there; slice 6's review notes correct it.
+  Windows runtime measurements remain for CI.
   Slice 2 drains all children and propagates the first unobserved task error; automatic
   sibling cancellation is implemented with cancellation in slice 5.
 
@@ -444,10 +446,12 @@ commits.
   with end-of-stream, and wakes undelivered senders with RuntimeError. A send committed before
   closure remains successful. Negative capacity raises RuntimeError with `a channel capacity
   cannot be negative`; sending after closure uses `cannot send to a closed channel`.
-  No new error subclass is needed. `receive()` obeys optional flattening: with optional
+  No new error subclass is needed. Originally `receive()` obeyed optional flattening: with optional
   messages, a message of `nothing` and end-of-stream both return `nothing`. Built-in iteration
   tracks end-of-stream separately, so `for` still visits actual `nothing` messages and is the
-  unambiguous companion. Destructuring, break, and continue use ordinary loop behavior.
+  unambiguous companion. The user's slice 6 review supersedes this: optional item types
+  are now rejected; wrap optional contents in a struct. Destructuring, break, and continue
+  use ordinary loop behavior.
 
   Deadlocks name each channel by its creation-order number, the send/receive direction, and
   the original wait location. A root outside an active group is called `the program`, not
@@ -612,6 +616,60 @@ commits.
   material startup regression for programs using no concurrency. The journal has
   both comparisons and the host details. The branch is ready for Claude's review;
   Windows runtime and measurement results remain pending CI.
+
+### Slice 6 review corrections (required by the user, 2026-09-30)
+
+- **Windows command arguments:** quote both `-M` arguments and `-femit-bin` so
+  PowerShell passes each as one native argument. The previous CI command failed
+  before measuring anything.
+- **Windows stack commit:** source inspection confirms Zig 0.16's Windows spawn
+  passes `stack_size` as committed size to `NtCreateThreadEx`, not reservation.
+  `Scheduler.zig` now starts task threads with `CreateThread` and
+  `STACK_SIZE_PARAM_IS_A_RESERVATION`, retaining the same 128 MiB recursion budget
+  on 64-bit hosts. No smaller stack limit is substituted. The Windows driver logs
+  `PeakPagedMemorySize64` (commit) as well as `PeakWorkingSet64`, requires the
+  `started: 64` marker emitted before any child runs, and checks that the 64-task
+  commit is below 1 GiB rather than about 8 GiB. Its measurements remain pending CI.
+- **Completed lifetimes:** joining unlinks a job from `Runtime.all`. A group's
+  final drain joins even if a cancellation checkpoint interrupted the ordinary
+  result wait after completion but before joining. After the group ends, completed
+  results/errors are managed edges of the Task handle; its native finalizer removes
+  the task record. Group records and task execution buffers are freed then.
+  Active groups root their handles; escaped handles remain usable; cycles through
+  completed results are collectible. Native finalizers never release managed values
+  during sweeping. A heap-cycle test, a scheduler unlink test, and `task-lifetime`
+  cover those invariants. `tools/task-scaling.py` compares 2,000 and 20,000 one-task
+  groups on Linux; Windows CI runs the same comparison for time, physical memory,
+  and commit. Both reject greater than 15x time or 2x peak memory for 10x tasks.
+  Source inspection and measurements also found that the task allocator was never
+  activated: it looked for a method key although reachability stores top-level type
+  keys. Activation now looks for `Emerald.Tasks` via Resolver, with a reachability
+  test. The existing allocator mutex also protects nine shared small-allocation
+  pools (16–4,096 bytes, alignment up to 16), so new OS threads can reuse buffers
+  freed by other tasks instead of growing ReleaseSafe's thread-local freelists.
+  Larger or over-aligned allocations still use the caller's allocator. Pool
+  backing storage is freed at outcome teardown; tests cover cross-thread reuse,
+  alignment, and refusal to resize across pooled/unpooled storage classes.
+- **Optional channel items:** reject an optional element at its type annotation
+  with `a channel's items can't be optional` and `Wrap the value in a struct.`
+  This is the user's accepted change, not optional flattening with a workaround.
+  The closed-channel case now sends structs containing optional fields; its output
+  stays unchanged. A dedicated diagnostics case protects the error and help.
+
+Linux ReleaseSafe scaling passed (three alternating samples per count): 2,000 tasks
+0.36 s / 7.19 MiB peak RSS; 20,000 tasks 3.57 s / 7.19 MiB. Time is 9.92x and
+peak memory 1.00x. Before allocator activation/pooling, time was already linear
+but ReleaseSafe RSS rose from about 8 MiB to 18 MiB (about 62 MiB at 100,000).
+Debug with reclaimed records was flat at 19,868 vs. 19,884 KiB, confirming the
+remaining growth was allocator retention rather than live task state.
+The corrected local gate passed: Debug and ReleaseSafe tests with pinned Zig 0.16.0
+and `-j1`, native build, documentation examples (24 executed, 126 linked conformance
+cases), changed-Zig formatting, whitespace, Windows x86_64/macOS aarch64 cross-builds
+outside `zig-out`, and the standalone Windows ReleaseSafe scheduler probe cross-build.
+All 33 task/channel run cases passed 50 runs each. The live-input driver passed 50
+prompt-exit and 50 retained-line checks. ReleaseSafe fuzz seed 12648430 passed 1,000
+cases, 136 executed. Windows runtime CI and commit measurements
+remain pending; no cross-build result is presented as a Windows runtime measurement.
 
 ## Validation
 

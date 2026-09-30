@@ -3351,6 +3351,10 @@ execution; neither creates a race under the single execution baton.
 `task.result(): T` waits for completion, returning its value or raising its error. It can
 be called repeatedly, including after the group has ended. `task.done?(): Bool` checks
 completion without waiting; failure and cancellation count as completion.
+Joined jobs leave the scheduler's active list. After its group finishes, a task handle
+owns its completed result and error; unreachable handles and their records are reclaimed
+by the heap, including cycles through results. Historical tasks do not accumulate in
+scheduler scans or keep all completed values alive until program exit.
 `task.wait(timeout: Duration): Bool` returns true when finished, false on timeout without
 cancelling the task. Zero checks without waiting; a negative timeout raises RuntimeError
 with `a task timeout cannot be negative`. `Tasks.yield()` lets other ready tasks run.
@@ -3366,16 +3370,17 @@ order by printing results in the wanted order or sending through a channel, not 
 inside I/O tasks. `Program.sleep`, input, HTTP, and filesystem operations let other tasks run
 while the calling task waits.
 
-`Channel[T]` has an invariant message type supplied by expected-type context, as in
+`Channel[T]` has an invariant, non-optional message type supplied by expected-type context, as in
 `const numbers: Channel[Int] = Channel(capacity: 3)`. `Channel[Int]()` is not expression
 syntax. Capacity zero is a FIFO rendezvous; positive capacity buffers up to that many
 messages. `send(value: T)` waits for space or a receiver; `receive(): T?` waits for a
 message. `close()` is idempotent: buffered messages remain available, closed-and-empty
 receives return `nothing`, and sends not already committed raise RuntimeError with
 `cannot send to a closed channel`. Negative capacity raises RuntimeError with
-`a channel capacity cannot be negative`. `for item in channel` ends only when closed and
-empty, and visits actual `nothing` messages even when `T` is optional; public `receive`
-flattens its optional result. Transmitted collections and structs keep value semantics;
+`a channel capacity cannot be negative`. An optional item type is a checking error:
+`a channel's items can't be optional`, with help to wrap the value in a struct. Struct
+fields may be optional without confusing a message with closure. `for item in channel`
+ends only when closed and empty. Transmitted collections and structs keep value semantics;
 class instances and channels remain shared identities.
 
 `task.cancel()` requests cooperative cancellation at the next suspension point; cancelling
@@ -4062,7 +4067,7 @@ recorded in their normative sections:
 | Task lifetime (15.13) | Only a live `TaskGroup` can start children; its `Tasks.run` joins them all | Detached work would introduce orphan resources and unseen errors. |
 | Scheduling (15.13) | One task runs Emerald code until a wait or yield; readiness is FIFO, timers follow deadlines, I/O follows arrival | Visible handoffs keep the heap non-atomic and computation reproducible without pretending host completion order is fixed. |
 | Task captures (15.13) | Inline blocks only; reject direct outer `var` reads, including nested lambdas; indirect-call gaps await multicore | Current function types do not describe capture effects. Existing checker scopes know direct captures without a second resolver pass. |
-| Task/channel types (15.13) | Built-in `Task[T]` and invariant `Channel[T]`; channel construction takes expected-type context | Reuse ordinary type annotations rather than introducing expression-level generic arguments or dynamic message values. |
+| Task/channel types (15.13) | Built-in `Task[T]` and invariant `Channel[T]` with non-optional items; channel construction takes expected-type context | Reuse ordinary type annotations rather than introducing expression-level generic arguments or dynamic message values. Reject optional items so `receive()` distinguishes a message from closure; wrap optional contents in a struct. |
 | Cancellation (15.13) | Cooperative CancelledError extends Error directly; protect cleanup and preserve the group's first failure | Killing threads skips cleanup; RuntimeError catches must not accidentally swallow cancellation. |
 | Blocking work (15.13) | Release the execution baton for sleep, input, files, and HTTP | A waiting task must not freeze unrelated work. Stdin preserves cancelled reads, HTTP reuses its deadline race, files finish before cancellation is delivered. |
 | Deadlocks (15.13) | DeadlockError describes waits and original locations when nothing can progress | A beginner gets an explanation instead of a silent hang. Timers and external work are possible progress, not deadlocks. |

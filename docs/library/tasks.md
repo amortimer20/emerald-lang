@@ -59,6 +59,10 @@ See [`conformance/runtime-errors/task-limit.em`](../../conformance/runtime-error
 `result() -> T` waits for completion and returns the result, or raises the task's error.
 Repeated result calls work after completion, even outside the group. Values retain their
 ordinary copy-on-write behavior; class instances remain shared references.
+Joined jobs no longer participate in scheduler scans. After the group finishes, the
+handle owns its result and error; an unreachable handle and its record can be reclaimed,
+including cycles through a returned closure.
+See [`conformance/run/task-lifetime.em`](../../conformance/run/task-lifetime.em).
 
 `wait(timeout: Duration) -> Bool` waits at most that duration: `true` means finished,
 including a task that failed; call `result()` to obtain its value or error. `false` leaves
@@ -94,6 +98,9 @@ Make a channel with an expected message type, for example
 `const numbers: Channel[Int] = Channel(capacity: 2)`. Explicit generic construction
 `Channel[Int]()` is not supported. The message type is invariant: a `Channel[Int]` is
 not a `Channel[Float]`. Channels are shared identities, not copied queues.
+The item type cannot itself be optional: `Channel[Int?]` is a checking error. Wrap an
+optional value in a struct, so `receive()` can distinguish a message from closure.
+See [`conformance/diagnostics/channel-optional.em`](../../conformance/diagnostics/channel-optional.em).
 
 Capacity zero is a rendezvous: a send waits for a receiver. Positive capacity buffers up
 to that many messages; senders and receivers wait FIFO. See
@@ -108,9 +115,8 @@ strings, and structs retain value semantics; class instances remain shared refer
 `close() -> Nothing` is idempotent. Buffered messages remain available; waiting receivers
 wake, and uncommitted sends fail. A send already delivered succeeds.
 
-`for item in channel { ... }` receives until closed and empty. With optional messages,
-`receive()` flattens the optional, so an actual `nothing` message and end-of-stream both
-return `nothing`. Iteration distinguishes them and visits actual `nothing` messages.
+`for item in channel { ... }` receives until closed and empty. A struct message may
+contain optional fields; those fields do not collide with the end-of-stream marker.
 See [`conformance/run/channel-closed.em`](../../conformance/run/channel-closed.em).
 
 **Raises:** negative capacity raises `RuntimeError` with `a channel capacity cannot be
