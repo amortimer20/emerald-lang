@@ -8,21 +8,25 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Measure-TaskProgram {
-    param([string]$Label, [string]$Binary, [string[]]$Arguments, [string]$Expected)
+    param([string]$Label, [string]$Binary, [string[]]$Arguments, [string]$Expected, [bool]$HoldForSample = $false)
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo.FileName = (Resolve-Path $Binary).Path
     $process.StartInfo.UseShellExecute = $false
     $process.StartInfo.RedirectStandardOutput = $true
     $process.StartInfo.RedirectStandardError = $true
+    $process.StartInfo.RedirectStandardInput = $HoldForSample
     foreach ($argument in $Arguments) {
         $process.StartInfo.ArgumentList.Add($argument)
     }
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $peak = 0L
     $commit = 0L
+    $prefix = ""
+    $acknowledged = $false
     try {
         [void]$process.Start()
+        $marker = if ($HoldForSample) { $process.StandardOutput.ReadLineAsync() } else { $null }
         while (-not $process.WaitForExit(1)) {
             if ($clock.Elapsed.TotalSeconds -gt 300) {
                 throw "$Label did not finish within five minutes"
@@ -34,13 +38,24 @@ function Measure-TaskProgram {
                 $process.Refresh()
                 $peak = [Math]::Max($peak, $process.PeakWorkingSet64)
                 $commit = [Math]::Max($commit, $process.PeakPagedMemorySize64)
+                if ($HoldForSample -and -not $acknowledged -and $marker.IsCompleted) {
+                    $prefix = $marker.GetAwaiter().GetResult() + "`n"
+                    # Sample after receiving the ready marker, then release the
+                    # child. Even a very short probe cannot exit before sampling.
+                    $process.Refresh()
+                    $peak = [Math]::Max($peak, $process.PeakWorkingSet64)
+                    $commit = [Math]::Max($commit, $process.PeakPagedMemorySize64)
+                    $process.StandardInput.WriteLine("measured")
+                    $process.StandardInput.Flush()
+                    $acknowledged = $true
+                }
             }
             catch [System.InvalidOperationException] {
                 if (-not $process.HasExited) { throw }
             }
         }
         $clock.Stop()
-        $output = $process.StandardOutput.ReadToEnd().Replace("`r`n", "`n").Trim()
+        $output = ($prefix + $process.StandardOutput.ReadToEnd()).Replace("`r`n", "`n").Trim()
         $errors = $process.StandardError.ReadToEnd()
         if ($process.ExitCode -ne 0 -or $output -ne $Expected -or $errors.Length -ne 0) {
             throw "$Label failed: exit $($process.ExitCode), stdout '$output', stderr '$errors'"
@@ -61,8 +76,8 @@ function Measure-TaskProgram {
 
 $null = Measure-TaskProgram "1,000 sequential tasks" $Emerald @("run", "tools/task-benchmark.em", "--", "1000") "499500"
 $null = Measure-TaskProgram "10,000 sequential tasks" $Emerald @("run", "tools/task-benchmark.em", "--", "10000") "49995000"
-$baseline = Measure-TaskProgram "1 live task (commit baseline)" $Emerald @("run", "tools/task-live-benchmark.em", "--", "1") "started: 1`n0"
-$live = Measure-TaskProgram "64 live tasks" $Emerald @("run", "tools/task-live-benchmark.em", "--", "64") "started: 64`n2016"
+$baseline = Measure-TaskProgram "1 live task (commit baseline)" $Emerald @("run", "tools/task-live-benchmark.em", "--", "1", "sample") "started: 1`n0" $true
+$live = Measure-TaskProgram "64 live tasks" $Emerald @("run", "tools/task-live-benchmark.em", "--", "64", "sample") "started: 64`n2016" $true
 Write-Host "All 64 task threads started (confirmed before the first task ran)."
 # The existing main interpreter thread commits a 1 GiB stack on Windows.
 # Compare the same program with one and 64 live children to isolate task costs,

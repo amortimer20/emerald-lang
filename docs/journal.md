@@ -3615,3 +3615,22 @@ this correction changes only the PowerShell measurement and its documentation. D
 tests and whitespace checks passed again before committing; the remaining platform
 jobs and fuzz campaign on `73a6014` all passed. The corrected Windows measurement
 must run successfully on the next CI commit before merging.
+
+## Concurrency: deterministic memory sampling handshake, 2026-09-30
+
+The Windows ReleaseSafe suite passed again on `ef08906`, but the new one-task
+baseline exited before PowerShell could sample its memory. The driver correctly
+refused to report a zero sample. A live-process polling loop alone cannot guarantee
+observing a short process, regardless of its polling interval.
+
+The live-task probe now has an explicit sampling mode: print `started: N`, wait
+for the input acknowledgement `measured`, then return the total. The driver reads
+the marker asynchronously, takes its peak working-set and commit samples while
+the process is guaranteed alive, and acknowledges it. One and 64 children use the
+same handshake and input-reader overhead. This fixes synchronization instead of
+adding a sleep, rerunning a flaky test, or widening a timing margin. The ordinary
+benchmark mode remains unchanged. Both sampling modes passed 50 runs on Linux;
+the tool is formatter-clean. Debug and ReleaseSafe tests, native build, documentation
+examples, changed-Zig formatting, whitespace, and Windows/macOS cross-builds passed
+again with pinned Zig 0.16.0 and `-j1`. Windows measurements remain pending the new
+CI run.

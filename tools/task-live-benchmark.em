@@ -6,6 +6,11 @@ Tasks.run { tasks =>
         pending.append(tasks.start { => i })
     }
     print("started: #{pending.count}")
+    # The Windows memory probe acknowledges this marker after taking its sample.
+    # Hold the process alive without relying on a fixed sleep duration.
+    if Program.arguments.count > 1 and Program.arguments[1] == "sample" {
+        assert input() == "measured"
+    }
     var total = 0
     for task in pending {
         total += task.result()

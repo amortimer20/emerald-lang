@@ -636,7 +636,12 @@ commits.
   thread in `emerald.zig` commits a 1 GiB stack, not the 128 MiB assumed by that
   check's comment. The corrected baseline uses the same live-task program with
   one child to isolate task-thread costs, without changing the interpreter's
-  pre-existing stack policy or increasing a timing margin. Final CI remains pending.
+  pre-existing stack policy or increasing a timing margin. The next CI run exposed
+  a sampling race: the one-task baseline exited before PowerShell read its memory.
+  The live-task probe now prints its ready marker and waits for a `measured` input
+  acknowledgement. The driver samples after receiving that marker, then releases
+  the process. Both one- and 64-task probes passed 50 Linux handshake runs; no
+  sleep or retry masks the race. Final Windows CI remains pending.
 - **Completed lifetimes:** joining unlinks a job from `Runtime.all`. A group's
   final drain joins even if a cancellation checkpoint interrupted the ordinary
   result wait after completion but before joining. After the group ends, completed

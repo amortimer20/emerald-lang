@@ -125,7 +125,9 @@ remain required before merge; cross-builds are not runtime measurements. The fir
 corrected Windows run passed tests and started all 64 children (1035.38 MiB commit),
 but the measurement's absolute 1 GiB ceiling confused their cost with the existing
 main interpreter thread's 1 GiB committed stack. The driver now compares one versus
-64 live children, with a 64 MiB ceiling on additional commit. No stack limit was reduced.
+64 live children, with a 64 MiB ceiling on additional commit. A ready/sample input
+handshake prevents the short baseline from exiting before PowerShell samples it;
+one- and 64-task probes each passed 50 runs locally. No stack limit was reduced.
 
 Implemented:
 per-task execution state,
