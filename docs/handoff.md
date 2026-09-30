@@ -240,7 +240,7 @@ on the roadmap.
 ## Longer term: the native compiler
 
 The user wants a real compiler for Emerald 1.0; the interpreter is a means to that end. No
-compiler design exists yet. Direction discussed on 2026-09-30, to weigh when that plan starts:
+compiler design exists yet. Directions discussed on 2026-09-30, to weigh when that plan starts:
 
 - **Write the compiler in Rust, on Cranelift, rather than porting the Zig interpreter.** The
   user asked about porting everything to Rust. A port would stop all language work for months,
@@ -248,6 +248,19 @@ compiler design exists yet. Direction discussed on 2026-09-30, to weigh when tha
   code either way, and Rust brings what it needs: a stable language (Zig is pre-1.0 and every
   upgrade costs work), Cranelift for code generation, and Salsa-style incremental analysis for
   the editor. The compiler replaces the interpreter as it matures.
+- **.NET is an equally strong candidate** (discussed the same day): compile Emerald to CIL and run
+  it on the CLR, with NativeAOT for native executables. It gives what Cranelift would make Emerald
+  write itself: a production garbage collector (the hardest part of a native runtime), a JIT,
+  real threads for tasks and later multicore, portable-PDB debugging in Visual Studio and VS Code
+  (a step-through debugger nearly free), and `decimal` and `BigInteger` underneath. The user
+  teaches C#, so they can read and extend its output. Costs: a runtime dependency or larger
+  self-contained binaries, tens of milliseconds of JIT startup (NativeAOT closes most of it),
+  UTF-16 strings that do not match Emerald's UTF-8 grapheme strings, and a heavy WebAssembly story
+  if a browser playground is ever wanted.
+- **Decide by prototype.** The compiler plan's first decision is .NET versus Rust with Cranelift,
+  made by compiling the same small subset (functions, structs, lists, a closure) with both,
+  running its conformance cases, and comparing binary size, startup, debugging, and how much
+  runtime code each needs.
 - **The conformance suite is the contract.** A replacement backend is acceptable only if it
   passes the same `conformance/` files unchanged (19.6, 23). Keep every case backend-neutral:
   no dependence on interpreter internals, thread identity, exact timing, or exact recursion
