@@ -237,6 +237,26 @@ Before each release, refresh the time-zone data with `python3 tools/update-tzdat
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than
 on the roadmap.
 
+## Longer term: the native compiler
+
+The user wants a real compiler for Emerald 1.0; the interpreter is a means to that end. No
+compiler design exists yet. Direction discussed on 2026-09-30, to weigh when that plan starts:
+
+- **Write the compiler in Rust, on Cranelift, rather than porting the Zig interpreter.** The
+  user asked about porting everything to Rust. A port would stop all language work for months,
+  and the bugs found so far were logic errors Rust would not have caught. But a compiler is new
+  code either way, and Rust brings what it needs: a stable language (Zig is pre-1.0 and every
+  upgrade costs work), Cranelift for code generation, and Salsa-style incremental analysis for
+  the editor. The compiler replaces the interpreter as it matures.
+- **The conformance suite is the contract.** A replacement backend is acceptable only if it
+  passes the same `conformance/` files unchanged (19.6, 23). Keep every case backend-neutral:
+  no dependence on interpreter internals, thread identity, exact timing, or exact recursion
+  depth.
+- **Constraints the current design already gives a compiler:** value semantics are a semantic
+  guarantee, not a physical copy; hash values and iteration order are unspecified except where
+  the spec fixes them; tasks share no `var`. Things a compiler must replace: checker results keyed
+  by syntax-tree node, natives routed by string key, and the prelude compiled at build time.
+
 ## Deferred
 
 - Taking `Trait.method` as a value remains rejected.
