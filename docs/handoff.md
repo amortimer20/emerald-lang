@@ -175,7 +175,7 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Concurrency is at integration/review. The standard-library slices the user chose to
+Concurrency is merged (#24, 2026-09-30). The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
@@ -190,15 +190,17 @@ building" notes record its decisions.
 - A fix to HTTP connection reuse: a request after a timed-out one could receive the timed-out
   request's reply.
 - Structured tasks, FIFO channels, timers and timed waits, cooperative cancellation,
-  and deadlock diagnostics (concurrency review/merge pending; full PR CI green).
+  and deadlock diagnostics.
 
-The two open pieces of work:
+Open work:
+- **Bug fixes**: the batch from the full-codebase review (formatter, `remove_if`, `##` comments,
+  JSON diagnostics, `RecursionError`, and more), handed to Codex on `codex/bug-fixes`. Claude
+  reviews and merges.
+- **The REPL**: it replays the whole session on every entry, so side effects (a file append, an
+  `Http` request, `Random`, the clock) repeat. [`repl-design-plan.md`](repl-design-plan.md) is
+  proposed and awaits the user's six decisions; Codex implements it once accepted.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
-- **Concurrency review** (rewrite-context 15.13): structured tasks and channels, in
-  [`concurrency-design-plan.md`](concurrency-design-plan.md), accepted with all nine
-  recommendations. All six slices have passed their local gate on `codex/concurrency`;
-  the branch is ready for review. Claude reviews the whole diff, checks the Windows runtime/measurement results,
-  opens the PR, and merges only with the full local gate and green CI.
+- A 0.7.0 release once the REPL and the review's wrong-behavior bugs are fixed.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
