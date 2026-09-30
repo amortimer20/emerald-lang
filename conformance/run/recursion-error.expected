@@ -1,0 +1,5 @@
+main: too much recursion calling `forever`
+main cleanup
+task: too much recursion calling `forever`
+task cleanup
+RuntimeError still catches recursion

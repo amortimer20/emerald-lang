@@ -3105,7 +3105,7 @@ test "unbounded recursion is caught at the limit, with repeated frames summarize
     defer report.deinit();
 
     const failure = report.failure.?;
-    try testing.expectEqualStrings("too much recursion calling `forever`", failure.message);
+    try testing.expectEqualStrings("RecursionError: too much recursion calling `forever`", failure.message);
     // Exactly the 1,000 active calls section 7.2 guarantees.
     try testing.expectEqual(@as(usize, 1000), failure.trace.len);
 

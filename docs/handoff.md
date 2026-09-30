@@ -165,21 +165,17 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 ## Next step
 
 The current task is the user's numbered bug-fix batch on `codex/bug-fixes`, branched
-from freshly fetched main `4c51a6c`. Item 1 reproduces and is implemented: `remove_if`
-uses the same copy-before-change path as the other collection mutators, and struct
-mutation inference recognizes it. Its full gate passed (Debug/ReleaseSafe, native build,
-24 doc examples/128 conformance links, formatting, whitespace, and Windows/macOS
-cross-builds). Item 2, formatter preservation of required grouping, is also complete. The REPL
-replay bug is explicitly excluded and belongs to Claude's separate plan. Item 2 also
-reproduces: formatting a `when` condition containing a trailing-block call removed
-required parentheses. The fix and an all-`run/` format/parse guard passed the same full
-gate; there are no excluded cases. Items 3 and 4 both reproduce and their
-comment-boundary fixes passed the full gate: inline `##` no longer suppresses a
-statement-ending newline, and comments after a `case` stay outside it. Item 5 also
-reproduces: native Math keys collided with a project's `math/` declarations. Its
-key separation and shadowing warning passed the full gate. Item 6 also reproduces;
-its receiver-aware counting dispatch and regressions passed the full gate. Next is
-item 7 (catchable recursion failures, including tasks).
+from freshly fetched main `4c51a6c`. Items 1–7 reproduced and are complete:
+collection copy-before-change, required case-header grouping and the all-`run/`
+format/parse guard, comment boundaries, project Math priority, user-method priority
+over counting forms, and catchable recursion failures. Each commit passed the full
+gate (Debug/ReleaseSafe, native build, documentation examples, formatting, whitespace,
+and Windows/macOS cross-builds). The latest doc check executed 24 examples and
+confirmed 130 conformance links; the main/task recursion regression matched its
+expected output in 50 runs. Reproductions and findings are in the journal.
+Next is item 8 (repeated argument diagnostics), which reproduces across all five
+typed/native APIs and a changing trait-default receiver. The REPL replay bug remains
+explicitly excluded and belongs to Claude's separate plan.
 
 The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
@@ -207,6 +203,9 @@ building" notes record its decisions.
   warning; `Emerald.Math` remains available for the native functions and constants.
 - User methods named `times`, `up_to`, or `down_to` take precedence over native
   counting forms, including trailing blocks and methods returning iterables.
+- Excessive recursion raises catchable `RecursionError` in the main program and
+  tasks. It extends `RuntimeError`, so existing broader catches keep working;
+  recursion limits, cleanup, and summarized stack traces are unchanged.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
@@ -290,7 +289,7 @@ on the roadmap.
     lists what JSON can build without saying the constructor is why.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
   `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
-  `EncodingError`, and `DeadlockError`.
+  `EncodingError`, `DeadlockError`, and `RecursionError`.
 - Task cancellation uses `CancelledError`, which extends `Error` directly rather than
   `RuntimeError`, so catching RuntimeError does not swallow cancellation.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a

@@ -27,6 +27,11 @@ const cancelled: Error = CancelledError("cancelled")
 assert not (cancelled is RuntimeError)
 assert cancelled.message == "cancelled"
 
+# Recursion failures remain ordinary RuntimeErrors as well as their own type.
+const recursion: RuntimeError = RecursionError("recursion")
+assert recursion is RecursionError
+assert recursion.message == "recursion"
+
 # A type-level function whose result is only a String.
 print(Console.plain(Console.style("hi", foreground: Console.Color.green)))
 print(Console.panel("reach", title: "Console"))

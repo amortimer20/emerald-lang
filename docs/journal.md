@@ -3870,3 +3870,42 @@ The focused regression passes. The full required gate passed with pinned Zig
 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build, documentation examples
 (24 executed, 128 linked conformance cases), changed-Zig formatting, whitespace,
 and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 7: catchable recursion failures, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`):
+
+```emerald
+func forever(n: Int): Int {
+    return forever(n + 1)
+}
+try {
+    print(forever(0))
+}
+catch error: RuntimeError {
+    print("caught RuntimeError: #{error.message}")
+}
+```
+
+Main prints `caught RuntimeError: too much recursion calling ` followed by
+backtick-quoted `forever`; checking the new specific catch on main reports that
+`RecursionError` is not a type. The prelude now declares `RecursionError` as a
+`RuntimeError` subclass. Both the call-depth limit and stack-space boundary use the
+same native recursion-failure helper, which constructs this typed error directly
+without making another Emerald call at the boundary. Its message and help are
+unchanged, while the uncaught diagnostic now names `RecursionError`.
+
+The new run case catches the specific type in the main program and across a task
+result/group failure, verifies `finally`, and confirms a RuntimeError catch still
+handles it. Prelude reach checks cover explicit construction and subclass identity.
+Existing unbounded-call and constructor-recursion golden files, and the Zig trace
+test, now require the specific error prefix without changing their 1,000-frame
+checks. All three affected expected files were read by hand. The library reference,
+handoff error-type list, and release notes record the shipped behavior promised
+by rewrite-context 7.2; there is no new language decision.
+
+The focused main/task regression matched its expected output in all 50 runs. The
+full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe
+tests, native build, documentation examples (24 executed, 130 linked conformance
+cases), changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64
+cross-builds outside `zig-out`.

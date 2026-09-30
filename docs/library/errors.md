@@ -37,6 +37,14 @@ by Base64 and hexadecimal decoding, and by `Bytes.to_string()` for invalid UTF-8
 **`InputError`** also extends `RuntimeError`; `input` raises it when input ends or contains
 invalid UTF-8, while `input_maybe` still returns `nothing` at end of input.
 
+**`RecursionError`** extends `RuntimeError`. Calls raise it when they exceed the
+interpreter's recursion boundary, in the main program or a task. Emerald supports
+at least 1,000 active calls; the diagnostic summarizes repeated frames. Typed catches
+and `finally` work normally, and a catch for `RuntimeError` still handles it. Run
+[`conformance/run/recursion-error.em`](../../conformance/run/recursion-error.em) for
+both execution contexts and cleanup; the uncaught diagnostic is covered by
+[`conformance/runtime-errors/recursion-limit.em`](../../conformance/runtime-errors/recursion-limit.em).
+
 **`CancelledError`** extends `Error` directly, not `RuntimeError`. Task cancellation raises
 it at a suspension point and runs `finally`; a catch for `RuntimeError` does not swallow it.
 Run [`conformance/run/task-cancellation.em`](../../conformance/run/task-cancellation.em)

@@ -10010,10 +10010,12 @@ fn raiseTooMuchRecursion(self: *Interpreter, span: Source.Span, name: []const u8
     // A program's own names never hold a space; a description such as "the
     // constructor of `Node`" or "a block" already reads as prose.
     const quote = if (std.mem.indexOfScalar(u8, name, ' ') == null) "`" else "";
-    return self.raiseFmt(
+    const message = try std.fmt.allocPrint(self.arena, "too much recursion calling {s}{s}{s}", .{ quote, name, quote });
+    self.task.state.raised_value = try self.makeError(Resolver.preludeKey("RecursionError"), message);
+    return self.raiseTyped(
         span,
-        "too much recursion calling {s}{s}{s}",
-        .{ quote, name, quote },
+        "RecursionError",
+        message,
         if (at_limit)
             "Emerald supports at least 1,000 active calls. Check that the recursion has a case that stops it."
         else
