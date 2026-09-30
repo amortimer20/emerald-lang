@@ -628,8 +628,15 @@ commits.
   `STACK_SIZE_PARAM_IS_A_RESERVATION`, retaining the same 128 MiB recursion budget
   on 64-bit hosts. No smaller stack limit is substituted. The Windows driver logs
   `PeakPagedMemorySize64` (commit) as well as `PeakWorkingSet64`, requires the
-  `started: 64` marker emitted before any child runs, and checks that the 64-task
-  commit is below 1 GiB rather than about 8 GiB. Its measurements remain pending CI.
+  `started: 64` marker emitted before any child runs, and compares one versus 64 live
+  children, requiring less than 64 MiB additional commit rather than about 8 GiB.
+  The first corrected CI run reached the measurements: 1,000/10,000 sequential
+  tasks committed 1032.74/1032.81 MiB; all 64 live tasks started and committed
+  1035.38 MiB. Its absolute 1 GiB check failed because the existing main interpreter
+  thread in `emerald.zig` commits a 1 GiB stack, not the 128 MiB assumed by that
+  check's comment. The corrected baseline uses the same live-task program with
+  one child to isolate task-thread costs, without changing the interpreter's
+  pre-existing stack policy or increasing a timing margin. Final CI remains pending.
 - **Completed lifetimes:** joining unlinks a job from `Runtime.all`. A group's
   final drain joins even if a cancellation checkpoint interrupted the ordinary
   result wait after completion but before joining. After the group ends, completed

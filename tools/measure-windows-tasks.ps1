@@ -61,11 +61,15 @@ function Measure-TaskProgram {
 
 $null = Measure-TaskProgram "1,000 sequential tasks" $Emerald @("run", "tools/task-benchmark.em", "--", "1000") "499500"
 $null = Measure-TaskProgram "10,000 sequential tasks" $Emerald @("run", "tools/task-benchmark.em", "--", "10000") "49995000"
+$baseline = Measure-TaskProgram "1 live task (commit baseline)" $Emerald @("run", "tools/task-live-benchmark.em", "--", "1") "started: 1`n0"
 $live = Measure-TaskProgram "64 live tasks" $Emerald @("run", "tools/task-live-benchmark.em", "--", "64") "started: 64`n2016"
 Write-Host "All 64 task threads started (confirmed before the first task ran)."
-# A default main interpreter stack is also committed by std.Thread.spawn;
-# this ceiling distinguishes it from 64 * 128 MiB task stacks.
-if ($live.Commit -gt 1GB) { throw "64 live tasks committed more than 1 GiB" }
+# The existing main interpreter thread commits a 1 GiB stack on Windows.
+# Compare the same program with one and 64 live children to isolate task costs,
+# rather than confusing that baseline with their reserved 128 MiB stacks.
+$addedCommit = $live.Commit - $baseline.Commit
+Write-Host ("63 additional task threads: {0:F2} MiB added peak commit" -f ($addedCommit / 1MB))
+if ($addedCommit -gt 64MB) { throw "63 additional task threads committed more than 64 MiB" }
 $null = Measure-TaskProgram "100,000 scheduler handoffs" $Scheduler @() ""
 $small = Measure-TaskProgram "2,000 sequential tasks" $Emerald @("run", "tools/task-benchmark.em", "--", "2000") "1999000"
 $large = Measure-TaskProgram "20,000 sequential tasks" $Emerald @("run", "tools/task-benchmark.em", "--", "20000") "199990000"

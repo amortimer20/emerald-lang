@@ -3593,3 +3593,25 @@ and the standalone ReleaseSafe Windows scheduler probe cross-build. All 33 task/
 run cases passed 50 executions each. The live-input driver passed 50 prompt-exit and 50
 retained-line checks. The ReleaseSafe fuzz campaign passed seed 12648430, 1,000 cases,
 136 executed. Windows runtime CI and its new measurements still gate merging.
+
+## Concurrency: Windows measurement baseline correction, 2026-09-30
+
+PR CI for `73a6014` passed Windows Debug and the Windows ReleaseSafe suite, reaching
+the repaired measurement command. It reported 1,000 tasks at 0.163 s / 9.27 MiB
+working set / 1032.74 MiB commit; 10,000 at 1.306 s / 9.33 MiB / 1032.81 MiB; all
+64 live task threads started, at 0.022 s / 10.93 MiB / 1035.38 MiB. The driver's
+absolute 1 GiB commit assertion failed. Inspection of `emerald.zig` confirmed its
+pre-existing main interpreter thread requests a 1 GiB stack through `std.Thread.spawn`;
+the driver's comment had incorrectly assumed 128 MiB. The extra commit from the live
+children was small, not 128 MiB per task. This was a measurement-baseline bug, not a
+reason to retry CI or change a timing margin.
+
+The driver now measures the same live-task program with one and 64 children, reports
+the additional commit, and rejects more than 64 MiB for the 63 additional threads.
+This isolates task stack costs and is much stricter than allowing their 8 GiB of
+upfront commit. The main interpreter's existing stack policy is recorded, not changed
+as an unrelated optimization. The full local gate passed for the code in `73a6014`;
+this correction changes only the PowerShell measurement and its documentation. Debug
+tests and whitespace checks passed again before committing; the remaining platform
+jobs and fuzz campaign on `73a6014` all passed. The corrected Windows measurement
+must run successfully on the next CI commit before merging.

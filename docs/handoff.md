@@ -121,7 +121,11 @@ optional channel item types (wrap optional contents in a struct). Reachability a
 used the wrong key to activate the task allocator; that is fixed, with bounded shared
 small-allocation pools. ReleaseSafe's corrected 2,000/20,000-task measurement is
 0.36/3.57 s with identical 7.19 MiB peak RSS. Windows runtime CI and commit measurements
-remain required before merge; cross-builds are not runtime measurements.
+remain required before merge; cross-builds are not runtime measurements. The first
+corrected Windows run passed tests and started all 64 children (1035.38 MiB commit),
+but the measurement's absolute 1 GiB ceiling confused their cost with the existing
+main interpreter thread's 1 GiB committed stack. The driver now compares one versus
+64 live children, with a 64 MiB ceiling on additional commit. No stack limit was reduced.
 
 Implemented:
 per-task execution state,
