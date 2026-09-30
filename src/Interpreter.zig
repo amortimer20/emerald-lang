@@ -4569,7 +4569,7 @@ fn evaluateCountingBlock(self: *Interpreter, expression: *const Ast.Expression, 
 fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Error!Value {
     var values: [2]f64 = undefined;
     for (call.arguments, 0..) |argument, index| values[index] = toFloat(try self.evaluate(argument));
-    const name = key["Math.".len..];
+    const name = key[Resolver.math_prefix.len..];
     return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else std.math.pow(f64, values[0], values[1]));
 }
 

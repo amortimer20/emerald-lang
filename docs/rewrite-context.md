@@ -2613,7 +2613,7 @@ const exists = Emerald.File.exists?("notes.txt") # the built-in
 ```
 
 Hiding one of the language's own built-ins (a prelude function such as `print` or `random`,
-`Bytes`, `Equatable`, `Hashable`, `Ordered`, `Textual`, `Error`, `RuntimeError`, or
+`Math`, `Bytes`, `Equatable`, `Hashable`, `Ordered`, `Textual`, `Error`, `RuntimeError`, or
 `AssertionError`) is a warning at the declaration, whose help names the qualified form; a
 program declaring one almost certainly means Emerald's. Hiding a standard-library name, such
 as `File`, `Date`, or `Console`, is silent: a teacher's "write your own `Date`" is not a

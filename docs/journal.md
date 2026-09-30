@@ -3794,3 +3794,45 @@ The focused programs pass. The full required gate passed with pinned Zig 0.16.0
 and `-j1`: Debug and ReleaseSafe tests, native build, documentation examples
 (24 executed, 128 linked conformance cases), changed-Zig formatting, whitespace,
 and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 5: project Math wins, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with a project:
+
+```emerald
+# main.em
+print(Math.sin(1))
+print(Emerald.Math.sin(1))
+```
+
+```emerald
+# math/functions.em
+func sin(value: Float): Float {
+    return value + 100
+}
+```
+
+Both calls printed `0.8414709848078965`, instead of the project's call printing
+`101.0`. Resolution already selected the project declaration, but its `Math.sin`
+key was identical to the native key and the native checker/interpreter dispatch
+claimed it. Native Math functions and constants now use keys under the reserved
+`Emerald` namespace, distinct from every project key. This fixes the collision at
+its source rather than reordering one call-site dispatch. Ordinary native Math
+signature checking continues to use the same shared Resolver helper.
+
+As expressly requested in item 5, hiding Math uses the usual built-in shadowing
+warning. The rewrite-context's warning list records Math alongside the language's
+own built-ins; standard-library namespace hiding remains otherwise unchanged.
+Run and diagnostic project regressions cover the project's function and constants,
+explicit native qualification, and the warning. Both expected files were read by
+hand. The focused output is `101.0`, `10`, `20`, `project cosine`, `0.0`, `true`,
+`true`. The String-taking project `cos` also ensures the user's signature remains
+usable. Main prints native values for the minimal repro; checking the complete
+regression on main reported no problems, so that check alone did not detect the
+wrong native dispatch.
+
+The full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug and
+ReleaseSafe tests, native build, documentation examples (24 executed, 128 linked
+conformance cases), changed-Zig formatting, whitespace, and Windows x86_64/macOS
+aarch64 cross-builds outside `zig-out`. Items 1–4 were pushed as a validated
+checkpoint on `codex/bug-fixes`; no merge was performed.

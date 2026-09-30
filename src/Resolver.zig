@@ -241,8 +241,10 @@ pub const prelude_namespace = Project.builtin_namespace;
 /// built-in `Float` type is a user declaration with setup state.
 pub const float_infinity_key = "Float.infinity";
 pub const float_nan_key = "Float.nan";
-pub const math_pi_key = "Math.pi";
-pub const math_e_key = "Math.e";
+// Native keys must not collide with declarations in a project's math/ directory.
+pub const math_prefix = prelude_namespace ++ ".Math.";
+pub const math_pi_key = math_prefix ++ "pi";
+pub const math_e_key = math_prefix ++ "e";
 /// Section 14.1's `Program.arguments`: the program's own CLI arguments,
 /// excluding the Emerald executable and entry-file paths.
 pub const program_arguments_key = "Program.arguments";
@@ -250,7 +252,7 @@ pub const program_arguments_key = "Program.arguments";
 pub const program_sleep_key = "Program.sleep";
 
 pub fn mathFunction(key: []const u8) ?Type.MathFunction {
-    const prefix = "Math.";
+    const prefix = math_prefix;
     if (!std.mem.startsWith(u8, key, prefix)) return null;
     return Type.math_functions.get(key[prefix.len..]);
 }
@@ -591,7 +593,7 @@ fn isBuiltinName(_: *Resolver, name: []const u8) bool {
     for (prelude) |builtin| {
         if (std.mem.eql(u8, name, builtin)) return true;
     }
-    const language = [_][]const u8{ "Bytes", "Equatable", "Hashable", "Ordered", "Textual", "Error", "RuntimeError", "AssertionError" };
+    const language = [_][]const u8{ "Math", "Bytes", "Equatable", "Hashable", "Ordered", "Textual", "Error", "RuntimeError", "AssertionError" };
     for (language) |builtin| {
         if (std.mem.eql(u8, name, builtin)) return true;
     }
@@ -2566,7 +2568,7 @@ fn qualifyBuiltinNamespace(self: *Resolver, span: Source.Span, namespace: []cons
     if (std.mem.eql(u8, namespace, "Math")) {
         if (std.mem.eql(u8, member, "pi")) return .{ .key = math_pi_key };
         if (std.mem.eql(u8, member, "e")) return .{ .key = math_e_key };
-        const key = try std.fmt.allocPrint(self.arena, "Math.{s}", .{member});
+        const key = try std.fmt.allocPrint(self.arena, math_prefix ++ "{s}", .{member});
         if (mathFunction(key) != null) return .{ .key = key };
         try self.reportWithHelpFmt(
             span,
