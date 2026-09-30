@@ -113,24 +113,22 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
-All six concurrency slices are implemented on `codex/concurrency`; their initial local
-gates passed, but review found four merge blockers. All four corrections pass local validation:
+All six concurrency slices and the four required review corrections are implemented
+on `codex/concurrency`, with local validation and fully green PR CI on `80b493e`
+(Debug/ReleaseSafe on Windows, macOS, and Ubuntu, plus fuzz). The corrections:
 quote Windows compiler module arguments, reserve task stacks instead of committing
 128 MiB each, reclaim joined jobs and unreachable completed handles, and reject
 optional channel item types (wrap optional contents in a struct). Reachability also
 used the wrong key to activate the task allocator; that is fixed, with bounded shared
 small-allocation pools. ReleaseSafe's corrected 2,000/20,000-task measurement is
-0.36/3.57 s with identical 7.19 MiB peak RSS. Windows runtime CI and commit measurements
-remain required before merge; cross-builds are not runtime measurements. The first
-corrected Windows run passed tests and started all 64 children (1035.38 MiB commit),
-but the measurement's absolute 1 GiB ceiling confused their cost with the existing
-main interpreter thread's 1 GiB committed stack. The driver now compares one versus
-64 live children, with a 64 MiB ceiling on additional commit. A ready/sample input
-handshake prevents the short baseline from exiting before PowerShell samples it;
-one- and 64-task probes each passed 50 runs locally. No stack limit was reduced.
+0.36/3.57 s with identical 7.19 MiB peak RSS. Windows measured 0.336/3.225 s,
+9.25/9.30 MiB working set, and 1032.75/1032.82 MiB commit: 9.59x time with flat
+memory. All 64 task threads started; the extra 63 added only 2.70 MiB peak commit.
+The existing main interpreter thread still commits a 1 GiB stack on Windows;
+the ready/sample probe isolates task costs without reducing stack limits. Measurement
+failures, corrections, and full results are in the plan and journal.
 
-Implemented:
-per-task execution state,
+Implemented: per-task execution state,
 `Task[T]`, structured groups, results, a FIFO single-holder
 OS-thread scheduler (64 live children), yield, timers, timed waits, native-I/O baton release,
 and `DeadlockError` with original wait locations. `Channel[T]` adds FIFO rendezvous and
@@ -159,13 +157,6 @@ cross-builds, and the standalone Windows ReleaseSafe scheduler probe cross-build
 task/channel run cases passed 50 executions each; the live-input driver passed 50 prompt
 exits and 50 retained-line checks. ReleaseSafe fuzz seed 12648430 passed 1,000 cases,
 136 executed. Results are recorded in the plan and journal.
-Slice 6 passed Debug and ReleaseSafe tests, native build, documentation examples
-(24 executed, 124 linked conformance files), formatting, whitespace, and Windows/macOS
-cross-builds, with Zig 0.16.0 and sequential `-j1`. Its example and prelude-reach case
-passed 50 runs each; fuzz seed 12648430 passed 1,000 cases, 136 executed. A final
-60-run alternating ReleaseSafe comparison with main `ef14a72` measured `print(1)` at
-3.67 vs. 3.76 ms (five program medians 100.2%–102.3% of main), without a material
-startup regression. Detailed results and earlier comparisons are in the journal.
 
 The accepted slice 5 I/O scope is implemented: CLI stdin uses a scheduler-owned reader
 that retains an in-flight line while cancellation interrupts the task's wait. Program exit
@@ -175,8 +166,8 @@ cancellation arrives when the operation returns, so named pipes/devices can dela
 Custom borrowed readers keep their existing host-read path; no general cancellation hook
 was added. CI runs the live-input regression driver on every platform and measures task
 creation, the live cap, and scheduler handoffs on Windows ReleaseSafe. Windows runtime
-results and measurements remain pending; the milestone is not fully done until review and
-green Windows PR CI. There has been no merge to main.
+tests and measurements passed. Claude's final review and merge of PR #23 remain;
+there has been no merge to main.
 
 A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
 `-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
@@ -199,7 +190,7 @@ building" notes record its decisions.
 - A fix to HTTP connection reuse: a request after a timed-out one could receive the timed-out
   request's reply.
 - Structured tasks, FIFO channels, timers and timed waits, cooperative cancellation,
-  and deadlock diagnostics (concurrency review and PR validation still pending).
+  and deadlock diagnostics (concurrency review/merge pending; full PR CI green).
 
 The two open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.

@@ -3634,3 +3634,34 @@ the tool is formatter-clean. Debug and ReleaseSafe tests, native build, document
 examples, changed-Zig formatting, whitespace, and Windows/macOS cross-builds passed
 again with pinned Zig 0.16.0 and `-j1`. Windows measurements remain pending the new
 CI run.
+
+## Concurrency: Windows runtime measurements passed, 2026-09-30
+
+Windows Debug and ReleaseSafe PR CI on `80b493e` passed, including live-input
+cancellation and the deterministic memory-sampling handshake. The measurements below
+are actual Windows execution from
+[PR run 36771640683](https://github.com/amortimer20/emerald-lang/actions/runs/36771640683),
+not cross-build results.
+
+| Probe | Time | Peak working set | Peak commit |
+| --- | --- | --- | --- |
+| 1,000 sequential tasks | 0.196 s | 9.25 MiB | 1032.75 MiB |
+| 10,000 sequential tasks | 1.681 s | 9.30 MiB | 1032.81 MiB |
+| One live child (sampling baseline) | 0.048 s | 9.44 MiB | 1048.74 MiB |
+| 64 live children | 0.037 s | 10.96 MiB | 1051.44 MiB |
+| 100,000 scheduler handoffs | 1.445 s | 3.20 MiB | 0.63 MiB |
+| 2,000 sequential tasks | 0.336 s | 9.25 MiB | 1032.75 MiB |
+| 20,000 sequential tasks | 3.225 s | 9.30 MiB | 1032.82 MiB |
+
+All 64 task threads started before a child ran. The additional 63 threads cost
+2.70 MiB peak commit, rather than 128 MiB each. One/64-child times include the
+driver handshake, so they are not isolated thread-creation timings. Both probes
+include the same input-reader overhead; the absolute commit also includes the main
+interpreter's pre-existing 1 GiB committed Windows stack. That remains unchanged,
+not hidden by calling commit charge physical memory or reducing a recursion limit.
+
+The 2,000/20,000 check passed at 9.59x time, 1.01x peak working set, and 1.00x commit,
+confirming linear sequential execution with bounded memory on Windows as well as
+Linux. The handoff and plan now record the green Windows runtime gate. No merge was
+performed; Claude still owns the final review and merge. The full PR run also passed
+Ubuntu and macOS Debug/ReleaseSafe and the fixed fuzz campaign. All seven jobs are green.

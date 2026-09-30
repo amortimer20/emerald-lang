@@ -641,7 +641,11 @@ commits.
   The live-task probe now prints its ready marker and waits for a `measured` input
   acknowledgement. The driver samples after receiving that marker, then releases
   the process. Both one- and 64-task probes passed 50 Linux handshake runs; no
-  sleep or retry masks the race. Final Windows CI remains pending.
+  sleep or retry masks the race. Windows Debug and ReleaseSafe PR CI on `80b493e`
+  passed, including the handshake and all measurement assertions. One/64 children
+  measured 1048.74/1051.44 MiB peak commit: only 2.70 MiB added for 63 threads,
+  with all 64 confirmed started. Those absolute figures include the existing
+  main interpreter stack and the probe's input reader, not 128 MiB per task.
 - **Completed lifetimes:** joining unlinks a job from `Runtime.all`. A group's
   final drain joins even if a cancellation checkpoint interrupted the ordinary
   result wait after completion but before joining. After the group ends, completed
@@ -680,8 +684,11 @@ cases), changed-Zig formatting, whitespace, Windows x86_64/macOS aarch64 cross-b
 outside `zig-out`, and the standalone Windows ReleaseSafe scheduler probe cross-build.
 All 33 task/channel run cases passed 50 runs each. The live-input driver passed 50
 prompt-exit and 50 retained-line checks. ReleaseSafe fuzz seed 12648430 passed 1,000
-cases, 136 executed. Windows runtime CI and commit measurements
-remain pending; no cross-build result is presented as a Windows runtime measurement.
+cases, 136 executed. Windows runtime CI and commit measurements passed on
+[`80b493e`'s PR run](https://github.com/amortimer20/emerald-lang/actions/runs/36771640683).
+Windows's 2,000/20,000 sequential tasks measured 0.336/3.225 s, 9.25/9.30 MiB
+working set, and 1032.75/1032.82 MiB commit: 9.59x time, 1.01x physical memory,
+1.00x commit. The journal records all measurements and the two driver corrections.
 
 ## Validation
 
