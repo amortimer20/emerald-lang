@@ -259,6 +259,17 @@ on the roadmap.
 
 ## Active rough edges
 
+- Found while writing the website's JSON pages (2026-09-30, in 0.6.0; fix after the concurrency
+  branch merges, since both touch `Checker.zig`):
+  - `print(Json.encode(1 + true))` reports `addition needs numbers` twice at the same place. Type
+    errors inside `Json.encode`'s argument repeat (probably `typeOfTypedEncode` typing the
+    argument once for its type and again for JSON eligibility); a misspelled name does not.
+  - Messages name built-ins with their internal prefix: ``parameter `text` of
+    `Emerald.Json.parse` needs String``, and likewise for `Json.decode`, probably every prelude
+    function through the generic parameter-type message. 14.2 wants the bare name. (`Digest`
+    was fixed alone during Base64 review; fix it once where the message is built.)
+  - `Json.decode` correctly refuses a struct that declares its own constructor, but its message
+    lists what JSON can build without saying the constructor is why.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
   `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
   `EncodingError`, and `DeadlockError`.
