@@ -9742,11 +9742,16 @@ fn typeOfTaskBlockCall(self: *Checker, call: Ast.Expression.Call, name: []const 
         .arity_help = if (task_block) "Give `start` one block with no parameters." else "Give `run` one block that takes a TaskGroup.",
     });
     if (nonliteral) {
+        // Name the program's own function in the fix when it wrote a plain name.
+        const help = switch (call.arguments[0].data) {
+            .name => |written| try std.fmt.allocPrint(self.arena, "Wrap the call in a block, as in `tasks.start {{ => {s}() }}`.", .{written}),
+            else => "Wrap the call in a block, as in `tasks.start { => work() }`.",
+        };
         try self.report(
             call.arguments[0].span,
             "`start` needs an inline block, not a function value",
             .{},
-            "Wrap the call in a block, as in `tasks.start { => fetch_weather() }`.",
+            help,
         );
         return .invalid;
     }

@@ -3665,3 +3665,19 @@ confirming linear sequential execution with bounded memory on Windows as well as
 Linux. The handoff and plan now record the green Windows runtime gate. No merge was
 performed; Claude still owns the final review and merge. The full PR run also passed
 Ubuntu and macOS Debug/ReleaseSafe and the fixed fuzz campaign. All seven jobs are green.
+
+## Concurrency, review and merge, 2026-09-30
+
+Claude reviewed the scheduler and the interpreter's task paths, and ran programs against the
+branch. Four problems were fixed on the branch before merging. Finished tasks were never freed:
+20,000 sequential tasks took 16 s and 157 MB, and scans of `Runtime.all` made time quadratic;
+now 20,000 take 9 to 10 times as long as 2,000, at the same peak. On Windows, `std.Thread.spawn`
+committed each task's whole stack; task stacks are now reserved, and 64 live tasks add 2.7 MiB of
+commit. The Windows measurement step had been passing its paths through PowerShell unquoted.
+`Channel[T]` with an optional `T` could not tell "sent nothing" from "closed" and is refused.
+Probes then confirmed the no-`var` rule (direct and nested captures), inline-only `start`, the
+first error winning, cancellation running `finally` without being caught as a `RuntimeError`,
+deadlock messages naming each wait, and the collector across channels and suspended tasks (500
+packets of nested lists, 20 runs, none damaged). The `start` hint now names the function the
+program wrote. The main interpreter thread on Windows still commits its 1 GiB stack, as before
+this milestone; reserving it the same way is a small follow-up.

@@ -259,6 +259,9 @@ on the roadmap.
 
 ## Active rough edges
 
+- On Windows the main interpreter thread commits its whole 1 GiB stack up front
+  (`std.Thread.spawn` passes the size as the committed size). Task threads already reserve
+  instead; do the same for the interpreter thread in `emerald.zig`.
 - Found while writing the website's JSON pages (2026-09-30, in 0.6.0; fix after the concurrency
   branch merges, since both touch `Checker.zig`):
   - `print(Json.encode(1 + true))` reports `addition needs numbers` twice at the same place. Type
