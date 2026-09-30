@@ -3751,3 +3751,46 @@ with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build,
 documentation examples (24 executed, 128 linked conformance cases), changed-Zig
 formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
 `zig-out`.
+
+## Bug-fix batch, items 3 and 4: comment boundaries, 2026-09-30
+
+Both reproduce on the separately built main baseline (`4c51a6c`). Item 3's program:
+
+```emerald
+var x = 1 ## note
+var y = 2
+print(x, y)
+```
+
+Main reports `expected the end of the line, found var` at the second declaration.
+Emitting a documentation token had replaced the lexer's previous code-token kind,
+so the following newline no longer terminated the statement. Documentation tokens
+now leave that continuation state alone. Lexer tests cover termination, operator
+continuation, and grouped continuation; the run regression also covers a commented
+return and prints `1 2`, `3 3`, and `42`.
+
+Item 4's program:
+
+```emerald
+case {
+    when true {
+        print("yes")
+    }
+}
+# This belongs after the case.
+print("done")
+```
+
+Main's formatter moves the comment inside the case's closing brace. The parser had
+included the statement-ending newline in the case's source span, allowing trivia
+starting immediately after that newline to be consumed inside the case. The span
+now ends at the actual closing brace, before consuming the terminator. The format
+regression covers inside, following, and closing-brace comments; main's format check
+fails on it and the fixed binary leaves it unchanged. These closely related fixes
+preserve settled comment semantics, with no new syntax choice. Both expected files
+were read by hand.
+
+The focused programs pass. The full required gate passed with pinned Zig 0.16.0
+and `-j1`: Debug and ReleaseSafe tests, native build, documentation examples
+(24 executed, 128 linked conformance cases), changed-Zig formatting, whitespace,
+and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.

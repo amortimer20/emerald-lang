@@ -179,7 +179,9 @@ fn skipSpacing(self: *Lexer) void {
 }
 
 fn emit(self: *Lexer, kind: Token.Kind, start: u32, end: u32) Token {
-    self.previous = kind;
+    // Documentation is retained for the parser, but does not change whether
+    // the preceding code needs a statement-ending newline.
+    if (kind != .doc_comment) self.previous = kind;
     return .{ .kind = kind, .span = .{ .start = start, .end = end } };
 }
 
@@ -964,6 +966,19 @@ test "line comments are skipped and documentation comments are kept" {
     try expectKinds("## docs\nfunc f() {}", &.{
         .doc_comment, .keyword_func, .identifier,  .left_paren,
         .right_paren, .left_brace,   .right_brace, .eof,
+    });
+}
+
+test "documentation comments preserve newline termination and continuation" {
+    try expectKinds("1 ## trailing\n2\n", &.{
+        .int_literal, .doc_comment, .newline, .int_literal, .newline, .eof,
+    });
+    try expectKinds("1 + ## continued\n2\n", &.{
+        .int_literal, .plus, .doc_comment, .int_literal, .newline, .eof,
+    });
+    try expectKinds("(1 ## grouped\n+ 2)\n", &.{
+        .left_paren,  .int_literal, .doc_comment, .plus, .int_literal,
+        .right_paren, .newline,     .eof,
     });
 }
 

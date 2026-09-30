@@ -508,8 +508,11 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
                     "Assign it to a name, as in `const label = case ...`, or give each `when` a block in braces in place of `then`.",
                 );
             }
+            // The case ends at its closing brace, not at the following
+            // newline: trivia after that brace belongs outside the case.
+            const span = spanning(parsed.keyword_span, self.tokens[self.index - 1].span);
             try self.expectStatementEnd();
-            break :blk .{ .span = spanning(parsed.keyword_span, self.tokens[self.index - 1].span), .data = .{ .case_statement = parsed } };
+            break :blk .{ .span = span, .data = .{ .case_statement = parsed } };
         },
         .keyword_while => self.parseWhile(),
         .keyword_for => self.parseFor(),

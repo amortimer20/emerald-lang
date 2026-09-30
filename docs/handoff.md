@@ -173,7 +173,10 @@ cross-builds). Item 2, formatter preservation of required grouping, is also comp
 replay bug is explicitly excluded and belongs to Claude's separate plan. Item 2 also
 reproduces: formatting a `when` condition containing a trailing-block call removed
 required parentheses. The fix and an all-`run/` format/parse guard passed the same full
-gate; there are no excluded cases. Next is item 3 (inline documentation comments).
+gate; there are no excluded cases. Items 3 and 4 both reproduce and their
+comment-boundary fixes passed the full gate: inline `##` no longer suppresses a
+statement-ending newline, and comments after a `case` stay outside it. Next is item 5
+(project namespaces shadowing built-ins).
 
 The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
@@ -195,6 +198,8 @@ building" notes record its decisions.
   correctly requires a mutable struct receiver.
 - Formatting preserves required parentheses around trailing-block calls in `when`
   headers; every conformance `run/` file is also formatted and reparsed as a guard.
+- Inline `##` comments preserve statement boundaries; formatting keeps comments
+  following a `case` outside the block and closing-brace comments on that brace.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
