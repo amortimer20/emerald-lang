@@ -310,6 +310,13 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
 
 ## Active rough edges
 
+- Found while writing the website's language pages (2026-09-30, in 0.6.0), each a spec promise
+  the implementation does not keep:
+  - An orphaned `##` documentation comment gets no warning (3.2 says it does):
+    `## This describes nothing.` followed by a blank line and `print("x")` checks clean.
+  - Casing gets no style warning (3.3 says violations are warnings): `var highScore = 10` checks
+    clean. Nor does a Boolean function whose name lacks `?`, which 3.3 also covers.
+  - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
 - On Windows the main interpreter thread commits its whole 1 GiB stack up front
   (`std.Thread.spawn` passes the size as the committed size). Task threads already reserve
   instead; do the same for the interpreter thread in `emerald.zig`.
