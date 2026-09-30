@@ -1538,6 +1538,21 @@ fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
     }
 }
 
+/// A syntactically counting-shaped call may instead name a declared method.
+/// Adapters inherit that distinction from their receiver expression.
+fn isNativeCounting(self: *Interpreter, expression: *const Ast.Expression) bool {
+    if (!Checker.isCounting(expression)) return false;
+    if (expression.data == .call) {
+        const call = expression.data.call;
+        if (self.method_calls.contains(call.callee) or self.facts.qualified.contains(call.callee)) return false;
+        const member = call.callee.data.member;
+        if (std.mem.eql(u8, member.name, "step") or std.mem.eql(u8, member.name, "reverse")) {
+            return self.isNativeCounting(member.base);
+        }
+    }
+    return true;
+}
+
 /// Section 6.4's counting loops: `a..b`, `a..<b`, `a.up_to(b)`, and
 /// `a.down_to(b)`, with an optional `.step(n)` and `.reverse()`. Everything
 /// is evaluated once, before the first iteration.
@@ -1546,7 +1561,7 @@ fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
 /// by stepping past it, because stepping past either end of the `Int` range
 /// would overflow.
 fn executeFor(self: *Interpreter, loop: Ast.For) Error!void {
-    if (!Checker.isCounting(loop.iterable)) return self.executeForList(loop);
+    if (!self.isNativeCounting(loop.iterable)) return self.executeForList(loop);
     const range = (try self.evaluate(loop.iterable)).data.range;
     return self.executeForRange(loop, range);
 }
@@ -3120,8 +3135,9 @@ fn evaluateCallInner(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Value {
-    if (Checker.isCountingBlock(call)) return self.evaluateCountingBlock(expression, call);
-    if (Checker.isCounting(expression)) return self.evaluateRangeCall(expression, call);
+    const declared = self.method_calls.contains(call.callee) or self.facts.qualified.contains(call.callee);
+    if (!declared and Checker.isCountingBlock(call)) return self.evaluateCountingBlock(expression, call);
+    if (self.isNativeCounting(expression)) return self.evaluateRangeCall(expression, call);
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
     // resolver decided which, and recorded it.
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);

@@ -177,8 +177,9 @@ gate; there are no excluded cases. Items 3 and 4 both reproduce and their
 comment-boundary fixes passed the full gate: inline `##` no longer suppresses a
 statement-ending newline, and comments after a `case` stay outside it. Item 5 also
 reproduces: native Math keys collided with a project's `math/` declarations. Its
-key separation and shadowing warning passed the full gate. Next is item 6
-(user methods named like counting forms).
+key separation and shadowing warning passed the full gate. Item 6 also reproduces;
+its receiver-aware counting dispatch and regressions passed the full gate. Next is
+item 7 (catchable recursion failures, including tasks).
 
 The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
@@ -204,6 +205,8 @@ building" notes record its decisions.
   following a `case` outside the block and closing-brace comments on that brace.
 - A project's `math/` declarations win over native Math members, with a shadowing
   warning; `Emerald.Math` remains available for the native functions and constants.
+- User methods named `times`, `up_to`, or `down_to` take precedence over native
+  counting forms, including trailing blocks and methods returning iterables.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.

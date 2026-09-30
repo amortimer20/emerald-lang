@@ -3836,3 +3836,37 @@ ReleaseSafe tests, native build, documentation examples (24 executed, 128 linked
 conformance cases), changed-Zig formatting, whitespace, and Windows x86_64/macOS
 aarch64 cross-builds outside `zig-out`. Items 1–4 were pushed as a validated
 checkpoint on `codex/bug-fixes`; no merge was performed.
+
+## Bug-fix batch, item 6: counting-shaped user methods, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`):
+
+```emerald
+class Counter {
+    func times(block: func(Int)) {
+        block(42)
+    }
+}
+Counter().times { number => print(number) }
+```
+
+Main reports `counting works with whole numbers, but this is Counter`. The checker
+and interpreter both selected counting by spelling before resolving the receiver
+or method. Counting recognition now happens after receiver checking, so user types
+keep ordinary method lookup, including inherited methods. The already-checked
+receiver is passed into counting validation rather than typed again. Iterables are
+checked through their ordinary expression types; execution excludes resolved
+methods and namespace functions from the native counting shortcut, including their
+adapter chains. This prevents treating a user's returned List as a Range or trying
+to interpret a custom Range-producing method as a primitive range constructor.
+
+The run regression fails on main and passes with the fix. It covers all three
+trailing-block spellings, inheritance, a struct method returning a List, List
+reversal after that method, a custom Range followed by a native step adapter, and
+the unchanged primitive counting block forms. Its expected output was read by
+hand. No method naming or counting-language rule was changed.
+
+The focused regression passes. The full required gate passed with pinned Zig
+0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build, documentation examples
+(24 executed, 128 linked conformance cases), changed-Zig formatting, whitespace,
+and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.

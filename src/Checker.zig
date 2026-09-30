@@ -2656,11 +2656,6 @@ fn forgetNarrowing(self: *Checker, name: []const u8) void {
 /// The type of each value a `for` loop visits. Only ranges so far, and a range
 /// counts whole numbers.
 fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
-    if (isCounting(iterable)) {
-        try self.checkCounting(iterable);
-        return .int;
-    }
-
     const actual = try self.typeOf(iterable);
     if (actual.kind == .invalid) return .invalid;
     if (!try self.requirePresent(actual, iterable, null)) return .invalid;
@@ -2716,7 +2711,7 @@ fn countingAdapter(name: []const u8) bool {
 /// Types every part of a counting expression and reports what can be seen
 /// from the source alone: a literal range or `down_to` that can only be empty,
 /// a literal step below 1, and a second step.
-fn checkCounting(self: *Checker, expression: *const Ast.Expression) Error!void {
+fn checkCounting(self: *Checker, expression: *const Ast.Expression, checked_base: ?Type) Error!void {
     if (expression.data == .range) {
         const range = expression.data.range;
         try self.requireCountingInt(range.start);
@@ -2735,17 +2730,17 @@ fn checkCounting(self: *Checker, expression: *const Ast.Expression) Error!void {
             "Write it as in `10.down_to(1)`, `(0..10).step(2)`, or `(1..5).reverse()`.",
         );
         try self.typeArguments(call.arguments);
-        if (!countingStart(member.name)) try self.checkCounting(member.base);
+        if (checked_base == null and !countingStart(member.name)) try self.checkCounting(member.base, null);
         return;
     }
 
     if (countingStart(member.name)) {
-        try self.requireCountingInt(member.base);
+        if (checked_base) |base| try self.requireCountingType(base, member.base) else try self.requireCountingInt(member.base);
         try self.requireCountingInt(call.arguments[0]);
         return self.rejectContradictingLiteralCount(expression, member, call.arguments[0]);
     }
 
-    try self.checkCounting(member.base);
+    if (checked_base == null) try self.checkCounting(member.base, null);
     if (std.mem.eql(u8, member.name, "reverse")) return;
 
     // `step`.
@@ -2776,6 +2771,10 @@ fn hasStep(expression: *const Ast.Expression) bool {
 
 fn requireCountingInt(self: *Checker, expression: *const Ast.Expression) Error!void {
     const actual = try self.typeOf(expression);
+    return self.requireCountingType(actual, expression);
+}
+
+fn requireCountingType(self: *Checker, actual: Type, expression: *const Ast.Expression) Error!void {
     if (actual.kind == .int or actual.kind == .invalid) return;
     try self.report(
         expression.span,
@@ -5775,7 +5774,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
             self.typeOfQualified(expression, reference)
         else
             self.typeOfMember(expression, member),
-        .range => self.typeOfCountingValue(expression),
+        .range => self.typeOfCountingValue(expression, null),
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
         .dictionary_literal => self.typeOfDictionary(expression, null),
@@ -6822,6 +6821,14 @@ fn typeOfMethodCall(
     if (base.kind == .invalid) {
         try self.typeArguments(call.arguments);
         return .invalid;
+    }
+    // Counting spellings are native operations only after resolving the
+    // receiver. A declared type owns its members, whatever their names.
+    if (base.kind != .struct_value) {
+        if (isCountingBlock(call)) return self.typeOfCountingBlock(expression, call, base);
+        if (countingStart(member.name) or (base.kind == .range and isCounting(expression))) {
+            return self.typeOfCountingValue(expression, base);
+        }
     }
     if (base.kind != .struct_value or base.optional) {
         // Section 15.5's `to_string(base:)` and `format(...)` are the one
@@ -8683,12 +8690,12 @@ fn familiarListName(name: []const u8) ?[]const u8 {
 }
 
 /// The counting syntax produces an ordinary immutable Range value.
-fn typeOfCountingValue(self: *Checker, expression: *const Ast.Expression) Error!Type {
-    try self.checkCounting(expression);
+fn typeOfCountingValue(self: *Checker, expression: *const Ast.Expression, checked_base: ?Type) Error!Type {
+    try self.checkCounting(expression, checked_base);
     return .range;
 }
 
-fn typeOfCountingBlock(self: *Checker, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Type {
+fn typeOfCountingBlock(self: *Checker, expression: *const Ast.Expression, call: Ast.Expression.Call, base: Type) Error!Type {
     const member = call.callee.data.member;
     const times = std.mem.eql(u8, member.name, "times");
     const wanted: usize = if (times) 1 else 2;
@@ -8704,7 +8711,7 @@ fn typeOfCountingBlock(self: *Checker, expression: *const Ast.Expression, call: 
         return .invalid;
     }
 
-    try self.requireCountingInt(member.base);
+    try self.requireCountingType(base, member.base);
     if (!times) {
         try self.requireCountingInt(call.arguments[0]);
         try self.rejectContradictingLiteralCount(expression, member, call.arguments[0]);
@@ -9490,8 +9497,6 @@ fn typeOfCall(
     call: Ast.Expression.Call,
 ) Error!Type {
     if (try self.isChannelCall(call)) return self.typeOfChannelCall(expression, call, null);
-    if (isCountingBlock(call)) return self.typeOfCountingBlock(expression, call);
-    if (isCounting(expression)) return self.typeOfCountingValue(expression);
     if (isSuper(call.callee)) return self.typeOfSuperCall(expression, call);
 
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
