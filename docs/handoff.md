@@ -324,6 +324,10 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
     does not belong here", twice) should suggest `and`/`or`; `c++` and `c--` should suggest
     `c += 1`; `true ? 1 : 2` should suggest `if c then a else b`; and `if x = 5 {` ("expected `{`
     ... found =") should suggest `==`.
+  - A file reaching a private `_name` declared in another file of the same folder gets
+    "[E1001] `_catalog` is not defined" ("check the spelling"), while the qualified form
+    (`Plants._catalog`) already says "`_catalog` is private to the file that declares it". Say
+    the same for the unqualified form, naming the declaring file.
   - `x ?? 0` (the C# and Swift spelling) gets "expected `)` to close this call, found ?"; suggest
     `.or(0)`. And `break` in a one-line lambda (`[1].each { x => break }`) gives a parse error
     plus a "this `}` does not close anything" cascade, while the block-bodied form already says
