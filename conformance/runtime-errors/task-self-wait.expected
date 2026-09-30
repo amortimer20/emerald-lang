@@ -1,0 +1,7 @@
+runtime-errors/task-self-wait.em:10:5: DeadlockError: these tasks are waiting for each other
+      waiting.result()
+      ^^^^^^^^^^^^^^^^
+At `runtime-errors/task-self-wait.em:10`, the group is waiting for the task started at `runtime-errors/task-self-wait.em:8`.
+At `runtime-errors/task-self-wait.em:8`, a task is waiting for the task started at `runtime-errors/task-self-wait.em:8`.
+Check the task results they wait for.
+in a block, called at runtime-errors/task-self-wait.em:6:1

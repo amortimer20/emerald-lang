@@ -29,12 +29,23 @@ pub const Problem = struct {
 
 pub const Method = enum { get, post, put, patch, delete };
 
+pub const CancelSignal = struct {
+    event: std.Io.Event = .unset,
+
+    pub fn request(self: *CancelSignal, client: *Client) void {
+        self.event.set(client.threaded.io());
+    }
+};
+
 pub const Options = struct {
     method: Method = .get,
     body: ?[]const u8 = null,
     headers: []const std.http.Header = &.{},
     timeout: std.Io.Duration = .fromSeconds(15),
     maximum_body_bytes: usize = 64 * 1024 * 1024,
+    /// Scheduler cancellation advances the existing deadline race. Transport
+    /// cleanup and connection-pool safety remain in the same request path.
+    cancel_signal: ?*CancelSignal = null,
 };
 
 pub const Response = struct {
@@ -129,7 +140,7 @@ pub const Client = struct {
         race.concurrent(.request, performInto, .{ self, url, options, &outcome }) catch {
             return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP request could not be started" } };
         };
-        race.concurrent(.deadline, wait, .{ self.threaded.io(), options.timeout }) catch {
+        race.concurrent(.deadline, wait, .{ self.threaded.io(), options.timeout, options.cancel_signal }) catch {
             return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP request deadline could not be started" } };
         };
 
@@ -146,8 +157,10 @@ pub const Client = struct {
     }
 };
 
-fn wait(io: std.Io, duration: std.Io.Duration) u8 {
-    std.Io.sleep(io, duration, .awake) catch {};
+fn wait(io: std.Io, duration: std.Io.Duration, signal: ?*CancelSignal) u8 {
+    if (signal) |cancel| {
+        cancel.event.waitTimeout(io, .{ .duration = .{ .raw = duration, .clock = .awake } }) catch {};
+    } else std.Io.sleep(io, duration, .awake) catch {};
     return 0;
 }
 

@@ -98,6 +98,10 @@ pub const StructValue = struct {
     /// Section 12: which of its enum's values this is. Zero for every other
     /// type.
     variant: u32 = 0,
+    /// Native bookkeeping only: no managed values may be released here.
+    /// Managed payloads belong in native_values so the collector sees their edges.
+    finalizer: ?struct { context: *anyopaque, run: *const fn (*anyopaque) void } = null,
+    native_values: []Value = &.{},
     marked: bool = false,
     internal: u32 = 0,
     previous: ?*StructValue = null,
@@ -507,6 +511,8 @@ pub fn createStruct(
 }
 
 fn destroyStruct(self: *Heap, instance: *StructValue) void {
+    if (instance.finalizer) |finalizer| finalizer.run(finalizer.context);
+    self.gpa.free(instance.native_values);
     self.gpa.free(instance.fields);
     self.gpa.destroy(instance);
 }
@@ -824,6 +830,7 @@ pub fn release(self: *Heap, value: Value) void {
         self.release_depth += 1;
         defer self.release_depth -= 1;
         for (instance.fields) |field| self.release(field);
+        for (instance.native_values) |payload| self.release(payload);
         self.unlinkStruct(instance);
         self.destroyStruct(instance);
         return;
@@ -1018,6 +1025,7 @@ fn countInternalReferences(self: *Heap) void {
     var structs = self.live_structs;
     while (structs) |instance| : (structs = instance.next) {
         for (instance.fields) |field| bumpInternal(field);
+        for (instance.native_values) |value| bumpInternal(value);
     }
 }
 
@@ -1084,8 +1092,9 @@ fn markReachable(self: *Heap) bool {
                 if (!self.reach(entry.key)) return false;
                 if (!self.reach(entry.value)) return false;
             },
-            .struct_value => |instance| for (instance.fields) |field| {
-                if (!self.reach(field)) return false;
+            .struct_value => |instance| {
+                for (instance.fields) |field| if (!self.reach(field)) return false;
+                for (instance.native_values) |value| if (!self.reach(value)) return false;
             },
             .environment => |environment| {
                 var bindings = environment.bindings.valueIterator();
@@ -1173,6 +1182,7 @@ fn sweep(self: *Heap) void {
     while (structs) |instance| : (structs = instance.next) {
         if (!instance.marked) {
             for (instance.fields) |field| dropReference(field);
+            for (instance.native_values) |value| dropReference(value);
         }
     }
 
@@ -1321,6 +1331,34 @@ test "releasing the last holder of a struct frees it and its fields" {
     const instance: Value = .{ .data = .{ .struct_value = try heap.createStruct(&descriptor, fields) } };
 
     heap.release(instance);
+    try testing.expect(heap.live_structs == null);
+    try testing.expect(heap.live == null);
+}
+
+test "native handle payloads are traced and cyclic handles finalize exactly once" {
+    var heap: Heap = .init(testing.allocator);
+    defer heap.deinit();
+    var finalized: usize = 0;
+    const Finalizer = struct {
+        fn run(context: *anyopaque) void {
+            const count: *usize = @ptrCast(@alignCast(context));
+            count.* += 1;
+        }
+    };
+    const descriptor: Value.StructType = .{ .name = "Handle", .display_name = "Handle", .fields = &.{} };
+    const instance = try heap.createStruct(&descriptor, try testing.allocator.alloc(Value, 0));
+    const handle: Value = .{ .data = .{ .struct_value = instance } };
+    instance.native_values = try testing.allocator.alloc(Value, 1);
+    const list = try heap.createList(.struct_value, 1);
+    instance.native_values[0] = .{ .data = .{ .list = list } };
+    try list.items.append(testing.allocator, retain(handle));
+    instance.finalizer = .{ .context = &finalized, .run = Finalizer.run };
+    heap.collect();
+    try testing.expectEqual(@as(usize, 0), finalized);
+    try testing.expect(heap.live != null);
+    heap.release(handle);
+    heap.collect();
+    try testing.expectEqual(@as(usize, 1), finalized);
     try testing.expect(heap.live_structs == null);
     try testing.expect(heap.live == null);
 }

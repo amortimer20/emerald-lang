@@ -2,7 +2,10 @@
 
 Status: accepted, 2026-09-29. The user answered "I'll trust your judgement" to the design
 discussion, which is taken as accepting all nine recommendations below; if that was not meant,
-the status goes back to proposed. Slice 1 is next. Rewrite-context 21 calls
+the status goes back to proposed. All six slices are implemented and locally validated.
+Review and green Windows PR CI remain required before the milestone is fully done.
+The user accepted the scheduling clarification in principle 5 on 2026-09-29.
+Rewrite-context 21 calls
 concurrency "the nearest major post-runtime design pass" and says that until it is done,
 "Emerald callbacks obey the single-threaded language model". 15.7 says the same of "threads,
 fibers, and any other concurrency primitive". The user's notes list *concurrency* and
@@ -27,6 +30,11 @@ Tasks.run { tasks =>
     print(news.result())
 }
 ```
+
+The requests may finish in either order. Printing from their results in the order wanted
+keeps the output fixed: weather first, then news. Printing from inside the tasks would show
+the order in which the network replies arrived, which can vary. A channel can also arrange
+the order in which results are printed.
 
 ```emerald
 # One task makes numbers and another uses them, through a channel.
@@ -65,10 +73,10 @@ Tasks.run { tasks =>
 
 That prints `cleaning up` after about a second and returns, rather than waiting a minute.
 
-These were checked with `emerald format`. Everything parses today except `Channel[Int]` in a
-type annotation, which needs the parser to learn two new generic type names (decision 5); the
-names `Tasks`, `Task`, and `Channel` are of course not defined yet. A block that takes nothing
-is written `{ => ... }`, and one that takes a value is `{ tasks => ... }`.
+Before implementation these were checked with `emerald format`; `Channel[Int]` and the
+task/channel names needed the additions in slices 2 and 4. They are now implemented.
+A block that takes nothing is written `{ => ... }`, and one that takes a value is
+`{ tasks => ... }`.
 
 Waiting a limited time for a task, and giving up on it, reads:
 
@@ -99,8 +107,16 @@ Tasks.run { tasks =>
 4. **Structured.** A task can only be started inside a `Tasks.run` block, which does not return
    until every task it started has finished. No task is left running, and no task's error goes
    unseen.
-5. **Deterministic by default.** Given the same input and no clock-dependent waits, a program
-   prints the same output every time. A student, a test, and a bug report can all rely on it.
+5. **Defined scheduling order.** When tasks wait only on each other (`result`, `wait`), on
+   channels, or on `Tasks.yield()`, the same program with the same input produces the same
+   output every time. Ready tasks resume in the order they became ready.
+   A task whose sleep ends earlier resumes earlier; sleeps that end at the same moment
+   resume in the order the tasks started waiting. Deadlines come from the real clock, so
+   only sleeps of clearly different lengths have a reliable order. A timed `wait` that
+   expires also involves a real-clock deadline.
+   File, network, and input completions resume their tasks in the order they arrive, which
+   can vary from run to run. To print in a fixed order, print from the tasks' results in the
+   order wanted, or send through a channel, rather than printing inside I/O tasks.
 6. **Room for multicore.** Nothing in the semantics may require tasks to share memory. Running
    tasks on several cores later must not change what a correct program means.
 7. **Library over keywords.** No new statement syntax. `Tasks`, `Task[T]`, and `Channel[T]` are
@@ -127,8 +143,13 @@ Tasks.run { tasks =>
   outside the heap holds (`Heap.collect`). It does not enumerate roots, so a suspended task's
   temporaries are not at risk. Slice 2 must still prove this with a stress test.
 - **Closures capture variables by reference** (7.4), so a task block that captured a `var`
-  would share it with its parent. That is what the capture rule in decision 4 prevents. The
-  checker already computes what a block captures (`Checker.capturesOf`).
+  would share it with its parent. That is what the capture rule in decision 4 prevents.
+  Correction found during slice 2: `Checker.capturesOf` does **not** compute a lambda's local
+  captures. It walks transitive module reads for a named declaration. `Resolver.lambda_reads`
+  contains only module-level variables, while `Resolver.local_captures` records local captures
+  for nested named functions, not lambdas. The checker's existing scope stack and binding
+  mutability allow the direct-capture rule to be enforced at name resolution, without new
+  resolver facts; see slice 2's settled note.
 - **Blocking natives block everything today.** `Program.sleep` ("nothing else in the program
   runs meanwhile"), `input`, the filesystem, and `Http` are all synchronous. `Http` runs its
   request on its own threaded `std.Io` and waits for it (`Http.Client.request`).
@@ -275,8 +296,8 @@ That holds if these stay true from the first slice:
   `callFilesystem`, the file closes, `clockNanoseconds`, and `callSleep` in `src/Interpreter.zig`
   each reach for `Io.Threaded.global_single_threaded`. A fiber-aware `Io` can suspend one task
   where a blocking call would stall every task on the same thread, so slice 1 replaces those
-  with one `Interpreter.io` field. `Http` already owns a threaded `Io`; it is offloaded to a
-  helper thread instead.
+  with one `Interpreter.io` field. `Http` already owns a threaded `Io`; as settled in
+  slice 3, the calling task releases its baton while waiting for the request.
 - The per-task state swap (slice 1) never depends on which kind of task is being switched.
 - The conformance suite stays backend-neutral (section 19.6): no case depends on thread
   identity, real timing beyond the ordering of different sleeps, or the exact recursion depth at
@@ -287,7 +308,8 @@ That holds if these stay true from the first slice:
 
 A blocking native releases the baton for the length of the wait and takes it back afterward.
 The clock (`Program.sleep`, timeouts) and input have to wake tasks: the scheduler owns a timer
-list, and the wait for input runs on the reading task's thread.
+list. As settled in slice 5, standard input uses a scheduler-owned reader thread, while its
+callers wait cooperatively; custom borrowed readers keep their existing host-read path.
 
 ## Slices
 
@@ -302,7 +324,17 @@ commits.
   one `Interpreter.io` field, as "Keeping the seam" says. It is a mechanical change that keeps
   behavior and makes a later backend a swap.
 - Measure with `tools/startup-benchmark.py`: no measurable cost.
-- Settled while building: (record here)
+- Settled while building: `TaskState(State)` owns the listed execution fields as one typed
+  value; interpreter caches and resource registries remain on `Interpreter`. In particular,
+  `file_handles` and `file_writers` are live resource registries rather than caches: they stay
+  interpreter-owned so a class handle retains its identity when passed between tasks. The
+  single-task `Baton` records its owner and whether it is held; `save` and `load` enforce the
+  one-task hand-off invariant in `Scheduler.zig`. `Streams.io` defaults to the existing
+  single-threaded backend and is passed into `Interpreter.run`, preserving callers while
+  removing every hard-coded global-Io lookup from `Interpreter.zig`. `clockNanoseconds` takes
+  the interpreter's `Io` explicitly. No source/API mismatch blocked this slice. An alternating
+  30-run ReleaseSafe startup comparison on Linux found no measurable cost: `print(1)` was
+  3.88 ms on main and 3.97 ms here; all five samples were between 98.5% and 102.2% of main.
 
 ### Slice 2: Tasks that return values
 
@@ -320,7 +352,27 @@ commits.
   worth building later.
 - Conformance: results from several tasks in order, an error from one task, an error from two
   (the first wins), a task that returns nothing, and each diagnostic.
-- Settled while building: (record here)
+- Settled while building: `Checker.capturesOf` records transitive module reads for named
+  declarations, not lambda-local captures, contrary to the verified-constraints claim. The
+  checker's existing `block_scopes`, lexical scope stack, and binding mutability suffice:
+  while checking an inline task block, a name resolved to an outer `var` is rejected at that
+  name, including in nested lambdas and assignments. No new resolver facts are needed. The
+  user approved requiring `tasks.start` to receive an inline `{ => ... }` block in this
+  milestone; a stored lambda, named function, or any other function value is rejected at its
+  argument with a wrapping example. That restriction makes direct captures checkable without
+  introducing an effect type for function values. Two indirect-call gaps remain for the
+  multicore plan: a task block may call a named function that reads a module `var`, or call a
+  captured function value whose own closure holds a `var`. Neither creates a race while one
+  task runs Emerald code at a time; both must be closed before multicore execution.
+  The scheduler uses OS threads behind one baton and a global cap of 64 live children. On
+  Linux ReleaseSafe, 1,000 sequential tasks took 0.21 s and 11 MiB peak RSS; 10,000 took
+  2.62 s and 52 MiB; 64 live tasks took 0.02 s and 24 MiB; 100,000 scheduler-only baton
+  handoffs took 1.63 s and 1 MiB. A 64-bit host reserves up to 128 MiB of virtual stack per
+  live task. The original claim that Windows committed pages only as used was wrong:
+  Zig 0.16 passes this as commit size there; slice 6's review notes correct it.
+  Windows runtime measurements remain for CI.
+  Slice 2 drains all children and propagates the first unobserved task error; automatic
+  sibling cancellation is implemented with cancellation in slice 5.
 
 ### Slice 3: Waiting for time and the outside world
 
@@ -329,7 +381,43 @@ commits.
 - Deadlock detection for the waits that exist so far, and `DeadlockError` with its message.
 - Conformance with deterministic output: tasks that sleep different lengths finish in order of
   their sleeps (using short sleeps), and tasks that only yield interleave in strict rotation.
-- Settled while building: (record here)
+- Settled while building: timers, `Tasks.yield`, `Task.wait(timeout)`,
+  `DeadlockError` with wait locations, and native I/O baton release are implemented and the
+  full local gate passes. The scheduler starts its sorted timer list's worker lazily. Native
+  operations return to the baton before touching the Emerald heap; input and each file
+  handle have FIFO resource gates, so reads and close cannot race. Closed handle records
+  stay until interpreter teardown so a queued operation never refers to freed native state.
+  Task executions wrap their backing allocator because native I/O can allocate while another
+  task evaluates; programs that do not reach `Tasks.run` keep their existing allocator.
+  HTTP's host request runs on the already-existing calling task thread while its baton is
+  released; it needs no additional helper thread. Deadlock detection runs at every handoff,
+  including when the last runnable task finishes, not just when a task begins waiting.
+  It snapshots wait locations before waking participants so group unwinding cannot replace
+  the original diagnostic locations. Focused cases cover caught and late-visible deadlocks.
+
+  **Scheduling clarification accepted by the user, 2026-09-29.** With the baton
+  released, two `File.read` operations can finish in either order. A standalone probe with
+  two tasks reading the same unchanged 1,000,000-byte file, then printing `a` or `b`, produced
+  `a, b` 94 times and `b, a` 6 times in 100 runs. It uses no timer, and its input is identical.
+  `tools/task-io-order-probe.em` preserves the reproduction. This is not a conformance case
+  whose output was retried until passing: it explicitly tested the plan's original promise.
+  A FIFO ready queue preserves the order of readiness, but cannot determine when host I/O
+  completes. Publishing all external completions in submission order would make output
+  reproducible, but can hold a completed network/file task behind another task still waiting
+  for interactive input. The accepted rule is reproducible scheduling when tasks wait only
+  on each other, channels, or yield; ready tasks resume in readiness order. Sleep deadlines
+  resume in deadline order, with equal deadlines ordered by when waiting began; only clearly
+  different sleep lengths have a reliable real-clock order. File, network, and input
+  completions publish readiness in arrival order, which may vary. The first example teaches
+  printing from results in the wanted order (or sending through a channel). Conformance
+  prints file-task results in explicit order and never depends on I/O completion order;
+  every task-using case still requires 50 matching runs before commit.
+
+  Validation: Zig 0.16.0, sequential `-j1` Debug and ReleaseSafe tests, native build,
+  documentation examples, changed-Zig formatting, whitespace, and Windows x86_64/macOS
+  aarch64 cross-builds passed. Eleven new or changed task-running conformance cases each
+  passed 50 consecutive runs (550 total), including HTTP against a loopback-only server.
+  Every expected file was read by hand. Windows execution remains for green PR CI.
 
 ### Slice 4: Channels
 
@@ -339,7 +427,45 @@ commits.
   ordinary type error.
 - Conformance: producer and consumer at several capacities, a closed channel, a send to a closed
   channel, a receive at the end, and a deadlock message.
-- Settled while building: (record here)
+- Settled while building: `Channel[T]` is invariant and takes its message type from the
+  expected type, including annotations, parameters, returns, and collection literals. A call
+  without that context reports the annotation example. The runtime reuses the opaque class
+  handle pattern behind `Task`, with a new static type kind, rather than a new runtime value
+  tag. Both `Channel()` and `Emerald.Channel()` route to native construction, but a locally
+  shadowing callable stays an ordinary call. Native arguments are bound by name.
+
+  Senders and receivers wait FIFO. Zero capacity is a rendezvous; positive buffers grow on
+  demand, reuse consumed slots, and never retain an entire stream's previous messages. Values
+  in native buffers and waiters are explicitly retained, preserving collection/struct
+  copy-on-write semantics and the collector's external roots; class instances remain shared.
+  Function messages keep existing closure semantics, including the indirect captured-`var`
+  gap already recorded for multicore. A cyclic captured-closure stream tests their lifetime.
+  All thread details remain in `Scheduler.zig`; the interpreter owns message values.
+
+  `close()` is idempotent, preserves buffered messages for draining, wakes pending receivers
+  with end-of-stream, and wakes undelivered senders with RuntimeError. A send committed before
+  closure remains successful. Negative capacity raises RuntimeError with `a channel capacity
+  cannot be negative`; sending after closure uses `cannot send to a closed channel`.
+  No new error subclass is needed. Originally `receive()` obeyed optional flattening: with optional
+  messages, a message of `nothing` and end-of-stream both return `nothing`. Built-in iteration
+  tracks end-of-stream separately, so `for` still visits actual `nothing` messages and is the
+  unambiguous companion. The user's slice 6 review supersedes this: optional item types
+  are now rejected; wrap optional contents in a struct. Destructuring, break, and continue
+  use ordinary loop behavior.
+
+  Deadlocks name each channel by its creation-order number, the send/receive direction, and
+  the original wait location. A root outside an active group is called `the program`, not
+  `the group`. Review found that a caught deadlock could continue before another participant
+  removed its waiter: those already-readied waiters must not accept new messages. Scheduler
+  readiness checks discard them before a new send/receive; a focused recovery case protects
+  this. No accepted decision or source constraint required a design change.
+
+  The full local gate and seven scheduler unit tests pass. Sixteen new or changed running
+  cases each passed 50 consecutive runs (800 total), including prelude reach, closed-channel
+  errors, and deadlocks. Expected files were read by hand. Validation used pinned Zig 0.16.0,
+  sequential `-j1` Debug and ReleaseSafe tests, native build, documentation examples,
+  changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds with
+  prefixes outside `zig-out`. Windows execution remains for green PR CI.
 
 ### Slice 5: Cancellation
 
@@ -348,7 +474,96 @@ commits.
 - Conformance: cancel a sleeping task, a task waiting on a channel, and a task in a `finally`;
   a `catch error: RuntimeError` that must not stop a cancellation; a program that exits with
   tasks cancelled.
-- Settled while building: (record here)
+- Settled while building: source inspection first paused implementation for a native-I/O
+  decision (2026-09-30). `Interpreter.blocking` runs host work on the
+  calling task's raw scheduler thread. The default `Streams.io` is
+  `std.Io.Threaded.global_single_threaded`; Zig 0.16 explicitly documents that backend
+  as not supporting cancellation. More importantly, `Streams.in` is an arbitrary
+  `*std.Io.Reader`, whose interface has no cancellation hook and whose backing I/O is
+  supplied by the caller. Replacing `Interpreter.io` alone cannot make that reader
+  cancellable. `Http.Client.request` has a private request/deadline race, but exposes
+  no scheduler cancellation handle.
+
+  A bounded local probe started an `input` task, yielded to it, then raised
+  `RuntimeError("stop the group")` in the group body. With its stdin pipe open and no
+  data, the existing binary was still running after two seconds; closing stdin let
+  it exit, reporting the child's InputError instead of the group's original error.
+  This demonstrates the current gap, not a test of an implemented `cancel()`.
+  Waking an externally blocked task without stopping and joining its host operation
+  would allow that operation to keep accessing the reader, allocator, and resources
+  during cleanup. Killing the task thread or detaching its borrowed host operation
+  is not an acceptable workaround.
+
+  **Narrower scope approved by the user, 2026-09-30.** Do not add a general host-I/O
+  cancellation contract or a cancellation hook for custom readers. Standard input
+  uses one scheduler-owned reader thread in `Scheduler.zig`. Tasks wait for a line
+  like a channel receive; cancelling that wait raises CancelledError immediately
+  and runs cleanup. The in-flight host read continues, and its line is retained
+  for the next input call, never discarded. Program exit must not join a blocked
+  stdin reader. Fixed in-memory readers used by tests and `.input` cases follow
+  the same delivery semantics and finish at EOF without allocator leaks.
+  HTTP cancellation uses the existing request/deadline race, not a new mechanism.
+  File operations are not interrupted: cancellation is delivered when the operation
+  returns. Local files normally return promptly, but a named pipe or device may
+  delay cancellation. Add coverage for a failing group with another task waiting
+  on unavailable input: the first error wins promptly, and a later line reaches
+  the next input call. These rules replace the broader extension proposed above.
+
+  Implementation choices: the CLI marks its standard-input source explicitly; the
+  scheduler's single stdin service owns a file reader, buffer, and process-lifetime
+  allocations, so a detached, blocked reader never refers to an interpreter's stack
+  or allocator. Fixed-reader services own a copy, advance the caller's fixed reader
+  only on delivery, and join/free at teardown. Other borrowed custom readers keep
+  their existing host-read path; no generic cancellation hook was introduced.
+  Runtime/job pointers are registered only for the length of a wait and removed
+  under the reader mutex before the task returns. A pending line is reserved for
+  the oldest waiting caller; abandoning that reservation passes it to the next
+  caller without consuming the line. The existing two-task input case exposed
+  a later caller stealing an already-promised line; reservation fixes that bug.
+
+  CancelledError extends Error directly. Requests are consumed at suspension
+  boundaries, not during ordinary computation. Cleanup and group draining mask
+  cancellation so waits in `finally` still finish. Deliberately cancelled children
+  do not fail an otherwise successful group; their result calls still raise their
+  CancelledError. A real task failure triggers sibling/owner cancellation once.
+  The group remains in cancellation while draining: children started by another
+  child before it reaches its checkpoint inherit that request. A regression
+  catches the first error in the owner and still verifies prompt late-child cleanup.
+  Normal implicit group joins remain cancellation points, including nested groups.
+  They become protected draining only after an error/cancellation; cancelling a
+  parent then cancels and joins its nested children before its own cleanup runs.
+  The group remembers that first failure. Directly asking for that failing task's
+  result in the owner observes its actual error, preserving existing typed catches
+  and avoiding a second raise during draining. Other owner suspension points raise
+  CancelledError, so a RuntimeError catch cannot swallow automatic cancellation.
+  Repeated cancellation must not remove a protected cleanup's channel waiter;
+  readiness checks keep those waiters matchable. A regression case cancels again
+  while `finally` is sending its second message, then receives that message and
+  lets cleanup finish. Group draining consumes pending cancellation before
+  restoring an original error, so a late cleanup request cannot replace it.
+  Two existing deadlock expectations now name the group's original failure site,
+  rather than replacing it with a child's later failure during draining.
+
+  HTTP's deadline worker can be signalled early; the same Select race stops and
+  joins the request, retaining the transport's connection cleanup. Cancellation
+  frees a response that finished concurrently before raising CancelledError.
+  The same signal applies to a group's owner waiting on HTTP when its child fails,
+  not only to explicitly cancelled child requests; the HTTP case checks both.
+  No host HTTP cancellation machinery was duplicated. File/resource waits are
+  allowed to return before cancellation is delivered. Live held-open-pipe checks
+  are in `tools/task-input-cancellation.py` and the CI matrix; they exercise prompt
+  group exit and preservation of a line supplied only after cancellation.
+  Managed file helpers check cancellation after opening and before invoking their
+  user block, closing the new handle on that path. A tmpDir-backed Zig test checks
+  both helpers, absence of user-block output, and subsequent reuse of the file.
+  Validation: pinned Zig 0.16.0, sequential `-j1` Debug and ReleaseSafe tests,
+  native build, documentation examples (23 executed, 113 linked conformance files),
+  changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+  outside `zig-out` passed. Fifteen new, changed, or directly affected task cases
+  each passed 50 consecutive runs (750 checks), including HTTP against a loopback-only
+  server. The live stdin driver passed 50 prompt-exit and 50 retained-line checks;
+  a local-file cancellation probe passed 50 runs. All expected files were read by
+  hand. Nine scheduler unit tests pass. Windows execution remains for green PR CI.
 
 ### Slice 6: Documentation and integration
 
@@ -363,7 +578,117 @@ commits.
 - An alternating ReleaseSafe startup comparison against `main`: no measurable cost for a
   program that uses none of this.
 - The handoff and journal.
-- Settled while building: (record here)
+- Settled while building: `docs/library/tasks.md` covers every public task/channel
+  operation, callback/capture rules, ordering, errors, cleanup, and the accepted I/O
+  cancellation distinctions. `examples/tasks.em` demonstrates ordered results, a buffered
+  producer/consumer, and cancellation using a 20 ms sleep, with no network. Its output was
+  verified with the binary and repeated 50 times. The existing prelude-reach case now also
+  reaches done/cancel/yield without changing its expected output; it passed 50 runs.
+  Rewrite-context 15.13 is the normative home for the completed design; sections 15.7 and
+  21 no longer defer structured tasks, and section 22 records all nine accepted choices.
+  `Program.sleep` documentation now correctly describes pausing only its calling task.
+
+  The formatter already handled task/channel flags and nested elements; a focused test
+  protects their canonical output. LSP traversal already handled element types and task
+  bodies, but the outer generic names have empty AST `name` fields. Definition and
+  reference handling now maps the Task/Channel flags to their prelude declarations, using
+  Resolver's namespace keys. Tests cover outer names, element annotations, values' hover
+  types, and navigation inside task blocks. Built-in member completion/signature help
+  remains part of the queued editor-intelligence work, not a second table added here.
+
+  Two valid fuzz templates exercise yielded task results and channel rendezvous/buffers,
+  without clocks or external I/O. The generator's selection range also makes its existing
+  inline-if fallback reachable (it had been excluded by the old upper bound). The fixed
+  ReleaseSafe campaign passed seed 12648430, 1,000 cases, 136 executions.
+  Windows ReleaseSafe CI now runs the existing creation/live-cap/handoff probes and logs
+  timings plus sampled peak physical memory with a bounded PowerShell driver. That script
+  cannot be executed on this Linux host; its Windows results remain a review/CI gate.
+  No accepted API decision needed changing.
+
+  Final validation: pinned Zig 0.16.0, sequential `-j1` Debug and ReleaseSafe tests,
+  native build, documentation examples (24 executed, 124 linked conformance files),
+  changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+  outside `zig-out` passed. The standalone scheduler benchmark also cross-compiled
+  for Windows. Both its root and scheduler modules now explicitly use ReleaseSafe.
+  A final 60-run alternating ReleaseSafe comparison against main `ef14a72` measured
+  `print(1)` at 3.67 vs. 3.76 ms; all five medians were 100.2%–102.3% of main.
+  These small observed differences do not establish zero overhead, but show no
+  material startup regression for programs using no concurrency. The journal has
+  both comparisons and the host details. The branch is ready for Claude's review;
+  Windows runtime and measurement results remain pending CI.
+
+### Slice 6 review corrections (required by the user, 2026-09-30)
+
+- **Windows command arguments:** quote both `-M` arguments and `-femit-bin` so
+  PowerShell passes each as one native argument. The previous CI command failed
+  before measuring anything.
+- **Windows stack commit:** source inspection confirms Zig 0.16's Windows spawn
+  passes `stack_size` as committed size to `NtCreateThreadEx`, not reservation.
+  `Scheduler.zig` now starts task threads with `CreateThread` and
+  `STACK_SIZE_PARAM_IS_A_RESERVATION`, retaining the same 128 MiB recursion budget
+  on 64-bit hosts. No smaller stack limit is substituted. The Windows driver logs
+  `PeakPagedMemorySize64` (commit) as well as `PeakWorkingSet64`, requires the
+  `started: 64` marker emitted before any child runs, and compares one versus 64 live
+  children, requiring less than 64 MiB additional commit rather than about 8 GiB.
+  The first corrected CI run reached the measurements: 1,000/10,000 sequential
+  tasks committed 1032.74/1032.81 MiB; all 64 live tasks started and committed
+  1035.38 MiB. Its absolute 1 GiB check failed because the existing main interpreter
+  thread in `emerald.zig` commits a 1 GiB stack, not the 128 MiB assumed by that
+  check's comment. The corrected baseline uses the same live-task program with
+  one child to isolate task-thread costs, without changing the interpreter's
+  pre-existing stack policy or increasing a timing margin. The next CI run exposed
+  a sampling race: the one-task baseline exited before PowerShell read its memory.
+  The live-task probe now prints its ready marker and waits for a `measured` input
+  acknowledgement. The driver samples after receiving that marker, then releases
+  the process. Both one- and 64-task probes passed 50 Linux handshake runs; no
+  sleep or retry masks the race. Windows Debug and ReleaseSafe PR CI on `80b493e`
+  passed, including the handshake and all measurement assertions. One/64 children
+  measured 1048.74/1051.44 MiB peak commit: only 2.70 MiB added for 63 threads,
+  with all 64 confirmed started. Those absolute figures include the existing
+  main interpreter stack and the probe's input reader, not 128 MiB per task.
+- **Completed lifetimes:** joining unlinks a job from `Runtime.all`. A group's
+  final drain joins even if a cancellation checkpoint interrupted the ordinary
+  result wait after completion but before joining. After the group ends, completed
+  results/errors are managed edges of the Task handle; its native finalizer removes
+  the task record. Group records and task execution buffers are freed then.
+  Active groups root their handles; escaped handles remain usable; cycles through
+  completed results are collectible. Native finalizers never release managed values
+  during sweeping. A heap-cycle test, a scheduler unlink test, and `task-lifetime`
+  cover those invariants. `tools/task-scaling.py` compares 2,000 and 20,000 one-task
+  groups on Linux; Windows CI runs the same comparison for time, physical memory,
+  and commit. Both reject greater than 15x time or 2x peak memory for 10x tasks.
+  Source inspection and measurements also found that the task allocator was never
+  activated: it looked for a method key although reachability stores top-level type
+  keys. Activation now looks for `Emerald.Tasks` via Resolver, with a reachability
+  test. The existing allocator mutex also protects nine shared small-allocation
+  pools (16–4,096 bytes, alignment up to 16), so new OS threads can reuse buffers
+  freed by other tasks instead of growing ReleaseSafe's thread-local freelists.
+  Larger or over-aligned allocations still use the caller's allocator. Pool
+  backing storage is freed at outcome teardown; tests cover cross-thread reuse,
+  alignment, and refusal to resize across pooled/unpooled storage classes.
+- **Optional channel items:** reject an optional element at its type annotation
+  with `a channel's items can't be optional` and `Wrap the value in a struct.`
+  This is the user's accepted change, not optional flattening with a workaround.
+  The closed-channel case now sends structs containing optional fields; its output
+  stays unchanged. A dedicated diagnostics case protects the error and help.
+
+Linux ReleaseSafe scaling passed (three alternating samples per count): 2,000 tasks
+0.36 s / 7.19 MiB peak RSS; 20,000 tasks 3.57 s / 7.19 MiB. Time is 9.92x and
+peak memory 1.00x. Before allocator activation/pooling, time was already linear
+but ReleaseSafe RSS rose from about 8 MiB to 18 MiB (about 62 MiB at 100,000).
+Debug with reclaimed records was flat at 19,868 vs. 19,884 KiB, confirming the
+remaining growth was allocator retention rather than live task state.
+The corrected local gate passed: Debug and ReleaseSafe tests with pinned Zig 0.16.0
+and `-j1`, native build, documentation examples (24 executed, 126 linked conformance
+cases), changed-Zig formatting, whitespace, Windows x86_64/macOS aarch64 cross-builds
+outside `zig-out`, and the standalone Windows ReleaseSafe scheduler probe cross-build.
+All 33 task/channel run cases passed 50 runs each. The live-input driver passed 50
+prompt-exit and 50 retained-line checks. ReleaseSafe fuzz seed 12648430 passed 1,000
+cases, 136 executed. Windows runtime CI and commit measurements passed on
+[`80b493e`'s PR run](https://github.com/amortimer20/emerald-lang/actions/runs/36771640683).
+Windows's 2,000/20,000 sequential tasks measured 0.336/3.225 s, 9.25/9.30 MiB
+working set, and 1032.75/1032.82 MiB commit: 9.59x time, 1.01x physical memory,
+1.00x commit. The journal records all measurements and the two driver corrections.
 
 ## Validation
 

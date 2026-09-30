@@ -33,6 +33,10 @@ pub const Kind = enum {
     dictionary,
     /// Section 8.2's `Set[String]`. `element` holds the member type.
     set,
+    /// Structured task handle `Task[T]`. `element` holds the result type.
+    task,
+    /// Shared channel identity; `element` is the message type.
+    channel,
     /// Section 7.1's `func(Int): String`. `signature` holds its shape.
     function,
     /// Section 10.1's user-defined value type. `user` carries stable identity
@@ -206,7 +210,7 @@ pub fn selfOf(trait: *const User) Type {
 pub fn mentionsSelf(self: Type) bool {
     return switch (self.kind) {
         .struct_value => self.opaque_self,
-        .list, .set => self.element.?.mentionsSelf(),
+        .list, .set, .task, .channel => self.element.?.mentionsSelf(),
         .dictionary => self.key.?.mentionsSelf() or self.element.?.mentionsSelf(),
         .tuple => for (self.elements) |element| {
             if (element.mentionsSelf()) break true;
@@ -246,6 +250,19 @@ pub fn setOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.Erro
     const stored = try allocator.create(Type);
     stored.* = element;
     return .{ .kind = .set, .element = stored };
+}
+
+/// `Task[result]`, with the result type allocated from `allocator`.
+pub fn taskOf(allocator: std.mem.Allocator, result: Type) std.mem.Allocator.Error!Type {
+    const stored = try allocator.create(Type);
+    stored.* = result;
+    return .{ .kind = .task, .element = stored };
+}
+
+pub fn channelOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.Error!Type {
+    const stored = try allocator.create(Type);
+    stored.* = element;
+    return .{ .kind = .channel, .element = stored };
 }
 
 /// Section 8.3: a dictionary key needs stable equality and hashing. Built-in
@@ -299,7 +316,7 @@ fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize, equatable
             }
             break :blk true;
         },
-        .nothing, .range, .list, .dictionary, .set, .function => false,
+        .nothing, .range, .list, .dictionary, .set, .task, .channel, .function => false,
     };
 }
 
@@ -352,6 +369,8 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         .list => try writer.print("List[{f}]", .{self.element.?.*}),
         .dictionary => try writer.print("Dict[{f}, {f}]", .{ self.key.?.*, self.element.?.* }),
         .set => try writer.print("Set[{f}]", .{self.element.?.*}),
+        .task => try writer.print("Task[{f}]", .{self.element.?.*}),
+        .channel => try writer.print("Channel[{f}]", .{self.element.?.*}),
         .tuple => {
             try writer.writeAll("(");
             for (self.elements, 0..) |element, position| {
@@ -396,7 +415,7 @@ pub fn isNumber(self: Type) bool {
     if (self.optional) return false;
     return switch (self.kind) {
         .int, .float => true,
-        .nothing, .bool, .string, .bytes, .range, .list, .tuple, .dictionary, .set, .function, .struct_value, .invalid => false,
+        .nothing, .bool, .string, .bytes, .range, .list, .tuple, .dictionary, .set, .task, .channel, .function, .struct_value, .invalid => false,
     };
 }
 
@@ -404,7 +423,7 @@ pub fn isNumber(self: Type) bool {
 pub fn isInvalid(self: Type) bool {
     return switch (self.kind) {
         .invalid => true,
-        .list, .set => self.element.?.isInvalid(),
+        .list, .set, .task, .channel => self.element.?.isInvalid(),
         .dictionary => self.key.?.isInvalid() or self.element.?.isInvalid(),
         .tuple => blk: {
             for (self.elements) |element| {
@@ -430,7 +449,7 @@ pub fn same(self: Type, other: Type) bool {
     if (self.optional != other.optional) return false;
     if (self.kind != other.kind) return false;
     if (self.kind == .struct_value) return self.user.? == other.user.? and self.opaque_self == other.opaque_self;
-    if (self.kind == .list or self.kind == .set) return self.element.?.same(other.element.?.*);
+    if (self.kind == .list or self.kind == .set or self.kind == .task or self.kind == .channel) return self.element.?.same(other.element.?.*);
     if (self.kind == .dictionary) {
         return self.key.?.same(other.key.?.*) and self.element.?.same(other.element.?.*);
     }

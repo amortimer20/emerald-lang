@@ -30,11 +30,47 @@ class FileError extends RuntimeError {
     }
 }
 
+class DeadlockError extends RuntimeError {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
+class CancelledError extends Error {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
 # Text encodings are distinct from filesystem failures: raw Bytes can be
 # invalid UTF-8 even when they never came from a file.
 class EncodingError extends RuntimeError {
     constructor(message: String) {
         super(message)
+    }
+}
+
+# Structured tasks. The generic Task result and TaskGroup operations are
+# checked at their call sites; their live state belongs to the interpreter.
+class Task {
+    var _id: Int = Program.arguments.count
+}
+
+class TaskGroup {
+    var _id: Int = Program.arguments.count
+}
+
+class Tasks {
+    func Tasks.run(body: func(TaskGroup)) {}
+    func Tasks.yield() {}
+}
+
+# The checker supplies Channel[T]'s message type; natives own its live state.
+class Channel {
+    const _id: Int
+
+    constructor(capacity: Int = 0) {
+        self._id = 0
     }
 }
 

@@ -3318,3 +3318,366 @@ ahead of its own and read the reply to them. `perform` now marks a connection as
 unless its response was read completely. The fixed binary had no failures in 1,200 runs, and
 `/slow` never reached the server. The unit test checks that a request after a timeout gets its
 own reply; the failing window is too narrow to hit on purpose there.
+
+## Concurrency, slice 1: a task's own state, 2026-09-29
+
+The interpreter's execution-local fields now live together in `Scheduler.TaskState`; its
+single-task baton checks that state is saved and loaded by its owner. `Streams.io` carries one
+execution I/O backend into `Interpreter.io`, and filesystem operations, file closure, clocks,
+and sleep use it rather than reaching for the global backend. Existing callers keep the
+single-threaded default. `file_handles` and `file_writers` stay on the interpreter because they
+are live resource registries whose class handles retain identity across tasks, not caches.
+
+On Linux, an alternating 30-run ReleaseSafe comparison against `main` showed no measurable
+startup cost: `print(1)` was 3.88 ms vs. 3.97 ms, and the language-only, dates, regex, and JSON
+samples were 99.0%, 100.2%, 98.5%, and 99.8% of main. Full validation passed with Zig
+0.16.0 `-j1` (Debug and ReleaseSafe tests, build, doc examples, formatting, whitespace, and
+Windows/macOS cross-builds).
+
+## Concurrency, slice 2: tasks with results, 2026-09-29
+
+`Task[T]`, `Tasks.run`, `TaskGroup.start`, `result()`, and `done?()` now run through a FIFO
+single-owner baton, with one OS thread per live child. A group drains all children before it
+returns and propagates its first unobserved task error. Tests cover ordered results, errors,
+nested tasks, a 950-call child recursion, a 64-child limit, and cyclic allocations across
+suspended tasks. Task-using conformance cases were repeated 50 times each before commit.
+
+The plan's claim that `Checker.capturesOf` tracked lambda-local captures was false: it tracks
+transitive module reads of named declarations. The checker already knows a binding's
+mutability and which scopes surround the current block, so it enforces direct no-`var`
+capture there, including nested lambdas. The user approved requiring an inline block for
+`tasks.start`; stored function values would hide their captures without an effect type.
+Named calls that read a module `var`, and calls through a function value that captured a
+`var`, remain known gaps for the multicore plan. They cause no data race with one baton.
+
+ReleaseSafe measurements on Linux: 1,000 sequential tasks took 0.21 s / 11 MiB peak RSS;
+10,000 took 2.62 s / 52 MiB; 64 live tasks took 0.02 s / 24 MiB; 100,000 scheduler-only
+baton handoffs took 1.63 s / 1 MiB. Each live task reserves a 128 MiB virtual stack on a
+64-bit host, committed only as used; the 64-task cap keeps that bounded. Windows timing
+and memory still need a CI runner. Automatic sibling cancellation arrives with slice 5's
+cancellation machinery; this slice drains children before propagating their errors.
+
+## Concurrency, slice 3: time and outside work, 2026-09-29
+
+`Tasks.yield()`, scheduler-managed sleeps, `Task.wait(timeout)`, and `DeadlockError` are
+implemented. A lazy timer worker keeps deadlines ordered and breaks ties by when waiting
+began. Input, filesystem operations, streamed handle operations, and HTTP release the baton
+only for their host work, then reacquire it before inspecting results or changing the Emerald
+heap. HTTP uses the calling task's existing thread, not an additional helper. Input and file
+handles have FIFO gates; closed native records survive until teardown so queued operations
+cannot refer to freed state. Task executions synchronize their backing allocator because
+host I/O can allocate while another task evaluates; non-task executions keep their allocator.
+
+A two-task probe reading the same unchanged 1,000,000-byte file, then printing inside each
+task, produced `a, b` 94 times and `b, a` 6 times in 100 runs. That disproved the original
+promise of reproducible output without clocks. The user approved the precise replacement:
+task/channel/yield scheduling is reproducible, with ready tasks resumed in readiness order;
+earlier sleep deadlines resume earlier, ties use waiting order, and only clearly different
+lengths give a reliable real-clock order. File/network/input completions arrive in variable
+order. The first example now teaches printing results in the wanted order (or using a channel).
+The probe is retained separately from conformance; conformance never assumes I/O arrival order.
+
+Review also found that a deadlock can become visible when the last runnable task finishes,
+not only when another task begins waiting. Detection now runs at every handoff and snapshots
+the original wait graph and locations before waking participants for error propagation.
+Focused cases cover caught deadlocks and this late-visible case.
+
+Full local validation passed with pinned Zig 0.16.0 and sequential `-j1`: Debug and ReleaseSafe
+tests, native build, documentation examples (23 executed, 112 linked conformance files),
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
+Eleven new or changed task-running cases each passed 50 consecutive runs (550 total), with
+HTTP using a loopback-only server; expected files were read by hand. Windows runtime behavior
+and measurements still require green PR CI. Channels are the next slice.
+
+## Concurrency, slice 4: channels, 2026-09-30
+
+`Channel[T]` now has FIFO rendezvous and buffered sends, `receive`, idempotent `close`,
+and built-in iteration. Its invariant message type is supplied by expected-type context:
+annotations, parameters, returns, and collection literals. Native creation handles both
+qualified and bare calls while respecting local shadowing; arguments bind by name. The
+runtime uses the existing opaque class-handle pattern, with static `Type.Kind.channel`.
+Thread operations remain entirely in the scheduler; native queues explicitly retain message
+values so their copy-on-write semantics and collector roots are unchanged. Buffers grow on
+demand and reuse consumed slots rather than retaining previous messages indefinitely.
+
+Closing preserves buffered messages for draining, ends pending receives, and fails uncommitted
+sends with RuntimeError. Negative capacity is also RuntimeError; no new error subclass was
+needed. Optional receive results flatten as usual, while iteration distinguishes a message of
+`nothing` from end-of-stream. Function messages retain existing closure semantics, so the
+known indirect captured-variable gap for multicore includes functions passed through channels.
+
+Deadlock diagnostics name channel numbers, send/receive direction, and original wait sites.
+Review found that after a caught deadlock, another participant's obsolete waiter could still
+be present until it resumed; such already-readied waiters must not accept new messages. The
+runtime now checks scheduler readiness before matching them. A focused recovery case protects
+this, alongside FIFO, capacities, closure, value copies, cyclic captured-closure messages,
+destructuring, loop control, contextual typing, and local shadowing. No plan/source mismatch
+required a new design decision.
+
+Full local validation passed with pinned Zig 0.16.0, sequential `-j1` Debug and ReleaseSafe
+tests, native build, documentation examples (23 executed, 112 linked conformance files),
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
+`zig-out`. All seven standalone scheduler unit tests passed. Sixteen new or changed running
+cases passed 50 consecutive runs each (800 total); expected files were read by hand. Windows
+runtime validation remains for green PR CI. Cancellation is the next slice.
+
+## Concurrency, slice 5: cooperative cancellation, 2026-09-30
+
+`Task.cancel()` requests cancellation at a suspension point. `CancelledError` extends
+`Error` directly, so a RuntimeError catch cannot swallow it. Task/channel/input/timer
+waits are readied cooperatively; finally blocks and group draining mask cancellation so
+cleanup can itself wait. A real failure remembers the group's first error and cancels
+siblings and its owner once. An owner asking for that failing task's result observes its
+actual error, preserving typed catches without raising it again during draining. Other
+owner suspension points raise CancelledError; the group reports its original failure
+after joining all children. Explicitly cancelled children alone do not fail a group,
+but their result calls raise CancelledError. Tasks started by a sibling before reaching
+its checkpoint inherit the group's ongoing cancellation; otherwise a new long sleep
+could keep the draining group alive after its first error was handled. Program exit
+cancels and drains its tasks.
+Normal implicit joining remains interruptible, including for nested groups; it becomes
+protected draining only after an error or cancellation. A nested-group regression checks
+that cancelling its parent stops the nested sleep and runs both levels of cleanup.
+Two existing deadlock expectations now preserve the group's original failure site rather
+than replacing it with a child's later failure.
+
+Final review caught a repeated-cancellation edge: channel matching must keep a protected
+cleanup waiter, even with a new cancellation request pending. The regression case cancels
+again while `finally` waits to send its second message, then receives it and allows cleanup
+to finish. Group draining also clears pending cancellation before restoring its original
+error, so a late cleanup request cannot replace that error.
+
+Inspection found that the raw-thread host operations and arbitrary borrowed input readers
+could not be interrupted by simply readying a task. A bounded probe started an input task,
+yielded, then raised `RuntimeError("stop the group")` in the owner; it remained alive with
+stdin open and no data, and reported the child's InputError only after stdin closed.
+The user approved a narrower solution rather than a general custom-reader contract:
+Scheduler.zig owns one process-lifetime stdin reader and its allocations; a cancelled
+task abandons only its registered wait, leaving the in-flight read and eventual line
+for the next input call. Program exit does not join that blocked reader. Fixed services
+own finite buffers and join/free at teardown; caller position advances only on delivery.
+Other borrowed readers retain their previous host-read path, with no cancellation hook.
+
+The two-task input test found a FIFO bug during development: a later caller could steal
+a line promised to an earlier waiting caller. Explicit reservation fixes it, and releasing
+a cancelled reservation passes the intact line onward. All reader/runtime pointers are
+unregistered under the reader mutex before their task returns. The live-input driver
+checks both prompt exit with stdin held open and a line supplied only after cleanup and
+the first-error catch; CI runs it on every platform/build combination.
+
+HTTP cancellation signals the existing deadline worker early, using the existing Select
+race and transport cleanup instead of a second cancellation mechanism. A response that
+finished concurrently is freed before raising CancelledError. The signal is shared by
+child cancellation and cancellation of a group's owner after its child fails; the HTTP
+case covers both directions. File operations are not
+interrupted: cancellation arrives after they return, so named pipes/devices can delay it.
+These distinctions are documented in the rewrite context and library references.
+Managed file helpers also deliver cancellation after opening, before invoking a user
+block, and close their new handle. A tmpDir-backed Zig test checks both helpers, absence
+of user-block output, and subsequent file reuse.
+
+Full local validation passed with Zig 0.16.0 and sequential `-j1`: Debug and ReleaseSafe
+tests, native build, documentation examples (23 executed, 113 linked conformance files),
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds with
+prefixes outside `zig-out`. Nine scheduler unit tests pass. Fifteen new, changed, or
+directly affected task cases passed 50 consecutive runs each (750 checks), including HTTP
+against a loopback-only server. The live-input driver passed 50 prompt-exit and 50
+retained-line checks, and a local-file cancellation probe passed 50 runs. Every expectation
+was read by hand. Windows execution remains a green-PR-CI gate. Slice 6 is next; the branch
+has not been pushed or merged.
+
+## Concurrency, slice 6: documentation and integration, 2026-09-30
+
+The task/channel reference and inventory now document the complete public surface,
+callbacks and direct-capture checking, scheduling, results, typed errors, cancellation,
+protected cleanup, deadlocks, and current limits. Rewrite-context 15.13 records the
+settled design; 15.7 and 21 no longer defer structured tasks, and section 22 records the
+nine accepted decisions. Program.sleep now documents pausing only its calling task.
+The handoff drops completed-slice narrative and stale Console-widget deferrals, retaining
+review/CI status and the multicore capture gaps.
+
+`examples/tasks.em` is a short, network-free tour: ordered results, buffered messages,
+and cancellation with a 20 ms sleep. Its verified output is `10 20`, `total: 6`, and
+`cleaning up`. It and the expanded prelude-reach case passed 50 matching runs each; the
+existing prelude-reach expected file was read and remains unchanged.
+
+The formatter already supported task/channel flags and nested type elements; a dedicated
+test protects their canonical output. LSP traversal already handled element annotations
+and task bodies, but the outer Task/Channel names were absent because generic AST nodes
+carry flags and an empty name. Their definition/reference handling now uses the prelude
+declarations through Resolver's namespace keys. Tests cover those names, element types,
+hover types, and navigation inside task blocks. The queued built-in-member table remains
+separate; no second completion/signature registry was introduced.
+
+Two valid fuzz templates exercise yielded results and channel rendezvous/buffers, without
+clocks or outside I/O. Correcting the template-selection range also makes the existing
+inline-if fallback reachable; the former upper bound excluded it. The fixed ReleaseSafe
+campaign passed seed 12648430, 1,000 cases, 136 executions.
+
+Windows ReleaseSafe CI now builds the existing scheduler probe and runs all four cost
+measurements: 1,000 and 10,000 sequential tasks, 64 live tasks, and 100,000 scheduler
+handoffs. Its bounded PowerShell driver reports time and sampled peak physical memory
+while each process is alive, checking output and status. Windows execution remains pending
+CI, not claimed from a cross-build. The standalone probe cross-compiled successfully for
+Windows; its documented command and CI explicitly set ReleaseSafe on both Zig modules.
+
+Startup comparisons used main `ef14a72` and this branch, ReleaseSafe, alternating 60 runs
+per binary/program, on Linux 6.18.33.2-microsoft-standard-WSL2, 8 CPUs. The first comparison
+measured `print(1)` at 3.73 vs. 3.76 ms, with five ratios from 100.7% to 102.8%.
+After the final LSP change, the comparison was:
+
+| Program | Main median | Concurrency median | Second/first |
+| --- | --- | --- | --- |
+| `print(1)` | 3.67 ms | 3.76 ms | 102.3% |
+| Structs (language only) | 4.09 ms | 4.12 ms | 100.7% |
+| Dates | 5.22 ms | 5.28 ms | 101.2% |
+| Regex | 5.76 ms | 5.85 ms | 101.6% |
+| JSON | 4.49 ms | 4.50 ms | 100.2% |
+
+These small observed differences do not establish zero overhead, but show no material
+startup regression for programs not using concurrency.
+
+The full local gate passed with pinned Zig 0.16.0 and sequential `-j1`: Debug and
+ReleaseSafe tests, native build, documentation examples (24 executed, 124 linked
+conformance files), changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64
+cross-builds with prefixes outside `zig-out`. No accepted API decision needed changing.
+All six implementation slices are ready for Claude's whole-branch review and PR; green
+Windows runtime CI and its measurement results remain required before the milestone is
+fully done. Codex pushes the branch, but does not merge it.
+
+## Concurrency: required review corrections, 2026-09-30
+
+The user identified four merge blockers after slice 6. The Windows measurement command
+now quotes both module arguments and the emitted binary argument, rather than letting
+PowerShell split a `.zig` path. Task threads use Windows `CreateThread` with
+`STACK_SIZE_PARAM_IS_A_RESERVATION`, preserving the 128 MiB recursion budget without
+committing it up front. That detail stays inside Scheduler.zig. The driver now reports
+peak commit as well as working set, confirms all 64 task threads started before a child
+ran, and rejects a live-task commit above 1 GiB. Actual Windows measurements await CI;
+a cross-build is not a Windows runtime result.
+
+Joined jobs leave the scheduler's active list. On group completion, results and errors
+become collector-visible edges on the Task handle. A native bookkeeping finalizer removes
+the record when the handle becomes unreachable; it never releases managed values while
+sweeping. Active groups root handles, while escaped handles continue to provide repeated
+results and errors. Group records, closures, and execution buffers are no longer retained
+until interpreter teardown. Tests cover unlinking, escaped handles, and cycles through
+managed native payloads. The final drain also joins a completed job when cancellation
+interrupted its ordinary wait before the host thread was joined.
+
+Measurements exposed an additional issue: the task allocator activation looked for a
+method key, but prelude reachability stores the top-level `Emerald.Tasks` key. That is
+corrected and tested. Simply enabling the existing allocator mutex did not stop
+ReleaseSafe's host allocator retaining small buffers in separate thread-local freelists.
+Nine shared size-class pools under that mutex now allow cross-thread reuse, with backing
+storage bounded by peak live allocations and released at outcome teardown. Larger and
+over-aligned allocations keep the caller's allocator. Tests verify reuse, alignment, and
+refusal to resize across pooled/unpooled allocation classes.
+
+Three alternating Linux ReleaseSafe samples per count measured 2,000 tasks at 0.36 s /
+7.19 MiB peak RSS and 20,000 at 3.57 s / 7.19 MiB: 9.92x time, 1.00x memory. Before
+pooling, reclaimed records already made execution linear, but RSS grew from about 8 to
+18 MiB (about 62 MiB at 100,000 tasks); Debug was flat at 19,868 vs. 19,884 KiB. These
+measurements separated allocator retention from live task state. Windows CI also checks
+the 2,000/20,000 ratio for time, physical memory, and commit.
+
+Optional channel item types now fail checking with `a channel's items can't be optional`
+and `Wrap the value in a struct.` A diagnostics case protects both lines. The previous
+optional-message case now uses a struct with an optional field; its expected output is
+unchanged. The new expected files were read by hand.
+
+Pinned Zig 0.16.0 local validation passed: Debug and ReleaseSafe tests with `-j1`, native
+build, documentation examples (24 executed, 126 linked conformance cases), changed-Zig
+formatting, whitespace, Windows x86_64 and macOS aarch64 cross-builds outside `zig-out`,
+and the standalone ReleaseSafe Windows scheduler probe cross-build. All 33 task/channel
+run cases passed 50 executions each. The live-input driver passed 50 prompt-exit and 50
+retained-line checks. The ReleaseSafe fuzz campaign passed seed 12648430, 1,000 cases,
+136 executed. Windows runtime CI and its new measurements still gate merging.
+
+## Concurrency: Windows measurement baseline correction, 2026-09-30
+
+PR CI for `73a6014` passed Windows Debug and the Windows ReleaseSafe suite, reaching
+the repaired measurement command. It reported 1,000 tasks at 0.163 s / 9.27 MiB
+working set / 1032.74 MiB commit; 10,000 at 1.306 s / 9.33 MiB / 1032.81 MiB; all
+64 live task threads started, at 0.022 s / 10.93 MiB / 1035.38 MiB. The driver's
+absolute 1 GiB commit assertion failed. Inspection of `emerald.zig` confirmed its
+pre-existing main interpreter thread requests a 1 GiB stack through `std.Thread.spawn`;
+the driver's comment had incorrectly assumed 128 MiB. The extra commit from the live
+children was small, not 128 MiB per task. This was a measurement-baseline bug, not a
+reason to retry CI or change a timing margin.
+
+The driver now measures the same live-task program with one and 64 children, reports
+the additional commit, and rejects more than 64 MiB for the 63 additional threads.
+This isolates task stack costs and is much stricter than allowing their 8 GiB of
+upfront commit. The main interpreter's existing stack policy is recorded, not changed
+as an unrelated optimization. The full local gate passed for the code in `73a6014`;
+this correction changes only the PowerShell measurement and its documentation. Debug
+tests and whitespace checks passed again before committing; the remaining platform
+jobs and fuzz campaign on `73a6014` all passed. The corrected Windows measurement
+must run successfully on the next CI commit before merging.
+
+## Concurrency: deterministic memory sampling handshake, 2026-09-30
+
+The Windows ReleaseSafe suite passed again on `ef08906`, but the new one-task
+baseline exited before PowerShell could sample its memory. The driver correctly
+refused to report a zero sample. A live-process polling loop alone cannot guarantee
+observing a short process, regardless of its polling interval.
+
+The live-task probe now has an explicit sampling mode: print `started: N`, wait
+for the input acknowledgement `measured`, then return the total. The driver reads
+the marker asynchronously, takes its peak working-set and commit samples while
+the process is guaranteed alive, and acknowledges it. One and 64 children use the
+same handshake and input-reader overhead. This fixes synchronization instead of
+adding a sleep, rerunning a flaky test, or widening a timing margin. The ordinary
+benchmark mode remains unchanged. Both sampling modes passed 50 runs on Linux;
+the tool is formatter-clean. Debug and ReleaseSafe tests, native build, documentation
+examples, changed-Zig formatting, whitespace, and Windows/macOS cross-builds passed
+again with pinned Zig 0.16.0 and `-j1`. Windows measurements remain pending the new
+CI run.
+
+## Concurrency: Windows runtime measurements passed, 2026-09-30
+
+Windows Debug and ReleaseSafe PR CI on `80b493e` passed, including live-input
+cancellation and the deterministic memory-sampling handshake. The measurements below
+are actual Windows execution from
+[PR run 36771640683](https://github.com/amortimer20/emerald-lang/actions/runs/36771640683),
+not cross-build results.
+
+| Probe | Time | Peak working set | Peak commit |
+| --- | --- | --- | --- |
+| 1,000 sequential tasks | 0.196 s | 9.25 MiB | 1032.75 MiB |
+| 10,000 sequential tasks | 1.681 s | 9.30 MiB | 1032.81 MiB |
+| One live child (sampling baseline) | 0.048 s | 9.44 MiB | 1048.74 MiB |
+| 64 live children | 0.037 s | 10.96 MiB | 1051.44 MiB |
+| 100,000 scheduler handoffs | 1.445 s | 3.20 MiB | 0.63 MiB |
+| 2,000 sequential tasks | 0.336 s | 9.25 MiB | 1032.75 MiB |
+| 20,000 sequential tasks | 3.225 s | 9.30 MiB | 1032.82 MiB |
+
+All 64 task threads started before a child ran. The additional 63 threads cost
+2.70 MiB peak commit, rather than 128 MiB each. One/64-child times include the
+driver handshake, so they are not isolated thread-creation timings. Both probes
+include the same input-reader overhead; the absolute commit also includes the main
+interpreter's pre-existing 1 GiB committed Windows stack. That remains unchanged,
+not hidden by calling commit charge physical memory or reducing a recursion limit.
+
+The 2,000/20,000 check passed at 9.59x time, 1.01x peak working set, and 1.00x commit,
+confirming linear sequential execution with bounded memory on Windows as well as
+Linux. The handoff and plan now record the green Windows runtime gate. No merge was
+performed; Claude still owns the final review and merge. The full PR run also passed
+Ubuntu and macOS Debug/ReleaseSafe and the fixed fuzz campaign. All seven jobs are green.
+
+## Concurrency, review and merge, 2026-09-30
+
+Claude reviewed the scheduler and the interpreter's task paths, and ran programs against the
+branch. Four problems were fixed on the branch before merging. Finished tasks were never freed:
+20,000 sequential tasks took 16 s and 157 MB, and scans of `Runtime.all` made time quadratic;
+now 20,000 take 9 to 10 times as long as 2,000, at the same peak. On Windows, `std.Thread.spawn`
+committed each task's whole stack; task stacks are now reserved, and 64 live tasks add 2.7 MiB of
+commit. The Windows measurement step had been passing its paths through PowerShell unquoted.
+`Channel[T]` with an optional `T` could not tell "sent nothing" from "closed" and is refused.
+Probes then confirmed the no-`var` rule (direct and nested captures), inline-only `start`, the
+first error winning, cancellation running `finally` without being caught as a `RuntimeError`,
+deadlock messages naming each wait, and the collector across channels and suspended tasks (500
+packets of nested lists, 20 runs, none damaged). The `start` hint now names the function the
+program wrote. The main interpreter thread on Windows still commits its 1 GiB stack, as before
+this milestone; reserving it the same way is a small follow-up.

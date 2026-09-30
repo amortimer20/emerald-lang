@@ -1,0 +1,5 @@
+runtime-errors/channel-send-deadlock.em:3:1: DeadlockError: these tasks are waiting for each other
+  numbers.send(2)
+  ^^^^^^^^^^^^^^^
+At `runtime-errors/channel-send-deadlock.em:3`, the program is waiting to send to channel 1.
+Check the task results they wait for.

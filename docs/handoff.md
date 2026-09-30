@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-28. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-30. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -45,9 +45,8 @@ four planned slices: `Console.Color`, `Console.style`, the twelve basic helpers,
 Windows VT setup resolve in that settled order; the REPL follows the same automatic policy.
 [`docs/library/console.md`](library/console.md), the inventory entry, rewrite-context 15.6
 and its decision-table rows, and [`examples/console.em`](../examples/console.em) document it.
-One-shot layout widgets (`Table`, `Panel`) and line-oriented interaction (prompts,
-multi-select) are later slices of the same library, not a separate `Tui`; they still need a
-design proposal.
+One-shot panels and tables (text and plain-struct rows), and six line-oriented prompts,
+are also implemented and reviewed; see the Console plan and journal.
 
 Inline `if condition then value else value` is now implemented, closing a gap that the
 design and language guide had incorrectly described as already available. It supports
@@ -114,13 +113,69 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
+All six concurrency slices and the four required review corrections are implemented
+on `codex/concurrency`, with local validation and fully green PR CI on `80b493e`
+(Debug/ReleaseSafe on Windows, macOS, and Ubuntu, plus fuzz). The corrections:
+quote Windows compiler module arguments, reserve task stacks instead of committing
+128 MiB each, reclaim joined jobs and unreachable completed handles, and reject
+optional channel item types (wrap optional contents in a struct). Reachability also
+used the wrong key to activate the task allocator; that is fixed, with bounded shared
+small-allocation pools. ReleaseSafe's corrected 2,000/20,000-task measurement is
+0.36/3.57 s with identical 7.19 MiB peak RSS. Windows measured 0.336/3.225 s,
+9.25/9.30 MiB working set, and 1032.75/1032.82 MiB commit: 9.59x time with flat
+memory. All 64 task threads started; the extra 63 added only 2.70 MiB peak commit.
+The existing main interpreter thread still commits a 1 GiB stack on Windows;
+the ready/sample probe isolates task costs without reducing stack limits. Measurement
+failures, corrections, and full results are in the plan and journal.
+
+Implemented: per-task execution state,
+`Task[T]`, structured groups, results, a FIFO single-holder
+OS-thread scheduler (64 live children), yield, timers, timed waits, native-I/O baton release,
+and `DeadlockError` with original wait locations. `Channel[T]` adds FIFO rendezvous and
+buffered messaging, receiving, idempotent close, and `for` iteration. Cancellation adds
+`Task.cancel()` and `CancelledError`, automatic sibling/group cancellation, protected cleanup,
+and preservation of the group's first failure. Channel's invariant message
+type comes from ordinary expected-type context. Input readers and shared file handles
+serialize operations FIFO. Direct captures of outer `var` bindings, including nested lambdas, are
+rejected; `start` requires an inline block. Two indirect-call capture gaps remain for the
+multicore plan: called named functions reading module `var`s, and called function values
+that captured `var`s elsewhere. They are safe under the single baton.
+
+Scheduling follows the accepted ordering clarification:
+task/channel/yield waits are reproducible; ready tasks resume in readiness order. Sleeps
+resume in deadline order, with equal deadlines ordered by when waiting began; only clearly
+different lengths have reliable real-clock ordering. File, network, and input completions
+resume in arrival order and can vary. Teach fixed output order by printing task results in
+the wanted order or sending through a channel. The probe and implementation findings are
+in the plan and journal, not repeated here. The full reference is
+[`library/tasks.md`](library/tasks.md), with a runnable `examples/tasks.em` tour.
+Rewrite-context 15.13 records the settled design. Formatter/LSP tests cover task blocks
+and generic type names/elements; built-in member completion remains queued below.
+The review-correction gate passed Debug and ReleaseSafe tests, native build, documentation
+examples (24 executed, 126 linked conformance cases), formatting, whitespace, Windows/macOS
+cross-builds, and the standalone Windows ReleaseSafe scheduler probe cross-build. All 33
+task/channel run cases passed 50 executions each; the live-input driver passed 50 prompt
+exits and 50 retained-line checks. ReleaseSafe fuzz seed 12648430 passed 1,000 cases,
+136 executed. Results are recorded in the plan and journal.
+
+The accepted slice 5 I/O scope is implemented: CLI stdin uses a scheduler-owned reader
+that retains an in-flight line while cancellation interrupts the task's wait. Program exit
+does not join that process-owned reader; fixed input services join/free without leaks.
+HTTP cancellation advances its existing deadline race. Files are not interrupted:
+cancellation arrives when the operation returns, so named pipes/devices can delay it.
+Custom borrowed readers keep their existing host-read path; no general cancellation hook
+was added. CI runs the live-input regression driver on every platform and measures task
+creation, the live cap, and scheduler handoffs on Windows ReleaseSafe. Windows runtime
+tests and measurements passed. Claude's final review and merge of PR #23 remain;
+there has been no merge to main.
+
 A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
 `-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
 project loader's, and range's unit tests now run in `zig build test`; they had been left out.
 
 ## Next step
 
-There is no implementation milestone in progress. The standard-library slices the user chose to
+Concurrency is at integration/review. The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
@@ -134,14 +189,16 @@ building" notes record its decisions.
   invalid UTF-8. Code that catches `RuntimeError` is unaffected.
 - A fix to HTTP connection reuse: a request after a timed-out one could receive the timed-out
   request's reply.
+- Structured tasks, FIFO channels, timers and timed waits, cooperative cancellation,
+  and deadlock diagnostics (concurrency review/merge pending; full PR CI green).
 
-The two open pieces of work, each needing a design plan the user approves before anything is
-built:
+The two open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
-- **Concurrency** (rewrite-context 21): structured tasks and channels, in
+- **Concurrency review** (rewrite-context 15.13): structured tasks and channels, in
   [`concurrency-design-plan.md`](concurrency-design-plan.md), accepted with all nine
-  recommendations. Claude wrote the plan; Codex implements it, and slice 1 (each task's own
-  state) is next.
+  recommendations. All six slices have passed their local gate on `codex/concurrency`;
+  the branch is ready for review. Claude reviews the whole diff, checks the Windows runtime/measurement results,
+  opens the PR, and merges only with the full local gate and green CI.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
@@ -183,7 +240,7 @@ on the roadmap.
 - Taking `Trait.method` as a value remains rejected.
 - Capturing a built-in function or method as a value, and variadic functions generally, remain
   rejected because no written function type describes them yet.
-- Expanded `emerald.toml`, bounded implementation limits, concurrency, generics, enum
+- Expanded `emerald.toml`, bounded implementation limits, multicore execution, generics, enum
   payloads, wider general overloading, and package management each need a separate design
   pass or a concrete program that motivates them.
 - The standard-library backlog is recorded in rewrite-context 15.7: date/time, regular
@@ -191,8 +248,9 @@ on the roadmap.
   pass or a concrete program.
 - Braceless type bodies (10.6) are deferred, not rejected: 24 records what a proposal must
   answer (one canonical formatter output, one parsing mode, one way to teach a declaration).
-- `Console`'s remaining scope — `Table`/`Panel` layout widgets and line-oriented interaction
-  (prompts, multi-select) — remains undesigned. `Tui`, `Graphics`, `Gui`, `Audio`, and `Game`
+- Wider concurrency APIs (detached tasks and channel `select`) remain deferred. The two
+  indirect capture-check gaps above must be closed before multicore execution.
+- `Tui`, `Graphics`, `Gui`, `Audio`, and `Game`
   are parked rather than on the roadmap: a full-screen terminal library needs raw-mode input
   and a redraw loop, and the other three need native platform bindings with no extension
   mechanism to plug them in and likely their own repos once a package manager exists.
@@ -201,6 +259,9 @@ on the roadmap.
 
 ## Active rough edges
 
+- On Windows the main interpreter thread commits its whole 1 GiB stack up front
+  (`std.Thread.spawn` passes the size as the committed size). Task threads already reserve
+  instead; do the same for the interpreter thread in `emerald.zig`.
 - Found while writing the website's JSON pages (2026-09-30, in 0.6.0; fix after the concurrency
   branch merges, since both touch `Checker.zig`):
   - `print(Json.encode(1 + true))` reports `addition needs numbers` twice at the same place. Type
@@ -214,7 +275,9 @@ on the roadmap.
     lists what JSON can build without saying the constructor is why.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
   `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
-  `EncodingError`.
+  `EncodingError`, and `DeadlockError`.
+- Task cancellation uses `CancelledError`, which extends `Error` directly rather than
+  `RuntimeError`, so catching RuntimeError does not swallow cancellation.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
 - A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses

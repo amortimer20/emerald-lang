@@ -1,0 +1,5 @@
+runtime-errors/task-negative-timeout.em:3:5: a task timeout cannot be negative
+      queued.wait(Duration(seconds: -1))
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Pass a Duration of zero or more.
+in a block, called at runtime-errors/task-negative-timeout.em:1:1

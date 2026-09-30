@@ -381,6 +381,10 @@ pub const TypeExpression = struct {
     key: ?*const TypeExpression = null,
     /// Whether `element` is section 8.2's `{T}` rather than `[T]`.
     set: bool = false,
+    /// Whether `element` is the result type in the built-in `Task[T]` form.
+    task: bool = false,
+    /// Whether `element` is the message type in `Channel[T]`.
+    channel: bool = false,
     /// The shape of a function type; null otherwise.
     signature: ?*const SignatureExpression = null,
     /// The position types of a tuple type, `(A, B)`; null otherwise.

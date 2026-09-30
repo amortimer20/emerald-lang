@@ -24,7 +24,7 @@ ordinary constructor starting with `super(message)`, like any other class (10.7)
 subclass that adds required state but no constructor is a checking error (`needs a
 constructor, because building {base} takes arguments`).
 
-Six subclasses are built in: **`RuntimeError`**, raised by interpreter-detected failures
+Built-in subclasses include **`RuntimeError`**, raised by interpreter-detected failures
 (overflow, division by zero, an out-of-range index, and every other **Raises** case
 documented on the other library pages), and **`AssertionError`**, raised by a failed
 `assert`. Both are ordinary `Error` subclasses a typed or untyped `catch` can handle like any
@@ -36,6 +36,16 @@ wrong form, or an unknown time zone. **`EncodingError`** extends `RuntimeError` 
 by Base64 and hexadecimal decoding, and by `Bytes.to_string()` for invalid UTF-8.
 **`InputError`** also extends `RuntimeError`; `input` raises it when input ends or contains
 invalid UTF-8, while `input_maybe` still returns `nothing` at end of input.
+
+**`CancelledError`** extends `Error` directly, not `RuntimeError`. Task cancellation raises
+it at a suspension point and runs `finally`; a catch for `RuntimeError` does not swallow it.
+Run [`conformance/run/task-cancellation.em`](../../conformance/run/task-cancellation.em)
+for cancellation during sleep and a channel receive, including cleanup.
+
+**`DeadlockError`** extends `RuntimeError`. Task and channel waits raise it when no task,
+timer, or outside operation can make progress. Its diagnostic describes the waits and their
+source locations. See [Tasks and channels](tasks.md) and
+[`conformance/runtime-errors/channel-receive-deadlock.em`](../../conformance/runtime-errors/channel-receive-deadlock.em).
 
 `raise` accepts only an `Error` value.
 

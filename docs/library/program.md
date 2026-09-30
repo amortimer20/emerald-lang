@@ -26,8 +26,8 @@ parentheses.
 
 ## Program.sleep(duration: Duration) -> Nothing
 
-Pauses the program for `duration`, then carries on. It blocks: nothing else in the program
-runs meanwhile, which suits a countdown or a simple animation. See
+Pauses the calling task for `duration`, then carries on. Other [tasks](tasks.md) may run
+meanwhile. Without tasks it pauses the program, which suits a countdown or a simple animation. See
 [`conformance/run/clock.em`](../../conformance/run/clock.em).
 
 ```emerald

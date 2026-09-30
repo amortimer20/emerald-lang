@@ -1,0 +1,4 @@
+diagnostics/channel-optional.em:1:25: a channel's items can't be optional
+  const messages: Channel[Int?] = nothing
+                          ^^^
+Wrap the value in a struct.

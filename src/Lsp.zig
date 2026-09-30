@@ -1223,6 +1223,12 @@ fn typeExpressionTargetAt(analysis: *const emerald.Analysis, file: u32, offset: 
 fn checkTypeExpr(type_expr: Ast.TypeExpression, file: u32, offset: u32, analysis: *const emerald.Analysis) ?Resolver.Target {
     if (offset < type_expr.span.start or offset > type_expr.span.end) return null;
 
+    if (taskChannelType(type_expr)) |builtin| {
+        if (offset < type_expr.span.start + builtin.name.len) {
+            return analysis.resolved.facts.declarations.get(builtin.key);
+        }
+    }
+
     if (type_expr.element) |elem| {
         if (checkTypeExpr(elem.*, file, offset, analysis)) |t| return t;
     }
@@ -1253,6 +1259,15 @@ fn checkTypeExpr(type_expr: Ast.TypeExpression, file: u32, offset: u32, analysis
         }
     }
     return null;
+}
+
+fn taskChannelType(type_expr: Ast.TypeExpression) ?struct { name: []const u8, key: []const u8 } {
+    return if (type_expr.task)
+        .{ .name = "Task", .key = Resolver.preludeKey("Task") }
+    else if (type_expr.channel)
+        .{ .name = "Channel", .key = Resolver.preludeKey("Channel") }
+    else
+        null;
 }
 
 /// A qualified path's inner segment: the resolver reads `Console.Color.red`
@@ -1995,6 +2010,14 @@ fn collectReferencesInTypeExpression(
     type_expr: Ast.TypeExpression,
     out: *std.ArrayList(Resolver.Target),
 ) std.mem.Allocator.Error!void {
+    if (taskChannelType(type_expr)) |builtin| {
+        if (analysis.resolved.facts.declarations.get(builtin.key)) |found| {
+            if (targetEql(found, target)) try out.append(gpa, .{
+                .file = file,
+                .span = .{ .start = type_expr.span.start, .end = type_expr.span.start + @as(u32, @intCast(builtin.name.len)) },
+            });
+        }
+    }
     if (type_expr.element) |elem| try collectReferencesInTypeExpression(gpa, analysis, target, file, elem.*, out);
     if (type_expr.key) |k| try collectReferencesInTypeExpression(gpa, analysis, target, file, k.*, out);
     if (type_expr.positions) |positions| {
@@ -3167,6 +3190,53 @@ test "definitionAt jumps from a written type annotation to the struct it names" 
     const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
     const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "struct Circle").? + "struct ".len);
     try testing.expectEqual(decl_offset, target.span.start);
+}
+
+test "task bodies and generic task and channel elements support hover and definition" {
+    const gpa = testing.allocator;
+    const text =
+        "struct Item {\n    const value: Int\n}\n" ++
+        "const channel: Channel[Item] = Channel(capacity: 1)\n" ++
+        "Tasks.run { tasks =>\n" ++
+        "    const job: Task[Item] = tasks.start { => Item(7) }\n" ++
+        "    channel.send(job.result())\n" ++
+        "    channel.close()\n" ++
+        "    for item in channel {\n        print(item.value)\n    }\n" ++
+        "}\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.checked.diagnostics.len == 0);
+
+    const declaration: u32 = @intCast(std.mem.indexOf(u8, text, "Item {").?);
+    for ([_][]const u8{ "Item] = Channel", "Item] = tasks", "Item(7)" }) |needle| {
+        const offset: u32 = @intCast(std.mem.indexOf(u8, text, needle).?);
+        try testing.expectEqual(declaration, (try definitionAt(gpa, &analysis, 0, offset)).?.span.start);
+    }
+    inline for ([_][]const u8{ "Task", "Channel" }) |name| {
+        const annotation_offset: u32 = @intCast(std.mem.indexOf(u8, text, name ++ "[").?);
+        const target = analysis.resolved.facts.declarations.get(Resolver.preludeKey(name)).?;
+        try testing.expect(targetEql(target, (try definitionAt(gpa, &analysis, 0, annotation_offset)).?));
+        var sites: std.ArrayList(Resolver.Target) = .empty;
+        defer sites.deinit(gpa);
+        try collectReferencesInStatements(gpa, &analysis, target, 0, analysis.parsed[0].program.statements, &sites);
+        var found_annotation = false;
+        for (sites.items) |site| {
+            if (site.span.start == annotation_offset) found_annotation = true;
+        }
+        try testing.expect(found_annotation);
+    }
+    const job_use: u32 = @intCast(std.mem.indexOf(u8, text, "job.result()").?);
+    try testing.expectEqual(Type.Kind.task, expressionAt(&analysis, 0, job_use).?.type.kind);
+    try testing.expectEqualStrings("Item", expressionAt(&analysis, 0, job_use).?.type.element.?.user.?.display_name);
+    const channel_use: u32 = @intCast(std.mem.indexOf(u8, text, "channel.send").?);
+    try testing.expectEqual(Type.Kind.channel, expressionAt(&analysis, 0, channel_use).?.type.kind);
+    const field_use: u32 = @intCast(std.mem.indexOf(u8, text, "item.value").? + "item.".len);
+    try testing.expectEqual(Type.Kind.int, expressionAt(&analysis, 0, field_use).?.type.kind);
+    try testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, text, "value: Int").?)), (try definitionAt(gpa, &analysis, 0, field_use)).?.span.start);
 }
 
 const nested_types_text =

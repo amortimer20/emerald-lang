@@ -976,6 +976,14 @@ const Printer = struct {
                 try self.write("Set[");
                 try self.printType(element.*);
                 try self.write("]");
+            } else if (t.task) {
+                try self.write("Task[");
+                try self.printType(element.*);
+                try self.write("]");
+            } else if (t.channel) {
+                try self.write("Channel[");
+                try self.printType(element.*);
+                try self.write("]");
             } else {
                 try self.write("List[");
                 try self.printType(element.*);
@@ -1386,6 +1394,13 @@ fn expectFormatsWithStyle(brace_style: Project.BraceStyle, text: []const u8, exp
     const formatted = try formatText(gpa, text, brace_style);
     defer gpa.free(formatted);
     try testing.expectEqualStrings(expected, formatted);
+}
+
+test "task and channel types and trailing task blocks format canonically" {
+    try expectFormats(
+        "const values:Channel[Int?]=Channel(capacity:1)\nTasks.run {tasks=>\nconst job:Task[List[Int]]=tasks.start {=> [1,2]}\nprint(job.result())\n}\n",
+        "const values: Channel[Int?] = Channel(capacity: 1)\nTasks.run { tasks =>\n    const job: Task[List[Int]] = tasks.start { => [1, 2] }\n    print(job.result())\n}\n",
+    );
 }
 
 test "formatting releases every allocation failure" {

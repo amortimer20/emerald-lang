@@ -1,0 +1,8 @@
+diagnostics/task-capture.em:4:28: a task block cannot capture the variable `module_count`
+      tasks.start { => print(module_count) }
+                             ^^^^^^^^^^^^
+Return a value from the task or use a channel to share `module_count`.
+diagnostics/task-capture.em:11:39: a task block cannot capture the variable `local_count`
+              const nested = { => print(local_count) }
+                                        ^^^^^^^^^^^
+Return a value from the task or use a channel to share `local_count`.

@@ -22,6 +22,11 @@ catch error: RuntimeError {
     print(error.message)
 }
 
+# Cancellation is deliberately outside RuntimeError's hierarchy.
+const cancelled: Error = CancelledError("cancelled")
+assert not (cancelled is RuntimeError)
+assert cancelled.message == "cancelled"
+
 # A type-level function whose result is only a String.
 print(Console.plain(Console.style("hi", foreground: Console.Color.green)))
 print(Console.panel("reach", title: "Console"))
@@ -41,3 +46,19 @@ print(csv_events[0].on)
 
 print(Base64.encode("reach".to_bytes()))
 print(Digest.sha256("reach".to_bytes()).count)
+
+Tasks.run { tasks =>
+    const result = tasks.start { => 7 }
+    print(result.result())
+    assert(result.done?())
+    result.cancel()
+    Tasks.yield()
+}
+
+func use_channel(channel: Channel[Int]) {
+    channel.send(11)
+    channel.close()
+    assert(channel.receive() == 11)
+    assert(channel.receive() == nothing)
+}
+use_channel(Channel(capacity: 1))

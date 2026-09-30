@@ -2147,7 +2147,7 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     _ = self.advance();
 
     var written = try self.identifier(token);
-    if (std.mem.eql(u8, written, "List") or std.mem.eql(u8, written, "Dict") or std.mem.eql(u8, written, "Set")) {
+    if (std.mem.eql(u8, written, "List") or std.mem.eql(u8, written, "Dict") or std.mem.eql(u8, written, "Set") or std.mem.eql(u8, written, "Task") or std.mem.eql(u8, written, "Channel")) {
         return self.parseCollectionType(token, written);
     }
     var span = token.span;
@@ -2261,11 +2261,13 @@ fn parseTupleType(self: *Parser) Error!Ast.TypeExpression {
     };
 }
 
-/// Section 8.2's `List[T]`, `Dict[K, V]`, and `Set[T]`.
+/// Built-in parameterized types: collections and `Task[T]`.
 fn parseCollectionType(self: *Parser, name: Token, kind: []const u8) Error!Ast.TypeExpression {
+    const task_type = std.mem.eql(u8, kind, "Task");
+    const channel_type = std.mem.eql(u8, kind, "Channel");
     const opening = self.peek();
     if (opening.kind != .left_bracket) {
-        return self.reportFmt(opening.span, "expected `[` after `{s}`, found {s}", .{ kind, opening.kind.describe() }, "Write `List[Int]`, `Dict[String, Int]`, or `Set[String]`.");
+        return self.reportFmt(opening.span, "expected `[` after `{s}`, found {s}", .{ kind, opening.kind.describe() }, if (task_type) "Write a result type, as in `Task[Int]`." else if (channel_type) "Write a message type, as in `Channel[Int]`." else "Write `List[Int]`, `Dict[String, Int]`, or `Set[String]`.");
     }
     _ = self.advance();
     try self.nest(opening.span);
@@ -2283,11 +2285,19 @@ fn parseCollectionType(self: *Parser, name: Token, kind: []const u8) Error!Ast.T
         element = try self.arena.create(Ast.TypeExpression);
         element.* = try self.parseTypeExpression();
     } else if (self.check(.comma)) {
-        return self.report(self.peek().span, "this collection type takes one element type", "Write `List[T]` or `Set[T]`; only `Dict[K, V]` takes two types.");
+        if (channel_type) return self.report(self.peek().span, "a `Channel` type takes one message type", "Write `Channel[T]` with the channel's one message type.");
+        return self.report(self.peek().span, if (task_type) "a `Task` type takes one result type" else "this collection type takes one element type", if (task_type) "Write `Task[T]` with the task's one result type." else "Write `List[T]` or `Set[T]`; only `Dict[K, V]` takes two types.");
     }
 
     const closing = self.peek();
     if (closing.kind != .right_bracket) {
+        if (channel_type) return self.reportFmt(closing.span, "expected `]` to close this channel type, found {s}", .{closing.kind.describe()}, "Close the message type, as in `Channel[Int]`.");
+        if (task_type) return self.reportFmt(
+            closing.span,
+            "expected `]` to close this task type, found {s}",
+            .{closing.kind.describe()},
+            "Close the result type, as in `Task[Int]`.",
+        );
         return self.reportFmt(
             closing.span,
             "expected `]` to close this collection type, found {s}",
@@ -2305,6 +2315,8 @@ fn parseCollectionType(self: *Parser, name: Token, kind: []const u8) Error!Ast.T
         .element = element,
         .key = key,
         .set = std.mem.eql(u8, kind, "Set"),
+        .task = std.mem.eql(u8, kind, "Task"),
+        .channel = std.mem.eql(u8, kind, "Channel"),
         .question_span = question,
     };
 }

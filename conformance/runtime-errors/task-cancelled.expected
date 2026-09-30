@@ -1,0 +1,5 @@
+runtime-errors/task-cancelled.em:3:9: CancelledError: this task was cancelled
+          Program.sleep(Duration(seconds: 60))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Wait for the task's result, or handle CancelledError when cancellation is expected.
+in a block, called at runtime-errors/task-cancelled.em:2:19

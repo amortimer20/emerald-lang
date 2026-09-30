@@ -1,0 +1,12 @@
+diagnostics/task-wait-arguments.em:3:15: this is Int, but parameter `timeout` of `wait` needs Duration
+      task.wait(1)
+                ^
+Pass a value of the expected type, or convert it first.
+diagnostics/task-wait-arguments.em:4:15: `wait` has no parameter named `delay`
+      task.wait(delay: Duration())
+                ^^^^^
+Check the spelling against the declaration.
+diagnostics/task-wait-arguments.em:5:10: `wait` takes 1 argument, but this call passes 0
+      task.wait()
+           ^^^^
+Give `wait` one Duration for its timeout.

@@ -56,6 +56,21 @@ jobs:
         shell: bash
         run: zig build test -Doptimize=${{ matrix.optimize }}
 
+      - name: Check cancellation with live standard input
+        shell: bash
+        run: |
+          zig build -j1 -Doptimize=${{ matrix.optimize }}
+          python tools/task-input-cancellation.py
+
+      - name: Measure Windows task costs
+        if: matrix.os == 'windows-latest' && matrix.optimize == 'ReleaseSafe'
+        shell: pwsh
+        run: |
+          $scheduler = Join-Path $env:RUNNER_TEMP 'emerald-scheduler-benchmark.exe'
+          zig build-exe -O ReleaseSafe --dep Scheduler "-Mroot=tools/scheduler-benchmark.zig" -O ReleaseSafe "-MScheduler=src/Scheduler.zig" "-femit-bin=$scheduler"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tools/measure-windows-tasks.ps1 -Scheduler $scheduler
+
   fuzz:
     name: bounded execution fuzz
     runs-on: ubuntu-latest

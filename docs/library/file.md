@@ -6,6 +6,10 @@ for whole-file and path work, [`conformance/run/file-streaming.em`](../../confor
 for streamed reads, and [`conformance/runtime-errors/file-streaming-closed.em`](../../conformance/runtime-errors/file-streaming-closed.em)
 for a typed failure.
 
+In a task, file operations let other tasks run but are not interrupted by cancellation.
+A cancelled task raises `CancelledError` after the host operation returns. Local files
+normally return promptly; a named pipe or device can delay cancellation. Cleanup still runs.
+
 ## File
 
 `read(path: String) -> String`, `write(path: String, contents: String) -> Nothing`, and

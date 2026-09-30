@@ -1,0 +1,4 @@
+runtime-errors/channel-negative-capacity.em:1:31: a channel capacity cannot be negative
+  const numbers: Channel[Int] = Channel(capacity: -1)
+                                ^^^^^^^^^^^^^^^^^^^^^
+Pass zero for a rendezvous, or a positive capacity for a buffer.
