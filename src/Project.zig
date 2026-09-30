@@ -221,7 +221,11 @@ fn enclosingProject(
         }
     }
     // The working directory itself, which has no name to take a `dirname` of.
-    if (holdsEntryFile(io, base, "")) {
+    // It is above the file only when the walk ended on a plain name: a walk
+    // that ended on `..` or an absolute root has left the working directory.
+    const left_working_directory = std.fs.path.isAbsolute(at) or
+        std.mem.eql(u8, at, "..") or std.mem.eql(u8, at, ".");
+    if (!left_working_directory and holdsEntryFile(io, base, "")) {
         const owned: []const u8 = try gpa.dupe(u8, ".");
         return owned;
     }
@@ -503,4 +507,23 @@ test "project loading keeps nested invalid directories tracked with their full p
     try testing.expectEqual(@as(usize, 1), project.bad_directories.len);
     try testing.expectEqualStrings("good/2bad", project.bad_directories[0].path);
     try testing.expectEqual(@as(u32, 0), project.bad_directories[0].file);
+}
+
+test "a lone file outside the working directory is not placed in its project" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(testing.io, "here/nested");
+    try tmp.dir.createDirPath(testing.io, "elsewhere/plants");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "here/main.em", .data = "print(1)\n" });
+
+    var here = try tmp.dir.openDir(testing.io, "here", .{});
+    defer here.close(testing.io);
+
+    const inside = try enclosingProject(testing.allocator, testing.io, here, "nested");
+    defer if (inside) |found| testing.allocator.free(found);
+    try testing.expectEqualStrings(".", inside.?);
+
+    const outside = try enclosingProject(testing.allocator, testing.io, here, "../elsewhere/plants");
+    try testing.expectEqual(@as(?[]const u8, null), outside);
 }
