@@ -324,6 +324,10 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
     does not belong here", twice) should suggest `and`/`or`; `c++` and `c--` should suggest
     `c += 1`; `true ? 1 : 2` should suggest `if c then a else b`; and `if x = 5 {` ("expected `{`
     ... found =") should suggest `==`.
+  - `x ?? 0` (the C# and Swift spelling) gets "expected `)` to close this call, found ?"; suggest
+    `.or(0)`. And `break` in a one-line lambda (`[1].each { x => break }`) gives a parse error
+    plus a "this `}` does not close anything" cascade, while the block-bodied form already says
+    "`break` can only be used inside a loop".
 - On Windows the main interpreter thread commits its whole 1 GiB stack up front
   (`std.Thread.spawn` passes the size as the committed size). Task threads already reserve
   instead; do the same for the interpreter thread in `emerald.zig`.
