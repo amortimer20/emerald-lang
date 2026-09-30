@@ -3987,3 +3987,36 @@ with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build,
 documentation examples (24 executed, 130 linked conformance cases), changed-Zig
 formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
 `zig-out`.
+
+## Bug-fix batch, item 10: explain JSON's constructor restriction, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with this program:
+
+```emerald
+struct Score {
+    const value: Int
+
+    constructor(value: Int) {
+        self.value = value
+    }
+}
+
+print(Json.decode("{\"value\": 5}", as: Score))
+```
+
+The old diagnostic said only that Score cannot be read from JSON, followed by
+the general accepted-type list. The shared eligibility result now carries the
+specific custom-constructor reason from JSON's existing check; the typed-call
+diagnostic explains that JSON builds through a generated constructor and suggests
+decoding a plain struct before calling the custom constructor. There is no change
+to which types JSON or CSV accepts, and no duplicated checker or decoder path.
+
+The new diagnostics regression covers direct, optional, list-contained, and
+nested-field occurrences of Score. Its output was compared with both binaries,
+and its expected file was read by hand. The first Debug gate found one missing
+space in the hand-written diagnostic caret lines; correcting that expectation
+made the Debug gate pass. Focused checking passes; the remaining full required
+gate also passed with pinned Zig 0.16.0 and `-j1`: ReleaseSafe tests, native build,
+documentation examples (24 executed, 130 linked conformance cases), changed-Zig
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
+`zig-out`.

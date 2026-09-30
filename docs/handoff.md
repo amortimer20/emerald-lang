@@ -176,7 +176,11 @@ expected output in 50 runs. Reproductions and findings are in the journal.
 Item 8's single-pass argument diagnostics reproduced across all five typed/native
 APIs and a changing trait-default receiver; its fixes also passed the full gate.
 Item 9's shared prelude-name display fix also passed the full gate.
-Next is item 10 (explaining JSON's generated-constructor requirement). The REPL replay bug remains
+Item 10's generated-constructor explanation also passed the full gate.
+Next is item 11 (parser error recovery), reproduced on the main baseline with
+`func f() { x = }`: recovery consumes the block's closing brace as though it were
+a stray top-level brace. Items 11–19 remain; items 1–10 are ready for review.
+The REPL replay bug remains
 explicitly excluded and belongs to Claude's separate plan.
 
 The standard-library slices the user chose to
@@ -212,6 +216,8 @@ building" notes record its decisions.
   Console.table, and changing trait-default calls, rather than being repeated.
 - Prelude call diagnostics use readable names such as `Json.parse`, not internal
   `Emerald.Json.parse` keys; project namespace qualification is preserved.
+- `Json.decode` explains when a struct cannot be built because it declares its
+  own constructor, including structs nested in fields or collections.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
@@ -282,10 +288,6 @@ on the roadmap.
 - On Windows the main interpreter thread commits its whole 1 GiB stack up front
   (`std.Thread.spawn` passes the size as the committed size). Task threads already reserve
   instead; do the same for the interpreter thread in `emerald.zig`.
-- Found while writing the website's JSON pages (2026-09-30, in 0.6.0; fix after the concurrency
-  branch merges, since both touch `Checker.zig`):
-  - `Json.decode` correctly refuses a struct that declares its own constructor, but its message
-    lists what JSON can build without saying the constructor is why.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
   `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
   `EncodingError`, `DeadlockError`, and `RecursionError`.

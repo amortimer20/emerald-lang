@@ -9774,6 +9774,7 @@ fn typeOfTaskBlockCall(self: *Checker, call: Ast.Expression.Call, name: []const 
 
 const JsonEncodeIssue = struct {
     type: Type,
+    own_constructor: bool = false,
     /// A stored-field path, when this refusal came from inside a struct. The
     /// field is the useful correction: it points at the declaration the
     /// programmer changes rather than at an opaque call site.
@@ -9919,7 +9920,23 @@ fn typeOfTypedDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8
     if (target.kind == .invalid) return .invalid;
     const issue = if (csv) try self.csvDecodeIssue(target, "") else try self.jsonDecodeIssue(target, "");
     if (issue) |found_issue| {
-        if (found_issue.field_path.len > 0) {
+        if (found_issue.own_constructor) {
+            if (found_issue.field_path.len > 0) {
+                try self.report(
+                    target_expression.span,
+                    "field `{s}` of {f} cannot be read from JSON because {f} declares its own constructor",
+                    .{ found_issue.field_path, target, found_issue.type },
+                    "JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.",
+                );
+            } else {
+                try self.report(
+                    target_expression.span,
+                    "{f} declares its own constructor, so it cannot be read from JSON",
+                    .{found_issue.type},
+                    "JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.",
+                );
+            }
+        } else if (found_issue.field_path.len > 0) {
             try self.report(
                 target_expression.span,
                 "field `{s}` of {f} cannot be read from {s} because it is {f}",
@@ -9988,7 +10005,8 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
         .struct_value => {
             const user = value.user.?;
             if (user.enumeration or jsonTextualType(user.name)) return null;
-            if (user.class or user.trait or self.constructors.contains(user.name)) return .{ .type = value, .field_path = field_path };
+            if (user.class or user.trait) return .{ .type = value, .field_path = field_path };
+            if (self.constructors.contains(user.name)) return .{ .type = value, .field_path = field_path, .own_constructor = true };
             if (self.jsonVisiting(user.name)) return null;
             try self.json_visiting.append(self.arena, user.name);
             defer _ = self.json_visiting.pop();
