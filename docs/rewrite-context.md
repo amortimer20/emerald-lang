@@ -3880,6 +3880,18 @@ run. For fixed output order, print the tasks' results in the order wanted, or se
 channel, rather than printing inside the I/O tasks. Implementation status is in the
 concurrency plan and handoff; multicore execution remains a separate deferred design.
 
+Channels in that milestone use `Channel[T]` with an invariant message type supplied by
+context, as in `const numbers: Channel[Int] = Channel(capacity: 3)`. Capacity zero is a
+FIFO rendezvous; a positive capacity buffers up to that many messages. `send(value)` waits
+for space or a receiver, and `receive(): T?` waits for a message. `close()` is idempotent:
+buffered messages remain available, closed-and-empty receives return `nothing`, and sends
+not already committed raise RuntimeError. Negative capacities also raise RuntimeError.
+`for item in channel` ends only when the channel is closed and empty, including when `T`
+itself is optional: iteration visits actual `nothing` messages even though public `receive`
+flattens its optional result. Transmitted collections and structs keep value semantics;
+class instances remain shared references. Channel waits participate in deadlock detection,
+with diagnostics naming their channel, direction, and source location.
+
 ## 22. Reconstruction decisions and history
 
 ### Full-conversation recovery

@@ -620,7 +620,7 @@ fn reachKey(self: *Checker, key: []const u8) Error!void {
 fn reachType(self: *Checker, value: Type) Error!void {
     if (!self.reaching) return;
     switch (value.kind) {
-        .list, .set, .task => if (value.element) |element| try self.reachType(element.*),
+        .list, .set, .task, .channel => if (value.element) |element| try self.reachType(element.*),
         .dictionary => {
             if (value.key) |key| try self.reachType(key.*);
             if (value.element) |element| try self.reachType(element.*);
@@ -2667,6 +2667,7 @@ fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
     if (actual.kind == .range) return .int;
     // Section 8.4: a loop visits the collection as it was when the loop began,
     // and a dictionary or set in the order things were put into it.
+    if (actual.kind == .channel) return actual.element.?.*;
     if (actual.kind == .list or actual.kind == .set or actual.kind == .dictionary) {
         return self.itemType(actual);
     }
@@ -3828,7 +3829,7 @@ fn replaceSelf(self: *Checker, t: Type, receiver: Type) Error!Type {
             replaced.optional = t.optional;
             return replaced;
         },
-        .list, .set, .task => {
+        .list, .set, .task, .channel => {
             const element = try self.arena.create(Type);
             element.* = try self.replaceSelf(t.element.?.*, receiver);
             var replaced = t;
@@ -5325,6 +5326,11 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         return Type.taskOf(self.arena, result);
     }
 
+    if (annotation.channel) {
+        const element = try self.resolveTypeExpression(annotation.element.?.*);
+        return Type.channelOf(self.arena, element);
+    }
+
     if (annotation.element) |element| {
         const inner = try self.resolveTypeExpression(element.*);
         return Type.listOf(self.arena, inner);
@@ -5802,6 +5808,7 @@ fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, refere
 /// `n` unannotated (7.2).
 fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
     const result: Type = switch (expression.data) {
+        .call => |call| if (try self.isChannelCall(call)) try self.typeOfChannelCall(expression, call, expected) else return self.typeOf(expression),
         .list_literal => try self.typeOfList(expression, expected),
         .lambda => try self.typeOfLambda(expression, expected),
         .tuple_literal => try self.typeOfTuple(expression, expected),
@@ -6819,7 +6826,7 @@ fn typeOfMethodCall(
         const named_builtin = (base.kind == .int and
             (std.mem.eql(u8, member.name, "to_string") or std.mem.eql(u8, member.name, "format"))) or
             (base.kind == .float and std.mem.eql(u8, member.name, "format")) or
-            (base.kind == .task and std.mem.eql(u8, member.name, "wait"));
+            (base.kind == .task and std.mem.eql(u8, member.name, "wait")) or base.kind == .channel;
         // Nothing else about the call is checked, since a named value's
         // position means nothing here and would only report again.
         if (!named_builtin and try self.rejectNames(call)) {
@@ -6833,6 +6840,24 @@ fn typeOfMethodCall(
     // what proves it.
     if (std.mem.eql(u8, member.name, "or")) return self.typeOfOr(expression, call, member, base);
     if (!try self.requirePresent(base, member.base, member.name)) {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+
+    if (base.kind == .channel) {
+        const sending = std.mem.eql(u8, member.name, "send");
+        const receiving = std.mem.eql(u8, member.name, "receive");
+        if (sending or receiving or std.mem.eql(u8, member.name, "close")) {
+            try self.checkArguments(call, member.name, .{
+                .types = if (sending) &.{base.element.?.*} else &.{},
+                .names = if (sending) &.{"value"} else &.{},
+                .has_default = if (sending) &.{false} else &.{},
+                .arity_help = if (sending) "Give `send` one value of the channel's message type." else "This channel method takes no arguments.",
+            });
+            try self.method_calls.put(self.arena, call.callee, try Resolver.methodKey(self.arena, Resolver.preludeKey("Channel"), member.name));
+            return if (receiving) base.element.?.*.optionalOf() else .nothing;
+        }
+        try self.report(member.name_span, "Channel[{f}] has no method named `{s}`", .{ base.element.?.*, member.name }, "A channel offers `send(value)`, `receive()`, and `close()`.");
         try self.typeArguments(call.arguments);
         return .invalid;
     }
@@ -9458,6 +9483,7 @@ fn typeOfCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Type {
+    if (try self.isChannelCall(call)) return self.typeOfChannelCall(expression, call, null);
     if (isCountingBlock(call)) return self.typeOfCountingBlock(expression, call);
     if (isCounting(expression)) return self.typeOfCountingValue(expression);
     if (isSuper(call.callee)) return self.typeOfSuperCall(expression, call);
@@ -9657,6 +9683,34 @@ fn typeOfCall(
 
     if (!self.in_function) try self.checkCaptures(expression.span, key, name);
     return signature.return_type;
+}
+
+/// Only the prelude constructor gets contextual generic inference. A local
+/// callable named Channel still shadows it, just like any other declaration.
+fn isChannelCall(self: *Checker, call: Ast.Expression.Call) Error!bool {
+    const reference = try self.referenceOf(call.callee) orelse return false;
+    if (!std.mem.eql(u8, reference.key, Resolver.preludeKey("Channel"))) return false;
+    if (call.callee.data == .name) {
+        const binding = self.find(call.callee.data.name) orelse return false;
+        return binding.is_type;
+    }
+    return true;
+}
+
+fn typeOfChannelCall(self: *Checker, expression: *const Ast.Expression, call: Ast.Expression.Call, expected: ?Type) Error!Type {
+    try self.reachKey(Resolver.preludeKey("Channel"));
+    try self.checkArguments(call, "Channel", .{
+        .types = &.{.int},
+        .names = &.{"capacity"},
+        .has_default = &.{true},
+        .arity_help = "Give `Channel` an optional Int capacity, as in `Channel(capacity: 3)`.",
+    });
+    if (expected) |wanted| if (wanted.kind == .channel) {
+        try self.literal_types.put(self.arena, expression, wanted.payload());
+        return wanted.payload();
+    };
+    try self.report(expression.span, "this channel needs a message type", .{}, "Write an annotation, as in `const numbers: Channel[Int] = Channel(capacity: 3)`.");
+    return .invalid;
 }
 
 /// The two structured-task calls infer `T` from a block's result. A written
@@ -9894,7 +9948,7 @@ fn jsonEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
             }
             return null;
         },
-        .nothing, .bytes, .range, .tuple, .set, .task, .function, .invalid => return .{ .type = value, .field_path = field_path },
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => return .{ .type = value, .field_path = field_path },
     }
 }
 
@@ -9930,7 +9984,7 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
             }
             return null;
         },
-        .nothing, .bytes, .range, .tuple, .set, .task, .function, .invalid => return .{ .type = value, .field_path = field_path },
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => return .{ .type = value, .field_path = field_path },
     }
 }
 

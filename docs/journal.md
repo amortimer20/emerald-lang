@@ -3388,3 +3388,35 @@ formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside `z
 Eleven new or changed task-running cases each passed 50 consecutive runs (550 total), with
 HTTP using a loopback-only server; expected files were read by hand. Windows runtime behavior
 and measurements still require green PR CI. Channels are the next slice.
+
+## Concurrency, slice 4: channels, 2026-09-30
+
+`Channel[T]` now has FIFO rendezvous and buffered sends, `receive`, idempotent `close`,
+and built-in iteration. Its invariant message type is supplied by expected-type context:
+annotations, parameters, returns, and collection literals. Native creation handles both
+qualified and bare calls while respecting local shadowing; arguments bind by name. The
+runtime uses the existing opaque class-handle pattern, with static `Type.Kind.channel`.
+Thread operations remain entirely in the scheduler; native queues explicitly retain message
+values so their copy-on-write semantics and collector roots are unchanged. Buffers grow on
+demand and reuse consumed slots rather than retaining previous messages indefinitely.
+
+Closing preserves buffered messages for draining, ends pending receives, and fails uncommitted
+sends with RuntimeError. Negative capacity is also RuntimeError; no new error subclass was
+needed. Optional receive results flatten as usual, while iteration distinguishes a message of
+`nothing` from end-of-stream. Function messages retain existing closure semantics, so the
+known indirect captured-variable gap for multicore includes functions passed through channels.
+
+Deadlock diagnostics name channel numbers, send/receive direction, and original wait sites.
+Review found that after a caught deadlock, another participant's obsolete waiter could still
+be present until it resumed; such already-readied waiters must not accept new messages. The
+runtime now checks scheduler readiness before matching them. A focused recovery case protects
+this, alongside FIFO, capacities, closure, value copies, cyclic captured-closure messages,
+destructuring, loop control, contextual typing, and local shadowing. No plan/source mismatch
+required a new design decision.
+
+Full local validation passed with pinned Zig 0.16.0, sequential `-j1` Debug and ReleaseSafe
+tests, native build, documentation examples (23 executed, 112 linked conformance files),
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
+`zig-out`. All seven standalone scheduler unit tests passed. Sixteen new or changed running
+cases passed 50 consecutive runs each (800 total); expected files were read by hand. Windows
+runtime validation remains for green PR CI. Cancellation is the next slice.

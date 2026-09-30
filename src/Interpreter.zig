@@ -92,6 +92,23 @@ const TaskGroupRecord = struct {
     active: bool = true,
 };
 
+const ChannelWaiter = struct {
+    job: *Scheduler.Runtime.Job,
+    value: ?Value = null,
+    delivered: bool = false,
+};
+
+const ChannelRecord = struct {
+    id: i64,
+    capacity: usize,
+    element: Value.Kind,
+    closed: bool = false,
+    buffer: std.ArrayList(Value) = .empty,
+    head: usize = 0,
+    senders: std.ArrayList(*ChannelWaiter) = .empty,
+    receivers: std.ArrayList(*ChannelWaiter) = .empty,
+};
+
 /// What running a program produced. An unhandled Emerald error stops an ordinary
 /// run; test mode collects one failure per test and continues discovery order.
 pub const Outcome = struct {
@@ -195,6 +212,8 @@ input_gate: Scheduler.Runtime.Gate = .{},
 task_records: std.AutoHashMapUnmanaged(i64, *TaskRecord) = .empty,
 task_groups: std.AutoHashMapUnmanaged(i64, *TaskGroupRecord) = .empty,
 next_task_id: i64 = 1,
+channels: std.AutoHashMapUnmanaged(i64, *ChannelRecord) = .empty,
+next_channel_id: i64 = 1,
 next_group_id: i64 = 1,
 next_completion_order: usize = 1,
 live_tasks: usize = 0,
@@ -410,6 +429,7 @@ pub fn run(
     // Whatever the counts did not reclaim, including lists still held by
     // module bindings and anything an error skipped releasing.
     defer interpreter.heap.deinit();
+    defer interpreter.deinitChannels();
     defer interpreter.deinitTasks();
     defer interpreter.literal_texts.deinit(gpa);
     defer interpreter.deinitFileHandles();
@@ -1525,6 +1545,15 @@ fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
 
     if (iterable.data == .range) return self.executeForRange(loop, iterable.data.range);
 
+    if (iterable.data == .struct_value and std.mem.eql(u8, iterable.data.struct_value.descriptor.name, Resolver.preludeKey("Channel"))) {
+        const id = iterable.data.struct_value.fields[0].data.int;
+        const channel = self.channels.get(id).?;
+        while (try self.receiveChannel(loop.iterable.span, channel)) |item| {
+            if (!try self.executeIteration(loop, item)) return;
+        }
+        return;
+    }
+
     // Section 9.1: a string yields its characters, each a string of its own.
     if (iterable.data == .string) {
         var clusters: unicode.Graphemes = .init(iterable.data.string.bytes);
@@ -1676,7 +1705,7 @@ fn widen(value: Value, kind: Value.Kind) Value {
 
 fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
     if (annotation.key != null or annotation.set) return .map;
-    if (annotation.task) return .struct_value;
+    if (annotation.task or annotation.channel) return .struct_value;
     if (annotation.element != null) return .list;
     if (annotation.positions != null) return .tuple;
     if (annotation.signature != null) return .closure;
@@ -1827,7 +1856,7 @@ fn kindOf(checked: Type) Value.Kind {
         .list => .list,
         .tuple => .tuple,
         .dictionary, .set => .map,
-        .task => .struct_value,
+        .task, .channel => .struct_value,
         .function => .closure,
         .struct_value => .struct_value,
     };
@@ -2306,7 +2335,7 @@ fn evaluateTypeName(self: *Interpreter, member: Ast.Expression.Member, static: T
 fn writeTypeName(writer: *std.Io.Writer, value: Value, static: Type) std.Io.Writer.Error!void {
     if (value.data == .nothing) return writer.writeAll("Nothing");
     const present = static.payload();
-    if (present.kind == .task) return writer.print("{f}", .{present});
+    if (present.kind == .task or present.kind == .channel) return writer.print("{f}", .{present});
     switch (value.data) {
         .struct_value => |object| return writer.writeAll(object.descriptor.display_name),
         .tuple => |tuple| if (present.kind == .tuple) {
@@ -3058,6 +3087,7 @@ fn evaluateCall(
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
         if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
+        if (std.mem.eql(u8, key, Resolver.preludeKey("Channel"))) return self.createChannel(expression, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::run")) return self.callTasksRun(expression.span, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::yield")) {
             const task = self.task;
@@ -3119,6 +3149,7 @@ fn evaluateCall(
     const key = self.keyOf(name);
     try self.reach(key, call.callee.span);
     if (self.find(name) != null) return self.callValue(expression.span, call);
+    if (std.mem.eql(u8, key, Resolver.preludeKey("Channel"))) return self.createChannel(expression, call);
     if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
     if (self.functions.contains(key)) return self.callFunction(expression.span, key, call);
     return self.callBuiltin(expression, call, name);
@@ -3333,7 +3364,13 @@ fn raiseDeadlock(self: *Interpreter, span: Source.Span) Error {
     const message = "these tasks are waiting for each other";
     self.task.state.raised_value = self.makeError(Resolver.preludeKey("DeadlockError"), message) catch return error.OutOfMemory;
     var details: std.Io.Writer.Allocating = .init(self.arena);
-    self.writeTaskWait(&details.writer, self.root_task, "the group") catch return error.OutOfMemory;
+    var root_description: []const u8 = "the program";
+    var groups = self.task_groups.valueIterator();
+    while (groups.next()) |group| if (group.*.active) {
+        root_description = "the group";
+        break;
+    };
+    self.writeTaskWait(&details.writer, self.root_task, root_description) catch return error.OutOfMemory;
     for (1..@as(usize, @intCast(self.next_task_id))) |id| {
         const task = self.task_records.get(@intCast(id)) orelse continue;
         self.writeTaskWait(&details.writer, &task.state, "a task") catch return error.OutOfMemory;
@@ -3343,6 +3380,15 @@ fn raiseDeadlock(self: *Interpreter, span: Source.Span) Error {
 }
 
 fn writeTaskWait(self: *Interpreter, writer: *std.Io.Writer, state: *Scheduler.TaskState(TaskData), description: []const u8) std.Io.Writer.Error!void {
+    if (state.state.job.?.deadlock_channel) |channel| {
+        const location = state.state.job.?.deadlock_site orelse return;
+        const source = self.files[location.file].source;
+        try writer.print("At `{s}:{d}`, {s} is waiting to {s} channel {d}.\n", .{
+            source.path,                                        source.location(location.start).line, description,
+            if (channel.sending) "send to" else "receive from", channel.id,
+        });
+        return;
+    }
     const target = state.state.job.?.deadlock_target orelse return;
     const location = state.state.job.?.deadlock_site orelse return;
     var tasks = self.task_records.valueIterator();
@@ -3408,6 +3454,161 @@ fn deinitTasks(self: *Interpreter) void {
         self.gpa.destroy(group_ptr.*);
     }
     self.task_groups.deinit(self.gpa);
+}
+
+fn createChannel(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {
+    const bound = try self.evaluateBound(call, &.{"capacity"}, &.{true});
+    defer {
+        self.releaseBound(bound);
+        self.gpa.free(bound.values);
+        if (bound.omitted) |omitted| self.gpa.free(omitted);
+    }
+    const capacity = if (bound.omitted != null and bound.omitted.?[0]) 0 else bound.values[0].data.int;
+    if (capacity < 0) return self.raise(expression.span, "a channel capacity cannot be negative", "Pass zero for a rendezvous, or a positive capacity for a buffer.");
+    const channel = try self.gpa.create(ChannelRecord);
+    errdefer self.gpa.destroy(channel);
+    channel.* = .{ .id = self.next_channel_id, .capacity = @intCast(capacity), .element = kindOf(self.literal_types.get(expression).?.element.?.*) };
+    const handle = try self.nativeTaskHandle("Channel", channel.id);
+    errdefer self.heap.release(handle);
+    try self.channels.put(self.gpa, channel.id, channel);
+    self.next_channel_id += 1;
+    return handle;
+}
+
+fn callChannel(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member, call: Ast.Expression.Call) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    defer self.heap.release(receiver);
+    const channel = self.channels.get(receiver.data.struct_value.fields[0].data.int).?;
+    if (std.mem.endsWith(u8, key, "::close")) {
+        if (!channel.closed) {
+            channel.closed = true;
+            for (channel.senders.items) |waiter| self.scheduler.wakeChannel(waiter.job);
+            for (channel.receivers.items) |waiter| self.scheduler.wakeChannel(waiter.job);
+            channel.senders.clearRetainingCapacity();
+            channel.receivers.clearRetainingCapacity();
+        }
+        return .nothing;
+    }
+    if (std.mem.endsWith(u8, key, "::receive")) return (try self.receiveChannel(span, channel)) orelse .nothing;
+    const bound = try self.evaluateBound(call, &.{"value"}, &.{false});
+    defer {
+        self.releaseBound(bound);
+        self.gpa.free(bound.values);
+        if (bound.omitted) |omitted| self.gpa.free(omitted);
+    }
+    try self.sendChannel(span, channel, widen(bound.values[0], channel.element));
+    return .nothing;
+}
+
+fn removeChannelWaiter(waiters: *std.ArrayList(*ChannelWaiter), waiter: *ChannelWaiter) void {
+    for (waiters.items, 0..) |item, index| if (item == waiter) {
+        _ = waiters.orderedRemove(index);
+        return;
+    };
+}
+
+fn waitChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, sending: bool) Error!void {
+    const task = self.task;
+    task.state.job.?.wait_site = .{ .file = task.state.file, .start = span.start };
+    defer task.state.job.?.wait_site = null;
+    const progressed = self.scheduler.parkChannel(task.state.job.?, .{ .id = channel.id, .sending = sending });
+    self.task = task;
+    if (!progressed) return self.raiseDeadlock(span);
+}
+
+fn sendChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, value: Value) Error!void {
+    if (channel.closed) return self.raise(span, "cannot send to a closed channel", "Send values before closing the channel.");
+    self.discardChannelWaiters(&channel.receivers);
+    if (channel.receivers.items.len != 0) {
+        const receiver = channel.receivers.orderedRemove(0);
+        receiver.value = Heap.retain(value);
+        receiver.delivered = true;
+        self.scheduler.wakeChannel(receiver.job);
+        return;
+    }
+    if (channel.buffer.items.len - channel.head < channel.capacity) {
+        // Reclaim consumed slots before growing: long streams stay bounded
+        // by their capacity rather than retaining every previous message.
+        if (channel.head != 0) {
+            const remaining = channel.buffer.items.len - channel.head;
+            std.mem.copyForwards(Value, channel.buffer.items[0..remaining], channel.buffer.items[channel.head..]);
+            channel.buffer.items.len = remaining;
+            channel.head = 0;
+        }
+        try channel.buffer.append(self.gpa, Heap.retain(value));
+        return;
+    }
+    var waiter: ChannelWaiter = .{ .job = self.task.state.job.?, .value = Heap.retain(value) };
+    defer if (waiter.value) |pending| self.heap.release(pending);
+    try channel.senders.append(self.gpa, &waiter);
+    defer removeChannelWaiter(&channel.senders, &waiter);
+    try self.waitChannel(span, channel, true);
+    if (!waiter.delivered) return self.raise(span, "cannot send to a closed channel", "Send values before closing the channel.");
+}
+
+/// null means closed and empty; a delivered Value.nothing is still a message
+/// when iterating Channel[T?], despite optional flattening on public receive.
+fn receiveChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord) Error!?Value {
+    self.discardChannelWaiters(&channel.senders);
+    if (channel.head < channel.buffer.items.len) {
+        const value = channel.buffer.items[channel.head];
+        channel.head += 1;
+        if (channel.senders.items.len != 0 and !channel.closed) {
+            const remaining = channel.buffer.items.len - channel.head;
+            std.mem.copyForwards(Value, channel.buffer.items[0..remaining], channel.buffer.items[channel.head..]);
+            channel.buffer.items.len = remaining;
+            channel.head = 0;
+            // The consumed slot already provides room; delivering a queued
+            // send requires no allocation and keeps the buffer bounded.
+            channel.buffer.appendAssumeCapacity(.nothing);
+            const sender = channel.senders.orderedRemove(0);
+            channel.buffer.items[channel.buffer.items.len - 1] = sender.value.?;
+            sender.value = null;
+            sender.delivered = true;
+            self.scheduler.wakeChannel(sender.job);
+        }
+        return value;
+    }
+    channel.buffer.clearRetainingCapacity();
+    channel.head = 0;
+    if (channel.senders.items.len != 0 and !channel.closed) {
+        const sender = channel.senders.orderedRemove(0);
+        const value = sender.value.?;
+        sender.value = null;
+        sender.delivered = true;
+        self.scheduler.wakeChannel(sender.job);
+        return value;
+    }
+    if (channel.closed) return null;
+    var waiter: ChannelWaiter = .{ .job = self.task.state.job.? };
+    defer if (waiter.value) |pending| self.heap.release(pending);
+    try channel.receivers.append(self.gpa, &waiter);
+    defer removeChannelWaiter(&channel.receivers, &waiter);
+    try self.waitChannel(span, channel, false);
+    const value = waiter.value;
+    waiter.value = null;
+    return value;
+}
+
+/// A caught deadlock can continue before its other participants have resumed
+/// to remove their waiters. Those readied tasks must not accept new messages.
+fn discardChannelWaiters(self: *Interpreter, waiters: *std.ArrayList(*ChannelWaiter)) void {
+    while (waiters.items.len != 0 and !self.scheduler.channelWaiting(waiters.items[0].job)) {
+        _ = waiters.orderedRemove(0);
+    }
+}
+
+fn deinitChannels(self: *Interpreter) void {
+    var channels = self.channels.valueIterator();
+    while (channels.next()) |item| {
+        const channel = item.*;
+        for (channel.buffer.items[channel.head..]) |value| self.heap.release(value);
+        channel.buffer.deinit(self.gpa);
+        channel.senders.deinit(self.gpa);
+        channel.receivers.deinit(self.gpa);
+        self.gpa.destroy(channel);
+    }
+    self.channels.deinit(self.gpa);
 }
 
 /// Removes only complete ANSI SGR sequences: ESC, `[`, zero or more decimal
@@ -5222,7 +5423,7 @@ fn jsonDecodeValue(self: *Interpreter, span: Source.Span, json: Json.Value, targ
         .list => self.jsonDecodeList(span, json, target, path),
         .dictionary => self.jsonDecodeDictionary(span, json, target, path),
         .struct_value => self.jsonDecodeStruct(span, json, target, path),
-        .nothing, .bytes, .range, .tuple, .set, .task, .function, .invalid => unreachable,
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => unreachable,
     };
 }
 
@@ -5431,7 +5632,7 @@ fn jsonFromTypedValue(self: *Interpreter, arena: std.mem.Allocator, span: Source
             break :blk .initObject(entries);
         },
         .struct_value => self.jsonFromStructValue(arena, span, value, value_type),
-        .nothing, .bytes, .range, .tuple, .set, .task, .function, .invalid => unreachable,
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => unreachable,
     };
 }
 
@@ -7540,6 +7741,7 @@ fn callMethod(
         if (isFileWriterKey(key)) return self.callFileWriter(expression.span, key, member, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TaskGroup::start")) return self.callTaskStart(expression.span, member, call);
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Task::")) return self.callTaskMethod(expression.span, key, member, call);
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Channel::")) return self.callChannel(expression.span, key, member, call);
         // A resolved user method owns its name, including `next`, `choose`,
         // and `shuffle!`. Honor it before considering native operations.
         if (member.optional) {

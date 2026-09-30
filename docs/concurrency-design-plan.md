@@ -2,8 +2,8 @@
 
 Status: accepted, 2026-09-29. The user answered "I'll trust your judgement" to the design
 discussion, which is taken as accepting all nine recommendations below; if that was not meant,
-the status goes back to proposed. Slices 1–3 are implemented and locally validated;
-slice 4 (channels) is next. Windows runtime validation remains a CI gate.
+the status goes back to proposed. Slices 1–4 are implemented and locally validated;
+slice 5 (cancellation) is next. Windows runtime validation remains a CI gate.
 The user accepted the scheduling clarification in principle 5 on 2026-09-29.
 Rewrite-context 21 calls
 concurrency "the nearest major post-runtime design pass" and says that until it is done,
@@ -424,7 +424,43 @@ commits.
   ordinary type error.
 - Conformance: producer and consumer at several capacities, a closed channel, a send to a closed
   channel, a receive at the end, and a deadlock message.
-- Settled while building: (record here)
+- Settled while building: `Channel[T]` is invariant and takes its message type from the
+  expected type, including annotations, parameters, returns, and collection literals. A call
+  without that context reports the annotation example. The runtime reuses the opaque class
+  handle pattern behind `Task`, with a new static type kind, rather than a new runtime value
+  tag. Both `Channel()` and `Emerald.Channel()` route to native construction, but a locally
+  shadowing callable stays an ordinary call. Native arguments are bound by name.
+
+  Senders and receivers wait FIFO. Zero capacity is a rendezvous; positive buffers grow on
+  demand, reuse consumed slots, and never retain an entire stream's previous messages. Values
+  in native buffers and waiters are explicitly retained, preserving collection/struct
+  copy-on-write semantics and the collector's external roots; class instances remain shared.
+  Function messages keep existing closure semantics, including the indirect captured-`var`
+  gap already recorded for multicore. A cyclic captured-closure stream tests their lifetime.
+  All thread details remain in `Scheduler.zig`; the interpreter owns message values.
+
+  `close()` is idempotent, preserves buffered messages for draining, wakes pending receivers
+  with end-of-stream, and wakes undelivered senders with RuntimeError. A send committed before
+  closure remains successful. Negative capacity raises RuntimeError with `a channel capacity
+  cannot be negative`; sending after closure uses `cannot send to a closed channel`.
+  No new error subclass is needed. `receive()` obeys optional flattening: with optional
+  messages, a message of `nothing` and end-of-stream both return `nothing`. Built-in iteration
+  tracks end-of-stream separately, so `for` still visits actual `nothing` messages and is the
+  unambiguous companion. Destructuring, break, and continue use ordinary loop behavior.
+
+  Deadlocks name each channel by its creation-order number, the send/receive direction, and
+  the original wait location. A root outside an active group is called `the program`, not
+  `the group`. Review found that a caught deadlock could continue before another participant
+  removed its waiter: those already-readied waiters must not accept new messages. Scheduler
+  readiness checks discard them before a new send/receive; a focused recovery case protects
+  this. No accepted decision or source constraint required a design change.
+
+  The full local gate and seven scheduler unit tests pass. Sixteen new or changed running
+  cases each passed 50 consecutive runs (800 total), including prelude reach, closed-channel
+  errors, and deadlocks. Expected files were read by hand. Validation used pinned Zig 0.16.0,
+  sequential `-j1` Debug and ReleaseSafe tests, native build, documentation examples,
+  changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds with
+  prefixes outside `zig-out`. Windows execution remains for green PR CI.
 
 ### Slice 5: Cancellation
 

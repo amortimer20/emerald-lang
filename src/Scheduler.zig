@@ -125,6 +125,8 @@ pub const Runtime = struct {
         deadlock_target: ?*Job = null,
         wait_site: ?WaitSite = null,
         deadlock_site: ?WaitSite = null,
+        channel_wait: ?ChannelWait = null,
+        deadlock_channel: ?ChannelWait = null,
         deadline: ?i96 = null,
         timer_next: ?*Job = null,
         gate_next: ?*Job = null,
@@ -135,6 +137,7 @@ pub const Runtime = struct {
 
     pub const WaitResult = enum { finished, timed_out, deadlocked };
     pub const WaitSite = struct { file: u32, start: u32 };
+    pub const ChannelWait = struct { id: i64, sending: bool };
 
     /// A native resource has one active operation. Its gate is managed under
     /// the baton, so buffered readers and live handles never race with close.
@@ -178,6 +181,7 @@ pub const Runtime = struct {
         while (item) |job| : (item = job.all_next) {
             job.deadlock_target = null;
             job.deadlock_site = null;
+            job.deadlock_channel = null;
         }
         while (true) {
             var first: ?*Job = null;
@@ -190,6 +194,7 @@ pub const Runtime = struct {
             job.deadlocked = true;
             job.deadlock_target = job.waiting_on;
             job.deadlock_site = job.wait_site;
+            job.deadlock_channel = job.channel_wait;
             job.waiting_on = null;
             self.enqueue(job);
         }
@@ -261,6 +266,37 @@ pub const Runtime = struct {
         current.deadlocked = false;
         if (deadlocked) return .deadlocked;
         return if (current.timed_out) .timed_out else .finished;
+    }
+
+    /// Channel bookkeeping is owned by the baton holder. These operations
+    /// only suspend and ready jobs; they never inspect an Emerald value.
+    pub fn parkChannel(self: *Runtime, current: *Job, wait: ChannelWait) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        std.debug.assert(self.current == current);
+        current.status = .waiting;
+        current.wait_order = self.next_wait_order;
+        self.next_wait_order += 1;
+        current.channel_wait = wait;
+        defer current.channel_wait = null;
+        _ = self.dispatch();
+        while (current.status != .running) current.condition.waitUncancelable(self.io, &self.mutex);
+        const deadlocked = current.deadlocked;
+        current.deadlocked = false;
+        return !deadlocked;
+    }
+
+    pub fn wakeChannel(self: *Runtime, job: *Job) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        // A deadlock can already have readied the whole wait graph.
+        if (job.status == .waiting) self.enqueue(job);
+    }
+
+    pub fn channelWaiting(self: *Runtime, job: *Job) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return job.status == .waiting and job.channel_wait != null;
     }
 
     fn now(self: *Runtime) i96 {
@@ -510,4 +546,50 @@ test "equal sleep deadlines resume in waiting order" {
         runtime.join(job);
     }
     try std.testing.expectEqualSlices(usize, &.{ 0, 1, 2 }, &order);
+}
+
+test "a channel deadlock snapshots its original wait" {
+    var root: Runtime.Job = undefined;
+    var runtime = Runtime.init(std.Io.Threaded.global_single_threaded.io(), &root);
+    defer runtime.deinit();
+    root.wait_site = .{ .file = 2, .start = 17 };
+    try std.testing.expect(!runtime.parkChannel(&root, .{ .id = 3, .sending = true }));
+    try std.testing.expectEqual(@as(i64, 3), root.deadlock_channel.?.id);
+    try std.testing.expect(root.deadlock_channel.?.sending);
+    try std.testing.expectEqual(@as(u32, 17), root.deadlock_site.?.start);
+}
+
+test "channel wakeups join the ready queue in readiness order" {
+    const Probe = struct {
+        runtime: *Runtime,
+        order: *[2]usize,
+        count: *usize,
+        number: usize,
+
+        fn run(context: *anyopaque, job: *Runtime.Job) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            std.debug.assert(self.runtime.parkChannel(job, .{ .id = 1, .sending = false }));
+            self.order[self.count.*] = self.number;
+            self.count.* += 1;
+        }
+    };
+    var root: Runtime.Job = undefined;
+    var runtime = Runtime.init(std.Io.Threaded.global_single_threaded.io(), &root);
+    defer runtime.deinit();
+    var order: [2]usize = undefined;
+    var count: usize = 0;
+    var first: Runtime.Job = undefined;
+    var second: Runtime.Job = undefined;
+    var one: Probe = .{ .runtime = &runtime, .order = &order, .count = &count, .number = 1 };
+    var two: Probe = .{ .runtime = &runtime, .order = &order, .count = &count, .number = 2 };
+    try runtime.start(&first, &one, Probe.run);
+    try runtime.start(&second, &two, Probe.run);
+    runtime.yield(&root);
+    runtime.wakeChannel(&second);
+    runtime.wakeChannel(&first);
+    try std.testing.expect(runtime.waitFor(&root, &first));
+    try std.testing.expect(runtime.waitFor(&root, &second));
+    runtime.join(&first);
+    runtime.join(&second);
+    try std.testing.expectEqualSlices(usize, &.{ 2, 1 }, &order);
 }

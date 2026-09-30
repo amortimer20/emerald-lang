@@ -59,6 +59,15 @@ class Tasks {
     func Tasks.yield() {}
 }
 
+# The checker supplies Channel[T]'s message type; natives own its live state.
+class Channel {
+    const _id: Int
+
+    constructor(capacity: Int = 0) {
+        self._id = 0
+    }
+}
+
 # Whole-file filesystem namespaces. Their bodies establish the ordinary
 # type-level signatures; the interpreter supplies the native operation.
 class File {

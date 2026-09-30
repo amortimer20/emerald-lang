@@ -1,0 +1,4 @@
+diagnostics/channel-type-parameters.em:1:25: a `Channel` type takes one message type
+  var numbers: Channel[Int, String]
+                          ^
+Write `Channel[T]` with the channel's one message type.

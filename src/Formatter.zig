@@ -980,6 +980,10 @@ const Printer = struct {
                 try self.write("Task[");
                 try self.printType(element.*);
                 try self.write("]");
+            } else if (t.channel) {
+                try self.write("Channel[");
+                try self.printType(element.*);
+                try self.write("]");
             } else {
                 try self.write("List[");
                 try self.printType(element.*);

@@ -1,0 +1,7 @@
+runtime-errors/channel-receive-deadlock.em:3:38: DeadlockError: these tasks are waiting for each other
+      const waiting = tasks.start { => numbers.receive() }
+                                       ^^^^^^^^^^^^^^^^^
+At `runtime-errors/channel-receive-deadlock.em:4`, the group is waiting for the task started at `runtime-errors/channel-receive-deadlock.em:3`.
+At `runtime-errors/channel-receive-deadlock.em:3`, a task is waiting to receive from channel 1.
+Check the task results they wait for.
+in a block, called at runtime-errors/channel-receive-deadlock.em:3:21

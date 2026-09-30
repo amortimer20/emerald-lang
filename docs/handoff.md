@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-29. This is the live status a session starts from. Keep it to the current
+Updated: 2026-09-30. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -114,10 +114,12 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
-Concurrency is in progress on `codex/concurrency`. Slices 1–3 are implemented and locally
+Concurrency is in progress on `codex/concurrency`. Slices 1–4 are implemented and locally
 validated: per-task execution state, `Task[T]`, structured groups, results, a FIFO single-holder
 OS-thread scheduler (64 live children), yield, timers, timed waits, native-I/O baton release,
-and `DeadlockError` with original wait locations. Input and shared file handles use FIFO
+and `DeadlockError` with original wait locations. `Channel[T]` adds FIFO rendezvous and
+buffered messaging, receiving, idempotent close, and `for` iteration. Its invariant message
+type comes from ordinary expected-type context. Input and shared file handles use FIFO
 resource gates. Direct captures of outer `var` bindings, including nested lambdas, are
 rejected; `start` requires an inline block. Two indirect-call capture gaps remain for the
 multicore plan: called named functions reading module `var`s, and called function values
@@ -130,13 +132,20 @@ different lengths have reliable real-clock ordering. File, network, and input co
 resume in arrival order and can vary. Teach fixed output order by printing task results in
 the wanted order or sending through a channel. The two-file-read probe produced `a, b` 94
 times and `b, a` 6 times in 100 runs; the evidence and decision are in the slice 3 note.
-Conformance cases order their I/O results explicitly. Slice 3 passed the full local gate
+Conformance cases order their I/O results explicitly. Slice 4 passed the full local gate
 with Zig 0.16.0 `-j1`: Debug and ReleaseSafe tests, native build, documentation examples,
-formatting, whitespace, and Windows/macOS cross-builds. Eleven new or changed task-running
-cases each passed 50 consecutive runs (550 total), including loopback-only HTTP. The journal
-records completed slices and measurements. Next is slice 4: channels. Windows runtime
+formatting, whitespace, and Windows/macOS cross-builds. Sixteen new or changed running cases
+each passed 50 consecutive runs (800 total), including channel deadlock recovery, cyclic
+closure messages, value-copy semantics, and prelude reach. The journal records completed
+slices and measurements. Next is slice 5: cancellation. Windows runtime
 behavior and memory measurements remain for CI; a slice is not fully done until its PR is
 green on Windows. This branch has not been pushed or merged.
+
+Channel waits participate in deadlock diagnostics. Retained messages preserve value semantics
+and remain safe across collection; class instances remain shared references. Public receive
+flattens optionals, while iteration still visits actual `nothing` messages. The slice 4 note
+records the implementation choices and caught-deadlock waiter cleanup; no accepted decision
+needed reopening.
 
 A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
 `-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
@@ -164,9 +173,9 @@ built:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - **Concurrency** (rewrite-context 21): structured tasks and channels, in
   [`concurrency-design-plan.md`](concurrency-design-plan.md), accepted with all nine
-  recommendations. Codex is implementing the plan on `codex/concurrency`; slices 1–3
+  recommendations. Codex is implementing the plan on `codex/concurrency`; slices 1–4
   have passed their local gate, including the accepted ordering correction above.
-  Continue with slice 4 (channels), then cancellation and documentation/integration.
+  Continue with slice 5 (cancellation), then documentation/integration.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
@@ -228,7 +237,7 @@ on the roadmap.
 
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
   `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
-  `EncodingError`.
+  `EncodingError`, and `DeadlockError`.
 - `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
   value; `Program.sleep` reports it.
 - A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses

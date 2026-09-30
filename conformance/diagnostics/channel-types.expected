@@ -1,0 +1,28 @@
+diagnostics/channel-types.em:2:14: this is String, but parameter `value` of `send` needs Int
+  numbers.send("wrong")
+               ^^^^^^^
+Pass a value of the expected type, or convert it first.
+diagnostics/channel-types.em:3:9: `send` takes 1 argument, but this call passes 0
+  numbers.send()
+          ^^^^
+Give `send` one value of the channel's message type.
+diagnostics/channel-types.em:4:9: `receive` takes 0 arguments, but this call passes 1
+  numbers.receive(1)
+          ^^^^^^^
+This channel method takes no arguments.
+diagnostics/channel-types.em:5:9: Channel[Int] has no method named `unknown`
+  numbers.unknown()
+          ^^^^^^^
+A channel offers `send(value)`, `receive()`, and `close()`.
+diagnostics/channel-types.em:6:31: this is Channel[Int], but `wrong` was declared as Channel[Float]
+  const wrong: Channel[Float] = numbers
+                                ^^^^^^^
+Give the declaration the type of its value, or convert the value to match.
+diagnostics/channel-types.em:7:17: this channel needs a message type
+  const missing = Channel()
+                  ^^^^^^^^^
+Write an annotation, as in `const numbers: Channel[Int] = Channel(capacity: 3)`.
+diagnostics/channel-types.em:8:50: this is String, but parameter `capacity` of `Channel` needs Int
+  const capacity: Channel[Int] = Channel(capacity: "wrong")
+                                                   ^^^^^^^
+Pass a value of the expected type, or convert it first.

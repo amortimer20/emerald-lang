@@ -46,3 +46,11 @@ Tasks.run { tasks =>
     const result = tasks.start { => 7 }
     print(result.result())
 }
+
+func use_channel(channel: Channel[Int]) {
+    channel.send(11)
+    channel.close()
+    assert(channel.receive() == 11)
+    assert(channel.receive() == nothing)
+}
+use_channel(Channel(capacity: 1))
