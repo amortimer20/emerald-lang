@@ -3720,3 +3720,34 @@ cases), changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64
 cross-builds outside `zig-out`. The handoff and release-note list record the fix
 before committing it. Claude's proposed REPL plan landed on main after this branch
 was created; it remains separate from this batch and no REPL code was changed.
+
+## Bug-fix batch, item 2: required case-header grouping, 2026-09-30
+
+Reproduced with the separately built main baseline (`4c51a6c`):
+
+```emerald
+const items = [1, 2]
+case {
+    when (items.any? { item => item > 1 }) {
+        print("yes")
+    }
+}
+```
+
+Main checked this program successfully, then formatted its header as
+`when items.any? { item => item > 1 } {`. Checking that output failed because the
+first brace was read as the arm body. The formatter now applies its existing
+control-header grouping logic to each `when` alternative, rather than printing it
+as an unrestricted expression. Run and format regressions protect the exact program
+and canonical output; their expected files were read by hand.
+
+A new conformance guard formats and reparses every `.em` file under `run/`, including
+all project members. There are no excluded cases. Reparse uses the frontend's own
+large-stack path, so deep regression programs do not depend on the test runner's
+platform-default stack. No new grammar or canonical style was chosen.
+
+The focused program runs and remains formatter-clean. The full required gate passed
+with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build,
+documentation examples (24 executed, 128 linked conformance cases), changed-Zig
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
+`zig-out`.

@@ -169,8 +169,11 @@ from freshly fetched main `4c51a6c`. Item 1 reproduces and is implemented: `remo
 uses the same copy-before-change path as the other collection mutators, and struct
 mutation inference recognizes it. Its full gate passed (Debug/ReleaseSafe, native build,
 24 doc examples/128 conformance links, formatting, whitespace, and Windows/macOS
-cross-builds). Next is item 2, formatter preservation of required grouping. The REPL
-replay bug is explicitly excluded and belongs to Claude's separate plan.
+cross-builds). Item 2, formatter preservation of required grouping, is also complete. The REPL
+replay bug is explicitly excluded and belongs to Claude's separate plan. Item 2 also
+reproduces: formatting a `when` condition containing a trailing-block call removed
+required parentheses. The fix and an all-`run/` format/parse guard passed the same full
+gate; there are no excluded cases. Next is item 3 (inline documentation comments).
 
 The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
@@ -190,6 +193,8 @@ building" notes record its decisions.
   and deadlock diagnostics (merged, with full PR CI green).
 - `List.remove_if` preserves other list/struct copies; calling it from a struct method
   correctly requires a mutable struct receiver.
+- Formatting preserves required parentheses around trailing-block calls in `when`
+  headers; every conformance `run/` file is also formatted and reparsed as a guard.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
