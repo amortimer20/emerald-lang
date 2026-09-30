@@ -175,7 +175,8 @@ confirmed 130 conformance links; the main/task recursion regression matched its
 expected output in 50 runs. Reproductions and findings are in the journal.
 Item 8's single-pass argument diagnostics reproduced across all five typed/native
 APIs and a changing trait-default receiver; its fixes also passed the full gate.
-Next is item 9 (bare prelude names in generic call diagnostics). The REPL replay bug remains
+Item 9's shared prelude-name display fix also passed the full gate.
+Next is item 10 (explaining JSON's generated-constructor requirement). The REPL replay bug remains
 explicitly excluded and belongs to Claude's separate plan.
 
 The standard-library slices the user chose to
@@ -209,6 +210,8 @@ building" notes record its decisions.
   recursion limits, cleanup, and summarized stack traces are unchanged.
 - Argument errors are reported once in JSON/CSV encoding, Base64, Digest,
   Console.table, and changing trait-default calls, rather than being repeated.
+- Prelude call diagnostics use readable names such as `Json.parse`, not internal
+  `Emerald.Json.parse` keys; project namespace qualification is preserved.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
@@ -281,10 +284,6 @@ on the roadmap.
   instead; do the same for the interpreter thread in `emerald.zig`.
 - Found while writing the website's JSON pages (2026-09-30, in 0.6.0; fix after the concurrency
   branch merges, since both touch `Checker.zig`):
-  - Messages name built-ins with their internal prefix: ``parameter `text` of
-    `Emerald.Json.parse` needs String``, and likewise for `Json.decode`, probably every prelude
-    function through the generic parameter-type message. 14.2 wants the bare name. (`Digest`
-    was fixed alone during Base64 review; fix it once where the message is built.)
   - `Json.decode` correctly refuses a struct that declares its own constructor, but its message
     lists what JSON can build without saying the constructor is why.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,

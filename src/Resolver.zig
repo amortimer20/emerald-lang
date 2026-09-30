@@ -73,10 +73,29 @@ pub fn typeSetupKey(arena: std.mem.Allocator, type_key: []const u8) std.mem.Allo
 }
 
 /// A key as a reader would write it: `Vector2::origin` is `Vector2.origin`,
-/// and a private declaration drops the file it is private to.
+/// a private declaration drops its file, and prelude names omit `Emerald.`
+/// (14.2). Ordinary project namespace qualification stays visible.
 pub fn displayKey(arena: std.mem.Allocator, key: []const u8) std.mem.Allocator.Error![]const u8 {
     const start = if (std.mem.indexOf(u8, key, private_separator)) |at| at + private_separator.len else 0;
-    return std.mem.replaceOwned(u8, arena, key[start..], method_separator, ".");
+    const written = key[start..];
+    const bare = if (isPreludeKey(written)) written[prelude_namespace.len + 1 ..] else written;
+    return std.mem.replaceOwned(u8, arena, bare, method_separator, ".");
+}
+
+test "display keys hide prelude internals but keep project namespaces" {
+    const cases = [_]struct { key: []const u8, shown: []const u8 }{
+        .{ .key = prelude_namespace ++ ".Json::parse", .shown = "Json.parse" },
+        .{ .key = prelude_namespace ++ ".Math.sin", .shown = "Math.sin" },
+        .{ .key = "prelude.em" ++ private_separator ++ prelude_namespace ++ ".Date::_parse", .shown = "Date._parse" },
+        .{ .key = "Tools.Json::parse", .shown = "Tools.Json.parse" },
+        .{ .key = "notes.em" ++ private_separator ++ "Tools._helper", .shown = "Tools._helper" },
+        .{ .key = "Vector2::origin", .shown = "Vector2.origin" },
+    };
+    for (cases) |case| {
+        const shown = try displayKey(std.testing.allocator, case.key);
+        defer std.testing.allocator.free(shown);
+        try std.testing.expectEqualStrings(case.shown, shown);
+    }
 }
 
 /// Where an assignment statement is written, which is how the passes after

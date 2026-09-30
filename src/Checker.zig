@@ -5787,12 +5787,18 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
 /// no type that can be written describes that, so they can only be called.
 fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
     if (!self.declarations.contains(reference.key)) {
+        // An explicitly qualified built-in value needs a qualified call in
+        // its fix: bare `print` may be the program's own function (14.2).
+        const shown = if (expression.data == .member and Resolver.builtinFunctionName(reference.key) != null)
+            reference.key
+        else
+            reference.display;
         try self.reportWithHelp(
             expression.span,
             "`{s}` is built in, and built-in functions cannot be used as values",
-            .{reference.display},
+            .{shown},
             "Call it with parentheses, as in `{s}(...)`, or wrap it in a lambda such as `{{ value => {s}(value) }}`.",
-            .{ reference.display, reference.display },
+            .{ shown, shown },
         );
         return .invalid;
     }
@@ -10101,8 +10107,7 @@ fn typeOfDigest(self: *Checker, call: Ast.Expression.Call, name: []const u8, key
         } else if (value.kind != .bytes or value.optional) {
             valid = false;
             const help = if (value.kind == .string) to_bytes_help else "Pass Bytes to digest.";
-            const shown = key[Resolver.prelude_namespace.len + 1 ..];
-            const method = try std.mem.replaceOwned(u8, self.arena, shown, "::", ".");
+            const method = try Resolver.displayKey(self.arena, key);
             try self.report(argument.span, "{s} takes Bytes, but this is {f}", .{ method, value }, help);
         }
     }

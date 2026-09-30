@@ -3955,3 +3955,35 @@ Focused checking and execution pass. The full required gate passed with pinned
 Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build, documentation examples
 (24 executed, 130 linked conformance cases), changed-Zig formatting, whitespace,
 and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 9: readable prelude call names, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with
+`print(Json.parse(5))`: the parameter error names `Emerald.Json.parse`. The same
+minimal wrong-type call with Json.decode, Csv.parse, File.exists?, Console.red,
+Date.parse, and Http.get exposes their internal prefix too. Wrong arity and unknown
+named arguments have the same leak, while Digest previously stripped it on its own.
+
+The resolver's shared display-key helper now omits the prelude namespace, after
+removing private-file qualification and before turning method separators into dots.
+Lookup keys themselves stay untouched; project namespace qualification stays visible.
+Generic checker call messages therefore share one formatting rule, and Digest uses
+that helper instead of its separate prefix/separator manipulation. Unit tests cover
+native functions, nested/private prelude members, ordinary project namespaces, and
+private project names.
+
+An explicitly qualified built-in taken as a value still suggests its qualified call:
+bare `print` may be the program's own function. The existing built-in-shadowing
+expectation remains unchanged, preserving a correct recovery hint rather than
+stripping qualification the user actually needs. Shadowing-help escape paths such
+as `Emerald.File.read` also remain qualified. The new diagnostic case covers the
+seven libraries, Digest, wrong arity, unknown parameters, a named option, explicit
+qualification, and native Math arity. Bytes.from_hex's old prefix and Regex.Match's
+nonconstructible-type display expectations now use bare names too. All three changed
+expected files were read by hand.
+
+The focused diagnostics match the intended text. The full required gate passed
+with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build,
+documentation examples (24 executed, 130 linked conformance cases), changed-Zig
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
+`zig-out`.
