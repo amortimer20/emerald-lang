@@ -1,6 +1,6 @@
 # REPL: design and implementation plan
 
-Status: proposed, 2026-09-30, awaiting the user's eight decisions below. `emerald repl` (18.4) was
+Status: accepted, 2026-09-30. The user accepted the eight recommendations below by planning to start the work; Codex begins after the bug-fix batch is merged. `emerald repl` (18.4) was
 built quickly, and it now does things a student never asked for. This plan replaces its core
 while keeping its surface: the prompt, multiline entry, echoing a bare expression's value, and
 `:help`, `:reset`, and `:quit`.
@@ -152,7 +152,7 @@ the scheduler all live for the whole session and end at `:reset` or exit.
 
 ## Decisions
 
-Each has a recommendation; the user decides.
+All eight were accepted as recommended on 2026-09-30. The alternatives are kept for the record.
 
 1. **Keep one persistent interpreter and re-check the session on each entry (recommended),** as
    above. Re-checking is cheap (checking has no side effects, and the prelude is checked lazily),
