@@ -113,20 +113,10 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
-All six concurrency slices and the four required review corrections are implemented
-on `codex/concurrency`, with local validation and fully green PR CI on `80b493e`
-(Debug/ReleaseSafe on Windows, macOS, and Ubuntu, plus fuzz). The corrections:
-quote Windows compiler module arguments, reserve task stacks instead of committing
-128 MiB each, reclaim joined jobs and unreachable completed handles, and reject
-optional channel item types (wrap optional contents in a struct). Reachability also
-used the wrong key to activate the task allocator; that is fixed, with bounded shared
-small-allocation pools. ReleaseSafe's corrected 2,000/20,000-task measurement is
-0.36/3.57 s with identical 7.19 MiB peak RSS. Windows measured 0.336/3.225 s,
-9.25/9.30 MiB working set, and 1032.75/1032.82 MiB commit: 9.59x time with flat
-memory. All 64 task threads started; the extra 63 added only 2.70 MiB peak commit.
-The existing main interpreter thread still commits a 1 GiB stack on Windows;
-the ready/sample probe isolates task costs without reducing stack limits. Measurement
-failures, corrections, and full results are in the plan and journal.
+Concurrency and its required review corrections are merged on main through PR #24
+(`4c51a6c`). The implementation, review findings, validation, and Windows measurements
+are recorded in the concurrency plan and journal. The main interpreter thread still
+commits its 1 GiB stack on Windows; item 15 of the current bug batch addresses that.
 
 Implemented: per-task execution state,
 `Task[T]`, structured groups, results, a FIFO single-holder
@@ -166,8 +156,7 @@ cancellation arrives when the operation returns, so named pipes/devices can dela
 Custom borrowed readers keep their existing host-read path; no general cancellation hook
 was added. CI runs the live-input regression driver on every platform and measures task
 creation, the live cap, and scheduler handoffs on Windows ReleaseSafe. Windows runtime
-tests and measurements passed. Claude's final review and merge of PR #23 remain;
-there has been no merge to main.
+tests and measurements passed before the concurrency merge.
 
 A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
 `-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
@@ -175,7 +164,15 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Concurrency is at integration/review. The standard-library slices the user chose to
+The current task is the user's numbered bug-fix batch on `codex/bug-fixes`, branched
+from freshly fetched main `4c51a6c`. Item 1 reproduces and is implemented: `remove_if`
+uses the same copy-before-change path as the other collection mutators, and struct
+mutation inference recognizes it. Its full gate passed (Debug/ReleaseSafe, native build,
+24 doc examples/128 conformance links, formatting, whitespace, and Windows/macOS
+cross-builds). Next is item 2, formatter preservation of required grouping. The REPL
+replay bug is explicitly excluded and belongs to Claude's separate plan.
+
+The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
@@ -190,15 +187,16 @@ building" notes record its decisions.
 - A fix to HTTP connection reuse: a request after a timed-out one could receive the timed-out
   request's reply.
 - Structured tasks, FIFO channels, timers and timed waits, cooperative cancellation,
-  and deadlock diagnostics (concurrency review/merge pending; full PR CI green).
+  and deadlock diagnostics (merged, with full PR CI green).
+- `List.remove_if` preserves other list/struct copies; calling it from a struct method
+  correctly requires a mutable struct receiver.
 
-The two open pieces of work:
+The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
-- **Concurrency review** (rewrite-context 15.13): structured tasks and channels, in
-  [`concurrency-design-plan.md`](concurrency-design-plan.md), accepted with all nine
-  recommendations. All six slices have passed their local gate on `codex/concurrency`;
-  the branch is ready for review. Claude reviews the whole diff, checks the Windows runtime/measurement results,
-  opens the PR, and merges only with the full local gate and green CI.
+- **Bug-fix batch:** items 1–19, implemented by Codex on `codex/bug-fixes`, one validated
+  commit per item or tightly related pair. Current progress is above; individual
+  reproduction programs, findings, and validation go in the journal.
+- **REPL replay:** a separate plan by Claude; not part of the bug-fix batch.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The

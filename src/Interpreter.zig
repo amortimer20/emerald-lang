@@ -7672,13 +7672,11 @@ fn callPartition(
 fn callRemoveIf(
     self: *Interpreter,
     expression: *const Ast.Expression,
-    call: Ast.Expression.Call,
-    receiver: Value,
+    list: *Heap.List,
+    block: Value,
 ) Error!Value {
-    const block = try self.evaluate(call.arguments[0]);
     defer self.heap.release(block);
 
-    const list = receiver.data.list;
     const callable = self.closureCallable(block.data.closure);
     const closure = block.data.closure;
     const items = &list.items;
@@ -8030,9 +8028,7 @@ fn callMethod(
         if (receiver.data == .list) return self.callPartition(expression, call, member, receiver);
     }
     if (std.mem.eql(u8, member.name, "remove_if")) {
-        const receiver = try self.evaluate(member.base);
-        defer self.heap.release(receiver);
-        return self.callRemoveIf(expression, call, receiver);
+        return self.callChangingMethod(expression, call, member);
     }
     if (std.mem.eql(u8, member.name, "group_by")) {
         const receiver = try self.evaluate(member.base);
@@ -8725,6 +8721,7 @@ fn callChangingMethod(
         return self.changeMap(call, member, try self.heap.uniqueMap(slot), arguments);
     }
     const list = try self.heap.unique(slot);
+    if (std.mem.eql(u8, member.name, "remove_if")) return self.callRemoveIf(expression, list, arguments[0]);
     return self.mutateList(expression.span, list, member.name, arguments);
 }
 

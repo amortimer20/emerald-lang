@@ -83,6 +83,12 @@ accepts, in place, rather than returning a new `List`; index removal remains the
 `remove_at(index)`. `remove_at`, `remove_first`, and `remove_last` return the element they
 removed.
 
+Every changing method, including `remove_if`, preserves other copies of the List.
+A struct method that calls `remove_if` on its field changes that struct and therefore
+cannot be called on a const struct. See
+[`collection-mutation-copies.em`](../../conformance/run/collection-mutation-copies.em) and
+[`remove-if-const-struct.em`](../../conformance/diagnostics/remove-if-const-struct.em).
+
 **Raises**: `remove_at` for an index outside `0..<count`, sharing "Indexing"'s exact message
 above; `insert` for an index outside `0..count` with its own wording
 (`` cannot insert at index {n} in a list of {count} element(s) ``); `remove_first`/

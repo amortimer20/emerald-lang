@@ -1,0 +1,4 @@
+diagnostics/remove-if-const-struct.em:8:1: `box` is a `const`, so its contents cannot change
+  box.prune()
+  ^^^
+Declare `box` with `var` if it needs to change.

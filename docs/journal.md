@@ -3681,3 +3681,42 @@ deadlock messages naming each wait, and the collector across channels and suspen
 packets of nested lists, 20 runs, none damaged). The `start` hint now names the function the
 program wrote. The main interpreter thread on Windows still commits its 1 GiB stack, as before
 this milestone; reserving it the same way is a small follow-up.
+
+## Bug-fix batch, item 1: collection mutation value semantics, 2026-09-30
+
+Branched from freshly fetched main `4c51a6c` and built that baseline with pinned
+Zig 0.16.0 before reproducing the user's program:
+
+```emerald
+var a = [1, 2, 3, 4]
+var b = a
+a.remove_if { n => n % 2 == 0 }
+print(a, b)
+```
+
+Main printed `[1, 3] [1, 3]`. The new run regression failed on main's assertion that
+`b` remains `[1, 2, 3, 4]`. Main also accepted the new diagnostics program calling
+`box.prune()` on a const struct whose method invokes `self.items.remove_if`.
+
+The native used an evaluated receiver directly, bypassing the place traversal and
+copy-before-change used by the other mutators. Its missing mutation metadata also
+made struct effect inference mistake that method for a read-only method. It now
+evaluates its block through the normal changing-call path and mutates the unique List
+at its actual place; the shared method metadata marks it as changing. No new syntax,
+method signature, or mutation policy was introduced.
+
+Audited all List mutators (`append`, `insert`, `remove`, `remove_all`, `remove_if`,
+`remove_at`, `remove_first`, `remove_last`, `clear`, `reverse!`, `unique!`, `sort!`,
+`shuffle!`), Dict insertion/replacement/removal/merge, and Set add/remove. The other
+natives already use the shared unique-storage path. The regression covers each,
+plus indexed assignment, seeded Random shuffle, nested List paths, and mutation of
+a struct copy. The const-struct diagnostic now rejects `prune`; both new expected
+files were read by hand. Callback reentrancy is the separately requested item 13,
+not claimed resolved by this copy-before-change audit.
+
+The full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe
+tests, native build, documentation examples (24 executed, 128 linked conformance
+cases), changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64
+cross-builds outside `zig-out`. The handoff and release-note list record the fix
+before committing it. Claude's proposed REPL plan landed on main after this branch
+was created; it remains separate from this batch and no REPL code was changed.
