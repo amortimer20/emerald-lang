@@ -3030,8 +3030,8 @@ as Ruby's.
 
 **Already gated on a separate design pass, not repeated here:**
 
-- Threads, fibers, and any other concurrency primitive wait for the dedicated concurrency
-  design pass (21).
+- Structured tasks and channels are implemented (15.13). Multicore execution, detached
+  tasks, and broader concurrency primitives still require their own design pass (21).
 - Anything that would want its own release cadence rather than living in this repository —
   the parked platform libraries (15.6) chief among them — waits on a package manager, itself
   undesigned (21).
@@ -3321,6 +3321,88 @@ hex failures, and invalid UTF-8 passed to `Bytes.to_string()`, raise `EncodingEr
 `Digest.sha256(bytes)` and `Digest.hmac_sha256(bytes, key)` return stable 32-byte digests.
 They are deliberately distinct from `Hashable.hash()`, whose value is a runtime detail and
 must not be persisted or displayed. These functions are not password hashing.
+
+### 15.13 Structured tasks and channels
+
+`Tasks`, `Task[T]`, `TaskGroup`, and `Channel[T]` are built-ins in the `Emerald`
+namespace. The reference is [`docs/library/tasks.md`](library/tasks.md), and
+[`examples/tasks.em`](../examples/tasks.em) demonstrates ordered results, a producer and
+consumer, and cancellation with cleanup. This is concurrency, not multicore execution:
+only one task runs Emerald code at a time. There are no `async`/`await` keywords or public
+threads and locks.
+
+`Tasks.run { tasks => ... }` calls its block once with a `TaskGroup`, then joins every
+child started through it, including children started while the group waits. Its result
+is the block's result. Groups can nest; no child outlives its group. `tasks.start { => ... }`
+queues a child and returns `Task[T]`, where `T` is the block's result type (or `Nothing`).
+There may be at most 64 live child tasks across an execution, not 64 per group. Completed
+children no longer count. Starting beyond the cap raises RuntimeError with
+`Tasks.run cannot start more than 64 tasks at once`.
+
+`start` requires an inline block. It rejects a stored lambda, named function, or other
+function value, with help to wrap the call in `{ => ... }`. The block and any nested
+lambda may name outer `const` bindings and parameters, but may not directly name an outer
+`var`, including a module-level variable. Locals declared inside the task remain changeable.
+The diagnostic names the variable and suggests returning a result or using a channel.
+Indirect reads through called named functions or captured function values are not checked
+in this milestone. Those gaps and shared class instances must be addressed before multicore
+execution; neither creates a race under the single execution baton.
+
+`task.result(): T` waits for completion, returning its value or raising its error. It can
+be called repeatedly, including after the group has ended. `task.done?(): Bool` checks
+completion without waiting; failure and cancellation count as completion.
+`task.wait(timeout: Duration): Bool` returns true when finished, false on timeout without
+cancelling the task. Zero checks without waiting; a negative timeout raises RuntimeError
+with `a task timeout cannot be negative`. `Tasks.yield()` lets other ready tasks run.
+Pure computation is not preempted: a long calculation needs to yield if others should progress.
+
+When tasks wait only on each other (`result`, `wait`), on channels, or on `Tasks.yield()`,
+the same program with the same input produces the same output every time. Ready tasks resume
+in the order they became ready. Earlier sleep deadlines resume earlier; equal deadlines
+resume in the order waiting began. Real-clock deadlines mean only clearly different sleep
+lengths have reliable ordering; timed-wait expiry is also a real-clock event. File, network,
+and input completions resume tasks in arrival order, which can vary. Teach fixed output
+order by printing results in the wanted order or sending through a channel, not printing
+inside I/O tasks. `Program.sleep`, input, HTTP, and filesystem operations let other tasks run
+while the calling task waits.
+
+`Channel[T]` has an invariant message type supplied by expected-type context, as in
+`const numbers: Channel[Int] = Channel(capacity: 3)`. `Channel[Int]()` is not expression
+syntax. Capacity zero is a FIFO rendezvous; positive capacity buffers up to that many
+messages. `send(value: T)` waits for space or a receiver; `receive(): T?` waits for a
+message. `close()` is idempotent: buffered messages remain available, closed-and-empty
+receives return `nothing`, and sends not already committed raise RuntimeError with
+`cannot send to a closed channel`. Negative capacity raises RuntimeError with
+`a channel capacity cannot be negative`. `for item in channel` ends only when closed and
+empty, and visits actual `nothing` messages even when `T` is optional; public `receive`
+flattens its optional result. Transmitted collections and structs keep value semantics;
+class instances and channels remain shared identities.
+
+`task.cancel()` requests cooperative cancellation at the next suspension point; cancelling
+a finished task does nothing. Cancellation raises `CancelledError`, which extends `Error`
+directly, not RuntimeError. `finally` still runs, including cleanup that itself waits;
+cleanup and error draining are protected from cancellation. Normal implicit group joining
+remains interruptible, and cancelling a parent cancels and joins its nested children.
+A failing child cancels its siblings and the group's block, then the group joins all
+children and propagates its first failure once. An owner catching the failing child's
+`result()` observes that failure, so draining does not raise it again. Deliberately cancelled
+children alone do not make a group fail; their result calls still raise CancelledError.
+Program exit cancels and drains active children.
+
+Standard-input cancellation interrupts the task's wait immediately. One scheduler-owned
+reader keeps the in-flight read and delivers its eventual line to the next input call;
+program exit never joins that process-owned reader. Fixed in-memory readers have the same
+delivery semantics and join/free at teardown. HTTP cancellation uses its existing deadline
+race. Files are not interrupted: cancellation arrives after the operation returns. Local
+files normally return promptly, but a named pipe or device may delay it. No cancellation
+hook is added for custom embedding readers.
+
+A wait that cannot progress raises `DeadlockError`, a RuntimeError subclass, rather than
+hanging. Diagnostics name task results or channel directions and their original source
+locations. A pending timer, input, or host operation can make progress, so does not count
+as a deadlock. Runtime scheduling is isolated behind `Scheduler.zig`; a future fiber backend
+must preserve these semantics and may only raise the live-task cap. General user-defined
+iteration, detached tasks, channel `select`, and multicore execution remain deferred.
 
 ## 16. Annotations, assertions, and tests
 
@@ -3852,7 +3934,7 @@ The following are deliberately outside the initial implementation:
 - enum payloads and algebraic pattern matching;
 - general user-defined `Iterable` and `for` integration;
 - a package registry and package manager;
-- concurrency, async, and parallel execution;
+- multicore/parallel execution, detached tasks, channel `select`, and wider concurrency APIs;
 - user-defined macros and advanced annotations;
 - runtime metaprogramming;
 - primary constructors;
@@ -3864,47 +3946,9 @@ The following are deliberately outside the initial implementation:
 Deferred means the design leaves room without reserving unnecessary syntax. A future
 feature still has to justify itself.
 
-Concurrency is the nearest major post-runtime design pass: consider it after the
-single-threaded interpreter and core runtime stabilize, before packages or advanced
-metaprogramming. Native libraries may use threads internally, but Emerald callbacks obey
-the single-threaded language model until that pass defines otherwise.
-
-The accepted structured-task milestone defines scheduling as follows. When tasks wait only
-on each other (`result`, `wait`), on channels, or on `Tasks.yield()`, the same program with
-the same input produces the same output every time. Ready tasks resume in the order they
-became ready. Earlier sleep deadlines resume earlier; equal sleep deadlines resume in the
-order waiting began. Deadlines come from the real clock, so only sleeps of clearly different
-lengths have a reliable order; expiry of a timed `wait` is also a real-clock event. File,
-network, and input completions resume tasks in arrival order, which can vary from run to
-run. For fixed output order, print the tasks' results in the order wanted, or send through a
-channel, rather than printing inside the I/O tasks. Implementation status is in the
-concurrency plan and handoff; multicore execution remains a separate deferred design.
-
-Channels in that milestone use `Channel[T]` with an invariant message type supplied by
-context, as in `const numbers: Channel[Int] = Channel(capacity: 3)`. Capacity zero is a
-FIFO rendezvous; a positive capacity buffers up to that many messages. `send(value)` waits
-for space or a receiver, and `receive(): T?` waits for a message. `close()` is idempotent:
-buffered messages remain available, closed-and-empty receives return `nothing`, and sends
-not already committed raise RuntimeError. Negative capacities also raise RuntimeError.
-`for item in channel` ends only when the channel is closed and empty, including when `T`
-itself is optional: iteration visits actual `nothing` messages even though public `receive`
-flattens its optional result. Transmitted collections and structs keep value semantics;
-class instances remain shared references. Channel waits participate in deadlock detection,
-with diagnostics naming their channel, direction, and source location.
-
-`Task.cancel()` requests cooperative cancellation at the next suspension point. It is
-idempotent, and requesting cancellation of an already finished task does nothing.
-Cancellation raises `CancelledError`, a direct `Error` subclass rather than a
-`RuntimeError`, and `finally` still runs, including cleanup that itself waits. A failing
-task cancels its siblings and the group's block; the group drains all children and reports
-its first error once. Deliberately cancelled children do not make a group fail merely by
-being cancelled; asking for their `result()` raises their CancelledError.
-Cancelling a standard-input wait does not discard input: one scheduler-owned reader keeps
-the in-flight read and delivers its eventual line to the next input call. Program exit
-does not join that process-owned reader. HTTP cancellation uses the request's existing
-deadline race. File operations are not interrupted: cancellation arrives after the host
-operation returns. Local files normally return promptly, but a named pipe or device can
-delay cancellation. There is no new cancellation hook for custom embedding readers.
+Structured tasks, channels, and cooperative cancellation are designed and implemented
+(15.13), while only one task runs Emerald code at a time. Multicore execution remains a
+separate design, including closing the indirect captured-variable gaps recorded there.
 
 ## 22. Reconstruction decisions and history
 
@@ -4014,6 +4058,15 @@ recorded in their normative sections:
 | Decision | Resolution | Reasoning |
 | --- | --- | --- |
 | JSON's two conversion paths (15.9) | `parse` produces a navigable `Json`; checker-known `encode` and `decode(text, as: Type)` convert a program's known types | An API response and a program's own saved `Score` have opposite information available. One dynamic value type and one static conversion spell the distinction without asking a beginner to build a serialization framework. |
+| Concurrency model (15.13) | Structured tasks and FIFO channels, without `async`/`await`, public threads, or locks | Ordinary functions can wait without coloring every caller; a beginner learns results and messages rather than shared-memory synchronization. |
+| Task lifetime (15.13) | Only a live `TaskGroup` can start children; its `Tasks.run` joins them all | Detached work would introduce orphan resources and unseen errors. |
+| Scheduling (15.13) | One task runs Emerald code until a wait or yield; readiness is FIFO, timers follow deadlines, I/O follows arrival | Visible handoffs keep the heap non-atomic and computation reproducible without pretending host completion order is fixed. |
+| Task captures (15.13) | Inline blocks only; reject direct outer `var` reads, including nested lambdas; indirect-call gaps await multicore | Current function types do not describe capture effects. Existing checker scopes know direct captures without a second resolver pass. |
+| Task/channel types (15.13) | Built-in `Task[T]` and invariant `Channel[T]`; channel construction takes expected-type context | Reuse ordinary type annotations rather than introducing expression-level generic arguments or dynamic message values. |
+| Cancellation (15.13) | Cooperative CancelledError extends Error directly; protect cleanup and preserve the group's first failure | Killing threads skips cleanup; RuntimeError catches must not accidentally swallow cancellation. |
+| Blocking work (15.13) | Release the execution baton for sleep, input, files, and HTTP | A waiting task must not freeze unrelated work. Stdin preserves cancelled reads, HTTP reuses its deadline race, files finish before cancellation is delivered. |
+| Deadlocks (15.13) | DeadlockError describes waits and original locations when nothing can progress | A beginner gets an explanation instead of a silent hang. Timers and external work are possible progress, not deadlocks. |
+| Scheduler backend and multicore (15.13) | Portable OS threads behind Scheduler.zig, 64 live children; fibers and multicore remain separate | Zig's fiber I/O has no Windows backend. Measurements justify a bounded first backend without exposing thread identity or preventing a later swap. |
 | JSON decoded structs (15.9) | Only a plain struct using its generated constructor is decodable; a missing field takes its default, or `nothing` when it is optional and has none, and extra JSON keys are ignored | A custom constructor can enforce an invariant or interpret fields differently, so pretending the runtime knows how to call it would be a hidden second construction path. Defaults make hand-edited settings forward-compatible, while ignored extras make readers tolerant of a newer writer. |
 | `as:` for JSON decoding (15.9) | The type is source syntax accepted only as `Json.decode`'s named `as:` argument | Emerald has no runtime type objects. Keeping this one checker-known call shape local avoids introducing a broad type-as-value feature for a single conversion operation. |
 | Private fields and JSON (15.9, 10.5) | Never written by `encode`, never read by `decode`; a decodable struct's private fields need defaults | A private field is the struct's own business: writing it would publish internal state, and reading it would let a hand-edited file set what the struct's own code guards. Taking the default keeps a decoded value exactly what the generated constructor could have built. |
@@ -4257,7 +4310,7 @@ for working Emerald programs, implementation measurements, or a dedicated design
   and would likely want their own repos and release cadence once a package manager exists to
   depend on them. Revisit any of these only once that infrastructure exists, or a concrete
   beginner program makes an earlier case;
-- concurrency and async as a dedicated design project after the single-threaded runtime.
+- multicore execution and wider concurrency APIs beyond the structured tasks of 15.13.
 
 Macros remain deferred as a separate language-design problem. If real boilerplate later
 justifies them, hygiene, expansion visibility, diagnostics, and whether derivation is their

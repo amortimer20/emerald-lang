@@ -1,6 +1,6 @@
 //! Measure 100,000 cooperative baton hand-offs without Emerald program work.
 //! Build with `zig build-exe -O ReleaseSafe --dep Scheduler
-//! -Mroot=tools/scheduler-benchmark.zig -MScheduler=src/Scheduler.zig`, then run
+//! -Mroot=tools/scheduler-benchmark.zig -O ReleaseSafe -MScheduler=src/Scheduler.zig`, then run
 //! under a wall clock and peak-memory monitor (`/usr/bin/time -v` on Linux).
 
 const std = @import("std");

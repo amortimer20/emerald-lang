@@ -2,8 +2,8 @@
 
 Status: accepted, 2026-09-29. The user answered "I'll trust your judgement" to the design
 discussion, which is taken as accepting all nine recommendations below; if that was not meant,
-the status goes back to proposed. Slices 1–5 are implemented and locally validated;
-slice 6 (documentation and integration) is next. Windows runtime validation remains a CI gate.
+the status goes back to proposed. All six slices are implemented and locally validated.
+Review and green Windows PR CI remain required before the milestone is fully done.
 The user accepted the scheduling clarification in principle 5 on 2026-09-29.
 Rewrite-context 21 calls
 concurrency "the nearest major post-runtime design pass" and says that until it is done,
@@ -73,10 +73,10 @@ Tasks.run { tasks =>
 
 That prints `cleaning up` after about a second and returns, rather than waiting a minute.
 
-These were checked with `emerald format`. Everything parses today except `Channel[Int]` in a
-type annotation, which needs the parser to learn two new generic type names (decision 5); the
-names `Tasks`, `Task`, and `Channel` are of course not defined yet. A block that takes nothing
-is written `{ => ... }`, and one that takes a value is `{ tasks => ... }`.
+Before implementation these were checked with `emerald format`; `Channel[Int]` and the
+task/channel names needed the additions in slices 2 and 4. They are now implemented.
+A block that takes nothing is written `{ => ... }`, and one that takes a value is
+`{ tasks => ... }`.
 
 Waiting a limited time for a task, and giving up on it, reads:
 
@@ -296,8 +296,8 @@ That holds if these stay true from the first slice:
   `callFilesystem`, the file closes, `clockNanoseconds`, and `callSleep` in `src/Interpreter.zig`
   each reach for `Io.Threaded.global_single_threaded`. A fiber-aware `Io` can suspend one task
   where a blocking call would stall every task on the same thread, so slice 1 replaces those
-  with one `Interpreter.io` field. `Http` already owns a threaded `Io`; it is offloaded to a
-  helper thread instead.
+  with one `Interpreter.io` field. `Http` already owns a threaded `Io`; as settled in
+  slice 3, the calling task releases its baton while waiting for the request.
 - The per-task state swap (slice 1) never depends on which kind of task is being switched.
 - The conformance suite stays backend-neutral (section 19.6): no case depends on thread
   identity, real timing beyond the ordering of different sleeps, or the exact recursion depth at
@@ -574,7 +574,44 @@ commits.
 - An alternating ReleaseSafe startup comparison against `main`: no measurable cost for a
   program that uses none of this.
 - The handoff and journal.
-- Settled while building: (record here)
+- Settled while building: `docs/library/tasks.md` covers every public task/channel
+  operation, callback/capture rules, ordering, errors, cleanup, and the accepted I/O
+  cancellation distinctions. `examples/tasks.em` demonstrates ordered results, a buffered
+  producer/consumer, and cancellation using a 20 ms sleep, with no network. Its output was
+  verified with the binary and repeated 50 times. The existing prelude-reach case now also
+  reaches done/cancel/yield without changing its expected output; it passed 50 runs.
+  Rewrite-context 15.13 is the normative home for the completed design; sections 15.7 and
+  21 no longer defer structured tasks, and section 22 records all nine accepted choices.
+  `Program.sleep` documentation now correctly describes pausing only its calling task.
+
+  The formatter already handled task/channel flags and nested elements; a focused test
+  protects their canonical output. LSP traversal already handled element types and task
+  bodies, but the outer generic names have empty AST `name` fields. Definition and
+  reference handling now maps the Task/Channel flags to their prelude declarations, using
+  Resolver's namespace keys. Tests cover outer names, element annotations, values' hover
+  types, and navigation inside task blocks. Built-in member completion/signature help
+  remains part of the queued editor-intelligence work, not a second table added here.
+
+  Two valid fuzz templates exercise yielded task results and channel rendezvous/buffers,
+  without clocks or external I/O. The generator's selection range also makes its existing
+  inline-if fallback reachable (it had been excluded by the old upper bound). The fixed
+  ReleaseSafe campaign passed seed 12648430, 1,000 cases, 136 executions.
+  Windows ReleaseSafe CI now runs the existing creation/live-cap/handoff probes and logs
+  timings plus sampled peak physical memory with a bounded PowerShell driver. That script
+  cannot be executed on this Linux host; its Windows results remain a review/CI gate.
+  No accepted API decision needed changing.
+
+  Final validation: pinned Zig 0.16.0, sequential `-j1` Debug and ReleaseSafe tests,
+  native build, documentation examples (24 executed, 124 linked conformance files),
+  changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+  outside `zig-out` passed. The standalone scheduler benchmark also cross-compiled
+  for Windows. Both its root and scheduler modules now explicitly use ReleaseSafe.
+  A final 60-run alternating ReleaseSafe comparison against main `ef14a72` measured
+  `print(1)` at 3.67 vs. 3.76 ms; all five medians were 100.2%–102.3% of main.
+  These small observed differences do not establish zero overhead, but show no
+  material startup regression for programs using no concurrency. The journal has
+  both comparisons and the host details. The branch is ready for Claude's review;
+  Windows runtime and measurement results remain pending CI.
 
 ## Validation
 

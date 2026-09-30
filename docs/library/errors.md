@@ -42,6 +42,11 @@ it at a suspension point and runs `finally`; a catch for `RuntimeError` does not
 Run [`conformance/run/task-cancellation.em`](../../conformance/run/task-cancellation.em)
 for cancellation during sleep and a channel receive, including cleanup.
 
+**`DeadlockError`** extends `RuntimeError`. Task and channel waits raise it when no task,
+timer, or outside operation can make progress. Its diagnostic describes the waits and their
+source locations. See [Tasks and channels](tasks.md) and
+[`conformance/runtime-errors/channel-receive-deadlock.em`](../../conformance/runtime-errors/channel-receive-deadlock.em).
+
 `raise` accepts only an `Error` value.
 
 **Raises** nothing here — `raise 1` is a checking-time error

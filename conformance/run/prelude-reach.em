@@ -50,6 +50,9 @@ print(Digest.sha256("reach".to_bytes()).count)
 Tasks.run { tasks =>
     const result = tasks.start { => 7 }
     print(result.result())
+    assert(result.done?())
+    result.cancel()
+    Tasks.yield()
 }
 
 func use_channel(channel: Channel[Int]) {

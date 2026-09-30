@@ -3485,3 +3485,62 @@ against a loopback-only server. The live-input driver passed 50 prompt-exit and 
 retained-line checks, and a local-file cancellation probe passed 50 runs. Every expectation
 was read by hand. Windows execution remains a green-PR-CI gate. Slice 6 is next; the branch
 has not been pushed or merged.
+
+## Concurrency, slice 6: documentation and integration, 2026-09-30
+
+The task/channel reference and inventory now document the complete public surface,
+callbacks and direct-capture checking, scheduling, results, typed errors, cancellation,
+protected cleanup, deadlocks, and current limits. Rewrite-context 15.13 records the
+settled design; 15.7 and 21 no longer defer structured tasks, and section 22 records the
+nine accepted decisions. Program.sleep now documents pausing only its calling task.
+The handoff drops completed-slice narrative and stale Console-widget deferrals, retaining
+review/CI status and the multicore capture gaps.
+
+`examples/tasks.em` is a short, network-free tour: ordered results, buffered messages,
+and cancellation with a 20 ms sleep. Its verified output is `10 20`, `total: 6`, and
+`cleaning up`. It and the expanded prelude-reach case passed 50 matching runs each; the
+existing prelude-reach expected file was read and remains unchanged.
+
+The formatter already supported task/channel flags and nested type elements; a dedicated
+test protects their canonical output. LSP traversal already handled element annotations
+and task bodies, but the outer Task/Channel names were absent because generic AST nodes
+carry flags and an empty name. Their definition/reference handling now uses the prelude
+declarations through Resolver's namespace keys. Tests cover those names, element types,
+hover types, and navigation inside task blocks. The queued built-in-member table remains
+separate; no second completion/signature registry was introduced.
+
+Two valid fuzz templates exercise yielded results and channel rendezvous/buffers, without
+clocks or outside I/O. Correcting the template-selection range also makes the existing
+inline-if fallback reachable; the former upper bound excluded it. The fixed ReleaseSafe
+campaign passed seed 12648430, 1,000 cases, 136 executions.
+
+Windows ReleaseSafe CI now builds the existing scheduler probe and runs all four cost
+measurements: 1,000 and 10,000 sequential tasks, 64 live tasks, and 100,000 scheduler
+handoffs. Its bounded PowerShell driver reports time and sampled peak physical memory
+while each process is alive, checking output and status. Windows execution remains pending
+CI, not claimed from a cross-build. The standalone probe cross-compiled successfully for
+Windows; its documented command and CI explicitly set ReleaseSafe on both Zig modules.
+
+Startup comparisons used main `ef14a72` and this branch, ReleaseSafe, alternating 60 runs
+per binary/program, on Linux 6.18.33.2-microsoft-standard-WSL2, 8 CPUs. The first comparison
+measured `print(1)` at 3.73 vs. 3.76 ms, with five ratios from 100.7% to 102.8%.
+After the final LSP change, the comparison was:
+
+| Program | Main median | Concurrency median | Second/first |
+| --- | --- | --- | --- |
+| `print(1)` | 3.67 ms | 3.76 ms | 102.3% |
+| Structs (language only) | 4.09 ms | 4.12 ms | 100.7% |
+| Dates | 5.22 ms | 5.28 ms | 101.2% |
+| Regex | 5.76 ms | 5.85 ms | 101.6% |
+| JSON | 4.49 ms | 4.50 ms | 100.2% |
+
+These small observed differences do not establish zero overhead, but show no material
+startup regression for programs not using concurrency.
+
+The full local gate passed with pinned Zig 0.16.0 and sequential `-j1`: Debug and
+ReleaseSafe tests, native build, documentation examples (24 executed, 124 linked
+conformance files), changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64
+cross-builds with prefixes outside `zig-out`. No accepted API decision needed changing.
+All six implementation slices are ready for Claude's whole-branch review and PR; green
+Windows runtime CI and its measurement results remain required before the milestone is
+fully done. Codex pushes the branch, but does not merge it.

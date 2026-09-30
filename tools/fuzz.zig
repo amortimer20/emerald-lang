@@ -65,7 +65,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // campaign rather than only by its unit test.
     if (random.uintLessThan(u8, 8) == 0) {
         const count = random.uintLessThan(u8, 16);
-        return switch (random.uintLessThan(u8, 11)) {
+        return switch (random.uintLessThan(u8, 14)) {
             0 => std.fmt.allocPrint(gpa,
                 \\var i = 0
                 \\while i < {d} {{
@@ -167,6 +167,32 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\print(Console.table(rows))
                 \\print(Console.panel("fuzz {d}", title: "case"))
             , .{ count, count }),
+            11 => std.fmt.allocPrint(gpa,
+                \\const values: Channel[Int] = Channel(capacity: {d})
+                \\Tasks.run {{ tasks =>
+                \\    tasks.start {{ =>
+                \\        values.send({d})
+                \\        values.close()
+                \\    }}
+                \\    const result = tasks.start {{ =>
+                \\        var total = 0
+                \\        for value in values {{
+                \\            total += value
+                \\        }}
+                \\        return total
+                \\    }}
+                \\    print(result.result())
+                \\}}
+            , .{ count % 3, count }),
+            12 => std.fmt.allocPrint(gpa,
+                \\Tasks.run {{ tasks =>
+                \\    const result = tasks.start {{ =>
+                \\        Tasks.yield()
+                \\        return {d}
+                \\    }}
+                \\    print(result.result())
+                \\}}
+            , .{count}),
             else => std.fmt.allocPrint(gpa,
                 \\const score = {d}
                 \\const result = if score > 5 then score * 2 else if score == 0 then 1 else score
