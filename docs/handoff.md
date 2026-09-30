@@ -173,8 +173,9 @@ gate (Debug/ReleaseSafe, native build, documentation examples, formatting, white
 and Windows/macOS cross-builds). The latest doc check executed 24 examples and
 confirmed 130 conformance links; the main/task recursion regression matched its
 expected output in 50 runs. Reproductions and findings are in the journal.
-Next is item 8 (repeated argument diagnostics), which reproduces across all five
-typed/native APIs and a changing trait-default receiver. The REPL replay bug remains
+Item 8's single-pass argument diagnostics reproduced across all five typed/native
+APIs and a changing trait-default receiver; its fixes also passed the full gate.
+Next is item 9 (bare prelude names in generic call diagnostics). The REPL replay bug remains
 explicitly excluded and belongs to Claude's separate plan.
 
 The standard-library slices the user chose to
@@ -206,6 +207,8 @@ building" notes record its decisions.
 - Excessive recursion raises catchable `RecursionError` in the main program and
   tasks. It extends `RuntimeError`, so existing broader catches keep working;
   recursion limits, cleanup, and summarized stack traces are unchanged.
+- Argument errors are reported once in JSON/CSV encoding, Base64, Digest,
+  Console.table, and changing trait-default calls, rather than being repeated.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
@@ -278,9 +281,6 @@ on the roadmap.
   instead; do the same for the interpreter thread in `emerald.zig`.
 - Found while writing the website's JSON pages (2026-09-30, in 0.6.0; fix after the concurrency
   branch merges, since both touch `Checker.zig`):
-  - `print(Json.encode(1 + true))` reports `addition needs numbers` twice at the same place. Type
-    errors inside `Json.encode`'s argument repeat (probably `typeOfTypedEncode` typing the
-    argument once for its type and again for JSON eligibility); a misspelled name does not.
   - Messages name built-ins with their internal prefix: ``parameter `text` of
     `Emerald.Json.parse` needs String``, and likewise for `Json.decode`, probably every prelude
     function through the generic parameter-type message. 14.2 wants the bare name. (`Digest`

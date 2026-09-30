@@ -9795,7 +9795,9 @@ fn typeOfTypedEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8
     try self.checkArguments(call, name, parameters);
     if (problem != .none) return .string;
 
-    const value = try self.typeOf(call.arguments[bound[0].?]);
+    // Argument checking recorded the inferred type. Checking it again would
+    // repeat its diagnostics and lose any context supplied to literals.
+    const value = self.expression_types.get(call.arguments[bound[0].?]).?.type;
     if (value.kind == .invalid) return .string;
     const issue = if (csv) try self.csvEncodeIssue(value, "") else try self.jsonEncodeIssue(value, "");
     if (issue) |found_issue| {
@@ -9854,10 +9856,7 @@ fn typeOfConsoleTable(self: *Checker, call: Ast.Expression.Call, name: []const u
     parameters.types = types;
     try self.checkArguments(call, name, parameters);
     if (problem != .none) return .string;
-    const value = if (text_literal)
-        self.expression_types.get(call.arguments[bound[0].?]).?.type
-    else
-        try self.typeOf(call.arguments[bound[0].?]);
+    const value = self.expression_types.get(call.arguments[bound[0].?]).?.type;
     if (value.kind == .invalid) return .string;
     const text_rows = value.kind == .list and value.element.?.kind == .list and value.element.?.element.?.kind == .string;
     if (text_rows) return .string;
@@ -10056,7 +10055,7 @@ fn typeOfBase64(self: *Checker, call: Ast.Expression.Call, name: []const u8, key
     const problem = call_arguments.bind(call, parameters.names, parameters.has_default, bound);
     try self.checkArguments(call, name, parameters);
     if (problem != .none) return .invalid;
-    const value = try self.typeOf(call.arguments[bound[0].?]);
+    const value = self.expression_types.get(call.arguments[bound[0].?]).?.type;
     const encoding = std.mem.eql(u8, key[key.len - "encode".len ..], "encode");
     const wanted: Type = if (encoding) .bytes else .string;
     if (value.kind != .invalid and (value.kind != wanted.kind or value.optional)) {
@@ -10096,7 +10095,7 @@ fn typeOfDigest(self: *Checker, call: Ast.Expression.Call, name: []const u8, key
     var valid = true;
     for (bound) |slot| {
         const argument = call.arguments[slot.?];
-        const value = try self.typeOf(argument);
+        const value = self.expression_types.get(argument).?.type;
         if (value.kind == .invalid) {
             valid = false;
         } else if (value.kind != .bytes or value.optional) {
@@ -10469,8 +10468,8 @@ fn typeOfTraitDefaultCall(self: *Checker, expression: *const Ast.Expression, cal
         .arity_help = "Pass the value to run it on first, then the method's own arguments.",
     });
     if (call.arguments.len > 0 and try self.methodChanges(reference.key)) {
-        const first = try self.typeOf(call.arguments[0]);
-        if (!isClass(first)) {
+        const first = self.expression_types.get(call.arguments[0]).?.type;
+        if (first.kind != .invalid and !isClass(first)) {
             try self.reportWithHelp(
                 call.callee.span,
                 "`{s}` changes the value it runs on, so it cannot be called this way yet",

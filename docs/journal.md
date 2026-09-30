@@ -3909,3 +3909,49 @@ full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSaf
 tests, native build, documentation examples (24 executed, 130 linked conformance
 cases), changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64
 cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 8: report argument errors once, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`):
+
+```emerald
+print(Json.encode(1 + true))
+print(Csv.encode(1 + true))
+print(Base64.encode(1 + true))
+print(Digest.sha256(1 + true))
+print(Console.table(1 + true))
+```
+
+Main reports each addition error twice. The required audit also reproduced duplicate
+receiver errors in this changing trait default:
+
+```emerald
+trait Counter {
+    var count: Int
+
+    func bump(amount: Int) {
+        self.count += amount
+    }
+}
+Counter.bump(1 + true, 1)
+```
+
+Argument binding/checking already
+records each expression's inferred or contextual type; the extra encoder,
+cryptographic-input, table-row, and changing-receiver validations now read that
+record instead of typing the expression again. An already-invalid trait receiver
+also no longer creates a misleading secondary class/struct mutation diagnostic.
+This is local reuse after argument checking, not global memoization across narrowing
+or inference contexts. Existing named binding and typed-call callee metadata remain
+unchanged.
+
+The diagnostics regression fails on main and now reports exactly one error for each
+of its eleven invalid expressions, covering JSON/CSV, all Base64 entry points, both
+Digest entry points (including named `key:`), Console.table, and trait receiver and
+parameter arguments. A run regression checks a valid explicit changing trait-default
+call with a named argument. Both expected files were read by hand.
+
+Focused checking and execution pass. The full required gate passed with pinned
+Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build, documentation examples
+(24 executed, 130 linked conformance cases), changed-Zig formatting, whitespace,
+and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
