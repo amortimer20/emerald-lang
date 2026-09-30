@@ -328,6 +328,13 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
     `.or(0)`. And `break` in a one-line lambda (`[1].each { x => break }`) gives a parse error
     plus a "this `}` does not close anything" cascade, while the block-bodied form already says
     "`break` can only be used inside a loop".
+  - A type with a trait's methods but no `with Trait` gets only "this is Square, but `s` was declared
+    as Shape"; say that `Square` doesn't adopt `Shape` and suggest `with Shape`. And a nested type
+    written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a
+    type ... declare the struct in this project"; suggest `Pizza.Size`.
+- Feature ideas from the language pages (not spec gaps): an enum has no list of its values
+  (`Light.values`) and no way to turn text into a value (`"red"` into `Light.red`). Both are common
+  needs, such as a menu of choices or reading a saved setting.
 - On Windows the main interpreter thread commits its whole 1 GiB stack up front
   (`std.Thread.spawn` passes the size as the committed size). Task threads already reserve
   instead; do the same for the interpreter thread in `emerald.zig`.
