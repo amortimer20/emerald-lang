@@ -319,6 +319,11 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   - A name ending in `?` with a non-`Bool` result is accepted, though 3.3 calls it a type error:
     `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
+  - Operators from other languages get generic parse errors, though `!` already gets a good one
+    ("Write `not` for negation"). Give each a hint: `true && false` and `||` ("this character
+    does not belong here", twice) should suggest `and`/`or`; `c++` and `c--` should suggest
+    `c += 1`; `true ? 1 : 2` should suggest `if c then a else b`; and `if x = 5 {` ("expected `{`
+    ... found =") should suggest `==`.
 - On Windows the main interpreter thread commits its whole 1 GiB stack up front
   (`std.Thread.spawn` passes the size as the committed size). Task threads already reserve
   instead; do the same for the interpreter thread in `emerald.zig`.
