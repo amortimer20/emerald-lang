@@ -1,6 +1,6 @@
 # REPL: design and implementation plan
 
-Status: proposed, 2026-09-30, awaiting the user's decisions below. `emerald repl` (18.4) was
+Status: proposed, 2026-09-30, awaiting the user's eight decisions below. `emerald repl` (18.4) was
 built quickly, and it now does things a student never asked for. This plan replaces its core
 while keeping its surface: the prompt, multiline entry, echoing a bare expression's value, and
 `:help`, `:reset`, and `:quit`.
@@ -30,6 +30,21 @@ leaves `log.txt` holding `xxx`: the append ran three times. The same happens to 
 a `Random` result (a different number every entry), `Date.today()`, `Stopwatch`, and every task.
 Each entry also gets slower as the session grows, since everything before it runs again.
 
+It also leaves out what a student most wants to see. A bare method or function call prints
+nothing, though it printed a property:
+
+```text
+> "abc".upper()
+> 2.0.square_root()
+> [1, 2].count
+2
+```
+
+The call's result is thrown away because the REPL echoes only a statement the parser would reject
+as "this result is never used", and a call may discard its result. And an error in a later entry
+is reported at its position in the whole session (`<repl>:2:1` for a one-line entry), because the
+session is one growing text.
+
 Two smaller problems:
 
 - It decides whether an entry is unfinished (so it should ask for another line) and whether it is
@@ -47,6 +62,10 @@ Two smaller problems:
 > count += 1
 > count
 1
+> "Ada".upper()
+"ADA"
+> 2.0.square_root()
+1.4142135623730951
 > File.append("log.txt", "x")
 > print(Random(1).next(1..6) == Random(1).next(1..6))
 true
@@ -122,8 +141,11 @@ each new entry:
    statements, and keep the previous analysis. Nothing has run.
 5. Otherwise give the interpreter the new analysis, let it register any new declarations, and run
    **only the new statements**, in the module scope that persists from earlier entries.
-6. If the new entry is a bare expression, print its value as `print` would, except that a
-   `String` is shown quoted, so `"Ada"` and `Ada` look different.
+6. If a new top-level statement is an expression, a call included, and its type is not
+   `Nothing`, print its value as `print` would, except that a `String` is shown quoted, so
+   `"Ada"` and `Ada` look different (decision 6). A declaration, an assignment, and a call that
+   returns nothing (`print`, `append`, `File.write`) print nothing extra.
+7. Report a diagnostic's position within the entry (`repl:1:9`), not within the session text.
 
 The interpreter, its heap, its module scope, open files, the HTTP client, the random engine, and
 the scheduler all live for the whole session and end at `:reset` or exit.
@@ -155,7 +177,15 @@ Each has a recommendation; the user decides.
    parser reports "incomplete at end of input" as its own flag, and marks a statement that is a
    bare expression. Alternative: keep matching message text, which breaks whenever a message is
    reworded, as the diagnostic work regularly does.
-6. **No new commands in this plan (recommended).** Keep `:help`, `:reset`, and `:quit`; update
+6. **Echo every expression statement's value, calls included, unless it is `Nothing`
+   (recommended).** `"abc".upper()` shows `"ABC"`; `print("hi")` shows `hi` once, not also its
+   result. The checker's type for the statement decides it, not the parser, since only the type
+   says whether a call returns something. Alternative: echo only non-call expressions, as today,
+   which hides exactly the results a student is exploring.
+7. **Positions are within the entry (recommended),** `repl:1:9` for the first line of what was
+   just typed, so a message points at what the student can see. Alternative: session-wide line
+   numbers, which grow with the session and point at text no longer on screen.
+8. **No new commands in this plan (recommended).** Keep `:help`, `:reset`, and `:quit`; update
    `:help`'s text to say what an interrupted entry keeps. Candidates for later: `:type expression`,
    `:load file.em`. Line editing and history (arrow keys, recalling an earlier line) is the most
    visible improvement a student would notice, but on macOS and Linux it needs raw terminal input,
@@ -173,9 +203,10 @@ commits.
   offsets into the session text and earlier nodes are untouched.
 - The parser reports "incomplete at end of input" as a result flag, set only by an unclosed
   block, call, list, lambda, `case`, string, or block comment at the very end.
-- The parser marks a top-level statement that is a bare expression (today's "this result is never
-  used" error is what the REPL keys on); the REPL turns it into an echo, and a file still reports
-  the error.
+- The parser marks a top-level statement that is a bare expression, a call included (today the
+  REPL keys on the "this result is never used" error and so misses calls); the REPL decides
+  whether to echo from the checker's type for it (decision 6), and a file still reports the error
+  for a non-call.
 - Replace `classifyEntry`'s message matching with these, and keep its unit tests passing.
 - Settled while building: (record here)
 
@@ -197,11 +228,14 @@ commits.
   interpreter, the echo, `:reset` (a new interpreter and session), and the updated `:help`.
 - Share the scheduler's standard-input reader between the REPL's own prompt and the program's
   `input`, so neither loses a line to the other.
+- Diagnostics positioned within the entry (decision 7): map a session offset to the entry's own
+  line and column when rendering.
 - A transcript test category, `conformance/repl/`: each case is a `.input` file of typed lines and
   an `.expected` transcript. Cover every example in "What a student should see", a side effect
   that must happen once (a file append, checked after the session), `Random` and `Date.today()`
   across entries, a multiline function, each unfinished-input form, a check error and a runtime
-  error (and what each keeps), redeclaration, `:reset`, and `Tasks.run` in an entry.
+  error (and what each keeps), redeclaration, `:reset`, `Tasks.run` in an entry, echoes of calls,
+  properties, and nothing-returning calls, and an error position in a late entry.
 - A timing check: entry 500 of a session is no slower than entry 5, within noise.
 - Settled while building: (record here)
 
@@ -231,7 +265,7 @@ input; a case whose transcript ever differs is a bug, not a flake.
 
 ## Out of scope
 
-- Line editing, history, and tab completion (decision 6).
+- Line editing, history, and tab completion (decision 8).
 - New commands (`:type`, `:load`, `:save`).
 - Undoing an entry's outside effects, which no REPL can do.
 - An incremental checker; the session is re-checked in full, which this plan measures.

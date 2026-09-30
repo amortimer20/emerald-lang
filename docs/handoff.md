@@ -198,7 +198,7 @@ Open work:
   reviews and merges.
 - **The REPL**: it replays the whole session on every entry, so side effects (a file append, an
   `Http` request, `Random`, the clock) repeat. [`repl-design-plan.md`](repl-design-plan.md) is
-  proposed and awaits the user's six decisions; Codex implements it once accepted.
+  proposed and awaits the user's eight decisions; Codex implements it once accepted.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release once the REPL and the review's wrong-behavior bugs are fixed.
 
