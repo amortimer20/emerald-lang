@@ -237,6 +237,22 @@ Before each release, refresh the time-zone data with `python3 tools/update-tzdat
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than
 on the roadmap.
 
+## Roadmap order (agreed 2026-09-30)
+
+1. The current queue: the bug-fix batch, the REPL milestone, and editor intelligence.
+2. **Choose the backend** by prototype (below). Moved ahead of the other big features because
+   multicore and the 1.0 compiler both depend on it.
+3. **Networking** (sockets and an HTTP server, the base for a web framework). Backend-neutral at the
+   API and conformance level, and tasks already give each connection its own task, so it can run
+   in parallel with the backend prototypes.
+4. **The package manager** (`emerald.toml` manifest, versions, resolution, fetching, how `import`
+   finds a package). Backend-agnostic, since packages are Emerald source; weigh NuGet interop if
+   .NET wins.
+5. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
+   or per-worker heaps and a thread-safe collector, most of which .NET would give for free and
+   Cranelift would make Emerald write itself. Its language rules are already settled (tasks share
+   no `var`; values only cross), with two gaps recorded in the concurrency plan.
+
 ## Longer term: the native compiler
 
 The user wants a real compiler for Emerald 1.0; the interpreter is a means to that end. No
