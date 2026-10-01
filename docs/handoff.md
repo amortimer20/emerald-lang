@@ -344,7 +344,15 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   written in Zig and a board profile of the library. Unlike MicroPython, checking happens on the
   computer, since the checker is too large for the board's RAM: `emerald board run file.em`
   checks, shows any errors as usual, and sends bytecode, and the REPL runs on the computer and
-  sends each entry. Per-board pin maps and drivers could live in their own packages.
+  sends each entry. Per-board pin maps and drivers could live in their own packages. A second, later board mode
+  (the user asked, 2026-10-01): compile ahead of time to native firmware, as C and Rust do, for
+  projects that need speed or memory. Emerald's static types make this far more effective than
+  for Python (`a + b` on two `Int`s is one instruction); it is typically 10 to 100 times faster
+  than a bytecode VM and uses much less RAM, and links only the runtime pieces a program uses. It
+  costs the on-board REPL (each change is build and flash). Proposed order: the VM first for
+  learning, native second from the same front end. If the desktop backend emits C or uses LLVM,
+  the native board target comes nearly free, so add "can it make Pico firmware?" to the backend
+  prototypes' questions.
   Either needs a board profile of the language: no files, HTTP, time zones, or OS threads (tasks
   would need a scheduler without OS threads), a pin, timer, and bus library instead, and a check
   on what a 64-bit `Int` and `Float` cost on a chip with no floating-point hardware. Emerald's
