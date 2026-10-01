@@ -115,8 +115,9 @@ method changes only ordinary identifier uses.
 
 Concurrency and its required review corrections are merged on main through PR #24
 (`4c51a6c`). The implementation, review findings, validation, and Windows measurements
-are recorded in the concurrency plan and journal. The main interpreter thread still
-commits its 1 GiB stack on Windows; item 15 of the current bug batch addresses that.
+are recorded in the concurrency plan and journal. The main interpreter's Windows
+thread now uses the same reservation-sized-stack helper as task threads; item 15's
+full validation is in progress.
 
 Implemented: per-task execution state,
 `Task[T]`, structured groups, results, a FIFO single-holder
@@ -190,7 +191,12 @@ reads see the original list; attempted writes raise `RuntimeError`; independent
 value copies remain changeable. Existing `each`/`reduce` snapshot behavior is
 preserved. Item 13 passed the full gate; the documentation check executed 24
 examples and confirmed 135 conformance links. Items 14–19 remain; item 14's
-read-only main probe has begun. Probe details are in the journal.
+read-only main probe has begun. Item 15 shares Scheduler's reservation-sized
+thread helper with the three main interpreter pipeline threads; it reproduces
+main's 1,049 MiB baseline commit from Windows CI and adds a CI assertion that
+the repaired one-task baseline is at most 128 MiB. The local full gate passes;
+Windows CI must still demonstrate the repaired measurement after the commit.
+Probe details are in the journal.
 The REPL replay bug remains
 explicitly excluded and belongs to Claude's separate plan.
 
@@ -307,9 +313,6 @@ on the roadmap.
 
 ## Active rough edges
 
-- On Windows the main interpreter thread commits its whole 1 GiB stack up front
-  (`std.Thread.spawn` passes the size as the committed size). Task threads already reserve
-  instead; do the same for the interpreter thread in `emerald.zig`.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
   `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
   `EncodingError`, `DeadlockError`, and `RecursionError`.

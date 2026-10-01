@@ -153,7 +153,7 @@ pub fn analyzeProject(gpa: std.mem.Allocator, project: *const Project) Error!?An
     };
 
     var task: Task = .{ .gpa = gpa, .project = project };
-    const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
+    const thread = Scheduler.ReservedThread.spawn(stack_size, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
     return task.result;
@@ -343,7 +343,7 @@ pub fn formatProject(gpa: std.mem.Allocator, project: *const Project) Error!Form
     };
 
     var task: Task = .{ .gpa = gpa, .project = project };
-    const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
+    const thread = Scheduler.ReservedThread.spawn(stack_size, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
     return task.result;
@@ -448,7 +448,7 @@ fn onLargeStack(gpa: std.mem.Allocator, project: *const Project, streams: ?Strea
     // honestly how much there is, and a program within section 7.2's
     // guarantees could fail or crash. Failing to start is the honest outcome.
     var task: Task = .{ .gpa = gpa, .project = project, .streams = streams, .test_mode = test_mode, .step_limit = step_limit };
-    const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
+    const thread = Scheduler.ReservedThread.spawn(stack_size, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
     return task.result;

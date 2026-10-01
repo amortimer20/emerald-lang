@@ -4136,3 +4136,28 @@ pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build,
 documentation examples (24 executed, 135 conformance links), changed-Zig
 formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds with
 prefixes outside `zig-out`.
+
+## Bug-fix batch, item 15: reserve the main Windows stack, 2026-10-01
+
+Reproduced from main's successful Windows ReleaseSafe CI measurement (`4c51a6c`):
+the one-live-task benchmark reported 1,048.75 MiB peak commit, despite only
+about 9.47 MiB physical working set. Zig 0.16's `std.Thread.spawn` source
+confirms that its Windows `NtCreateThreadEx` call supplies `stack_size` as the
+committed stack size. Emerald had used that call for its three 1 GiB-stack
+pipeline threads, while Scheduler's task threads already used `CreateThread`
+with `STACK_SIZE_PARAM_IS_A_RESERVATION`.
+
+Scheduler now exports one `ReservedThread` helper. It copies its arguments into
+a small page-allocated context on Windows, frees that context in the child, and
+uses `CreateThread` with the reservation flag; non-Windows keeps `std.Thread.spawn`.
+The three frontend/interpreter call sites and task jobs use it, so their existing
+stack budgets are unchanged. A scheduler unit test verifies copied arguments and
+join behavior. The Windows measurement now requires the kept-alive one-task
+baseline to stay at or below 128 MiB of commit, a threshold the old 1,049 MiB
+implementation fails before task-thread cost is considered. Debug and ReleaseSafe
+tests, including a Windows-targeted Scheduler compile, pass locally. The full
+gate passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests,
+native build, documentation examples (24 executed, 135 conformance links),
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+with prefixes outside `zig-out`. Windows CI's actual post-fix measurement remains
+the required final confirmation.
