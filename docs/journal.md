@@ -4242,3 +4242,20 @@ slice commit: pinned Zig 0.16.0 with `-j1`, Debug and ReleaseSafe test suites,
 native build, 24 documentation examples with 134 linked conformance files,
 changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
 with prefixes outside `zig-out`.
+
+## REPL slice 2: persistent interpreter session
+
+`Interpreter.Session` now owns the REPL's long-lived heap, module scope, native
+resources, scheduler, and root task. Each accepted whole-session analysis is installed before
+any entry executes: all checker/resolver tables are replaced together, then only that entry's
+new declarations are registered and its statements run. `Analysis` consequently owns its
+complete file/program view, and the coming REPL retains every accepted analysis/source so
+runtime values never point into freed syntax trees.
+
+The ordinary one-shot interpreter path remains unchanged. A session uses the scheduler's
+shared allocator from its first entry, rather than trying to change allocation domains if a
+later entry names `Tasks`. A runtime failure removes declarations and module bindings introduced
+by its entry; prior output, assignments, and outside effects intentionally remain. Direct
+testing-allocator coverage exercises a struct value and closure across analysis replacements, a
+type declared after a value using an earlier type, and a raised entry followed by a legal reuse
+of its dropped declaration.

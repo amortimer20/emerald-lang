@@ -107,8 +107,13 @@ pub const Analysis = struct {
     /// leaves whatever pointed into it — here, text, there, syntax nodes —
     /// dangling.
     prelude_source: Source,
+    /// The complete project view passed to resolver/checker, including the
+    /// prelude.  REPL sessions borrow it while executing the matching
+    /// analysis, so it outlives every syntax node and fact below.
+    files: []Project.File,
     tokenized: []Lexer.Tokenized,
     parsed: []Parser.Parsed,
+    programs: []Ast.Program,
     resolved: Resolver.Resolved,
     checked: Checker.Checked,
 
@@ -122,10 +127,12 @@ pub const Analysis = struct {
     pub fn deinit(self: *Analysis, gpa: std.mem.Allocator) void {
         self.checked.deinit();
         self.resolved.deinit();
+        gpa.free(self.programs);
         for (self.parsed) |*one| one.deinit();
         gpa.free(self.parsed);
         for (self.tokenized) |*one| one.deinit(gpa);
         gpa.free(self.tokenized);
+        gpa.free(self.files);
         self.prelude_source.deinit(gpa);
         self.* = undefined;
     }
@@ -173,7 +180,7 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis 
     var prelude_source = try Source.init(gpa, "prelude.em", prelude_text);
     errdefer prelude_source.deinit(gpa);
     const files = try gpa.alloc(Project.File, project.files.len + 1);
-    defer gpa.free(files);
+    errdefer gpa.free(files);
     @memcpy(files[0..project.files.len], project.files);
     files[project.files.len] = .{ .source = prelude_source, .namespace = Resolver.prelude_namespace, .entry = false };
 
@@ -187,6 +194,7 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis 
     if (!lex_ok) {
         for (tokenized) |*one| one.deinit(gpa);
         gpa.free(tokenized);
+        gpa.free(files);
         prelude_source.deinit(gpa);
         return null;
     }
@@ -206,12 +214,13 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis 
         gpa.free(parsed);
         for (tokenized) |*one| one.deinit(gpa);
         gpa.free(tokenized);
+        gpa.free(files);
         prelude_source.deinit(gpa);
         return null;
     }
 
     const programs = try gpa.alloc(Ast.Program, files.len);
-    defer gpa.free(programs);
+    errdefer gpa.free(programs);
     for (parsed, programs) |one, *program| program.* = one.program;
 
     var resolved = try Resolver.resolve(gpa, files, programs, project.enclosing_project);
@@ -221,12 +230,47 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis 
         gpa.free(parsed);
         for (tokenized) |*one| one.deinit(gpa);
         gpa.free(tokenized);
+        gpa.free(programs);
+        gpa.free(files);
         prelude_source.deinit(gpa);
         return null;
     }
 
     const checked = try Checker.check(gpa, files, programs, resolved.facts);
-    return .{ .prelude_source = prelude_source, .tokenized = tokenized, .parsed = parsed, .resolved = resolved, .checked = checked };
+    return .{
+        .prelude_source = prelude_source,
+        .files = files,
+        .tokenized = tokenized,
+        .parsed = parsed,
+        .programs = programs,
+        .resolved = resolved,
+        .checked = checked,
+    };
+}
+
+/// The runtime-facing view of an analysis.  It deliberately borrows the
+/// analysis rather than copying any facts: a REPL keeps every accepted
+/// `Analysis` alive for the lifetime of its interpreter session.
+pub fn sessionAnalysis(analysis: *const Analysis) Interpreter.SessionAnalysis {
+    return .{
+        .files = analysis.files,
+        .programs = analysis.programs,
+        .checked_structs = &analysis.checked.structs,
+        .signatures = &analysis.checked.signatures,
+        .literal_types = &analysis.checked.literal_types,
+        .changing_methods = &analysis.checked.changing_methods,
+        .method_calls = &analysis.checked.method_calls,
+        .operator_calls = &analysis.checked.operator_calls,
+        .operator_assignments = &analysis.checked.operator_assignments,
+        .json_encodes = &analysis.checked.json_encodes,
+        .json_decodes = &analysis.checked.json_decodes,
+        .super_members = &analysis.checked.super_members,
+        .prelude_reached = analysis.checked.prelude_reached,
+        .type_tests = &analysis.checked.type_tests,
+        .type_names = &analysis.checked.type_names,
+        .trait_calls = &analysis.checked.trait_calls,
+        .facts = analysis.resolved.facts,
+    };
 }
 
 /// A single file is a complete program, so it is a project of one. Nothing
@@ -861,6 +905,97 @@ fn runToString(gpa: std.mem.Allocator, text: []const u8, input: []const u8) ![]u
     }
 
     return out.toOwnedSlice();
+}
+
+const ReplTestAnalysis = struct {
+    source: Source,
+    analysis: Analysis,
+
+    fn init(gpa: std.mem.Allocator, text: []const u8) !ReplTestAnalysis {
+        var source = try Source.init(gpa, "<repl>", text);
+        errdefer source.deinit(gpa);
+        var files = [_]Project.File{lone(&source)};
+        const project = loneProject(&files);
+        const analysis = (try analyzeProject(gpa, &project)) orelse return error.UnexpectedDiagnostic;
+        if (!analysis.ok()) return error.UnexpectedDiagnostic;
+        return .{ .source = source, .analysis = analysis };
+    }
+
+    fn deinit(self: *ReplTestAnalysis, gpa: std.mem.Allocator) void {
+        self.analysis.deinit(gpa);
+        self.source.deinit(gpa);
+        self.* = undefined;
+    }
+};
+
+test "an interpreter session keeps earlier values while replacing analysis" {
+    const gpa = testing.allocator;
+    const first =
+        \\struct Point {
+        \\    const x: Int
+        \\}
+        \\const point = Point(2)
+        \\const twice = { value: Int => value * 2 }
+    ++ "\n";
+    const second = first ++
+        \\struct Box {
+        \\    const point: Point
+        \\}
+        \\const box = Box(point)
+        \\print(twice(box.point.x))
+    ++ "\n";
+    const failed = second ++
+        \\const discarded = 1
+        \\raise RuntimeError("boom")
+    ++ "\n";
+    const after_failure = second ++
+        \\const discarded = 3
+        \\print(discarded)
+    ++ "\n";
+
+    var first_analysis = try ReplTestAnalysis.init(gpa, first);
+    defer first_analysis.deinit(gpa);
+    var second_analysis = try ReplTestAnalysis.init(gpa, second);
+    defer second_analysis.deinit(gpa);
+    var failed_analysis = try ReplTestAnalysis.init(gpa, failed);
+    defer failed_analysis.deinit(gpa);
+    var after_analysis = try ReplTestAnalysis.init(gpa, after_failure);
+    defer after_analysis.deinit(gpa);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var input: std.Io.Reader = .fixed("");
+    var session = try Interpreter.Session.init(
+        gpa,
+        sessionAnalysis(&first_analysis.analysis),
+        &out.writer,
+        &input,
+        std.Io.Threaded.global_single_threaded.io(),
+        &.{},
+        false,
+        false,
+        .empty,
+        .utc,
+        Interpreter.StackLimit.here(64 * 1024 * 1024),
+    );
+    defer session.deinit();
+    try testing.expectEqual(.complete, try session.runEntry(first_analysis.analysis.programs[0].statements));
+
+    const second_start = first_analysis.analysis.programs[0].statements.len;
+    try session.install(sessionAnalysis(&second_analysis.analysis), second_start);
+    try testing.expectEqual(.complete, try session.runEntry(second_analysis.analysis.programs[0].statements[second_start..]));
+
+    const failed_start = second_analysis.analysis.programs[0].statements.len;
+    try session.install(sessionAnalysis(&failed_analysis.analysis), failed_start);
+    switch (try session.runEntry(failed_analysis.analysis.programs[0].statements[failed_start..])) {
+        .failed => {},
+        else => return error.TestUnexpectedResult,
+    }
+
+    const after_start = second_analysis.analysis.programs[0].statements.len;
+    try session.install(sessionAnalysis(&after_analysis.analysis), after_start);
+    try testing.expectEqual(.complete, try session.runEntry(after_analysis.analysis.programs[0].statements[after_start..]));
+    try testing.expectEqualStrings("4\n3\n", out.written());
 }
 
 fn expectOutput(text: []const u8, expected: []const u8) !void {

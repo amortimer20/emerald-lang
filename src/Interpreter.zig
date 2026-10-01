@@ -299,6 +299,10 @@ constructors: std.StringHashMapUnmanaged(Constructor) = .empty,
 /// Every struct's declaration and what calling its generated constructor
 /// matches arguments against, by the same keys.
 struct_infos: std.StringHashMapUnmanaged(StructInfo) = .empty,
+/// Struct layouts from the current whole-session analysis. Runtime values use
+/// the descriptors above, but registering declarations from a later REPL
+/// entry needs the checker-proved fields for that entry's original tree.
+checked_structs: *const Checker.Structs,
 /// What the checker proved about each function, including return types it
 /// inferred, which are needed to widen results the way it allowed.
 signatures: *const Type.Signatures,
@@ -340,6 +344,319 @@ literal_types: *const Checker.LiteralTypes,
 /// every new holder of a list retains it, and every holder that ends releases
 /// it.
 heap: Heap,
+
+/// A checked view of the append-only REPL program.  The owner keeps the
+/// analysis, its parsed trees, and its source alive until the session ends:
+/// runtime function declarations and type names borrow all three.
+pub const SessionAnalysis = struct {
+    files: []const Project.File,
+    programs: []const Ast.Program,
+    checked_structs: *const Checker.Structs,
+    signatures: *const Type.Signatures,
+    literal_types: *const Checker.LiteralTypes,
+    changing_methods: *const Resolver.NameSet,
+    method_calls: *const Checker.MethodCalls,
+    operator_calls: *const Checker.OperatorCalls,
+    operator_assignments: *const Checker.OperatorAssignments,
+    json_encodes: *const Checker.JsonEncodes,
+    json_decodes: *const Checker.JsonDecodes,
+    super_members: *const Checker.MethodCalls,
+    prelude_reached: ?*const Resolver.NameSet,
+    type_tests: *const Checker.TypeTests,
+    type_names: *const Checker.LiteralTypes,
+    trait_calls: *const Checker.MethodCalls,
+    facts: Resolver.Facts,
+};
+
+/// The result of executing one accepted interactive entry.  A diagnostic is
+/// owned by the session arena and stays renderable until reset or shutdown.
+pub const SessionResult = union(enum) {
+    complete,
+    failed: Diagnostic,
+    exited: u8,
+};
+
+/// One long-lived interactive execution.  It deliberately owns the scheduler
+/// allocator even before an entry names `Tasks`: a later entry may do so, and
+/// changing an allocator beneath values or closures already in the heap would
+/// violate their ownership invariant.
+pub const Session = struct {
+    host_allocator: std.mem.Allocator,
+    shared_allocator: *Scheduler.SharedAllocator,
+    arena_state: std.heap.ArenaAllocator,
+    module_states: []ModuleState,
+    module_failed_values: []?Value,
+    module_failed_diagnostics: []?Diagnostic,
+    root_job: Scheduler.Runtime.Job = undefined,
+    scheduler: Scheduler.Runtime,
+    root_task: Scheduler.TaskState(TaskData),
+    interpreter: Interpreter,
+    entry: u32,
+    installed: bool = false,
+
+    pub fn init(
+        host_allocator: std.mem.Allocator,
+        analysis: SessionAnalysis,
+        out: *std.Io.Writer,
+        in: *std.Io.Reader,
+        io: std.Io,
+        arguments: []const []const u8,
+        color: bool,
+        standard_input: bool,
+        process_environment: std.process.Environ,
+        local_zone: TimeZone.Local,
+        stack: StackLimit,
+    ) RunError!*Session {
+        const self = try host_allocator.create(Session);
+        errdefer host_allocator.destroy(self);
+
+        const shared_allocator = try host_allocator.create(Scheduler.SharedAllocator);
+        errdefer host_allocator.destroy(shared_allocator);
+        shared_allocator.* = .{ .child = host_allocator, .io = io };
+        errdefer shared_allocator.deinit();
+        const gpa = shared_allocator.allocator();
+
+        var arena_state: std.heap.ArenaAllocator = .init(gpa);
+        errdefer arena_state.deinit();
+        const module_states = try gpa.alloc(ModuleState, analysis.files.len);
+        errdefer gpa.free(module_states);
+        const module_failed_values = try gpa.alloc(?Value, analysis.files.len);
+        errdefer gpa.free(module_failed_values);
+        const module_failed_diagnostics = try gpa.alloc(?Diagnostic, analysis.files.len);
+        errdefer gpa.free(module_failed_diagnostics);
+        @memset(module_failed_values, null);
+        @memset(module_failed_diagnostics, null);
+
+        var entry: u32 = 0;
+        for (analysis.files, module_states, 0..) |file, *state, index| {
+            state.* = if (file.entry) .done else .pending;
+            if (file.entry) entry = @intCast(index);
+        }
+
+        self.* = .{
+            .host_allocator = host_allocator,
+            .shared_allocator = shared_allocator,
+            .arena_state = arena_state,
+            .module_states = module_states,
+            .module_failed_values = module_failed_values,
+            .module_failed_diagnostics = module_failed_diagnostics,
+            .scheduler = undefined,
+            .root_task = undefined,
+            .interpreter = undefined,
+            .entry = entry,
+        };
+        self.scheduler = Scheduler.Runtime.init(io, &self.root_job);
+        self.root_task = .{ .state = .{
+            .file = entry,
+            .stack = stack,
+            .job = &self.root_job,
+        } };
+        self.interpreter = .{
+            .arena = self.arena_state.allocator(),
+            .gpa = gpa,
+            .files = analysis.files,
+            .programs = analysis.programs,
+            .module_states = module_states,
+            .module_failed_values = module_failed_values,
+            .module_failed_diagnostics = module_failed_diagnostics,
+            .task = &self.root_task,
+            .root_task = &self.root_task,
+            .scheduler = &self.scheduler,
+            .facts = analysis.facts,
+            .out = out,
+            .in = in,
+            .io = io,
+            .color = color,
+            .standard_input = standard_input,
+            .environment = process_environment,
+            .local_zone = local_zone,
+            .arguments = arguments,
+            .checked_structs = analysis.checked_structs,
+            .signatures = analysis.signatures,
+            .changing_methods = analysis.changing_methods,
+            .method_calls = analysis.method_calls,
+            .operator_calls = analysis.operator_calls,
+            .operator_assignments = analysis.operator_assignments,
+            .json_encodes = analysis.json_encodes,
+            .json_decodes = analysis.json_decodes,
+            .super_members = analysis.super_members,
+            .prelude_reached = analysis.prelude_reached,
+            .type_tests = analysis.type_tests,
+            .type_names = analysis.type_names,
+            .trait_calls = analysis.trait_calls,
+            .literal_types = analysis.literal_types,
+            .heap = .init(gpa),
+        };
+        errdefer self.deinit();
+        try self.install(analysis, 0);
+        return self;
+    }
+
+    /// Replaces every checker/resolver table as one operation before any user
+    /// code can run, then registers only declarations introduced at `start`.
+    /// Existing runtime descriptors remain the identity of earlier values.
+    pub fn install(self: *Session, analysis: SessionAnalysis, start: usize) RunError!void {
+        std.debug.assert(analysis.files.len == self.module_states.len);
+        const interpreter = &self.interpreter;
+        interpreter.files = analysis.files;
+        interpreter.programs = analysis.programs;
+        interpreter.checked_structs = analysis.checked_structs;
+        interpreter.signatures = analysis.signatures;
+        interpreter.literal_types = analysis.literal_types;
+        interpreter.changing_methods = analysis.changing_methods;
+        interpreter.method_calls = analysis.method_calls;
+        interpreter.operator_calls = analysis.operator_calls;
+        interpreter.operator_assignments = analysis.operator_assignments;
+        interpreter.json_encodes = analysis.json_encodes;
+        interpreter.json_decodes = analysis.json_decodes;
+        interpreter.super_members = analysis.super_members;
+        interpreter.prelude_reached = analysis.prelude_reached;
+        interpreter.type_tests = analysis.type_tests;
+        interpreter.type_names = analysis.type_names;
+        interpreter.trait_calls = analysis.trait_calls;
+        interpreter.facts = analysis.facts;
+
+        for (analysis.programs, 0..) |program, index| {
+            const is_entry = index == self.entry;
+            if (self.installed and !is_entry) continue;
+            const statements = if (is_entry and self.installed) program.statements[start..] else program.statements;
+            interpreter.task.state.file = @intCast(index);
+            try self.registerDeclarations(statements);
+        }
+        interpreter.task.state.file = self.entry;
+        try self.inheritNewTypes();
+        var nested = interpreter.facts.nested_functions.iterator();
+        while (nested.next()) |item| {
+            const registered = try interpreter.functions.getOrPut(interpreter.arena, item.key_ptr.*);
+            if (!registered.found_existing) registered.value_ptr.* = item.value_ptr.*;
+        }
+        self.installed = true;
+    }
+
+    /// Runs only this entry after `install`.  A raised entry loses all of its
+    /// declarations, but assignments and outside effects before the raise are
+    /// intentionally not reversible (18.4's interactive rule).
+    pub fn runEntry(self: *Session, statements: []const Ast.Statement) RunError!SessionResult {
+        const interpreter = &self.interpreter;
+        interpreter.task = &self.root_task;
+        interpreter.task.state.file = self.entry;
+        interpreter.executeAll(statements) catch |err| switch (err) {
+            error.Raised, error.StepLimit => {
+                const failure = interpreter.task.state.failure.?;
+                self.rollbackDeclarations(statements);
+                if (interpreter.task.state.raised_value) |value| interpreter.heap.release(value);
+                interpreter.task.state.raised_value = null;
+                interpreter.task.state.failure = null;
+                return .{ .failed = failure };
+            },
+            error.Returned => {
+                if (interpreter.task.state.return_value) |value| interpreter.heap.release(value);
+                interpreter.task.state.return_value = null;
+                return .complete;
+            },
+            error.Exited => return .{ .exited = interpreter.task.state.exit_code orelse 0 },
+            error.Broke, error.Continued => unreachable,
+            else => |other| return other,
+        };
+        return .complete;
+    }
+
+    fn registerDeclarations(self: *Session, statements: []const Ast.Statement) RunError!void {
+        const interpreter = &self.interpreter;
+        for (statements) |statement| {
+            switch (statement.data) {
+                .struct_declaration => |declaration| try interpreter.registerStruct(interpreter.checked_structs, declaration, interpreter.keyOf(declaration.name)),
+                .function_declaration => |function| try interpreter.functions.put(interpreter.arena, interpreter.keyOf(function.name), function),
+                else => {},
+            }
+        }
+    }
+
+    fn inheritNewTypes(self: *Session) RunError!void {
+        var bases: std.StringHashMapUnmanaged(void) = .empty;
+        var infos = self.interpreter.struct_infos.valueIterator();
+        while (infos.next()) |info| if (info.base) |base| try bases.put(self.interpreter.arena, base, {});
+        var finished: std.StringHashMapUnmanaged(void) = .empty;
+        var keys = self.interpreter.struct_infos.keyIterator();
+        while (keys.next()) |key| try self.interpreter.inherit(key.*, &bases, &finished);
+    }
+
+    fn rollbackDeclarations(self: *Session, statements: []const Ast.Statement) void {
+        for (statements) |statement| switch (statement.data) {
+            .declaration => |declaration| self.removeModuleBinding(declaration.name),
+            .destructuring => |declaration| for (declaration.pattern.names) |name| self.removeModuleBinding(name.text),
+            .function_declaration => |function| _ = self.interpreter.functions.remove(self.interpreter.keyOf(function.name)),
+            .struct_declaration => |declaration| self.removeStruct(declaration, self.interpreter.keyOf(declaration.name)),
+            else => {},
+        };
+    }
+
+    fn removeModuleBinding(self: *Session, name: []const u8) void {
+        if (self.interpreter.module.fetchRemove(self.interpreter.keyOf(name))) |entry| {
+            if (entry.value.value) |value| self.interpreter.heap.release(value);
+        }
+    }
+
+    fn removeStruct(self: *Session, declaration: Ast.StructDeclaration, key: []const u8) void {
+        for (declaration.types) |nested| {
+            const nested_key = Resolver.methodKey(self.interpreter.arena, key, nested.declaration.name) catch return;
+            self.removeStruct(nested.declaration, nested_key);
+        }
+        for (declaration.properties) |property| {
+            const getter = Resolver.methodKey(self.interpreter.arena, key, property.name) catch return;
+            _ = self.interpreter.functions.remove(getter);
+            if (property.setter != null) {
+                const setter = Resolver.setterKey(self.interpreter.arena, key, property.name) catch return;
+                _ = self.interpreter.functions.remove(setter);
+            }
+        }
+        for (declaration.methods) |method| {
+            const method_key = Resolver.methodKey(self.interpreter.arena, key, method.name) catch return;
+            _ = self.interpreter.functions.remove(method_key);
+            _ = self.interpreter.overrides.remove(method_key);
+        }
+        for (declaration.type_functions) |function| {
+            const member_key = Resolver.methodKey(self.interpreter.arena, key, function.member) catch return;
+            _ = self.interpreter.functions.remove(member_key);
+        }
+        _ = self.interpreter.structs.remove(key);
+        if (self.interpreter.type_setups.fetchRemove(key)) |setup| {
+            if (setup.value.failed_value) |value| self.interpreter.heap.release(value);
+        }
+        _ = self.interpreter.constructors.remove(key);
+        _ = self.interpreter.struct_infos.remove(key);
+        _ = self.interpreter.trait_infos.remove(key);
+    }
+
+    pub fn deinit(self: *Session) void {
+        const interpreter = &self.interpreter;
+        if (self.root_task.state.return_value) |value| interpreter.heap.release(value);
+        if (self.root_task.state.raised_value) |value| interpreter.heap.release(value);
+        self.root_task.state.scopes.deinit(interpreter.gpa);
+        self.root_task.state.call_stack.deinit(interpreter.gpa);
+        self.root_task.state.taken_fields.deinit(interpreter.gpa);
+        for (self.root_task.state.spare_scopes.items) |environment| {
+            environment.bindings.deinit(interpreter.gpa);
+            interpreter.gpa.destroy(environment);
+        }
+        self.root_task.state.spare_scopes.deinit(interpreter.gpa);
+        interpreter.deinitHttpClient();
+        interpreter.deinitFileWriters();
+        interpreter.deinitFileHandles();
+        interpreter.literal_texts.deinit(interpreter.gpa);
+        if (interpreter.input_reader) |reader| reader.deinit();
+        interpreter.deinitTasks();
+        interpreter.deinitChannels();
+        interpreter.heap.deinit();
+        interpreter.gpa.free(self.module_states);
+        interpreter.gpa.free(self.module_failed_values);
+        interpreter.gpa.free(self.module_failed_diagnostics);
+        self.arena_state.deinit();
+        self.shared_allocator.deinit();
+        self.host_allocator.destroy(self.shared_allocator);
+        self.host_allocator.destroy(self);
+    }
+};
 
 pub fn run(
     host_allocator: std.mem.Allocator,
@@ -427,6 +744,7 @@ pub fn run(
         .environment = process_environment,
         .local_zone = local_zone,
         .arguments = arguments,
+        .checked_structs = checked_structs,
         .signatures = signatures,
         .changing_methods = changing_methods,
         .method_calls = method_calls,

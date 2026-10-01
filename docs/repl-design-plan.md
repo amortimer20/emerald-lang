@@ -233,7 +233,23 @@ commits.
 - Unit tests in Zig that drive the interpreter through several entries directly, including a
   struct value and a closure created in one entry and used in later ones, a type declared later
   than a value that uses an earlier type, and a raising entry.
-- Settled while building: (record here)
+- Settled while building:
+  - `Interpreter.Session` is a separate persistent path; the one-shot
+    `Interpreter.run` path remains intact for `run`, `test`, and embedding
+    callers.  This keeps the REPL lifetime change contained while both paths
+    continue to share execution semantics.
+  - `emerald.Analysis` now owns the complete files/programs view as well as
+    lexer/parser/resolver/checker results.  The REPL will retain every accepted
+    analysis and source, so runtime values and function declarations always
+    point into trees that remain alive.  A session installs all analysis
+    pointers before registering declarations or executing an entry.
+  - A session always uses `Scheduler.SharedAllocator`, even before `Tasks` is
+    named.  A later entry may introduce tasks, and changing allocation domains
+    underneath existing heap values would be unsound.
+  - A failed entry removes only names and runtime declaration tables introduced
+    by that entry.  Its preceding assignments and external effects remain, as
+    decision 2 requires.  Type descriptors and other arena allocations may
+    remain unreachable until `:reset`; they never remain resolvable.
 
 ### Slice 3: The new REPL
 

@@ -9,8 +9,9 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 
 The Zig rewrite implements the current rewrite-context language surface: control flow,
 functions, optionals, collections, Unicode strings, structs, classes, inheritance, traits,
-enums, typed errors, projects/namespaces, ranges and slicing. The formatter and REPL are
-complete. The language server provides diagnostics (identical to `emerald check`), symbols,
+enums, typed errors, projects/namespaces, ranges and slicing. The formatter is complete; the
+REPL's persistent-session redesign is in progress. The language server provides diagnostics
+(identical to `emerald check`), symbols,
 format-on-save, hover, go to definition, find references, rename, and completion, but the last
 two are shallow for the built-in types: see "Queued: editor intelligence" below.
 
@@ -173,7 +174,8 @@ finish before optimizing are done (dates and times, regular expressions, Console
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
 journal records each milestone, its review, and what was measured; each plan's "Settled while
-building" notes record its decisions.
+building" notes record its decisions. The current implementation work is REPL slice 2 on
+`codex/repl`; slice 3 rewires the command loop once this persistent interpreter is reviewed.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
@@ -225,12 +227,14 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **The REPL**: it replays the whole session on every entry, so side effects (a file append, an
-  `Http` request, `Random`, the clock) repeat. [`repl-design-plan.md`](repl-design-plan.md) is
-  accepted with all eight recommendations. Slice 1 is complete on `codex/repl`: tail lexing and
-  interactive parsing preserve global spans, mark expression statements structurally, and report
-  incomplete input by flags rather than diagnostic text. Its full local gate passed. Slice 2
-  next makes the interpreter persist across entries.
+- **The REPL**: its current command loop still replays the whole session on every entry, so side
+  effects (a file append, an `Http` request, `Random`, the clock) repeat. The accepted
+  [`repl-design-plan.md`](repl-design-plan.md)'s first two slices are complete on `codex/repl`:
+  tail parsing is structural, and `Interpreter.Session` now preserves one heap/module scope
+  while replacing checker facts atomically for each accepted analysis. It retains every source
+  and parsed tree that runtime values borrow, and rolls back a raising entry's declarations.
+  Direct Debug-allocator tests cover a struct value, closure, later dependent type, and failed
+  entry. Slice 3 next rewrites the command loop to use it.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
 
