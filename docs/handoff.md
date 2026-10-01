@@ -327,6 +327,23 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   made by compiling the same small subset (functions, structs, lists, a closure) with both,
   running its conformance cases, and comparing binary size, startup, debugging, and how much
   runtime code each needs.
+- **Microcontrollers are a goal (the user, 2026-10-01): Emerald should eventually run on boards
+  such as the Raspberry Pi Pico** (RP2040: two Cortex-M0+ cores, 264 KB of RAM, 2 MB of flash, no
+  floating-point unit; Pico 2's RP2350: Cortex-M33 or RISC-V cores, 520 KB, 4 MB). This is a
+  requirement for the backend prototypes, and it cuts against both leading candidates: Cranelift
+  generates code for x86-64, AArch64, s390x, and 64-bit RISC-V, not 32-bit ARM or 32-bit RISC-V,
+  and .NET's own runtime does not target microcontrollers (.NET nanoFramework is a separate,
+  partial runtime). Paths that do reach the Pico: LLVM (Rust and Zig both use it for these
+  chips), emitting C and building it with the board's toolchain, or a small bytecode VM written in
+  Zig and run on the board, as MicroPython does. Two shapes to weigh, not yet discussed with the
+  user: an interpreter on the board with a REPL over USB (MicroPython's classroom model: copy a
+  file, see the result at once), or compiling on the computer into firmware (Arduino's model).
+  Either needs a board profile of the language: no files, HTTP, time zones, or OS threads (tasks
+  would need a scheduler without OS threads), a pin, timer, and bus library instead, and a check
+  on what a 64-bit `Int` and `Float` cost on a chip with no floating-point hardware. Emerald's
+  reference counting, with no tracing collector, already suits small memory. A cheap first
+  measurement when this is planned: build the current interpreter ReleaseSmall without its
+  tables (time zones, Unicode, regex) and see how far it is from 2 MB.
 - **The conformance suite is the contract.** A replacement backend is acceptable only if it
   passes the same `conformance/` files unchanged (19.6, 23). Keep every case backend-neutral:
   no dependence on interpreter internals, thread identity, exact timing, or exact recursion
