@@ -291,6 +291,7 @@ functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// A persistent session must own resolver-produced names stored in runtime
 /// tables or closures: the next analysis frees the resolver's arena.
 session_keys: ?std.StringHashMapUnmanaged(void) = null,
+session: ?*Session = null,
 /// Struct types, keyed program-wide and carrying their short source name for
 /// display.
 structs: std.StringHashMapUnmanaged(*const Value.StructType) = .empty,
@@ -352,6 +353,11 @@ heap: Heap,
 /// until replacement; the owner keeps parsed entries and their source text
 /// until the session ends. Runtime tables own synthesized resolver names.
 pub const SessionAnalysis = struct {
+    /// Session-wide source offset of this entry. A release callback transfers
+    /// analysis ownership to Session; borrowed views must outlive the session.
+    entry: usize = 0,
+    owner: ?*anyopaque = null,
+    release: ?*const fn (*anyopaque, std.mem.Allocator) void = null,
     files: []const Project.File,
     programs: []const Ast.Program,
     checked_structs: *const Checker.Structs,
@@ -384,6 +390,46 @@ pub const SessionResult = union(enum) {
 /// changing an allocator beneath values or closures already in the heap would
 /// violate their ownership invariant.
 pub const Session = struct {
+    const Declarations = struct {
+        functions: @FieldType(Interpreter, "functions"),
+        structs: @FieldType(Interpreter, "structs"),
+        constructors: @FieldType(Interpreter, "constructors"),
+        struct_infos: @FieldType(Interpreter, "struct_infos"),
+        trait_infos: @FieldType(Interpreter, "trait_infos"),
+        overrides: @FieldType(Interpreter, "overrides"),
+        type_setups: @FieldType(Interpreter, "type_setups"),
+
+        fn read(interpreter: *Interpreter) Declarations {
+            var result: Declarations = undefined;
+            inline for (std.meta.fields(Declarations)) |field| @field(result, field.name) = @field(interpreter, field.name);
+            return result;
+        }
+
+        fn install(self: Declarations, interpreter: *Interpreter) void {
+            inline for (std.meta.fields(Declarations)) |field| @field(interpreter, field.name) = @field(self, field.name);
+        }
+
+        fn snapshot(self: Declarations, arena: std.mem.Allocator) !Declarations {
+            var result: Declarations = undefined;
+            inline for (std.meta.fields(Declarations)) |field| @field(result, field.name) = try @field(self, field.name).clone(arena);
+            // Rollback can release a failed type initializer's error. Its
+            // archived view is another holder, just like the active table.
+            var setups = result.type_setups.valueIterator();
+            while (setups.next()) |setup| if (setup.failed_value) |value| {
+                _ = Heap.retain(value);
+            };
+            return result;
+        }
+    };
+
+    const Failed = struct { analysis: SessionAnalysis, declarations: Declarations };
+    const Origin = struct { entry: usize, end: usize };
+    current: SessionAnalysis = undefined,
+    current_failed: bool = false,
+    current_declarations: Declarations = undefined,
+    failed: std.AutoHashMapUnmanaged(usize, Failed) = .empty,
+    origins: std.ArrayList(Origin) = .empty,
+    active: ?usize = null,
     host_allocator: std.mem.Allocator,
     shared_allocator: *Scheduler.SharedAllocator,
     arena_state: std.heap.ArenaAllocator,
@@ -455,6 +501,7 @@ pub const Session = struct {
             .job = &self.root_job,
         } };
         self.interpreter = .{
+            .session = self,
             .arena = self.arena_state.allocator(),
             .gpa = gpa,
             .files = analysis.files,
@@ -502,23 +549,15 @@ pub const Session = struct {
     pub fn install(self: *Session, analysis: SessionAnalysis, start: usize) RunError!void {
         std.debug.assert(analysis.files.len == self.module_states.len);
         const interpreter = &self.interpreter;
-        interpreter.files = analysis.files;
-        interpreter.programs = analysis.programs;
-        interpreter.checked_structs = analysis.checked_structs;
-        interpreter.signatures = analysis.signatures;
-        interpreter.literal_types = analysis.literal_types;
-        interpreter.changing_methods = analysis.changing_methods;
-        interpreter.method_calls = analysis.method_calls;
-        interpreter.operator_calls = analysis.operator_calls;
-        interpreter.operator_assignments = analysis.operator_assignments;
-        interpreter.json_encodes = analysis.json_encodes;
-        interpreter.json_decodes = analysis.json_decodes;
-        interpreter.super_members = analysis.super_members;
-        interpreter.prelude_reached = analysis.prelude_reached;
-        interpreter.type_tests = analysis.type_tests;
-        interpreter.type_names = analysis.type_names;
-        interpreter.trait_calls = analysis.trait_calls;
-        interpreter.facts = analysis.facts;
+        const previous = if (self.installed and !self.current_failed) self.current else null;
+        if (self.installed) {
+            self.activate(null);
+        }
+        self.current = analysis;
+        self.current_failed = false;
+        self.applyAnalysis(analysis);
+        if (previous) |obsolete| self.releaseAnalysis(obsolete);
+        try self.origins.append(interpreter.arena, .{ .entry = analysis.entry, .end = analysis.files[self.entry].source.text.len });
 
         for (analysis.programs, 0..) |program, index| {
             const is_entry = index == self.entry;
@@ -538,6 +577,58 @@ pub const Session = struct {
         self.installed = true;
     }
 
+    fn releaseAnalysis(self: *Session, analysis: SessionAnalysis) void {
+        if (analysis.release) |release| release(analysis.owner.?, self.host_allocator);
+    }
+
+    fn applyAnalysis(self: *Session, analysis: SessionAnalysis) void {
+        self.interpreter.files = analysis.files;
+        self.interpreter.programs = analysis.programs;
+        self.interpreter.checked_structs = analysis.checked_structs;
+        self.interpreter.signatures = analysis.signatures;
+        self.interpreter.literal_types = analysis.literal_types;
+        self.interpreter.changing_methods = analysis.changing_methods;
+        self.interpreter.method_calls = analysis.method_calls;
+        self.interpreter.operator_calls = analysis.operator_calls;
+        self.interpreter.operator_assignments = analysis.operator_assignments;
+        self.interpreter.json_encodes = analysis.json_encodes;
+        self.interpreter.json_decodes = analysis.json_decodes;
+        self.interpreter.super_members = analysis.super_members;
+        self.interpreter.prelude_reached = analysis.prelude_reached;
+        self.interpreter.type_tests = analysis.type_tests;
+        self.interpreter.type_names = analysis.type_names;
+        self.interpreter.trait_calls = analysis.trait_calls;
+        self.interpreter.facts = analysis.facts;
+    }
+
+    /// Only failed origins select an old view. Kept code always uses the newest
+    /// analysis, including a kept function called from inside failed-entry code.
+    fn activate(self: *Session, origin: ?usize) void {
+        const target = if (origin) |entry| if (self.failed.contains(entry)) origin else null else null;
+        self.interpreter.task.state.session_context = target;
+        if (self.active == target) return;
+        if (self.active) |entry| {
+            self.failed.getPtr(entry).?.declarations = Declarations.read(&self.interpreter);
+        } else self.current_declarations = Declarations.read(&self.interpreter);
+        self.active = target;
+        if (target) |entry| {
+            const retained = self.failed.get(entry).?;
+            self.applyAnalysis(retained.analysis);
+            retained.declarations.install(&self.interpreter);
+        } else {
+            self.applyAnalysis(self.current);
+            self.current_declarations.install(&self.interpreter);
+        }
+    }
+
+    fn originOf(self: *Session, file: u32, span: Source.Span) ?usize {
+        if (file != self.entry) return null;
+        for (self.origins.items) |entry| {
+            if (span.start >= entry.entry and span.start < entry.end) return entry.entry;
+        }
+        return null;
+    }
+
     /// Runs only this entry after `install`.  A raised entry loses all of its
     /// declarations, but assignments and outside effects before the raise are
     /// intentionally not reversible (18.4's interactive rule).
@@ -548,6 +639,9 @@ pub const Session = struct {
         interpreter.executeAll(statements) catch |err| switch (err) {
             error.Raised, error.StepLimit => {
                 const failure = interpreter.task.state.failure.?;
+                const declarations = try Declarations.read(interpreter).snapshot(interpreter.arena);
+                try self.failed.put(interpreter.arena, self.current.entry, .{ .analysis = self.current, .declarations = declarations });
+                self.current_failed = true;
                 self.rollbackDeclarations(statements);
                 if (interpreter.task.state.raised_value) |value| interpreter.heap.release(value);
                 interpreter.task.state.raised_value = null;
@@ -653,6 +747,9 @@ pub const Session = struct {
         interpreter.deinitTasks();
         interpreter.deinitChannels();
         interpreter.heap.deinit();
+        if (!self.current_failed) self.releaseAnalysis(self.current);
+        var retained = self.failed.valueIterator();
+        while (retained.next()) |entry| self.releaseAnalysis(entry.analysis);
         interpreter.gpa.free(self.module_states);
         interpreter.gpa.free(self.module_failed_values);
         interpreter.gpa.free(self.module_failed_diagnostics);
@@ -1048,6 +1145,7 @@ fn hoistNestedFunctions(self: *Interpreter, statements: []const Ast.Statement) E
         const key = try self.runtimeKey(self.facts.nested_keys.get(.{ .file = self.task.state.file, .start = function.name_span.start }).?);
         const captured = try self.gpa.dupe(*Environment, self.task.state.scopes.items);
         const closure = try self.heap.createClosure(.{ .named = key }, captured, self.task.state.file);
+        closure.session_entry = self.codeOrigin(self.task.state.file, function.name_span);
         const current = &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings;
         current.put(self.gpa, function.name, .{ .kind = .closure, .value = .{ .data = .{ .closure = closure } } }) catch |err| {
             self.heap.release(.{ .data = .{ .closure = closure } });
@@ -1483,7 +1581,7 @@ fn assignThroughSuper(self: *Interpreter, assignment: Ast.Assignment, setter: []
         defer self.heap.release(right);
         break :blk try self.applyBinary(assignment.target_span, operation, current, right, self.operatorAssignment(assignment));
     } else try self.evaluate(assignment.value);
-    var callable = self.namedCallable(setter);
+    var callable = self.methodCallable(setter, object);
     callable.self_value = Heap.retain(object);
     const arguments = [_]Value{value};
     self.heap.release(try self.invoke(assignment.target_span, callable, &arguments));
@@ -1625,6 +1723,7 @@ fn evaluateCallbackReceiver(self: *Interpreter, base: *const Ast.Expression, gua
 
 /// State that belongs to the task currently holding the scheduler baton.
 const TaskData = struct {
+    session_context: ?usize = null,
     job: ?*Scheduler.Runtime.Job = null,
     file: u32 = 0,
     scopes: std.ArrayList(*Environment) = .empty,
@@ -1763,7 +1862,7 @@ fn storeInObject(self: *Interpreter, span: Source.Span, in_object: InObject, val
         self.heap.release(value);
         return err;
     };
-    var callable = self.namedCallable(property.setter.?);
+    var callable = self.methodCallable(property.setter.?, owner);
     const arguments = [_]Value{value};
     if (instance.descriptor.class) {
         callable.self_value = owner;
@@ -1783,7 +1882,7 @@ fn fieldPosition(instance: *const Heap.StructValue, name: []const u8) ?usize {
 /// Section 10.3's getter, run on a value that only lends itself to the call.
 fn readProperty(self: *Interpreter, span: Source.Span, receiver: Value, name: []const u8) Error!Value {
     const property = try self.propertyOf(span, receiver.data.struct_value, name);
-    var callable = self.namedCallable(property.getter);
+    var callable = self.methodCallable(property.getter, receiver);
     callable.self_value = Heap.retain(receiver);
     return self.invoke(span, callable, &.{});
 }
@@ -1900,7 +1999,7 @@ fn storeProperty(self: *Interpreter, span: Source.Span, slot: *Value, name: []co
     const receiver = slot.*;
     slot.* = Value.nothing;
     var changed: Value = Value.nothing;
-    var callable = self.namedCallable(property.setter.?);
+    var callable = self.methodCallable(property.setter.?, receiver);
     callable.self_value = receiver;
     callable.self_out = &changed;
     const arguments = [_]Value{value};
@@ -2273,6 +2372,7 @@ fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, d
         if (field.enum_value != null) try values.append(self.arena, field.name);
     }
     descriptor.* = .{
+        .session_entry = self.codeOrigin(self.task.state.file, declaration.name_span),
         .values = values.items,
         .name = type_key,
         .display_name = checked.user.?.display_name,
@@ -2753,9 +2853,9 @@ fn evaluateLambda(self: *Interpreter, expression: *const Ast.Expression) Error!V
     const captured = try self.gpa.dupe(*Environment, self.task.state.scopes.items);
     // A block can be passed to another file and called there, so it remembers
     // where it was written: that is what its bare module-level names mean.
-    return .{ .data = .{
-        .closure = try self.heap.createClosure(.{ .lambda = expression }, captured, self.task.state.file),
-    } };
+    const closure = try self.heap.createClosure(.{ .lambda = expression }, captured, self.task.state.file);
+    closure.session_entry = self.codeOrigin(self.task.state.file, expression.span);
+    return .{ .data = .{ .closure = closure } };
 }
 
 /// A name read for its value, whether it was written bare or qualified.
@@ -2789,7 +2889,9 @@ fn evaluateName(
 fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
     const key = try self.runtimeKey(name);
     const captured = try self.gpa.alloc(*Environment, 0);
-    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = key }, captured, self.task.state.file) } };
+    const closure = try self.heap.createClosure(.{ .named = key }, captured, self.task.state.file);
+    closure.session_entry = self.codeOrigin(self.facts.owner.get(key) orelse self.task.state.file, self.functions.get(key).?.name_span);
+    return .{ .data = .{ .closure = closure } };
 }
 
 /// Section 7.5's captured method: a closure holding its own copy of the
@@ -2809,6 +2911,7 @@ fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: [
         return err;
     };
     closure.receiver = receiver;
+    closure.session_entry = self.methodCallable(version, receiver).session_entry;
     return .{ .data = .{ .closure = closure } };
 }
 
@@ -2977,7 +3080,7 @@ const TextualDisplay = struct {
 fn callTextual(self: *Interpreter, span: Source.Span, value: Value) Error!Value {
     const method = value.data.struct_value.descriptor.methods.?.get("to_string").?;
     try self.requireVersionBuilt(span, value, method.key, method);
-    var callable = self.namedCallable(method.key);
+    var callable = self.methodCallable(method.key, value);
     callable.self_value = Heap.retain(value);
     return self.invoke(span, callable, &.{});
 }
@@ -3024,7 +3127,7 @@ fn equatable(self: *Interpreter, span: Source.Span) EquatableDispatch {
 fn callHash(self: *Interpreter, span: Source.Span, value: Value) Error!Value {
     const method = value.data.struct_value.descriptor.methods.?.get("hash").?;
     try self.requireVersionBuilt(span, value, method.key, method);
-    var callable = self.namedCallable(method.key);
+    var callable = self.methodCallable(method.key, value);
     callable.self_value = Heap.retain(value);
     return self.invoke(span, callable, &.{});
 }
@@ -3466,9 +3569,8 @@ fn applyBinary(
 /// their declared method directly; classes pass through the same virtual
 /// dispatch that an ordinary `value.method()` call uses.
 fn callAnnotatedOperator(self: *Interpreter, span: Source.Span, key: []const u8, left: Value, right: Value) Error!Value {
-    var callable = self.namedCallable(key);
     const version = try self.dispatch(span, left, key);
-    if (version.ptr != key.ptr) callable = self.namedCallable(version);
+    var callable = self.methodCallable(version, left);
     callable.self_value = Heap.retain(left);
     return self.invoke(span, callable, &.{Heap.retain(right)});
 }
@@ -3481,7 +3583,7 @@ fn callOperator(self: *Interpreter, span: Source.Span, name: []const u8, left: V
     const object = left.data.struct_value;
     const method = object.descriptor.methods.?.get(name).?;
     if (method.depth > object.built) return self.raiseUnbuilt(span, name, method.owner, object.descriptor.display_name);
-    var callable = self.namedCallable(method.key);
+    var callable = self.methodCallable(method.key, left);
     callable.self_value = Heap.retain(left);
     return self.invoke(span, callable, &.{Heap.retain(right)});
 }
@@ -3639,7 +3741,7 @@ fn evaluateCallInner(
             try self.cancellationPoint(expression.span);
             const task = self.task;
             self.scheduler.yield(task.state.job.?);
-            self.task = task;
+            self.activateTask(task);
             try self.cancellationPoint(expression.span);
             return .nothing;
         }
@@ -3895,7 +3997,7 @@ fn taskMain(context: *anyopaque, job: *Scheduler.Runtime.Job) void {
     const self = task.interpreter;
     task.state.state.job = job;
     task.state.state.stack = StackLimit.here(Scheduler.Runtime.stack_size);
-    self.task = &task.state;
+    self.activateTask(&task.state);
     const closure = task.block.data.closure;
     const result = self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{});
     if (result) |value| task.result = value else |err| task.ended = err;
@@ -3917,11 +4019,11 @@ fn awaitTask(self: *Interpreter, span: Source.Span, task: *TaskRecord, for_resul
     parent.state.job.?.wait_site = .{ .file = parent.state.file, .start = span.start };
     defer parent.state.job.?.wait_site = null;
     if (!self.scheduler.waitFor(parent.state.job.?, &task.job)) {
-        self.task = parent;
+        self.activateTask(parent);
         try self.cancellationPoint(span);
         return self.raiseDeadlock(span);
     }
-    self.task = parent;
+    self.activateTask(parent);
     if (for_result) self.prepareTaskResult(task);
     try self.cancellationPoint(span);
     self.scheduler.join(&task.job);
@@ -3965,7 +4067,7 @@ fn callTaskMethod(self: *Interpreter, span: Source.Span, key: []const u8, member
         parent.state.job.?.wait_site = .{ .file = parent.state.file, .start = span.start };
         defer parent.state.job.?.wait_site = null;
         const result = self.scheduler.waitForUntil(parent.state.job.?, &task.job, deadline);
-        self.task = parent;
+        self.activateTask(parent);
         try self.cancellationPoint(span);
         return switch (result) {
             .finished => .initBool(true),
@@ -4077,7 +4179,7 @@ fn blocking(self: *Interpreter, comptime operation: anytype, args: std.meta.Args
     self.scheduler.beginExternal(task.state.job.?);
     const result = @call(.auto, operation, args);
     self.scheduler.endExternal(task.state.job.?);
-    self.task = task;
+    self.activateTask(task);
     task.state.external_completed = true;
     return result;
 }
@@ -4085,7 +4187,7 @@ fn blocking(self: *Interpreter, comptime operation: anytype, args: std.meta.Args
 fn acquireResource(self: *Interpreter, gate: *Scheduler.Runtime.Gate) void {
     const task = self.task;
     self.scheduler.acquire(task.state.job.?, gate);
-    self.task = task;
+    self.activateTask(task);
 }
 
 fn releaseResource(self: *Interpreter, gate: *Scheduler.Runtime.Gate) void {
@@ -4225,7 +4327,7 @@ fn waitChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, s
     task.state.job.?.wait_site = .{ .file = task.state.file, .start = span.start };
     defer task.state.job.?.wait_site = null;
     const progressed = self.scheduler.parkChannel(task.state.job.?, .{ .id = channel.id, .sending = sending });
-    self.task = task;
+    self.activateTask(task);
     try self.cancellationPoint(span);
     if (!progressed) return self.raiseDeadlock(span);
 }
@@ -6733,7 +6835,7 @@ fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) E
         self.scheduler.prepareTimers() catch return self.raise(span, "the task scheduler could not wait for time", "Try starting fewer tasks at once.");
         const task = self.task;
         self.scheduler.sleepUntil(task.state.job.?, deadline);
-        self.task = task;
+        self.activateTask(task);
         try self.cancellationPoint(span);
         return .nothing;
     }
@@ -6816,6 +6918,7 @@ fn constructStruct(
 
     var built: Value = Value.nothing;
     const result = self.invoke(call_span, .{
+        .session_entry = self.codeOrigin(self.facts.owner.get(key) orelse self.task.state.file, info.declaration.name_span),
         .name = constructor.frame_name,
         .named = false,
         .file = self.facts.owner.get(key) orelse self.task.state.file,
@@ -6889,6 +6992,7 @@ fn buildPart(
         }
         var built: Value = Value.nothing;
         const result = self.invoke(call_span, .{
+            .session_entry = self.codeOrigin(self.facts.owner.get(key) orelse self.task.state.file, info.declaration.name_span),
             .name = constructor.frame_name,
             .named = false,
             .file = self.facts.owner.get(key) orelse self.task.state.file,
@@ -7047,8 +7151,11 @@ fn runFieldDefaults(
     instance: Value,
     which: []const bool,
 ) Error!Value {
-    self.requireChecked(key);
     const info = self.struct_infos.get(key).?;
+    const previous = self.sessionContext();
+    self.selectSession(self.codeOrigin(self.facts.owner.get(key) orelse self.task.state.file, info.declaration.name_span));
+    defer self.selectSession(previous);
+    self.requireChecked(key);
     const outer_scopes = self.task.state.scopes;
     self.task.state.scopes = .empty;
     defer {
@@ -7238,7 +7345,7 @@ fn inputLine(self: *Interpreter, span: Source.Span) (Error || error{ReadFailed})
         if (try input.take(self.gpa, input_job)) |line| return .{ .bytes = line.bytes, .at_end = line.at_end };
         const task = self.task;
         try self.scheduler.waitInput(task.state.job.?, input);
-        self.task = task;
+        self.activateTask(task);
         try self.cancellationPoint(span);
     }
 }
@@ -7321,6 +7428,7 @@ const Constructor = struct {
 };
 
 const Callable = struct {
+    session_entry: ?usize = null,
     /// What a stack trace calls it.
     name: []const u8,
     /// A lambda's parameters as written, so section 8.6's `(name, age)` can be
@@ -7356,6 +7464,7 @@ const Callable = struct {
     /// when it is not the one its body was: an override uses the defaults of
     /// the declaration it replaces (7.3).
     defaults_file: ?u32 = null,
+    defaults_entry: ?usize = null,
 
     const Body = union(enum) {
         statements: []const Ast.Statement,
@@ -7396,13 +7505,53 @@ fn callFunction(
     return self.invoke(call_span, callable, bound.values);
 }
 
+fn sessionContext(self: *Interpreter) ?usize {
+    return if (self.session) |session| session.active else null;
+}
+
+fn selectSession(self: *Interpreter, origin: ?usize) void {
+    if (self.session) |session| session.activate(origin);
+}
+
+fn codeOrigin(self: *Interpreter, file: u32, span: Source.Span) ?usize {
+    const session = self.session orelse return null;
+    // Prelude bodies are checked lazily in the calling entry's analysis. A
+    // failed entry may be their only reaching caller; selecting the current
+    // view would lose those facts. User declarations instead own a source span.
+    if (file != session.entry) return session.active orelse session.current.entry;
+    return session.originOf(file, span);
+}
+
+fn methodCallable(self: *Interpreter, key: []const u8, receiver: Value) Callable {
+    const previous = self.sessionContext();
+    if (receiver.data == .struct_value) {
+        const descriptor = receiver.data.struct_value.descriptor;
+        if (!std.mem.startsWith(u8, descriptor.name, Resolver.prelude_namespace ++ ".")) self.selectSession(descriptor.session_entry);
+    }
+    defer self.selectSession(previous);
+    return self.namedCallable(key);
+}
+
+/// Restore the session view as well as the task when the baton returns.
+fn activateTask(self: *Interpreter, task: *Scheduler.TaskState(TaskData)) void {
+    self.task = task;
+    self.selectSession(task.state.session_context);
+}
+
 fn namedCallable(self: *Interpreter, key: []const u8) Callable {
+    const previous = self.sessionContext();
+    defer self.selectSession(previous);
+    const declared = self.functions.get(key).?;
+    const file = self.facts.owner.get(key) orelse self.task.state.file;
+    const origin = self.codeOrigin(file, declared.name_span);
+    self.selectSession(origin);
     self.requireChecked(key);
     const declaration = self.functions.get(key).?;
     // Section 7.3: an override uses the defaults of the declaration it
     // replaces, which are written with that declaration's parameters.
     if (self.overrides.get(key)) |original| {
         return .{
+            .session_entry = origin,
             .name = declaration.name,
             .file = self.facts.owner.get(key) orelse self.task.state.file,
             .signature = self.signatures.get(key).?,
@@ -7410,11 +7559,13 @@ fn namedCallable(self: *Interpreter, key: []const u8) Callable {
             .captured = &.{},
             .written = self.functions.get(original).?.parameters,
             .defaults_file = self.facts.owner.get(original) orelse self.task.state.file,
+            .defaults_entry = self.codeOrigin(self.facts.owner.get(original) orelse self.task.state.file, self.functions.get(original).?.name_span),
         };
     }
     return .{
         // The name as it was written, not the key: a stack trace should read
         // the way the file reads.
+        .session_entry = origin,
         .name = declaration.name,
         .file = self.facts.owner.get(key) orelse self.task.state.file,
         .signature = self.signatures.get(key).?,
@@ -7471,7 +7622,13 @@ fn invokeClosure(
             return err;
         };
     };
-    if (!self.changing_methods.contains(key)) {
+    const changing = blk: {
+        const previous = self.sessionContext();
+        self.selectSession(callable.session_entry);
+        defer self.selectSession(previous);
+        break :blk self.changing_methods.contains(key);
+    };
+    if (!changing) {
         callable.self_value = Heap.retain(closure.receiver);
         return self.invoke(call_span, callable, arguments);
     }
@@ -7497,6 +7654,9 @@ fn invokeClosure(
 }
 
 fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
+    const previous = self.sessionContext();
+    self.selectSession(closure.session_entry);
+    defer self.selectSession(previous);
     return switch (closure.function) {
         .named => |name| blk: {
             // A nested function (7.1) sees the scopes it was created in; a
@@ -7507,6 +7667,7 @@ fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
         },
         .method => |name| self.namedCallable(name),
         .lambda => |expression| .{
+            .session_entry = closure.session_entry,
             .name = "a block",
             .named = false,
             .file = closure.file,
@@ -7531,6 +7692,9 @@ fn invoke(
     callable: Callable,
     arguments: []const Value,
 ) Error!Value {
+    const previous = self.sessionContext();
+    self.selectSession(callable.session_entry);
+    defer self.selectSession(previous);
     if (self.task.state.call_stack.items.len >= max_call_depth) {
         for (arguments) |argument| self.heap.release(argument);
         if (callable.self_value) |instance| {
@@ -7610,6 +7774,9 @@ fn invoke(
     // followed by omitted defaults in parameter order." A default sees the
     // parameters before it, which are already bound.
     if (callable.omitted) |omitted| {
+        const body_context = self.sessionContext();
+        if (callable.defaults_file != null) self.selectSession(callable.defaults_entry);
+        defer self.selectSession(body_context);
         if (callable.defaults_file) |file| self.task.state.file = file;
         defer self.task.state.file = callable.file;
         for (omitted, callable.written, callable.signature.parameters) |left, parameter, parameter_type| {
@@ -9334,7 +9501,7 @@ fn callStructMethod(
                 self.heap.release(receiver);
                 return err;
             };
-            if (version.ptr != key.ptr) callable = self.namedCallable(version);
+            callable = self.methodCallable(version, receiver);
         }
         const bound = self.evaluateBoundParameters(call, callable.written) catch |err| {
             self.heap.release(receiver);
@@ -9359,7 +9526,7 @@ fn callStructMethod(
         const receiver = try self.elementValue(path.root.span, &root, path.steps);
         defer self.heap.release(receiver);
         const version = try self.dispatch(expression.span, receiver, key);
-        if (version.ptr != key.ptr) callable = self.namedCallable(version);
+        callable = self.methodCallable(version, receiver);
     }
     const bound = try self.evaluateBoundParameters(call, callable.written);
     defer self.gpa.free(bound.values);

@@ -231,14 +231,16 @@ Open work:
   effects (a file append, an `Http` request, `Random`, the clock) repeat. The accepted
   [`repl-design-plan.md`](repl-design-plan.md)'s first two slices are complete on `codex/repl`:
   tail parsing is structural, and `Interpreter.Session` now preserves one heap/module scope
-  while replacing checker facts for each accepted analysis. Slice 2's initial commit `b9e5804`
-  failed deterministically: its test reparsed prior entries, so earlier closures had no facts
-  in the current analysis. The corrective change adds `SessionSyntax`/`analyzeSession`, keeping
-  each entry's original nodes and source while freeing obsolete analyses after replacement.
-  Runtime tables and captured callables also own synthesized resolver names. Debug-allocator
-  tests exercise earlier lambdas, function/method values, struct construction, later dependent
-  types, and a dropped raising entry. Corrective local validation passed with pinned Zig 0.16.0
-  and `-j1`: 537 tests in each of Debug/ReleaseSafe, native build, documentation examples,
+  while replacing checker facts for each accepted analysis. `SessionSyntax` parses each entry
+  once and keeps all submitted source text, including dropped entries, so offsets are never
+  reused. Successful analyses are freed after replacement; failed analyses and declaration
+  snapshots remain until session teardown for code assigned into earlier bindings. Calls select
+  their code's entry view and restore the caller's view, including across scheduler yields;
+  lazily checked prelude helpers use their caller's analysis. Testing-allocator regressions
+  cover escaped lambdas/nested functions, kept-function calls, span collisions, and an escaped
+  trait-backed instance/captured method constructing its old type after its name is reused.
+  The journal records both slice 2 corrections. Local validation passed with pinned Zig 0.16.0
+  and `-j1`: 540 tests in each of Debug/ReleaseSafe, native build, documentation examples,
   formatting/whitespace, and Windows/macOS cross-builds. Slice 2 awaits review; do not begin
   slice 3 before approval.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.

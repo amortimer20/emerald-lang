@@ -118,7 +118,10 @@ file. `"Hello, Ada!"` is quoted because of decision 4; today the REPL echoes a s
   those keys alive after an old analysis is freed (verified by the slice 2 correction).
 - **The interpreter holds pointers to one analysis** (`signatures`, `method_calls`,
   `operator_calls`, `json_encodes`, `prelude_reached`, and so on). A new entry's analysis replaces
-  them all at once.
+  them all at once. Correction from slice 2 review: a failed entry can assign code into an
+  earlier binding, so its analysis must remain alive. Calls into that code select the failed
+  entry's retained analysis, and calls into kept code select the current analysis, restoring
+  the caller's view afterward.
 - **Spans are offsets into one `Source`.** An append-only session text keeps every earlier span
   valid, as long as a new entry is lexed and parsed from its own starting offset. Whether
   `Lexer.tokenize` and `Parser.parse` can start at an offset of an existing `Source` must be
@@ -135,11 +138,12 @@ each new entry:
 1. Append the entry's text to the session source, then lex and parse **only the new part**,
    starting at its offset. Previous statements are kept as they are.
 2. If the parser says the entry is unfinished (an open block, call, list, string, or comment at
-   the end), ask for another line. If it has a syntax error, report it and drop the new text.
+   the end), ask for another line. If it has a syntax error, report it and exclude its statements.
+   Submitted text stays in the append-only source, even when its entry is dropped.
 3. Build the session program from all kept statements plus the new ones, and resolve and check it
    as a whole. Earlier nodes are the same objects, so their facts come out the same.
-4. If checking reports an error in the new statements, report it, drop the new text and
-   statements, and keep the previous analysis. Nothing has run.
+4. If checking reports an error in the new statements, report it, exclude those statements,
+   and keep the previous analysis. Nothing has run; its source offsets are not reused.
 5. Otherwise give the interpreter the new analysis, let it register any new declarations, and run
    **only the new statements**, in the module scope that persists from earlier entries.
 6. If a new top-level statement is an expression, a call included, and its type is not
@@ -241,8 +245,9 @@ commits.
     continue to share execution semantics.
   - `SessionSyntax` owns source snapshots and entries parsed exactly once with
     `tokenizeFrom`/`parseEntry`. `analyzeSession` builds each program from those
-    same statement nodes plus the new entry. Only the current resolver/checker
-    analysis is retained; it is replaced before obsolete facts are freed.
+    same statement nodes plus the new entry. Successful entries use the current
+    resolver/checker analysis; obsolete successful analyses are freed after replacement.
+    Failed entries retain their analyses for code that escapes through an assignment.
     Runtime tables and callable values own synthesized resolver keys in the
     session arena, so freeing previous analyses cannot leave dangling names.
   - A session always uses `Scheduler.SharedAllocator`, even before `Tasks` is
@@ -251,7 +256,30 @@ commits.
   - A failed entry removes only names and runtime declaration tables introduced
     by that entry.  Its preceding assignments and external effects remain, as
     decision 2 requires.  Type descriptors and other arena allocations may
-    remain unreachable until `:reset`; they never remain resolvable.
+    remain until `:reset`; their names are not resolvable from later entries.
+  - Further slice 2 review reproduced a missing-facts panic when a failed entry
+    assigned a lambda into an earlier `var`. Session analyses now have stable,
+    heap-owned addresses and transfer ownership through `ownedSessionAnalysis`.
+    The session retains each failed analysis until teardown, together with a
+    snapshot of runtime declaration tables: an escaped instance needs its methods
+    and constructors even after their names are removed or reused in a later entry.
+  - Closures (including nested function closures), runtime struct descriptors,
+    and callables carry their declaring entry's source offset. Named declarations
+    recover that origin from their kept name span. Each call selects the failed
+    origin's view, or the current view for kept code, then restores its caller's
+    view on success or failure. Field/parameter defaults and constructors follow
+    the same rule. The scheduler restores the view with the task when returning
+    the baton, so a yield cannot leave another task's checker facts installed.
+    Prelude bodies keep their caller's analysis because they are checked lazily:
+    a helper reached only from failed-entry code may have no facts in the current
+    analysis. A regression verifies this with `Console.green` after its only
+    reaching entry is dropped.
+  - `dropLast` drops statements only, never source text. Later entries start after
+    all prior text, including failures, so span-keyed nested-function facts cannot
+    collide. Testing-allocator regressions cover the requested `20` result,
+    escaped nested functions calling kept code, a later nested function at the
+    formerly reused offset, yields across task views, and a trait-backed escaped
+    instance/captured method constructing its old type after that name is reused.
   - Correction to `b9e5804`: its test reparsed earlier entries, violating the
     node-identity invariant and panicking in `closureCallable`. Its claimed
     validation was incorrect: the executor printed only command output and

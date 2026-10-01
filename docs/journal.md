@@ -4290,3 +4290,41 @@ Debug and ReleaseSafe (final command exit status 0), native build, 24 executable
 documentation examples and 134 linked conformance files, changed-Zig formatting,
 `git diff --check`, and Windows x86_64/macOS aarch64 cross-builds with prefixes
 outside `zig-out`. Branch CI must be green before handing this correction back.
+
+## REPL slice 2 correction: code escaping a failed entry, 2026-10-01
+
+Review found another ownership hole: a failed entry can assign its lambda into an
+earlier `var`, and decision 2 preserves that assignment. Dropping its statements
+then replacing its analysis left the lambda with no checker facts. The exact
+`action(2)` regression reproduced the `closureCallable` null-lookup panic under
+Debug before the fix (537/538 tests passed, one crashed).
+
+Session analyses now have stable heap-owned addresses. `ownedSessionAnalysis`
+transfers their ownership to the interpreter: replacement releases obsolete
+successful analyses, while each failed analysis remains until teardown. A failed
+entry also archives its runtime declaration tables, so an escaped instance's
+methods and constructors stay callable after their names disappear or are reused.
+The shared module bindings still preserve assignments and other completed effects.
+
+Closures, nested-function closures, runtime struct descriptors, and callables
+identify their declaring entry by its source offset. Every call selects that
+failed entry's retained view or the current view for kept code, restoring its
+caller afterward. Constructors and defaults follow the same rule, and the view
+travels with the task when the scheduler hands back the baton. Prelude bodies
+need the calling analysis because they are checked lazily; a helper reached
+only by failed-entry code can have no facts in the current analysis.
+
+`SessionSyntax.dropLast` now excludes statements without truncating source text.
+Later entries start after dropped text, keeping span-keyed nested-function facts
+unique. Three new testing-allocator regressions cover the exact `20` result,
+escaped nested functions returning through kept code, the formerly colliding
+nested-function spans, task yields between views, lazy `Console.green` calls,
+and a trait-backed escaped instance/captured method constructing its old type
+after that name is redeclared. Slice 3 remains unstarted pending review.
+
+Final validation completed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe
+test suites passed (540 tests each, final exit statuses 0), native build, all 24
+executable documentation examples and 134 linked conformance files, changed-Zig
+formatting, `git diff --check`, and Windows x86_64/macOS aarch64 cross-builds with
+prefixes outside `zig-out`. The corrective commit is pushed separately; branch
+CI is checked before reporting completion to the user.

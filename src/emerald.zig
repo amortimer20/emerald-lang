@@ -115,6 +115,7 @@ pub const Analysis = struct {
     parsed: []Parser.Parsed,
     programs: []Ast.Program,
     borrowed_session_trees: bool = false,
+    session_entry: usize = 0,
     resolved: Resolver.Resolved,
     checked: Checker.Checked,
 
@@ -254,6 +255,7 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis 
 /// replacement is installed; parsed session entries have a separate lifetime.
 pub fn sessionAnalysis(analysis: *const Analysis) Interpreter.SessionAnalysis {
     return .{
+        .entry = analysis.session_entry,
         .files = analysis.files,
         .programs = analysis.programs,
         .checked_structs = &analysis.checked.structs,
@@ -274,11 +276,27 @@ pub fn sessionAnalysis(analysis: *const Analysis) Interpreter.SessionAnalysis {
     };
 }
 
+/// Transfers a stable, heap-owned session analysis to the interpreter. Successful
+/// entries can release their obsolete analysis; failed entries retain theirs.
+/// Allocate both the Analysis and its contents with the session's host allocator.
+pub fn ownedSessionAnalysis(analysis: *Analysis) Interpreter.SessionAnalysis {
+    var view = sessionAnalysis(analysis);
+    view.owner = analysis;
+    view.release = struct {
+        fn release(context: *anyopaque, gpa: std.mem.Allocator) void {
+            const owned: *Analysis = @ptrCast(@alignCast(context));
+            owned.deinit(gpa);
+            gpa.destroy(owned);
+        }
+    }.release;
+    return view;
+}
+
 /// Syntax owned for the lifetime of an interactive session. Each entry is
 /// parsed exactly once, at its offset in the growing source. Copies of the
 /// top-level Statement records keep their expression/body pointers unchanged.
-/// Analyses borrow those trees and can be freed after their replacement is
-/// installed. Even a dropped runtime entry's tree stays alive: a side effect
+/// Analyses borrow those trees. Successful analyses are freed after replacement;
+/// failed analyses stay with the session. A dropped runtime entry's tree stays alive: a side effect
 /// before its error may have stored a closure in an existing binding.
 pub const SessionSyntax = struct {
     entries: std.ArrayList(Entry) = .empty,
@@ -319,10 +337,10 @@ pub const SessionSyntax = struct {
     }
 
     /// Drop the current candidate from future checking without invalidating
-    /// any syntax that runtime effects may still reference.
+    /// any syntax that runtime effects may still reference. Text is never
+    /// truncated: span-keyed facts must not collide with a later entry.
     pub fn dropLast(self: *SessionSyntax) void {
         const entry = self.entries.items[self.entries.items.len - 1];
-        self.text.items.len = entry.text_start;
         self.statements.items.len = entry.statement_start;
     }
 
@@ -382,6 +400,7 @@ pub fn analyzeSession(gpa: std.mem.Allocator, syntax: *const SessionSyntax) Erro
                 .tokenized = &.{},
                 .parsed = &.{},
                 .borrowed_session_trees = true,
+                .session_entry = trees.entries.items[trees.entries.items.len - 1].text_start,
                 .resolved = resolved,
                 .checked = checked,
             };
@@ -1038,8 +1057,7 @@ test "an interpreter session keeps earlier values while replacing analysis" {
         \\const point = Point(2)
         \\const twice = { value: Int => value * 2 }
     );
-    var analysis = (try analyzeSession(gpa, &syntax)).?;
-    defer analysis.deinit(gpa);
+    var analysis = try newSessionAnalysis(gpa, &syntax);
     try testing.expect(analysis.ok());
 
     var out: std.Io.Writer.Allocating = .init(gpa);
@@ -1047,7 +1065,7 @@ test "an interpreter session keeps earlier values while replacing analysis" {
     var input: std.Io.Reader = .fixed("");
     var session = try Interpreter.Session.init(
         gpa,
-        sessionAnalysis(&analysis),
+        ownedSessionAnalysis(analysis),
         &out.writer,
         &input,
         std.Io.Threaded.global_single_threaded.io(),
@@ -1094,16 +1112,20 @@ test "an interpreter session keeps earlier values while replacing analysis" {
     try testing.expectEqualStrings("4\n3\n", out.written());
 }
 
-/// Tests free the obsolete checker/resolver facts immediately, so retention
-/// of old analyses cannot accidentally conceal a missing current-node fact.
-fn replaceSessionAnalysis(gpa: std.mem.Allocator, syntax: *const SessionSyntax, session: *Interpreter.Session, analysis: *Analysis, start: usize) !void {
-    var next = (try analyzeSession(gpa, syntax)).?;
-    errdefer next.deinit(gpa);
+fn newSessionAnalysis(gpa: std.mem.Allocator, syntax: *const SessionSyntax) !*Analysis {
+    const analysis = try gpa.create(Analysis);
+    errdefer gpa.destroy(analysis);
+    analysis.* = (try analyzeSession(gpa, syntax)).?;
+    return analysis;
+}
+
+/// Successful entries free their obsolete facts immediately. Only analyses
+/// for failed entries are retained, because code can escape through assignment.
+fn replaceSessionAnalysis(gpa: std.mem.Allocator, syntax: *const SessionSyntax, session: *Interpreter.Session, analysis: **Analysis, start: usize) !void {
+    const next = try newSessionAnalysis(gpa, syntax);
     try testing.expect(next.ok());
-    var previous = analysis.*;
+    try session.install(ownedSessionAnalysis(next), start);
     analysis.* = next;
-    try session.install(sessionAnalysis(analysis), start);
-    previous.deinit(gpa);
 }
 
 test "a later entry calls earlier lambda function and method values and constructs an earlier struct" {
@@ -1127,14 +1149,13 @@ test "a later entry calls earlier lambda function and method values and construc
         \\const factory = _make_point
         \\const block = { value: Int => Point(value).doubled() }
     );
-    var analysis = (try analyzeSession(gpa, &syntax)).?;
-    defer analysis.deinit(gpa);
+    var analysis = try newSessionAnalysis(gpa, &syntax);
     try testing.expect(analysis.ok());
     const original_block = syntax.statements.items[5].data.declaration.initializer.?;
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
     var input: std.Io.Reader = .fixed("");
-    const session = try Interpreter.Session.init(gpa, sessionAnalysis(&analysis), &out.writer, &input, std.Io.Threaded.global_single_threaded.io(), &.{}, false, false, .empty, .utc, Interpreter.StackLimit.here(64 * 1024 * 1024));
+    const session = try Interpreter.Session.init(gpa, ownedSessionAnalysis(analysis), &out.writer, &input, std.Io.Threaded.global_single_threaded.io(), &.{}, false, false, .empty, .utc, Interpreter.StackLimit.here(64 * 1024 * 1024));
     defer session.deinit();
     try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements));
 
@@ -1149,6 +1170,172 @@ test "a later entry calls earlier lambda function and method values and construc
 
 fn expectOutput(text: []const u8, expected: []const u8) !void {
     return expectOutputWithInput(text, "", expected);
+}
+
+test "a failed session entry can leave callable code in an earlier binding" {
+    const gpa = testing.allocator;
+    var syntax: SessionSyntax = .{};
+    defer syntax.deinit(gpa);
+    _ = try syntax.append(gpa, "var action = { value: Int => value }\n");
+    var analysis = try newSessionAnalysis(gpa, &syntax);
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var input: std.Io.Reader = .fixed("");
+    const session = try Interpreter.Session.init(gpa, ownedSessionAnalysis(analysis), &out.writer, &input, std.Io.Threaded.global_single_threaded.io(), &.{}, false, false, .empty, .utc, Interpreter.StackLimit.here(64 * 1024 * 1024));
+    defer session.deinit();
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements));
+    const failed = try syntax.append(gpa, "action = { value: Int => value * 10 }\nraise RuntimeError(\"boom\")\n");
+    const failed_start = failed.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, failed_start);
+    try testing.expectEqual(.failed, std.meta.activeTag(try session.runEntry(analysis.programs[0].statements[failed_start..])));
+    syntax.dropLast();
+    const next = try syntax.append(gpa, "print(action(2))\n");
+    const start = next.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, start);
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements[start..]));
+    try testing.expectEqualStrings("20\n", out.written());
+    // The failed body is the only code reaching Console. Its Emerald helpers
+    // need the failed analysis too, even though their syntax lives in prelude.em.
+    const styled = try syntax.append(gpa,
+        \\action = { value: Int => Console.green((value * 10).to_string()).count }
+        \\raise RuntimeError("boom")
+    );
+    const styled_start = styled.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, styled_start);
+    try testing.expectEqual(.failed, std.meta.activeTag(try session.runEntry(analysis.programs[0].statements[styled_start..])));
+    syntax.dropLast();
+    const final = try syntax.append(gpa, "print(action(2))\n");
+    const final_start = final.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, final_start);
+    try testing.expect(!analysis.checked.prelude_reached.?.contains(Resolver.preludeKey("Console")));
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements[final_start..]));
+    try testing.expectEqualStrings("20\n2\n", out.written());
+}
+
+test "failed-entry nested functions keep unique spans and return through kept code" {
+    const gpa = testing.allocator;
+    var syntax: SessionSyntax = .{};
+    defer syntax.deinit(gpa);
+    _ = try syntax.append(gpa,
+        \\func kept(value: Int): Int {
+        \\    const identity = { n: Int => n }
+        \\    return identity(value)
+        \\}
+        \\var action = { value: Int => value }
+        \\var saved = action
+    );
+    var analysis = try newSessionAnalysis(gpa, &syntax);
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var input: std.Io.Reader = .fixed("");
+    const session = try Interpreter.Session.init(gpa, ownedSessionAnalysis(analysis), &out.writer, &input, std.Io.Threaded.global_single_threaded.io(), &.{}, false, false, .empty, .utc, Interpreter.StackLimit.here(64 * 1024 * 1024));
+    defer session.deinit();
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements));
+    const failed = try syntax.append(gpa,
+        \\action = { value: Int =>
+        \\    func apply(n: Int): Int {
+        \\        Tasks.yield()
+        \\        return kept(n) * 10
+        \\    }
+        \\    return apply(value)
+        \\}
+        \\saved = action
+        \\raise RuntimeError("boom")
+    );
+    const failed_start = failed.statement_start;
+    const failed_offset = failed.text_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, failed_start);
+    try testing.expectEqual(.failed, std.meta.activeTag(try session.runEntry(analysis.programs[0].statements[failed_start..])));
+    const retained_length = syntax.text.items.len;
+    syntax.dropLast();
+    try testing.expectEqual(retained_length, syntax.text.items.len);
+    const next = try syntax.append(gpa,
+        \\action = { value: Int =>
+        \\    func apply(n: Int): Int {
+        \\        Tasks.yield()
+        \\        return kept(n) * 30
+        \\    }
+        \\    return apply(value)
+        \\}
+        \\print(saved(2), action(2), saved(3))
+    );
+    const start = next.statement_start;
+    try testing.expectEqual(retained_length, next.text_start);
+    try testing.expect(next.text_start > failed_offset);
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, start);
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements[start..]));
+    try testing.expectEqualStrings("20 60 30\n", out.written());
+    const tasks_entry = try syntax.append(gpa,
+        \\const job = saved
+        \\Tasks.run { tasks =>
+        \\    const first = tasks.start { => job(4) }
+        \\    const second = tasks.start { => kept(5) }
+        \\    print(first.result(), second.result())
+        \\}
+    );
+    const tasks_start = tasks_entry.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, tasks_start);
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements[tasks_start..]));
+    try testing.expectEqualStrings("20 60 30\n40 5\n", out.written());
+}
+
+test "an escaped failed-entry instance keeps its methods after its type name is reused" {
+    const gpa = testing.allocator;
+    var syntax: SessionSyntax = .{};
+    defer syntax.deinit(gpa);
+    _ = try syntax.append(gpa,
+        \\trait Runner {
+        \\    func run(value: Int): Int
+        \\}
+        \\struct Initial with Runner {
+        \\    @override
+        \\    func run(value: Int): Int { return value }
+        \\}
+        \\func kept(value: Int): Int { return value + 1 }
+        \\var runner: Runner = Initial()
+        \\var action = { value: Int => value }
+    );
+    var analysis = try newSessionAnalysis(gpa, &syntax);
+    try testing.expect(analysis.ok());
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var input: std.Io.Reader = .fixed("");
+    const session = try Interpreter.Session.init(gpa, ownedSessionAnalysis(analysis), &out.writer, &input, std.Io.Threaded.global_single_threaded.io(), &.{}, false, false, .empty, .utc, Interpreter.StackLimit.here(64 * 1024 * 1024));
+    defer session.deinit();
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements));
+    const failed = try syntax.append(gpa,
+        \\struct Changed with Runner {
+        \\    const factor: Int
+        \\    constructor(factor: Int) {
+        \\        const identity = { n: Int => n }
+        \\        self.factor = identity(factor)
+        \\    }
+        \\    @override
+        \\    func run(value: Int): Int {
+        \\        const copy = Changed(self.factor)
+        \\        const apply = { n: Int => kept(n) * copy.factor }
+        \\        return apply(value)
+        \\    }
+        \\}
+        \\runner = Changed(10)
+        \\action = runner.run
+        \\raise RuntimeError("boom")
+    );
+    const failed_start = failed.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, failed_start);
+    try testing.expectEqual(.failed, std.meta.activeTag(try session.runEntry(analysis.programs[0].statements[failed_start..])));
+    syntax.dropLast();
+    const next = try syntax.append(gpa,
+        \\struct Changed with Runner {
+        \\    @override
+        \\    func run(value: Int): Int { return value * 100 }
+        \\}
+        \\print(runner.run(2), action(3), Changed().run(4))
+    );
+    const start = next.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, start);
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements[start..]));
+    try testing.expectEqualStrings("30 40 400\n", out.written());
 }
 
 /// Runs a program that reads `input` through `input()`.
