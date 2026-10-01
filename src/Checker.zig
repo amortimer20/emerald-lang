@@ -6463,6 +6463,19 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         );
         return .invalid;
     }
+    if (Resolver.mathFunction(reference.key) != null) {
+        // Keep the written path in the fix: an explicit prelude path or a
+        // `using` alias may be needed when the project owns `Math` (14.2).
+        const written = self.files[self.file].source.text[expression.span.start..expression.span.end];
+        try self.reportWithHelp(
+            expression.span,
+            "`{s}` is a built-in function, so it has to be called",
+            .{reference.display},
+            "Call it with numbers, as in `{s}(...)`, or wrap the call in a block.",
+            .{written},
+        );
+        return .invalid;
+    }
     // Sections 15.9 and 15.11: typed JSON and CSV calls are checked specially at
     // each call, which no function value could carry.
     if (isJsonEncodeKey(reference.key) or isCsvEncodeKey(reference.key) or isJsonDecodeKey(reference.key) or isCsvDecodeKey(reference.key) or isConsoleTableKey(reference.key)) {

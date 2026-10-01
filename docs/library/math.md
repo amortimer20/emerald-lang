@@ -6,6 +6,11 @@ takes and returns `Float`, accepting an `Int` argument through ordinary widening
 angles are radians. A project that declares its own `Math` namespace keeps ownership of that
 name, and the built-in one steps aside.
 
+Built-in Math functions must be called, not stored as function values. Wrap a call
+in a block when passing it to another function, such as
+`{ value => Math.sin(value) }`. Constants remain ordinary Float values. See
+[`conformance/run/math-function-wrappers.em`](../../conformance/run/math-function-wrappers.em).
+
 `Math` follows ordinary IEEE `Float` results rather than raising: an inverse-trigonometric
 input outside its real domain, a negative logarithm, an invalid logarithm base, or a negative
 base raised to a non-integral power all produce `NaN`, and `natural_log(0)` produces

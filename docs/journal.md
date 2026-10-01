@@ -4049,3 +4049,30 @@ passes. The full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug
 and ReleaseSafe tests, native build, documentation examples (24 executed, 130
 linked conformance cases), changed-Zig formatting, whitespace, and Windows
 x86_64/macOS aarch64 cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 12: reject native Math function values, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with
+`const f = Math.sin`: checking reports `No problems found`. Math functions reach
+the qualified-value checker without a declared signature, so the old fallback
+returned an invalid type silently rather than explaining the unsupported capture.
+
+The qualified-value checker now uses Resolver.mathFunction to reject only resolved
+native Math function keys, with Program.sleep's built-in-function message shape
+and help suggesting a numerical call or block wrapper. The help preserves the
+written path, so an explicit `Emerald.Math` path stays correct when a project owns
+Math. Constants are handled before the new check; project functions have different
+keys and retain ordinary function-value behavior. Native routing, member names,
+argument checking, and hint vocabulary do not change.
+
+The diagnostics regression covers sin, explicit Emerald.Math.cos, the two-argument
+arc_tan2, and Program.sleep's unchanged diagnostic. A run case verifies typed
+one- and two-argument wrappers and Math constants; the existing project-shadowing
+case now captures and calls the project's sin. Expected files were read by hand.
+The Math reference documents the restriction and links the wrapper example.
+The first gate caught an incorrect source accessor in the path-preserving help;
+it was corrected to read the current project file. The full required validation
+gate then passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests,
+native build, documentation examples (24 executed, 131 linked conformance cases),
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+outside `zig-out`.

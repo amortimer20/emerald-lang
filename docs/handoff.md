@@ -171,7 +171,7 @@ format/parse guard, comment boundaries, project Math priority, user-method prior
 over counting forms, and catchable recursion failures. Each commit passed the full
 gate (Debug/ReleaseSafe, native build, documentation examples, formatting, whitespace,
 and Windows/macOS cross-builds). The latest doc check executed 24 examples and
-confirmed 130 conformance links; the main/task recursion regression matched its
+confirmed 131 conformance links; the main/task recursion regression matched its
 expected output in 50 runs. Reproductions and findings are in the journal.
 Item 8's single-pass argument diagnostics reproduced across all five typed/native
 APIs and a changing trait-default receiver; its fixes also passed the full gate.
@@ -179,8 +179,9 @@ Item 9's shared prelude-name display fix also passed the full gate.
 Item 10's generated-constructor explanation also passed the full gate.
 Item 11's parser recovery fix also passed the full gate: failed expressions no
 longer consume their enclosing body's closing brace. The user now wants one item
-per turn; do not start item 12 without their go-ahead. Items 12–19 remain after
-item 11. Next is item 12 (rejecting native Math functions as values).
+per turn. Item 12's rejection of native Math function values passed the full gate.
+Items 13–19 remain; do not start item 13 without the user's
+go-ahead.
 The REPL replay bug remains
 explicitly excluded and belongs to Claude's separate plan.
 
@@ -222,6 +223,9 @@ building" notes record its decisions.
 - Parser recovery preserves closing braces after a missing expression instead
   of reporting misleading unclosed blocks; real missing and stray braces still
   receive their own diagnostics.
+- Native Math functions cannot be stored as values; diagnostics suggest calling
+  them or wrapping their calls in blocks. Math constants and project functions
+  remain usable as values.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
@@ -297,8 +301,6 @@ on the roadmap.
   `EncodingError`, `DeadlockError`, and `RecursionError`.
 - Task cancellation uses `CancelledError`, which extends `Error` directly rather than
   `RuntimeError`, so catching RuntimeError does not swallow cancellation.
-- `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
-  value; `Program.sleep` reports it.
 - A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses
   it then, naming the `prelude.em` line and column. A later problem inside the prelude stops
   `emerald.analyze` with a panic naming its line, column, and message; it is always
