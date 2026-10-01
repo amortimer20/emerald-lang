@@ -253,9 +253,13 @@ on the roadmap.
 
 1. The current queue: the bug-fix batch, the REPL milestone, and editor intelligence.
 2. **A QA iteration** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
-   use, before more is built on top. The user's first finding: Console tables render poorly (seen
-   on the website's Console page; the cause is not yet investigated, so check the terminal
-   output and the website's rendering separately). Also carry in the rough edges recorded under
+   use, before more is built on top. The user's first finding: Console tables rendered poorly on the
+   website's Console page (borders short, vertical lines broken between rows). Fixed on the site
+   2026-10-01: Google's JetBrains Mono leaves out the box-drawing characters, so browsers drew them
+   from a mismatched fallback font, and the code line height broke the lines; the site now serves
+   the full font and gives box-art blocks the font's own line height. Still to QA: how
+   `Console.table` and `Console.panel` look in real terminals and on Windows, since the width
+   measure (CJK and emoji take two columns) was only tested against the interpreter. Also carry in the rough edges recorded under
    "Active rough edges" and the diagnostics that still need hints, plus two found while
    writing the Console and Tasks pages: a `Console.table` whose `header:` has a different width than
    its rows reports the header as "row 1" ("row 2 has 2 cells, but row 1 has 1"), and
