@@ -227,7 +227,10 @@ Open work:
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
 - **The REPL**: it replays the whole session on every entry, so side effects (a file append, an
   `Http` request, `Random`, the clock) repeat. [`repl-design-plan.md`](repl-design-plan.md) is
-  accepted with all eight recommendations; Codex implements it next, now the bug-fix batch is merged.
+  accepted with all eight recommendations. Slice 1 is complete on `codex/repl`: tail lexing and
+  interactive parsing preserve global spans, mark expression statements structurally, and report
+  incomplete input by flags rather than diagnostic text. Its full local gate passed. Slice 2
+  next makes the interpreter persist across entries.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
 

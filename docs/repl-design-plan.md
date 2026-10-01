@@ -208,7 +208,20 @@ commits.
   whether to echo from the checker's type for it (decision 6), and a file still reports the error
   for a non-call.
 - Replace `classifyEntry`'s message matching with these, and keep its unit tests passing.
-- Settled while building: (record here)
+- Settled while building:
+  - `Lexer.tokenizeFrom` starts at a committed entry boundary, where delimiter
+    state is clean; it preserves global spans without re-lexing an earlier
+    statement. The session will only call it after an entry's terminating
+    newline.
+  - The lexer owns incomplete block-comment and multiline-string state; the
+    parser owns incomplete delimiter/block/case/lambda state. Both expose
+    flags, so `Repl.classifyEntry` never examines diagnostic wording.
+  - An EOF diagnostic counts as parser-incomplete only while a delimiter is
+    structurally open. Thus `var value =` remains an immediate syntax error,
+    while `print(` or an open block asks for another line.
+  - `Ast.Statement.interactive_expression` is set only by `parseEntry`, for
+    all top-level expression statements including calls. File parsing retains
+    section 5.2's unused non-call diagnostic.
 
 ### Slice 2: An interpreter that lasts a session
 

@@ -4217,3 +4217,28 @@ This documentation-only commit passed the full local gate with pinned Zig 0.16.0
 and `-j1`: 531 Debug and 531 ReleaseSafe tests, native build, 24 documentation
 examples with 135 linked conformance files, whitespace, and Windows x86_64/macOS
 aarch64 cross-builds with prefixes outside `zig-out`.
+
+## REPL slice 1: parsing an entry structurally, 2026-10-01
+
+`Lexer.tokenizeFrom` now lexes a source tail from a committed entry boundary,
+retaining source-global token spans. Lexer results explicitly mark an unclosed
+block comment or multiline string at end of input. `Parser.parseEntry` retains
+top-level expression statements (including calls), marks them for later REPL
+echo handling, and explicitly marks an incomplete delimiter, block, `case`, or
+lambda. Ordinary `Parser.parse` and file behavior are unchanged: a non-call
+expression remains a section 5.2 diagnostic.
+
+The REPL classifier now consumes those flags and statement metadata instead of
+matching diagnostics such as "this result is never used" or "never closed".
+An incomplete flag is deliberately structural: an open delimiter is incomplete,
+but `var value =` is an immediate syntax error. The initial tail lexer assumes
+the tail starts after a committed entry's newline, so its delimiter state starts
+clean; the session representation in slice 2/3 preserves that invariant.
+
+Focused lexer and parser tests cover global tail spans, lexical incompleteness,
+open call/list/block/lambda/case forms, a malformed top-level assignment, and
+both pure and call expression statements. Full validation is recorded with the
+slice commit: pinned Zig 0.16.0 with `-j1`, Debug and ReleaseSafe test suites,
+native build, 24 documentation examples with 134 linked conformance files,
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+with prefixes outside `zig-out`.

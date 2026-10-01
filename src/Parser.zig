@@ -31,6 +31,9 @@ pub const Parsed = struct {
     arena_state: std.heap.ArenaAllocator,
     program: Ast.Program,
     diagnostics: []const Diagnostic,
+    /// An interactive entry stopped at the end of a construct that can be
+    /// continued on another line. Ordinary file parsing never sets this.
+    incomplete_at_end: bool = false,
 
     pub fn ok(self: Parsed) bool {
         return self.diagnostics.len == 0;
@@ -47,6 +50,8 @@ source: *const Source,
 tokens: []const Token,
 index: usize = 0,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
+interactive_entry: bool = false,
+incomplete_at_end: bool = false,
 /// Whether statements here are a file's own, which a struct declaration must
 /// be. Set false for the duration of any block body.
 at_top_level: bool = true,
@@ -108,11 +113,22 @@ pub const max_expression_depth = 10_000;
 const Error = error{ParseFailed} || std.mem.Allocator.Error;
 
 pub fn parse(gpa: std.mem.Allocator, source: *const Source, tokens: []const Token) !Parsed {
+    return parseWithMode(gpa, source, tokens, false);
+}
+
+/// Parses one interactive entry from tail tokens of an existing source. It
+/// retains expression statements (calls included) so the REPL can echo their
+/// checked values; ordinary files keep section 5.2's unused-expression error.
+pub fn parseEntry(gpa: std.mem.Allocator, source: *const Source, tokens: []const Token) !Parsed {
+    return parseWithMode(gpa, source, tokens, true);
+}
+
+fn parseWithMode(gpa: std.mem.Allocator, source: *const Source, tokens: []const Token, interactive_entry: bool) !Parsed {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var parser: Parser = .{ .arena = arena, .source = source, .tokens = tokens };
+    var parser: Parser = .{ .arena = arena, .source = source, .tokens = tokens, .interactive_entry = interactive_entry };
 
     var statements: std.ArrayList(Ast.Statement) = .empty;
     var using: std.ArrayList(Ast.Using) = .empty;
@@ -152,6 +168,7 @@ pub fn parse(gpa: std.mem.Allocator, source: *const Source, tokens: []const Toke
         .arena_state = arena_state,
         .program = .{ .statements = owned_statements, .using = owned_using },
         .diagnostics = owned_diagnostics,
+        .incomplete_at_end = parser.incomplete_at_end,
     };
 }
 
@@ -287,6 +304,11 @@ fn skipToNextStatement(self: *Parser, context: enum { file, body }) void {
 }
 
 fn report(self: *Parser, span: Source.Span, message: []const u8, help: []const u8) Error {
+    // A parser diagnostic at EOF while a delimiter is open is an incomplete
+    // interactive entry, not a conclusion reverse-engineered from the
+    // diagnostic text. A malformed top-level statement such as `value =`
+    // keeps this false and is reported immediately.
+    if (self.interactive_entry and self.check(.eof) and self.nesting > 0) self.incomplete_at_end = true;
     try self.note(span, message, help);
     return error.ParseFailed;
 }
@@ -2867,7 +2889,7 @@ fn finishExpressionStatement(self: *Parser, expression: *const Ast.Expression) E
     // Section 5.2: a call may discard its result, but a pure expression whose
     // result is unused is a mistake, and the diagnostic should suggest the
     // update the writer probably meant.
-    if (expression.data != .call) {
+    if (expression.data != .call and !(self.interactive_entry and self.at_top_level)) {
         return self.report(
             expression.span,
             "this result is never used",
@@ -2875,7 +2897,9 @@ fn finishExpressionStatement(self: *Parser, expression: *const Ast.Expression) E
         );
     }
 
-    return self.finishSimpleStatement(.{ .span = expression.span, .data = .{ .expression = expression } });
+    var statement = try self.finishSimpleStatement(.{ .span = expression.span, .data = .{ .expression = expression } });
+    statement.interactive_expression = self.interactive_entry and self.at_top_level;
+    return statement;
 }
 
 /// A statement ends at a newline, at the end of the file, or just before the
@@ -4362,6 +4386,61 @@ test "parser reports malformed declarations without crashing" {
     var parsed = try parse(testing.allocator, &source, tokens.tokens);
     defer parsed.deinit();
 
+    try testing.expect(parsed.diagnostics.len > 0);
+}
+
+test "an interactive tail preserves its source spans and marks expression statements" {
+    const source_text = "const earlier = 1\n1 + 2\n";
+    var source = try Source.init(testing.allocator, "test.em", source_text);
+    defer source.deinit(testing.allocator);
+    const start: u32 = @intCast(std.mem.indexOf(u8, source_text, "1 + 2").?);
+    var tokens = try Lexer.tokenizeFrom(testing.allocator, &source, start);
+    defer tokens.deinit(testing.allocator);
+    var parsed = try parseEntry(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+
+    try testing.expectEqual(@as(usize, 0), parsed.diagnostics.len);
+    try testing.expect(!parsed.incomplete_at_end);
+    try testing.expectEqual(@as(usize, 1), parsed.program.statements.len);
+    const statement = parsed.program.statements[0];
+    try testing.expect(statement.interactive_expression);
+    try testing.expectEqual(start, statement.span.start);
+
+    var call_source = try Source.init(testing.allocator, "test.em", "print(1)\n");
+    defer call_source.deinit(testing.allocator);
+    var call_tokens = try Lexer.tokenize(testing.allocator, &call_source);
+    defer call_tokens.deinit(testing.allocator);
+    var call = try parseEntry(testing.allocator, &call_source, call_tokens.tokens);
+    defer call.deinit();
+    try testing.expect(call.program.statements[0].interactive_expression);
+    try testing.expect(call.program.statements[0].data.expression.data == .call);
+}
+
+test "only an open interactive construct is incomplete at end" {
+    const incomplete_entries = [_][]const u8{
+        "func f() {\n",
+        "print(\n",
+        "const xs = [\n",
+        "const f = { =>\n",
+        "case 1 {\n",
+    };
+    for (incomplete_entries) |entry_text| {
+        var source = try Source.init(testing.allocator, "test.em", entry_text);
+        defer source.deinit(testing.allocator);
+        var tokens = try Lexer.tokenize(testing.allocator, &source);
+        defer tokens.deinit(testing.allocator);
+        var parsed = try parseEntry(testing.allocator, &source, tokens.tokens);
+        defer parsed.deinit();
+        try testing.expect(parsed.incomplete_at_end);
+    }
+
+    var source = try Source.init(testing.allocator, "test.em", "var value =\n");
+    defer source.deinit(testing.allocator);
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+    var parsed = try parseEntry(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+    try testing.expect(!parsed.incomplete_at_end);
     try testing.expect(parsed.diagnostics.len > 0);
 }
 

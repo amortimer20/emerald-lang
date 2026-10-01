@@ -249,80 +249,24 @@ fn classifyEntry(gpa: std.mem.Allocator, text: []const u8) !Classification {
     var source = try Source.init(gpa, "<repl>", text);
     defer source.deinit(gpa);
 
-    var tokenized = try Lexer.tokenize(gpa, &source);
+    var tokenized = try Lexer.tokenizeFrom(gpa, &source, 0);
     defer tokenized.deinit(gpa);
     if (tokenized.diagnostics.len != 0) {
-        if (lexerLooksIncomplete(tokenized.diagnostics)) return .incomplete;
+        if (tokenized.incomplete_at_end) return .incomplete;
         return .{ .invalid = try renderAgainst(gpa, &source, tokenized.diagnostics) };
     }
 
-    var parsed = try Parser.parse(gpa, &source, tokenized.tokens);
+    var parsed = try Parser.parseEntry(gpa, &source, tokenized.tokens);
     defer parsed.deinit();
+    if (parsed.incomplete_at_end) return .incomplete;
     if (parsed.diagnostics.len != 0) {
-        // `Parser.finishExpressionStatement` rejects a bare expression that
-        // is not a call as a parse error, not a checker one — 5.2's "only a
-        // call" rule is enforced immediately, so a bare expression never
-        // becomes a `Statement.Data.expression` node to inspect at all. This
-        // is precisely section 18.4's "a bare expression prints its value":
-        // the one diagnostic, with nothing else parsed alongside it, means
-        // the whole entry was exactly one such expression.
-        if (parsed.diagnostics.len == 1 and parsed.program.statements.len == 0 and
-            std.mem.eql(u8, parsed.diagnostics[0].message, "this result is never used"))
-        {
-            return .{ .complete = true };
-        }
-        if (parserLooksIncomplete(parsed.diagnostics, @intCast(text.len))) return .incomplete;
         return .{ .invalid = try renderAgainst(gpa, &source, parsed.diagnostics) };
     }
 
+    if (parsed.program.statements.len == 1 and parsed.program.statements[0].interactive_expression) {
+        return .{ .complete = parsed.program.statements[0].data.expression.data != .call };
+    }
     return .{ .complete = false };
-}
-
-/// The lexer only ever reports these two messages when its scan ran off the
-/// true end of input, never for a genuinely malformed construct — see
-/// `Lexer.skipBlockComment` and `Lexer.unterminated`. A `"this string is
-/// never closed"` diagnostic is only the "still typing" case when its span
-/// is the 3-byte `"""` delimiter (`Lexer.unterminated`'s `delimiter.len == 3`
-/// branch); the same message with a 1-byte span means an ordinary or raw
-/// string hit a bare newline, which is a permanent error since neither may
-/// span a line by grammar.
-fn lexerLooksIncomplete(diagnostics: []const Diagnostic) bool {
-    for (diagnostics) |diagnostic| {
-        const is_block_comment = std.mem.eql(u8, diagnostic.message, "this block comment is never closed");
-        const is_open_string = std.mem.eql(u8, diagnostic.message, "this string is never closed") and
-            diagnostic.span.len() == 3;
-        if (!is_block_comment and !is_open_string) return false;
-    }
-    return true;
-}
-
-/// Two distinct patterns in `Parser.zig` both mean "ran out of input," and
-/// look different because they serve different readers.
-///
-/// A closing delimiter expected somewhere other than a block's `}` — a
-/// call's `)`, an index's `]`, a dictionary's `]`, and so on — is reported as
-/// `"expected ... found {s}"`, where `{s}` is `Token.Kind.describe()`; for
-/// the lexer's one, always-present `.eof` token (a zero-width span at the
-/// true end of the text, `Lexer.zig`'s `next`/`emit`) that reads "found the
-/// end of the file," and the diagnostic's span is that same zero-width EOF
-/// position — structurally checkable without matching text.
-///
-/// A `{ ... }` body — a function/if/while/for's block, a `case`, or a
-/// lambda — instead reports "this block/`case`/lambda is never closed" at
-/// its *opening* brace, so the reader sees which block is unclosed rather
-/// than only "found EOF"; each of the three is only ever reached after its
-/// own parse loop breaks specifically on `.eof` (`Parser.zig`'s `parseBlock`,
-/// `parseCaseArms`, and the lambda-block parser all check `.right_brace` or
-/// `.eof` to end their loop), so the message alone is a reliable signal here.
-fn parserLooksIncomplete(diagnostics: []const Diagnostic, text_len: u32) bool {
-    for (diagnostics) |diagnostic| {
-        const at_eof = diagnostic.span.start == text_len and diagnostic.span.end == text_len;
-        const unclosed_block = std.mem.eql(u8, diagnostic.message, "this block is never closed") or
-            std.mem.eql(u8, diagnostic.message, "this `case` is never closed") or
-            std.mem.eql(u8, diagnostic.message, "this lambda is never closed");
-        if (!at_eof and !unclosed_block) return false;
-    }
-    return true;
 }
 
 fn renderAgainst(gpa: std.mem.Allocator, source: *const Source, diagnostics: []const Diagnostic) ![]u8 {
