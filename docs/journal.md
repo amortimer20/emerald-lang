@@ -4020,3 +4020,32 @@ gate also passed with pinned Zig 0.16.0 and `-j1`: ReleaseSafe tests, native bui
 documentation examples (24 executed, 130 linked conformance cases), changed-Zig
 formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
 `zig-out`.
+
+## Bug-fix batch, item 11: preserve closing braces during recovery, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with the user's
+minimal program:
+
+```emerald
+func f() {
+    x =
+}
+```
+
+It reports the missing expression at `}`, then incorrectly reports that the
+function's block is never closed. Statement recovery unconditionally consumed a
+closing brace at its starting position, treating it as a stray file-level brace
+even when called inside a body. Recovery now takes its file/body context from
+its caller: file-level recovery still consumes a stray brace to make progress;
+ordinary blocks, lambda blocks, and type bodies leave their closing brace for
+the enclosing parser. No diagnostics are suppressed and no syntax changes.
+
+The new diagnostic regression fails on the main baseline and now reports only
+the real missing expressions in a function, nested block, statement lambda, and
+struct field. It also checks a genuine stray brace and an actually unclosed
+function after those errors, so recovery must preserve both later scope and
+independent diagnostics. The expected file was read by hand. Focused checking
+passes. The full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug
+and ReleaseSafe tests, native build, documentation examples (24 executed, 130
+linked conformance cases), changed-Zig formatting, whitespace, and Windows
+x86_64/macOS aarch64 cross-builds outside `zig-out`.

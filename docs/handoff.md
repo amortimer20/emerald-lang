@@ -177,9 +177,10 @@ Item 8's single-pass argument diagnostics reproduced across all five typed/nativ
 APIs and a changing trait-default receiver; its fixes also passed the full gate.
 Item 9's shared prelude-name display fix also passed the full gate.
 Item 10's generated-constructor explanation also passed the full gate.
-Next is item 11 (parser error recovery), reproduced on the main baseline with
-`func f() { x = }`: recovery consumes the block's closing brace as though it were
-a stray top-level brace. Items 11–19 remain; items 1–10 are ready for review.
+Item 11's parser recovery fix also passed the full gate: failed expressions no
+longer consume their enclosing body's closing brace. The user now wants one item
+per turn; do not start item 12 without their go-ahead. Items 12–19 remain after
+item 11. Next is item 12 (rejecting native Math functions as values).
 The REPL replay bug remains
 explicitly excluded and belongs to Claude's separate plan.
 
@@ -218,6 +219,9 @@ building" notes record its decisions.
   `Emerald.Json.parse` keys; project namespace qualification is preserved.
 - `Json.decode` explains when a struct cannot be built because it declares its
   own constructor, including structs nested in fields or collections.
+- Parser recovery preserves closing braces after a missing expression instead
+  of reporting misleading unclosed blocks; real missing and stray braces still
+  receive their own diagnostics.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
