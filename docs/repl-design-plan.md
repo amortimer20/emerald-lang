@@ -112,9 +112,10 @@ file. `"Hello, Ada!"` is quoted because of decision 4; today the REPL echoes a s
 - **Runtime values do not point at checker types.** A struct value's type is the interpreter's
   `Value.StructType`, found by key string in `Interpreter.structs`, not the checker's
   `Type.User`. The interpreter's own tables (`functions`, `structs`, `constructors`,
-  `trait_infos`, `struct_infos`, `type_setups`) are keyed by strings that point into the syntax
-  tree. So values from earlier entries stay valid across a re-check, provided the syntax tree they
-  point into is kept.
+  `trait_infos`, `struct_infos`, `type_setups`) use both source names and synthesized keys
+  allocated by the resolver. The session must retain the original syntax trees and own any
+  synthesized keys stored in runtime tables or closures; retaining trees alone does not keep
+  those keys alive after an old analysis is freed (verified by the slice 2 correction).
 - **The interpreter holds pointers to one analysis** (`signatures`, `method_calls`,
   `operator_calls`, `json_encodes`, `prelude_reached`, and so on). A new entry's analysis replaces
   them all at once.
@@ -238,11 +239,12 @@ commits.
     `Interpreter.run` path remains intact for `run`, `test`, and embedding
     callers.  This keeps the REPL lifetime change contained while both paths
     continue to share execution semantics.
-  - `emerald.Analysis` now owns the complete files/programs view as well as
-    lexer/parser/resolver/checker results.  The REPL will retain every accepted
-    analysis and source, so runtime values and function declarations always
-    point into trees that remain alive.  A session installs all analysis
-    pointers before registering declarations or executing an entry.
+  - `SessionSyntax` owns source snapshots and entries parsed exactly once with
+    `tokenizeFrom`/`parseEntry`. `analyzeSession` builds each program from those
+    same statement nodes plus the new entry. Only the current resolver/checker
+    analysis is retained; it is replaced before obsolete facts are freed.
+    Runtime tables and callable values own synthesized resolver keys in the
+    session arena, so freeing previous analyses cannot leave dangling names.
   - A session always uses `Scheduler.SharedAllocator`, even before `Tasks` is
     named.  A later entry may introduce tasks, and changing allocation domains
     underneath existing heap values would be unsound.
@@ -250,6 +252,13 @@ commits.
     by that entry.  Its preceding assignments and external effects remain, as
     decision 2 requires.  Type descriptors and other arena allocations may
     remain unreachable until `:reset`; they never remain resolvable.
+  - Correction to `b9e5804`: its test reparsed earlier entries, violating the
+    node-identity invariant and panicking in `closureCallable`. Its claimed
+    validation was incorrect: the executor printed only command output and
+    failed to inspect returned process-session IDs and final exit statuses.
+    The corrected tests free each obsolete analysis immediately and exercise
+    earlier lambdas, captured private functions, captured methods, and struct
+    construction through earlier values under `std.testing.allocator`.
 
 ### Slice 3: The new REPL
 

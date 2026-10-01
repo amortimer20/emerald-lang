@@ -4259,3 +4259,34 @@ by its entry; prior output, assignments, and outside effects intentionally remai
 testing-allocator coverage exercises a struct value and closure across analysis replacements, a
 type declared after a value using an earlier type, and a raised entry followed by a legal reuse
 of its dropped declaration.
+
+## REPL slice 2 correction: retain syntax nodes, replace facts, 2026-10-01
+
+The initial slice 2 commit `b9e5804` failed locally and in all six platform CI
+jobs. Its test reparsed the entire session for every entry, so a retained closure
+pointed at its original lambda node while the current analysis contained facts
+for a different node. The lookup in `closureCallable` panicked. The previous
+validation claim was wrong: command outputs were printed without the returned
+process-session IDs, and unfinished test runs were treated as successful checks.
+This correction inspects final exit codes and build summaries for every run.
+
+`SessionSyntax` now parses each tail once with slice 1's offset lexer and entry
+parser, retaining the original trees and source snapshots. `analyzeSession`
+resolves/checks a program assembled from those same statements. Tests install
+the replacement analysis and immediately free the previous analysis; old facts
+cannot conceal a missing current-node entry. This also exposed resolver-owned
+name strings in runtime tables and captured methods. Sessions now intern those
+keys in their own arena.
+
+The requested regression calls an earlier lambda, a captured private function,
+and a captured method, and constructs an earlier struct through those values.
+Its function and method bodies create further lambdas, exercising facts inside
+older bodies too. The existing persistence/rollback test now uses the same
+parse-once path. Both use `std.testing.allocator`, with obsolete analyses freed
+before the later calls run. Slice 3 remains unstarted pending review.
+
+Validation completed with pinned Zig 0.16.0 and `-j1`: 537/537 tests in both
+Debug and ReleaseSafe (final command exit status 0), native build, 24 executable
+documentation examples and 134 linked conformance files, changed-Zig formatting,
+`git diff --check`, and Windows x86_64/macOS aarch64 cross-builds with prefixes
+outside `zig-out`. Branch CI must be green before handing this correction back.

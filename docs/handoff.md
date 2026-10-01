@@ -231,10 +231,16 @@ Open work:
   effects (a file append, an `Http` request, `Random`, the clock) repeat. The accepted
   [`repl-design-plan.md`](repl-design-plan.md)'s first two slices are complete on `codex/repl`:
   tail parsing is structural, and `Interpreter.Session` now preserves one heap/module scope
-  while replacing checker facts atomically for each accepted analysis. It retains every source
-  and parsed tree that runtime values borrow, and rolls back a raising entry's declarations.
-  Direct Debug-allocator tests cover a struct value, closure, later dependent type, and failed
-  entry. Slice 3 next rewrites the command loop to use it.
+  while replacing checker facts for each accepted analysis. Slice 2's initial commit `b9e5804`
+  failed deterministically: its test reparsed prior entries, so earlier closures had no facts
+  in the current analysis. The corrective change adds `SessionSyntax`/`analyzeSession`, keeping
+  each entry's original nodes and source while freeing obsolete analyses after replacement.
+  Runtime tables and captured callables also own synthesized resolver names. Debug-allocator
+  tests exercise earlier lambdas, function/method values, struct construction, later dependent
+  types, and a dropped raising entry. Corrective local validation passed with pinned Zig 0.16.0
+  and `-j1`: 537 tests in each of Debug/ReleaseSafe, native build, documentation examples,
+  formatting/whitespace, and Windows/macOS cross-builds. Slice 2 awaits review; do not begin
+  slice 3 before approval.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
 

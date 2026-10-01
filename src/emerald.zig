@@ -114,6 +114,7 @@ pub const Analysis = struct {
     tokenized: []Lexer.Tokenized,
     parsed: []Parser.Parsed,
     programs: []Ast.Program,
+    borrowed_session_trees: bool = false,
     resolved: Resolver.Resolved,
     checked: Checker.Checked,
 
@@ -127,6 +128,7 @@ pub const Analysis = struct {
     pub fn deinit(self: *Analysis, gpa: std.mem.Allocator) void {
         self.checked.deinit();
         self.resolved.deinit();
+        if (self.borrowed_session_trees) gpa.free(self.programs[0].statements);
         gpa.free(self.programs);
         for (self.parsed) |*one| one.deinit();
         gpa.free(self.parsed);
@@ -248,9 +250,8 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis 
     };
 }
 
-/// The runtime-facing view of an analysis.  It deliberately borrows the
-/// analysis rather than copying any facts: a REPL keeps every accepted
-/// `Analysis` alive for the lifetime of its interpreter session.
+/// The runtime-facing view of an analysis. The analysis stays alive until a
+/// replacement is installed; parsed session entries have a separate lifetime.
 pub fn sessionAnalysis(analysis: *const Analysis) Interpreter.SessionAnalysis {
     return .{
         .files = analysis.files,
@@ -271,6 +272,125 @@ pub fn sessionAnalysis(analysis: *const Analysis) Interpreter.SessionAnalysis {
         .trait_calls = &analysis.checked.trait_calls,
         .facts = analysis.resolved.facts,
     };
+}
+
+/// Syntax owned for the lifetime of an interactive session. Each entry is
+/// parsed exactly once, at its offset in the growing source. Copies of the
+/// top-level Statement records keep their expression/body pointers unchanged.
+/// Analyses borrow those trees and can be freed after their replacement is
+/// installed. Even a dropped runtime entry's tree stays alive: a side effect
+/// before its error may have stored a closure in an existing binding.
+pub const SessionSyntax = struct {
+    entries: std.ArrayList(Entry) = .empty,
+    statements: std.ArrayList(Ast.Statement) = .empty,
+    text: std.ArrayList(u8) = .empty,
+
+    pub const Entry = struct {
+        source: Source,
+        parsed: Parser.Parsed,
+        text_start: usize,
+        statement_start: usize,
+    };
+
+    pub fn append(self: *SessionSyntax, gpa: std.mem.Allocator, text: []const u8) !*const Entry {
+        const text_start = self.text.items.len;
+        const statement_start = self.statements.items.len;
+        errdefer self.text.items.len = text_start;
+        try self.text.appendSlice(gpa, text);
+        if (text.len == 0 or text[text.len - 1] != '\n') try self.text.append(gpa, '\n');
+        var source = try Source.init(gpa, "<repl>", self.text.items);
+        errdefer source.deinit(gpa);
+        var tokens = try Lexer.tokenizeFrom(gpa, &source, @intCast(text_start));
+        defer tokens.deinit(gpa);
+        // Lexical diagnostics are handled by the command loop's classifier;
+        // this API installs only complete, lexically valid entries.
+        if (tokens.diagnostics.len != 0) return error.InvalidEntry;
+        var parsed = try Parser.parseEntry(gpa, &source, tokens.tokens);
+        errdefer parsed.deinit();
+        try self.entries.ensureUnusedCapacity(gpa, 1);
+        if (parsed.ok()) try self.statements.appendSlice(gpa, parsed.program.statements);
+        self.entries.appendAssumeCapacity(.{
+            .source = source,
+            .parsed = parsed,
+            .text_start = text_start,
+            .statement_start = statement_start,
+        });
+        return &self.entries.items[self.entries.items.len - 1];
+    }
+
+    /// Drop the current candidate from future checking without invalidating
+    /// any syntax that runtime effects may still reference.
+    pub fn dropLast(self: *SessionSyntax) void {
+        const entry = self.entries.items[self.entries.items.len - 1];
+        self.text.items.len = entry.text_start;
+        self.statements.items.len = entry.statement_start;
+    }
+
+    pub fn deinit(self: *SessionSyntax, gpa: std.mem.Allocator) void {
+        for (self.entries.items) |*entry| {
+            entry.parsed.deinit();
+            entry.source.deinit(gpa);
+        }
+        self.entries.deinit(gpa);
+        self.statements.deinit(gpa);
+        self.text.deinit(gpa);
+        self.* = undefined;
+    }
+};
+
+/// Resolve and check the kept trees, never reparse the preceding session.
+/// The caller retains `syntax` until the interpreter ends, and owns only the
+/// current analysis. The large stack is shared with ordinary project checking.
+pub fn analyzeSession(gpa: std.mem.Allocator, syntax: *const SessionSyntax) Error!?Analysis {
+    const Work = struct {
+        gpa: std.mem.Allocator,
+        syntax: *const SessionSyntax,
+        result: Error!?Analysis = undefined,
+
+        fn run(self: *@This(), available: usize) void {
+            _ = available;
+            self.result = @This().analyze(self.gpa, self.syntax);
+        }
+
+        fn analyze(allocator: std.mem.Allocator, trees: *const SessionSyntax) Error!?Analysis {
+            var prelude_source = try Source.init(allocator, "prelude.em", prelude_text);
+            errdefer prelude_source.deinit(allocator);
+            const files = try allocator.alloc(Project.File, 2);
+            errdefer allocator.free(files);
+            files[0] = .{ .source = trees.entries.items[trees.entries.items.len - 1].source, .namespace = "", .entry = true };
+            files[1] = .{ .source = prelude_source, .namespace = Resolver.prelude_namespace, .entry = false };
+            const programs = try allocator.alloc(Ast.Program, 2);
+            errdefer allocator.free(programs);
+            programs[0] = .{ .statements = try allocator.dupe(Ast.Statement, trees.statements.items) };
+            errdefer allocator.free(programs[0].statements);
+            programs[1] = prelude_program;
+            var resolved = try Resolver.resolve(allocator, files, programs, null);
+            errdefer resolved.deinit();
+            if (!resolved.ok()) {
+                resolved.deinit();
+                allocator.free(programs[0].statements);
+                allocator.free(programs);
+                allocator.free(files);
+                prelude_source.deinit(allocator);
+                return null;
+            }
+            const checked = try Checker.check(allocator, files, programs, resolved.facts);
+            return .{
+                .prelude_source = prelude_source,
+                .files = files,
+                .programs = programs,
+                .tokenized = &.{},
+                .parsed = &.{},
+                .borrowed_session_trees = true,
+                .resolved = resolved,
+                .checked = checked,
+            };
+        }
+    };
+    var work: Work = .{ .gpa = gpa, .syntax = syntax };
+    const thread = Scheduler.ReservedThread.spawn(stack_size, Work.run, .{ &work, stack_size }) catch return error.StackUnavailable;
+    thread.join();
+    return work.result;
 }
 
 /// A single file is a complete program, so it is a project of one. Nothing
@@ -907,67 +1027,27 @@ fn runToString(gpa: std.mem.Allocator, text: []const u8, input: []const u8) ![]u
     return out.toOwnedSlice();
 }
 
-const ReplTestAnalysis = struct {
-    source: Source,
-    analysis: Analysis,
-
-    fn init(gpa: std.mem.Allocator, text: []const u8) !ReplTestAnalysis {
-        var source = try Source.init(gpa, "<repl>", text);
-        errdefer source.deinit(gpa);
-        var files = [_]Project.File{lone(&source)};
-        const project = loneProject(&files);
-        const analysis = (try analyzeProject(gpa, &project)) orelse return error.UnexpectedDiagnostic;
-        if (!analysis.ok()) return error.UnexpectedDiagnostic;
-        return .{ .source = source, .analysis = analysis };
-    }
-
-    fn deinit(self: *ReplTestAnalysis, gpa: std.mem.Allocator) void {
-        self.analysis.deinit(gpa);
-        self.source.deinit(gpa);
-        self.* = undefined;
-    }
-};
-
 test "an interpreter session keeps earlier values while replacing analysis" {
     const gpa = testing.allocator;
-    const first =
+    var syntax: SessionSyntax = .{};
+    defer syntax.deinit(gpa);
+    _ = try syntax.append(gpa,
         \\struct Point {
         \\    const x: Int
         \\}
         \\const point = Point(2)
         \\const twice = { value: Int => value * 2 }
-    ++ "\n";
-    const second = first ++
-        \\struct Box {
-        \\    const point: Point
-        \\}
-        \\const box = Box(point)
-        \\print(twice(box.point.x))
-    ++ "\n";
-    const failed = second ++
-        \\const discarded = 1
-        \\raise RuntimeError("boom")
-    ++ "\n";
-    const after_failure = second ++
-        \\const discarded = 3
-        \\print(discarded)
-    ++ "\n";
-
-    var first_analysis = try ReplTestAnalysis.init(gpa, first);
-    defer first_analysis.deinit(gpa);
-    var second_analysis = try ReplTestAnalysis.init(gpa, second);
-    defer second_analysis.deinit(gpa);
-    var failed_analysis = try ReplTestAnalysis.init(gpa, failed);
-    defer failed_analysis.deinit(gpa);
-    var after_analysis = try ReplTestAnalysis.init(gpa, after_failure);
-    defer after_analysis.deinit(gpa);
+    );
+    var analysis = (try analyzeSession(gpa, &syntax)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.ok());
 
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
     var input: std.Io.Reader = .fixed("");
     var session = try Interpreter.Session.init(
         gpa,
-        sessionAnalysis(&first_analysis.analysis),
+        sessionAnalysis(&analysis),
         &out.writer,
         &input,
         std.Io.Threaded.global_single_threaded.io(),
@@ -979,23 +1059,92 @@ test "an interpreter session keeps earlier values while replacing analysis" {
         Interpreter.StackLimit.here(64 * 1024 * 1024),
     );
     defer session.deinit();
-    try testing.expectEqual(.complete, try session.runEntry(first_analysis.analysis.programs[0].statements));
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements));
 
-    const second_start = first_analysis.analysis.programs[0].statements.len;
-    try session.install(sessionAnalysis(&second_analysis.analysis), second_start);
-    try testing.expectEqual(.complete, try session.runEntry(second_analysis.analysis.programs[0].statements[second_start..]));
+    const second = try syntax.append(gpa,
+        \\struct Box {
+        \\    const point: Point
+        \\}
+        \\const box = Box(point)
+        \\print(twice(box.point.x))
+    );
+    const second_start = second.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, second_start);
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements[second_start..]));
 
-    const failed_start = second_analysis.analysis.programs[0].statements.len;
-    try session.install(sessionAnalysis(&failed_analysis.analysis), failed_start);
-    switch (try session.runEntry(failed_analysis.analysis.programs[0].statements[failed_start..])) {
+    const failed = try syntax.append(gpa,
+        \\const discarded = 1
+        \\raise RuntimeError("boom")
+    );
+    const failed_start = failed.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, failed_start);
+    switch (try session.runEntry(analysis.programs[0].statements[failed_start..])) {
         .failed => {},
         else => return error.TestUnexpectedResult,
     }
 
-    const after_start = second_analysis.analysis.programs[0].statements.len;
-    try session.install(sessionAnalysis(&after_analysis.analysis), after_start);
-    try testing.expectEqual(.complete, try session.runEntry(after_analysis.analysis.programs[0].statements[after_start..]));
+    syntax.dropLast();
+    const after = try syntax.append(gpa,
+        \\const discarded = 3
+        \\print(discarded)
+    );
+    const after_start = after.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, after_start);
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements[after_start..]));
     try testing.expectEqualStrings("4\n3\n", out.written());
+}
+
+/// Tests free the obsolete checker/resolver facts immediately, so retention
+/// of old analyses cannot accidentally conceal a missing current-node fact.
+fn replaceSessionAnalysis(gpa: std.mem.Allocator, syntax: *const SessionSyntax, session: *Interpreter.Session, analysis: *Analysis, start: usize) !void {
+    var next = (try analyzeSession(gpa, syntax)).?;
+    errdefer next.deinit(gpa);
+    try testing.expect(next.ok());
+    var previous = analysis.*;
+    analysis.* = next;
+    try session.install(sessionAnalysis(analysis), start);
+    previous.deinit(gpa);
+}
+
+test "a later entry calls earlier lambda function and method values and constructs an earlier struct" {
+    const gpa = testing.allocator;
+    var syntax: SessionSyntax = .{};
+    defer syntax.deinit(gpa);
+    _ = try syntax.append(gpa,
+        \\struct Point {
+        \\    const x: Int
+        \\    func doubled(): Int {
+        \\        const apply = { value: Int => value * 2 }
+        \\        return apply(self.x)
+        \\    }
+        \\}
+        \\func _make_point(value: Int): Point {
+        \\    const identity = { => value }
+        \\    return Point(identity())
+        \\}
+        \\const point = Point(2)
+        \\const method = point.doubled
+        \\const factory = _make_point
+        \\const block = { value: Int => Point(value).doubled() }
+    );
+    var analysis = (try analyzeSession(gpa, &syntax)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.ok());
+    const original_block = syntax.statements.items[5].data.declaration.initializer.?;
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var input: std.Io.Reader = .fixed("");
+    const session = try Interpreter.Session.init(gpa, sessionAnalysis(&analysis), &out.writer, &input, std.Io.Threaded.global_single_threaded.io(), &.{}, false, false, .empty, .utc, Interpreter.StackLimit.here(64 * 1024 * 1024));
+    defer session.deinit();
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements));
+
+    const entry = try syntax.append(gpa, "print(block(3), factory(4).doubled(), method())\n");
+    const start = entry.statement_start;
+    try replaceSessionAnalysis(gpa, &syntax, session, &analysis, start);
+    try testing.expectEqual(original_block, analysis.programs[0].statements[5].data.declaration.initializer.?);
+    try testing.expect(analysis.checked.literal_types.contains(original_block));
+    try testing.expectEqual(.complete, try session.runEntry(analysis.programs[0].statements[start..]));
+    try testing.expectEqualStrings("6 8 4\n", out.written());
 }
 
 fn expectOutput(text: []const u8, expected: []const u8) !void {

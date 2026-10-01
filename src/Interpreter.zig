@@ -288,6 +288,9 @@ scopes: std.ArrayList(*Environment) = .empty,
 spare_scopes: std.ArrayList(*Environment) = .empty,
 
 functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
+/// A persistent session must own resolver-produced names stored in runtime
+/// tables or closures: the next analysis frees the resolver's arena.
+session_keys: ?std.StringHashMapUnmanaged(void) = null,
 /// Struct types, keyed program-wide and carrying their short source name for
 /// display.
 structs: std.StringHashMapUnmanaged(*const Value.StructType) = .empty,
@@ -345,9 +348,9 @@ literal_types: *const Checker.LiteralTypes,
 /// it.
 heap: Heap,
 
-/// A checked view of the append-only REPL program.  The owner keeps the
-/// analysis, its parsed trees, and its source alive until the session ends:
-/// runtime function declarations and type names borrow all three.
+/// A checked view of the append-only REPL program. The current analysis lives
+/// until replacement; the owner keeps parsed entries and their source text
+/// until the session ends. Runtime tables own synthesized resolver names.
 pub const SessionAnalysis = struct {
     files: []const Project.File,
     programs: []const Ast.Program,
@@ -486,6 +489,7 @@ pub const Session = struct {
             .trait_calls = analysis.trait_calls,
             .literal_types = analysis.literal_types,
             .heap = .init(gpa),
+            .session_keys = .empty,
         };
         errdefer self.deinit();
         try self.install(analysis, 0);
@@ -527,7 +531,8 @@ pub const Session = struct {
         try self.inheritNewTypes();
         var nested = interpreter.facts.nested_functions.iterator();
         while (nested.next()) |item| {
-            const registered = try interpreter.functions.getOrPut(interpreter.arena, item.key_ptr.*);
+            const key = try interpreter.runtimeKey(item.key_ptr.*);
+            const registered = try interpreter.functions.getOrPut(interpreter.arena, key);
             if (!registered.found_existing) registered.value_ptr.* = item.value_ptr.*;
         }
         self.installed = true;
@@ -566,7 +571,7 @@ pub const Session = struct {
         for (statements) |statement| {
             switch (statement.data) {
                 .struct_declaration => |declaration| try interpreter.registerStruct(interpreter.checked_structs, declaration, interpreter.keyOf(declaration.name)),
-                .function_declaration => |function| try interpreter.functions.put(interpreter.arena, interpreter.keyOf(function.name), function),
+                .function_declaration => |function| try interpreter.functions.put(interpreter.arena, try interpreter.runtimeKey(interpreter.keyOf(function.name)), function),
                 else => {},
             }
         }
@@ -1040,7 +1045,7 @@ fn hoistNestedFunctions(self: *Interpreter, statements: []const Ast.Statement) E
     for (statements) |statement| {
         if (statement.data != .function_declaration) continue;
         const function = statement.data.function_declaration;
-        const key = self.facts.nested_keys.get(.{ .file = self.task.state.file, .start = function.name_span.start }).?;
+        const key = try self.runtimeKey(self.facts.nested_keys.get(.{ .file = self.task.state.file, .start = function.name_span.start }).?);
         const captured = try self.gpa.dupe(*Environment, self.task.state.scopes.items);
         const closure = try self.heap.createClosure(.{ .named = key }, captured, self.task.state.file);
         const current = &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings;
@@ -1081,7 +1086,7 @@ fn unpackInto(self: *Interpreter, pattern: Ast.Pattern, value: Value, how: Unpac
             },
             .declare, .bind_loop => {
                 const in_block = self.task.state.scopes.items.len > 0;
-                const key = if (in_block) name.text else self.keyOf(name.text);
+                const key = if (in_block) name.text else try self.runtimeKey(self.keyOf(name.text));
                 const current = if (in_block)
                     &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings
                 else
@@ -1160,7 +1165,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
 
             const in_block = self.task.state.scopes.items.len > 0;
             const current = if (in_block) &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings else &self.module;
-            const name = if (in_block) declaration.name else self.keyOf(declaration.name);
+            const name = if (in_block) declaration.name else try self.runtimeKey(self.keyOf(declaration.name));
             try current.put(if (in_block) self.gpa else self.arena, name, .{
                 .kind = kind,
                 .value = if (initial) |value| widen(value, kind) else null,
@@ -2220,7 +2225,8 @@ fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
 
 /// One type's runtime descriptor and functions, then its nested types'
 /// (14.3), each under its own key.
-fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, declaration: Ast.StructDeclaration, type_key: []const u8) std.mem.Allocator.Error!void {
+fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, declaration: Ast.StructDeclaration, written_key: []const u8) std.mem.Allocator.Error!void {
+    const type_key = try self.runtimeKey(written_key);
     for (declaration.types) |nested| {
         try self.registerStruct(checked_structs, nested.declaration, try Resolver.methodKey(self.arena, type_key, nested.declaration.name));
     }
@@ -2242,7 +2248,7 @@ fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, d
         runtime.* = .{ .name = property.name, .getter = getter, .setter = setter };
     }
     const adopted = try self.arena.alloc([]const u8, checked.user.?.traits.len);
-    for (checked.user.?.traits, adopted) |trait, *trait_key| trait_key.* = trait.name;
+    for (checked.user.?.traits, adopted) |trait, *trait_key| trait_key.* = try self.runtimeKey(trait.name);
     // Section 11.1: a trait is never built, so it has no
     // descriptor; its defaults are functions like any method.
     if (declaration.trait) {
@@ -2326,7 +2332,7 @@ fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, d
             .field_names = field_names,
             .has_default = has_default,
             .any_default = any_default,
-            .base = if (checked.user.?.base) |base| base.name else null,
+            .base = if (checked.user.?.base) |base| try self.runtimeKey(base.name) else null,
             .traits = adopted,
             .offset = checked.user.?.inherited,
             .defaults_frame = try std.fmt.allocPrint(
@@ -2372,6 +2378,14 @@ fn kindOf(checked: Type) Value.Kind {
 /// resolver worked it out for the file being executed. A local is its own key.
 fn keyOf(self: *Interpreter, name: []const u8) []const u8 {
     return self.facts.keyFor(self.task.state.file, name) orelse name;
+}
+
+fn runtimeKey(self: *Interpreter, key: []const u8) std.mem.Allocator.Error![]const u8 {
+    const keys = if (self.session_keys) |*keys| keys else return key;
+    if (keys.getKey(key)) |owned| return owned;
+    const owned = try self.arena.dupe(u8, key);
+    try keys.put(self.arena, owned, {});
+    return owned;
 }
 
 /// Resolves the same namespace alias at the front of a written type that the
@@ -2773,8 +2787,9 @@ fn evaluateName(
 /// Section 7.5's captured named function, which captures nothing: a named
 /// function's body can only see the module, which is always visible.
 fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
+    const key = try self.runtimeKey(name);
     const captured = try self.gpa.alloc(*Environment, 0);
-    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = name }, captured, self.task.state.file) } };
+    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = key }, captured, self.task.state.file) } };
 }
 
 /// Section 7.5's captured method: a closure holding its own copy of the
@@ -2784,7 +2799,7 @@ fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: [
     // Section 10.7: the version the object's own class runs, decided now.
     // Taking it runs nothing, so whether that class's part is built yet is
     // checked when the method is called.
-    const version = if (isSuper(member.base)) key else if (versionOf(receiver, key)) |method| method.key else key;
+    const version = try self.runtimeKey(if (isSuper(member.base)) key else if (versionOf(receiver, key)) |method| method.key else key);
     const captured = self.gpa.alloc(*Environment, 0) catch |err| {
         self.heap.release(receiver);
         return err;
