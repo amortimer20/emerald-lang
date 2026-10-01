@@ -1005,7 +1005,7 @@ test "cancelled file opening closes the resource before invoking its block" {
 test "FileHandle streams text, rejects invalid UTF-8, and rejects reads after close" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "lines.txt", .data = "one\ntwo\nthree\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "lines.txt", .data = "one\r\ntwo\r\nthree\r\n" });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "invalid.bin", .data = "\xff" });
 
     const relative = try std.fmt.allocPrint(testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
@@ -1035,6 +1035,10 @@ test "FileHandle streams text, rejects invalid UTF-8, and rejects reads after cl
     , .{lines_literal});
     defer testing.allocator.free(streamed);
     try expectOutput(streamed, "one\ntwo\nthree\n");
+
+    const whole = try std.fmt.allocPrint(testing.allocator, "print(File.read_lines(\"{s}\"))", .{lines_literal});
+    defer testing.allocator.free(whole);
+    try expectOutput(whole, "[\"one\", \"two\", \"three\"]\n");
 
     const closed = try std.fmt.allocPrint(testing.allocator,
         \\const file = File.open("{s}")

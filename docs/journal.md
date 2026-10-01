@@ -4159,5 +4159,25 @@ tests, including a Windows-targeted Scheduler compile, pass locally. The full
 gate passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests,
 native build, documentation examples (24 executed, 135 conformance links),
 changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
-with prefixes outside `zig-out`. Windows CI's actual post-fix measurement remains
-the required final confirmation.
+with prefixes outside `zig-out`. Windows CI run `36873845746` was green on every
+platform. Its ReleaseSafe measurement reported 22.67 MiB baseline commit and
+25.37 MiB with 64 live tasks (only 2.70 MiB more), and printed the reservation
+confirmation; this replaces the old 1,048.75 MiB main-thread baseline.
+
+## Bug-fix batch, item 17: CRLF file lines, 2026-10-01
+
+Reproduced against a separately built current main (`a191cf3`) with a file
+containing `"first\r\nsecond\r\n"`: `File.read_lines` gave
+`["first\\r", "second\\r"]`, and streamed `read_line` returned the same
+trailing carriage returns, while `String.lines` gave `["first", "second"]`.
+
+`fileLines` now trims terminal carriage returns exactly as `strings.lines` does,
+and `readStreamBytes` shrinks its line-only result after the same trim. Binary
+`read_bytes` keeps raw bytes. The local implementation also adopts main's
+just-landed corrected line-count loop: an empty file produces no lines and a
+blank line before a trailing newline is retained. Whole-file and streaming
+conformance cases, plus the existing temporary-directory Zig streaming test,
+cover CRLF behavior. The full gate passed with pinned Zig 0.16.0 and `-j1`:
+531 Debug and 531 ReleaseSafe tests, native build, documentation examples,
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+with prefixes outside `zig-out`.

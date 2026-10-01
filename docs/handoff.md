@@ -116,8 +116,9 @@ method changes only ordinary identifier uses.
 Concurrency and its required review corrections are merged on main through PR #24
 (`4c51a6c`). The implementation, review findings, validation, and Windows measurements
 are recorded in the concurrency plan and journal. The main interpreter's Windows
-thread now uses the same reservation-sized-stack helper as task threads; item 15's
-full validation is in progress.
+thread now uses the same reservation-sized-stack helper as task threads. Item 15's
+full validation and Windows CI measurement are green: the one-task commit baseline
+fell from 1,048.75 MiB to 22.67 MiB.
 
 Implemented: per-task execution state,
 `Task[T]`, structured groups, results, a FIFO single-holder
@@ -196,7 +197,10 @@ thread helper with the three main interpreter pipeline threads; it reproduces
 main's 1,049 MiB baseline commit from Windows CI and adds a CI assertion that
 the repaired one-task baseline is at most 128 MiB. The local full gate passes;
 Windows CI must still demonstrate the repaired measurement after the commit.
-Probe details are in the journal.
+Item 17 is complete: `File.read_lines` and `FileHandle.read_line` remove CRLF's
+carriage return like `String.lines`; its fix also carries forward current main's
+empty/final-blank-line splitter correction. The full local gate passed. Probe
+details are in the journal.
 The REPL replay bug remains
 explicitly excluded and belongs to Claude's separate plan.
 
@@ -246,6 +250,8 @@ building" notes record its decisions.
   accessing freed storage. Changing operations publish only a finished result;
   failed callbacks leave the list unchanged. Independent value copies remain
   changeable; ordinary `each`/`reduce` snapshot semantics are unchanged.
+- `File.read_lines` and `FileHandle.read_line` now remove CRLF's carriage return,
+  matching `String.lines`; empty files and blank final lines split correctly.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
