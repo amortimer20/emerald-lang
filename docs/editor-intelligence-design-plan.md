@@ -1,6 +1,6 @@
 # Editor intelligence: design and implementation plan
 
-Status: proposed, 2026-10-01, for the user's decisions below. Claude builds it. Implementation
+Status: accepted, 2026-10-01. The user accepted all ten recommendations. Claude builds it. Implementation
 starts after the REPL work's slice 2 is merged, since both touch the compiler's front end; until
 then only this plan changes.
 
@@ -84,7 +84,7 @@ hover on Math.sin:
 
 ## Decisions for the user
 
-Each has a recommendation, and the alternatives are kept for the record.
+All ten were accepted as recommended on 2026-10-01. The alternatives are kept for the record.
 
 1. **Where the descriptions live (recommended: two places, one per kind of member).** Natively
    typed members (the ~230 above) get a data file in emerald-lang, `src/builtins.json`, with each

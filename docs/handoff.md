@@ -232,8 +232,8 @@ Open work:
 - A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it). The plan is
-[`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), proposed 2026-10-01 and
-waiting for the user's ten decisions; implementation starts after REPL slice 2 merges. The findings
+[`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
+recommendations; implementation starts after REPL slice 2 merges. The findings
 below are the plan's starting point. The
 goal is C#-level IntelliSense in VS Code. Investigation found that the editor already runs the
 current server (`emerald lsp --stdio` from the 0.6.0 install) and that diagnostics match
