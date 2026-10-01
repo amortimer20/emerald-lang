@@ -191,8 +191,20 @@ building" notes record its decisions.
   request's reply.
 - Structured tasks, FIFO channels, timers and timed waits, cooperative cancellation,
   and deadlock diagnostics.
+- A fix to `File.read_lines`: an empty file crashed the interpreter, and a blank line just
+  before the end of a file was dropped (`"a\n\n"` gave `["a"]`).
+- HTTP now sends Emerald's own `User-Agent`, or the program's, instead of Zig's (the second
+  header was ignored before).
 
 Open work:
+- **The website's reference pages** (2026-10-01, branch `claude/language-reference` in
+  `emerald-website`, for the user to review and push): the whole language reference, Built-ins,
+  and every Standard Library family are written, and every example's output is checked against
+  a real build by `scripts/check-outputs.py` and `scripts/check-examples.py`. Left to do: the
+  **Tasks** pages (`Tasks`, `Task`, `TaskGroup`, `Channel`, `CancelledError`), which are in main
+  but not in 0.6.0. The Console layout and prompts pages were written against main, so they
+  describe 0.7.0; the site should not be published ahead of that release, or those pages and
+  the `File.read_lines` and `User-Agent` notes above should wait.
 - **Bug fixes**: the batch from the full-codebase review (formatter, `remove_if`, `##` comments,
   JSON diagnostics, `RecursionError`, and more), handed to Codex on `codex/bug-fixes`. Claude
   reviews and merges.
