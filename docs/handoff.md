@@ -166,46 +166,9 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-The current task is the user's numbered bug-fix batch on `codex/bug-fixes`, branched
-from freshly fetched main `4c51a6c`. Items 1–7 reproduced and are complete:
-collection copy-before-change, required case-header grouping and the all-`run/`
-format/parse guard, comment boundaries, project Math priority, user-method priority
-over counting forms, and catchable recursion failures. Each commit passed the full
-gate (Debug/ReleaseSafe, native build, documentation examples, formatting, whitespace,
-and Windows/macOS cross-builds). The latest doc check executed 24 examples and
-confirmed 131 conformance links; the main/task recursion regression matched its
-expected output in 50 runs. Reproductions and findings are in the journal.
-Item 8's single-pass argument diagnostics reproduced across all five typed/native
-APIs and a changing trait-default receiver; its fixes also passed the full gate.
-Item 9's shared prelude-name display fix also passed the full gate.
-Item 10's generated-constructor explanation also passed the full gate.
-Item 11's parser recovery fix also passed the full gate: failed expressions no
-longer consume their enclosing body's closing brace. Item 12's rejection of native
-Math function values passed the full gate. The user has now authorized items 13–19
-as a larger batch, still with separate validated commits.
-Item 13 reproduces on main `4c51a6c`, both in the baseline binary and a separate
-Debug probe using `std.testing.allocator`: an equals callback appending to the
-searched list makes `remove` panic on freed storage. The accepted mutation-only
-guard and snapshot publication are implemented, with focused equality, ordering,
-key-building, storage-path, runtime-error, and Zig allocator regressions. Callback
-reads see the original list; attempted writes raise `RuntimeError`; independent
-value copies remain changeable. Existing `each`/`reduce` snapshot behavior is
-preserved. Item 13 passed the full gate; the documentation check executed 24
-examples and confirmed 135 conformance links. Items 14 and 19 did not reproduce:
-unknown native-namespace members are rejected by checking, and the handoff has no
-Console-widget status contradiction. Item 15 shares Scheduler's reservation-sized
-thread helper with the three main interpreter pipeline threads; it reproduces
-main's 1,049 MiB baseline commit from Windows CI and adds a CI assertion that
-the repaired one-task baseline is at most 128 MiB. The local full gate and
-Windows CI are green: the one-task baseline is 22.67 MiB of commit.
-Item 17 is complete: `File.read_lines` and `FileHandle.read_line` remove CRLF's
-carriage return like `String.lines`; its fix also carries forward current main's
-empty/final-blank-line splitter correction. The full local gate passed. Probe
-details are in the journal.
-The REPL replay bug remains
-explicitly excluded and belongs to Claude's separate plan.
-
-The standard-library slices the user chose to
+The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
+the others have a validated commit each, with reproductions in the journal). Concurrency is
+merged (#24, 2026-09-30). The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
@@ -220,7 +183,7 @@ building" notes record its decisions.
 - A fix to HTTP connection reuse: a request after a timed-out one could receive the timed-out
   request's reply.
 - Structured tasks, FIFO channels, timers and timed waits, cooperative cancellation,
-  and deadlock diagnostics (merged, with full PR CI green).
+  and deadlock diagnostics.
 - `List.remove_if` preserves other list/struct copies; calling it from a struct method
   correctly requires a mutable struct receiver.
 - Formatting preserves required parentheses around trailing-block calls in `when`
@@ -253,13 +216,20 @@ building" notes record its decisions.
   changeable; ordinary `each`/`reduce` snapshot semantics are unchanged.
 - `File.read_lines` and `FileHandle.read_line` now remove CRLF's carriage return,
   matching `String.lines`; empty files and blank final lines split correctly.
+- HTTP now sends Emerald's own `User-Agent`, or the program's, instead of Zig's (the second
+  header was ignored before).
 
-The open pieces of work:
+Open work:
+- **The website** is published (2026-10-01): the whole reference, with every example's output
+  checked against a real build by `scripts/check-outputs.py` and `scripts/check-examples.py`
+  in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
+  against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
+  `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
+- **The REPL**: it replays the whole session on every entry, so side effects (a file append, an
+  `Http` request, `Random`, the clock) repeat. [`repl-design-plan.md`](repl-design-plan.md) is
+  accepted with all eight recommendations; Codex implements it next, now the bug-fix batch is merged.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
-- **Bug-fix batch:** all items 1–19 are accounted for on `codex/bug-fixes`, with one
-  validated commit per item or tightly related pair. Items 14 and 19 did not reproduce;
-  individual reproduction programs, findings, and validation are in the journal.
-- **REPL replay:** a separate plan by Claude; not part of the bug-fix batch.
+- A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
@@ -296,6 +266,98 @@ Before each release, refresh the time-zone data with `python3 tools/update-tzdat
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than
 on the roadmap.
 
+## Roadmap order (agreed 2026-09-30, QA iteration added 2026-10-01)
+
+1. The current queue: the REPL milestone and editor intelligence (the bug-fix batch is merged).
+2. **A QA iteration** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
+   use, before more is built on top. The user's first finding: Console tables render poorly on the
+   website's Console page (borders short, vertical lines broken between rows). The terminal
+   output is fine (checked by the user, 2026-10-01); only the website is wrong. A first attempt on
+   2026-10-01 did not fix it for the user: it self-hosted the full JetBrains Mono (Google's copy
+   leaves out the box-drawing characters U+2500 to U+257F, so browsers used a mismatched
+   fallback font), set the font's own line height (1.32) on blocks with box characters
+   (`src/plugins/box-art.mjs`, `reference.css`), and made the "At a glance" tables share one width.
+   In a headless Chromium the boxes joined up, so the cause on the user's machine is still
+   unknown: get a screenshot or the browser and font from the user, and check line height, the
+   font actually in use, and Expressive Code's own styles. Deferred by the user to this iteration.
+   Also carry in the rough edges recorded under
+   "Active rough edges" and the diagnostics that still need hints, plus two found while
+   writing the Console and Tasks pages: a `Console.table` whose `header:` has a different width than
+   its rows reports the header as "row 1" ("row 2 has 2 cells, but row 1 has 1"), and
+   `Channel[Int?]` reports a redundant "needs a message type" error after the correct one. The
+   website's pages are checked against a real build by `scripts/check-outputs.py` in
+   `emerald-website`; rerun it against the build under test. Scope the pass with the user when it
+   starts, and finish it before the 0.7.0 release.
+3. **Choose the backend** by prototype (below). Moved ahead of the other big features because
+   multicore and the 1.0 compiler both depend on it.
+4. **Networking** (sockets and an HTTP server, the base for a web framework). Backend-neutral at the
+   API and conformance level, and tasks already give each connection its own task, so it can run
+   in parallel with the backend prototypes.
+5. **The package manager** (`emerald.toml` manifest, versions, resolution, fetching, how `import`
+   finds a package). Backend-agnostic, since packages are Emerald source; weigh NuGet interop if
+   .NET wins.
+6. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
+   or per-worker heaps and a thread-safe collector, most of which .NET would give for free and
+   Cranelift would make Emerald write itself. Its language rules are already settled (tasks share
+   no `var`; values only cross), with two gaps recorded in the concurrency plan.
+
+## Longer term: the native compiler
+
+The user wants a real compiler for Emerald 1.0; the interpreter is a means to that end. No
+compiler design exists yet. Directions discussed on 2026-09-30, to weigh when that plan starts:
+
+- **Write the compiler in Rust, on Cranelift, rather than porting the Zig interpreter.** The
+  user asked about porting everything to Rust. A port would stop all language work for months,
+  and the bugs found so far were logic errors Rust would not have caught. But a compiler is new
+  code either way, and Rust brings what it needs: a stable language (Zig is pre-1.0 and every
+  upgrade costs work), Cranelift for code generation, and Salsa-style incremental analysis for
+  the editor. The compiler replaces the interpreter as it matures.
+- **.NET is an equally strong candidate** (discussed the same day): compile Emerald to CIL and run
+  it on the CLR, with NativeAOT for native executables. It gives what Cranelift would make Emerald
+  write itself: a production garbage collector (the hardest part of a native runtime), a JIT,
+  real threads for tasks and later multicore, portable-PDB debugging in Visual Studio and VS Code
+  (a step-through debugger nearly free), and `decimal` and `BigInteger` underneath. The user
+  teaches C#, so they can read and extend its output. Costs: a runtime dependency or larger
+  self-contained binaries, tens of milliseconds of JIT startup (NativeAOT closes most of it),
+  UTF-16 strings that do not match Emerald's UTF-8 grapheme strings, and a heavy WebAssembly story
+  if a browser playground is ever wanted.
+- **Decide by prototype.** The compiler plan's first decision is .NET versus Rust with Cranelift,
+  made by compiling the same small subset (functions, structs, lists, a closure) with both,
+  running its conformance cases, and comparing binary size, startup, debugging, and how much
+  runtime code each needs.
+- **The conformance suite is the contract.** A replacement backend is acceptable only if it
+  passes the same `conformance/` files unchanged (19.6, 23). Keep every case backend-neutral:
+  no dependence on interpreter internals, thread identity, exact timing, or exact recursion
+  depth.
+- **Constraints the current design already gives a compiler:** value semantics are a semantic
+  guarantee, not a physical copy; hash values and iteration order are unspecified except where
+  the spec fixes them; tasks share no `var`. Things a compiler must replace: checker results keyed
+  by syntax-tree node, natives routed by string key, and the prelude compiled at build time.
+
+## Longer term: "batteries included" (the user's direction, 2026-10-01)
+
+The user wants Emerald to be batteries included for students and hobbyists: console UI, graphics,
+simple game development, simple web development, a simple GUI framework, and similar. The goal is
+not to own any of those domains; it is that a student or hobbyist can make something they care about
+without leaving the language or hunting for libraries. Nothing is designed yet, and none of it is
+scheduled. The website's homepage and Roadmap page do not mention it yet; add it when the user
+says it is time (the user wants it eventually, not now).
+
+Already in place: Console styling, tables, panels, and prompts (the console UI start), tasks and
+channels, HTTP client, JSON and CSV. Open questions for when this is planned, raised by Claude and
+not yet discussed:
+- **What ships in the standard library and what is a package.** The package manager (roadmap item
+  5) decides whether graphics, games, and GUI are built in or installable, and keeps the core small.
+- **The backend choice (roadmap item 3) shapes the rest.** Graphics, windows, and input come from
+  the platform: the chosen backend decides which native libraries are easy to reach (.NET has GUI
+  and graphics toolkits; Cranelift would mean binding to C libraries such as SDL), and whether
+  Emerald runs the same on Windows, macOS, and Linux.
+- **Web development builds on networking** (roadmap item 4): the HTTP server comes first.
+- **Games need a fast loop**, which the interpreter may not give; the native compiler matters here.
+- **Every addition keeps the language's rule:** one clear way, taught slowly, with errors that
+  explain themselves. Each domain would get a small, deliberate API and learner-written docs, like
+  the existing pages.
+
 ## Deferred
 
 - Taking `Trait.method` as a value remains rejected.
@@ -320,6 +382,35 @@ on the roadmap.
 
 ## Active rough edges
 
+- Found while writing the website's language pages (2026-09-30, in 0.6.0), each a spec promise
+  the implementation does not keep:
+  - An orphaned `##` documentation comment gets no warning (3.2 says it does):
+    `## This describes nothing.` followed by a blank line and `print("x")` checks clean.
+  - Casing gets no style warning (3.3 says violations are warnings): `var highScore = 10` checks
+    clean, and neither does `func is_ready(): Bool`, whose name lacks the `?` 3.3 expects.
+  - A name ending in `?` with a non-`Bool` result is accepted, though 3.3 calls it a type error:
+    `func ready?(): Int { return 1 }` checks clean.
+  - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
+  - Operators from other languages get generic parse errors, though `!` already gets a good one
+    ("Write `not` for negation"). Give each a hint: `true && false` and `||` ("this character
+    does not belong here", twice) should suggest `and`/`or`; `c++` and `c--` should suggest
+    `c += 1`; `true ? 1 : 2` should suggest `if c then a else b`; and `if x = 5 {` ("expected `{`
+    ... found =") should suggest `==`.
+  - A file reaching a private `_name` declared in another file of the same folder gets
+    "[E1001] `_catalog` is not defined" ("check the spelling"), while the qualified form
+    (`Plants._catalog`) already says "`_catalog` is private to the file that declares it". Say
+    the same for the unqualified form, naming the declaring file.
+  - `x ?? 0` (the C# and Swift spelling) gets "expected `)` to close this call, found ?"; suggest
+    `.or(0)`. And `break` in a one-line lambda (`[1].each { x => break }`) gives a parse error
+    plus a "this `}` does not close anything" cascade, while the block-bodied form already says
+    "`break` can only be used inside a loop".
+  - A type with a trait's methods but no `with Trait` gets only "this is Square, but `s` was declared
+    as Shape"; say that `Square` doesn't adopt `Shape` and suggest `with Shape`. And a nested type
+    written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a
+    type ... declare the struct in this project"; suggest `Pizza.Size`.
+- Feature ideas from the language pages (not spec gaps): an enum has no list of its values
+  (`Light.values`) and no way to turn text into a value (`"red"` into `Light.red`). Both are common
+  needs, such as a menu of choices or reading a saved setting.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
   `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
   `EncodingError`, `DeadlockError`, and `RecursionError`.

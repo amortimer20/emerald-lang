@@ -1427,7 +1427,7 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
             .{name},
             try std.fmt.allocPrint(
                 self.arena,
-                "Write the name you want from it, such as `{s}.area`, or put `using {s}` at the top of this file to reach its names directly.",
+                "Write `{s}.` before the name you want from it, or put `using {s}` at the top of this file to reach its names directly.",
                 .{ name, name },
             ),
         );
