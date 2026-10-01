@@ -4181,3 +4181,39 @@ cover CRLF behavior. The full gate passed with pinned Zig 0.16.0 and `-j1`:
 531 Debug and 531 ReleaseSafe tests, native build, documentation examples,
 changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
 with prefixes outside `zig-out`.
+
+## Bug-fix batch, items 14, 16, 18, and 19: verified documentation findings, 2026-10-01
+
+Item 14 did not reproduce against the built current-main binary. This program:
+
+```emerald
+Base64.unknown("text")
+Digest.unknown("text")
+File.unknown("text")
+Directory.unknown("text")
+Path.unknown("text")
+```
+
+produced five checker diagnostics that each say the relevant namespace has no
+type-level member named `unknown`; none reached native dispatch, fell through,
+or crashed. No routing change was warranted.
+
+Item 16 reproduced by comparing the HTTP reference page with `Http.zig`: a
+body-bearing redirect is returned without being followed, while `strict` still
+raises only for its 4xx or 5xx status. The page now says that rather than
+claiming strict mode raises for every redirect.
+
+Item 18 reproduced by comparing rewrite-context 18.5 with `Lsp.onCompletion`:
+completion already handles value members, type-qualified members, namespaces,
+and bare names. Section 18.5 now says so, while retaining the handoff's
+narrower warning that native built-in members are still shallow.
+
+Item 19 did not reproduce. A case-insensitive search of this handoff for
+`Console`, `design`, and `widget` found the implementation status and the
+historical design/review notes consistently describe tables, panels, and
+prompts as already implemented. No text change was appropriate for that item.
+
+This documentation-only commit passed the full local gate with pinned Zig 0.16.0
+and `-j1`: 531 Debug and 531 ReleaseSafe tests, native build, 24 documentation
+examples with 135 linked conformance files, whitespace, and Windows x86_64/macOS
+aarch64 cross-builds with prefixes outside `zig-out`.

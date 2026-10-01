@@ -56,8 +56,8 @@ completed response always returns and `response.ok?()` tells whether its status 
 299. Network, certificate, timeout, and response-size failures still raise in either mode.
 
 `get` and `delete` follow up to five redirects and expose the final address. A request with a
-body is not resent to a new address: its redirect response is returned, or raises in strict
-mode.
+body is not resent to a new address: its redirect response is returned unchanged. Strict mode
+still raises only when that response has a 4xx or 5xx status.
 
 ```emerald
 const response = Http.get("https://api.example.com/weather", query: ["city": "São Paulo"])

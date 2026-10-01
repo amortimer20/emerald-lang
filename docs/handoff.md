@@ -191,12 +191,13 @@ key-building, storage-path, runtime-error, and Zig allocator regressions. Callba
 reads see the original list; attempted writes raise `RuntimeError`; independent
 value copies remain changeable. Existing `each`/`reduce` snapshot behavior is
 preserved. Item 13 passed the full gate; the documentation check executed 24
-examples and confirmed 135 conformance links. Items 14–19 remain; item 14's
-read-only main probe has begun. Item 15 shares Scheduler's reservation-sized
+examples and confirmed 135 conformance links. Items 14 and 19 did not reproduce:
+unknown native-namespace members are rejected by checking, and the handoff has no
+Console-widget status contradiction. Item 15 shares Scheduler's reservation-sized
 thread helper with the three main interpreter pipeline threads; it reproduces
 main's 1,049 MiB baseline commit from Windows CI and adds a CI assertion that
-the repaired one-task baseline is at most 128 MiB. The local full gate passes;
-Windows CI must still demonstrate the repaired measurement after the commit.
+the repaired one-task baseline is at most 128 MiB. The local full gate and
+Windows CI are green: the one-task baseline is 22.67 MiB of commit.
 Item 17 is complete: `File.read_lines` and `FileHandle.read_line` remove CRLF's
 carriage return like `String.lines`; its fix also carries forward current main's
 empty/final-blank-line splitter correction. The full local gate passed. Probe
@@ -255,9 +256,9 @@ building" notes record its decisions.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
-- **Bug-fix batch:** items 1–19, implemented by Codex on `codex/bug-fixes`, one validated
-  commit per item or tightly related pair. Current progress is above; individual
-  reproduction programs, findings, and validation go in the journal.
+- **Bug-fix batch:** all items 1–19 are accounted for on `codex/bug-fixes`, with one
+  validated commit per item or tightly related pair. Items 14 and 19 did not reproduce;
+  individual reproduction programs, findings, and validation are in the journal.
 - **REPL replay:** a separate plan by Claude; not part of the bug-fix batch.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the

@@ -3734,9 +3734,9 @@ cursor, rather than a separate word-boundary guess of its own. Completion needed
 different strategy from the rest: a broken construct like `foo.` fails to *parse* at all,
 discarding its whole enclosing statement, so a completion request patches a throwaway copy of
 the buffer (`foo.` becomes a synthetic call) rather than changing the shared parser's recovery
-for every caller. It is scoped to a value's own member access; a type-qualified base's own
-members (10.4), namespace-level completion, and a bare identifier with no preceding dot
-remain open.
+for every caller. Completion covers a value's own members, a type-qualified base's own
+members (10.4), namespace-level members, and bare identifiers. Native built-in type and
+namespace members remain shallow; the handoff records that editor limitation precisely.
 
 Quick fixes correspond to known diagnostics and deterministic edits, and are not yet
 implemented. The official VS Code extension comes first, while the server remains
