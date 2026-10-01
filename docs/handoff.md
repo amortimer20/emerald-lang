@@ -317,6 +317,30 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   the spec fixes them; tasks share no `var`. Things a compiler must replace: checker results keyed
   by syntax-tree node, natives routed by string key, and the prelude compiled at build time.
 
+## Longer term: "batteries included" (the user's direction, 2026-10-01)
+
+The user wants Emerald to be batteries included for students and hobbyists: console UI, graphics,
+simple game development, simple web development, a simple GUI framework, and similar. The goal is
+not to own any of those domains; it is that a student or hobbyist can make something they care about
+without leaving the language or hunting for libraries. Nothing is designed yet, and none of it is
+scheduled. The website's homepage and Roadmap page do not mention it yet; add it when the user
+says it is time (the user wants it eventually, not now).
+
+Already in place: Console styling, tables, panels, and prompts (the console UI start), tasks and
+channels, HTTP client, JSON and CSV. Open questions for when this is planned, raised by Claude and
+not yet discussed:
+- **What ships in the standard library and what is a package.** The package manager (roadmap item
+  5) decides whether graphics, games, and GUI are built in or installable, and keeps the core small.
+- **The backend choice (roadmap item 3) shapes the rest.** Graphics, windows, and input come from
+  the platform: the chosen backend decides which native libraries are easy to reach (.NET has GUI
+  and graphics toolkits; Cranelift would mean binding to C libraries such as SDL), and whether
+  Emerald runs the same on Windows, macOS, and Linux.
+- **Web development builds on networking** (roadmap item 4): the HTTP server comes first.
+- **Games need a fast loop**, which the interpreter may not give; the native compiler matters here.
+- **Every addition keeps the language's rule:** one clear way, taught slowly, with errors that
+  explain themselves. Each domain would get a small, deliberate API and learner-written docs, like
+  the existing pages.
+
 ## Deferred
 
 - Taking `Trait.method` as a value remains rejected.
