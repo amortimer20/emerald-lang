@@ -249,18 +249,29 @@ Before each release, refresh the time-zone data with `python3 tools/update-tzdat
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than
 on the roadmap.
 
-## Roadmap order (agreed 2026-09-30)
+## Roadmap order (agreed 2026-09-30, QA iteration added 2026-10-01)
 
 1. The current queue: the bug-fix batch, the REPL milestone, and editor intelligence.
-2. **Choose the backend** by prototype (below). Moved ahead of the other big features because
+2. **A QA iteration** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
+   use, before more is built on top. The user's first finding: Console tables render poorly (seen
+   on the website's Console page; the cause is not yet investigated, so check the terminal
+   output and the website's rendering separately). Also carry in the rough edges recorded under
+   "Active rough edges" and the diagnostics that still need hints, plus two found while
+   writing the Console and Tasks pages: a `Console.table` whose `header:` has a different width than
+   its rows reports the header as "row 1" ("row 2 has 2 cells, but row 1 has 1"), and
+   `Channel[Int?]` reports a redundant "needs a message type" error after the correct one. The
+   website's pages are checked against a real build by `scripts/check-outputs.py` in
+   `emerald-website`; rerun it against the build under test. Scope the pass with the user when it
+   starts, and finish it before the 0.7.0 release.
+3. **Choose the backend** by prototype (below). Moved ahead of the other big features because
    multicore and the 1.0 compiler both depend on it.
-3. **Networking** (sockets and an HTTP server, the base for a web framework). Backend-neutral at the
+4. **Networking** (sockets and an HTTP server, the base for a web framework). Backend-neutral at the
    API and conformance level, and tasks already give each connection its own task, so it can run
    in parallel with the backend prototypes.
-4. **The package manager** (`emerald.toml` manifest, versions, resolution, fetching, how `import`
+5. **The package manager** (`emerald.toml` manifest, versions, resolution, fetching, how `import`
    finds a package). Backend-agnostic, since packages are Emerald source; weigh NuGet interop if
    .NET wins.
-5. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
+6. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
    or per-worker heaps and a thread-safe collector, most of which .NET would give for free and
    Cranelift would make Emerald write itself. Its language rules are already settled (tasks share
    no `var`; values only cross), with two gaps recorded in the concurrency plan.
