@@ -4333,12 +4333,13 @@ fn deinitFileWriters(self: *Interpreter) void {
 }
 
 fn fileLines(self: *Interpreter, bytes: []const u8) Error!Value {
+    // Every line break ends a line, and text after the last one is a final line of its own, so a
+    // trailing break adds no empty line. An empty file therefore has no lines at all.
     const count = if (bytes.len == 0) 0 else std.mem.count(u8, bytes, "\n") + @intFromBool(bytes[bytes.len - 1] != '\n');
     const list = try self.heap.createList(.string, count);
     var pieces = std.mem.splitScalar(u8, bytes, '\n');
-    while (pieces.next()) |piece| {
-        if (piece.len == 0 and pieces.rest().len == 0 and bytes.len > 0 and bytes[bytes.len - 1] == '\n') break;
-        list.items.appendAssumeCapacity(try self.heap.copyText(piece));
+    for (0..count) |_| {
+        list.items.appendAssumeCapacity(try self.heap.copyText(pieces.next().?));
     }
     return .{ .data = .{ .list = list } };
 }
