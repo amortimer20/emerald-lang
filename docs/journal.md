@@ -4076,3 +4076,63 @@ gate then passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests,
 native build, documentation examples (24 executed, 131 linked conformance cases),
 changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
 outside `zig-out`.
+
+## Bug-fix batch, item 13: callback-safe list operations, 2026-10-01
+
+Reproduced on the separately built main binary (`4c51a6c`):
+
+```emerald
+var items: List[Item] = []
+
+class Item with Equatable {
+    const id: Int
+
+    @override
+    func equals(other: Item): Bool {
+        for n in 0..<100 {
+            items.append(Item(n))
+        }
+        return self.id == other.id
+    }
+}
+
+items.append(Item(1))
+items.append(Item(2))
+items.remove(Item(9999))
+print(items.count)
+```
+
+It aborts with `switch on corrupt value` in Value.equals, reached from
+Interpreter.mutateList's remove loop. A second probe imported an untouched archive
+of main's source and called emerald.run with std.testing.allocator in a filtered
+Zig Debug test. It reproduces the same panic and abort; no library implementation
+was changed for either probe. The callback reallocates the ArrayList that the
+outer loop is still iterating.
+
+The user approved a mutation-only guard: reads must see the original list,
+mutation must raise catchable RuntimeError naming the list and method, and value
+copies must remain independent. Unlike the changing-struct guard, this leaves the
+receiver available for reads. The implementation protects bindings or shared
+class fields, checks writes before COW/assignment, and prepares changing callback
+operations in scratch storage before a single successful publication. Removal
+and deduplication decisions finish before compaction, so raised callbacks leave
+scratch ownership valid too. Guard entries are shared across tasks under the
+baton and can be removed out of order if callbacks yield.
+
+Focused cases cover equality, ordering, key-building, all list mutation routes,
+local/module bindings, nested functions, indices, class aliases, independently
+changed value copies, and failures after earlier matching or sorting decisions.
+A Zig test repeats the reallocating class-equality reproduction with the testing
+allocator and verifies recovery. Golden files were read manually. The baseline
+storage-path case fails by observing intermediate changed data.
+
+The first full Debug gate found that guarding ordinary traversal callbacks was
+too broad: existing Zig and conformance tests explicitly allow each/reduce to
+change their source while traversing a snapshot. Those guards were removed;
+the new restriction applies to equality/hashing/ordering operations and remove_if,
+not ordinary traversal. A later test-only constructor call was corrected to
+Random(1), matching its existing required seed. The complete gate passed with
+pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build,
+documentation examples (24 executed, 135 conformance links), changed-Zig
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds with
+prefixes outside `zig-out`.

@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-30. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-01. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -178,10 +178,19 @@ APIs and a changing trait-default receiver; its fixes also passed the full gate.
 Item 9's shared prelude-name display fix also passed the full gate.
 Item 10's generated-constructor explanation also passed the full gate.
 Item 11's parser recovery fix also passed the full gate: failed expressions no
-longer consume their enclosing body's closing brace. The user now wants one item
-per turn. Item 12's rejection of native Math function values passed the full gate.
-Items 13–19 remain; do not start item 13 without the user's
-go-ahead.
+longer consume their enclosing body's closing brace. Item 12's rejection of native
+Math function values passed the full gate. The user has now authorized items 13–19
+as a larger batch, still with separate validated commits.
+Item 13 reproduces on main `4c51a6c`, both in the baseline binary and a separate
+Debug probe using `std.testing.allocator`: an equals callback appending to the
+searched list makes `remove` panic on freed storage. The accepted mutation-only
+guard and snapshot publication are implemented, with focused equality, ordering,
+key-building, storage-path, runtime-error, and Zig allocator regressions. Callback
+reads see the original list; attempted writes raise `RuntimeError`; independent
+value copies remain changeable. Existing `each`/`reduce` snapshot behavior is
+preserved. Item 13 passed the full gate; the documentation check executed 24
+examples and confirmed 135 conformance links. Items 14–19 remain; item 14's
+read-only main probe has begun. Probe details are in the journal.
 The REPL replay bug remains
 explicitly excluded and belongs to Claude's separate plan.
 
@@ -226,6 +235,11 @@ building" notes record its decisions.
 - Native Math functions cannot be stored as values; diagnostics suggest calling
   them or wrapping their calls in blocks. Math constants and project functions
   remain usable as values.
+- List equality, hashing, and ordering callbacks may read their original list,
+  but attempting to change it raises a catchable `RuntimeError` rather than
+  accessing freed storage. Changing operations publish only a finished result;
+  failed callbacks leave the list unchanged. Independent value copies remain
+  changeable; ordinary `each`/`reduce` snapshot semantics are unchanged.
 
 The open pieces of work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.

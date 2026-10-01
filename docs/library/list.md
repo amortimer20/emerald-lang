@@ -12,6 +12,27 @@ slicing,
 value semantics, and the other `conformance/run/list-*.em` files cited per section. Every
 example on this page was re-run against the built binary while writing it.
 
+## Equality and ordering callbacks
+
+An `equals`, `hash`, or `compare` callback used by a list method may read the list,
+but cannot change the list the method is using. This also applies to `remove_if`
+and the key-producing blocks of `sort_by`, `min_by`, `max_by`, `unique_by`,
+`group_by`, `associate`, and `associate_by`. Reads see the original list, not a
+partly sorted or partly removed result. Changing methods publish their result
+only after all callbacks succeed; if a callback raises, the list is unchanged.
+
+Attempting to change that list raises a catchable `RuntimeError` naming the list
+and the active method. This includes indexed assignment, calls through class
+aliases, and writes made by a function the callback calls. A separate list value
+copy may be changed independently. Copy first, or collect changes and apply them
+after the operation. Ordinary traversal blocks such as `each` and `reduce` keep
+their existing snapshot behavior and may change their source binding.
+
+Run the focused [equality](../../conformance/run/list-callback-equality.em),
+[ordering](../../conformance/run/list-callback-ordering.em),
+[key-building](../../conformance/run/list-callback-hashing.em), and
+[storage-path](../../conformance/run/list-callback-paths.em) examples.
+
 ## Size and properties
 
 ## count -> Int

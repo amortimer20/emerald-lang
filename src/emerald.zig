@@ -3315,6 +3315,34 @@ test "a block traverses the list as it was, even when the block changes it" {
     );
 }
 
+test "list equality callbacks reject reallocating the receiver without changing it" {
+    try expectOutput(
+        \\var items: List[Item] = []
+        \\class Item with Equatable {
+        \\    const id: Int
+        \\    @override
+        \\    func equals(other: Item): Bool {
+        \\        assert(items.count == 2 and items[0].id == 1)
+        \\        for n in 0..<100 {
+        \\            items.append(Item(n))
+        \\        }
+        \\        return self.id == other.id
+        \\    }
+        \\}
+        \\items = [Item(1), Item(2)]
+        \\try {
+        \\    items.remove(Item(9999))
+        \\}
+        \\catch error: RuntimeError {
+        \\    print(error.message)
+        \\}
+        \\print(items.map { item => item.id })
+        \\items.append(Item(3))
+        \\print(items.count)
+        \\
+    , "a callback cannot change `items` while `remove` is using it\n[1, 2]\n3\n");
+}
+
 test "section 7.5: a named function is a value" {
     const program =
         \\func triple(value: Int): Int {
