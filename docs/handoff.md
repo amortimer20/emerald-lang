@@ -442,6 +442,11 @@ not yet discussed:
     as Shape"; say that `Square` doesn't adopt `Shape` and suggest `with Shape`. And a nested type
     written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a
     type ... declare the struct in this project"; suggest `Pizza.Size`.
+- An idea the user will consider later (2026-10-01; not planned, and nothing changes until they
+  decide): let a trailing block in an `if`, `while`, `for`, or `case` header work without the
+  parentheses 7.4 requires, as in `if items.any? { item => item > 1 } {`. Every lambda has `=>`, even
+  with no parameters, and a body never starts with parameters followed by `=>`, so a short
+  lookahead after the `{` tells a block argument from the body. Parentheses would stay allowed.
 - Feature ideas from the language pages (not spec gaps): an enum has no list of its values
   (`Light.values`) and no way to turn text into a value (`"red"` into `Light.red`). Both are common
   needs, such as a menu of choices or reading a saved setting.
