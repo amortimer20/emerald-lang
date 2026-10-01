@@ -283,6 +283,52 @@ fn sameLineContinuations(place: []const u8, path: []const u8, text: []const u8, 
     return count;
 }
 
+// Even deliberately non-canonical source must remain valid after formatting.
+// Walk individual files so project members receive the same protection.
+test "formatted run programs still parse" {
+    const gpa = testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var root = try std.Io.Dir.cwd().openDir(io, build_options.conformance_dir, .{});
+    defer root.close(io);
+    var dir = try root.openDir(io, "run", .{ .iterate = true });
+    defer dir.close(io);
+    var walker = try dir.walk(gpa);
+    defer walker.deinit();
+
+    var problems: usize = 0;
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".em")) continue;
+        const text = try dir.readFileAlloc(io, entry.path, gpa, .limited(Source.max_bytes));
+        defer gpa.free(text);
+        var source = try Source.init(gpa, entry.path, text);
+        defer source.deinit(gpa);
+        var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+        const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+        var report = try emerald.formatProject(gpa, &project);
+        defer report.deinit();
+        if (report.diagnostics.len != 0) {
+            std.debug.print("\nrun/{s}: could not format the original program\n", .{entry.path});
+            problems += 1;
+            continue;
+        }
+        var formatted = try Source.init(gpa, entry.path, report.files[0].text);
+        defer formatted.deinit(gpa);
+        var formatted_files = [_]emerald.Project.File{.{ .source = formatted, .namespace = "", .entry = true }};
+        const formatted_project: emerald.Project = .{ .files = &formatted_files, .entry = 0, .bad_directories = &.{} };
+        // Reuse the frontend's large-stack path rather than parsing a deep
+        // regression program on the test runner's host-chosen stack.
+        var reparsed = try emerald.formatProject(gpa, &formatted_project);
+        defer reparsed.deinit();
+        if (!reparsed.ok()) {
+            std.debug.print("\nrun/{s}: formatted output does not parse:\n{s}\n", .{ entry.path, formatted.text });
+            problems += 1;
+        }
+    }
+    if (problems != 0) return error.FormattedRunDidNotParse;
+}
+
 // Examples are what a reader copies, so each must already be exactly as the
 // formatter writes it.
 test "examples are formatted" {

@@ -2656,11 +2656,6 @@ fn forgetNarrowing(self: *Checker, name: []const u8) void {
 /// The type of each value a `for` loop visits. Only ranges so far, and a range
 /// counts whole numbers.
 fn typeOfIterable(self: *Checker, iterable: *const Ast.Expression) Error!Type {
-    if (isCounting(iterable)) {
-        try self.checkCounting(iterable);
-        return .int;
-    }
-
     const actual = try self.typeOf(iterable);
     if (actual.kind == .invalid) return .invalid;
     if (!try self.requirePresent(actual, iterable, null)) return .invalid;
@@ -2716,7 +2711,7 @@ fn countingAdapter(name: []const u8) bool {
 /// Types every part of a counting expression and reports what can be seen
 /// from the source alone: a literal range or `down_to` that can only be empty,
 /// a literal step below 1, and a second step.
-fn checkCounting(self: *Checker, expression: *const Ast.Expression) Error!void {
+fn checkCounting(self: *Checker, expression: *const Ast.Expression, checked_base: ?Type) Error!void {
     if (expression.data == .range) {
         const range = expression.data.range;
         try self.requireCountingInt(range.start);
@@ -2735,17 +2730,17 @@ fn checkCounting(self: *Checker, expression: *const Ast.Expression) Error!void {
             "Write it as in `10.down_to(1)`, `(0..10).step(2)`, or `(1..5).reverse()`.",
         );
         try self.typeArguments(call.arguments);
-        if (!countingStart(member.name)) try self.checkCounting(member.base);
+        if (checked_base == null and !countingStart(member.name)) try self.checkCounting(member.base, null);
         return;
     }
 
     if (countingStart(member.name)) {
-        try self.requireCountingInt(member.base);
+        if (checked_base) |base| try self.requireCountingType(base, member.base) else try self.requireCountingInt(member.base);
         try self.requireCountingInt(call.arguments[0]);
         return self.rejectContradictingLiteralCount(expression, member, call.arguments[0]);
     }
 
-    try self.checkCounting(member.base);
+    if (checked_base == null) try self.checkCounting(member.base, null);
     if (std.mem.eql(u8, member.name, "reverse")) return;
 
     // `step`.
@@ -2776,6 +2771,10 @@ fn hasStep(expression: *const Ast.Expression) bool {
 
 fn requireCountingInt(self: *Checker, expression: *const Ast.Expression) Error!void {
     const actual = try self.typeOf(expression);
+    return self.requireCountingType(actual, expression);
+}
+
+fn requireCountingType(self: *Checker, actual: Type, expression: *const Ast.Expression) Error!void {
     if (actual.kind == .int or actual.kind == .invalid) return;
     try self.report(
         expression.span,
@@ -5775,7 +5774,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
             self.typeOfQualified(expression, reference)
         else
             self.typeOfMember(expression, member),
-        .range => self.typeOfCountingValue(expression),
+        .range => self.typeOfCountingValue(expression, null),
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
         .dictionary_literal => self.typeOfDictionary(expression, null),
@@ -5788,12 +5787,18 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
 /// no type that can be written describes that, so they can only be called.
 fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
     if (!self.declarations.contains(reference.key)) {
+        // An explicitly qualified built-in value needs a qualified call in
+        // its fix: bare `print` may be the program's own function (14.2).
+        const shown = if (expression.data == .member and Resolver.builtinFunctionName(reference.key) != null)
+            reference.key
+        else
+            reference.display;
         try self.reportWithHelp(
             expression.span,
             "`{s}` is built in, and built-in functions cannot be used as values",
-            .{reference.display},
+            .{shown},
             "Call it with parentheses, as in `{s}(...)`, or wrap it in a lambda such as `{{ value => {s}(value) }}`.",
-            .{ reference.display, reference.display },
+            .{ shown, shown },
         );
         return .invalid;
     }
@@ -6458,6 +6463,19 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         );
         return .invalid;
     }
+    if (Resolver.mathFunction(reference.key) != null) {
+        // Keep the written path in the fix: an explicit prelude path or a
+        // `using` alias may be needed when the project owns `Math` (14.2).
+        const written = self.files[self.file].source.text[expression.span.start..expression.span.end];
+        try self.reportWithHelp(
+            expression.span,
+            "`{s}` is a built-in function, so it has to be called",
+            .{reference.display},
+            "Call it with numbers, as in `{s}(...)`, or wrap the call in a block.",
+            .{written},
+        );
+        return .invalid;
+    }
     // Sections 15.9 and 15.11: typed JSON and CSV calls are checked specially at
     // each call, which no function value could carry.
     if (isJsonEncodeKey(reference.key) or isCsvEncodeKey(reference.key) or isJsonDecodeKey(reference.key) or isCsvDecodeKey(reference.key) or isConsoleTableKey(reference.key)) {
@@ -6822,6 +6840,14 @@ fn typeOfMethodCall(
     if (base.kind == .invalid) {
         try self.typeArguments(call.arguments);
         return .invalid;
+    }
+    // Counting spellings are native operations only after resolving the
+    // receiver. A declared type owns its members, whatever their names.
+    if (base.kind != .struct_value) {
+        if (isCountingBlock(call)) return self.typeOfCountingBlock(expression, call, base);
+        if (countingStart(member.name) or (base.kind == .range and isCounting(expression))) {
+            return self.typeOfCountingValue(expression, base);
+        }
     }
     if (base.kind != .struct_value or base.optional) {
         // Section 15.5's `to_string(base:)` and `format(...)` are the one
@@ -8683,12 +8709,12 @@ fn familiarListName(name: []const u8) ?[]const u8 {
 }
 
 /// The counting syntax produces an ordinary immutable Range value.
-fn typeOfCountingValue(self: *Checker, expression: *const Ast.Expression) Error!Type {
-    try self.checkCounting(expression);
+fn typeOfCountingValue(self: *Checker, expression: *const Ast.Expression, checked_base: ?Type) Error!Type {
+    try self.checkCounting(expression, checked_base);
     return .range;
 }
 
-fn typeOfCountingBlock(self: *Checker, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Type {
+fn typeOfCountingBlock(self: *Checker, expression: *const Ast.Expression, call: Ast.Expression.Call, base: Type) Error!Type {
     const member = call.callee.data.member;
     const times = std.mem.eql(u8, member.name, "times");
     const wanted: usize = if (times) 1 else 2;
@@ -8704,7 +8730,7 @@ fn typeOfCountingBlock(self: *Checker, expression: *const Ast.Expression, call: 
         return .invalid;
     }
 
-    try self.requireCountingInt(member.base);
+    try self.requireCountingType(base, member.base);
     if (!times) {
         try self.requireCountingInt(call.arguments[0]);
         try self.rejectContradictingLiteralCount(expression, member, call.arguments[0]);
@@ -9490,8 +9516,6 @@ fn typeOfCall(
     call: Ast.Expression.Call,
 ) Error!Type {
     if (try self.isChannelCall(call)) return self.typeOfChannelCall(expression, call, null);
-    if (isCountingBlock(call)) return self.typeOfCountingBlock(expression, call);
-    if (isCounting(expression)) return self.typeOfCountingValue(expression);
     if (isSuper(call.callee)) return self.typeOfSuperCall(expression, call);
 
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
@@ -9763,6 +9787,7 @@ fn typeOfTaskBlockCall(self: *Checker, call: Ast.Expression.Call, name: []const 
 
 const JsonEncodeIssue = struct {
     type: Type,
+    own_constructor: bool = false,
     /// A stored-field path, when this refusal came from inside a struct. The
     /// field is the useful correction: it points at the declaration the
     /// programmer changes rather than at an opaque call site.
@@ -9790,7 +9815,9 @@ fn typeOfTypedEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8
     try self.checkArguments(call, name, parameters);
     if (problem != .none) return .string;
 
-    const value = try self.typeOf(call.arguments[bound[0].?]);
+    // Argument checking recorded the inferred type. Checking it again would
+    // repeat its diagnostics and lose any context supplied to literals.
+    const value = self.expression_types.get(call.arguments[bound[0].?]).?.type;
     if (value.kind == .invalid) return .string;
     const issue = if (csv) try self.csvEncodeIssue(value, "") else try self.jsonEncodeIssue(value, "");
     if (issue) |found_issue| {
@@ -9849,10 +9876,7 @@ fn typeOfConsoleTable(self: *Checker, call: Ast.Expression.Call, name: []const u
     parameters.types = types;
     try self.checkArguments(call, name, parameters);
     if (problem != .none) return .string;
-    const value = if (text_literal)
-        self.expression_types.get(call.arguments[bound[0].?]).?.type
-    else
-        try self.typeOf(call.arguments[bound[0].?]);
+    const value = self.expression_types.get(call.arguments[bound[0].?]).?.type;
     if (value.kind == .invalid) return .string;
     const text_rows = value.kind == .list and value.element.?.kind == .list and value.element.?.element.?.kind == .string;
     if (text_rows) return .string;
@@ -9909,7 +9933,23 @@ fn typeOfTypedDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8
     if (target.kind == .invalid) return .invalid;
     const issue = if (csv) try self.csvDecodeIssue(target, "") else try self.jsonDecodeIssue(target, "");
     if (issue) |found_issue| {
-        if (found_issue.field_path.len > 0) {
+        if (found_issue.own_constructor) {
+            if (found_issue.field_path.len > 0) {
+                try self.report(
+                    target_expression.span,
+                    "field `{s}` of {f} cannot be read from JSON because {f} declares its own constructor",
+                    .{ found_issue.field_path, target, found_issue.type },
+                    "JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.",
+                );
+            } else {
+                try self.report(
+                    target_expression.span,
+                    "{f} declares its own constructor, so it cannot be read from JSON",
+                    .{found_issue.type},
+                    "JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.",
+                );
+            }
+        } else if (found_issue.field_path.len > 0) {
             try self.report(
                 target_expression.span,
                 "field `{s}` of {f} cannot be read from {s} because it is {f}",
@@ -9978,7 +10018,8 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
         .struct_value => {
             const user = value.user.?;
             if (user.enumeration or jsonTextualType(user.name)) return null;
-            if (user.class or user.trait or self.constructors.contains(user.name)) return .{ .type = value, .field_path = field_path };
+            if (user.class or user.trait) return .{ .type = value, .field_path = field_path };
+            if (self.constructors.contains(user.name)) return .{ .type = value, .field_path = field_path, .own_constructor = true };
             if (self.jsonVisiting(user.name)) return null;
             try self.json_visiting.append(self.arena, user.name);
             defer _ = self.json_visiting.pop();
@@ -10051,7 +10092,7 @@ fn typeOfBase64(self: *Checker, call: Ast.Expression.Call, name: []const u8, key
     const problem = call_arguments.bind(call, parameters.names, parameters.has_default, bound);
     try self.checkArguments(call, name, parameters);
     if (problem != .none) return .invalid;
-    const value = try self.typeOf(call.arguments[bound[0].?]);
+    const value = self.expression_types.get(call.arguments[bound[0].?]).?.type;
     const encoding = std.mem.eql(u8, key[key.len - "encode".len ..], "encode");
     const wanted: Type = if (encoding) .bytes else .string;
     if (value.kind != .invalid and (value.kind != wanted.kind or value.optional)) {
@@ -10091,14 +10132,13 @@ fn typeOfDigest(self: *Checker, call: Ast.Expression.Call, name: []const u8, key
     var valid = true;
     for (bound) |slot| {
         const argument = call.arguments[slot.?];
-        const value = try self.typeOf(argument);
+        const value = self.expression_types.get(argument).?.type;
         if (value.kind == .invalid) {
             valid = false;
         } else if (value.kind != .bytes or value.optional) {
             valid = false;
             const help = if (value.kind == .string) to_bytes_help else "Pass Bytes to digest.";
-            const shown = key[Resolver.prelude_namespace.len + 1 ..];
-            const method = try std.mem.replaceOwned(u8, self.arena, shown, "::", ".");
+            const method = try Resolver.displayKey(self.arena, key);
             try self.report(argument.span, "{s} takes Bytes, but this is {f}", .{ method, value }, help);
         }
     }
@@ -10464,8 +10504,8 @@ fn typeOfTraitDefaultCall(self: *Checker, expression: *const Ast.Expression, cal
         .arity_help = "Pass the value to run it on first, then the method's own arguments.",
     });
     if (call.arguments.len > 0 and try self.methodChanges(reference.key)) {
-        const first = try self.typeOf(call.arguments[0]);
-        if (!isClass(first)) {
+        const first = self.expression_types.get(call.arguments[0]).?.type;
+        if (first.kind != .invalid and !isClass(first)) {
             try self.reportWithHelp(
                 call.callee.span,
                 "`{s}` changes the value it runs on, so it cannot be called this way yet",

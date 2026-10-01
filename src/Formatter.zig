@@ -528,11 +528,11 @@ const Printer = struct {
         try self.printBlock(f.body);
     }
 
-    /// The condition of `if`/`while`, and the iterable of `for`, are parsed
+    /// The condition of `if`/`while`/`when`, and the iterable of `for`, are parsed
     /// with `Parser.in_control_header` set, so the `{` right after a call
     /// there always opens the statement's body rather than the call's
     /// trailing block (7.4) — a bare, unparenthesized trailing-block call is
-    /// therefore never valid directly in one of these three positions, and
+    /// therefore never valid directly in these header positions, and
     /// reading it back would fail exactly where the body was meant to begin.
     /// Any bracket or parenthesis reopens the possibility beneath it, so only
     /// a header expression that reaches one *without* first crossing into
@@ -644,7 +644,7 @@ const Printer = struct {
             try self.write("when ");
             for (arm.alternatives, 0..) |alternative, i| {
                 if (i > 0) try self.write(", ");
-                try self.printExpr(alternative);
+                try self.printHeaderExpr(alternative);
             }
             try self.printCaseBody(arm.body);
             try self.printTrailingComment(caseBodyEnd(arm.body));

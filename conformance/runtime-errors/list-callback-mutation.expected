@@ -1,0 +1,5 @@
+runtime-errors/list-callback-mutation.em:3:5: a callback cannot change `items` while `remove_if` is using it
+      items.append(item)
+      ^^^^^
+A callback cannot change the list it is being called for; copy it first, or collect the changes and apply them after.
+in a block, called at runtime-errors/list-callback-mutation.em:2:1

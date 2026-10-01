@@ -12,6 +12,27 @@ slicing,
 value semantics, and the other `conformance/run/list-*.em` files cited per section. Every
 example on this page was re-run against the built binary while writing it.
 
+## Equality and ordering callbacks
+
+An `equals`, `hash`, or `compare` callback used by a list method may read the list,
+but cannot change the list the method is using. This also applies to `remove_if`
+and the key-producing blocks of `sort_by`, `min_by`, `max_by`, `unique_by`,
+`group_by`, `associate`, and `associate_by`. Reads see the original list, not a
+partly sorted or partly removed result. Changing methods publish their result
+only after all callbacks succeed; if a callback raises, the list is unchanged.
+
+Attempting to change that list raises a catchable `RuntimeError` naming the list
+and the active method. This includes indexed assignment, calls through class
+aliases, and writes made by a function the callback calls. A separate list value
+copy may be changed independently. Copy first, or collect changes and apply them
+after the operation. Ordinary traversal blocks such as `each` and `reduce` keep
+their existing snapshot behavior and may change their source binding.
+
+Run the focused [equality](../../conformance/run/list-callback-equality.em),
+[ordering](../../conformance/run/list-callback-ordering.em),
+[key-building](../../conformance/run/list-callback-hashing.em), and
+[storage-path](../../conformance/run/list-callback-paths.em) examples.
+
 ## Size and properties
 
 ## count -> Int
@@ -82,6 +103,12 @@ raise. `remove_if` is `reject`'s in-place sibling: it removes every element the 
 accepts, in place, rather than returning a new `List`; index removal remains the distinct
 `remove_at(index)`. `remove_at`, `remove_first`, and `remove_last` return the element they
 removed.
+
+Every changing method, including `remove_if`, preserves other copies of the List.
+A struct method that calls `remove_if` on its field changes that struct and therefore
+cannot be called on a const struct. See
+[`collection-mutation-copies.em`](../../conformance/run/collection-mutation-copies.em) and
+[`remove-if-const-struct.em`](../../conformance/diagnostics/remove-if-const-struct.em).
 
 **Raises**: `remove_at` for an index outside `0..<count`, sharing "Indexing"'s exact message
 above; `insert` for an index outside `0..count` with its own wording

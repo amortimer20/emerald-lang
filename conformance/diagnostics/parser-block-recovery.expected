@@ -1,0 +1,24 @@
+diagnostics/parser-block-recovery.em:3:1: expected an expression, found }
+  }
+  ^
+An expression is a number, a name, or something built from them.
+diagnostics/parser-block-recovery.em:8:5: expected an expression, found }
+      }
+      ^
+An expression is a number, a name, or something built from them.
+diagnostics/parser-block-recovery.em:14:1: expected an expression, found }
+  }
+  ^
+An expression is a number, a name, or something built from them.
+diagnostics/parser-block-recovery.em:18:1: expected an expression, found }
+  }
+  ^
+An expression is a number, a name, or something built from them.
+diagnostics/parser-block-recovery.em:20:1: this `}` does not close anything
+  }
+  ^
+Remove it, or look above for a block that is missing its opening `{`.
+diagnostics/parser-block-recovery.em:22:17: this block is never closed
+  func unclosed() {
+                  ^
+Add the closing `}` that ends it.

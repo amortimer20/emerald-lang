@@ -1,0 +1,16 @@
+diagnostics/math-functions-as-values.em:1:14: `Math.sin` is a built-in function, so it has to be called
+  const sine = Math.sin
+               ^^^^^^^^
+Call it with numbers, as in `Math.sin(...)`, or wrap the call in a block.
+diagnostics/math-functions-as-values.em:2:16: `Math.cos` is a built-in function, so it has to be called
+  const cosine = Emerald.Math.cos
+                 ^^^^^^^^^^^^^^^^
+Call it with numbers, as in `Emerald.Math.cos(...)`, or wrap the call in a block.
+diagnostics/math-functions-as-values.em:3:15: `Math.arc_tan2` is a built-in function, so it has to be called
+  const angle = Math.arc_tan2
+                ^^^^^^^^^^^^^
+Call it with numbers, as in `Math.arc_tan2(...)`, or wrap the call in a block.
+diagnostics/math-functions-as-values.em:4:15: `Program.sleep` is a built-in function, so it has to be called
+  const pause = Program.sleep
+                ^^^^^^^^^^^^^
+Call it with how long to pause, as in `Program.sleep(Duration(seconds: 1))`.

@@ -7,6 +7,8 @@ end-to-end behavioral test for anything a future backend could inherit incorrect
 host. A replacement backend is acceptable only when it passes these same files unchanged.
 
 Run them with `zig build test`. The runner is [`src/conformance.zig`](../src/conformance.zig).
+The test suite also formats and reparses every `.em` file under `run/`, including
+project files, to catch formatting that breaks valid syntax. No cases are excluded.
 
 ## Layout
 

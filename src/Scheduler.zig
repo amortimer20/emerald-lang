@@ -153,7 +153,7 @@ pub const Runtime = struct {
     pub const Job = struct {
         condition: std.Io.Condition = .init,
         status: enum { running, ready, waiting, external, done } = .running,
-        thread: ?TaskThread = null,
+        thread: ?ReservedThread = null,
         runtime: ?*Runtime = null,
         ready_next: ?*Job = null,
         all_next: ?*Job = null,
@@ -247,7 +247,7 @@ pub const Runtime = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         job.* = .{ .status = .ready, .context = context, .run = run, .runtime = self };
-        const thread = try TaskThread.spawn(self, job);
+        const thread = try ReservedThread.spawn(stack_size, Runtime.worker, .{ self, job });
         job.thread = thread;
         job.all_next = self.all.all_next;
         self.all.all_next = job;
@@ -585,7 +585,7 @@ pub const Runtime = struct {
 /// Zig 0.16's Windows spawn passes stack_size as the *commit* size to
 /// NtCreateThreadEx. Reserve the same recursion budget without committing it
 /// up front. Keep this platform detail entirely behind the scheduler seam.
-const TaskThread = struct {
+pub const ReservedThread = struct {
     handle: if (builtin.os.tag == .windows) std.os.windows.HANDLE else std.Thread,
 
     extern "kernel32" fn CreateThread(
@@ -597,22 +597,32 @@ const TaskThread = struct {
         id: ?*u32,
     ) callconv(.winapi) ?std.os.windows.HANDLE;
 
-    fn entry(argument: std.os.windows.LPVOID) callconv(.winapi) u32 {
-        const job: *Runtime.Job = @ptrCast(@alignCast(argument));
-        Runtime.worker(job.runtime.?, job);
-        return 0;
-    }
-
-    fn spawn(runtime: *Runtime, job: *Runtime.Job) std.Thread.SpawnError!TaskThread {
+    /// The task scheduler and the main analysis/interpreter pipeline share
+    /// this reservation rule. Arguments are copied before the caller returns.
+    pub fn spawn(stack_size: usize, comptime function: anytype, arguments: anytype) std.Thread.SpawnError!ReservedThread {
         if (builtin.os.tag == .windows) {
+            const Context = struct {
+                arguments: @TypeOf(arguments),
+
+                fn entry(argument: std.os.windows.LPVOID) callconv(.winapi) u32 {
+                    const context: *@This() = @ptrCast(@alignCast(argument));
+                    const copied = context.arguments;
+                    std.heap.page_allocator.destroy(context);
+                    @call(.auto, function, copied);
+                    return 0;
+                }
+            };
+            const context = try std.heap.page_allocator.create(Context);
+            errdefer std.heap.page_allocator.destroy(context);
+            context.* = .{ .arguments = arguments };
             const stack_size_param_is_a_reservation = 0x00010000;
-            const handle = CreateThread(null, Runtime.stack_size, entry, job, stack_size_param_is_a_reservation, null) orelse return error.SystemResources;
+            const handle = CreateThread(null, stack_size, Context.entry, context, stack_size_param_is_a_reservation, null) orelse return error.SystemResources;
             return .{ .handle = handle };
         }
-        return .{ .handle = try std.Thread.spawn(.{ .stack_size = Runtime.stack_size }, Runtime.worker, .{ runtime, job }) };
+        return .{ .handle = try std.Thread.spawn(.{ .stack_size = stack_size }, function, arguments) };
     }
 
-    fn join(self: TaskThread) void {
+    pub fn join(self: ReservedThread) void {
         if (builtin.os.tag == .windows) {
             const windows = std.os.windows;
             const forever: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
@@ -622,6 +632,18 @@ const TaskThread = struct {
         } else self.handle.join();
     }
 };
+
+test "reserved threads run copied arguments and join with the result visible" {
+    const Probe = struct {
+        fn run(result: *usize, first: usize, second: usize) void {
+            result.* = first + second;
+        }
+    };
+    var result: usize = 0;
+    const thread = try ReservedThread.spawn(1024 * 1024 * 1024, Probe.run, .{ &result, @as(usize, 19), @as(usize, 23) });
+    thread.join();
+    try std.testing.expectEqual(@as(usize, 42), result);
+}
 
 /// One owned reader and one pending line. Stdin's service has process lifetime:
 /// it owns its file reader, buffer, and allocator, never a caller's stack or an

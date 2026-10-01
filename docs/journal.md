@@ -3681,3 +3681,539 @@ deadlock messages naming each wait, and the collector across channels and suspen
 packets of nested lists, 20 runs, none damaged). The `start` hint now names the function the
 program wrote. The main interpreter thread on Windows still commits its 1 GiB stack, as before
 this milestone; reserving it the same way is a small follow-up.
+
+## Bug-fix batch, item 1: collection mutation value semantics, 2026-09-30
+
+Branched from freshly fetched main `4c51a6c` and built that baseline with pinned
+Zig 0.16.0 before reproducing the user's program:
+
+```emerald
+var a = [1, 2, 3, 4]
+var b = a
+a.remove_if { n => n % 2 == 0 }
+print(a, b)
+```
+
+Main printed `[1, 3] [1, 3]`. The new run regression failed on main's assertion that
+`b` remains `[1, 2, 3, 4]`. Main also accepted the new diagnostics program calling
+`box.prune()` on a const struct whose method invokes `self.items.remove_if`.
+
+The native used an evaluated receiver directly, bypassing the place traversal and
+copy-before-change used by the other mutators. Its missing mutation metadata also
+made struct effect inference mistake that method for a read-only method. It now
+evaluates its block through the normal changing-call path and mutates the unique List
+at its actual place; the shared method metadata marks it as changing. No new syntax,
+method signature, or mutation policy was introduced.
+
+Audited all List mutators (`append`, `insert`, `remove`, `remove_all`, `remove_if`,
+`remove_at`, `remove_first`, `remove_last`, `clear`, `reverse!`, `unique!`, `sort!`,
+`shuffle!`), Dict insertion/replacement/removal/merge, and Set add/remove. The other
+natives already use the shared unique-storage path. The regression covers each,
+plus indexed assignment, seeded Random shuffle, nested List paths, and mutation of
+a struct copy. The const-struct diagnostic now rejects `prune`; both new expected
+files were read by hand. Callback reentrancy is the separately requested item 13,
+not claimed resolved by this copy-before-change audit.
+
+The full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe
+tests, native build, documentation examples (24 executed, 128 linked conformance
+cases), changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64
+cross-builds outside `zig-out`. The handoff and release-note list record the fix
+before committing it. Claude's proposed REPL plan landed on main after this branch
+was created; it remains separate from this batch and no REPL code was changed.
+
+## Bug-fix batch, item 2: required case-header grouping, 2026-09-30
+
+Reproduced with the separately built main baseline (`4c51a6c`):
+
+```emerald
+const items = [1, 2]
+case {
+    when (items.any? { item => item > 1 }) {
+        print("yes")
+    }
+}
+```
+
+Main checked this program successfully, then formatted its header as
+`when items.any? { item => item > 1 } {`. Checking that output failed because the
+first brace was read as the arm body. The formatter now applies its existing
+control-header grouping logic to each `when` alternative, rather than printing it
+as an unrestricted expression. Run and format regressions protect the exact program
+and canonical output; their expected files were read by hand.
+
+A new conformance guard formats and reparses every `.em` file under `run/`, including
+all project members. There are no excluded cases. Reparse uses the frontend's own
+large-stack path, so deep regression programs do not depend on the test runner's
+platform-default stack. No new grammar or canonical style was chosen.
+
+The focused program runs and remains formatter-clean. The full required gate passed
+with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build,
+documentation examples (24 executed, 128 linked conformance cases), changed-Zig
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
+`zig-out`.
+
+## Bug-fix batch, items 3 and 4: comment boundaries, 2026-09-30
+
+Both reproduce on the separately built main baseline (`4c51a6c`). Item 3's program:
+
+```emerald
+var x = 1 ## note
+var y = 2
+print(x, y)
+```
+
+Main reports `expected the end of the line, found var` at the second declaration.
+Emitting a documentation token had replaced the lexer's previous code-token kind,
+so the following newline no longer terminated the statement. Documentation tokens
+now leave that continuation state alone. Lexer tests cover termination, operator
+continuation, and grouped continuation; the run regression also covers a commented
+return and prints `1 2`, `3 3`, and `42`.
+
+Item 4's program:
+
+```emerald
+case {
+    when true {
+        print("yes")
+    }
+}
+# This belongs after the case.
+print("done")
+```
+
+Main's formatter moves the comment inside the case's closing brace. The parser had
+included the statement-ending newline in the case's source span, allowing trivia
+starting immediately after that newline to be consumed inside the case. The span
+now ends at the actual closing brace, before consuming the terminator. The format
+regression covers inside, following, and closing-brace comments; main's format check
+fails on it and the fixed binary leaves it unchanged. These closely related fixes
+preserve settled comment semantics, with no new syntax choice. Both expected files
+were read by hand.
+
+The focused programs pass. The full required gate passed with pinned Zig 0.16.0
+and `-j1`: Debug and ReleaseSafe tests, native build, documentation examples
+(24 executed, 128 linked conformance cases), changed-Zig formatting, whitespace,
+and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 5: project Math wins, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with a project:
+
+```emerald
+# main.em
+print(Math.sin(1))
+print(Emerald.Math.sin(1))
+```
+
+```emerald
+# math/functions.em
+func sin(value: Float): Float {
+    return value + 100
+}
+```
+
+Both calls printed `0.8414709848078965`, instead of the project's call printing
+`101.0`. Resolution already selected the project declaration, but its `Math.sin`
+key was identical to the native key and the native checker/interpreter dispatch
+claimed it. Native Math functions and constants now use keys under the reserved
+`Emerald` namespace, distinct from every project key. This fixes the collision at
+its source rather than reordering one call-site dispatch. Ordinary native Math
+signature checking continues to use the same shared Resolver helper.
+
+As expressly requested in item 5, hiding Math uses the usual built-in shadowing
+warning. The rewrite-context's warning list records Math alongside the language's
+own built-ins; standard-library namespace hiding remains otherwise unchanged.
+Run and diagnostic project regressions cover the project's function and constants,
+explicit native qualification, and the warning. Both expected files were read by
+hand. The focused output is `101.0`, `10`, `20`, `project cosine`, `0.0`, `true`,
+`true`. The String-taking project `cos` also ensures the user's signature remains
+usable. Main prints native values for the minimal repro; checking the complete
+regression on main reported no problems, so that check alone did not detect the
+wrong native dispatch.
+
+The full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug and
+ReleaseSafe tests, native build, documentation examples (24 executed, 128 linked
+conformance cases), changed-Zig formatting, whitespace, and Windows x86_64/macOS
+aarch64 cross-builds outside `zig-out`. Items 1–4 were pushed as a validated
+checkpoint on `codex/bug-fixes`; no merge was performed.
+
+## Bug-fix batch, item 6: counting-shaped user methods, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`):
+
+```emerald
+class Counter {
+    func times(block: func(Int)) {
+        block(42)
+    }
+}
+Counter().times { number => print(number) }
+```
+
+Main reports `counting works with whole numbers, but this is Counter`. The checker
+and interpreter both selected counting by spelling before resolving the receiver
+or method. Counting recognition now happens after receiver checking, so user types
+keep ordinary method lookup, including inherited methods. The already-checked
+receiver is passed into counting validation rather than typed again. Iterables are
+checked through their ordinary expression types; execution excludes resolved
+methods and namespace functions from the native counting shortcut, including their
+adapter chains. This prevents treating a user's returned List as a Range or trying
+to interpret a custom Range-producing method as a primitive range constructor.
+
+The run regression fails on main and passes with the fix. It covers all three
+trailing-block spellings, inheritance, a struct method returning a List, List
+reversal after that method, a custom Range followed by a native step adapter, and
+the unchanged primitive counting block forms. Its expected output was read by
+hand. No method naming or counting-language rule was changed.
+
+The focused regression passes. The full required gate passed with pinned Zig
+0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build, documentation examples
+(24 executed, 128 linked conformance cases), changed-Zig formatting, whitespace,
+and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 7: catchable recursion failures, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`):
+
+```emerald
+func forever(n: Int): Int {
+    return forever(n + 1)
+}
+try {
+    print(forever(0))
+}
+catch error: RuntimeError {
+    print("caught RuntimeError: #{error.message}")
+}
+```
+
+Main prints `caught RuntimeError: too much recursion calling ` followed by
+backtick-quoted `forever`; checking the new specific catch on main reports that
+`RecursionError` is not a type. The prelude now declares `RecursionError` as a
+`RuntimeError` subclass. Both the call-depth limit and stack-space boundary use the
+same native recursion-failure helper, which constructs this typed error directly
+without making another Emerald call at the boundary. Its message and help are
+unchanged, while the uncaught diagnostic now names `RecursionError`.
+
+The new run case catches the specific type in the main program and across a task
+result/group failure, verifies `finally`, and confirms a RuntimeError catch still
+handles it. Prelude reach checks cover explicit construction and subclass identity.
+Existing unbounded-call and constructor-recursion golden files, and the Zig trace
+test, now require the specific error prefix without changing their 1,000-frame
+checks. All three affected expected files were read by hand. The library reference,
+handoff error-type list, and release notes record the shipped behavior promised
+by rewrite-context 7.2; there is no new language decision.
+
+The focused main/task regression matched its expected output in all 50 runs. The
+full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe
+tests, native build, documentation examples (24 executed, 130 linked conformance
+cases), changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64
+cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 8: report argument errors once, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`):
+
+```emerald
+print(Json.encode(1 + true))
+print(Csv.encode(1 + true))
+print(Base64.encode(1 + true))
+print(Digest.sha256(1 + true))
+print(Console.table(1 + true))
+```
+
+Main reports each addition error twice. The required audit also reproduced duplicate
+receiver errors in this changing trait default:
+
+```emerald
+trait Counter {
+    var count: Int
+
+    func bump(amount: Int) {
+        self.count += amount
+    }
+}
+Counter.bump(1 + true, 1)
+```
+
+Argument binding/checking already
+records each expression's inferred or contextual type; the extra encoder,
+cryptographic-input, table-row, and changing-receiver validations now read that
+record instead of typing the expression again. An already-invalid trait receiver
+also no longer creates a misleading secondary class/struct mutation diagnostic.
+This is local reuse after argument checking, not global memoization across narrowing
+or inference contexts. Existing named binding and typed-call callee metadata remain
+unchanged.
+
+The diagnostics regression fails on main and now reports exactly one error for each
+of its eleven invalid expressions, covering JSON/CSV, all Base64 entry points, both
+Digest entry points (including named `key:`), Console.table, and trait receiver and
+parameter arguments. A run regression checks a valid explicit changing trait-default
+call with a named argument. Both expected files were read by hand.
+
+Focused checking and execution pass. The full required gate passed with pinned
+Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build, documentation examples
+(24 executed, 130 linked conformance cases), changed-Zig formatting, whitespace,
+and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 9: readable prelude call names, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with
+`print(Json.parse(5))`: the parameter error names `Emerald.Json.parse`. The same
+minimal wrong-type call with Json.decode, Csv.parse, File.exists?, Console.red,
+Date.parse, and Http.get exposes their internal prefix too. Wrong arity and unknown
+named arguments have the same leak, while Digest previously stripped it on its own.
+
+The resolver's shared display-key helper now omits the prelude namespace, after
+removing private-file qualification and before turning method separators into dots.
+Lookup keys themselves stay untouched; project namespace qualification stays visible.
+Generic checker call messages therefore share one formatting rule, and Digest uses
+that helper instead of its separate prefix/separator manipulation. Unit tests cover
+native functions, nested/private prelude members, ordinary project namespaces, and
+private project names.
+
+An explicitly qualified built-in taken as a value still suggests its qualified call:
+bare `print` may be the program's own function. The existing built-in-shadowing
+expectation remains unchanged, preserving a correct recovery hint rather than
+stripping qualification the user actually needs. Shadowing-help escape paths such
+as `Emerald.File.read` also remain qualified. The new diagnostic case covers the
+seven libraries, Digest, wrong arity, unknown parameters, a named option, explicit
+qualification, and native Math arity. Bytes.from_hex's old prefix and Regex.Match's
+nonconstructible-type display expectations now use bare names too. All three changed
+expected files were read by hand.
+
+The focused diagnostics match the intended text. The full required gate passed
+with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build,
+documentation examples (24 executed, 130 linked conformance cases), changed-Zig
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
+`zig-out`.
+
+## Bug-fix batch, item 10: explain JSON's constructor restriction, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with this program:
+
+```emerald
+struct Score {
+    const value: Int
+
+    constructor(value: Int) {
+        self.value = value
+    }
+}
+
+print(Json.decode("{\"value\": 5}", as: Score))
+```
+
+The old diagnostic said only that Score cannot be read from JSON, followed by
+the general accepted-type list. The shared eligibility result now carries the
+specific custom-constructor reason from JSON's existing check; the typed-call
+diagnostic explains that JSON builds through a generated constructor and suggests
+decoding a plain struct before calling the custom constructor. There is no change
+to which types JSON or CSV accepts, and no duplicated checker or decoder path.
+
+The new diagnostics regression covers direct, optional, list-contained, and
+nested-field occurrences of Score. Its output was compared with both binaries,
+and its expected file was read by hand. The first Debug gate found one missing
+space in the hand-written diagnostic caret lines; correcting that expectation
+made the Debug gate pass. Focused checking passes; the remaining full required
+gate also passed with pinned Zig 0.16.0 and `-j1`: ReleaseSafe tests, native build,
+documentation examples (24 executed, 130 linked conformance cases), changed-Zig
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds outside
+`zig-out`.
+
+## Bug-fix batch, item 11: preserve closing braces during recovery, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with the user's
+minimal program:
+
+```emerald
+func f() {
+    x =
+}
+```
+
+It reports the missing expression at `}`, then incorrectly reports that the
+function's block is never closed. Statement recovery unconditionally consumed a
+closing brace at its starting position, treating it as a stray file-level brace
+even when called inside a body. Recovery now takes its file/body context from
+its caller: file-level recovery still consumes a stray brace to make progress;
+ordinary blocks, lambda blocks, and type bodies leave their closing brace for
+the enclosing parser. No diagnostics are suppressed and no syntax changes.
+
+The new diagnostic regression fails on the main baseline and now reports only
+the real missing expressions in a function, nested block, statement lambda, and
+struct field. It also checks a genuine stray brace and an actually unclosed
+function after those errors, so recovery must preserve both later scope and
+independent diagnostics. The expected file was read by hand. Focused checking
+passes. The full required gate passed with pinned Zig 0.16.0 and `-j1`: Debug
+and ReleaseSafe tests, native build, documentation examples (24 executed, 130
+linked conformance cases), changed-Zig formatting, whitespace, and Windows
+x86_64/macOS aarch64 cross-builds outside `zig-out`.
+
+## Bug-fix batch, item 12: reject native Math function values, 2026-09-30
+
+Reproduced on the separately built main baseline (`4c51a6c`) with
+`const f = Math.sin`: checking reports `No problems found`. Math functions reach
+the qualified-value checker without a declared signature, so the old fallback
+returned an invalid type silently rather than explaining the unsupported capture.
+
+The qualified-value checker now uses Resolver.mathFunction to reject only resolved
+native Math function keys, with Program.sleep's built-in-function message shape
+and help suggesting a numerical call or block wrapper. The help preserves the
+written path, so an explicit `Emerald.Math` path stays correct when a project owns
+Math. Constants are handled before the new check; project functions have different
+keys and retain ordinary function-value behavior. Native routing, member names,
+argument checking, and hint vocabulary do not change.
+
+The diagnostics regression covers sin, explicit Emerald.Math.cos, the two-argument
+arc_tan2, and Program.sleep's unchanged diagnostic. A run case verifies typed
+one- and two-argument wrappers and Math constants; the existing project-shadowing
+case now captures and calls the project's sin. Expected files were read by hand.
+The Math reference documents the restriction and links the wrapper example.
+The first gate caught an incorrect source accessor in the path-preserving help;
+it was corrected to read the current project file. The full required validation
+gate then passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests,
+native build, documentation examples (24 executed, 131 linked conformance cases),
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+outside `zig-out`.
+
+## Bug-fix batch, item 13: callback-safe list operations, 2026-10-01
+
+Reproduced on the separately built main binary (`4c51a6c`):
+
+```emerald
+var items: List[Item] = []
+
+class Item with Equatable {
+    const id: Int
+
+    @override
+    func equals(other: Item): Bool {
+        for n in 0..<100 {
+            items.append(Item(n))
+        }
+        return self.id == other.id
+    }
+}
+
+items.append(Item(1))
+items.append(Item(2))
+items.remove(Item(9999))
+print(items.count)
+```
+
+It aborts with `switch on corrupt value` in Value.equals, reached from
+Interpreter.mutateList's remove loop. A second probe imported an untouched archive
+of main's source and called emerald.run with std.testing.allocator in a filtered
+Zig Debug test. It reproduces the same panic and abort; no library implementation
+was changed for either probe. The callback reallocates the ArrayList that the
+outer loop is still iterating.
+
+The user approved a mutation-only guard: reads must see the original list,
+mutation must raise catchable RuntimeError naming the list and method, and value
+copies must remain independent. Unlike the changing-struct guard, this leaves the
+receiver available for reads. The implementation protects bindings or shared
+class fields, checks writes before COW/assignment, and prepares changing callback
+operations in scratch storage before a single successful publication. Removal
+and deduplication decisions finish before compaction, so raised callbacks leave
+scratch ownership valid too. Guard entries are shared across tasks under the
+baton and can be removed out of order if callbacks yield.
+
+Focused cases cover equality, ordering, key-building, all list mutation routes,
+local/module bindings, nested functions, indices, class aliases, independently
+changed value copies, and failures after earlier matching or sorting decisions.
+A Zig test repeats the reallocating class-equality reproduction with the testing
+allocator and verifies recovery. Golden files were read manually. The baseline
+storage-path case fails by observing intermediate changed data.
+
+The first full Debug gate found that guarding ordinary traversal callbacks was
+too broad: existing Zig and conformance tests explicitly allow each/reduce to
+change their source while traversing a snapshot. Those guards were removed;
+the new restriction applies to equality/hashing/ordering operations and remove_if,
+not ordinary traversal. A later test-only constructor call was corrected to
+Random(1), matching its existing required seed. The complete gate passed with
+pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests, native build,
+documentation examples (24 executed, 135 conformance links), changed-Zig
+formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds with
+prefixes outside `zig-out`.
+
+## Bug-fix batch, item 15: reserve the main Windows stack, 2026-10-01
+
+Reproduced from main's successful Windows ReleaseSafe CI measurement (`4c51a6c`):
+the one-live-task benchmark reported 1,048.75 MiB peak commit, despite only
+about 9.47 MiB physical working set. Zig 0.16's `std.Thread.spawn` source
+confirms that its Windows `NtCreateThreadEx` call supplies `stack_size` as the
+committed stack size. Emerald had used that call for its three 1 GiB-stack
+pipeline threads, while Scheduler's task threads already used `CreateThread`
+with `STACK_SIZE_PARAM_IS_A_RESERVATION`.
+
+Scheduler now exports one `ReservedThread` helper. It copies its arguments into
+a small page-allocated context on Windows, frees that context in the child, and
+uses `CreateThread` with the reservation flag; non-Windows keeps `std.Thread.spawn`.
+The three frontend/interpreter call sites and task jobs use it, so their existing
+stack budgets are unchanged. A scheduler unit test verifies copied arguments and
+join behavior. The Windows measurement now requires the kept-alive one-task
+baseline to stay at or below 128 MiB of commit, a threshold the old 1,049 MiB
+implementation fails before task-thread cost is considered. Debug and ReleaseSafe
+tests, including a Windows-targeted Scheduler compile, pass locally. The full
+gate passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe tests,
+native build, documentation examples (24 executed, 135 conformance links),
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+with prefixes outside `zig-out`. Windows CI run `36873845746` was green on every
+platform. Its ReleaseSafe measurement reported 22.67 MiB baseline commit and
+25.37 MiB with 64 live tasks (only 2.70 MiB more), and printed the reservation
+confirmation; this replaces the old 1,048.75 MiB main-thread baseline.
+
+## Bug-fix batch, item 17: CRLF file lines, 2026-10-01
+
+Reproduced against a separately built current main (`a191cf3`) with a file
+containing `"first\r\nsecond\r\n"`: `File.read_lines` gave
+`["first\\r", "second\\r"]`, and streamed `read_line` returned the same
+trailing carriage returns, while `String.lines` gave `["first", "second"]`.
+
+`fileLines` now trims terminal carriage returns exactly as `strings.lines` does,
+and `readStreamBytes` shrinks its line-only result after the same trim. Binary
+`read_bytes` keeps raw bytes. The local implementation also adopts main's
+just-landed corrected line-count loop: an empty file produces no lines and a
+blank line before a trailing newline is retained. Whole-file and streaming
+conformance cases, plus the existing temporary-directory Zig streaming test,
+cover CRLF behavior. The full gate passed with pinned Zig 0.16.0 and `-j1`:
+531 Debug and 531 ReleaseSafe tests, native build, documentation examples,
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+with prefixes outside `zig-out`.
+
+## Bug-fix batch, items 14, 16, 18, and 19: verified documentation findings, 2026-10-01
+
+Item 14 did not reproduce against the built current-main binary. This program:
+
+```emerald
+Base64.unknown("text")
+Digest.unknown("text")
+File.unknown("text")
+Directory.unknown("text")
+Path.unknown("text")
+```
+
+produced five checker diagnostics that each say the relevant namespace has no
+type-level member named `unknown`; none reached native dispatch, fell through,
+or crashed. No routing change was warranted.
+
+Item 16 reproduced by comparing the HTTP reference page with `Http.zig`: a
+body-bearing redirect is returned without being followed, while `strict` still
+raises only for its 4xx or 5xx status. The page now says that rather than
+claiming strict mode raises for every redirect.
+
+Item 18 reproduced by comparing rewrite-context 18.5 with `Lsp.onCompletion`:
+completion already handles value members, type-qualified members, namespaces,
+and bare names. Section 18.5 now says so, while retaining the handoff's
+narrower warning that native built-in members are still shallow.
+
+Item 19 did not reproduce. A case-insensitive search of this handoff for
+`Console`, `design`, and `widget` found the implementation status and the
+historical design/review notes consistently describe tables, panels, and
+prompts as already implemented. No text change was appropriate for that item.
+
+This documentation-only commit passed the full local gate with pinned Zig 0.16.0
+and `-j1`: 531 Debug and 531 ReleaseSafe tests, native build, 24 documentation
+examples with 135 linked conformance files, whitespace, and Windows x86_64/macOS
+aarch64 cross-builds with prefixes outside `zig-out`.

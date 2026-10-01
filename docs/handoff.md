@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-09-30. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-01. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -113,20 +113,12 @@ inheritance semantics, and limitations are recorded in §11.5 and §22 of the re
 Operator symbols are navigation/reference sites, not renameable identifiers; renaming their
 method changes only ordinary identifier uses.
 
-All six concurrency slices and the four required review corrections are implemented
-on `codex/concurrency`, with local validation and fully green PR CI on `80b493e`
-(Debug/ReleaseSafe on Windows, macOS, and Ubuntu, plus fuzz). The corrections:
-quote Windows compiler module arguments, reserve task stacks instead of committing
-128 MiB each, reclaim joined jobs and unreachable completed handles, and reject
-optional channel item types (wrap optional contents in a struct). Reachability also
-used the wrong key to activate the task allocator; that is fixed, with bounded shared
-small-allocation pools. ReleaseSafe's corrected 2,000/20,000-task measurement is
-0.36/3.57 s with identical 7.19 MiB peak RSS. Windows measured 0.336/3.225 s,
-9.25/9.30 MiB working set, and 1032.75/1032.82 MiB commit: 9.59x time with flat
-memory. All 64 task threads started; the extra 63 added only 2.70 MiB peak commit.
-The existing main interpreter thread still commits a 1 GiB stack on Windows;
-the ready/sample probe isolates task costs without reducing stack limits. Measurement
-failures, corrections, and full results are in the plan and journal.
+Concurrency and its required review corrections are merged on main through PR #24
+(`4c51a6c`). The implementation, review findings, validation, and Windows measurements
+are recorded in the concurrency plan and journal. The main interpreter's Windows
+thread now uses the same reservation-sized-stack helper as task threads. Item 15's
+full validation and Windows CI measurement are green: the one-task commit baseline
+fell from 1,048.75 MiB to 22.67 MiB.
 
 Implemented: per-task execution state,
 `Task[T]`, structured groups, results, a FIFO single-holder
@@ -166,8 +158,7 @@ cancellation arrives when the operation returns, so named pipes/devices can dela
 Custom borrowed readers keep their existing host-read path; no general cancellation hook
 was added. CI runs the live-input regression driver on every platform and measures task
 creation, the live cap, and scheduler handoffs on Windows ReleaseSafe. Windows runtime
-tests and measurements passed. Claude's final review and merge of PR #23 remain;
-there has been no merge to main.
+tests and measurements passed before the concurrency merge.
 
 A `-` written directly against a number is now part of it (5.3): `-3.abs()` is `3` and
 `-3.positive?()` is `false`, except before `**`, so `-2 ** 2` is still `-4`. The formatter's,
@@ -175,7 +166,9 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Concurrency is merged (#24, 2026-09-30). The standard-library slices the user chose to
+The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
+the others have a validated commit each, with reproductions in the journal). Concurrency is
+merged (#24, 2026-09-30). The standard-library slices the user chose to
 finish before optimizing are done (dates and times, regular expressions, Console styling,
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
@@ -191,28 +184,52 @@ building" notes record its decisions.
   request's reply.
 - Structured tasks, FIFO channels, timers and timed waits, cooperative cancellation,
   and deadlock diagnostics.
-- A fix to `File.read_lines`: an empty file crashed the interpreter, and a blank line just
-  before the end of a file was dropped (`"a\n\n"` gave `["a"]`).
+- `List.remove_if` preserves other list/struct copies; calling it from a struct method
+  correctly requires a mutable struct receiver.
+- Formatting preserves required parentheses around trailing-block calls in `when`
+  headers; every conformance `run/` file is also formatted and reparsed as a guard.
+- Inline `##` comments preserve statement boundaries; formatting keeps comments
+  following a `case` outside the block and closing-brace comments on that brace.
+- A project's `math/` declarations win over native Math members, with a shadowing
+  warning; `Emerald.Math` remains available for the native functions and constants.
+- User methods named `times`, `up_to`, or `down_to` take precedence over native
+  counting forms, including trailing blocks and methods returning iterables.
+- Excessive recursion raises catchable `RecursionError` in the main program and
+  tasks. It extends `RuntimeError`, so existing broader catches keep working;
+  recursion limits, cleanup, and summarized stack traces are unchanged.
+- Argument errors are reported once in JSON/CSV encoding, Base64, Digest,
+  Console.table, and changing trait-default calls, rather than being repeated.
+- Prelude call diagnostics use readable names such as `Json.parse`, not internal
+  `Emerald.Json.parse` keys; project namespace qualification is preserved.
+- `Json.decode` explains when a struct cannot be built because it declares its
+  own constructor, including structs nested in fields or collections.
+- Parser recovery preserves closing braces after a missing expression instead
+  of reporting misleading unclosed blocks; real missing and stray braces still
+  receive their own diagnostics.
+- Native Math functions cannot be stored as values; diagnostics suggest calling
+  them or wrapping their calls in blocks. Math constants and project functions
+  remain usable as values.
+- List equality, hashing, and ordering callbacks may read their original list,
+  but attempting to change it raises a catchable `RuntimeError` rather than
+  accessing freed storage. Changing operations publish only a finished result;
+  failed callbacks leave the list unchanged. Independent value copies remain
+  changeable; ordinary `each`/`reduce` snapshot semantics are unchanged.
+- `File.read_lines` and `FileHandle.read_line` now remove CRLF's carriage return,
+  matching `String.lines`; empty files and blank final lines split correctly.
 - HTTP now sends Emerald's own `User-Agent`, or the program's, instead of Zig's (the second
   header was ignored before).
 
 Open work:
-- **The website's reference pages** (2026-10-01, branch `claude/language-reference` in
-  `emerald-website`, for the user to review and push): the whole language reference, Built-ins,
-  and every Standard Library family are written, and every example's output is checked against
-  a real build by `scripts/check-outputs.py` and `scripts/check-examples.py`. Left to do: the
-  **Tasks** pages (`Tasks`, `Task`, `TaskGroup`, `Channel`, `CancelledError`), which are in main
-  but not in 0.6.0. The Console layout and prompts pages were written against main, so they
-  describe 0.7.0; the site should not be published ahead of that release, or those pages and
-  the `File.read_lines` and `User-Agent` notes above should wait.
-- **Bug fixes**: the batch from the full-codebase review (formatter, `remove_if`, `##` comments,
-  JSON diagnostics, `RecursionError`, and more), handed to Codex on `codex/bug-fixes`. Claude
-  reviews and merges.
+- **The website** is published (2026-10-01): the whole reference, with every example's output
+  checked against a real build by `scripts/check-outputs.py` and `scripts/check-examples.py`
+  in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
+  against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
+  `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
 - **The REPL**: it replays the whole session on every entry, so side effects (a file append, an
   `Http` request, `Random`, the clock) repeat. [`repl-design-plan.md`](repl-design-plan.md) is
-  accepted with all eight recommendations; Codex implements it after the bug-fix batch merges.
+  accepted with all eight recommendations; Codex implements it next, now the bug-fix batch is merged.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
-- A 0.7.0 release once the REPL and the review's wrong-behavior bugs are fixed.
+- A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
 user's weekly usage resets, and it needs a design plan with decisions for the user first). The
@@ -251,7 +268,7 @@ on the roadmap.
 
 ## Roadmap order (agreed 2026-09-30, QA iteration added 2026-10-01)
 
-1. The current queue: the bug-fix batch, the REPL milestone, and editor intelligence.
+1. The current queue: the REPL milestone and editor intelligence (the bug-fix batch is merged).
 2. **A QA iteration** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
    use, before more is built on top. The user's first finding: Console tables render poorly on the
    website's Console page (borders short, vertical lines broken between rows). The terminal
@@ -394,27 +411,11 @@ not yet discussed:
 - Feature ideas from the language pages (not spec gaps): an enum has no list of its values
   (`Light.values`) and no way to turn text into a value (`"red"` into `Light.red`). Both are common
   needs, such as a menu of choices or reading a saved setting.
-- On Windows the main interpreter thread commits its whole 1 GiB stack up front
-  (`std.Thread.spawn` passes the size as the committed size). Task threads already reserve
-  instead; do the same for the interpreter thread in `emerald.zig`.
-- Found while writing the website's JSON pages (2026-09-30, in 0.6.0; fix after the concurrency
-  branch merges, since both touch `Checker.zig`):
-  - `print(Json.encode(1 + true))` reports `addition needs numbers` twice at the same place. Type
-    errors inside `Json.encode`'s argument repeat (probably `typeOfTypedEncode` typing the
-    argument once for its type and again for JSON eligibility); a misspelled name does not.
-  - Messages name built-ins with their internal prefix: ``parameter `text` of
-    `Emerald.Json.parse` needs String``, and likewise for `Json.decode`, probably every prelude
-    function through the generic parameter-type message. 14.2 wants the bare name. (`Digest`
-    was fixed alone during Base64 review; fix it once where the message is built.)
-  - `Json.decode` correctly refuses a struct that declares its own constructor, but its message
-    lists what JSON can build without saying the constructor is why.
 - Runtime failures currently share `RuntimeError` except `AssertionError`, `InputError`,
   `FileError`, `DateTimeError`, `RegexError`, `JsonError`, `HttpError`, `CsvError`, and
-  `EncodingError`, and `DeadlockError`.
+  `EncodingError`, `DeadlockError`, and `RecursionError`.
 - Task cancellation uses `CancelledError`, which extends `Error` directly rather than
   `RuntimeError`, so catching RuntimeError does not swallow cancellation.
-- `const f = Math.sin` passes checking, although a built-in function cannot be taken as a
-  value; `Program.sleep` reports it.
 - A prelude that does not lex or parse fails the build, since `tools/prelude_ast.zig` parses
   it then, naming the `prelude.em` line and column. A later problem inside the prelude stops
   `emerald.analyze` with a panic naming its line, column, and message; it is always

@@ -1,0 +1,1 @@
+key-building callbacks read safely and reject source mutation

@@ -9,6 +9,12 @@ class RuntimeError extends Error {
     }
 }
 
+class RecursionError extends RuntimeError {
+    constructor(message: String) {
+        super(message)
+    }
+}
+
 class AssertionError extends Error {
     constructor(message: String) {
         super(message)

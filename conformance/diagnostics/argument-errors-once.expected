@@ -1,0 +1,44 @@
+diagnostics/argument-errors-once.em:13:19: addition needs numbers, but this is Int and Bool
+  print(Json.encode(1 + true))
+                    ^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:14:18: addition needs numbers, but this is Int and Bool
+  print(Csv.encode(1 + true))
+                   ^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:15:21: addition needs numbers, but this is Int and Bool
+  print(Base64.encode(1 + true))
+                      ^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:16:21: addition needs numbers, but this is Int and Bool
+  print(Base64.decode(1 + true))
+                      ^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:17:27: addition needs numbers, but this is Int and Bool
+  print(Base64.decode_maybe(1 + true))
+                            ^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:18:21: addition needs numbers, but this is Int and Bool
+  print(Digest.sha256(1 + true))
+                      ^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:19:26: addition needs numbers, but this is Int and Bool
+  print(Digest.hmac_sha256(1 + true, key: 2 + false))
+                           ^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:19:41: addition needs numbers, but this is Int and Bool
+  print(Digest.hmac_sha256(1 + true, key: 2 + false))
+                                          ^^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:20:21: addition needs numbers, but this is Int and Bool
+  print(Console.table(1 + true))
+                      ^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:21:14: addition needs numbers, but this is Int and Bool
+  Counter.bump(1 + true, 1)
+               ^^^^^^^^
+Arithmetic works on Int and Float.
+diagnostics/argument-errors-once.em:22:23: addition needs numbers, but this is Int and Bool
+  Counter.bump(Tally(), 1 + true)
+                        ^^^^^^^^
+Arithmetic works on Int and Float.

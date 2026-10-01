@@ -73,10 +73,29 @@ pub fn typeSetupKey(arena: std.mem.Allocator, type_key: []const u8) std.mem.Allo
 }
 
 /// A key as a reader would write it: `Vector2::origin` is `Vector2.origin`,
-/// and a private declaration drops the file it is private to.
+/// a private declaration drops its file, and prelude names omit `Emerald.`
+/// (14.2). Ordinary project namespace qualification stays visible.
 pub fn displayKey(arena: std.mem.Allocator, key: []const u8) std.mem.Allocator.Error![]const u8 {
     const start = if (std.mem.indexOf(u8, key, private_separator)) |at| at + private_separator.len else 0;
-    return std.mem.replaceOwned(u8, arena, key[start..], method_separator, ".");
+    const written = key[start..];
+    const bare = if (isPreludeKey(written)) written[prelude_namespace.len + 1 ..] else written;
+    return std.mem.replaceOwned(u8, arena, bare, method_separator, ".");
+}
+
+test "display keys hide prelude internals but keep project namespaces" {
+    const cases = [_]struct { key: []const u8, shown: []const u8 }{
+        .{ .key = prelude_namespace ++ ".Json::parse", .shown = "Json.parse" },
+        .{ .key = prelude_namespace ++ ".Math.sin", .shown = "Math.sin" },
+        .{ .key = "prelude.em" ++ private_separator ++ prelude_namespace ++ ".Date::_parse", .shown = "Date._parse" },
+        .{ .key = "Tools.Json::parse", .shown = "Tools.Json.parse" },
+        .{ .key = "notes.em" ++ private_separator ++ "Tools._helper", .shown = "Tools._helper" },
+        .{ .key = "Vector2::origin", .shown = "Vector2.origin" },
+    };
+    for (cases) |case| {
+        const shown = try displayKey(std.testing.allocator, case.key);
+        defer std.testing.allocator.free(shown);
+        try std.testing.expectEqualStrings(case.shown, shown);
+    }
 }
 
 /// Where an assignment statement is written, which is how the passes after
@@ -241,8 +260,10 @@ pub const prelude_namespace = Project.builtin_namespace;
 /// built-in `Float` type is a user declaration with setup state.
 pub const float_infinity_key = "Float.infinity";
 pub const float_nan_key = "Float.nan";
-pub const math_pi_key = "Math.pi";
-pub const math_e_key = "Math.e";
+// Native keys must not collide with declarations in a project's math/ directory.
+pub const math_prefix = prelude_namespace ++ ".Math.";
+pub const math_pi_key = math_prefix ++ "pi";
+pub const math_e_key = math_prefix ++ "e";
 /// Section 14.1's `Program.arguments`: the program's own CLI arguments,
 /// excluding the Emerald executable and entry-file paths.
 pub const program_arguments_key = "Program.arguments";
@@ -250,7 +271,7 @@ pub const program_arguments_key = "Program.arguments";
 pub const program_sleep_key = "Program.sleep";
 
 pub fn mathFunction(key: []const u8) ?Type.MathFunction {
-    const prefix = "Math.";
+    const prefix = math_prefix;
     if (!std.mem.startsWith(u8, key, prefix)) return null;
     return Type.math_functions.get(key[prefix.len..]);
 }
@@ -591,7 +612,7 @@ fn isBuiltinName(_: *Resolver, name: []const u8) bool {
     for (prelude) |builtin| {
         if (std.mem.eql(u8, name, builtin)) return true;
     }
-    const language = [_][]const u8{ "Bytes", "Equatable", "Hashable", "Ordered", "Textual", "Error", "RuntimeError", "AssertionError" };
+    const language = [_][]const u8{ "Math", "Bytes", "Equatable", "Hashable", "Ordered", "Textual", "Error", "RuntimeError", "AssertionError" };
     for (language) |builtin| {
         if (std.mem.eql(u8, name, builtin)) return true;
     }
@@ -2566,7 +2587,7 @@ fn qualifyBuiltinNamespace(self: *Resolver, span: Source.Span, namespace: []cons
     if (std.mem.eql(u8, namespace, "Math")) {
         if (std.mem.eql(u8, member, "pi")) return .{ .key = math_pi_key };
         if (std.mem.eql(u8, member, "e")) return .{ .key = math_e_key };
-        const key = try std.fmt.allocPrint(self.arena, "Math.{s}", .{member});
+        const key = try std.fmt.allocPrint(self.arena, math_prefix ++ "{s}", .{member});
         if (mathFunction(key) != null) return .{ .key = key };
         try self.reportWithHelpFmt(
             span,

@@ -79,9 +79,12 @@ $null = Measure-TaskProgram "10,000 sequential tasks" $Emerald @("run", "tools/t
 $baseline = Measure-TaskProgram "1 live task (commit baseline)" $Emerald @("run", "tools/task-live-benchmark.em", "--", "1", "sample") "started: 1`n0" $true
 $live = Measure-TaskProgram "64 live tasks" $Emerald @("run", "tools/task-live-benchmark.em", "--", "64", "sample") "started: 64`n2016" $true
 Write-Host "All 64 task threads started (confirmed before the first task ran)."
-# The existing main interpreter thread commits a 1 GiB stack on Windows.
-# Compare the same program with one and 64 live children to isolate task costs,
-# rather than confusing that baseline with their reserved 128 MiB stacks.
+# Both the main interpreter's 1 GiB stack and the task stacks must be reserved,
+# not committed up front. The acknowledged baseline stays alive for sampling;
+# this absolute bound fails on the old main-thread implementation (~1,049 MiB).
+if ($baseline.Commit -gt 128MB) { throw "The main interpreter committed more than 128 MiB" }
+Write-Host "The main interpreter's 1 GiB stack is reserved, not committed up front."
+# Compare the same program with one and 64 live children to isolate task costs.
 $addedCommit = $live.Commit - $baseline.Commit
 Write-Host ("63 additional task threads: {0:F2} MiB added peak commit" -f ($addedCommit / 1MB))
 if ($addedCommit -gt 64MB) { throw "63 additional task threads committed more than 64 MiB" }

@@ -127,7 +127,7 @@ pub fn parse(gpa: std.mem.Allocator, source: *const Source, tokens: []const Toke
                 try using.append(arena, declaration);
             } else |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.ParseFailed => parser.skipToNextStatement(),
+                error.ParseFailed => parser.skipToNextStatement(.file),
             }
             continue;
         }
@@ -138,7 +138,7 @@ pub fn parse(gpa: std.mem.Allocator, source: *const Source, tokens: []const Toke
             error.OutOfMemory => return error.OutOfMemory,
             // Resume at the next line so one mistake does not cascade, which is
             // what section 17.2 asks for.
-            error.ParseFailed => parser.skipToNextStatement(),
+            error.ParseFailed => parser.skipToNextStatement(.file),
         }
     }
 
@@ -254,10 +254,12 @@ fn skipToLeftBrace(self: *Parser) void {
 /// broken loop or `if` header does, the whole block goes with it; otherwise its
 /// closing brace would surface later as a second, unrelated error. A `}` that
 /// closes an enclosing block is left for that block to consume.
-fn skipToNextStatement(self: *Parser) void {
+fn skipToNextStatement(self: *Parser, context: enum { file, body }) void {
     // A stray `}` at the top level is itself the failed statement.
+    // Inside a body it closes that body, even if an expression was missing
+    // immediately before it. Leave it for the enclosing parser to consume.
     if (self.check(.right_brace)) {
-        _ = self.advance();
+        if (context == .file) _ = self.advance();
         return;
     }
 
@@ -508,8 +510,11 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
                     "Assign it to a name, as in `const label = case ...`, or give each `when` a block in braces in place of `then`.",
                 );
             }
+            // The case ends at its closing brace, not at the following
+            // newline: trivia after that brace belongs outside the case.
+            const span = spanning(parsed.keyword_span, self.tokens[self.index - 1].span);
             try self.expectStatementEnd();
-            break :blk .{ .span = spanning(parsed.keyword_span, self.tokens[self.index - 1].span), .data = .{ .case_statement = parsed } };
+            break :blk .{ .span = span, .data = .{ .case_statement = parsed } };
         },
         .keyword_while => self.parseWhile(),
         .keyword_for => self.parseFor(),
@@ -841,7 +846,7 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         // reported as closing nothing (17.2).
         self.parseStructMember(name, &members) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            error.ParseFailed => self.skipToNextStatement(),
+            error.ParseFailed => self.skipToNextStatement(.body),
         };
         self.skipSeparators();
     }
@@ -2629,7 +2634,7 @@ fn parseBlock(self: *Parser) Error!Ast.Block {
             try statements.append(self.arena, statement);
         } else |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            error.ParseFailed => self.skipToNextStatement(),
+            error.ParseFailed => self.skipToNextStatement(.body),
         }
     }
 
@@ -3800,7 +3805,7 @@ fn finishLambdaBlock(
             try statements.append(self.arena, statement);
         } else |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            error.ParseFailed => self.skipToNextStatement(),
+            error.ParseFailed => self.skipToNextStatement(.body),
         }
     }
 

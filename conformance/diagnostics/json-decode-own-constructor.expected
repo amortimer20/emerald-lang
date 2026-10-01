@@ -1,0 +1,16 @@
+diagnostics/json-decode-own-constructor.em:13:29: Score declares its own constructor, so it cannot be read from JSON
+  print(Json.decode("{}", as: Score))
+                              ^^^^^
+JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.
+diagnostics/json-decode-own-constructor.em:14:31: Score declares its own constructor, so it cannot be read from JSON
+  print(Json.decode("null", as: Score?))
+                                ^^^^^
+JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.
+diagnostics/json-decode-own-constructor.em:15:29: Score declares its own constructor, so it cannot be read from JSON
+  print(Json.decode("[]", as: List[Score]))
+                              ^^^^^^^^^^^
+JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.
+diagnostics/json-decode-own-constructor.em:16:29: field `score` of Player cannot be read from JSON because Score declares its own constructor
+  print(Json.decode("{}", as: Player))
+                              ^^^^^^
+JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.

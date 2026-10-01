@@ -14,7 +14,8 @@ normally return promptly; a named pipe or device can delay cancellation. Cleanup
 
 `read(path: String) -> String`, `write(path: String, contents: String) -> Nothing`, and
 `append(path: String, contents: String) -> Nothing` read or replace/extend UTF-8 text.
-`read_lines(path: String) -> List[String]` splits lines, and
+`read_lines(path: String) -> List[String]` splits lines (and removes the `\r`
+from Windows CRLF endings, matching `String.lines`), and
 `write_lines(path: String, lines: List[String]) -> Nothing` writes every line with a trailing
 newline, including the last. `exists?(path: String) -> Bool` tests for a file.
 
@@ -37,8 +38,8 @@ writer and closes it after normal completion, return, or an error.
 
 `read() -> String` returns all text remaining after the current position. `read_line() ->
 String?` returns the next line without its newline, or `nothing` at end of file. Like
-`read_lines`, it does not add an empty final line for a trailing newline, but does return an
-unterminated final line. `close() -> Nothing` is idempotent. Handles are read-only; use
+`read_lines`, it removes a CRLF's `\r`, does not add an empty final line for a trailing newline,
+but does return an unterminated final line. `close() -> Nothing` is idempotent. Handles are read-only; use
 `File.write` or `File.append` for whole-file writes.
 
 `read_bytes(count: Int) -> Bytes?` returns up to `count` remaining bytes, or `nothing` when

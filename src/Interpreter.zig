@@ -218,6 +218,7 @@ root_task: *Scheduler.TaskState(TaskData),
 scheduler: *Scheduler.Runtime,
 input_gate: Scheduler.Runtime.Gate = .{},
 input_reader: ?*Scheduler.InputReader = null,
+callback_guard: ?*CallbackGuard = null,
 standard_input: bool = false,
 task_records: std.AutoHashMapUnmanaged(i64, *TaskRecord) = .empty,
 task_groups: std.AutoHashMapUnmanaged(i64, *TaskGroupRecord) = .empty,
@@ -755,6 +756,7 @@ fn unpackInto(self: *Interpreter, pattern: Ast.Pattern, value: Value, how: Unpac
             .assign => {
                 const slot = self.find(name.text).?;
                 if (slot.changing) |method| return self.raiseChanging(name.span, name.text, method);
+                if (slot.value != null) try self.requireCallbackWrite(name.span, &slot.value.?);
                 const widened = widen(Heap.retain(item), slot.kind);
                 if (slot.value) |old| self.heap.release(old);
                 slot.value = widened;
@@ -1181,6 +1183,123 @@ const TakenField = struct {
     change: Heap.Binding.Change,
 };
 
+/// Unlike a changing struct's exclusive borrow, collection callbacks may read
+/// their original receiver. Protect the storage place, not the shared buffer:
+/// a value copy in another binding remains independently mutable through COW.
+const CallbackGuard = struct {
+    previous: ?*CallbackGuard = null,
+    environment: ?*Environment = null,
+    name: []const u8 = "",
+    object: ?*Heap.StructValue = null,
+    position: usize = 0,
+    method: []const u8 = "",
+    holder: Value = Value.nothing,
+    steps: ?[]const PlaceStep = null,
+
+    fn slot(self: *const CallbackGuard, interpreter: *Interpreter) ?*Value {
+        if (self.object) |object| return &object.fields[self.position];
+        const binding = if (self.environment) |environment|
+            environment.bindings.getPtr(self.name)
+        else
+            interpreter.module.getPtr(self.name);
+        return if (binding) |found| if (found.value != null) &found.value.? else null else null;
+    }
+};
+
+fn callbackBinding(self: *Interpreter, name: []const u8) CallbackGuard {
+    var index = self.task.state.scopes.items.len;
+    while (index > 0) {
+        index -= 1;
+        const environment = self.task.state.scopes.items[index];
+        if (environment.bindings.contains(name)) return .{ .environment = environment, .name = name };
+    }
+    return .{ .name = self.keyOf(name) };
+}
+
+fn requireCallbackWrite(self: *Interpreter, span: Source.Span, slot: *Value) Error!void {
+    var next = self.callback_guard;
+    while (next) |guard| : (next = guard.previous) {
+        if (guard.slot(self) != slot) continue;
+        return self.raiseFmt(span, "a callback cannot change `{s}` while `{s}` is using it", .{
+            try Resolver.displayKey(self.arena, guard.name), guard.method,
+        }, "A callback cannot change the list it is being called for; copy it first, or collect the changes and apply them after.");
+    }
+}
+
+fn beginCallback(self: *Interpreter, guard: *CallbackGuard, method: []const u8) void {
+    guard.method = method;
+    guard.previous = self.callback_guard;
+    self.callback_guard = guard;
+}
+
+fn endCallback(self: *Interpreter, guard: *CallbackGuard) void {
+    var link = &self.callback_guard;
+    while (link.*) |current| {
+        if (current == guard) {
+            link.* = guard.previous;
+            return;
+        }
+        link = &current.previous;
+    }
+    unreachable;
+}
+
+/// Evaluate a reading receiver in ordinary root-to-leaf order, retaining its
+/// storage identity without evaluating an index or a getter a second time.
+fn evaluateCallbackReceiver(self: *Interpreter, base: *const Ast.Expression, guard: *CallbackGuard) Error!Value {
+    var path: std.ArrayList(*const Ast.Expression) = .empty;
+    defer path.deinit(self.gpa);
+    var root = base;
+    while (!self.facts.qualified.contains(root) and !self.type_names.contains(root) and
+        !self.method_calls.contains(root) and !self.super_members.contains(root))
+    {
+        switch (root.data) {
+            .member => |member| {
+                try path.append(self.gpa, root);
+                root = member.base;
+            },
+            .index => |index| {
+                try path.append(self.gpa, root);
+                root = index.base;
+            },
+            else => break,
+        }
+    }
+    var value = try self.evaluate(root);
+    errdefer self.heap.release(value);
+    if (root.data == .name or self.facts.qualified.contains(root)) guard.* = self.callbackBinding(self.rootName(root));
+    var index = path.items.len;
+    while (index > 0) {
+        index -= 1;
+        const node = path.items[index];
+        if (node.data == .member and value.data == .struct_value) {
+            const instance = value.data.struct_value;
+            const member = node.data.member;
+            if (fieldPosition(instance, member.name)) |position| {
+                if (instance.descriptor.class) {
+                    self.heap.release(guard.holder);
+                    guard.holder = Heap.retain(value);
+                    guard.object = instance;
+                    guard.position = position;
+                    guard.name = member.name;
+                }
+            } else {
+                // A getter returns a value, not a writable place in its owner.
+                self.heap.release(guard.holder);
+                guard.* = .{};
+            }
+        }
+        const next = switch (node.data) {
+            .member => |member| try self.readMember(value, member),
+            .index => |indexed| try self.readIndex(node, value, indexed),
+            else => unreachable,
+        };
+        self.heap.release(value);
+        value = next;
+    }
+    return value;
+}
+
 /// State that belongs to the task currently holding the scheduler baton.
 const TaskData = struct {
     job: ?*Scheduler.Runtime.Job = null,
@@ -1228,6 +1347,10 @@ fn changeInObject(
 ) Error!Value {
     var callable = callable_in;
     const position = fieldPosition(object, rest[0].field).?;
+    self.requireCallbackWrite(span, &object.fields[position]) catch |err| {
+        for (arguments) |argument| self.heap.release(argument);
+        return err;
+    };
     self.requireFieldFree(span, object, position) catch |err| {
         for (arguments) |argument| self.heap.release(argument);
         return err;
@@ -1380,6 +1503,10 @@ fn elementValue(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
 fn storeElement(self: *Interpreter, span: Source.Span, root: *Value, steps: []const PlaceStep, value: Value) Error!void {
     var slot = root;
     for (steps, 0..) |step, step_index| {
+        self.requireCallbackWrite(span, slot) catch |err| {
+            self.heap.release(value);
+            return err;
+        };
         const last = step_index + 1 == steps.len;
 
         switch (step) {
@@ -1392,6 +1519,10 @@ fn storeElement(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
                 };
                 const instance = try self.heap.uniqueStruct(slot);
                 if (last) {
+                    self.requireCallbackWrite(span, &instance.fields[position]) catch |err| {
+                        self.heap.release(value);
+                        return err;
+                    };
                     self.heap.release(instance.fields[position]);
                     instance.fields[position] = widen(value, instance.descriptor.fields[position].kind);
                     return;
@@ -1459,32 +1590,50 @@ fn storeProperty(self: *Interpreter, span: Source.Span, slot: *Value, name: []co
 /// what it finds there. Every container on the way is made safe to change
 /// first.
 fn containerSlot(self: *Interpreter, span: Source.Span, root: *Value, steps: []const PlaceStep) Error!*Value {
+    return self.containerSlotTracking(span, root, steps, null);
+}
+
+fn containerSlotTracking(self: *Interpreter, span: Source.Span, root: *Value, steps: []const PlaceStep, guard: ?*CallbackGuard) Error!*Value {
     var slot = root;
-    for (steps) |step| switch (step) {
-        .field => |name| {
-            const position = fieldPosition(slot.data.struct_value, name).?;
-            try self.requireFieldFree(span, slot.data.struct_value, position);
-            const instance = try self.heap.uniqueStruct(slot);
-            slot = &instance.fields[position];
-        },
-        .index => |index| {
-            if (slot.data == .map) {
-                const map = try self.heap.uniqueMap(slot);
-                const key = widen(Heap.retain(index.value), map.key_kind);
-                defer self.heap.release(key);
-                const hash = try self.hashKey(index.span, key);
-                const found = switch (try self.heap.locate(map, hash, key, self.equatable(index.span))) {
-                    .entry => |at| at,
-                    .vacancy => return self.raiseMissingKey(index.span, key),
-                };
-                slot = &map.entries.items[found].value;
-                continue;
-            }
-            const list = try self.heap.unique(slot);
-            const position = try self.checkIndex(list, index.value.data.int, index.span);
-            slot = &list.items.items[position];
-        },
-    };
+    for (steps, 0..) |step, step_index| {
+        try self.requireCallbackWrite(span, slot);
+        switch (step) {
+            .field => |name| {
+                const position = fieldPosition(slot.data.struct_value, name).?;
+                try self.requireFieldFree(span, slot.data.struct_value, position);
+                if (guard) |held| {
+                    if (slot.data.struct_value.descriptor.class) {
+                        self.heap.release(held.holder);
+                        held.holder = Heap.retain(slot.*);
+                        held.object = slot.data.struct_value;
+                        held.position = position;
+                        held.name = name;
+                        held.steps = steps[step_index..];
+                    }
+                }
+                const instance = try self.heap.uniqueStruct(slot);
+                slot = &instance.fields[position];
+            },
+            .index => |index| {
+                if (slot.data == .map) {
+                    const map = try self.heap.uniqueMap(slot);
+                    const key = widen(Heap.retain(index.value), map.key_kind);
+                    defer self.heap.release(key);
+                    const hash = try self.hashKey(index.span, key);
+                    const found = switch (try self.heap.locate(map, hash, key, self.equatable(index.span))) {
+                        .entry => |at| at,
+                        .vacancy => return self.raiseMissingKey(index.span, key),
+                    };
+                    slot = &map.entries.items[found].value;
+                    continue;
+                }
+                const list = try self.heap.unique(slot);
+                const position = try self.checkIndex(list, index.value.data.int, index.span);
+                slot = &list.items.items[position];
+            },
+        }
+    }
+    try self.requireCallbackWrite(span, slot);
     return slot;
 }
 
@@ -1538,6 +1687,21 @@ fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
     }
 }
 
+/// A syntactically counting-shaped call may instead name a declared method.
+/// Adapters inherit that distinction from their receiver expression.
+fn isNativeCounting(self: *Interpreter, expression: *const Ast.Expression) bool {
+    if (!Checker.isCounting(expression)) return false;
+    if (expression.data == .call) {
+        const call = expression.data.call;
+        if (self.method_calls.contains(call.callee) or self.facts.qualified.contains(call.callee)) return false;
+        const member = call.callee.data.member;
+        if (std.mem.eql(u8, member.name, "step") or std.mem.eql(u8, member.name, "reverse")) {
+            return self.isNativeCounting(member.base);
+        }
+    }
+    return true;
+}
+
 /// Section 6.4's counting loops: `a..b`, `a..<b`, `a.up_to(b)`, and
 /// `a.down_to(b)`, with an optional `.step(n)` and `.reverse()`. Everything
 /// is evaluated once, before the first iteration.
@@ -1546,7 +1710,7 @@ fn executeWhile(self: *Interpreter, loop: Ast.While) Error!void {
 /// by stepping past it, because stepping past either end of the `Int` range
 /// would overflow.
 fn executeFor(self: *Interpreter, loop: Ast.For) Error!void {
-    if (!Checker.isCounting(loop.iterable)) return self.executeForList(loop);
+    if (!self.isNativeCounting(loop.iterable)) return self.executeForList(loop);
     const range = (try self.evaluate(loop.iterable)).data.range;
     return self.executeForRange(loop, range);
 }
@@ -2393,6 +2557,10 @@ fn evaluateProperty(self: *Interpreter, expression: *const Ast.Expression, membe
     }
     const base = try self.evaluate(member.base);
     defer self.heap.release(base);
+    return self.readMember(base, member);
+}
+
+fn readMember(self: *Interpreter, base: Value, member: Ast.Expression.Member) Error!Value {
 
     // Slice 2's optional field/property read: the receiver is evaluated once,
     // and nothing reaches no member at all.
@@ -2680,6 +2848,10 @@ fn evaluateSet(
 fn evaluateIndex(self: *Interpreter, expression: *const Ast.Expression, index: Ast.Expression.Index) Error!Value {
     const base = try self.evaluate(index.base);
     defer self.heap.release(base);
+    return self.readIndex(expression, base, index);
+}
+
+fn readIndex(self: *Interpreter, expression: *const Ast.Expression, base: Value, index: Ast.Expression.Index) Error!Value {
 
     // Section 8.3: a dictionary lookup can miss, and reports that as absence
     // rather than as an error, which is what makes `.or(0)` the natural reply.
@@ -3120,8 +3292,9 @@ fn evaluateCallInner(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Value {
-    if (Checker.isCountingBlock(call)) return self.evaluateCountingBlock(expression, call);
-    if (Checker.isCounting(expression)) return self.evaluateRangeCall(expression, call);
+    const declared = self.method_calls.contains(call.callee) or self.facts.qualified.contains(call.callee);
+    if (!declared and Checker.isCountingBlock(call)) return self.evaluateCountingBlock(expression, call);
+    if (self.isNativeCounting(expression)) return self.evaluateRangeCall(expression, call);
     // `Shapes.area(3)` calls a declaration; `text.upper()` calls a method. The
     // resolver decided which, and recorded it.
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
@@ -4267,7 +4440,11 @@ fn readStreamBytes(reader: *std.Io.Reader, gpa: std.mem.Allocator, count: ?usize
         bytes.deinit(gpa);
         return null;
     }
-    return try bytes.toOwnedSlice(gpa);
+    const result = try bytes.toOwnedSlice(gpa);
+    // `read_line` matches String.lines and File.read_lines: CRLF has one
+    // line ending, not a trailing carriage-return character in the line.
+    if (count == null) return @as(?[]u8, try gpa.realloc(result, std.mem.trimEnd(u8, result, "\r").len));
+    return result;
 }
 
 fn callFileWriter(self: *Interpreter, span: Source.Span, key: []const u8, member: Ast.Expression.Member, call: Ast.Expression.Call) Error!Value {
@@ -4339,7 +4516,8 @@ fn fileLines(self: *Interpreter, bytes: []const u8) Error!Value {
     const list = try self.heap.createList(.string, count);
     var pieces = std.mem.splitScalar(u8, bytes, '\n');
     for (0..count) |_| {
-        list.items.appendAssumeCapacity(try self.heap.copyText(pieces.next().?));
+        const line = std.mem.trimEnd(u8, pieces.next().?, "\r");
+        list.items.appendAssumeCapacity(try self.heap.copyText(line));
     }
     return .{ .data = .{ .list = list } };
 }
@@ -4570,7 +4748,7 @@ fn evaluateCountingBlock(self: *Interpreter, expression: *const Ast.Expression, 
 fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Error!Value {
     var values: [2]f64 = undefined;
     for (call.arguments, 0..) |argument, index| values[index] = toFloat(try self.evaluate(argument));
-    const name = key["Math.".len..];
+    const name = key[Resolver.math_prefix.len..];
     return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else std.math.pow(f64, values[0], values[1]));
 }
 
@@ -7673,30 +7851,24 @@ fn callPartition(
 fn callRemoveIf(
     self: *Interpreter,
     expression: *const Ast.Expression,
-    call: Ast.Expression.Call,
-    receiver: Value,
+    list: *Heap.List,
+    block: Value,
 ) Error!Value {
-    const block = try self.evaluate(call.arguments[0]);
     defer self.heap.release(block);
 
-    const list = receiver.data.list;
     const callable = self.closureCallable(block.data.closure);
     const closure = block.data.closure;
     const items = &list.items;
 
-    var kept: usize = 0;
-    for (items.items) |item| {
+    const keep = try self.gpa.alloc(bool, items.items.len);
+    defer self.gpa.free(keep);
+    for (items.items, keep) |item, *kept| {
         const argument = [_]Value{Heap.retain(item)};
         const produced = try self.invokeClosure(expression.span, closure, callable, &argument);
         defer self.heap.release(produced);
-        if (produced.data.bool) {
-            self.heap.release(item);
-        } else {
-            items.items[kept] = item;
-            kept += 1;
-        }
+        kept.* = !produced.data.bool;
     }
-    items.shrinkRetainingCapacity(kept);
+    self.compactList(list, keep);
     return Value.nothing;
 }
 
@@ -7776,12 +7948,16 @@ fn callExtremeBy(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
-    const receiver = try self.evaluate(member.base);
+    var guard: CallbackGuard = .{};
+    defer self.heap.release(guard.holder);
+    const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
     defer self.heap.release(receiver);
     const items = receiver.data.list.items.items;
     if (items.len == 0) return Value.nothing;
     const block = try self.evaluate(call.arguments[0]);
     defer self.heap.release(block);
+    self.beginCallback(&guard, member.name);
+    defer self.endCallback(&guard);
     const callable = self.closureCallable(block.data.closure);
     const closure = block.data.closure;
     const minimum = std.mem.eql(u8, member.name, "min_by");
@@ -7815,8 +7991,12 @@ fn callExtremeBy(
 /// Section 8.6's paired extrema. Both selections make one pass over the List;
 /// an empty List has neither answer, so both tuple positions are `nothing`.
 fn callMinMax(self: *Interpreter, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Value {
-    const receiver = try self.evaluate(member.base);
+    var guard: CallbackGuard = .{};
+    defer self.heap.release(guard.holder);
+    const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
     defer self.heap.release(receiver);
+    self.beginCallback(&guard, member.name);
+    defer self.endCallback(&guard);
     return self.listMinMax(expression.span, receiver.data.list);
 }
 
@@ -7830,7 +8010,9 @@ fn callSortBy(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
-    const receiver = try self.evaluate(member.base);
+    var guard: CallbackGuard = .{};
+    defer self.heap.release(guard.holder);
+    const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
     defer self.heap.release(receiver);
     const list = receiver.data.list;
     const items = list.items.items;
@@ -7841,6 +8023,8 @@ fn callSortBy(
 
     const block = try self.evaluate(call.arguments[0]);
     defer self.heap.release(block);
+    self.beginCallback(&guard, member.name);
+    defer self.endCallback(&guard);
     const callable = self.closureCallable(block.data.closure);
     const closure = block.data.closure;
     const key_kind = kindOf(callable.signature.return_type);
@@ -7874,13 +8058,17 @@ fn callUniqueBy(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
-    const receiver = try self.evaluate(member.base);
+    var guard: CallbackGuard = .{};
+    defer self.heap.release(guard.holder);
+    const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
     defer self.heap.release(receiver);
     const list = receiver.data.list;
     const items = list.items.items;
 
     const block = try self.evaluate(call.arguments[0]);
     defer self.heap.release(block);
+    self.beginCallback(&guard, member.name);
+    defer self.endCallback(&guard);
     const callable = self.closureCallable(block.data.closure);
     const closure = block.data.closure;
     const key_kind = kindOf(callable.signature.return_type);
@@ -7918,13 +8106,17 @@ fn callAssociate(
     member: Ast.Expression.Member,
 ) Error!Value {
     const by_key_only = std.mem.eql(u8, member.name, "associate_by");
-    const receiver = try self.evaluate(member.base);
+    var guard: CallbackGuard = .{};
+    defer self.heap.release(guard.holder);
+    const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
     defer self.heap.release(receiver);
     const list = receiver.data.list;
     const items = list.items.items;
 
     const block = try self.evaluate(call.arguments[0]);
     defer self.heap.release(block);
+    self.beginCallback(&guard, member.name);
+    defer self.endCallback(&guard);
     const callable = self.closureCallable(block.data.closure);
     const closure = block.data.closure;
     const produced = callable.signature.return_type;
@@ -7960,8 +8152,12 @@ fn callAssociate(
 /// an empty List's element kind alone cannot say what a tuple's own two
 /// positions held.
 fn callToDictionary(self: *Interpreter, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Value {
-    const receiver = try self.evaluate(member.base);
+    var guard: CallbackGuard = .{};
+    defer self.heap.release(guard.holder);
+    const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
     defer self.heap.release(receiver);
+    self.beginCallback(&guard, member.name);
+    defer self.endCallback(&guard);
     const list = receiver.data.list;
     const built = self.literal_types.get(expression).?;
     const key_kind = kindOf(built.key.?.*);
@@ -8031,19 +8227,29 @@ fn callMethod(
         if (receiver.data == .list) return self.callPartition(expression, call, member, receiver);
     }
     if (std.mem.eql(u8, member.name, "remove_if")) {
-        const receiver = try self.evaluate(member.base);
-        defer self.heap.release(receiver);
-        return self.callRemoveIf(expression, call, receiver);
+        return self.callChangingMethod(expression, call, member);
     }
     if (std.mem.eql(u8, member.name, "group_by")) {
-        const receiver = try self.evaluate(member.base);
+        var guard: CallbackGuard = .{};
+        defer self.heap.release(guard.holder);
+        const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
         defer self.heap.release(receiver);
-        if (receiver.data == .list) return self.callGroupBy(expression, call, member, receiver);
+        if (receiver.data == .list) {
+            self.beginCallback(&guard, member.name);
+            defer self.endCallback(&guard);
+            return self.callGroupBy(expression, call, member, receiver);
+        }
     }
     if (std.mem.eql(u8, member.name, "frequencies")) {
-        const receiver = try self.evaluate(member.base);
+        var guard: CallbackGuard = .{};
+        defer self.heap.release(guard.holder);
+        const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
         defer self.heap.release(receiver);
-        if (receiver.data == .list) return self.callFrequencies(expression, call, member, receiver);
+        if (receiver.data == .list) {
+            self.beginCallback(&guard, member.name);
+            defer self.endCallback(&guard);
+            return self.callFrequencies(expression, call, member, receiver);
+        }
     }
     if (std.mem.eql(u8, member.name, "min_by") or std.mem.eql(u8, member.name, "max_by")) return self.callExtremeBy(expression, call, member);
     if (std.mem.eql(u8, member.name, "min_max")) return self.callMinMax(expression, member);
@@ -8122,6 +8328,7 @@ fn callRandomMethod(self: *Interpreter, expression: *const Ast.Expression, call:
         object = Heap.retain(in_object.object);
         slot = try self.containerSlot(expression.span, &object, in_object.rest);
     } else if (path.steps.len > 0) slot = try self.containerSlot(expression.span, slot, path.steps);
+    try self.requireCallbackWrite(expression.span, slot);
     const list = try self.heap.unique(slot);
     self.seededShuffle(instance, list.items.items);
     return Value.nothing;
@@ -8168,7 +8375,9 @@ fn callReadingMethod(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
-    const receiver = try self.evaluate(member.base);
+    var guard: CallbackGuard = .{};
+    defer self.heap.release(guard.holder);
+    const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
     defer self.heap.release(receiver);
     const arguments = try self.evaluateArguments(call.arguments);
     defer {
@@ -8187,6 +8396,8 @@ fn callReadingMethod(
         return self.readMap(call, member, receiver.data.map, arguments);
     }
 
+    self.beginCallback(&guard, member.name);
+    defer self.endCallback(&guard);
     return self.readListMethod(expression.span, receiver.data.list, member.name, arguments);
 }
 
@@ -8670,6 +8881,7 @@ fn placeBinding(self: *Interpreter, name: []const u8, span: Source.Span) Error!*
     try self.reach(self.keyOf(name), span);
     const binding = self.find(name).?;
     if (binding.changing) |method| return self.raiseChanging(span, name, method);
+    if (binding.value != null) try self.requireCallbackWrite(span, &binding.value.?);
     return binding;
 }
 
@@ -8715,17 +8927,48 @@ fn callChangingMethod(
     };
     var object: Value = Value.nothing;
     defer self.heap.release(object);
+    var guard = if (binding != null) self.callbackBinding(self.rootName(receiver)) else CallbackGuard{};
+    defer self.heap.release(guard.holder);
     var slot = if (binding) |found| &found.value.? else &temporary.?;
     if (objectOnPath(slot.*, steps)) |in_object| {
         object = Heap.retain(in_object.object);
-        slot = try self.containerSlot(expression.span, &object, in_object.rest);
-    } else if (steps.len > 0) slot = try self.containerSlot(expression.span, slot, steps);
+        slot = try self.containerSlotTracking(expression.span, &object, in_object.rest, &guard);
+    } else if (steps.len > 0) slot = try self.containerSlotTracking(expression.span, slot, steps, &guard);
 
     if (slot.data == .map) {
         defer for (arguments) |argument| self.heap.release(argument);
         return self.changeMap(call, member, try self.heap.uniqueMap(slot), arguments);
     }
+    try self.requireCallbackWrite(expression.span, slot);
+    if (std.mem.eql(u8, member.name, "remove") or std.mem.eql(u8, member.name, "remove_all") or
+        std.mem.eql(u8, member.name, "remove_if") or std.mem.eql(u8, member.name, "unique!") or
+        std.mem.eql(u8, member.name, "sort!"))
+    {
+        const copy = try self.copyList(slot.data.list.element, slot.data.list.items.items);
+        var owned_copy = true;
+        defer if (owned_copy) self.heap.release(copy);
+        self.beginCallback(&guard, member.name);
+        const result = if (std.mem.eql(u8, member.name, "remove_if"))
+            self.callRemoveIf(expression, copy.data.list, arguments[0])
+        else
+            self.mutateList(expression.span, copy.data.list, member.name, arguments);
+        self.endCallback(&guard);
+        const value = try result;
+        // Callbacks can grow the module's binding table. Re-find the place,
+        // and publish only the finished result; reads never see partial work.
+        slot = if (guard.object != null)
+            try self.containerSlot(expression.span, &guard.holder, guard.steps.?)
+        else if (binding != null)
+            try self.containerSlot(expression.span, guard.slot(self).?, steps)
+        else
+            try self.containerSlot(expression.span, &temporary.?, steps);
+        self.heap.release(slot.*);
+        slot.* = copy;
+        owned_copy = false;
+        return value;
+    }
     const list = try self.heap.unique(slot);
+    if (std.mem.eql(u8, member.name, "remove_if")) return self.callRemoveIf(expression, list, arguments[0]);
     return self.mutateList(expression.span, list, member.name, arguments);
 }
 
@@ -8893,8 +9136,12 @@ fn takeReceiver(
 /// Section 8.2's `["red", "green"].to_set()`. Repeats collapse, and the first
 /// of each keeps its position, which is what `put` already does.
 fn callToSet(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
-    const receiver = try self.evaluate(member.base);
+    var guard: CallbackGuard = .{};
+    defer self.heap.release(guard.holder);
+    const receiver = try self.evaluateCallbackReceiver(member.base, &guard);
     defer self.heap.release(receiver);
+    self.beginCallback(&guard, member.name);
+    defer self.endCallback(&guard);
 
     const items = receiver.data.list.items.items;
     const map = try self.heap.createMap(receiver.data.list.element, .nothing, true);
@@ -9845,16 +10092,10 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
         },
         .remove_all => {
             defer self.heap.release(arguments[0]);
-            var kept: usize = 0;
-            for (items.items) |item| {
-                if (try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) {
-                    self.heap.release(item);
-                } else {
-                    items.items[kept] = item;
-                    kept += 1;
-                }
-            }
-            items.shrinkRetainingCapacity(kept);
+            const keep = try self.gpa.alloc(bool, items.items.len);
+            defer self.gpa.free(keep);
+            for (items.items, keep) |item, *kept| kept.* = !try Value.equals(self.gpa, item, arguments[0], self.equatable(span));
+            self.compactList(list, keep);
         },
         .remove_at => {
             const position = try self.checkIndex(list, arguments[0].data.int, span);
@@ -9874,18 +10115,19 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
         },
         .@"reverse!" => std.mem.reverse(Value, items.items),
         .@"unique!" => {
-            var kept: usize = 0;
-            outer: for (items.items) |item| {
-                for (items.items[0..kept]) |previous| {
+            const keep = try self.gpa.alloc(bool, items.items.len);
+            defer self.gpa.free(keep);
+            outer: for (items.items, 0..) |item, position| {
+                keep[position] = true;
+                for (items.items[0..position], keep[0..position]) |previous, kept| {
+                    if (!kept) continue;
                     if (try Value.equals(self.gpa, item, previous, self.equatable(span))) {
-                        self.heap.release(item);
+                        keep[position] = false;
                         continue :outer;
                     }
                 }
-                items.items[kept] = item;
-                kept += 1;
             }
-            items.shrinkRetainingCapacity(kept);
+            self.compactList(list, keep);
         },
         .@"sort!" => {
             if (list.element == .float and items.items.len > 0 and std.math.isNan(items.items[0].data.float)) return self.raiseExtremeNaN(span, .sort);
@@ -9894,6 +10136,19 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
         .@"shuffle!" => self.random().shuffle(Value, items.items),
     }
     return Value.nothing;
+}
+
+/// No user code runs during publication: decisions are complete before any
+/// element is released or moved, so an error leaves scratch ownership valid.
+fn compactList(self: *Interpreter, list: *Heap.List, keep: []const bool) void {
+    var count: usize = 0;
+    for (list.items.items, keep) |item, kept| {
+        if (kept) {
+            list.items.items[count] = item;
+            count += 1;
+        } else self.heap.release(item);
+    }
+    list.items.shrinkRetainingCapacity(count);
 }
 
 /// Section 5.2: arguments evaluate left to right, every one of them before the
@@ -9998,10 +10253,12 @@ fn raiseTooMuchRecursion(self: *Interpreter, span: Source.Span, name: []const u8
     // A program's own names never hold a space; a description such as "the
     // constructor of `Node`" or "a block" already reads as prose.
     const quote = if (std.mem.indexOfScalar(u8, name, ' ') == null) "`" else "";
-    return self.raiseFmt(
+    const message = try std.fmt.allocPrint(self.arena, "too much recursion calling {s}{s}{s}", .{ quote, name, quote });
+    self.task.state.raised_value = try self.makeError(Resolver.preludeKey("RecursionError"), message);
+    return self.raiseTyped(
         span,
-        "too much recursion calling {s}{s}{s}",
-        .{ quote, name, quote },
+        "RecursionError",
+        message,
         if (at_limit)
             "Emerald supports at least 1,000 active calls. Check that the recursion has a case that stops it."
         else

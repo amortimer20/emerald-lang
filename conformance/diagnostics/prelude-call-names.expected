@@ -1,0 +1,52 @@
+diagnostics/prelude-call-names.em:1:18: this is Int, but parameter `text` of `Json.parse` needs String
+  print(Json.parse(5))
+                   ^
+Pass a value of the expected type, or convert it first.
+diagnostics/prelude-call-names.em:2:19: this is Int, but parameter `text` of `Json.decode` needs String
+  print(Json.decode(5, as: Int))
+                    ^
+Pass a value of the expected type, or convert it first.
+diagnostics/prelude-call-names.em:3:17: this is Int, but parameter `text` of `Csv.parse` needs String
+  print(Csv.parse(5))
+                  ^
+Pass a value of the expected type, or convert it first.
+diagnostics/prelude-call-names.em:4:20: this is Int, but parameter `path` of `File.exists?` needs String
+  print(File.exists?(5))
+                     ^
+Pass a value of the expected type, or convert it first.
+diagnostics/prelude-call-names.em:5:19: this is Int, but parameter `text` of `Console.red` needs String
+  print(Console.red(5))
+                    ^
+Pass a value of the expected type, or convert it first.
+diagnostics/prelude-call-names.em:6:18: this is Int, but parameter `text` of `Date.parse` needs String
+  print(Date.parse(5))
+                   ^
+Pass a value of the expected type, or convert it first.
+diagnostics/prelude-call-names.em:7:16: this is Int, but parameter `url` of `Http.get` needs String
+  print(Http.get(5))
+                 ^
+Pass a value of the expected type, or convert it first.
+diagnostics/prelude-call-names.em:8:21: Digest.sha256 takes Bytes, but this is String
+  print(Digest.sha256("text"))
+                      ^^^^^^
+Convert text to Bytes first, with `to_bytes()`.
+diagnostics/prelude-call-names.em:9:7: `Json.parse` takes 1 argument, but this call passes 0
+  print(Json.parse())
+        ^^^^^^^^^^
+Match the number of arguments to the function's parameters.
+diagnostics/prelude-call-names.em:10:18: `Json.parse` has no parameter named `other`
+  print(Json.parse(other: "{}"))
+                   ^^^^^
+Check the spelling against the declaration.
+diagnostics/prelude-call-names.em:11:30: this is Int, but parameter `pretty` of `Json.encode` needs Bool
+  print(Json.encode(1, pretty: 1))
+                               ^
+Pass a value of the expected type, or convert it first.
+diagnostics/prelude-call-names.em:12:26: this is Int, but parameter `text` of `Json.parse` needs String
+  print(Emerald.Json.parse(5))
+                           ^
+Pass a value of the expected type, or convert it first.
+diagnostics/prelude-call-names.em:13:7: `Math.sin` takes 1 argument, but this call passes 2
+  print(Math.sin(1, 2))
+        ^^^^^^^^
+Match the number of arguments to what the method needs.

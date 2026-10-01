@@ -1,0 +1,4 @@
+diagnostics/math-project-shadow/math/functions.em:1:1: warning: the directory `diagnostics/math-project-shadow/math/` hides Emerald's built-in `Math`
+  func sin(value: Float): Float {
+  ^
+A project name always wins, so `Math.` here reaches this directory's names. Write `Emerald.Math` to reach the built-in, or rename the directory.

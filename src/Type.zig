@@ -573,6 +573,9 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "insert", ListMethod{ .parameters = &.{ .index, .element }, .result = .nothing, .mutates = true } },
     .{ "remove", ListMethod{ .parameters = &.{.element}, .result = .nothing, .mutates = true } },
     .{ "remove_all", ListMethod{ .parameters = &.{.element}, .result = .nothing, .mutates = true } },
+    // Its block signature is checked separately, but every mutation consumer
+    // (including struct effect analysis) must know that it changes its receiver.
+    .{ "remove_if", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
     .{ "remove_at", ListMethod{ .parameters = &.{.index}, .result = .element, .mutates = true } },
     .{ "remove_first", ListMethod{ .parameters = &.{}, .result = .element, .mutates = true } },
     .{ "remove_last", ListMethod{ .parameters = &.{}, .result = .element, .mutates = true } },

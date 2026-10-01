@@ -153,7 +153,7 @@ pub fn analyzeProject(gpa: std.mem.Allocator, project: *const Project) Error!?An
     };
 
     var task: Task = .{ .gpa = gpa, .project = project };
-    const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
+    const thread = Scheduler.ReservedThread.spawn(stack_size, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
     return task.result;
@@ -343,7 +343,7 @@ pub fn formatProject(gpa: std.mem.Allocator, project: *const Project) Error!Form
     };
 
     var task: Task = .{ .gpa = gpa, .project = project };
-    const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
+    const thread = Scheduler.ReservedThread.spawn(stack_size, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
     return task.result;
@@ -448,7 +448,7 @@ fn onLargeStack(gpa: std.mem.Allocator, project: *const Project, streams: ?Strea
     // honestly how much there is, and a program within section 7.2's
     // guarantees could fail or crash. Failing to start is the honest outcome.
     var task: Task = .{ .gpa = gpa, .project = project, .streams = streams, .test_mode = test_mode, .step_limit = step_limit };
-    const thread = std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ &task, stack_size }) catch
+    const thread = Scheduler.ReservedThread.spawn(stack_size, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
     return task.result;
@@ -1005,7 +1005,7 @@ test "cancelled file opening closes the resource before invoking its block" {
 test "FileHandle streams text, rejects invalid UTF-8, and rejects reads after close" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "lines.txt", .data = "one\ntwo\nthree\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "lines.txt", .data = "one\r\ntwo\r\nthree\r\n" });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "invalid.bin", .data = "\xff" });
 
     const relative = try std.fmt.allocPrint(testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
@@ -1035,6 +1035,10 @@ test "FileHandle streams text, rejects invalid UTF-8, and rejects reads after cl
     , .{lines_literal});
     defer testing.allocator.free(streamed);
     try expectOutput(streamed, "one\ntwo\nthree\n");
+
+    const whole = try std.fmt.allocPrint(testing.allocator, "print(File.read_lines(\"{s}\"))", .{lines_literal});
+    defer testing.allocator.free(whole);
+    try expectOutput(whole, "[\"one\", \"two\", \"three\"]\n");
 
     const closed = try std.fmt.allocPrint(testing.allocator,
         \\const file = File.open("{s}")
@@ -3105,7 +3109,7 @@ test "unbounded recursion is caught at the limit, with repeated frames summarize
     defer report.deinit();
 
     const failure = report.failure.?;
-    try testing.expectEqualStrings("too much recursion calling `forever`", failure.message);
+    try testing.expectEqualStrings("RecursionError: too much recursion calling `forever`", failure.message);
     // Exactly the 1,000 active calls section 7.2 guarantees.
     try testing.expectEqual(@as(usize, 1000), failure.trace.len);
 
@@ -3313,6 +3317,34 @@ test "a block traverses the list as it was, even when the block changes it" {
         "var numbers = [1, 2, 3]\nnumbers.each { n => numbers.append(n) }\nprint(numbers)\n",
         "[1, 2, 3, 1, 2, 3]\n",
     );
+}
+
+test "list equality callbacks reject reallocating the receiver without changing it" {
+    try expectOutput(
+        \\var items: List[Item] = []
+        \\class Item with Equatable {
+        \\    const id: Int
+        \\    @override
+        \\    func equals(other: Item): Bool {
+        \\        assert(items.count == 2 and items[0].id == 1)
+        \\        for n in 0..<100 {
+        \\            items.append(Item(n))
+        \\        }
+        \\        return self.id == other.id
+        \\    }
+        \\}
+        \\items = [Item(1), Item(2)]
+        \\try {
+        \\    items.remove(Item(9999))
+        \\}
+        \\catch error: RuntimeError {
+        \\    print(error.message)
+        \\}
+        \\print(items.map { item => item.id })
+        \\items.append(Item(3))
+        \\print(items.count)
+        \\
+    , "a callback cannot change `items` while `remove` is using it\n[1, 2]\n3\n");
 }
 
 test "section 7.5: a named function is a value" {
