@@ -253,13 +253,17 @@ on the roadmap.
 
 1. The current queue: the bug-fix batch, the REPL milestone, and editor intelligence.
 2. **A QA iteration** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
-   use, before more is built on top. The user's first finding: Console tables rendered poorly on the
-   website's Console page (borders short, vertical lines broken between rows). Fixed on the site
-   2026-10-01: Google's JetBrains Mono leaves out the box-drawing characters, so browsers drew them
-   from a mismatched fallback font, and the code line height broke the lines; the site now serves
-   the full font and gives box-art blocks the font's own line height. Still to QA: how
-   `Console.table` and `Console.panel` look in real terminals and on Windows, since the width
-   measure (CJK and emoji take two columns) was only tested against the interpreter. Also carry in the rough edges recorded under
+   use, before more is built on top. The user's first finding: Console tables render poorly on the
+   website's Console page (borders short, vertical lines broken between rows). The terminal
+   output is fine (checked by the user, 2026-10-01); only the website is wrong. A first attempt on
+   2026-10-01 did not fix it for the user: it self-hosted the full JetBrains Mono (Google's copy
+   leaves out the box-drawing characters U+2500 to U+257F, so browsers used a mismatched
+   fallback font), set the font's own line height (1.32) on blocks with box characters
+   (`src/plugins/box-art.mjs`, `reference.css`), and made the "At a glance" tables share one width.
+   In a headless Chromium the boxes joined up, so the cause on the user's machine is still
+   unknown: get a screenshot or the browser and font from the user, and check line height, the
+   font actually in use, and Expressive Code's own styles. Deferred by the user to this iteration.
+   Also carry in the rough edges recorded under
    "Active rough edges" and the diagnostics that still need hints, plus two found while
    writing the Console and Tasks pages: a `Console.table` whose `header:` has a different width than
    its rows reports the header as "row 1" ("row 2 has 2 cells, but row 1 has 1"), and
