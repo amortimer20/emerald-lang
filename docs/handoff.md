@@ -335,9 +335,16 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   and .NET's own runtime does not target microcontrollers (.NET nanoFramework is a separate,
   partial runtime). Paths that do reach the Pico: LLVM (Rust and Zig both use it for these
   chips), emitting C and building it with the board's toolchain, or a small bytecode VM written in
-  Zig and run on the board, as MicroPython does. Two shapes to weigh, not yet discussed with the
-  user: an interpreter on the board with a REPL over USB (MicroPython's classroom model: copy a
-  file, see the result at once), or compiling on the computer into firmware (Arduino's model).
+  Zig and run on the board, as MicroPython does. The user chose MicroPython's shape (2026-10-01): a
+  runtime flashed onto the board once, then programs and a REPL over USB, rather than Arduino's
+  build-and-flash firmware. Claude's proposal, to settle when this is planned: one language and
+  one repository with a second target ("MicroEmerald"), not a separate implementation, because
+  MicroPython's separate implementation is why it drifts from Python. The lexer, parser, checker,
+  diagnostics, and the backend-neutral conformance cases are shared; the board gets a small VM
+  written in Zig and a board profile of the library. Unlike MicroPython, checking happens on the
+  computer, since the checker is too large for the board's RAM: `emerald board run file.em`
+  checks, shows any errors as usual, and sends bytecode, and the REPL runs on the computer and
+  sends each entry. Per-board pin maps and drivers could live in their own packages.
   Either needs a board profile of the language: no files, HTTP, time zones, or OS threads (tasks
   would need a scheduler without OS threads), a pin, timer, and bus library instead, and a check
   on what a 64-bit `Int` and `Float` cost on a chip with no floating-point hardware. Emerald's
