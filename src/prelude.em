@@ -1,5 +1,6 @@
 # Section 13's common root for every value that may be raised.
 class Error {
+    ## What went wrong, in words.
     const message: String
 }
 
@@ -67,7 +68,9 @@ class TaskGroup {
 }
 
 class Tasks {
+    ## Runs the block, giving it a `TaskGroup` to start tasks from.
     func Tasks.run(body: func(TaskGroup)) {}
+    ## Lets the other tasks that are ready run, and carries on when this one's turn comes round again.
     func Tasks.yield() {}
 }
 
@@ -75,6 +78,7 @@ class Tasks {
 class Channel {
     const _id: Int
 
+    ## A channel for values of type `T`.
     constructor(capacity: Int = 0) {
         self._id = 0
     }
@@ -83,20 +87,35 @@ class Channel {
 # Whole-file filesystem namespaces. Their bodies establish the ordinary
 # type-level signatures; the interpreter supplies the native operation.
 class File {
+    ## Opens a text file for reading and gives back a `FileHandle`, which reads it a line at a time.
     func File.open(path: String): FileHandle { return FileHandle() }
+    ## Opens the file, gives the open `FileHandle` to the block, and closes it afterwards, whether the block finishes normally, returns early, or raises an error.
     func File.with_open(path: String, block: func(FileHandle)) {}
+    ## Creates a text file for writing, replacing it if it already exists, and gives back a `FileWriter`, which writes to it a piece at a time.
     func File.create(path: String): FileWriter { return FileWriter() }
+    ## Creates the file, gives the open `FileWriter` to the block, and closes it afterwards, whether the block finishes normally, returns early, or raises an error.
     func File.with_writer(path: String, block: func(FileWriter)) {}
+    ## The whole file as one `String`, line breaks included.
     func File.read(path: String): String { return "" }
+    ## The whole file as `Bytes`, with no check that it is text.
     func File.read_binary(path: String): Bytes { return Bytes.from_list([]) }
+    ## Puts `contents` in the file, creating it if it isn't there.
     func File.write(path: String, contents: String) {}
+    ## Puts `bytes` in the file, creating it if it isn't there, and replacing what it held.
     func File.write_binary(path: String, bytes: Bytes) {}
+    ## Adds `contents` to the end of the file, creating the file if it isn't there.
     func File.append(path: String, contents: String) {}
+    ## The file as a list with one item for each line, without the line breaks.
     func File.read_lines(path: String): List[String] { return [] }
+    ## Writes each item of `lines` followed by a line break, including the last one, so the file ends the way a text file normally does.
     func File.write_lines(path: String, lines: List[String]) {}
+    ## Whether there is a file at `path`.
     func File.exists?(path: String): Bool { return false }
+    ## Makes a copy of the file at `source` at `destination`, leaving the original where it is.
     func File.copy(source: String, destination: String) {}
+    ## Moves the file at `source` to `destination`.
     func File.move(source: String, destination: String) {}
+    ## Removes the file at `path`.
     func File.delete(path: String) {}
 }
 
@@ -105,10 +124,15 @@ class File {
 class FileHandle {
     var _id: Int = Program.arguments.count
 
+    ## Everything not yet read, as one `String`.
     func read(): String { return "" }
+    ## The next line, without its line break, or `nothing` once there are no more lines.
     func read_line(): String? { return nothing }
+    ## Up to `count` of the bytes not yet read, as `Bytes`, or `nothing` when there are none left.
     func read_bytes(count: Int): Bytes? { return nothing }
+    ## Every byte not yet read.
     func read_all_bytes(): Bytes { return Bytes.from_list([]) }
+    ## Lets go of the file.
     func close() {}
 }
 
@@ -117,8 +141,11 @@ class FileHandle {
 class FileWriter {
     var _id: Int = Program.arguments.count
 
+    ## Adds `text` to the end of the file, as UTF-8.
     func write(text: String) {}
+    ## Adds `Bytes` to the end of the file exactly as they are.
     func write_bytes(bytes: Bytes) {}
+    ## Finishes the file and lets go of it.
     func close() {}
 }
 
@@ -131,31 +158,48 @@ class Bytes {
 }
 
 class Base64 {
+    ## The bytes written as Base64.
     func Base64.encode(bytes: Bytes, url_safe: Bool = false): String { return "" }
+    ## The bytes that Base64 text stands for.
     func Base64.decode(text: String, url_safe: Bool = false): Bytes { return Bytes.from_list([]) }
+    ## Like `decode`, but gives `nothing` instead of raising an error.
     func Base64.decode_maybe(text: String, url_safe: Bool = false): Bytes? { return nothing }
 }
 
 class Digest {
+    ## The 32-byte SHA-256 digest of `bytes`.
     func Digest.sha256(bytes: Bytes): Bytes { return Bytes.from_list([]) }
+    ## The 32-byte HMAC-SHA256 digest of `bytes`, made with a secret `key`.
     func Digest.hmac_sha256(bytes: Bytes, key: Bytes): Bytes { return Bytes.from_list([]) }
 }
 
 class Directory {
+    ## Whether there is a folder at `path`.
     func Directory.exists?(path: String): Bool { return false }
+    ## Makes the folder, along with any folders above it that are missing, so `Directory.create("a/b/c")` works even when `a` doesn't exist yet.
     func Directory.create(path: String) {}
+    ## Removes a folder, but only an empty one.
     func Directory.delete(path: String) {}
+    ## Removes a folder and everything inside it, folders and files alike.
     func Directory.delete_recursive(path: String) {}
+    ## The full path of everything directly inside the folder, files and folders alike.
     func Directory.list(path: String): List[String] { return [] }
 }
 
 class Path {
+    ## The parts put together with a separator between each.
     func Path.join(parts: List[String]): String { return "" }
+    ## The last part of the path: the file or folder name, with its extension.
     func Path.name(path: String): String { return "" }
+    ## The last part without its extension.
     func Path.stem(path: String): String { return "" }
+    ## The part after the last dot of the name, without the dot: `"txt"`, not `".txt"`.
     func Path.extension(path: String): String { return "" }
+    ## Everything before the last part: the folder a file or folder is in.
     func Path.parent(path: String): String { return "" }
+    ## Whether the path is absolute.
     func Path.absolute?(path: String): Bool { return false }
+    ## The full, absolute path to something that exists, starting from the top of the disk.
     func Path.absolute(path: String): String { return "" }
 }
 
@@ -175,6 +219,7 @@ class Console {
     func Console._width(text: String): Int { return 0 }
 
     # Native: removes complete ANSI SGR sequences, leaving other control text alone.
+    ## The text with the styling Console added taken out, so it can be compared, measured, or saved as plain text, whether or not styling is on.
     func Console.plain(text: String): String { return text }
 
     func Console._layer(text: String, open: Int, close: Int): String {
@@ -205,6 +250,7 @@ class Console {
         }
     }
 
+    ## Styles text with any combination of options at once.
     func Console.style(text: String, foreground: Emerald.Console.Color? = nothing, background: Emerald.Console.Color? = nothing, bold: Bool = false, dim: Bool = false, italic: Bool = false, underline: Bool = false): String {
         if not Emerald.Console._color() {
             return text
@@ -232,6 +278,7 @@ class Console {
     }
 
     func Console.black(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.black) }
+    ## The text in a color.
     func Console.red(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.red) }
     func Console.green(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.green) }
     func Console.yellow(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.yellow) }
@@ -240,6 +287,7 @@ class Console {
     func Console.cyan(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.cyan) }
     func Console.white(text: String): String { return Emerald.Console.style(text, foreground: Emerald.Console.Color.white) }
 
+    ## The text in a style.
     func Console.bold(text: String): String { return Emerald.Console.style(text, bold: true) }
     func Console.dim(text: String): String { return Emerald.Console.style(text, dim: true) }
     func Console.italic(text: String): String { return Emerald.Console.style(text, italic: true) }
@@ -273,6 +321,7 @@ class Console {
         return line
     }
 
+    ## A table of text rows, drawn with box characters.
     func Console.table(rows: List[List[String]], header: List[String] = []): String {
         return Emerald.Console._table_impl(rows, header, [])
     }
@@ -331,6 +380,7 @@ class Console {
         return result + "\n" + Emerald.Console._table_rule(widths, "└", "┴", "┘")
     }
 
+    ## A box around one or more lines of text.
     func Console.panel(text: String, title: String? = nothing, color: Emerald.Console.Color? = nothing): String {
         var lines = text.lines()
         if lines.count == 0 {
@@ -374,6 +424,7 @@ class Console {
         }
     }
 
+    ## Asks a question and gives back the answer without the spaces around it.
     func Console.ask(question: String, default: String? = nothing): String {
         while true {
             const prompt = if default != nothing then "#{question} [#{default}] " else "#{question} "
@@ -388,6 +439,7 @@ class Console {
         }
     }
 
+    ## Asks for a whole number.
     func Console.ask_int(question: String, minimum: Int? = nothing, maximum: Int? = nothing): Int {
         if minimum != nothing and maximum != nothing and minimum > maximum {
             raise RuntimeError("minimum cannot be greater than maximum")
@@ -412,6 +464,7 @@ class Console {
         }
     }
 
+    ## The same as `ask_int`, for a number that can have a fraction.
     func Console.ask_float(question: String, minimum: Float? = nothing, maximum: Float? = nothing): Float {
         if minimum != nothing and maximum != nothing and minimum > maximum {
             raise RuntimeError("minimum cannot be greater than maximum")
@@ -436,6 +489,7 @@ class Console {
         }
     }
 
+    ## Asks a yes-or-no question.
     func Console.confirm(question: String, default: Bool? = nothing): Bool {
         while true {
             const suffix = if default == true then " (Y/n)" else if default == false then " (y/N)" else " (y/n)"
@@ -453,6 +507,7 @@ class Console {
         }
     }
 
+    ## Shows the options as a numbered list and asks for a number.
     func Console.choose(question: String, options: List[String]): String {
         if options.count == 0 {
             raise RuntimeError("choose needs at least one option")
@@ -467,6 +522,7 @@ class Console {
         }
     }
 
+    ## Like `choose`, but any number of options can be picked, typed as numbers separated by commas or spaces.
     func Console.choose_many(question: String, options: List[String]): List[String] {
         if options.count == 0 {
             raise RuntimeError("choose_many needs at least one option")
@@ -508,6 +564,7 @@ class Console {
 class Random {
     var _state: Int
 
+    ## A generator starting from `seed`.
     constructor(seed: Int) {
         self._state = seed
     }
@@ -516,6 +573,7 @@ class Random {
 # Section 11.5's remaining comparison contract: arithmetic is registered by
 # `@operator` on the concrete method that owns it.
 trait Ordered {
+    ## A negative number when this value comes before `other`, zero when they are in the same place, and a positive number when it comes after.
     func compare(other: Self): Int
 }
 
@@ -528,10 +586,12 @@ trait Ordered {
 # hash, so adopting `Equatable` alone does not make a type a dictionary or
 # set key again — `Hashable`'s own `hash()` is what does.
 trait Equatable {
+    ## Whether this value and `other` count as equal.
     func equals(other: Self): Bool
 }
 
 trait Hashable with Equatable {
+    ## A number for the value.
     func hash(): Int
 }
 
@@ -541,6 +601,7 @@ trait Hashable with Equatable {
 # explicit, as for every other trait: a method named `to_string` alone changes
 # nothing about how a value displays.
 trait Textual {
+    ## The value as text.
     func to_string(): String
 }
 
@@ -584,6 +645,7 @@ struct Duration with Ordered, Textual {
     const _seconds: Int
     const _nanoseconds: Int
 
+    ## Any combination of units, added together.
     constructor(days: Int = 0, hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0) {
         const parts = (milliseconds % 1000) * 1000000 + (microseconds % 1000000) * 1000 + nanoseconds % 1000000000
         self._seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds + milliseconds // 1000 + microseconds // 1000000 + nanoseconds // 1000000000 + parts // 1000000000
@@ -594,6 +656,7 @@ struct Duration with Ordered, Textual {
         return self._total_seconds() / 86400
     }
 
+    ## The whole length in one unit, as a `Float` with a fraction.
     const total_hours: Float {
         return self._total_seconds() / 3600
     }
@@ -615,6 +678,7 @@ struct Duration with Ordered, Textual {
         return self._whole(1, 86400)
     }
 
+    ## The whole length in one unit, rounded toward zero, as an `Int`.
     const whole_hours: Int {
         return self._whole(1, 3600)
     }
@@ -659,6 +723,7 @@ struct Duration with Ordered, Textual {
         return self._seconds < 0
     }
 
+    ## The length without its sign.
     func abs(): Self {
         return if self.negative?() then self._negated() else self
     }
@@ -981,12 +1046,14 @@ func _time_at(points: List[Int], start: Int, end: Int): (Int, Int, Int, Int) {
 # A calendar date with no time of day or time zone, in the proleptic Gregorian
 # calendar from year 1 through 9999.
 struct Date with Ordered, Textual {
+    ## The parts of the date as whole numbers: `year`, `month` (1 to 12), and `day` (1 to 31).
     const year: Int
     const month: Int
     const day: Int
 
     const Date._weekdays = [Emerald.Weekday.monday, Emerald.Weekday.tuesday, Emerald.Weekday.wednesday, Emerald.Weekday.thursday, Emerald.Weekday.friday, Emerald.Weekday.saturday, Emerald.Weekday.sunday]
 
+    ## A date from its parts.
     constructor(year: Int, month: Int, day: Int) {
         const problem = _date_problem(year, month, day)
         if problem != nothing {
@@ -998,10 +1065,12 @@ struct Date with Ordered, Textual {
     }
 
     # Today's date in `zone`.
+    ## Today's date, in `zone`, which is the computer's own zone unless you say otherwise.
     func Date.today(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.Date {
         return Emerald.Instant.now().to_date_time(zone).date
     }
 
+    ## Reads a date written as `YYYY-MM-DD`, ignoring spaces around it.
     func Date.parse(text: String): Emerald.Date {
         const problem = Emerald.Date._text_problem(text)
         if problem != nothing {
@@ -1010,6 +1079,7 @@ struct Date with Ordered, Textual {
         return Emerald.Date._from_text(text)
     }
 
+    ## Like `parse`, but gives `nothing` instead of raising an error.
     func Date.parse_maybe(text: String): Emerald.Date? {
         if Emerald.Date._text_problem(text) != nothing {
             return nothing
@@ -1017,28 +1087,34 @@ struct Date with Ordered, Textual {
         return Emerald.Date._from_text(text)
     }
 
+    ## The day of the week, as a `Weekday`.
     const weekday: Emerald.Weekday {
         return Emerald.Date._weekdays[(self._days() + 3) % 7]
     }
 
+    ## The month's English name, for building text.
     const month_name: String {
         return _month_name(self.month)
     }
 
+    ## 1 for 1 January, counting up to 365, or 366 in a leap year.
     const day_of_year: Int {
         return self._days() - _days_from_civil(self.year, 1, 1) + 1
     }
 
+    ## How many days the date's month has: 28, 29, 30, or 31.
     const days_in_month: Int {
         return _month_length(self.year, self.month)
     }
 
+    ## Whether the date's year has a 29 February: every fourth year, except century years that aren't divisible by 400.
     func leap_year?(): Bool {
         return _leap?(self.year)
     }
 
     # Years and months first, keeping the day when that month has it and
     # otherwise using its last day; then weeks and days.
+    ## A later date.
     func add(years: Int = 0, months: Int = 0, weeks: Int = 0, days: Int = 0): Self {
         const index = self.year * 12 + self.month - 1 + years * 12 + months
         const year = index // 12
@@ -1055,16 +1131,19 @@ struct Date with Ordered, Textual {
         return Emerald.Date(year_moved, month_moved, day_moved)
     }
 
+    ## An earlier date: `add` with every amount made negative.
     func subtract(years: Int = 0, months: Int = 0, weeks: Int = 0, days: Int = 0): Self {
         return self.add(years: -years, months: -months, weeks: -weeks, days: -days)
     }
 
+    ## The number of days from this date to `other`, negative when `other` is earlier.
     func days_until(other: Self): Int {
         return other._days() - self._days()
     }
 
     # Whole months: the most that `add(months:)` can move this date without
     # passing `other`.
+    ## Whole months from this date to `other`: the most months that `add(months:)` can move this date without going past it.
     func months_until(other: Self): Int {
         var months = other.year * 12 + other.month - (self.year * 12 + self.month)
         if months > 0 and self.add(months: months) > other {
@@ -1077,12 +1156,14 @@ struct Date with Ordered, Textual {
     }
 
     # Whole years, so a birth date's `years_until(today)` is an age.
+    ## Whole years from this date to `other`, so `born.years_until(Date.today())` is an age.
     func years_until(other: Self): Int {
         const months = self.months_until(other)
         return if months >= 0 then months // 12 else -((-months) // 12)
     }
 
     # This date at a time of day.
+    ## This date at a time of day, as a `DateTime`.
     func at(time: Emerald.Time): Emerald.DateTime {
         return Emerald.DateTime(self.year, self.month, self.day, time.hour, time.minute, time.second, time.nanosecond)
     }
@@ -1125,11 +1206,13 @@ struct Date with Ordered, Textual {
 # A time on the clock with no date or time zone, to the nanosecond. Moving it
 # wraps around midnight.
 struct Time with Ordered, Textual {
+    ## The parts of the time as whole numbers: `hour` (0 to 23), `minute` (0 to 59), `second` (0 to 59), and `nanosecond`.
     const hour: Int
     const minute: Int
     const second: Int
     const nanosecond: Int
 
+    ## A time from its parts.
     constructor(hour: Int, minute: Int = 0, second: Int = 0, nanosecond: Int = 0) {
         const problem = _time_problem(hour, minute, second, nanosecond)
         if problem != nothing {
@@ -1142,10 +1225,12 @@ struct Time with Ordered, Textual {
     }
 
     # The time on the clock in `zone` now.
+    ## The time on the clock now, in `zone`, which is the computer's own zone unless you say otherwise.
     func Time.now(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.Time {
         return Emerald.Instant.now().to_date_time(zone).time
     }
 
+    ## Reads `HH:MM`, `HH:MM:SS`, or `HH:MM:SS` followed by a fraction of a second of one to nine digits, ignoring spaces around it.
     func Time.parse(text: String): Emerald.Time {
         const problem = Emerald.Time._text_problem(text)
         if problem != nothing {
@@ -1154,6 +1239,7 @@ struct Time with Ordered, Textual {
         return Emerald.Time._from_text(text)
     }
 
+    ## Like `parse`, but gives `nothing` instead of raising an error, for text a person typed.
     func Time.parse_maybe(text: String): Emerald.Time? {
         if Emerald.Time._text_problem(text) != nothing {
             return nothing
@@ -1161,11 +1247,13 @@ struct Time with Ordered, Textual {
         return Emerald.Time._from_text(text)
     }
 
+    ## A later time.
     func add(hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0): Self {
         const (_, second_of_day, nanosecond) = _shifted(self._second_of_day(), self.nanosecond, hours, minutes, seconds, milliseconds, microseconds, nanoseconds)
         return Emerald.Time(second_of_day // 3600, second_of_day % 3600 // 60, second_of_day % 60, nanosecond)
     }
 
+    ## An earlier time: `add` with every amount made negative, wrapping the same way.
     func subtract(hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0): Self {
         return self.add(hours: -hours, minutes: -minutes, seconds: -seconds, milliseconds: -milliseconds, microseconds: -microseconds, nanoseconds: -nanoseconds)
     }
@@ -1209,19 +1297,23 @@ struct Time with Ordered, Textual {
 # A date and a time of day with no time zone: what a calendar and a wall clock
 # show together.
 struct DateTime with Ordered, Textual {
+    ## The two halves of a `DateTime`: `date` is its `Date` and `time` is its `Time`.
     const date: Emerald.Date
     const time: Emerald.Time
 
+    ## A date and a time from their parts.
     constructor(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0, nanosecond: Int = 0) {
         self.date = Emerald.Date(year, month, day)
         self.time = Emerald.Time(hour, minute, second, nanosecond)
     }
 
     # What a calendar and clock in `zone` show now.
+    ## What a calendar and clock in `zone` show now, which is the computer's own zone unless you say otherwise.
     func DateTime.now(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.DateTime {
         return Emerald.Instant.now().to_date_time(zone)
     }
 
+    ## Reads a date and a time separated by `T` or a space.
     func DateTime.parse(text: String): Emerald.DateTime {
         const problem = Emerald.DateTime._text_problem(text)
         if problem != nothing {
@@ -1230,6 +1322,7 @@ struct DateTime with Ordered, Textual {
         return Emerald.DateTime._from_text(text)
     }
 
+    ## Like `parse`, but gives `nothing` instead of raising an error.
     func DateTime.parse_maybe(text: String): Emerald.DateTime? {
         if Emerald.DateTime._text_problem(text) != nothing {
             return nothing
@@ -1237,6 +1330,7 @@ struct DateTime with Ordered, Textual {
         return Emerald.DateTime._from_text(text)
     }
 
+    ## The parts of both halves, read directly: `year`, `month`, `day`, `hour`, `minute`, `second`, and `nanosecond` as whole numbers, and `weekday` as a `Weekday`.
     const year: Int {
         return self.date.year
     }
@@ -1271,6 +1365,7 @@ struct DateTime with Ordered, Textual {
 
     # Years and months first, as `Date.add` moves them; then weeks and days,
     # together with any whole days the time units carry past midnight.
+    ## A later date and time.
     func add(years: Int = 0, months: Int = 0, weeks: Int = 0, days: Int = 0, hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0): Self {
         const time = self.time
         const (carried, second_of_day, nanosecond) = _shifted(time.hour * 3600 + time.minute * 60 + time.second, time.nanosecond, hours, minutes, seconds, milliseconds, microseconds, nanoseconds)
@@ -1278,6 +1373,7 @@ struct DateTime with Ordered, Textual {
         return Emerald.DateTime(date.year, date.month, date.day, second_of_day // 3600, second_of_day % 3600 // 60, second_of_day % 60, nanosecond)
     }
 
+    ## An earlier date and time: `add` with every amount made negative.
     func subtract(years: Int = 0, months: Int = 0, weeks: Int = 0, days: Int = 0, hours: Int = 0, minutes: Int = 0, seconds: Int = 0, milliseconds: Int = 0, microseconds: Int = 0, nanoseconds: Int = 0): Self {
         return self.add(years: -years, months: -months, weeks: -weeks, days: -days, hours: -hours, minutes: -minutes, seconds: -seconds, milliseconds: -milliseconds, microseconds: -microseconds, nanoseconds: -nanoseconds)
     }
@@ -1285,6 +1381,7 @@ struct DateTime with Ordered, Textual {
     # The moment this date and time is in `zone`. When clocks go back, a time
     # happens twice and this is the earlier; when they go forward, a time is
     # skipped and this moves it forward by the gap, as Temporal does.
+    ## The exact moment this date and time is in `zone`.
     func to_instant(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.Instant {
         const seconds = _days_from_civil(self.year, self.month, self.day) * 86400 + self.hour * 3600 + self.minute * 60 + self.second
         const naive = Emerald.Instant.from_unix_seconds(seconds).after(Emerald.Duration(nanoseconds: self.nanosecond))
@@ -1305,6 +1402,7 @@ struct DateTime with Ordered, Textual {
 
     # The difference the calendar and clock show, as if every day had exactly
     # 24 hours: a change of clocks in some time zone is not counted.
+    ## The length of time from this to `other`, as the calendar and clock show it, counting every day as exactly 24 hours.
     func duration_until(other: Self): Emerald.Duration {
         const days = self.date.days_until(other.date)
         const seconds = (other.time.hour - self.time.hour) * 3600 + (other.time.minute - self.time.minute) * 60 + other.time.second - self.time.second
@@ -1356,6 +1454,7 @@ struct Instant with Ordered, Textual {
     const _seconds: Int
     const _nanoseconds: Int
 
+    ## The moment now, from the computer's clock.
     func Instant.now(): Emerald.Instant {
         const now = Emerald.Instant._now()
         return Emerald.Instant._at(now // 1000000000, now % 1000000000)
@@ -1366,14 +1465,17 @@ struct Instant with Ordered, Textual {
         return 0
     }
 
+    ## The moment a Unix timestamp names: the number of seconds since the start of 1970, as many systems and file formats store a time.
     func Instant.from_unix_seconds(seconds: Int): Emerald.Instant {
         return Emerald.Instant._at(seconds, 0)
     }
 
+    ## The same, for a timestamp counted in milliseconds, as many web systems use.
     func Instant.from_unix_milliseconds(milliseconds: Int): Emerald.Instant {
         return Emerald.Instant._at(milliseconds // 1000, milliseconds % 1000 * 1000000)
     }
 
+    ## Reads a date and a time followed by `Z` for UTC, or by an offset from UTC.
     func Instant.parse(text: String): Emerald.Instant {
         const problem = Emerald.Instant._text_problem(text)
         if problem != nothing {
@@ -1382,6 +1484,7 @@ struct Instant with Ordered, Textual {
         return Emerald.Instant._from_text(text)
     }
 
+    ## Like `parse`, but gives `nothing` instead of raising an error.
     func Instant.parse_maybe(text: String): Emerald.Instant? {
         if Emerald.Instant._text_problem(text) != nothing {
             return nothing
@@ -1390,6 +1493,7 @@ struct Instant with Ordered, Textual {
     }
 
     # Rounded toward the past, as Unix time is.
+    ## The Unix timestamp: whole seconds since the start of 1970.
     const unix_seconds: Int {
         return self._seconds
     }
@@ -1417,6 +1521,7 @@ struct Instant with Ordered, Textual {
     }
 
     # What a calendar and clock in `zone` show at this moment.
+    ## What a calendar and clock in `zone` show at this moment, as a `DateTime`.
     func to_date_time(zone: Emerald.TimeZone = Emerald.TimeZone.local): Emerald.DateTime {
         const local = self.after(zone.offset_at(self))
         const (year, month, day) = _civil_from_days(local._seconds // 86400)
@@ -1502,6 +1607,7 @@ struct Instant with Ordered, Textual {
 # as "Europe/Paris" from the database built into Emerald, or the machine's own
 # zone.
 struct TimeZone with Textual {
+    ## The zone's name, which is also how it prints.
     const name: String
     # Whether the zone is always `_offset` seconds ahead of UTC; otherwise the
     # runtime holds rules for its name. Not an `Int?`, so a zone stays usable
@@ -1509,13 +1615,16 @@ struct TimeZone with Textual {
     const _fixed: Bool
     const _offset: Int
 
+    ## Coordinated Universal Time, the zone with no offset, named `UTC`.
     const TimeZone.utc = Emerald.TimeZone("UTC")
 
     # The machine's zone, decided once when the program starts. UTC for
     # `emerald check`, tests of Emerald itself, and anywhere else no machine
     # zone was resolved.
+    ## The computer's own zone, worked out once when the program starts.
     const TimeZone.local = Emerald.TimeZone(Emerald.TimeZone._local_name())
 
+    ## A zone by name.
     constructor(name: String) {
         const offset = Emerald.TimeZone._fixed_offset(name)
         if offset == nothing and not Emerald.TimeZone._known?(name) {
@@ -1531,6 +1640,7 @@ struct TimeZone with Textual {
     }
 
     # The zone called `name`, or nothing when there is none.
+    ## Like `TimeZone(name)`, but gives `nothing` for an unknown name instead of raising an error.
     func TimeZone.named_maybe(name: String): Emerald.TimeZone? {
         if Emerald.TimeZone._fixed_offset(name) == nothing and not Emerald.TimeZone._known?(name) {
             return nothing
@@ -1540,6 +1650,7 @@ struct TimeZone with Textual {
 
     # A zone always this far from UTC, named like "+05:30" or "-03:30". The
     # minutes take the sign of the hours.
+    ## A zone that is always this far from UTC, named by its offset.
     func TimeZone.fixed(hours: Int, minutes: Int = 0): Emerald.TimeZone {
         if minutes < -59 or minutes > 59 or (hours > 0 and minutes < 0) or (hours < 0 and minutes > 0) {
             raise Emerald.DateTimeError("minutes #{minutes} must be between -59 and 59, with the same sign as hours #{hours}: write minutes: #{-minutes} instead")
@@ -1553,6 +1664,7 @@ struct TimeZone with Textual {
     }
 
     # How far ahead of UTC clocks in this zone are at `instant`.
+    ## How far ahead of UTC the zone's clocks are at a moment, as a `Duration`.
     func offset_at(instant: Emerald.Instant): Emerald.Duration {
         if self._fixed {
             return Emerald.Duration(seconds: self._offset)
@@ -1599,6 +1711,7 @@ struct TimeZone with Textual {
 class Stopwatch with Textual {
     var _started: Int
 
+    ## A stopwatch that starts at once.
     func Stopwatch.start(): Emerald.Stopwatch {
         return Emerald.Stopwatch(Emerald.Stopwatch._ticks())
     }
@@ -1608,10 +1721,12 @@ class Stopwatch with Textual {
         return 0
     }
 
+    ## The time since the stopwatch started, or was last restarted, as a `Duration`.
     func elapsed(): Emerald.Duration {
         return Emerald.Duration(nanoseconds: Emerald.Stopwatch._ticks() - self._started)
     }
 
+    ## Starts measuring again from now, as if the stopwatch had just been made.
     func restart() {
         self._started = Emerald.Stopwatch._ticks()
     }
@@ -1637,6 +1752,7 @@ class RegexError extends RuntimeError {
 }
 
 struct Regex with Textual {
+    ## What the regex was built from: `pattern`, `ignore_case`, and `multiline`.
     const pattern: String
     const ignore_case: Bool
     const multiline: Bool
@@ -1644,6 +1760,7 @@ struct Regex with Textual {
     # One match, found in some text. `start` and `end` count characters as
     # indexing does, so `text[found.start..<found.end]` is `found.text`.
     struct Match with Textual {
+        ## The text that matched, and where it is: `start` is the position of its first character, and `end` is the position just after its last.
         const text: String
         const start: Int
         const end: Int
@@ -1659,6 +1776,7 @@ struct Regex with Textual {
         # Group `number`'s text, where group 0 is the whole match and the
         # others count opening parentheses from the left. A RegexError when
         # the group took no part in this match, as `(x)?` without an x.
+        ## The text a group matched.
         func group(number: Int): String {
             const text = self.group_maybe(number)
             if text == nothing {
@@ -1668,6 +1786,7 @@ struct Regex with Textual {
         }
 
         # Group `number`'s text, or nothing when it took no part in this match.
+        ## Like `group`, but gives `nothing` for a group that took no part in the match.
         func group_maybe(number: Int): String? {
             if number < 0 or number >= self._texts.count {
                 const groups = if self._texts.count == 1 then "its only group is 0, the whole match" else "its groups are numbered 0 to #{self._texts.count - 1}, where 0 is the whole match"
@@ -1681,6 +1800,7 @@ struct Regex with Textual {
 
         # The text of the group written (?<name>...). A RegexError when it
         # took no part in this match.
+        ## The text of the group written `(?<name>...)`.
         func named(name: String): String {
             const text = self.named_maybe(name)
             if text == nothing {
@@ -1691,6 +1811,7 @@ struct Regex with Textual {
 
         # The text of the group written (?<name>...), or nothing when it took
         # no part in this match.
+        ## Like `named`, but gives `nothing` for a group that took no part in the match.
         func named_maybe(name: String): String? {
             const number = if name == "" then nothing else self._names.find_index { each => each == name }
             if number == nothing {
@@ -1717,6 +1838,7 @@ struct Regex with Textual {
         }
     }
 
+    ## A regex from a pattern.
     constructor(pattern: String, ignore_case: Bool = false, multiline: Bool = false) {
         const problem = Emerald.Regex._problem(pattern, ignore_case, multiline)
         if problem != nothing {
@@ -1729,21 +1851,25 @@ struct Regex with Textual {
 
     # Native: a pattern that matches `text` and nothing else, every character
     # with a meaning in patterns written with a backslash.
+    ## A pattern that matches `text` exactly, with a backslash before every character that has a meaning in patterns.
     func Regex.escape(text: String): String {
         return text
     }
 
     # Whether the whole of `text` matches.
+    ## Whether the whole of `text` fits the pattern.
     func matches?(text: String): Bool {
         return Emerald.Regex._whole?(self.pattern, self.ignore_case, self.multiline, text)
     }
 
     # Whether some part of `text` matches.
+    ## Whether some part of `text` fits the pattern.
     func contains_match?(text: String): Bool {
         return Emerald.Regex._find(self.pattern, self.ignore_case, self.multiline, text, 1).count > 0
     }
 
     # The first match in `text`, or nothing.
+    ## The first match, as a `Regex.Match`, or `nothing` when there is none.
     func find(text: String): Emerald.Regex.Match? {
         const found = Emerald.Regex._find(self.pattern, self.ignore_case, self.multiline, text, 1)
         if found.count == 0 {
@@ -1753,22 +1879,26 @@ struct Regex with Textual {
     }
 
     # Every match in `text`, from left to right, none overlapping.
+    ## Every match, from left to right, with none overlapping.
     func find_all(text: String): List[Emerald.Regex.Match] {
         return Emerald.Regex._find(self.pattern, self.ignore_case, self.multiline, text, 0)
     }
 
     # `text` with its first match replaced. The replacement is used as it is
     # written: "$1" is a dollar sign and a one.
+    ## `text` with its first match replaced.
     func replace(text: String, replacement: String): String {
         return Emerald.Regex._replace(self.pattern, self.ignore_case, self.multiline, text, replacement, 1)
     }
 
     # `text` with every match replaced, the replacement used as it is written.
+    ## `text` with every match replaced, as `find_all` finds them.
     func replace_all(text: String, replacement: String): String {
         return Emerald.Regex._replace(self.pattern, self.ignore_case, self.multiline, text, replacement, 0)
     }
 
     # `text` with every match replaced by what `block` returns for it.
+    ## `text` with each match replaced by what the block returns for it.
     func replace_each(text: String, block: func(Emerald.Regex.Match): String): String {
         const found = self.find_all(text)
         return Emerald.Regex._splice(text, found, found.map { each => block(each) })
@@ -1778,6 +1908,7 @@ struct Regex with Textual {
     # String.split keeps them. A match of nothing at the very start or end
     # splits nothing off, so a pattern that matches nothing splits between
     # every character.
+    ## The pieces of `text` between matches.
     func split(text: String): List[String] {
         return Emerald.Regex._split(self.pattern, self.ignore_case, self.multiline, text)
     }
@@ -1825,6 +1956,7 @@ struct Regex with Textual {
 # functions keep the small API ordinary Emerald code; their private helpers
 # are the only native boundary.
 class CsvError extends RuntimeError {
+    ## The line of the text where the problem is, counting from 1, or `nothing` when it isn't about one line, such as a column the text lacks altogether.
     const line: Int?
 
     constructor(message: String, line: Int? = nothing) {
@@ -1834,18 +1966,23 @@ class CsvError extends RuntimeError {
 }
 
 class Csv {
+    ## Every row as a list of text cells, including a header row if the text has one.
     func Csv.parse(text: String, separator: String = ","): List[List[String]] {
         return Csv._parse(text, separator)
     }
 
+    ## Uses the first row as the names of the columns, and gives each later row as a dictionary from those names to its cells, which are text.
     func Csv.parse_records(text: String, separator: String = ","): List[Dict[String, String]] {
         return Csv._parse_records(text, separator)
     }
 
+    ## Reads rows into a list of your own struct, such as `as: List[Score]`.
     func Csv.decode(text: String, as: Nothing, separator: String = ","): Nothing {}
 
+    ## A list of structs written as CSV: a first row of the fields' names, in the order they are declared, then a row for each struct.
     func Csv.encode(records: Nothing, separator: String = ","): String { return "" }
 
+    ## Rows of text written as CSV, with a line break between rows and none at the end.
     func Csv.format(rows: List[List[String]], separator: String = ","): String {
         return Csv._format(rows, separator)
     }
@@ -1872,6 +2009,7 @@ class JsonError extends RuntimeError {
 struct Json with Textual, Equatable {
     enum Kind { null, bool, number, string, list, object }
 
+    ## Which of JSON's six kinds of value this is.
     const kind: Emerald.Json.Kind
     const _bool: Bool
     # Every number as a Float; `_whole` when it also reads exactly as `_int`,
@@ -1890,6 +2028,7 @@ struct Json with Textual, Equatable {
 
     # JSON's one null value. Like enum values, this is a type-level value, not
     # a function call, so building a document reads naturally.
+    ## JSON's `null`.
     const Json.null: Emerald.Json = Emerald.Json._built(Emerald.Json.Kind.null, false, 0.0, false, 0, false, "", [], [])
 
     # Build a value with no document path. Public `from_` functions below are
@@ -1902,6 +2041,7 @@ struct Json with Textual, Equatable {
 
     # The document `text` holds. A JsonError at the line and column of the
     # first mistake when it is not JSON.
+    ## Reads `text` as JSON, whatever its shape.
     func Json.parse(text: String): Emerald.Json {
         const parsed = Emerald.Json._parse(text)
         if parsed == nothing {
@@ -1911,21 +2051,25 @@ struct Json with Textual, Equatable {
     }
 
     # The document `text` holds, or nothing when it is not JSON.
+    ## Reads `text` as JSON, like `parse`, but gives `nothing` when it isn't JSON instead of raising an error.
     func Json.parse_maybe(text: String): Emerald.Json? {
         return Emerald.Json._parse(text)
     }
 
     # A JSON text value.
+    ## `text` as a JSON value.
     func Json.from_string(text: String): Emerald.Json {
         return Emerald.Json._built(Emerald.Json.Kind.string, false, 0.0, false, 0, false, text, [], [])
     }
 
     # A JSON whole number.
+    ## A whole number as a JSON value.
     func Json.from_int(value: Int): Emerald.Json {
         return Emerald.Json._built(Emerald.Json.Kind.number, false, value, true, value, false, "", [], [])
     }
 
     # A JSON number from a Float. JSON has no spelling for NaN or infinity.
+    ## A number as a JSON value.
     func Json.from_float(value: Float): Emerald.Json {
         if not value.finite?() {
             raise Emerald.JsonError("#{value} cannot be written as JSON")
@@ -1936,24 +2080,28 @@ struct Json with Textual, Equatable {
     }
 
     # A JSON true or false value.
+    ## `true` or `false` as a JSON value.
     func Json.from_bool(value: Bool): Emerald.Json {
         return Emerald.Json._built(Emerald.Json.Kind.bool, value, 0.0, false, 0, false, "", [], [])
     }
 
     # A JSON list. Its items must already be Json values, which makes nested
     # documents explicit and keeps this first builder slice statically small.
+    ## A JSON list of `items`.
     func Json.from_list(items: List[Emerald.Json]): Emerald.Json {
         return Emerald.Json._built(Emerald.Json.Kind.list, false, 0.0, false, 0, false, "", items, [])
     }
 
     # A JSON object. Dictionary insertion order becomes the object's key
     # order, as it does for a parsed document.
+    ## A JSON object of `entries`, with its keys in the order they were added.
     func Json.from_object(entries: Dict[String, Emerald.Json]): Emerald.Json {
         return Emerald.Json._built(Emerald.Json.Kind.object, false, 0.0, false, 0, false, "", [], entries)
     }
 
     # JSON text for an already-built Json value. Encoding the program's own
     # structs and collections follows in the next JSON slice.
+    ## `value` written as JSON text.
     func Json.encode(value: Emerald.Json, pretty: Bool = false): String {
         return Emerald.Json._write(value, pretty)
     }
@@ -1961,16 +2109,19 @@ struct Json with Textual, Equatable {
     # The checker recognizes `as:` as a source type and gives this call that
     # type as its result. Its dummy written shape keeps the prelude declaration
     # available to the resolver without pretending a type is a runtime value.
+    ## Reads `text` into the type named after `as:`, and gives back a value of that type.
     func Json.decode(text: String, as: Nothing): Nothing {
     }
 
     # Whether this is JSON's null.
+    ## Whether this is JSON's `null`.
     func null?(): Bool {
         return self.kind == Emerald.Json.Kind.null
     }
 
     # The value under `key` in this object. A JsonError when this is not an
     # object, or it has no such key.
+    ## The value for `key` in this object.
     func get(key: String): Emerald.Json {
         if self.kind != Emerald.Json.Kind.object {
             raise Emerald.JsonError("#{self._subject()} #{self._describe()}, not an object, so it has no key \"#{key}\"")
@@ -1984,6 +2135,7 @@ struct Json with Textual, Equatable {
 
     # The value under `key`, or nothing when this is not an object or has no
     # such key.
+    ## The value for `key` in this object, or `nothing` when there is no such key, or this is not an object.
     func get_maybe(key: String): Emerald.Json? {
         if self.kind != Emerald.Json.Kind.object {
             return nothing
@@ -1997,6 +2149,7 @@ struct Json with Textual, Equatable {
 
     # Item `index` of this list, counting from 0. A JsonError when this is not
     # a list, or it has no such item.
+    ## The item at `index` in this list, counting from 0.
     func at(index: Int): Emerald.Json {
         if self.kind != Emerald.Json.Kind.list {
             raise Emerald.JsonError("#{self._subject()} #{self._describe()}, not a list, so it has no item #{index}")
@@ -2011,6 +2164,7 @@ struct Json with Textual, Equatable {
 
     # Item `index` of this list, or nothing when this is not a list or has no
     # such item.
+    ## The item at `index` in this list, or `nothing` when there is no such item, or this is not a list.
     func at_maybe(index: Int): Emerald.Json? {
         if self.kind != Emerald.Json.Kind.list or index < 0 or index >= self._items.count {
             return nothing
@@ -2020,6 +2174,7 @@ struct Json with Textual, Equatable {
 
     # This object's keys, in the order the document gives them. A JsonError
     # when this is not an object.
+    ## This object's keys, in the order the text gives them.
     func keys(): List[String] {
         if self.kind != Emerald.Json.Kind.object {
             raise Emerald.JsonError("#{self._subject()} #{self._describe()}, not an object, so it has no keys")
@@ -2029,6 +2184,7 @@ struct Json with Textual, Equatable {
 
     # How many items this list has, or entries this object has. A JsonError
     # for any other kind of value.
+    ## How many items this list has, or how many entries this object has.
     const count: Int {
         if self.kind == Emerald.Json.Kind.list {
             return self._items.count
@@ -2040,6 +2196,7 @@ struct Json with Textual, Equatable {
     }
 
     # This text. A JsonError when this is not text.
+    ## This text, as a `String`.
     func string(): String {
         const text = self.string_maybe()
         if text == nothing {
@@ -2049,12 +2206,14 @@ struct Json with Textual, Equatable {
     }
 
     # This text, or nothing when this is not text.
+    ## This text, or `nothing` when this is not text.
     func string_maybe(): String? {
         return if self.kind == Emerald.Json.Kind.string then self._text else nothing
     }
 
     # This whole number, which may be written `3`, `3.0`, or `3e0`. A
     # JsonError when this is not a whole number, or is too large for an Int.
+    ## This whole number, as an `Int`.
     func int(): Int {
         const number = self.int_maybe()
         if number == nothing {
@@ -2067,11 +2226,13 @@ struct Json with Textual, Equatable {
     }
 
     # This whole number, or nothing when this is not one that fits in an Int.
+    ## This whole number, or `nothing` when this is not a whole number.
     func int_maybe(): Int? {
         return if self.kind == Emerald.Json.Kind.number and self._whole then self._int else nothing
     }
 
     # This number, whole or not. A JsonError when this is not a number.
+    ## This number, whole or not, as a `Float`.
     func float(): Float {
         const number = self.float_maybe()
         if number == nothing {
@@ -2081,11 +2242,13 @@ struct Json with Textual, Equatable {
     }
 
     # This number, or nothing when this is not a number.
+    ## This number, or `nothing` when this is not a number.
     func float_maybe(): Float? {
         return if self.kind == Emerald.Json.Kind.number then self._number else nothing
     }
 
     # This true or false. A JsonError when this is neither.
+    ## This `true` or `false`, as a `Bool`.
     func bool(): Bool {
         const value = self.bool_maybe()
         if value == nothing {
@@ -2095,11 +2258,13 @@ struct Json with Textual, Equatable {
     }
 
     # This true or false, or nothing when this is neither.
+    ## This `true` or `false`, or `nothing` when it is neither.
     func bool_maybe(): Bool? {
         return if self.kind == Emerald.Json.Kind.bool then self._bool else nothing
     }
 
     # This list's items. A JsonError when this is not a list.
+    ## This list's items.
     func list(): List[Emerald.Json] {
         const items = self.list_maybe()
         if items == nothing {
@@ -2109,6 +2274,7 @@ struct Json with Textual, Equatable {
     }
 
     # This list's items, or nothing when this is not a list.
+    ## This list's items, or `nothing` when this is not a list.
     func list_maybe(): List[Emerald.Json]? {
         if self.kind != Emerald.Json.Kind.list {
             return nothing
@@ -2121,6 +2287,7 @@ struct Json with Textual, Equatable {
     }
 
     # This object's entries, in order. A JsonError when this is not an object.
+    ## This object's entries, in the order the text gives them.
     func object(): Dict[String, Emerald.Json] {
         const entries = self.object_maybe()
         if entries == nothing {
@@ -2130,6 +2297,7 @@ struct Json with Textual, Equatable {
     }
 
     # This object's entries, or nothing when this is not an object.
+    ## This object's entries, or `nothing` when this is not an object.
     func object_maybe(): Dict[String, Emerald.Json]? {
         if self.kind != Emerald.Json.Kind.object {
             return nothing
@@ -2245,6 +2413,7 @@ struct Json with Textual, Equatable {
 # A failed web request. `status` is present only when a server answered with
 # an error status; connection, timeout, and text-decoding failures have none.
 class HttpError extends RuntimeError {
+    ## The server's status number when it answered with an error status, and `nothing` for every other failure.
     const status: Int?
 
     constructor(message: String, status: Int? = nothing) {
@@ -2258,37 +2427,48 @@ class HttpError extends RuntimeError {
 class Http {
     struct Response {
         const _native: Nothing
+        ## The server's status number, and `reason`, the words that go with it.
         const status: Int
         const reason: String
+        ## The address the answer came from.
         const url: String
+        ## All the headers, as a dictionary whose names are all lowercase.
         const headers: Dict[String, String]
+        ## The body as raw bytes, with no conversion to text.
         const bytes: Bytes
 
+        ## Whether the status is a success, from 200 through 299.
         func ok?(): Bool {
             return self.status >= 200 and self.status < 300
         }
 
+        ## The value of one header, or `nothing` when the server didn't send it.
         func header(name: String): String? {
             return Emerald.Http._header(self.headers, name)
         }
 
+        ## The body as text, read as UTF-8.
         const text: String {
             return Emerald.Http._text(self.bytes, self.url)
         }
 
+        ## The body read as JSON, for an answer whose shape is only known as it arrives.
         func json(): Emerald.Json {
             return Emerald.Http._json(self.bytes, self.url)
         }
     }
 
+    ## Fetches the address and gives back the answer.
     func Http.get(url: String, query: Dict[String, String] = [], headers: Dict[String, String] = [], timeout: Emerald.Duration = Emerald.Duration(seconds: 30), strict: Bool = true): Emerald.Http.Response {
         return Emerald.Http._request("get", url, nothing, query, headers, timeout, strict)
     }
 
+    ## Asks the server to remove what is at the address.
     func Http.delete(url: String, query: Dict[String, String] = [], headers: Dict[String, String] = [], timeout: Emerald.Duration = Emerald.Duration(seconds: 30), strict: Bool = true): Emerald.Http.Response {
         return Emerald.Http._request("delete", url, nothing, query, headers, timeout, strict)
     }
 
+    ## Sends data to the server.
     func Http.post(url: String, body: String? = nothing, json: String? = nothing, bytes: Bytes? = nothing, query: Dict[String, String] = [], headers: Dict[String, String] = [], timeout: Emerald.Duration = Emerald.Duration(seconds: 30), strict: Bool = true): Emerald.Http.Response {
         return Emerald.Http._body_request("post", url, body, json, bytes, query, headers, timeout, strict)
     }
@@ -2301,6 +2481,7 @@ class Http {
         return Emerald.Http._body_request("patch", url, body, json, bytes, query, headers, timeout, strict)
     }
 
+    ## Makes text safe to put in one part of an address, by encoding every character that has a meaning there, including `/`, `?`, and `&`.
     func Http.encode_component(text: String): String {
         return text
     }

@@ -151,7 +151,29 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
   enumerate them.
 - `##` comments for the members declared in `prelude.em` (decision 1), in the same voice.
 - No behavior change for programs; existing tests pass unchanged.
-- Settled while building: (record here)
+- Settled while building (the data half, 2026-10-01, on `claude/builtin-data`; the drift test
+  waits for REPL slice 2):
+  - `src/builtins.json` has 241 members and 244 signatures, bootstrapped from the website's
+    `<Member>` entries, which the user has read, and then edited by hand; from now on the JSON is
+    the source and the website is checked against it (slice 7). A member has `owner` (`null` for
+    a prelude function), `name`, `kind` (`method`, `property`, `type_method`, `type_property`,
+    `function`, `statement` for `assert`), `changes` when it changes its receiver, and a list of
+    `signatures`, since `substring`, `up_to`, and `down_to` each have two shapes. A signature has
+    `parameters` (name, type, `default`, `optional`, `variadic`), an optional `block` as written,
+    `result`, `summary`, `raises`, and `page`.
+  - Besides the twelve native types and namespaces, `Task`, `TaskGroup`, `Channel`, and `Random`
+    have native methods (`result`, `start`, `send`, `next`, and the rest) behind bodiless prelude
+    classes, so they are in the data too.
+  - Where the checker lists every member in its "has no member" hint (`String`, `Int`, `Float`),
+    the data matches it exactly. Its hints for `List`, `Dict`, and `Set` show only a sample, so the
+    drift test is the real proof.
+  - `prelude.em` has 181 new `##` comments, one above each public declaration a website page
+    describes. Not commented: the operators (`duration + other`), which are not named
+    declarations; `Json.Kind`'s values, which share one line; and each error's `message`, which
+    is `Error.message`, inherited.
+  - Comparing the prelude's parameter names with the website found `File.write` and
+    `File.append` documented with `text` where the declaration says `contents`, so
+    `File.write(path, text: ...)` from the page was refused. The website now says `contents`.
 
 ### Slice 2: Completion
 

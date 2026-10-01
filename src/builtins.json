@@ -1,0 +1,3740 @@
+{
+ "version": 1,
+ "about": "Every natively typed member of Emerald, for editors and tools. Completion, hover, and signature help read it, and a test in the checker proves it names exactly the members the checker accepts. Each summary is one plain sentence for learners, in the website reference's voice; page is the member's anchor under https://emerald-lang.web.app/docs/.",
+ "members": [
+  {
+   "owner": "Bool",
+   "name": "to_string",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "`\"true\"` or `\"false\"`, exactly as `print` shows it.",
+     "page": "builtins/types/bool/#to_string"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "times",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "index: Int => ...",
+     "result": "Nothing",
+     "summary": "Runs the block this many times, passing it `0`, then `1`, and so on, up to one less than the number.",
+     "raises": true,
+     "page": "builtins/types/int/#times"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "up_to",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "target",
+       "type": "Int"
+      }
+     ],
+     "result": "Range",
+     "summary": "A `Range` from this number up to `target`, including both.",
+     "page": "builtins/types/int/#up_to"
+    },
+    {
+     "parameters": [
+      {
+       "name": "target",
+       "type": "Int"
+      }
+     ],
+     "block": "value: Int => ...",
+     "result": "Nothing",
+     "summary": "Counts up to `target` right away, running the block with each number.",
+     "page": "builtins/types/int/#up_to-block"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "down_to",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "target",
+       "type": "Int"
+      }
+     ],
+     "result": "Range",
+     "summary": "A `Range` from this number down to `target`, including both.",
+     "page": "builtins/types/int/#down_to"
+    },
+    {
+     "parameters": [
+      {
+       "name": "target",
+       "type": "Int"
+      }
+     ],
+     "block": "value: Int => ...",
+     "result": "Nothing",
+     "summary": "Counts down to `target` right away, running the block with each number.",
+     "page": "builtins/types/int/#down_to-block"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "even?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the number is even.",
+     "page": "builtins/types/int/#even"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "odd?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the number is odd.",
+     "page": "builtins/types/int/#odd"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "multiple_of?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "divisor",
+       "type": "Int"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether the number divides evenly by `divisor`, leaving nothing over.",
+     "raises": true,
+     "page": "builtins/types/int/#multiple_of"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "zero?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the number is zero.",
+     "page": "builtins/types/int/#zero"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "positive?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the number is greater than zero.",
+     "page": "builtins/types/int/#positive"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "negative?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the number is less than zero.",
+     "page": "builtins/types/int/#negative"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "abs",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "The distance from zero: the number without its sign.",
+     "raises": true,
+     "page": "builtins/types/int/#abs"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "clamp",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "minimum",
+       "type": "Int"
+      },
+      {
+       "name": "maximum",
+       "type": "Int"
+      }
+     ],
+     "result": "Int",
+     "summary": "The number, kept within `minimum` to `maximum`.",
+     "raises": true,
+     "page": "builtins/types/int/#clamp"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "between?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "minimum",
+       "type": "Int"
+      },
+      {
+       "name": "maximum",
+       "type": "Int"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether the number is from `minimum` to `maximum`, including both.",
+     "raises": true,
+     "page": "builtins/types/int/#between"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "to_string",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "base",
+       "type": "Int",
+       "default": "10"
+      }
+     ],
+     "result": "String",
+     "summary": "The number as text, exactly as `print` shows it.",
+     "raises": true,
+     "page": "builtins/types/int/#to_string"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "format",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "group_digits",
+       "type": "Bool",
+       "default": "false"
+      }
+     ],
+     "result": "String",
+     "summary": "The number as text, with a comma between every three digits when `group_digits` is `true`.",
+     "page": "builtins/types/int/#format"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "digits",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[Int]",
+     "summary": "The number's decimal digits, from left to right.",
+     "page": "builtins/types/int/#digits"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "gcd",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Int"
+      }
+     ],
+     "result": "Int",
+     "summary": "The greatest common divisor: the largest number that divides both this number and `other` evenly.",
+     "raises": true,
+     "page": "builtins/types/int/#gcd"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "lcm",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Int"
+      }
+     ],
+     "result": "Int",
+     "summary": "The least common multiple: the smallest positive number that both this number and `other` divide evenly.",
+     "raises": true,
+     "page": "builtins/types/int/#lcm"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "factorial",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "The product of every whole number from 1 up to this one.",
+     "raises": true,
+     "page": "builtins/types/int/#factorial"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "to_float",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float",
+     "summary": "The same number as a `Float`.",
+     "page": "builtins/types/int/#to_float"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "round",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "The nearest whole number.",
+     "raises": true,
+     "page": "builtins/types/float/#round"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "floor",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "The nearest whole number at or below the value.",
+     "raises": true,
+     "page": "builtins/types/float/#floor"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "ceil",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "The nearest whole number at or above the value.",
+     "raises": true,
+     "page": "builtins/types/float/#ceil"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "truncate",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "The whole-number part, with the fraction dropped.",
+     "raises": true,
+     "page": "builtins/types/float/#truncate"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "round_to",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "places",
+       "type": "Int"
+      }
+     ],
+     "result": "Float",
+     "summary": "The value rounded to `places` decimal places.",
+     "page": "builtins/types/float/#round_to"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "format",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "decimal_places",
+       "type": "Int?",
+       "default": "nothing"
+      },
+      {
+       "name": "group_digits",
+       "type": "Bool",
+       "default": "false"
+      }
+     ],
+     "result": "String",
+     "summary": "The value as text, with a set number of `decimal_places` and, optionally, commas between groups of digits.",
+     "raises": true,
+     "page": "builtins/types/float/#format"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "to_string",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The value as text, exactly as `print` shows it.",
+     "page": "builtins/types/float/#to_string"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "abs",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float",
+     "summary": "The distance from zero: the value without its sign.",
+     "page": "builtins/types/float/#abs"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "clamp",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "minimum",
+       "type": "Float"
+      },
+      {
+       "name": "maximum",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The value, kept within `minimum` to `maximum`.",
+     "raises": true,
+     "page": "builtins/types/float/#clamp"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "between?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "minimum",
+       "type": "Float"
+      },
+      {
+       "name": "maximum",
+       "type": "Float"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether the value is from `minimum` to `maximum`, including both.",
+     "raises": true,
+     "page": "builtins/types/float/#between"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "zero?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the value is zero.",
+     "page": "builtins/types/float/#zero"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "positive?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the value is greater than zero.",
+     "page": "builtins/types/float/#positive"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "negative?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the value is less than zero.",
+     "page": "builtins/types/float/#negative"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "square_root",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float",
+     "summary": "The square root of the value.",
+     "page": "builtins/types/float/#square_root"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "to_radians",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float",
+     "summary": "An angle in degrees, converted to radians.",
+     "page": "builtins/types/float/#to_radians"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "to_degrees",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float",
+     "summary": "An angle in radians, converted to degrees.",
+     "page": "builtins/types/float/#to_degrees"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "infinity",
+   "kind": "type_property",
+   "signatures": [
+    {
+     "result": "Float",
+     "summary": "A value larger than every other `Float`.",
+     "page": "builtins/types/float/#infinity"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "nan",
+   "kind": "type_property",
+   "signatures": [
+    {
+     "result": "Float",
+     "summary": "\"Not a number\", the result of a calculation with no meaningful answer.",
+     "page": "builtins/types/float/#nan"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "finite?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the value is an ordinary number: neither infinity nor not a number.",
+     "page": "builtins/types/float/#finite"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "infinite?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the value is infinity or negative infinity.",
+     "page": "builtins/types/float/#infinite"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "nan?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the value is not a number.",
+     "page": "builtins/types/float/#nan-1"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "to_int",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "The value as an `Int`, with the fraction dropped.",
+     "raises": true,
+     "page": "builtins/types/float/#to_int"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "count",
+   "kind": "property",
+   "signatures": [
+    {
+     "result": "Int",
+     "summary": "How many characters the text has.",
+     "page": "builtins/types/string/#count"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "empty?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the text has no characters at all.",
+     "page": "builtins/types/string/#empty"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "blank?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the text is empty or has only spaces, tabs, and line breaks.",
+     "page": "builtins/types/string/#blank"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "chars",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[String]",
+     "summary": "Each character, in order, as a list of one-character strings.",
+     "page": "builtins/types/string/#chars"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "code_points",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[Int]",
+     "summary": "The Unicode number of each code point the text is stored as.",
+     "page": "builtins/types/string/#code_points"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "bytes",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[Int]",
+     "summary": "The text's UTF-8 bytes, each from 0 to 255.",
+     "page": "builtins/types/string/#bytes"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "upper",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The text in capital letters.",
+     "page": "builtins/types/string/#upper"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "lower",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The text in small letters.",
+     "page": "builtins/types/string/#lower"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "capitalize",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The text with its first character in capitals.",
+     "page": "builtins/types/string/#capitalize"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "trim",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The text without spaces, tabs, or line breaks at either end.",
+     "page": "builtins/types/string/#trim"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "trim_start",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The text without spaces at its start.",
+     "page": "builtins/types/string/#trim_start"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "trim_end",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The text without spaces at its end.",
+     "page": "builtins/types/string/#trim_end"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "contains?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether `text` appears anywhere in the text.",
+     "page": "builtins/types/string/#contains"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "starts_with?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether the text begins with `text`.",
+     "page": "builtins/types/string/#starts_with"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "ends_with?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether the text ends with `text`.",
+     "page": "builtins/types/string/#ends_with"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "index_of",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "result": "Int?",
+     "summary": "Where `text` first appears, counting characters from 0, or `nothing` when it does not appear.",
+     "page": "builtins/types/string/#index_of"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "substring",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "start",
+       "type": "Int"
+      }
+     ],
+     "result": "String",
+     "summary": "The text from position `start` to the end.",
+     "raises": true,
+     "page": "builtins/types/string/#substring"
+    },
+    {
+     "parameters": [
+      {
+       "name": "start",
+       "type": "Int"
+      },
+      {
+       "name": "count",
+       "type": "Int"
+      }
+     ],
+     "result": "String",
+     "summary": "`count` characters, beginning at position `start`.",
+     "raises": true,
+     "page": "builtins/types/string/#substring-count"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "split",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "separator",
+       "type": "String"
+      }
+     ],
+     "result": "List[String]",
+     "summary": "The pieces of text between each `separator`, in order.",
+     "raises": true,
+     "page": "builtins/types/string/#split"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "lines",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[String]",
+     "summary": "Each line, without its line break.",
+     "page": "builtins/types/string/#lines"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "partition",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "separator",
+       "type": "String"
+      }
+     ],
+     "result": "(String, String, String)",
+     "summary": "The text before the first `separator`, the separator itself, and the text after it.",
+     "raises": true,
+     "page": "builtins/types/string/#partition"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "replace",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "old",
+       "type": "String"
+      },
+      {
+       "name": "new",
+       "type": "String"
+      }
+     ],
+     "result": "String",
+     "summary": "The text with every `old` replaced by `new`.",
+     "raises": true,
+     "page": "builtins/types/string/#replace"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "insert_at",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "index",
+       "type": "Int"
+      },
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "result": "String",
+     "summary": "The text with `text` added before the character at `index`.",
+     "raises": true,
+     "page": "builtins/types/string/#insert_at"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "remove_prefix",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "result": "String",
+     "summary": "The text without `text` at its start.",
+     "page": "builtins/types/string/#remove_prefix"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "remove_suffix",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "result": "String",
+     "summary": "The text without `text` at its end.",
+     "page": "builtins/types/string/#remove_suffix"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "reverse",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The characters in the opposite order.",
+     "page": "builtins/types/string/#reverse"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "repeat",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "times",
+       "type": "Int"
+      }
+     ],
+     "result": "String",
+     "summary": "The text, `times` times over.",
+     "page": "builtins/types/string/#repeat"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "collapse_repeats",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The text with every run of the same character shortened to one.",
+     "page": "builtins/types/string/#collapse_repeats"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "pad_start",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "width",
+       "type": "Int"
+      },
+      {
+       "name": "fill",
+       "type": "String",
+       "default": "\" \""
+      }
+     ],
+     "result": "String",
+     "summary": "The text with `fill` added at its start until it is `width` characters long.",
+     "raises": true,
+     "page": "builtins/types/string/#pad_start"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "pad_end",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "width",
+       "type": "Int"
+      },
+      {
+       "name": "fill",
+       "type": "String",
+       "default": "\" \""
+      }
+     ],
+     "result": "String",
+     "summary": "The text with `fill` added at its end until it is `width` characters long.",
+     "raises": true,
+     "page": "builtins/types/string/#pad_end"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "pad_center",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "width",
+       "type": "Int"
+      },
+      {
+       "name": "fill",
+       "type": "String",
+       "default": "\" \""
+      }
+     ],
+     "result": "String",
+     "summary": "The text with `fill` added on both sides until it is `width` characters long.",
+     "raises": true,
+     "page": "builtins/types/string/#pad_center"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "to_int",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "The whole number the text spells, such as `\"42\"` or `\"-7\"`.",
+     "raises": true,
+     "page": "builtins/types/string/#to_int"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "to_int_or",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "fallback",
+       "type": "Int"
+      }
+     ],
+     "result": "Int",
+     "summary": "The whole number the text spells, or `fallback` when it is not one.",
+     "page": "builtins/types/string/#to_int_or"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "to_int_maybe",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int?",
+     "summary": "The whole number the text spells, or `nothing` when it is not one.",
+     "page": "builtins/types/string/#to_int_maybe"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "to_float",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float",
+     "summary": "The number the text spells, which may have a decimal point or an exponent, such as `\"3.75\"` or `\"1e3\"`.",
+     "raises": true,
+     "page": "builtins/types/string/#to_float"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "to_float_or",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "fallback",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The number the text spells, or `fallback` when it is not one.",
+     "page": "builtins/types/string/#to_float_or"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "to_float_maybe",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float?",
+     "summary": "The number the text spells, or `nothing` when it is not one.",
+     "page": "builtins/types/string/#to_float_maybe"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "count",
+   "kind": "property",
+   "signatures": [
+    {
+     "result": "Int",
+     "summary": "How many items the list has.",
+     "page": "builtins/types/list/#count"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "empty?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the list has no items.",
+     "page": "builtins/types/list/#empty"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "first",
+   "kind": "property",
+   "signatures": [
+    {
+     "result": "T?",
+     "summary": "The first item, or `nothing` when the list is empty.",
+     "page": "builtins/types/list/#first"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "last",
+   "kind": "property",
+   "signatures": [
+    {
+     "result": "T?",
+     "summary": "The last item, or `nothing` when the list is empty.",
+     "page": "builtins/types/list/#last"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "append",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "item",
+       "type": "T"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Adds `item` at the end.",
+     "page": "builtins/types/list/#append"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "insert",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "index",
+       "type": "Int"
+      },
+      {
+       "name": "item",
+       "type": "T"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Adds `item` at position `index`, moving the items after it along.",
+     "raises": true,
+     "page": "builtins/types/list/#insert"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "remove",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "item",
+       "type": "T"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Removes the first item equal to `item`.",
+     "page": "builtins/types/list/#remove"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "remove_all",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "item",
+       "type": "T"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Removes every item equal to `item`.",
+     "page": "builtins/types/list/#remove_all"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "remove_if",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "Nothing",
+     "summary": "Removes every item the block accepts.",
+     "page": "builtins/types/list/#remove_if"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "remove_at",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "index",
+       "type": "Int"
+      }
+     ],
+     "result": "T",
+     "summary": "Removes the item at position `index` and gives it back.",
+     "raises": true,
+     "page": "builtins/types/list/#remove_at"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "remove_first",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "T",
+     "summary": "Removes the first item and gives it back.",
+     "raises": true,
+     "page": "builtins/types/list/#remove_first"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "remove_last",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "T",
+     "summary": "Removes the last item and gives it back.",
+     "raises": true,
+     "page": "builtins/types/list/#remove_last"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "clear",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Nothing",
+     "summary": "Removes every item.",
+     "page": "builtins/types/list/#clear"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "contains?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "item",
+       "type": "T"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether an item equal to `item` is in the list.",
+     "page": "builtins/types/list/#contains"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "find",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "T?",
+     "summary": "The first item the block accepts, or `nothing` when it accepts none.",
+     "page": "builtins/types/list/#find"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "find_index",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "Int?",
+     "summary": "The position of the first item the block accepts, or `nothing` when it accepts none.",
+     "page": "builtins/types/list/#find_index"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "each",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => ...",
+     "result": "Nothing",
+     "summary": "Runs the block once for each item, in order.",
+     "page": "builtins/types/list/#each"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "each_with_index",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T, index: Int => ...",
+     "result": "Nothing",
+     "summary": "Runs the block for each item, with its position.",
+     "page": "builtins/types/list/#each_with_index"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "reverse_each",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => ...",
+     "result": "Nothing",
+     "summary": "Runs the block for each item, from last to first.",
+     "page": "builtins/types/list/#reverse_each"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "map",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => U",
+     "result": "List[U]",
+     "summary": "A list of what the block gives for each item, in order.",
+     "page": "builtins/types/list/#map"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "filter",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "List[T]",
+     "summary": "The items the block accepts, in order.",
+     "page": "builtins/types/list/#filter"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "reject",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "List[T]",
+     "summary": "The items the block does not accept.",
+     "page": "builtins/types/list/#reject"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "flat_map",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => List[U]",
+     "result": "List[U]",
+     "summary": "The items of every list the block gives, joined into one list.",
+     "page": "builtins/types/list/#flat_map"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "filter_map",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => U?",
+     "result": "List[U]",
+     "summary": "What the block gives for each item, leaving out every `nothing`.",
+     "page": "builtins/types/list/#filter_map"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "take",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "count",
+       "type": "Int"
+      }
+     ],
+     "result": "List[T]",
+     "summary": "The first `count` items.",
+     "raises": true,
+     "page": "builtins/types/list/#take"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "drop",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "count",
+       "type": "Int"
+      }
+     ],
+     "result": "List[T]",
+     "summary": "Everything after the first `count` items.",
+     "raises": true,
+     "page": "builtins/types/list/#drop"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "take_while",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "List[T]",
+     "summary": "Items from the start, up to the first one the block does not accept.",
+     "page": "builtins/types/list/#take_while"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "drop_while",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "List[T]",
+     "summary": "Everything from the first item the block does not accept.",
+     "page": "builtins/types/list/#drop_while"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "sort",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[T]",
+     "summary": "The items from smallest to largest.",
+     "raises": true,
+     "page": "builtins/types/list/#sort"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "sort_by",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => K",
+     "result": "List[T]",
+     "summary": "The items, ordered by the key the block gives for each, smallest first.",
+     "page": "builtins/types/list/#sort_by"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "sort!",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Nothing",
+     "summary": "Sorts the list itself, smallest first.",
+     "page": "builtins/types/list/#sort-1"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "reverse",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[T]",
+     "summary": "The items in the opposite order.",
+     "page": "builtins/types/list/#reverse"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "reverse!",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Nothing",
+     "summary": "Reverses the list itself.",
+     "page": "builtins/types/list/#reverse-1"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "shuffle",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[T]",
+     "summary": "The items in a random order.",
+     "page": "builtins/types/list/#shuffle"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "shuffle!",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Nothing",
+     "summary": "Puts the list itself in a random order.",
+     "page": "builtins/types/list/#shuffle-1"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "random",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "T?",
+     "summary": "One item, chosen at random, or `nothing` when the list is empty.",
+     "page": "builtins/types/list/#random"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "unique",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[T]",
+     "summary": "Each item once, keeping the first of each.",
+     "page": "builtins/types/list/#unique"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "unique!",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Nothing",
+     "summary": "Removes repeated items from the list itself, keeping the first of each.",
+     "page": "builtins/types/list/#unique-1"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "unique_by",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => K",
+     "result": "List[T]",
+     "summary": "The first item for each key the block gives.",
+     "page": "builtins/types/list/#unique_by"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "any?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts at least one item.",
+     "page": "builtins/types/list/#any"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "all?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts every item.",
+     "page": "builtins/types/list/#all"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "none?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts no item.",
+     "page": "builtins/types/list/#none"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "one?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts exactly one item.",
+     "page": "builtins/types/list/#one"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "count_where",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "Int",
+     "summary": "How many items the block accepts.",
+     "page": "builtins/types/list/#count_where"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "sum",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "T",
+     "summary": "All the items added up.",
+     "raises": true,
+     "page": "builtins/types/list/#sum"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "average",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float?",
+     "summary": "The mean of the items, or `nothing` when the list is empty.",
+     "page": "builtins/types/list/#average"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "min",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "T?",
+     "summary": "The smallest item, or `nothing` when the list is empty.",
+     "page": "builtins/types/list/#min"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "max",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "T?",
+     "summary": "The largest item, or `nothing` when the list is empty.",
+     "page": "builtins/types/list/#max"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "min_max",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "(T?, T?)",
+     "summary": "The smallest and largest items together, found in one pass.",
+     "page": "builtins/types/list/#min_max"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "min_by",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => K",
+     "result": "T?",
+     "summary": "The item whose key, from the block, is smallest.",
+     "page": "builtins/types/list/#min_by"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "max_by",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => K",
+     "result": "T?",
+     "summary": "The item whose key, from the block, is largest.",
+     "page": "builtins/types/list/#max_by"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "chain",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "List[T]"
+      }
+     ],
+     "result": "List[T]",
+     "summary": "This list's items followed by `other`'s.",
+     "page": "builtins/types/list/#chain"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "zip",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "List[U]"
+      }
+     ],
+     "result": "List[(T, U)]",
+     "summary": "Items paired by position with `other`'s.",
+     "page": "builtins/types/list/#zip"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "chunks",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "size",
+       "type": "Int"
+      }
+     ],
+     "result": "List[List[T]]",
+     "summary": "The items in pieces of `size`, in order.",
+     "raises": true,
+     "page": "builtins/types/list/#chunks"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "windows",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "size",
+       "type": "Int"
+      }
+     ],
+     "result": "List[List[T]]",
+     "summary": "Every run of `size` items side by side, one step apart.",
+     "raises": true,
+     "page": "builtins/types/list/#windows"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "pairs",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[(T, T)]",
+     "summary": "Each item paired with the one after it.",
+     "page": "builtins/types/list/#pairs"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "partition",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => Bool",
+     "result": "(List[T], List[T])",
+     "summary": "The items the block accepts, and the ones it does not.",
+     "page": "builtins/types/list/#partition"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "reduce",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "initial",
+       "type": "A"
+      }
+     ],
+     "block": "total: A, item: T => A",
+     "result": "A",
+     "summary": "Combines the items into one value.",
+     "page": "builtins/types/list/#reduce"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "reduce_right",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "initial",
+       "type": "A"
+      }
+     ],
+     "block": "total: A, item: T => A",
+     "result": "A",
+     "summary": "Like `reduce`, but from the last item to the first.",
+     "page": "builtins/types/list/#reduce_right"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "to_set",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Set[T]",
+     "summary": "A `Set` of the items, each once.",
+     "page": "builtins/types/list/#to_set"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "to_dictionary",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Dict[K, V]",
+     "summary": "A `Dict` from a list of `(key, value)` pairs.",
+     "page": "builtins/types/list/#to_dictionary"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "frequencies",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Dict[T, Int]",
+     "summary": "How many times each item appears.",
+     "page": "builtins/types/list/#frequencies"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "group_by",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => K",
+     "result": "Dict[K, List[T]]",
+     "summary": "The items grouped by the key the block gives for each.",
+     "page": "builtins/types/list/#group_by"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "associate",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => (K, V)",
+     "result": "Dict[K, V]",
+     "summary": "A `Dict` with the key and value the block gives for each item.",
+     "page": "builtins/types/list/#associate"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "associate_by",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "item: T => K",
+     "result": "Dict[K, T]",
+     "summary": "A `Dict` from the key the block gives to each item itself.",
+     "page": "builtins/types/list/#associate_by"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "count",
+   "kind": "property",
+   "signatures": [
+    {
+     "result": "Int",
+     "summary": "How many entries the dictionary has.",
+     "page": "builtins/types/dict/#count"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "empty?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the dictionary has no entries.",
+     "page": "builtins/types/dict/#empty"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "contains_key?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "key",
+       "type": "K"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether the dictionary has an entry for `key`.",
+     "page": "builtins/types/dict/#contains_key"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "contains_value?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "V"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether any entry has the value `value`.",
+     "page": "builtins/types/dict/#contains_value"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "keys",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[K]",
+     "summary": "The keys, in order.",
+     "page": "builtins/types/dict/#keys"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "values",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[V]",
+     "summary": "The values, in order.",
+     "page": "builtins/types/dict/#values"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "entries",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[(K, V)]",
+     "summary": "Each entry as a `(key, value)` pair, in order.",
+     "page": "builtins/types/dict/#entries"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "remove",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "key",
+       "type": "K"
+      }
+     ],
+     "result": "V?",
+     "summary": "Removes the entry for `key` and gives back its value, or `nothing` when there was no such entry.",
+     "page": "builtins/types/dict/#remove"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "merge",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Dict[K, V]"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Adds every entry of `other`.",
+     "page": "builtins/types/dict/#merge"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "map_keys",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "key: K => K2",
+     "result": "Dict[K2, V]",
+     "summary": "Each key changed by the block, with its value unchanged.",
+     "page": "builtins/types/dict/#map_keys"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "map_values",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: V => V2",
+     "result": "Dict[K, V2]",
+     "summary": "Each value changed by the block, with its key unchanged.",
+     "page": "builtins/types/dict/#map_values"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "filter",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => Bool",
+     "result": "Dict[K, V]",
+     "summary": "The entries the block accepts, in order.",
+     "page": "builtins/types/dict/#filter"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "reject",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => Bool",
+     "result": "Dict[K, V]",
+     "summary": "The entries the block does not accept.",
+     "page": "builtins/types/dict/#reject"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "each",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => ...",
+     "result": "Nothing",
+     "summary": "Runs the block for each entry, in order.",
+     "page": "builtins/types/dict/#each"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "each_with_index",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V), index: Int => ...",
+     "result": "Nothing",
+     "summary": "Runs the block for each entry, with its position.",
+     "page": "builtins/types/dict/#each_with_index"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "reverse_each",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => ...",
+     "result": "Nothing",
+     "summary": "Runs the block for each entry, from last to first.",
+     "page": "builtins/types/dict/#reverse_each"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "map",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => U",
+     "result": "List[U]",
+     "summary": "A list of what the block gives for each entry.",
+     "page": "builtins/types/dict/#map"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "flat_map",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => List[U]",
+     "result": "List[U]",
+     "summary": "The items of every list the block gives, joined into one list.",
+     "page": "builtins/types/dict/#flat_map"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "filter_map",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => U?",
+     "result": "List[U]",
+     "summary": "What the block gives for each entry, leaving out every `nothing`.",
+     "page": "builtins/types/dict/#filter_map"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "find",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => Bool",
+     "result": "(K, V)?",
+     "summary": "The first entry the block accepts, or `nothing`.",
+     "page": "builtins/types/dict/#find"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "find_index",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => Bool",
+     "result": "Int?",
+     "summary": "The position of the first entry the block accepts, or `nothing`.",
+     "page": "builtins/types/dict/#find_index"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "any?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts at least one entry.",
+     "page": "builtins/types/dict/#any"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "all?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts every entry.",
+     "page": "builtins/types/dict/#all"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "none?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts no entry.",
+     "page": "builtins/types/dict/#none"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "one?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts exactly one entry.",
+     "page": "builtins/types/dict/#one"
+    }
+   ]
+  },
+  {
+   "owner": "Dict",
+   "name": "count_where",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "(key: K, value: V) => Bool",
+     "result": "Int",
+     "summary": "How many entries the block accepts.",
+     "page": "builtins/types/dict/#count_where"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "count",
+   "kind": "property",
+   "signatures": [
+    {
+     "result": "Int",
+     "summary": "How many values the set has.",
+     "page": "builtins/types/set/#count"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "empty?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the set has no values.",
+     "page": "builtins/types/set/#empty"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "contains?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "T"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether `value` is in the set.",
+     "page": "builtins/types/set/#contains"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "add",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "T"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Adds `value`.",
+     "page": "builtins/types/set/#add"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "remove",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "T"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Removes `value`.",
+     "page": "builtins/types/set/#remove"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "union",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Set[T]"
+      }
+     ],
+     "result": "Set[T]",
+     "summary": "Every value in either set.",
+     "page": "builtins/types/set/#union"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "intersection",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Set[T]"
+      }
+     ],
+     "result": "Set[T]",
+     "summary": "The values in both sets.",
+     "page": "builtins/types/set/#intersection"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "difference",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Set[T]"
+      }
+     ],
+     "result": "Set[T]",
+     "summary": "The values in this set that are not in `other`.",
+     "page": "builtins/types/set/#difference"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "symmetric_difference",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Set[T]"
+      }
+     ],
+     "result": "Set[T]",
+     "summary": "The values in exactly one of the two sets.",
+     "page": "builtins/types/set/#symmetric_difference"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "subset?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Set[T]"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether every value in this set is also in `other`.",
+     "page": "builtins/types/set/#subset"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "superset?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Set[T]"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether this set has every value in `other`.",
+     "page": "builtins/types/set/#superset"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "disjoint?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Set[T]"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether the two sets have no values in common.",
+     "page": "builtins/types/set/#disjoint"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "filter",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => Bool",
+     "result": "Set[T]",
+     "summary": "The values the block accepts.",
+     "page": "builtins/types/set/#filter"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "reject",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => Bool",
+     "result": "Set[T]",
+     "summary": "The values the block does not accept.",
+     "page": "builtins/types/set/#reject"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "each",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => ...",
+     "result": "Nothing",
+     "summary": "Runs the block for each value, in order.",
+     "page": "builtins/types/set/#each"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "each_with_index",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T, index: Int => ...",
+     "result": "Nothing",
+     "summary": "Runs the block for each value, with its position in order.",
+     "page": "builtins/types/set/#each_with_index"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "reverse_each",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => ...",
+     "result": "Nothing",
+     "summary": "Runs the block for each value, from last to first.",
+     "page": "builtins/types/set/#reverse_each"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "map",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => U",
+     "result": "List[U]",
+     "summary": "A list of what the block gives for each value.",
+     "page": "builtins/types/set/#map"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "flat_map",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => List[U]",
+     "result": "List[U]",
+     "summary": "The items of every list the block gives, joined into one list.",
+     "page": "builtins/types/set/#flat_map"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "filter_map",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => U?",
+     "result": "List[U]",
+     "summary": "What the block gives for each value, leaving out every `nothing`.",
+     "page": "builtins/types/set/#filter_map"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "find",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => Bool",
+     "result": "T?",
+     "summary": "The first value the block accepts, or `nothing`.",
+     "page": "builtins/types/set/#find"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "find_index",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => Bool",
+     "result": "Int?",
+     "summary": "The position of the first value the block accepts, or `nothing`.",
+     "page": "builtins/types/set/#find_index"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "any?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts at least one value.",
+     "page": "builtins/types/set/#any"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "all?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts every value.",
+     "page": "builtins/types/set/#all"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "none?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts no value.",
+     "page": "builtins/types/set/#none"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "one?",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => Bool",
+     "result": "Bool",
+     "summary": "Whether the block accepts exactly one value.",
+     "page": "builtins/types/set/#one"
+    }
+   ]
+  },
+  {
+   "owner": "Set",
+   "name": "count_where",
+   "kind": "method",
+   "signatures": [
+    {
+     "block": "value: T => Bool",
+     "result": "Int",
+     "summary": "How many values the block accepts.",
+     "page": "builtins/types/set/#count_where"
+    }
+   ]
+  },
+  {
+   "owner": "Range",
+   "name": "count",
+   "kind": "property",
+   "signatures": [
+    {
+     "result": "Int",
+     "summary": "How many numbers the range has.",
+     "page": "builtins/types/range/#count"
+    }
+   ]
+  },
+  {
+   "owner": "Range",
+   "name": "empty?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the range has no numbers at all.",
+     "page": "builtins/types/range/#empty"
+    }
+   ]
+  },
+  {
+   "owner": "Range",
+   "name": "step",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "distance",
+       "type": "Int"
+      }
+     ],
+     "result": "Range",
+     "summary": "A range that visits every `distance`-th number, in the same direction.",
+     "raises": true,
+     "page": "builtins/types/range/#step"
+    }
+   ]
+  },
+  {
+   "owner": "Range",
+   "name": "reverse",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Range",
+     "summary": "The same numbers in the opposite order.",
+     "page": "builtins/types/range/#reverse"
+    }
+   ]
+  },
+  {
+   "owner": "Range",
+   "name": "to_list",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[Int]",
+     "summary": "Every number the range visits, in order, as a `List`.",
+     "page": "builtins/types/range/#to_list"
+    }
+   ]
+  },
+  {
+   "owner": "Bytes",
+   "name": "from_list",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "numbers",
+       "type": "List[Int]"
+      }
+     ],
+     "result": "Bytes",
+     "summary": "Bytes made from a list of whole numbers, each from 0 to 255.",
+     "raises": true,
+     "page": "builtins/types/bytes/#from_list"
+    }
+   ]
+  },
+  {
+   "owner": "Bytes",
+   "name": "to_string",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The bytes read as UTF-8 text.",
+     "raises": true,
+     "page": "builtins/types/bytes/#to_string"
+    }
+   ]
+  },
+  {
+   "owner": "Bytes",
+   "name": "to_string_maybe",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String?",
+     "summary": "The bytes read as UTF-8 text, or `nothing` when they are not valid text.",
+     "page": "builtins/types/bytes/#to_string_maybe"
+    }
+   ]
+  },
+  {
+   "owner": "Bytes",
+   "name": "to_hex",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The bytes written as hexadecimal, two lowercase digits for each byte.",
+     "page": "builtins/types/bytes/#to_hex"
+    }
+   ]
+  },
+  {
+   "owner": "Bytes",
+   "name": "from_hex",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "result": "Bytes",
+     "summary": "Bytes read from hexadecimal digits, two for each byte, in upper or lower case.",
+     "raises": true,
+     "page": "builtins/types/bytes/#from_hex"
+    }
+   ]
+  },
+  {
+   "owner": "Bytes",
+   "name": "from_hex_maybe",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "text",
+       "type": "String"
+      }
+     ],
+     "result": "Bytes?",
+     "summary": "Like `Bytes.from_hex`, but gives `nothing` instead of raising an error.",
+     "page": "builtins/types/bytes/#from_hex_maybe"
+    }
+   ]
+  },
+  {
+   "owner": "Bytes",
+   "name": "count",
+   "kind": "property",
+   "signatures": [
+    {
+     "result": "Int",
+     "summary": "How many bytes there are.",
+     "page": "builtins/types/bytes/#count"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "pi",
+   "kind": "type_property",
+   "signatures": [
+    {
+     "result": "Float",
+     "summary": "π, the ratio of a circle's circumference to its diameter.",
+     "page": "library/program/math/#pi"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "e",
+   "kind": "type_property",
+   "signatures": [
+    {
+     "result": "Float",
+     "summary": "e, the base of natural logarithms.",
+     "page": "library/program/math/#e"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "sin",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "radians",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The sine of an angle in radians.",
+     "page": "library/program/math/#sin"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "cos",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "radians",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The cosine of an angle in radians.",
+     "page": "library/program/math/#cos"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "tan",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "radians",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The tangent of an angle in radians.",
+     "page": "library/program/math/#tan"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "arc_sin",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The angle, in radians, whose sine is `value`: the inverse of `sin`.",
+     "page": "library/program/math/#arc_sin"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "arc_cos",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The angle, in radians, whose cosine is `value`: the inverse of `cos`.",
+     "page": "library/program/math/#arc_cos"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "arc_tan",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The angle, in radians, whose tangent is `value`: the inverse of `tan`.",
+     "page": "library/program/math/#arc_tan"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "arc_tan2",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "y",
+       "type": "Float"
+      },
+      {
+       "name": "x",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The angle, in radians, from the positive x-axis to the point (`x`, `y`).",
+     "page": "library/program/math/#arc_tan2"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "natural_log",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The natural logarithm: the power that e must be raised to in order to get `value`.",
+     "page": "library/program/math/#natural_log"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "log10",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The logarithm with base 10: for a whole power of ten, how many zeros it has.",
+     "page": "library/program/math/#log10"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "log",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "Float"
+      },
+      {
+       "name": "base",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "The logarithm with any `base`: the power that `base` must be raised to in order to get `value`.",
+     "page": "library/program/math/#log"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "power",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "base",
+       "type": "Float"
+      },
+      {
+       "name": "exponent",
+       "type": "Float"
+      }
+     ],
+     "result": "Float",
+     "summary": "`base` raised to `exponent`, always as a `Float`.",
+     "page": "library/program/math/#power"
+    }
+   ]
+  },
+  {
+   "owner": "Program",
+   "name": "arguments",
+   "kind": "type_property",
+   "signatures": [
+    {
+     "result": "List[String]",
+     "summary": "The words written after `--` when the program was started, in order.",
+     "page": "library/program/program/#arguments"
+    }
+   ]
+  },
+  {
+   "owner": "Program",
+   "name": "sleep",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "duration",
+       "type": "Duration"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Pauses the program for `duration`, then carries on.",
+     "raises": true,
+     "page": "library/program/program/#sleep"
+    }
+   ]
+  },
+  {
+   "owner": null,
+   "name": "print",
+   "kind": "function",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "values",
+       "type": "Any",
+       "variadic": true
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Shows each value, separated by a space, then ends the line.",
+     "page": "builtins/functions/print/#print"
+    }
+   ]
+  },
+  {
+   "owner": null,
+   "name": "write",
+   "kind": "function",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "values",
+       "type": "Any",
+       "variadic": true
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Shows each value, separated by a space, exactly as `print` does, but does not end the line.",
+     "page": "builtins/functions/write/#write"
+    }
+   ]
+  },
+  {
+   "owner": null,
+   "name": "input",
+   "kind": "function",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "prompt",
+       "type": "String",
+       "default": "\"\""
+      }
+     ],
+     "result": "String",
+     "summary": "Shows `prompt`, then gives back the line the person types, without its line break.",
+     "raises": true,
+     "page": "builtins/functions/input/#input"
+    }
+   ]
+  },
+  {
+   "owner": null,
+   "name": "input_maybe",
+   "kind": "function",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "prompt",
+       "type": "String",
+       "default": "\"\""
+      }
+     ],
+     "result": "String?",
+     "summary": "Like `input`, but gives `nothing` when the input has ended, instead of raising an error.",
+     "page": "builtins/functions/input/#input_maybe"
+    }
+   ]
+  },
+  {
+   "owner": null,
+   "name": "random",
+   "kind": "function",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "range",
+       "type": "Range"
+      }
+     ],
+     "result": "Int",
+     "summary": "A whole number chosen at random from `range`, every number in it equally likely.",
+     "raises": true,
+     "page": "builtins/functions/random/#random"
+    }
+   ]
+  },
+  {
+   "owner": null,
+   "name": "exit",
+   "kind": "function",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "code",
+       "type": "Int",
+       "default": "0"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Ends the program at once, with the status `code`; `0` means it finished normally.",
+     "raises": true,
+     "page": "builtins/functions/exit/#exit"
+    }
+   ]
+  },
+  {
+   "owner": null,
+   "name": "assert",
+   "kind": "statement",
+   "signatures": [
+    {
+     "result": "Nothing",
+     "summary": "Stops the program with an `AssertionError` when `condition` is `false`, and does nothing otherwise.",
+     "page": "builtins/functions/assert/#assert",
+     "parameters": [
+      {
+       "name": "condition",
+       "type": "Bool"
+      },
+      {
+       "name": "message",
+       "type": "String",
+       "optional": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "owner": "Task",
+   "name": "result",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "T",
+     "summary": "Waits for the task to finish, and gives what its block returned.",
+     "raises": true,
+     "page": "library/tasks/task/#result"
+    }
+   ]
+  },
+  {
+   "owner": "Task",
+   "name": "wait",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "timeout",
+       "type": "Duration"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Waits for the task to finish, but for no longer than `timeout`.",
+     "raises": true,
+     "page": "library/tasks/task/#wait"
+    }
+   ]
+  },
+  {
+   "owner": "Task",
+   "name": "done?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the task has finished, without waiting to find out.",
+     "page": "library/tasks/task/#done"
+    }
+   ]
+  },
+  {
+   "owner": "Task",
+   "name": "cancel",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Nothing",
+     "summary": "Asks the task to stop.",
+     "page": "library/tasks/task/#cancel"
+    }
+   ]
+  },
+  {
+   "owner": "TaskGroup",
+   "name": "start",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "block": "=> ...",
+     "result": "Task[T]",
+     "summary": "Starts a task that runs the block, and gives back a `Task` for its result.",
+     "raises": true,
+     "page": "library/tasks/taskgroup/#start"
+    }
+   ]
+  },
+  {
+   "owner": "Channel",
+   "name": "send",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "value",
+       "type": "T"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Puts a value into the channel.",
+     "raises": true,
+     "page": "library/tasks/channel/#send"
+    }
+   ]
+  },
+  {
+   "owner": "Channel",
+   "name": "receive",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "T?",
+     "summary": "Takes the next message, waiting for one if there is none yet.",
+     "raises": true,
+     "page": "library/tasks/channel/#receive"
+    }
+   ]
+  },
+  {
+   "owner": "Channel",
+   "name": "close",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Nothing",
+     "summary": "Says that nothing more will be sent.",
+     "page": "library/tasks/channel/#close"
+    }
+   ]
+  },
+  {
+   "owner": "Random",
+   "name": "next",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "range",
+       "type": "Range"
+      }
+     ],
+     "result": "Int",
+     "summary": "One whole number from `range`, as the built-in `random(range)` chooses, but repeatably.",
+     "raises": true,
+     "page": "library/program/random/#next"
+    }
+   ]
+  },
+  {
+   "owner": "Random",
+   "name": "choose",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "list",
+       "type": "List[T]"
+      }
+     ],
+     "result": "T?",
+     "summary": "One item from `list`, or `nothing` when the list is empty.",
+     "page": "library/program/random/#choose"
+    }
+   ]
+  },
+  {
+   "owner": "Random",
+   "name": "shuffle!",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "list",
+       "type": "List[T]"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Puts the items of `list` in a random order, changing the list itself.",
+     "page": "library/program/random/#shuffle"
+    }
+   ]
+  }
+ ]
+}
