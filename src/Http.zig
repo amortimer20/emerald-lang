@@ -191,6 +191,9 @@ fn perform(client: *Client, url: []const u8, options: Options) Outcome {
         .delete => .DELETE,
     }, uri, .{
         .redirect_behavior = if (options.body == null) .init(5) else .unhandled,
+        // Zig adds its own User-Agent unless told not to, ahead of any in `extra_headers`, so a
+        // program that names one would otherwise send both and the server would read Zig's.
+        .headers = .{ .user_agent = if (suppliesHeader(options.headers, "user-agent")) .omit else .default },
         .extra_headers = options.headers,
     }) catch |err| {
         client.allocator.free(storage);
@@ -342,6 +345,11 @@ fn immediate() u8 {
 /// The deterministic loopback server shared by native and end-to-end tests.
 /// It deliberately has no network-facing API: conformance receives only its
 /// generated base URL as a program argument.
+fn suppliesHeader(headers: []const std.http.Header, wanted: []const u8) bool {
+    for (headers) |header| if (std.ascii.eqlIgnoreCase(header.name, wanted)) return true;
+    return false;
+}
+
 pub const TestServer = struct {
     io: std.Io.Threaded,
     listener: std.Io.net.Server,
@@ -417,6 +425,18 @@ pub const TestServer = struct {
             } else {
                 request.respond("echo mismatch", .{ .status = .bad_request, .keep_alive = false }) catch {};
             }
+        } else if (std.mem.eql(u8, request.head.target, "/agent")) {
+            var count: usize = 0;
+            var first: []const u8 = "";
+            var lines = std.mem.splitSequence(u8, request.head_buffer, "\r\n");
+            while (lines.next()) |line| {
+                if (!std.ascii.startsWithIgnoreCase(line, "user-agent:")) continue;
+                if (count == 0) first = std.mem.trim(u8, line["user-agent:".len..], " ");
+                count += 1;
+            }
+            var reply: [160]u8 = undefined;
+            const text = std.fmt.bufPrint(&reply, "{d}:{s}", .{ count, first }) catch return;
+            request.respond(text, .{ .keep_alive = false }) catch {};
         } else if (std.mem.eql(u8, request.head.target, "/slow")) {
             std.Io.sleep(io, .fromMilliseconds(250), .awake) catch return;
             request.respond("too late", .{ .keep_alive = false }) catch {};
@@ -481,6 +501,15 @@ test "local HTTP transport handles responses, redirects, limits, and deadlines" 
     };
     defer echo.deinit(allocator);
     try std.testing.expectEqualStrings("POST:posted body", echo.body);
+
+    const agent_url = try server.url(allocator, "/agent");
+    defer allocator.free(agent_url);
+    var named_agent = switch (client.request(agent_url, .{ .headers = &.{.{ .name = "User-Agent", .value = "mine/1" }} })) {
+        .response => |response| response,
+        .problem => return std.testing.expect(false),
+    };
+    defer named_agent.deinit(allocator);
+    try std.testing.expectEqualStrings("1:mine/1", named_agent.body);
 
     const redirect_url = try server.url(allocator, "/redirect");
     defer allocator.free(redirect_url);
