@@ -3695,13 +3695,31 @@ Settled by the first implementation slice, and binding on any future backend tha
 
 ### 18.4 REPL
 
-`emerald repl` keeps declarations and values across entries. A bare expression prints its
-value; a statement follows normal statement behavior. Multiline input continues while a
-delimiter or declaration body remains incomplete.
+`emerald repl` keeps one interpreter and its values across entries. Each accepted entry runs
+once: earlier entries are checked again but never executed again, so a file append, a request,
+or a random draw is not repeated. The parser keeps earlier syntax nodes and identifies
+unfinished input structurally, not by diagnostic wording. Multiline input continues while a
+delimiter, declaration body, multiline string, or block comment remains incomplete.
+
+Every top-level expression statement, calls included, echoes its value unless its checked
+type is `Nothing`. Strings are echoed quoted; other values display as with `print`.
+Declarations and assignments have no extra echo, and `print("hi")` prints `hi` only once.
+An optional expression whose value is `nothing` still echoes `nothing`. Prompt input and
+program `input` share one scheduler-owned reader, including across `:reset`.
 
 The REPL keeps ordinary binding rules: a `var` may be reassigned, while a name may not be
 redeclared and a `const` may not be replaced. `:help` lists its three commands, `:reset`
-clears the session, and `:quit` exits. An invalid entry does not partially mutate the session.
+clears the session, and `:quit` exits. Redeclaration diagnostics suggest a different name or
+`:reset`. Diagnostic locations are relative to the entry they describe (`repl:1:9`), including
+trace frames that refer to an earlier entry.
+
+An entry that fails to parse or check runs nothing and leaves earlier bindings unchanged.
+An entry that raises while running loses its declarations, but completed assignments,
+output, and outside effects remain. Code assigned into earlier bindings before the error
+remains callable; its retained syntax and analysis live until reset or exit. Submitted text
+keeps unique offsets even after an entry is dropped. `:reset` starts a new interpreter and
+session; it does not undo a file write or a request. Line editing, history, and additional
+commands remain outside this slice.
 
 ### 18.5 Language server
 
@@ -4075,6 +4093,7 @@ recorded in their normative sections:
 | Decision | Resolution | Reasoning |
 | --- | --- | --- |
 | JSON's two conversion paths (15.9) | `parse` produces a navigable `Json`; checker-known `encode` and `decode(text, as: Type)` convert a program's known types | An API response and a program's own saved `Score` have opposite information available. One dynamic value type and one static conversion spell the distinction without asking a beginner to build a serialization framework. |
+| REPL replay versus a persistent session (18.4) | Keep one interpreter and earlier syntax nodes, recheck the kept program, and execute only the new entry; remove a raising entry's declarations but keep its completed effects | Replaying input and suppressing old output cannot undo or faithfully repeat files, requests, randomness, clocks, or tasks. Persistent values make each effect happen once without requiring an incremental checker. Failed-entry code that escapes into an earlier binding retains its analysis, and append-only offsets prevent stale span-keyed facts from colliding. |
 | Concurrency model (15.13) | Structured tasks and FIFO channels, without `async`/`await`, public threads, or locks | Ordinary functions can wait without coloring every caller; a beginner learns results and messages rather than shared-memory synchronization. |
 | Task lifetime (15.13) | Only a live `TaskGroup` can start children; its `Tasks.run` joins them all | Detached work would introduce orphan resources and unseen errors. |
 | Scheduling (15.13) | One task runs Emerald code until a wait or yield; readiness is FIFO, timers follow deadlines, I/O follows arrival | Visible handoffs keep the heap non-atomic and computation reproducible without pretending host completion order is fixed. |

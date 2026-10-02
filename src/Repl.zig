@@ -371,10 +371,11 @@ test "a file append executes once and its effect survives session teardown" {
     const gpa = testing.allocator;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "log.txt", .data = "" });
-    const relative = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/log.txt", .{tmp.sub_path});
+    const relative = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer gpa.free(relative);
-    const absolute = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, relative, gpa);
+    const directory = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, relative, gpa);
+    defer gpa.free(directory);
+    const absolute = try std.fs.path.join(gpa, &.{ directory, "log.txt" });
     defer gpa.free(absolute);
     // JSON's ASCII escape spelling also safely quotes Windows paths for
     // Emerald. No host path is spliced into source without escaping.
@@ -383,7 +384,8 @@ test "a file append executes once and its effect survives session teardown" {
     const transcript = try std.fmt.allocPrint(gpa, "File.append({s}, \"x\")\nprint(1)\nprint(2)\n:quit\n", .{literal});
     defer gpa.free(transcript);
     for (0..50) |_| {
-        try tmp.dir.writeFile(testing.io, .{ .sub_path = "log.txt", .data = "" });
+        // File.append creates the missing file. Remove it only after each
+        // verified run so every session starts with a fresh path.
         var input: std.Io.Reader = .fixed(transcript);
         var output: std.Io.Writer.Allocating = .init(gpa);
         defer output.deinit();
@@ -392,6 +394,7 @@ test "a file append executes once and its effect survives session teardown" {
         defer gpa.free(contents);
         try testing.expectEqualStrings("x", contents);
         try testing.expectEqualStrings("Emerald REPL. Type `:help` for commands; Ctrl-D exits.\n> > 1\n> 2\n> \n", output.written());
+        try tmp.dir.deleteFile(testing.io, "log.txt");
     }
 }
 

@@ -9,8 +9,8 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 
 The Zig rewrite implements the current rewrite-context language surface: control flow,
 functions, optionals, collections, Unicode strings, structs, classes, inheritance, traits,
-enums, typed errors, projects/namespaces, ranges and slicing. The formatter is complete; the
-REPL's persistent-session redesign is in progress. The language server provides diagnostics
+enums, typed errors, projects/namespaces, ranges and slicing. The formatter and persistent-session
+REPL are complete on `codex/repl`, pending final review and merge. The language server provides diagnostics
 (identical to `emerald check`), symbols,
 format-on-save, hover, go to definition, find references, rename, and completion, but the last
 two are shallow for the built-in types: see "Queued: editor intelligence" below.
@@ -174,9 +174,9 @@ finish before optimizing are done (dates and times, regular expressions, Console
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
 journal records each milestone, its review, and what was measured; each plan's "Settled while
-building" notes record its decisions. REPL slice 3 is implemented on `codex/repl`: the command
-loop now uses the persistent interpreter. The next step is the user's slice 3 review;
-slice 4 (documentation and integration) must wait for approval.
+building" notes record its decisions. All four REPL slices are implemented on `codex/repl`,
+with `origin/main` merged before the final integration gate. The next step is final review
+and merge by the user/Claude after branch CI is green; Codex does not merge to main.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
@@ -222,6 +222,13 @@ slice 4 (documentation and integration) must wait for approval.
 - `File.append` creates a missing file, as C#, Python, and Ruby do (it raised `FileError` before).
 - HTTP now sends Emerald's own `User-Agent`, or the program's, instead of Zig's (the second
   header was ignored before).
+- The REPL keeps one interpreter and executes each entry once, so files, requests, randomness,
+  clocks, and tasks are no longer replayed. Calls now echo results and strings echo quoted;
+  `print` and other `Nothing`-typed statements have no extra result.
+- REPL diagnostics point within their originating entry. Parse/check errors run nothing;
+  runtime errors remove the entry's declarations but keep completed assignments and outside
+  effects. `:help` explains this, and redeclaration errors suggest a different name or `:reset`.
+  Prompt input and program input share one reader, including across reset.
 
 Open work:
 - **The website** is published (2026-10-01): the whole reference, with every example's output
@@ -229,37 +236,21 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **The REPL**: the accepted [`repl-design-plan.md`](repl-design-plan.md)'s first three slices
-  are implemented on `codex/repl`. The command loop no longer replays earlier entries:
-  completed assignments, output, and outside effects happen once. The greeting, prompts,
-  multiline entry, `:help`, `:reset`, and `:quit` remain. Calls now echo their results,
-  strings are quoted, and `Nothing`-typed statements have no extra echo. In the underlying session,
-  tail parsing is structural, and `Interpreter.Session` now preserves one heap/module scope
-  while replacing checker facts for each accepted analysis. `SessionSyntax` parses each entry
-  once and keeps all submitted source text, including dropped entries, so offsets are never
-  reused. Successful analyses are freed after replacement; failed analyses and declaration
-  snapshots remain until session teardown for code assigned into earlier bindings. Calls select
-  their code's entry view and restore the caller's view, including across scheduler yields;
-  lazily checked prelude helpers use their caller's analysis. Testing-allocator regressions
-  cover escaped lambdas/nested functions, kept-function calls, span collisions, and an escaped
-  trait-backed instance/captured method constructing its old type after its name is reused.
-  The journal records both slice 2 corrections; slice 2 (`94705cb`) is approved. Slice 3 adds
-  the two review probes (`20` and `1070 20`), binary origin lookup, entry-relative diagnostics,
-  and one scheduler-owned input reader shared with program input and retained across reset.
-  Interactive type bodies and file-local `using` aliases are covered too. Nine transcript
-  cases run 50 times each in every conformance gate; another testing-allocator test checks
-  a file append after teardown in 50 sessions. All nine also passed 50 runs each through
-  the actual CLI. Golden files were read by hand.
-  The user approved correcting the timing criterion: execution must stay flat; full-session
-  analysis is measured, not asserted in CI, with a local entry-500 budget of 100 ms.
-  The execution assertion passed in Debug and ReleaseSafe; ReleaseSafe profiling measured
-  entry-500 analysis at 13.240 ms, dominated by checking. The plan records all four prefix
-  measurements and the repeated prelude metadata work; no incremental checker was added.
-  Final local validation passed with pinned Zig 0.16.0 and `-j1`: 546 tests in each of
-  Debug/ReleaseSafe, native build, 24 executable documentation examples and 134 linked
-  conformance files, formatting/whitespace, and Windows x86_64/macOS aarch64 cross-builds.
-  Slice 3's commit is pushed on this branch; its CI result is checked before reporting completion.
-  Stop for review afterward, before slice 4.
+- **The REPL**: all four slices of [`repl-design-plan.md`](repl-design-plan.md) are implemented
+  on `codex/repl`, pending final review/merge. The [language guide](language/repl.md),
+  rewrite-context 18.4 and section 22 now describe the persistent session; the journal records
+  the implementation and slice 2 corrections. Slice 3 (`e03cb64`) passed all seven CI jobs.
+  Main's seven newer commits merged cleanly, preserving File.append's create-if-missing
+  behavior and the editor-intelligence/board/batteries-included/header-block notes.
+  The file-append regression now starts with a missing file on every one of its 50 runs.
+  Nine existing transcript expectations remain unchanged. Full-session checking remains
+  intentional: the approved execution-only assertion passed, and measured ReleaseSafe
+  entry-500 analysis was 13.240 ms (under 100 ms). Line editing/history remain deferred.
+  Final post-merge local gate passed: 546 tests in each of Debug/ReleaseSafe, native build,
+  24 executable doc examples and 134 linked conformance files, formatting/whitespace, and
+  Windows/macOS cross-builds. All nine transcripts matched 50 CLI runs each, and all three
+  new guide examples were verified. Slice 4 is pushed on this branch; final CI is checked
+  before reporting completion. Stop for review; do not merge to main.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
 

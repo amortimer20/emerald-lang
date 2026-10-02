@@ -5,11 +5,16 @@ built quickly, and it now does things a student never asked for. This plan repla
 while keeping its surface: the prompt, multiline entry, echoing a bare expression's value, and
 `:help`, `:reset`, and `:quit`.
 
+Implementation: all four slices complete on `codex/repl`; final review and merge pending.
+
 The executor makes the remaining judgement calls within a slice and records each one under that
 slice's "Settled while building" note. At the start of each slice, reread `git status`, the
 recent `git log`, and docs/handoff.md.
 
-## What is wrong now
+## What was wrong before this milestone
+
+This section records the replay implementation replaced by slices 1–3, not the current
+`src/Repl.zig`. The append demonstrations need no setup file: File.append now creates it.
 
 The REPL keeps one ever-growing source text and, on every entry, lexes, parses, resolves,
 checks, and runs **the whole session again** from the start (`src/Repl.zig`). To hide that, it
@@ -148,7 +153,7 @@ each new entry:
    **only the new statements**, in the module scope that persists from earlier entries.
 6. If a new top-level statement is an expression, a call included, and its type is not
    `Nothing`, print its value as `print` would, except that a `String` is shown quoted, so
-   `"Ada"` and `Ada` look different (decision 6). A declaration, an assignment, and a call that
+   `"Ada"` and `Ada` look different (decisions 4 and 6). A declaration, an assignment, and a call that
    returns nothing (`print`, `append`, `File.write`) print nothing extra.
 7. Report a diagnostic's position within the entry (`repl:1:9`), not within the session text.
 
@@ -403,7 +408,30 @@ commits.
   retired.
 - The handoff and journal; the 0.7.0 release-notes list (the REPL no longer repeats side
   effects, and a bare `String` echoes quoted).
-- Settled while building: (record here)
+- Settled while building:
+  - Merged `origin/main` into `codex/repl` before integration, without rebasing
+    or rewriting history. The seven commits merged without conflicts; main's
+    File.append dispatch change and section 15.3 text remain intact, alongside
+    the REPL session work. Its editor-intelligence, board-target,
+    batteries-included, header-block, and release notes are preserved.
+  - Added a focused `docs/language/repl.md` guide and linked it from the guide
+    index. Normative changes in the rewrite context are confined to 18.4 and
+    section 22; the plan's replay description is explicitly historical.
+  - The append example starts in a fresh directory, without a setup file.
+    The 50-session file-effect regression also uses a missing file each time,
+    removing it only after verifying `x`. No existing transcript or expected
+    output changed; main's new `file-append-creates` case remains as merged.
+  - The handoff's completed slice narrative is condensed, with history kept
+    in the journal. New REPL release notes sit beside main's existing notes,
+    without duplicating the File.append, CRLF, User-Agent, Console, or tasks entries.
+  - Post-merge validation passed with pinned Zig 0.16.0 and `-j1`: Debug and
+    ReleaseSafe suites (546 tests each), native build, the doc-example check
+    (24 executed examples, 134 linked conformance files), formatting/whitespace,
+    and Windows x86_64/macOS aarch64 cross-builds outside `zig-out`.
+    The nine existing transcripts each matched 50 actual CLI runs (450 processes,
+    no retries) as well as 50 runs in each test gate. All three new guide
+    transcripts were verified against the built binary, including the fresh
+    file holding exactly `x` and the shortened error's `repl:4:5` location.
 
 ## Validation
 

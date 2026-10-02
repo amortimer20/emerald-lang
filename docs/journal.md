@@ -4420,3 +4420,45 @@ examples and 134 linked conformance files, changed-Zig formatting,
 `git diff --check`, and Windows x86_64/macOS aarch64 cross-builds using prefixes
 outside `zig-out`. Slice 3 is committed/pushed separately; its branch CI must
 be green before it is reported complete. No merge or tag, and no slice 4 work.
+
+## 2026-10-01 — REPL slice 4: documentation and integration with main
+
+Slice 3 (`e03cb64`) passed all seven branch CI jobs before this slice began.
+At the user's request, fetched origin and merged `origin/main` into `codex/repl`
+as `0955c9d`, without rebasing, amending, or force-pushing. All seven main
+commits merged cleanly: File.append's create-if-missing behavior (PR #29),
+the accepted editor-intelligence plan, and the board-target, microcontroller,
+batteries-included, and parenthesis-free-header-block handoff notes remain.
+No conflict resolution or API improvisation was needed.
+
+Added `docs/language/repl.md` and its guide-index entry. It teaches persistence,
+call results and quoted strings, multiline input, redeclaration, reset, shared
+input, and the difference between checking errors and runtime failures.
+Rewrite-context changes are confined to 18.4 and the implementation-decision
+table in section 22: a persistent interpreter replaces replay, while analysis
+still rechecks the whole kept program. The design plan's old replay description
+is explicitly historical. Existing slice history stays in this journal; the
+handoff now has a compact completed-milestone status and new REPL release notes
+beside, not duplicating, main's File.append, CRLF, User-Agent, Console, and tasks
+entries. Final review/merge remains with the user and Claude.
+
+The append demonstration needs no setup file. Its testing-allocator regression
+now resolves the temporary directory's path and starts each of 50 sessions
+with a missing `log.txt`, deleting it only after verifying the result is `x`.
+This exercises creation and no replay together. The nine existing transcript
+inputs/expectations are unchanged, as is main's new `file-append-creates` case.
+Checker.zig and Lsp.zig were not touched.
+
+Post-merge validation passed with pinned Zig 0.16.0 and `-j1`, with final exit
+statuses checked: Debug and ReleaseSafe suites (546 tests each, including
+50 consecutive runs of every transcript in each gate), native build,
+`bash tools/check-doc-examples.sh` (24 executable examples and 134 linked
+conformance files), `zig fmt --check build.zig src/*.zig tools/*.zig`,
+`git diff --check`, and Windows x86_64/macOS aarch64 cross-builds with prefixes
+outside `zig-out`. The built CLI independently matched all nine transcripts
+50/50 each (450 processes, no retries). All three new guide transcripts were
+verified, including the fresh file containing exactly `x` and the runtime
+error's entry-relative `repl:4:5` location with `score` still 7 afterward.
+
+Slice 4 is committed and pushed separately after the merge. Branch CI is
+checked before reporting completion; no merge to main or tag is performed.
