@@ -4462,3 +4462,31 @@ error's entry-relative `repl:4:5` location with `score` still 7 afterward.
 
 Slice 4 is committed and pushed separately after the merge. Branch CI is
 checked before reporting completion; no merge to main or tag is performed.
+
+## 2026-10-02 — Diagnostic polish: revised Boolean naming decision
+
+The user dropped item 11's missing-`?` warning entirely. A Bool result can report
+the success of an action, so forcing `save?` would teach a misleading name.
+Rewrite-context 3.3 and the section 22 decision table now record the one-way
+rule: a `?` name must return plain Bool, but returning Bool does not require
+that suffix. Item 12's type error still applies everywhere, overrides and the
+prelude included. Casing warnings exclude the prelude and overrides; warn at
+the original program declaration instead. Orphaned-doc warnings also exclude
+the prelude. These exemptions are recorded with their normative rules.
+
+The branch was clean when the decision arrived. No missing-suffix implementation
+or cases had been added, so there were no `equals`/`ready` warning cases to
+remove. Added `conformance/run/bool-action-name` for `func save(): Bool`, with
+the hand-read expectation `true`, and linked it from the core language guide.
+The handoff no longer calls `is_ready(): Bool` a missing-suffix gap. It also
+reflects that the REPL has merged through PR #30 (`01125eb`), rather than still
+waiting for review; the completed slice history remains above.
+
+Validation on pinned Zig 0.16.0: toolchain check, native `zig build -j1`,
+focused `emerald check` (no problems) and `run` (`true`), Debug
+`zig build test -j1` (546 tests, exit 0), doc-example check (24 executed
+examples and 135 linked conformance files), and `git diff --check` passed.
+No checker/resolver implementation changes are included in this decision
+update. Items 7–12 remain to implement; the website output check belongs to
+the completed group C implementation, not this documentation-only policy
+change plus its regression. Changes are uncommitted on `codex/diagnostic-polish`.
