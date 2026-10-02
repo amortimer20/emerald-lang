@@ -1689,6 +1689,71 @@ fn checkTraits(self: *Checker, declaration: Ast.StructDeclaration, user: *const 
     }
 }
 
+/// A type can happen to supply every requirement of a trait without adopting
+/// it. Emerald stays nominal: that is still not assignable as the trait, but
+/// recognizing the close miss lets the diagnostic point at the missing `with`
+/// instead of suggesting an unrelated conversion.
+fn structurallySuppliesTrait(self: *Checker, user: *const Type.User, trait: *const Type.User) Error!bool {
+    var traits: std.ArrayList(*const Type.User) = .empty;
+    try self.collectTraits(trait, &traits);
+    var required_any = false;
+    for (traits.items) |required_trait| {
+        const declaration = self.struct_declarations.get(required_trait.name).?;
+        for (declaration.properties) |property| {
+            if (Resolver.isPrivate(property.name) or property.getter.abstract_span == null) continue;
+            required_any = true;
+            const supplied = try self.declaredMember(user, property.name, true) orelse return false;
+            if (supplied.kind != .field and supplied.kind != .property) return false;
+            const key = try Resolver.methodKey(self.arena, required_trait.name, property.name);
+            const expected = (try self.signatureFor(key)).return_type;
+            const actual: Type, const writable: bool = switch (supplied.kind) {
+                .field => blk: {
+                    const field = user.field(property.name).?.value;
+                    break :blk .{ field.type, field.mutable };
+                },
+                .property => .{ (try self.signatureFor(supplied.key.?)).return_type, self.properties.get(supplied.key.?) orelse false },
+                else => unreachable,
+            };
+            if (!actual.same(expected) or (property.mutable and !writable)) return false;
+        }
+        for (declaration.methods) |method| {
+            if (Resolver.isPrivate(method.name) or method.abstract_span == null) continue;
+            required_any = true;
+            const supplied = try self.declaredMember(user, method.name, true) orelse return false;
+            if (supplied.kind != .method) return false;
+            const key = try Resolver.methodKey(self.arena, required_trait.name, method.name);
+            const expected = try self.signatureOn(try self.signatureFor(key), Type.structOf(user));
+            if (!try self.sameSignature(try self.signatureFor(supplied.key.?), expected)) return false;
+        }
+    }
+    return required_any;
+}
+
+/// Reports the nominal-trait mistake only for a concrete type that already
+/// supplies every required public member. Types that are missing or mismatch a
+/// requirement retain the ordinary type-mismatch diagnostic, which is more
+/// useful for fixing their actual problem.
+fn reportMissingTraitAdoption(
+    self: *Checker,
+    span: Source.Span,
+    actual: Type,
+    expected: Type,
+    code: ?Diagnostic.Code,
+) Error!bool {
+    const user = actual.user orelse return false;
+    const trait = expected.user orelse return false;
+    if (actual.kind != .struct_value or actual.optional or user.trait or user.enumeration or !trait.trait) return false;
+    if (!try self.structurallySuppliesTrait(user, trait)) return false;
+    try self.diagnostics.append(self.arena, .{
+        .message = try std.fmt.allocPrint(self.arena, "`{s}` does not adopt `{s}`", .{ user.display_name, trait.display_name }),
+        .span = span,
+        .help = try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration.", .{ trait.display_name, user.display_name }),
+        .code = code,
+        .file = self.file,
+    });
+    return true;
+}
+
 /// Whether two traits' members of one name and kind can be supplied by one
 /// member: the same method shape, or properties of the same type, where a
 /// writable one subsumes a read-only one (11.2).
@@ -2898,13 +2963,15 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
         const actual = try self.typeOfExpected(initializer, expected);
         if (declaration.annotation != null) {
             if (!actual.assignableTo(declared)) {
-                try self.reportCoded(
-                    initializer.span,
-                    .type_mismatch,
-                    "this is {f}, but `{s}` was declared as {f}",
-                    .{ actual, declaration.name, declared },
-                    mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
-                );
+                if (!try self.reportMissingTraitAdoption(initializer.span, actual, declared, .type_mismatch)) {
+                    try self.reportCoded(
+                        initializer.span,
+                        .type_mismatch,
+                        "this is {f}, but `{s}` was declared as {f}",
+                        .{ actual, declaration.name, declared },
+                        mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
+                    );
+                }
             }
         } else {
             // Section 4.1 infers the local's type from its initializer.

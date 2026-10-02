@@ -4659,3 +4659,27 @@ Judgement: only name a file when the private spelling has one owner. Files may
 legitimately reuse private names; picking one declaration in that case would
 turn an honest unknown-name diagnostic into a false correction. This is a
 resolver-only improvement with no visibility or namespace semantic change.
+
+## 2026-10-02 — Diagnostic polish item 8: omitted trait adoption
+
+Reproduced a concrete `Square` with the complete public `Shape` contract being
+assigned to `Shape`: it previously received only the generic declaration type
+mismatch. The checker now recognizes this narrow nominal-conformance near miss
+for concrete structs and classes, says that the type does not adopt the trait,
+and points to `with Shape` on the type declaration. The conformance case covers
+both a struct and a class, plus a `Triangle` that lacks the required member and
+therefore deliberately retains the ordinary mismatch.
+
+Judgement: inspect required public trait members with the same signatures,
+property mutability, `Self` substitution, and inherited-member lookup already
+used for declared adoptions. This diagnostic does not make structural typing a
+language feature: absent `with`, the value remains unassignable. Traits with no
+requirements, private members, traits themselves, enums, and incomplete or
+wrong-shaped implementations retain the existing diagnostic, because suggesting
+adoption there would hide the real missing member or imply a vacuous contract.
+
+The focused CLI reproduction and Debug suite passed before the full gate. The
+full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests with `-j1`,
+native build, documentation examples (24 executed, 135 linked conformance
+files), `zig fmt --check src/Checker.zig`, whitespace check, and Windows
+x86_64/macOS aarch64 cross-builds with output outside `zig-out`.

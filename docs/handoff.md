@@ -186,8 +186,9 @@ mistaken condition-assignment, and optional-default corrections,
 without changing strings, comments, subtraction, negation, or line continuation.
 One-line lambda `break`/`continue` now receive the existing loop-boundary diagnostic
 instead of parser cascades. Group A is pushed and all seven CI jobs passed at
-`2d92564`. Group B item 7 now identifies the declaring file for an unqualified
-private module name; items 8–9 remain next.
+`2d92564`. Group B items 7–8 now identify the declaring file for an unqualified
+private module name and explain when a structurally matching type still needs to
+adopt a trait; item 9 remains next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -205,6 +206,8 @@ private module name; items 8–9 remain next.
   function cannot exit the caller's loop instead of producing parser/brace cascades.
 - An unqualified reference to a private module name in another file identifies
   that file and explains the privacy boundary, rather than calling the name undefined.
+- A struct or class that supplies every required trait member but omits `with Trait`
+  is told that it does not adopt the trait and shown the declaration-level fix.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -469,9 +472,7 @@ not yet discussed:
   - A name ending in `?` with a non-`Bool` result is accepted, though 3.3 calls it a type error:
     `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
-  - A type with a trait's methods but no `with Trait` gets only "this is Square, but `s` was declared
-    as Shape"; say that `Square` doesn't adopt `Shape` and suggest `with Shape`. And a nested type
-    written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a
+  - A nested type written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a
     type ... declare the struct in this project"; suggest `Pizza.Size`.
 - An idea the user will consider later (2026-10-01; not planned, and nothing changes until they
   decide): let a trailing block in an `if`, `while`, `for`, or `case` header work without the
