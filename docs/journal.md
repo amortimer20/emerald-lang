@@ -4830,3 +4830,17 @@ The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
 suites, native build, documentation examples (24 executed and 135 linked
 conformance files), `zig fmt --check src/Checker.zig`, whitespace check, and
 Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+
+## 2026-10-02 — Trait adoption hint includes supplied defaults
+
+The missing-adoption hint now lists each public method the struct directly defines
+when the trait declares that method, whether its implementation is required or a
+default. Methods stay in trait closure order; a default the struct leaves alone is
+omitted. The existing one-, two-, three-, and four-or-more-method wording remains
+unchanged, and missing required methods still receive the ordinary type mismatch.
+Three conformance cases cover replacing a default, leaving a default unimplemented,
+and applying the suggested adoption and overrides exactly.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/*.zig tools/*.zig`, and `git diff --check`.

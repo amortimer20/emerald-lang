@@ -178,6 +178,10 @@ building" notes record its decisions. The REPL milestone is merged through PR #3
 (`01125eb`), the diagnostic polish batch through PR #31 (`6476cf7`), and its follow-ups through
 PR #32 (`6bdd5a6`). The Windows Debug test stall below is the open problem.
 
+The unmerged trait-adoption hint follow-up is on
+`copilot/trait-adoption-default-hint`; its focused cases and local full gate are
+recorded in the journal.
+
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
   Emerald's `and` and `or`, rather than two character errors.
@@ -197,9 +201,10 @@ PR #32 (`6bdd5a6`). The Windows Debug test stall below is the open problem.
   function cannot exit the caller's loop instead of producing parser/brace cascades.
 - An unqualified reference to a private module name in another file identifies
   that file and explains the privacy boundary, rather than calling the name undefined.
-- A struct or class that supplies every required trait member but omits `with Trait`
-  is told that it does not adopt the trait and shown the declaration-level fix;
-  the follow-up hint also names required methods needing `@override`.
+- A struct that supplies every required trait member but omits `with Trait` is
+  told that it does not adopt the trait and shown the declaration-level fix.
+  The follow-up lists each public trait method the struct defines, in trait order;
+  default methods are included only when the struct replaces them.
 - A bare nested type name inside its enclosing type is corrected to its required
   qualified spelling, such as `Pizza.Size`.
 - Orphaned `##` documentation comments now warn when a blank line or a

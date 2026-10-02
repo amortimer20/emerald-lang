@@ -1,0 +1,4 @@
+diagnostics/trait-adoption-default-overrides.em:19:23: `Square` does not adopt `Shape`
+  const square: Shape = Square()
+                        ^^^^^^^^
+Add `with Shape` to `Square`'s declaration, and `@override` before its `area` and `describe` methods.
