@@ -190,8 +190,9 @@ instead of parser cascades. Group A is pushed and all seven CI jobs passed at
 unqualified private module name, explains when a structurally matching type
 still needs to adopt a trait, and qualifies nested type names inside their
 enclosing type. Group B is pushed and all seven CI jobs passed at `1809db4`.
-Group C is underway: items 10–11 now warn for orphaned documentation and
-declaration-casing issues; the `?`-return-type rule remains next.
+Group C is validated locally: orphaned documentation and declaration-casing
+warnings now land alongside the enforced `?`-return-type rule. Its final commit,
+push, and CI review are next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -218,6 +219,9 @@ declaration-casing issues; the `?`-return-type rule remains next.
 - Program declarations now receive non-fatal casing warnings with corrected
   `snake_case` or `PascalCase` spellings; generated-prelude and `@override`
   names remain exempt.
+- A callable whose name ends in `?` must return exactly `Bool`, including
+  overridden methods and computed properties; action-style `Bool` results
+  remain valid without the suffix.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -276,8 +280,8 @@ Open work:
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
 - **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; groups A
-  and B are implemented and CI-green through `1809db4`; Group C items 10–11
-  are implemented locally, with item 12 remaining.
+  and B are implemented and CI-green through `1809db4`; Group C has passed its
+  full local validation and awaits its final commit, push, and CI review.
   The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
@@ -474,8 +478,6 @@ not yet discussed:
   job was rerun or timeout widened to make it pass.
 - Found while writing the website's language pages (2026-09-30, in 0.6.0), each a spec promise
   the implementation does not keep:
-  - A name ending in `?` with a non-`Bool` result is accepted, though 3.3 calls it a type error:
-    `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
 - An idea the user will consider later (2026-10-01; not planned, and nothing changes until they
   decide): let a trailing block in an `if`, `while`, `for`, or `case` header work without the

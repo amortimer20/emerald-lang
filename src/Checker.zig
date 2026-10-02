@@ -4034,8 +4034,25 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
         try self.checkAllPathsReturn(declaration, signature.return_type);
     }
 
+    if (!std.mem.endsWith(u8, key, Resolver.setter_suffix)) {
+        try self.checkQuestionResult(declaration.name, declaration.name_span, signature.return_type);
+    }
     try self.signatures.put(self.arena, key, signature);
     return signature;
+}
+
+/// Section 3.3: `?` promises that a callable answers a yes-or-no question.
+/// This lives beside signature construction so it covers written and inferred
+/// results alike, including an override, while a property's synthetic setter
+/// does not mistake its `Nothing` result for the property's result.
+fn checkQuestionResult(self: *Checker, name: []const u8, span: Source.Span, result: Type) Error!void {
+    if (!std.mem.endsWith(u8, name, "?") or result.kind == .invalid or (result.kind == .bool and !result.optional)) return;
+    try self.report(
+        span,
+        "`{s}` ends in `?`, so it must return Bool, but it returns {f}",
+        .{ name, result },
+        "Change its result to `Bool`, or remove `?` if it does not answer a yes-or-no question.",
+    );
 }
 
 /// What `Self` means in the signature of the function `key`: the type, for a

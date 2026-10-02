@@ -4733,6 +4733,32 @@ The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
 suites, native build, documentation examples (24 executed and 135 linked
 conformance files), `zig fmt --check src/Checker.zig`, whitespace check, and
 Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+
+## 2026-10-02 — Diagnostic polish item 12: question-name results
+
+Reproduced `func ready?(): Int` checking clean. The checker now rejects a
+callable whose name ends in `?` unless its finalized result is exactly `Bool`.
+The diagnostics regression covers a top-level function, inherited override,
+and computed property. The rule applies to the prelude and overrides as well
+as program code; an action-style `Bool` result such as `save(): Bool` remains
+valid without a question mark.
+
+Judgement: validate at signature finalization rather than requiring a written
+return annotation, so inferred results follow the same rule. A computed
+property's getter uses its declared result and is checked; its synthetic setter
+is deliberately skipped because its `Nothing` result is not the property's
+answer.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/Checker.zig`, whitespace check, and
+Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+The website's output checker found no Emerald-output changes across every page.
+The `loops` and `optionals` transcripts were rerun with the answers their pages
+show (`hi`/`quit` and `12`); the generic filename finder initially selected the
+`plants/catalog.em` title in the projects page, so that page was rerun as its
+actual paired diagnostic fixture, `projects.em`, and also matched. HTTP
+examples were intentionally skipped without the local fixture.
 Existing example prose before statements was converted from `##` documentation
 to ordinary `#` comments, leaving `##` for declarations, so the documented
 examples remain warning-free.
