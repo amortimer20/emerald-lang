@@ -35,10 +35,12 @@
 const std = @import("std");
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
+const Lexer = @import("Lexer.zig");
 const Project = @import("Project.zig");
 const Regex = @import("Regex.zig");
 const Resolver = @import("Resolver.zig");
 const Source = @import("Source.zig");
+const Token = @import("Token.zig");
 const Type = @import("Type.zig");
 const unicode = @import("unicode.zig");
 const call_arguments = @import("arguments.zig");
@@ -427,6 +429,7 @@ pub fn checkWithOptions(
     if (prelude_file) |index| checker.prelude_path = files[index].source.path;
     try checker.scopes.append(arena, prelude);
     try checker.scopes.append(arena, module);
+    try checker.checkDocumentationWarnings(gpa);
     var struct_sites: std.ArrayList(StructSite) = .empty;
 
     // Hoisted, as in the resolver. The resolver has rejected duplicate names,
@@ -594,6 +597,110 @@ pub fn checkWithOptions(
         .type_tests = checker.type_tests,
         .type_names = checker.type_names,
         .trait_calls = checker.trait_calls,
+    };
+}
+
+/// Section 3.2's documentation warning is checked after ordinary lexing and
+/// parsing have succeeded. The parser intentionally keeps documentation out of
+/// its tree, so this small token pass keeps a warning non-fatal while using the
+/// lexer to distinguish comment text from strings and ordinary comments. The
+/// generated prelude is not a program file and therefore never warns.
+fn checkDocumentationWarnings(self: *Checker, gpa: std.mem.Allocator) Error!void {
+    for (self.files, 0..) |file, index| {
+        if (std.mem.eql(u8, file.namespace, Resolver.prelude_namespace)) continue;
+        var tokenized = try Lexer.tokenize(gpa, &file.source);
+        defer tokenized.deinit(gpa);
+        // The normal frontend stops before checking lexical failures. Keeping
+        // that boundary here avoids repeating a lexical problem in a direct
+        // checker test.
+        if (tokenized.diagnostics.len != 0) continue;
+        self.file = @intCast(index);
+
+        var at: usize = 0;
+        while (at < tokenized.tokens.len) : (at += 1) {
+            const first = tokenized.tokens[at];
+            if (first.kind != .doc_comment) continue;
+
+            var last = at;
+            var next = at + 1;
+            while (next < tokenized.tokens.len) {
+                while (next < tokenized.tokens.len and tokenized.tokens[next].kind == .newline) next += 1;
+                if (next == tokenized.tokens.len or tokenized.tokens[next].kind != .doc_comment or
+                    lineBreakCount(file.source.text[tokenized.tokens[last].span.end..tokenized.tokens[next].span.start]) != 1) break;
+                last = next;
+                next += 1;
+            }
+            at = last;
+
+            while (next < tokenized.tokens.len and tokenized.tokens[next].kind == .newline) next += 1;
+            const follows_declaration = next < tokenized.tokens.len and
+                lineBreakCount(file.source.text[tokenized.tokens[last].span.end..tokenized.tokens[next].span.start]) == 1 and
+                documentationDeclarationStarts(tokenized.tokens, next);
+            if (documentationStartsLine(file.source.text, first.span.start) and follows_declaration) continue;
+            try self.reportWarning(
+                first.span,
+                "this documentation comment does not describe a declaration",
+                .{},
+                "Write it immediately before the declaration it describes, with no blank line between them.",
+            );
+        }
+    }
+}
+
+fn lineBreakCount(text: []const u8) usize {
+    var count: usize = 0;
+    for (text) |byte| {
+        if (byte == '\n') count += 1;
+    }
+    return count;
+}
+
+fn documentationStartsLine(text: []const u8, start: u32) bool {
+    const before = text[0..start];
+    const line = if (std.mem.lastIndexOfScalar(u8, before, '\n')) |newline| before[newline + 1 ..] else before;
+    return std.mem.trim(u8, line, " \t\r").len == 0;
+}
+
+/// A documentation block can lead ordinary declarations and an annotated one.
+/// The parser itself gives an annotation its precise diagnostics; this only
+/// answers whether a declaration follows well enough to avoid an orphan warning.
+fn documentationDeclarationStarts(tokens: []const Token, start: usize) bool {
+    var at = start;
+    while (at < tokens.len and tokens[at].kind == .at) {
+        at += 1;
+        if (at == tokens.len or tokens[at].kind != .identifier) return false;
+        at += 1;
+        if (at < tokens.len and tokens[at].kind == .left_paren) {
+            var depth: usize = 0;
+            while (at < tokens.len) : (at += 1) switch (tokens[at].kind) {
+                .left_paren => depth += 1,
+                .right_paren => {
+                    depth -= 1;
+                    if (depth == 0) {
+                        at += 1;
+                        break;
+                    }
+                },
+                .eof => return false,
+                else => {},
+            };
+            if (depth != 0) return false;
+        }
+        while (at < tokens.len and tokens[at].kind == .newline) at += 1;
+    }
+    if (at == tokens.len) return false;
+    return switch (tokens[at].kind) {
+        .keyword_class,
+        .keyword_const,
+        .keyword_constructor,
+        .keyword_enum,
+        .keyword_func,
+        .keyword_struct,
+        .keyword_trait,
+        .keyword_using,
+        .keyword_var,
+        => true,
+        else => false,
     };
 }
 

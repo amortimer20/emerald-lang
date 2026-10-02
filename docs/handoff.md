@@ -190,6 +190,8 @@ instead of parser cascades. Group A is pushed and all seven CI jobs passed at
 unqualified private module name, explains when a structurally matching type
 still needs to adopt a trait, and qualifies nested type names inside their
 enclosing type. Group B is pushed and all seven CI jobs passed at `1809db4`.
+Group C is underway: item 10 now warns for orphaned documentation comments;
+the casing and `?`-return-type rules remain next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -211,6 +213,8 @@ enclosing type. Group B is pushed and all seven CI jobs passed at `1809db4`.
   is told that it does not adopt the trait and shown the declaration-level fix.
 - A bare nested type name inside its enclosing type is corrected to its required
   qualified spelling, such as `Pizza.Size`.
+- Orphaned `##` documentation comments now warn when a blank line or a
+  non-declaration separates them from what they would document.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -269,7 +273,8 @@ Open work:
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
 - **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; groups A
-  and B are implemented and CI-green through `1809db4`; group C remains pending.
+  and B are implemented and CI-green through `1809db4`; Group C item 10 is
+  implemented locally, with items 11–12 remaining.
   The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
@@ -466,8 +471,6 @@ not yet discussed:
   job was rerun or timeout widened to make it pass.
 - Found while writing the website's language pages (2026-09-30, in 0.6.0), each a spec promise
   the implementation does not keep:
-  - An orphaned `##` documentation comment gets no warning (3.2 says it does):
-    `## This describes nothing.` followed by a blank line and `print("x")` checks clean.
   - Casing gets no style warning (3.3 says violations are warnings): `var highScore = 10` checks
     clean. The user dropped missing-`?` warnings (2026-10-02): Bool can report an action's
     success, as in `func save(): Bool`. Casing warnings must exclude the prelude and

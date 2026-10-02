@@ -4712,3 +4712,27 @@ Pushed Group B through `1809db4` on `codex/diagnostic-polish`. [Run
 passed all six platform Debug/ReleaseSafe jobs and the bounded execution fuzz
 job. Group B is ready for review; group C has not started, and the branch has
 not been merged or rebased.
+
+## 2026-10-02 — Diagnostic polish item 10: orphaned documentation comments
+
+Reproduced an orphaned `##` block followed by a blank line and a statement:
+both `emerald check` and `emerald run` previously accepted it without a
+warning. The checker now warns when a documentation block is not at the start
+of a line immediately before a declaration. A focused diagnostics conformance
+case covers a blank line, a following statement, and a valid comment directly
+before a declaration.
+
+Judgement: the parser intentionally discards documentation comments, so the
+checker performs one small post-parse lexer pass to distinguish them from
+ordinary comments and strings without making warnings fatal parser diagnostics.
+It groups adjacent `##` lines into one block and measures source newlines to
+detect blank lines. The generated prelude is explicitly skipped: documentation
+warnings apply only to program files.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/Checker.zig`, whitespace check, and
+Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+Existing example prose before statements was converted from `##` documentation
+to ordinary `#` comments, leaving `##` for declarations, so the documented
+examples remain warning-free.

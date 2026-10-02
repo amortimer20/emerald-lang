@@ -1,6 +1,6 @@
-## Everything in `scoring/` belongs to the `Scoring` namespace, whether it is
-## written in one file or ten. `main.em` reaches these either by writing
-## `Scoring.total(...)` or, as it does, by saying `using Scoring` once.
+# Everything in `scoring/` belongs to the `Scoring` namespace, whether it is
+# written in one file or ten. `main.em` reaches these either by writing
+# `Scoring.total(...)` or, as it does, by saying `using Scoring` once.
 
 ## A module-level value. It is worked out the first time anything in this file
 ## is used, not when the program starts.

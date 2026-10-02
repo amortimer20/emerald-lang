@@ -1,5 +1,5 @@
-## The ledger's storage and reporting model. This file is part of the same
-## project as main.em, so its public names are directly visible there.
+# The ledger's storage and reporting model. This file is part of the same
+# project as main.em, so its public names are directly visible there.
 
 class LedgerError extends Error { }
 

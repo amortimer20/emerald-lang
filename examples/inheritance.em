@@ -54,8 +54,8 @@ for shape in shapes {
     print(shape.describe())
 }
 
-## `is` asks what an object really is. Inside the branch where it holds, the
-## shape is known to be a rectangle, so its width can be read.
+# `is` asks what an object really is. Inside the branch where it holds, the
+# shape is known to be a rectangle, so its width can be read.
 for shape in shapes {
     if shape is Rectangle {
         print(shape.type_name, "is", shape.width, "wide")

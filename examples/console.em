@@ -1,7 +1,7 @@
-## A small terminal program using Console's styling, layout, and prompts.
-##
-## Run it with `emerald run examples/console.em` for plain output, or add
-## `--color=always` to see the ANSI styling even when output is redirected.
+# A small terminal program using Console's styling, layout, and prompts.
+#
+# Run it with `emerald run examples/console.em` for plain output, or add
+# `--color=always` to see the ANSI styling even when output is redirected.
 
 struct Score {
     const name: String

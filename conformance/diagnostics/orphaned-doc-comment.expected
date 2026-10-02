@@ -1,0 +1,8 @@
+diagnostics/orphaned-doc-comment.em:1:1: warning: this documentation comment does not describe a declaration
+  ## This documentation has a blank line after it.
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Write it immediately before the declaration it describes, with no blank line between them.
+diagnostics/orphaned-doc-comment.em:5:1: warning: this documentation comment does not describe a declaration
+  ## This documentation describes a statement, not a declaration.
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Write it immediately before the declaration it describes, with no blank line between them.

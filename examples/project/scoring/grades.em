@@ -1,6 +1,6 @@
-## A second file in the same directory. Its names sit beside the other file's,
-## with no qualification between them: `pass_mark` below is the one declared in
-## `scores.em`.
+# A second file in the same directory. Its names sit beside the other file's,
+# with no qualification between them: `pass_mark` below is the one declared in
+# `scores.em`.
 
 func grade(score: Int): String {
     return "excellent" if score >= 8

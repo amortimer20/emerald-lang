@@ -1,8 +1,8 @@
-## A small persisted personal-finance ledger.
-##
-## Run from this directory's parent, for example:
-##   emerald run examples/ledger/main.em -- add 2026-09-20 groceries -42.75 "market"
-##   emerald run examples/ledger/main.em -- summary 2026-09
+# A small persisted personal-finance ledger.
+#
+# Run from this directory's parent, for example:
+#   emerald run examples/ledger/main.em -- add 2026-09-20 groceries -42.75 "market"
+#   emerald run examples/ledger/main.em -- summary 2026-09
 
 func usage() {
     print("Ledger — a tab-delimited personal-finance journal")
