@@ -186,9 +186,10 @@ mistaken condition-assignment, and optional-default corrections,
 without changing strings, comments, subtraction, negation, or line continuation.
 One-line lambda `break`/`continue` now receive the existing loop-boundary diagnostic
 instead of parser cascades. Group A is pushed and all seven CI jobs passed at
-`2d92564`. Group B items 7–8 now identify the declaring file for an unqualified
-private module name and explain when a structurally matching type still needs to
-adopt a trait; item 9 remains next.
+`2d92564`. Group B is complete: it identifies the declaring file for an
+unqualified private module name, explains when a structurally matching type
+still needs to adopt a trait, and qualifies nested type names inside their
+enclosing type. Its push and CI review are next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -208,6 +209,8 @@ adopt a trait; item 9 remains next.
   that file and explains the privacy boundary, rather than calling the name undefined.
 - A struct or class that supplies every required trait member but omits `with Trait`
   is told that it does not adopt the trait and shown the declaration-level fix.
+- A bare nested type name inside its enclosing type is corrected to its required
+  qualified spelling, such as `Pizza.Size`.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -265,8 +268,8 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; group A
-  and group B item 7 are implemented. Items 8–9 come next; group C remains pending.
+- **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; groups A
+  and B are implemented locally. Push group B and confirm CI before review; group C remains pending.
   The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
@@ -472,8 +475,6 @@ not yet discussed:
   - A name ending in `?` with a non-`Bool` result is accepted, though 3.3 calls it a type error:
     `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
-  - A nested type written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a
-    type ... declare the struct in this project"; suggest `Pizza.Size`.
 - An idea the user will consider later (2026-10-01; not planned, and nothing changes until they
   decide): let a trailing block in an `if`, `while`, `for`, or `case` header work without the
   parentheses 7.4 requires, as in `if items.any? { item => item > 1 } {`. Every lambda has `=>`, even

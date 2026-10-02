@@ -4683,3 +4683,24 @@ full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests with `-j1`,
 native build, documentation examples (24 executed, 135 linked conformance
 files), `zig fmt --check src/Checker.zig`, whitespace check, and Windows
 x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+
+## 2026-10-02 — Diagnostic polish item 9: bare nested type names
+
+Reproduced `const size: Size`-style annotations inside an outer type: despite a
+declared `Pizza.Size`, the checker said only that `Size` was not a type. It now
+finds a direct nested type of the innermost containing declaration and suggests
+the required qualified spelling, `Pizza.Size`. The focused diagnostics case was
+written and read by hand against the built binary.
+
+Judgement: use existing declaration spans and nested-type keys in the checker,
+without changing resolution. The hint is offered only for an unqualified name
+inside a type whose direct nested type has that name; unrelated unknown types
+and already-qualified paths retain their established diagnostics. Choosing the
+innermost containing type also extends naturally to nested declarations without
+guessing across unrelated outer scopes.
+
+The focused CLI reproduction and Debug suite passed before the full gate. The
+full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests with `-j1`,
+native build, documentation examples (24 executed, 135 linked conformance
+files), `zig fmt --check src/Checker.zig`, whitespace check, and Windows
+x86_64/macOS aarch64 cross-builds with output outside `zig-out`.

@@ -2089,6 +2089,26 @@ fn typeKeyOf(self: *Checker, name: []const u8) Error![]const u8 {
     return whole;
 }
 
+/// A bare type name inside another type's braces may be a nested type that is
+/// visible only through its enclosing type. Find the innermost such type so an
+/// unknown-type diagnostic can show the spelling section 14.3 requires.
+fn nestedTypeAt(self: *Checker, name: []const u8, span: Source.Span) Error!?[]const u8 {
+    var result: ?struct { key: []const u8, span: Source.Span } = null;
+    var types = self.type_spans.iterator();
+    while (types.next()) |entry| {
+        const owner = self.facts.owner.get(entry.key_ptr.*) orelse continue;
+        const enclosing = entry.value_ptr.*;
+        if (owner != self.file or span.start < enclosing.start or span.end > enclosing.end) continue;
+        const nested = try Resolver.methodKey(self.arena, entry.key_ptr.*, name);
+        if (!self.structs.contains(nested)) continue;
+        if (result) |found| {
+            if (enclosing.len() >= found.span.len()) continue;
+        }
+        result = .{ .key = nested, .span = enclosing };
+    }
+    return if (result) |found| try Resolver.displayKey(self.arena, found.key) else null;
+}
+
 /// A written type name's key before any nesting: a name the file sees, or a
 /// namespace-qualified one, following a namespace alias at its front.
 fn writtenTypeKey(self: *Checker, name: []const u8) Error![]const u8 {
@@ -5443,6 +5463,16 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         if (try self.reportPrivateNestedPath(key, annotation.span)) return .invalid;
         return user_type;
     }
+    if (std.mem.indexOfScalar(u8, annotation.name, '.') == null) if (try self.nestedTypeAt(annotation.name, annotation.span)) |nested| {
+        try self.reportWithHelp(
+            annotation.span,
+            "`{s}` is not a type",
+            .{annotation.name},
+            "Write `{s}` instead.",
+            .{nested},
+        );
+        return .invalid;
+    };
     try self.report(
         annotation.span,
         "`{s}` is not a type",
