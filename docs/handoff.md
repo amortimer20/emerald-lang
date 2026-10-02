@@ -280,11 +280,16 @@ Open work:
   failure was the same message, in three different binaries (`emerald-repl` 28 times, `emerald-lsp`
   19, `emerald-test` 14; never `emerald-conformance`). It is a hang, not a slow test: on Linux
   `emerald-lsp` runs all 35 tests in 1 second and `emerald-repl` all 9 in 6 seconds. The failed
-  iterations were not longer than the passing ones. Not yet tried: run the `emerald-lsp` binary
-  directly, without the build runner's `--listen` pipe, hundreds of times on Windows (it takes a
-  second); stalls there mean a hang in Emerald's code, none mean an interaction with the runner's
-  pipe. One suspect to rule in or out: the scheduler's standard-input reader service, which has
-  process lifetime and could read the test process's own stdin, the same pipe the runner talks over.
+  iterations were not longer than the passing ones. **Direct-run experiment** (run 37065921721):
+  the `emerald-lsp` and `emerald-repl` test binaries run directly on Windows Debug, with no build
+  runner, 120 and 40 times each, once with default stdin and once with stdin held open by a pipe that
+  never closes (as the runner's `--listen` pipe is): **320 runs, no hangs**. So the stall is not in
+  Emerald's code run on its own, and the scheduler's stdin reader is not the cause. It needs the build
+  runner: either its `--listen` message exchange on Windows (the message is the build system's
+  own watchdog, not a test timeout) or the runner running several test binaries at once. Untried:
+  `zig build test-lsp` alone with a build step for one binary; and `zig build test -j1`. Stalls in
+  the single-binary run point at the runner's protocol (likely a Zig 0.16.0 bug to report upstream
+  with the log); stalls only in the full run point at load; none in `-j1` mean concurrency.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 
