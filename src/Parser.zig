@@ -3788,6 +3788,12 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     // operator does and the lexer has already dropped the break after it.
     if (!self.brokeLine(header.arrow)) {
         const start = self.peek();
+        // Loop exits are statements, even on the arrow's line. Parse the
+        // ordinary block body so the checker can explain that a lambda cannot
+        // break or continue its caller's loop, without a stray-brace cascade.
+        if (start.kind == .keyword_break or start.kind == .keyword_continue) {
+            return self.finishLambdaBlock(opening, parameters, try self.parseStatement());
+        }
         const first = try self.parseExpression();
         if (self.check(.right_brace)) {
             const closing = self.advance();
@@ -4610,6 +4616,13 @@ fn expectParsesCleanly(source_text: []const u8) !void {
     var parsed = try parse(testing.allocator, &source, tokens.tokens);
     defer parsed.deinit();
     try testing.expectEqual(@as(usize, 0), parsed.diagnostics.len);
+}
+
+test "one-line lambda loop exits parse as statements for the checker" {
+    try expectParsesCleanly("[1].each { x => break }\n");
+    try expectParsesCleanly("[1].each { x => continue }\n");
+    try expectParsesCleanly("[1].each { x => break if x > 0 }\n");
+    try expectParsesCleanly("[1].each { x => continue if x > 0 }\n");
 }
 
 test "Allman brace style parses for if, else, and else if" {

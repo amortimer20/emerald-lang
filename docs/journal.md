@@ -4597,3 +4597,25 @@ changed-file formatting, whitespace check, and Windows/macOS cross-builds
 outside `zig-out`. The user's connection interruptions did not require a
 restart: the existing build processes completed successfully. No suite failed.
 Item 6 is next, followed by the group A push and CI check before review.
+
+## 2026-10-02 — Diagnostic polish item 6: one-line lambda loop exits
+
+Reproduced the parse errors and stray-closing-brace cascades from one-line
+`break`/`continue` lambdas, including guarded exits within an outer loop.
+The parser now treats those keyword-led bodies as ordinary block statements;
+the existing checker explains that a function cannot exit its caller's loop.
+No checker or diagnostic wording change was necessary. The four-error
+conformance expectation was written/read by hand and matched the built CLI.
+A parser unit test verifies all four forms parse cleanly before checking.
+
+Judgement: reuse `parseStatement` and `finishLambdaBlock` only for the two
+requested loop-exit keywords. Do not broaden every one-line lambda statement
+form, add caller-loop control, or change lambda return semantics. Guarded
+exits use the same condition parser introduced by item 4.
+
+The full gate passed on pinned Zig 0.16.0: 548/548 tests in both Debug and
+ReleaseSafe (`-j1`), native build, doc examples (24 executed, 135 linked
+conformance files), `zig fmt --check src/*.zig tools/*.zig`, whitespace check,
+and Windows/macOS cross-builds outside `zig-out`. All six group A items have
+their own commits and completed gates. Push group A, check its seven CI jobs,
+and stop for review before groups B and C; no merge or history rewrite.
