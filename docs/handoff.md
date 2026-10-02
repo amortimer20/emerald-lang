@@ -181,9 +181,10 @@ The revised item 11 is recorded in 3.3 and section 22: no missing-`?` warning;
 Bool can report an action's success. Casing and orphaned-doc warnings exclude the
 prelude, casing excludes overrides, and `?` names still require Bool everywhere.
 The naming implementation remains pending; the `save(): Bool` regression pins the new rule.
-Group A items 1–3 add logical-operator, increment/decrement, and conditional-value corrections,
+Group A items 1–4 add logical-operator, increment/decrement, conditional-value,
+and mistaken condition-assignment corrections,
 without changing strings, comments, subtraction, negation, or line continuation.
-The mistaken assignment-in-a-condition hint is next.
+The optional-default `??` hint is next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -192,6 +193,9 @@ The mistaken assignment-in-a-condition hint is next.
   subtraction of a negative value and double negation retain their meaning.
 - C-style `condition ? value : other` explains Emerald's
   `if condition then value else other_value` spelling.
+- Conditions written with `=` suggest `==`, including grouped conditions,
+  guards, inline `if`, `assert`, and subjectless `case` arms. Assignments inside
+  predicate bodies remain valid; mistaken conditions do not cascade into brace errors.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -250,7 +254,7 @@ Open work:
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
 - **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; group A
-  items 1–3 are implemented. Items 4–6 come next, then review before groups B and C.
+  items 1–4 are implemented. Items 5–6 come next, then review before groups B and C.
   The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
@@ -451,9 +455,6 @@ not yet discussed:
   - A name ending in `?` with a non-`Bool` result is accepted, though 3.3 calls it a type error:
     `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
-  - Operators from other languages get generic parse errors, though `!` already gets a good one
-    ("Write `not` for negation"). Remaining hint: `if x = 5 {` ("expected `{`
-    ... found =") should suggest `==`.
   - A file reaching a private `_name` declared in another file of the same folder gets
     "[E1001] `_catalog` is not defined" ("check the spelling"), while the qualified form
     (`Plants._catalog`) already says "`_catalog` is private to the file that declares it". Say

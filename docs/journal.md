@@ -4553,3 +4553,26 @@ Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
 native build `-j1`, doc examples (24 executed, 135 linked conformance files),
 changed-file formatting, whitespace check, and Windows/macOS cross-builds
 outside `zig-out`. No suite failed. Item 4 is next.
+
+## 2026-10-02 — Diagnostic polish item 4: assignment in a condition
+
+Reproduced the misleading block, parenthesis, `then`, and terminator errors
+for `=` in conditions before changing code. Conditions now explain `==`
+directly in ordinary and grouped `if`/`while` conditions, inline `if`,
+statement/return guards, `assert`, and subjectless `case` arms. A hand-read
+diagnostics case covers all seven paths; a runnable case checks correct
+comparisons and ordinary assignments, including a captured assignment inside
+an `any?` predicate. The built CLI matched both expectations after the gate.
+
+Judgement: track condition context independently of control headers.
+Parentheses must retain the comparison context, while lambda and statement
+bodies must clear it. Diagnose the equal sign and consume its right-hand
+expression for recovery, so the existing block/delimiter parser stays aligned;
+the parse diagnostic prevents the invalid program from checking or executing.
+Subjectless `when` and `assert` are conditions too, so use the same helper
+rather than leave those with misleading delimiter errors.
+
+Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
+native build `-j1`, doc examples (24 executed, 135 linked conformance files),
+changed-file formatting, whitespace check, and Windows/macOS cross-builds
+outside `zig-out`. No suite failed. Item 5 is next.

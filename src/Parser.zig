@@ -86,6 +86,9 @@ recursion: u32 = 0,
 /// Any bracket or parenthesis clears it, because the body cannot begin inside
 /// one.
 in_control_header: bool = false,
+/// Conditions reject assignment even inside a group. Unlike the header flag,
+/// parentheses keep this set; statement bodies and lambdas clear it.
+in_condition: bool = false,
 /// Where `self` means something: directly inside a constructor or method body
 /// (10.2). A lambda clears it, since a block that captured `self` could let the
 /// value escape before every field is set, or outlive a method that changes it.
@@ -1646,7 +1649,7 @@ fn expectName(self: *Parser, message: []const u8) Error!Token {
 /// Section 6.4: `while condition { body }`.
 fn parseWhile(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseHeaderExpression();
+    const condition = try self.parseHeaderCondition();
     const body = try self.parseBlock();
     return .{
         .span = spanning(keyword.span, body.span),
@@ -1713,7 +1716,7 @@ fn finishSimpleStatement(self: *Parser, statement: Ast.Statement) Error!Ast.Stat
         return statement;
     }
 
-    const condition = try self.parseExpression();
+    const condition = try self.parseCondition();
     return self.finishGuardedStatement(statement, condition);
 }
 
@@ -1974,7 +1977,7 @@ fn parseValueExit(self: *Parser, comptime kind: std.meta.Tag(Ast.Statement.Data)
             const if_keyword = self.advance();
             try self.nest(if_keyword.span);
             defer self.unnest();
-            const condition = try self.parseExpression();
+            const condition = try self.parseCondition();
             if (!self.check(.keyword_then)) {
                 return self.finishGuardedStatement(.{
                     .span = keyword.span,
@@ -1993,7 +1996,7 @@ fn parseValueExit(self: *Parser, comptime kind: std.meta.Tag(Ast.Statement.Data)
 
 fn parseAssert(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseExpression();
+    const condition = try self.parseCondition();
     const message = if (self.match(.comma) != null) try self.parseExpression() else null;
     return self.finishSimpleStatement(.{
         .span = if (message) |m| spanning(keyword.span, m.span) else spanning(keyword.span, condition.span),
@@ -2412,7 +2415,7 @@ fn parseFunctionType(self: *Parser) Error!Ast.TypeExpression {
 
 fn parseIf(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseHeaderExpression();
+    const condition = try self.parseHeaderCondition();
     const then_block = try self.parseBlock();
 
     var otherwise: ?Ast.Else = null;
@@ -2545,7 +2548,7 @@ fn parseCaseArms(self: *Parser, opening: Token, subjectless: bool, parts: *CaseP
         _ = self.advance();
         var alternatives: std.ArrayList(*const Ast.Expression) = .empty;
         while (true) {
-            try alternatives.append(self.arena, try self.parseHeaderExpression());
+            try alternatives.append(self.arena, if (subjectless) try self.parseHeaderCondition() else try self.parseHeaderExpression());
             const comma = self.match(.comma) orelse break;
             if (subjectless) {
                 return self.report(
@@ -2616,7 +2619,24 @@ fn parseHeaderExpression(self: *Parser) Error!*const Ast.Expression {
     return self.parseExpression();
 }
 
+fn parseCondition(self: *Parser) Error!*const Ast.Expression {
+    const saved = self.in_condition;
+    self.in_condition = true;
+    defer self.in_condition = saved;
+    return self.parseExpression();
+}
+
+fn parseHeaderCondition(self: *Parser) Error!*const Ast.Expression {
+    const saved = self.in_control_header;
+    self.in_control_header = true;
+    defer self.in_control_header = saved;
+    return self.parseCondition();
+}
+
 fn parseBlock(self: *Parser) Error!Ast.Block {
+    const saved_condition = self.in_condition;
+    self.in_condition = false;
+    defer self.in_condition = saved_condition;
     self.skipToLeftBrace();
     const opening = self.peek();
     if (opening.kind != .left_brace) {
@@ -2925,6 +2945,17 @@ fn expectStatementEnd(self: *Parser) Error!void {
 
 fn parseExpression(self: *Parser) Error!*const Ast.Expression {
     const expression = try self.parseDisjunction();
+    // Consume the mistaken comparison's right side for recovery, so its block
+    // and closing delimiters still parse. The diagnostic prevents execution.
+    while (self.in_condition and self.check(.equal)) {
+        const written = self.advance();
+        try self.note(
+            written.span,
+            "a condition compares values with `==`, not `=`",
+            "Write `==` to compare values. Put an assignment on its own line.",
+        );
+        _ = try self.parseDisjunction();
+    }
     // This is expression syntax, not a type's optional suffix or a predicate
     // name. Leave `??` to its own correction rather than call it a ternary.
     if (self.check(.question) and self.peekAfterNext().kind != .question and
@@ -2943,7 +2974,7 @@ fn parseIfExpression(self: *Parser) Error!*const Ast.Expression {
     const keyword = self.advance();
     try self.nest(keyword.span);
     defer self.unnest();
-    const condition = try self.parseExpression();
+    const condition = try self.parseCondition();
     return self.finishIfExpression(keyword, condition);
 }
 
@@ -3714,6 +3745,10 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     const opening = self.advance();
     try self.nest(opening.span);
     defer self.unnest();
+
+    const saved_condition = self.in_condition;
+    self.in_condition = false;
+    defer self.in_condition = saved_condition;
 
     // The body is a body, whatever the statement around it was doing.
     const saved_header = self.in_control_header;
