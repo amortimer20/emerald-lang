@@ -267,19 +267,24 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **Intermittent Windows Debug test stall (open; investigate as a real bug).** The Zig test
+- **Intermittent Windows Debug test stall (open; a real hang, cause unknown).** The Zig test
   runner on Windows Debug stops responding for about a minute ("test runner failed to respond
-  for 1m...") with every other test binary already passed. Two occurrences, in different test
-  binaries: `emerald-repl.exe` (run 37003741611, `3f7d694`, 2026-10-02 11:55) and `emerald-test.exe`
-  (run 37055293101, `4035a57`, 2026-10-02 19:37; its retry passed). Across the last 60 CI runs the
-  only other Windows Debug failure was a real REPL session crash (fixed), so the stall is new:
-  0 of 38 Windows Debug jobs before the Windows stack-reservation change (item 15, merged
-  2026-10-01 14:42, `ReservedThread` in `Scheduler.zig`) and 2 of about 20 since. That split is
-  suggestive but could be chance (about 1 in 9). The code reads sound, so no cause is
-  established. Proposed experiment: a temporary branch whose Windows Debug job runs the test step
-  20 times (a shell loop, no retries and no wider timeout), once on main and once with
-  `ReservedThread` reverted to `std.Thread.spawn` on Windows; compare stall counts, and keep a
-  per-test log (`--test-timeout` or `zig build test --summary all`) so the stuck test is named.
+  for 1m...") with the other test binaries already passed. Seen in CI at `3f7d694` (run 37003741611,
+  `emerald-repl`) and `4035a57` (run 37055293101, `emerald-test`), about 2 of 20 Windows Debug jobs
+  since 2026-10-01 against 0 of 38 before. Experiment on branch `claude/windows-stall-experiment`
+  (a throwaway workflow; delete the branch when done), run 37057757591: the Windows Debug test step
+  repeated 15 times in each of 4 jobs per variant, nothing retried, default parallelism. **The
+  Windows stack-reservation change is not the cause**: with `ReservedThread` as merged, 29 of 60
+  iterations stalled; with the interpreter's own threads back on `std.Thread.spawn`, 32 of 60.
+  Repetition makes it far more frequent than in ordinary CI (about 50% against about 10%). Every
+  failure was the same message, in three different binaries (`emerald-repl` 28 times, `emerald-lsp`
+  19, `emerald-test` 14; never `emerald-conformance`). It is a hang, not a slow test: on Linux
+  `emerald-lsp` runs all 35 tests in 1 second and `emerald-repl` all 9 in 6 seconds. The failed
+  iterations were not longer than the passing ones. Not yet tried: run the `emerald-lsp` binary
+  directly, without the build runner's `--listen` pipe, hundreds of times on Windows (it takes a
+  second); stalls there mean a hang in Emerald's code, none mean an interaction with the runner's
+  pipe. One suspect to rule in or out: the scheduler's standard-input reader service, which has
+  process lifetime and could read the test process's own stdin, the same pipe the runner talks over.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 
