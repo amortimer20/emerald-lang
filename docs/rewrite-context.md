@@ -2865,7 +2865,10 @@ after normal completion, return, or error. `read`, `read_lines`, `write`, `write
 newline after every line. `Path.absolute` is the one Path operation that consults the
 filesystem.
 
-Every operation other than the two predicates raises `FileError` for missing paths, access
+`File.write`, `File.write_binary`, `File.write_lines`, `File.append`, and `File.create` create a
+missing file (append starts from empty, as C#'s `File.AppendAllText` and Python's and Ruby's append
+modes do); none creates a missing directory.
+Every other operation except the two predicates raises `FileError` for missing paths, access
 failures, invalid UTF-8, and failed writes; reading a closed FileHandle also raises
 `FileError`. `Bytes` is immutable raw binary data: `Bytes.from_list(List[Int])` builds values
 from 0 through 255, `String.to_bytes()` converts valid text, and `Bytes.to_string()`/`to_string_maybe()`

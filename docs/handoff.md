@@ -216,6 +216,7 @@ building" notes record its decisions.
   changeable; ordinary `each`/`reduce` snapshot semantics are unchanged.
 - `File.read_lines` and `FileHandle.read_line` now remove CRLF's carriage return,
   matching `String.lines`; empty files and blank final lines split correctly.
+- `File.append` creates a missing file, as C#, Python, and Ruby do (it raised `FileError` before).
 - HTTP now sends Emerald's own `User-Agent`, or the program's, instead of Zig's (the second
   header was ignored before).
 
