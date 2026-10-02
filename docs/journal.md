@@ -4704,3 +4704,11 @@ full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests with `-j1`,
 native build, documentation examples (24 executed, 135 linked conformance
 files), `zig fmt --check src/Checker.zig`, whitespace check, and Windows
 x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+
+## 2026-10-02 — Diagnostic polish group B: CI and review handoff
+
+Pushed Group B through `1809db4` on `codex/diagnostic-polish`. [Run
+37037868996](https://github.com/amortimer20/emerald-lang/actions/runs/37037868996)
+passed all six platform Debug/ReleaseSafe jobs and the bounded execution fuzz
+job. Group B is ready for review; group C has not started, and the branch has
+not been merged or rebased.

@@ -189,7 +189,7 @@ instead of parser cascades. Group A is pushed and all seven CI jobs passed at
 `2d92564`. Group B is complete: it identifies the declaring file for an
 unqualified private module name, explains when a structurally matching type
 still needs to adopt a trait, and qualifies nested type names inside their
-enclosing type. Its push and CI review are next.
+enclosing type. Group B is pushed and all seven CI jobs passed at `1809db4`.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -269,7 +269,7 @@ Open work:
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
 - **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; groups A
-  and B are implemented locally. Push group B and confirm CI before review; group C remains pending.
+  and B are implemented and CI-green through `1809db4`; group C remains pending.
   The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
