@@ -267,29 +267,33 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **Intermittent Windows Debug test stall (open; a real hang, cause unknown).** The Zig test
+- **Intermittent Windows Debug test stall (worked around in CI; cause still open).** The Zig test
   runner on Windows Debug stops responding for about a minute ("test runner failed to respond
-  for 1m...") with the other test binaries already passed. Seen in CI at `3f7d694` (run 37003741611,
-  `emerald-repl`) and `4035a57` (run 37055293101, `emerald-test`), about 2 of 20 Windows Debug jobs
-  since 2026-10-01 against 0 of 38 before. Experiment on branch `claude/windows-stall-experiment`
-  (a throwaway workflow; delete the branch when done), run 37057757591: the Windows Debug test step
-  repeated 15 times in each of 4 jobs per variant, nothing retried, default parallelism. **The
-  Windows stack-reservation change is not the cause**: with `ReservedThread` as merged, 29 of 60
-  iterations stalled; with the interpreter's own threads back on `std.Thread.spawn`, 32 of 60.
-  Repetition makes it far more frequent than in ordinary CI (about 50% against about 10%). Every
-  failure was the same message, in three different binaries (`emerald-repl` 28 times, `emerald-lsp`
-  19, `emerald-test` 14; never `emerald-conformance`). It is a hang, not a slow test: on Linux
-  `emerald-lsp` runs all 35 tests in 1 second and `emerald-repl` all 9 in 6 seconds. The failed
-  iterations were not longer than the passing ones. **Direct-run experiment** (run 37065921721):
-  the `emerald-lsp` and `emerald-repl` test binaries run directly on Windows Debug, with no build
-  runner, 120 and 40 times each, once with default stdin and once with stdin held open by a pipe that
-  never closes (as the runner's `--listen` pipe is): **320 runs, no hangs**. So the stall is not in
-  Emerald's code run on its own, and the scheduler's stdin reader is not the cause. It needs the build
-  runner: either its `--listen` message exchange on Windows (the message is the build system's
-  own watchdog, not a test timeout) or the runner running several test binaries at once. Untried:
-  `zig build test-lsp` alone with a build step for one binary; and `zig build test -j1`. Stalls in
-  the single-binary run point at the runner's protocol (likely a Zig 0.16.0 bug to report upstream
-  with the log); stalls only in the full run point at load; none in `-j1` mean concurrency.
+  for 1m...") while test binaries run. Seen in CI at `3f7d694` (run 37003741611, `emerald-repl`) and
+  `4035a57` (run 37055293101, `emerald-test`): about 2 of 20 Windows Debug jobs since 2026-10-01,
+  against 0 of 38 before. **What the experiments showed** (throwaway branch
+  `claude/windows-stall-experiment`; delete it when finished), all on Windows Debug, nothing
+  retried and no timeout widened:
+  - The Windows stack-reservation change (item 15) is not the cause: repeated runs stalled in 29 of
+    60 iterations as merged and 32 of 60 with the interpreter's threads back on `std.Thread.spawn`
+    (run 37057757591). Repetition raises the rate to about one in two.
+  - Failures are always the same message, in three binaries (`emerald-repl` 28, `emerald-lsp` 19,
+    `emerald-test` 14; never `emerald-conformance`). It is a hang, not a slow test: on Linux
+    `emerald-lsp` runs all 35 tests in 1 second and `emerald-repl` all 9 in 6.
+  - It is not in Emerald's code on its own: the `emerald-lsp` and `emerald-repl` binaries run
+    directly 320 times, with default stdin and with stdin held open by a pipe, never hung (run
+    37065921721). So the scheduler's stdin reader is cleared.
+  - It needs the test binaries to run at once: through the build runner, `zig build test-lsp` alone
+    (120 runs) and `test-repl` alone (80) never stalled, and the full suite with `-j1` (20 runs) never
+    stalled, against 61 of 120 for the normal parallel run (run 37066707311).
+  - **Workaround in `ci.yml`:** the Windows Debug job runs `zig build test -j1`. Serial runs took
+    66 to 155 seconds, the same as parallel, so it costs nothing. Remove the flag once the cause is
+    fixed. Windows ReleaseSafe has not stalled in this evidence and is unchanged.
+  - **Next, to find the cause:** run the parallel suite without `emerald-conformance` (a step
+    for unit, REPL, and LSP only), and with `-j2`. A stall without conformance points at the
+    runner handling several test processes on Windows (probably a Zig 0.16.0 bug to report upstream
+    with the logs); a clean run points at something conformance does, such as the fixed-name
+    directories its programs create in the working directory or the memory its programs use.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 

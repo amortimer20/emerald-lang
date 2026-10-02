@@ -37,6 +37,10 @@ jobs:
           - os: windows-latest
             build: debug
             optimize: Debug
+            # Workaround, not a fix: with the test binaries running at once, about one Windows
+            # Debug run in two stalls ("test runner failed to respond"); serially, 0 of 20 did.
+            # See docs/handoff.md, "Intermittent Windows Debug test stall".
+            test_flags: -j1
           - os: windows-latest
             build: release-safe
             optimize: ReleaseSafe
@@ -54,7 +58,7 @@ jobs:
 
       - name: Run test suite
         shell: bash
-        run: zig build test -Doptimize=${{ matrix.optimize }}
+        run: zig build test -Doptimize=${{ matrix.optimize }} ${{ matrix.test_flags }}
 
       - name: Check cancellation with live standard input
         shell: bash
