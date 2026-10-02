@@ -4736,3 +4736,23 @@ Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
 Existing example prose before statements was converted from `##` documentation
 to ordinary `#` comments, leaving `##` for declarations, so the documented
 examples remain warning-free.
+
+## 2026-10-02 — Diagnostic polish item 11: declaration casing
+
+Reproduced `var highScore`, `func SayHello`, and `struct point` checking clean.
+The checker now gives each program declaration one non-fatal warning with its
+`snake_case` or `PascalCase` correction. The regression also confirms that a
+method introduced with `@override` does not repeat a warning that belongs to
+the declaration it replaces. `func save(): Bool` remains warning-free, as
+settled by the earlier Boolean-naming decision.
+
+Judgement: casing is checked where the checker registers or visits a
+declaration, rather than by changing the parser. That keeps it advisory,
+covers nested types and type members with their ordinary declarations, and
+skips the generated prelude by namespace. An override's method and parameters
+are omitted because the inherited contract dictates both spellings.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/Checker.zig`, whitespace check, and
+Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.

@@ -704,6 +704,80 @@ fn documentationDeclarationStarts(tokens: []const Token, start: usize) bool {
     };
 }
 
+/// Section 3.3's naming conventions are warnings about declarations written by
+/// a program. Prelude names and override names are inherited contracts, not a
+/// program's own naming choices, so neither receives a warning here.
+fn namingWarningsApply(self: *const Checker) bool {
+    return !std.mem.eql(u8, self.files[@intCast(self.file)].namespace, Resolver.prelude_namespace);
+}
+
+fn checkSnakeCase(self: *Checker, name: []const u8, span: Source.Span, what: []const u8) Error!void {
+    if (!self.namingWarningsApply() or isSnakeCase(name)) return;
+    const suggested = try snakeCase(self.arena, name);
+    try self.reportWarning(
+        span,
+        "{s} `{s}` should use snake_case",
+        .{ what, name },
+        try std.fmt.allocPrint(self.arena, "Rename it to `{s}`.", .{suggested}),
+    );
+}
+
+fn checkPascalCase(self: *Checker, name: []const u8, span: Source.Span) Error!void {
+    if (!self.namingWarningsApply() or isPascalCase(name)) return;
+    const suggested = try pascalCase(self.arena, name);
+    try self.reportWarning(
+        span,
+        "type name `{s}` should use PascalCase",
+        .{name},
+        try std.fmt.allocPrint(self.arena, "Rename it to `{s}`.", .{suggested}),
+    );
+}
+
+fn checkFunctionCasing(self: *Checker, function: Ast.FunctionDeclaration) Error!void {
+    if (function.override_span != null) return;
+    try self.checkSnakeCase(function.name, function.name_span, "function name");
+    try self.checkParameterCasing(function.parameters);
+}
+
+fn checkParameterCasing(self: *Checker, parameters: []const Ast.Parameter) Error!void {
+    for (parameters) |parameter| try self.checkSnakeCase(parameter.name, parameter.name_span, "parameter");
+}
+
+fn isSnakeCase(name: []const u8) bool {
+    for (name) |byte| if (std.ascii.isUpper(byte)) return false;
+    return true;
+}
+
+fn snakeCase(arena: std.mem.Allocator, name: []const u8) Error![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    for (name, 0..) |byte, index| {
+        if (std.ascii.isUpper(byte)) {
+            if (index != 0 and result.items.len != 0 and result.items[result.items.len - 1] != '_') try result.append(arena, '_');
+            try result.append(arena, std.ascii.toLower(byte));
+        } else try result.append(arena, byte);
+    }
+    return result.items;
+}
+
+fn isPascalCase(name: []const u8) bool {
+    const first = std.mem.trimStart(u8, name, "_");
+    return first.len != 0 and std.ascii.isUpper(first[0]) and std.mem.indexOfScalar(u8, first, '_') == null;
+}
+
+fn pascalCase(arena: std.mem.Allocator, name: []const u8) Error![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    var capitalize = true;
+    for (name) |byte| {
+        if (byte == '_') {
+            capitalize = true;
+            continue;
+        }
+        try result.append(arena, if (capitalize) std.ascii.toUpper(byte) else byte);
+        capitalize = false;
+    }
+    return result.items;
+}
+
 /// Marks the prelude declaration `key` belongs to as reached, so its bodies are
 /// checked: the top-level type that holds it (`Emerald.Regex` for
 /// `Emerald.Regex::Match::group`), or the top-level function itself. A whole
@@ -1068,6 +1142,7 @@ fn registerStruct(
     display_name: []const u8,
     span: Source.Span,
 ) Error!void {
+    try self.checkPascalCase(declaration.name, declaration.name_span);
     try struct_sites.append(self.arena, .{ .file = self.file, .declaration = declaration, .key = key });
     const user = try self.arena.create(Type.User);
     user.* = .{ .name = key, .display_name = display_name, .class = declaration.class, .trait = declaration.trait, .enumeration = declaration.enumeration };
@@ -1164,6 +1239,12 @@ fn checkStructDeclaration(self: *Checker, key: []const u8, declaration: Ast.Stru
     // of them. They are compared in the order they are written, so the one
     // reported is always the later one.
     const members = try self.membersOf(declaration);
+    for (members) |member| {
+        if (member.override_span == null) try self.checkSnakeCase(member.name, member.span, member.noun());
+    }
+    for (declaration.methods) |method| if (method.override_span == null) try self.checkParameterCasing(method.parameters);
+    for (declaration.type_functions) |function| try self.checkParameterCasing(function.declaration.parameters);
+    if (declaration.constructor) |constructor| try self.checkParameterCasing(constructor.parameters);
 
     var seen: std.StringHashMapUnmanaged(Member) = .empty;
     for (members) |member| {
@@ -2501,8 +2582,11 @@ fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
         // A program function is checked after the top level; see the module
         // comment. A nested one is checked where it is written, unless a use
         // above it needed it first.
-        .function_declaration => |function| if (self.nestedKey(function)) |key| {
-            if (self.nested.contains(key)) try self.ensureBodyChecked(key);
+        .function_declaration => |function| {
+            try self.checkFunctionCasing(function);
+            if (self.nestedKey(function)) |key| {
+                if (self.nested.contains(key)) try self.ensureBodyChecked(key);
+            }
         },
         .struct_declaration => {},
         .return_statement => |return_statement| try self.checkReturn(return_statement),
@@ -3078,6 +3162,7 @@ fn enclosingLoop(self: *Checker, span: Source.Span, comptime keyword: []const u8
 }
 
 fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
+    try self.checkSnakeCase(declaration.name, declaration.name_span, "variable name");
     var declared: Type = .invalid;
     var assigned = true;
 
