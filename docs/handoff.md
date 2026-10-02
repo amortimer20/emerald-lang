@@ -181,12 +181,15 @@ The revised item 11 is recorded in 3.3 and section 22: no missing-`?` warning;
 Bool can report an action's success. Casing and orphaned-doc warnings exclude the
 prelude, casing excludes overrides, and `?` names still require Bool everywhere.
 The naming implementation remains pending; the `save(): Bool` regression pins the new rule.
-Group A item 1 adds one `and`/`or` correction for each `&&`/`||`, without changing
-strings, comments, or single-character errors. The remaining parser hints are next.
+Group A items 1–2 add logical-operator and increment/decrement corrections,
+without changing strings, comments, subtraction, negation, or line continuation.
+The conditional-expression hint is next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
   Emerald's `and` and `or`, rather than two character errors.
+- `++` and dangling `--` explain the corresponding `+= 1`/`-= 1` update;
+  subtraction of a negative value and double negation retain their meaning.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -245,7 +248,7 @@ Open work:
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
 - **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; group A
-  item 1 is implemented. Items 2–6 come next, then review before groups B and C.
+  items 1–2 are implemented. Items 3–6 come next, then review before groups B and C.
   The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
@@ -447,8 +450,8 @@ not yet discussed:
     `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
   - Operators from other languages get generic parse errors, though `!` already gets a good one
-    ("Write `not` for negation"). Remaining hints: `c++` and `c--` should suggest
-    `c += 1`; `true ? 1 : 2` should suggest `if c then a else b`; and `if x = 5 {` ("expected `{`
+    ("Write `not` for negation"). Remaining hints: `true ? 1 : 2` should suggest
+    `if c then a else b`; and `if x = 5 {` ("expected `{`
     ... found =") should suggest `==`.
   - A file reaching a private `_name` declared in another file of the same folder gets
     "[E1001] `_catalog` is not defined" ("check the spelling"), while the qualified form

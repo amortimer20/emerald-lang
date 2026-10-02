@@ -3105,6 +3105,15 @@ fn parseAdditive(self: *Parser) Error!*const Ast.Expression {
             else => return left,
         };
         const operator_token = self.advance();
+        if (self.check(operator_token.kind) and operator_token.span.end == self.peek().span.start and
+            (operator == .add or !startsExpression(self.peekAfterNext().kind)))
+        {
+            return self.report(
+                spanning(operator_token.span, self.peek().span),
+                if (operator == .add) "`++` is not an operator in Emerald" else "`--` is not a decrement operator in Emerald",
+                if (operator == .add) "Write `name += 1` to increase a variable by one." else "Write `name -= 1` to decrease a variable by one.",
+            );
+        }
         const right = try self.parseMultiplicative();
         left = try self.node(spanning(left.span, right.span), .{ .binary = .{
             .operator = operator,
@@ -3137,6 +3146,13 @@ fn parseMultiplicative(self: *Parser) Error!*const Ast.Expression {
 }
 
 fn parseUnary(self: *Parser) Error!*const Ast.Expression {
+    if (self.check(.plus) and self.peekAfterNext().kind == .plus and self.peek().span.end == self.peekAfterNext().span.start) {
+        return self.report(
+            spanning(self.peek().span, self.peekAfterNext().span),
+            "`++` is not an operator in Emerald",
+            "Write `name += 1` to increase a variable by one.",
+        );
+    }
     if (self.match(.minus)) |token| {
         if (try self.negativeLiteral(token)) |literal| {
             return self.parsePowerFrom(try self.parsePostfixFrom(literal));
@@ -3153,6 +3169,35 @@ fn parseUnary(self: *Parser) Error!*const Ast.Expression {
         } });
     }
     return self.parsePower();
+}
+
+/// `c--1` is subtraction of a negative value, and `--c` is double negation.
+/// Only a dangling pair can be diagnosed as an attempted decrement: operator
+/// line continuation remains valid when an operand follows on the next line.
+fn startsExpression(kind: Token.Kind) bool {
+    return switch (kind) {
+        .int_literal,
+        .float_literal,
+        .string_literal,
+        .raw_string_literal,
+        .multiline_string_literal,
+        .string_start,
+        .identifier,
+        .keyword_self,
+        .keyword_super,
+        .keyword_true,
+        .keyword_false,
+        .keyword_nothing,
+        .keyword_not,
+        .keyword_if,
+        .keyword_case,
+        .minus,
+        .left_paren,
+        .left_bracket,
+        .left_brace,
+        => true,
+        else => false,
+    };
 }
 
 /// The right operand is a unary expression, not another power. That single

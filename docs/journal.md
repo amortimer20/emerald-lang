@@ -4514,3 +4514,23 @@ No failed test was retried without identifying and correcting the cause.
 The standalone Boolean-naming decision was committed as `3f7d694` and pushed
 before implementation, as requested. Item 2 follows this commit; group A will
 be pushed and checked in CI before review, with groups B and C still pending.
+
+## 2026-10-02 — Diagnostic polish item 2: increment/decrement hints
+
+Reproduced `c++` as "expected an expression, found +" and `c--` as an
+expression missing at EOF. Postfix and prefix `++` now explain `name += 1`;
+a dangling postfix `--` explains `name -= 1`, highlighting the pair itself.
+Three diagnostics cases have hand-read expectations. A runnable regression
+also checks the suggested updates and preserves `c--1`, `--c`, spaced
+subtraction of a negative value, and continuation onto the next line.
+
+Judgement: do not reserve `--` lexically. It already denotes two ordinary
+minus tokens in valid expressions. Diagnose attempted decrement only when
+no operand follows; otherwise preserve subtraction/negation, including
+existing operator line continuation. This is a hint change, not a grammar
+restriction or a new decrement operator.
+
+Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
+native build `-j1`, doc examples (24 executed, 135 linked conformance files),
+changed-file `zig fmt --check`, `git diff --check`, and Windows/macOS
+cross-builds with prefixes outside `zig-out`. No suite failed.

@@ -1,0 +1,4 @@
+diagnostics/foreign-prefix-increment.em:2:7: `++` is not an operator in Emerald
+  print(++c)
+        ^^
+Write `name += 1` to increase a variable by one.
