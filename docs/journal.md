@@ -4759,6 +4759,13 @@ show (`hi`/`quit` and `12`); the generic filename finder initially selected the
 `plants/catalog.em` title in the projects page, so that page was rerun as its
 actual paired diagnostic fixture, `projects.em`, and also matched. HTTP
 examples were intentionally skipped without the local fixture.
+
+## 2026-10-02 — Diagnostic polish Group C: ready for CI
+
+Items 10–12 are committed separately through `b067123`: orphaned `##`
+documentation warns, declarations receive the settled casing warnings, and
+question-mark callables require `Bool` results. The website audit found no
+Emerald output changes. The branch is ready to push for the group's CI review.
 Existing example prose before statements was converted from `##` documentation
 to ordinary `#` comments, leaving `##` for declarations, so the documented
 examples remain warning-free.
