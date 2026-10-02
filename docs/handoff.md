@@ -185,8 +185,8 @@ Group A items 1–6 add logical-operator, increment/decrement, conditional-value
 mistaken condition-assignment, and optional-default corrections,
 without changing strings, comments, subtraction, negation, or line continuation.
 One-line lambda `break`/`continue` now receive the existing loop-boundary diagnostic
-instead of parser cascades. Stop for group A review before starting groups B or C;
-push the branch and confirm its CI before reporting completion.
+instead of parser cascades. Group A is pushed and all seven CI jobs passed at
+`2d92564`; stop for review before starting groups B or C.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -450,6 +450,11 @@ not yet discussed:
 
 ## Active rough edges
 
+- A Windows Debug REPL test runner stopped responding for about a minute in the
+  policy-only CI run at `3f7d694`, before the parser changes. Its cause is not
+  established. The subsequent group A run passed every job, including Windows
+  Debug, but that does not establish a fix. Investigate separately; no failed
+  job was rerun or timeout widened to make it pass.
 - Found while writing the website's language pages (2026-09-30, in 0.6.0), each a spec promise
   the implementation does not keep:
   - An orphaned `##` documentation comment gets no warning (3.2 says it does):
@@ -508,7 +513,9 @@ not yet discussed:
 Diagnostic-polish group A passed the full local gate before each item commit.
 The final gate passed 548 tests in both Debug and ReleaseSafe, native build,
 24 documentation examples, formatting/whitespace checks, and Windows/macOS
-cross-builds. Groups B and C remain unimplemented; group A is the review boundary.
+cross-builds. [CI at `2d92564`](https://github.com/amortimer20/emerald-lang/actions/runs/37020381290)
+passed all seven jobs (Debug/ReleaseSafe on Linux, macOS, Windows, and bounded
+execution fuzz). Groups B and C remain unimplemented; group A is the review boundary.
 
 `main` is the only long-lived branch and has no open pull requests. Work happens on
 `claude/*` and `codex/*` branches, merged by pull request once CI passes; see

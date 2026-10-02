@@ -4619,3 +4619,26 @@ conformance files), `zig fmt --check src/*.zig tools/*.zig`, whitespace check,
 and Windows/macOS cross-builds outside `zig-out`. All six group A items have
 their own commits and completed gates. Push group A, check its seven CI jobs,
 and stop for review before groups B and C; no merge or history rewrite.
+
+## 2026-10-02 — Diagnostic polish group A: CI and review handoff
+
+Pushed the six separate implementation commits through `2d92564` on
+`codex/diagnostic-polish`, following the separately pushed policy commit
+`3f7d694`. [Run 37020381290](https://github.com/amortimer20/emerald-lang/actions/runs/37020381290)
+completed successfully at that exact code revision: all six platform/build
+jobs and bounded execution fuzz passed. Group A is ready for review; groups
+B and C have not started, and the branch is not merged.
+
+The earlier [policy-only run](https://github.com/amortimer20/emerald-lang/actions/runs/37003741611)
+failed Windows Debug because `emerald-repl.exe`'s test runner failed to respond
+for `1m2.63ms`; its other six jobs passed. The log does not establish the
+underlying cause, and the later green run is not evidence that the stall is
+fixed. Recorded it as an active rough edge for separate investigation rather
+than changing REPL code outside this group, rerunning the failed job, or
+increasing its timeout. This follow-up records validation only; it changes
+no source, examples, or expectations.
+
+The documentation-only follow-up also passed the full local gate: Debug and
+ReleaseSafe tests `-j1`, native build, documentation examples, formatting,
+whitespace check, and both platform cross-builds. CI covers the unchanged
+code at `2d92564`; Markdown-only pushes intentionally do not start a new run.
