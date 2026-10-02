@@ -4750,6 +4750,17 @@ suites, native build, documentation examples (24 executed and 135 linked
 conformance files), `zig fmt --check src/*.zig tools/*.zig`, and
 `git diff --check`.
 
+## 2026-10-02 — Diagnostic follow-ups, Task 3: const casing noun
+
+Declaration casing warnings now use `constant name` for a `const` binding and
+retain `variable name` for a `var`. The conformance case exercises both in one
+file; the correction text and all other declaration nouns remain unchanged.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/*.zig tools/*.zig`, and
+`git diff --check`.
+
 ## 2026-10-02 — Diagnostic follow-ups, Task 2: short operands in hints
 
 The `++`/`--`, C-style ternary, and `??` corrections now use source text when

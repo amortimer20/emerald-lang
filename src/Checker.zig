@@ -3180,7 +3180,7 @@ fn enclosingLoop(self: *Checker, span: Source.Span, comptime keyword: []const u8
 }
 
 fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
-    try self.checkSnakeCase(declaration.name, declaration.name_span, "variable name");
+    try self.checkSnakeCase(declaration.name, declaration.name_span, if (declaration.mutable) "variable name" else "constant name");
     var declared: Type = .invalid;
     var assigned = true;
 
