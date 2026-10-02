@@ -175,13 +175,8 @@ layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
 journal records each milestone, its review, and what was measured; each plan's "Settled while
 building" notes record its decisions. The REPL milestone is merged through PR #30
-(`01125eb`). Current work is the follow-up diagnostic batch on
-`copilot/diagnostic-followups`. Tasks 1–3 are complete locally. Trait-adoption
-help lists required methods and `@override` in trait order. Foreign-syntax hints
-quote short operands for `++`/`--`, `? :`, and `??`, while compound expressions
-keep the generic help. Casing warnings call `const` bindings constants and keep
-`var` bindings variables. The full local gate passed. Task 4 is a CI report only;
-the branch needs its report, a push, a review PR, and green CI; do not merge.
+(`01125eb`), the diagnostic polish batch through PR #31 (`6476cf7`), and its follow-ups through
+PR #32 (`6bdd5a6`). The Windows Debug test stall below is the open problem.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -272,10 +267,19 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **Diagnostic follow-ups**: on `copilot/diagnostic-followups`, Tasks 1–3 are
-  committed locally after the full gate. Task 4's report found one Windows Debug
-  test-runner timeout (`emerald-repl`) in CI run `37003741611`; the other failure
-  in the last 30 runs was a distinct interpreter-test crash. Push/PR/CI review remain.
+- **Intermittent Windows Debug test stall (open; investigate as a real bug).** The Zig test
+  runner on Windows Debug stops responding for about a minute ("test runner failed to respond
+  for 1m...") with every other test binary already passed. Two occurrences, in different test
+  binaries: `emerald-repl.exe` (run 37003741611, `3f7d694`, 2026-10-02 11:55) and `emerald-test.exe`
+  (run 37055293101, `4035a57`, 2026-10-02 19:37; its retry passed). Across the last 60 CI runs the
+  only other Windows Debug failure was a real REPL session crash (fixed), so the stall is new:
+  0 of 38 Windows Debug jobs before the Windows stack-reservation change (item 15, merged
+  2026-10-01 14:42, `ReservedThread` in `Scheduler.zig`) and 2 of about 20 since. That split is
+  suggestive but could be chance (about 1 in 9). The code reads sound, so no cause is
+  established. Proposed experiment: a temporary branch whose Windows Debug job runs the test step
+  20 times (a shell loop, no retries and no wider timeout), once on main and once with
+  `ReservedThread` reverted to `std.Thread.spawn` on Windows; compare stall counts, and keep a
+  per-test log (`--test-timeout` or `zig build test --summary all`) so the stuck test is named.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 
