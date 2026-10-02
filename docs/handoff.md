@@ -219,6 +219,7 @@ slice 4 (documentation and integration) must wait for approval.
   changeable; ordinary `each`/`reduce` snapshot semantics are unchanged.
 - `File.read_lines` and `FileHandle.read_line` now remove CRLF's carriage return,
   matching `String.lines`; empty files and blank final lines split correctly.
+- `File.append` creates a missing file, as C#, Python, and Ruby do (it raised `FileError` before).
 - HTTP now sends Emerald's own `User-Agent`, or the program's, instead of Zig's (the second
   header was ignored before).
 
@@ -262,8 +263,10 @@ Open work:
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
 
-**Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it, after the
-user's weekly usage resets, and it needs a design plan with decisions for the user first). The
+**Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it). The plan is
+[`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
+recommendations; implementation starts after REPL slice 2 merges. The findings
+below are the plan's starting point. The
 goal is C#-level IntelliSense in VS Code. Investigation found that the editor already runs the
 current server (`emerald lsp --stdio` from the 0.6.0 install) and that diagnostics match
 `emerald check` exactly on every example, but completion and hover are shallow:
@@ -356,6 +359,38 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   made by compiling the same small subset (functions, structs, lists, a closure) with both,
   running its conformance cases, and comparing binary size, startup, debugging, and how much
   runtime code each needs.
+- **Microcontrollers are a goal (the user, 2026-10-01): Emerald should eventually run on boards
+  such as the Raspberry Pi Pico** (RP2040: two Cortex-M0+ cores, 264 KB of RAM, 2 MB of flash, no
+  floating-point unit; Pico 2's RP2350: Cortex-M33 or RISC-V cores, 520 KB, 4 MB). This is a
+  requirement for the backend prototypes, and it cuts against both leading candidates: Cranelift
+  generates code for x86-64, AArch64, s390x, and 64-bit RISC-V, not 32-bit ARM or 32-bit RISC-V,
+  and .NET's own runtime does not target microcontrollers (.NET nanoFramework is a separate,
+  partial runtime). Paths that do reach the Pico: LLVM (Rust and Zig both use it for these
+  chips), emitting C and building it with the board's toolchain, or a small bytecode VM written in
+  Zig and run on the board, as MicroPython does. The user chose MicroPython's shape (2026-10-01): a
+  runtime flashed onto the board once, then programs and a REPL over USB, rather than Arduino's
+  build-and-flash firmware. Claude's proposal, to settle when this is planned: one language and
+  one repository with a second target ("MicroEmerald"), not a separate implementation, because
+  MicroPython's separate implementation is why it drifts from Python. The lexer, parser, checker,
+  diagnostics, and the backend-neutral conformance cases are shared; the board gets a small VM
+  written in Zig and a board profile of the library. Unlike MicroPython, checking happens on the
+  computer, since the checker is too large for the board's RAM: `emerald board run file.em`
+  checks, shows any errors as usual, and sends bytecode, and the REPL runs on the computer and
+  sends each entry. Per-board pin maps and drivers could live in their own packages. A second, later board mode
+  (the user asked, 2026-10-01): compile ahead of time to native firmware, as C and Rust do, for
+  projects that need speed or memory. Emerald's static types make this far more effective than
+  for Python (`a + b` on two `Int`s is one instruction); it is typically 10 to 100 times faster
+  than a bytecode VM and uses much less RAM, and links only the runtime pieces a program uses. It
+  costs the on-board REPL (each change is build and flash). Proposed order: the VM first for
+  learning, native second from the same front end. If the desktop backend emits C or uses LLVM,
+  the native board target comes nearly free, so add "can it make Pico firmware?" to the backend
+  prototypes' questions.
+  Either needs a board profile of the language: no files, HTTP, time zones, or OS threads (tasks
+  would need a scheduler without OS threads), a pin, timer, and bus library instead, and a check
+  on what a 64-bit `Int` and `Float` cost on a chip with no floating-point hardware. Emerald's
+  reference counting, with no tracing collector, already suits small memory. A cheap first
+  measurement when this is planned: build the current interpreter ReleaseSmall without its
+  tables (time zones, Unicode, regex) and see how far it is from 2 MB.
 - **The conformance suite is the contract.** A replacement backend is acceptable only if it
   passes the same `conformance/` files unchanged (19.6, 23). Keep every case backend-neutral:
   no dependence on interpreter internals, thread identity, exact timing, or exact recursion
@@ -439,6 +474,11 @@ not yet discussed:
     as Shape"; say that `Square` doesn't adopt `Shape` and suggest `with Shape`. And a nested type
     written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a
     type ... declare the struct in this project"; suggest `Pizza.Size`.
+- An idea the user will consider later (2026-10-01; not planned, and nothing changes until they
+  decide): let a trailing block in an `if`, `while`, `for`, or `case` header work without the
+  parentheses 7.4 requires, as in `if items.any? { item => item > 1 } {`. Every lambda has `=>`, even
+  with no parameters, and a body never starts with parameters followed by `=>`, so a short
+  lookahead after the `{` tells a block argument from the body. Parentheses would stay allowed.
 - Feature ideas from the language pages (not spec gaps): an enum has no list of its values
   (`Light.values`) and no way to turn text into a value (`"red"` into `Light.red`). Both are common
   needs, such as a menu of choices or reading a saved setting.

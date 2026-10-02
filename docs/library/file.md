@@ -13,7 +13,8 @@ normally return promptly; a named pipe or device can delay cancellation. Cleanup
 ## File
 
 `read(path: String) -> String`, `write(path: String, contents: String) -> Nothing`, and
-`append(path: String, contents: String) -> Nothing` read or replace/extend UTF-8 text.
+`append(path: String, contents: String) -> Nothing` read or replace/extend UTF-8 text; `append`
+creates the file when it does not exist, as `write` does.
 `read_lines(path: String) -> List[String]` splits lines (and removes the `\r`
 from Windows CRLF endings, matching `String.lines`), and
 `write_lines(path: String, lines: List[String]) -> Nothing` writes every line with a trailing

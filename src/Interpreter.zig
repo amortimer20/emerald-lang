@@ -4740,7 +4740,12 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
     }
     if (std.mem.eql(u8, suffix, "File::append")) {
         const path = values[0].data.string.bytes;
-        const old = self.blocking(std.Io.Dir.readFileAlloc, .{ cwd, io, path, self.gpa, .unlimited }) catch return self.raiseFilePath(span, path, "append to");
+        // Like C#'s File.AppendAllText and Python's and Ruby's append modes, a missing file is created;
+        // a missing folder still fails when the file is written below.
+        const old = self.blocking(std.Io.Dir.readFileAlloc, .{ cwd, io, path, self.gpa, .unlimited }) catch |err| switch (err) {
+            error.FileNotFound => try self.gpa.alloc(u8, 0),
+            else => return self.raiseFilePath(span, path, "append to"),
+        };
         defer self.gpa.free(old);
         if (!std.unicode.utf8ValidateSlice(old)) return self.raiseFilePath(span, path, "append UTF-8 text to");
         const combined = std.mem.concat(self.gpa, u8, &.{ old, values[1].data.string.bytes }) catch return error.OutOfMemory;
