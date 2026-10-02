@@ -1,0 +1,51 @@
+# Temporary: find out whether the Windows Debug test stall depends on the interpreter's
+# ReservedThread (item 15). Delete this branch afterwards. Runs the real test step repeatedly,
+# the way CI does (default parallelism), with no retries and no longer timeout.
+name: Windows stall experiment
+
+on:
+  push:
+    branches:
+      - claude/windows-stall-experiment
+  workflow_dispatch:
+
+jobs:
+  repeat:
+    name: ${{ matrix.variant }} / shard ${{ matrix.shard }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, thread-spawn]
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Use std.Thread.spawn for the interpreter's own threads
+        if: matrix.variant == 'thread-spawn'
+        shell: bash
+        run: |
+          sed -i 's/Scheduler\.ReservedThread\.spawn(stack_size, Task\.go, \.{ &task, stack_size })/std.Thread.spawn(.{ .stack_size = stack_size }, Task.go, .{ \&task, stack_size })/' src/emerald.zig
+          sed -i 's/Scheduler\.ReservedThread\.spawn(stack_size, Work\.run, \.{ &work, stack_size })/std.Thread.spawn(.{ .stack_size = stack_size }, Work.run, .{ \&work, stack_size })/' src/emerald.zig
+          echo "ReservedThread.spawn calls left in emerald.zig: $(grep -c 'ReservedThread.spawn' src/emerald.zig)"
+          git diff --stat
+
+      - name: Repeat the Debug test step 15 times
+        shell: bash
+        run: |
+          fails=0
+          for i in $(seq 1 15); do
+            start=$(date +%s)
+            if zig build test -Doptimize=Debug > iteration.log 2>&1; then
+              result=pass
+            else
+              result=FAIL
+              fails=$((fails + 1))
+              grep -E "failed to respond|failed command|panic|error:" iteration.log | cut -c1-220 | head -5
+            fi
+            echo "iteration $i: $result in $(( $(date +%s) - start ))s"
+          done
+          echo "${{ matrix.variant }} shard ${{ matrix.shard }}: $fails of 15 iterations failed" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$fails" -eq 0 ]

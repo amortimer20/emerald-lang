@@ -81,12 +81,14 @@ pub fn build(b: *std.Build) void {
         .root_module = emerald_module,
     });
     const run_unit_tests = b.addRunArtifact(unit_tests);
+    run_unit_tests.has_side_effects = true; // stall experiment: rerun every time
 
     const conformance_tests = b.addTest(.{
         .name = "emerald-conformance",
         .root_module = conformance_module,
     });
     const run_conformance = b.addRunArtifact(conformance_tests);
+    run_conformance.has_side_effects = true; // stall experiment: rerun every time
 
     // `Repl.zig` is `main.zig`'s sibling, not `emerald_module`'s, so its own
     // tests (the completeness heuristic) need their own module: `zig build
@@ -104,6 +106,7 @@ pub fn build(b: *std.Build) void {
     });
     conformance_module.addImport("repl", repl_module);
     const run_repl_tests = b.addRunArtifact(repl_tests);
+    run_repl_tests.has_side_effects = true; // stall experiment: rerun every time
 
     const repl_benchmark = b.addExecutable(.{
         .name = "repl-benchmark",
@@ -129,6 +132,7 @@ pub fn build(b: *std.Build) void {
         .root_module = lsp_module,
     });
     const run_lsp_tests = b.addRunArtifact(lsp_tests);
+    run_lsp_tests.has_side_effects = true; // stall experiment: rerun every time
 
     // `zig build unicode-conformance -- <database directory>` checks all of
     // Unicode's NormalizationTest.txt, which is too large to commit. Part of
