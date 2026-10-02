@@ -500,6 +500,22 @@ not yet discussed:
   parentheses 7.4 requires, as in `if items.any? { item => item > 1 } {`. Every lambda has `=>`, even
   with no parameters, and a body never starts with parameters followed by `=>`, so a short
   lookahead after the `{` tells a block argument from the body. Parentheses would stay allowed.
+- **Language ideas for after 1.0's basics (the user, 2026-10-02; not planned, nothing designed):**
+  enums that carry data, user-defined generic types and functions, and user-defined iterables
+  (all deferred by the spec; see 11.3). Built-in `List[T]`, `Dict`, `Set`, `Task[T]`, and
+  `Channel[T]` already cover most classroom needs, so none is urgent; of the three, enums with data
+  would help most (exhaustive `case` over variants) and are the cheaper design. **The user's
+  requirement for generics: they must be clean, easy to read, and easy to work with, and must not
+  make the language messy.** Rules to hold a design plan to: no variance and no wildcards (a
+  `Channel[Int]` is already not a `Channel[Float]`); constraints only through existing traits
+  (`Ordered`, `Equatable`, `Hashable`, `Textual`, and the program's own), perhaps spelled with
+  `with`; check a generic once at its definition against its constraints, never per use, so errors
+  name `T` in plain words and say what to add; no higher-kinded types, associated types,
+  specialization, or overloading; type arguments inferred where possible and otherwise written once
+  on the declaration (`const names: Stack[String] = Stack()`, as for `Channel`). Before building,
+  write about ten realistic programs in the proposed syntax (stack, linked list, pair, binary tree,
+  cache, queue) and read them cold, then try it with students. How generics compile (reified, as on
+  .NET, or monomorphized, as with Cranelift or C) depends on the backend choice.
 - Feature ideas from the language pages (not spec gaps): an enum has no list of its values
   (`Light.values`) and no way to turn text into a value (`"red"` into `Light.red`). Both are common
   needs, such as a menu of choices or reading a saved setting.
