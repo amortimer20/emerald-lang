@@ -1,0 +1,4 @@
+diagnostics/foreign-ternary-short.em:2:22: `? :` is not a conditional operator in Emerald
+  const result = ready ? 1 : 2
+                       ^
+Write `if ready then 1 else 2`.

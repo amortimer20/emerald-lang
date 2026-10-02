@@ -1,0 +1,4 @@
+diagnostics/foreign-increment-short.em:2:6: `++` is not an operator in Emerald
+  count++
+       ^^
+Write `count += 1` to increase a variable by one.

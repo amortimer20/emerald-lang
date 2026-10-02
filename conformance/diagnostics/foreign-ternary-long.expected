@@ -1,0 +1,4 @@
+diagnostics/foreign-ternary-long.em:3:22: `? :` is not a conditional operator in Emerald
+  const result = a + b ? 1 : 2
+                       ^
+Write `if condition then value else other_value`.

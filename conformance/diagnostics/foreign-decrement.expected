@@ -1,4 +1,4 @@
 diagnostics/foreign-decrement.em:2:2: `--` is not a decrement operator in Emerald
   c--
    ^^
-Write `name -= 1` to decrease a variable by one.
+Write `c -= 1` to decrease a variable by one.

@@ -1,0 +1,4 @@
+diagnostics/foreign-optional-default-short.em:2:22: `??` is not an operator in Emerald
+  const display = name ?? "anon"
+                       ^^
+Write `name.or("anon")` to use a fallback for `nothing`.

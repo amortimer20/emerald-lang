@@ -176,11 +176,12 @@ ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is relea
 journal records each milestone, its review, and what was measured; each plan's "Settled while
 building" notes record its decisions. The REPL milestone is merged through PR #30
 (`01125eb`). Current work is the follow-up diagnostic batch on
-`copilot/diagnostic-followups`. Task 1 is complete locally: missing-trait-adoption
-help names required methods and their `@override` annotations in trait order,
-with one-, two-, four-method and applied-hint conformance cases. The full local
-gate passed. Tasks 2 and 3 are next; Task 4 is a CI report only. The branch still
-needs one commit per task, a push, a review PR, and green CI; do not merge.
+`copilot/diagnostic-followups`. Tasks 1 and 2 are complete locally. Trait-adoption
+help lists required methods and `@override` in trait order. Foreign-syntax hints
+quote short operands for `++`/`--`, `? :`, and `??`, while compound expressions
+keep the generic help. The combined full local gate passed. Task 3 (const casing
+noun) is next; Task 4 is a CI report only. The branch still needs one commit per
+task, a push, a review PR, and green CI; do not merge.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -194,6 +195,8 @@ needs one commit per task, a push, a review PR, and green CI; do not merge.
   predicate bodies remain valid; mistaken conditions do not cascade into brace errors.
 - `??` suggests an optional fallback with `.or(...)`, with the same correction
   whether or not spaces surround the mistaken operator.
+- Foreign-operator corrections use short source operands in place for `++`, `--`,
+  `? :`, and `??`; compound operands keep the generic correction.
 - One-line lambda `break`/`continue`, including guarded exits, explain that a
   function cannot exit the caller's loop instead of producing parser/brace cascades.
 - An unqualified reference to a private module name in another file identifies
@@ -268,10 +271,10 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **Diagnostic follow-ups**: on `copilot/diagnostic-followups`, Task 1 is committed
-  locally after the full gate; Tasks 2 and 3 remain. Task 4's report found one
-  Windows Debug test-runner timeout (`emerald-repl`) in CI run `37003741611`;
-  other failures in the last 30 runs were a distinct interpreter-test crash.
+- **Diagnostic follow-ups**: on `copilot/diagnostic-followups`, Tasks 1 and 2 are
+  committed locally after the full gate; Task 3 remains. Task 4 found one Windows
+  Debug test-runner timeout (`emerald-repl`) in CI run `37003741611`; the other
+  failure in the last 30 runs was a distinct interpreter-test crash.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 

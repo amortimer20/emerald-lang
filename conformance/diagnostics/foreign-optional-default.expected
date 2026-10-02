@@ -1,7 +1,7 @@
 diagnostics/foreign-optional-default.em:2:9: `??` is not an operator in Emerald
   print(x ?? 0)
           ^^
-Write `value.or(default)`, as in `value.or(0)`, to use a fallback for `nothing`.
+Write `x.or(0)` to use a fallback for `nothing`.
 diagnostics/foreign-optional-default.em:3:8: `??` is not an operator in Emerald
   print(x??0)
          ^^

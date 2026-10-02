@@ -4750,6 +4750,20 @@ suites, native build, documentation examples (24 executed and 135 linked
 conformance files), `zig fmt --check src/*.zig tools/*.zig`, and
 `git diff --check`.
 
+## 2026-10-02 — Diagnostic follow-ups, Task 2: short operands in hints
+
+The `++`/`--`, C-style ternary, and `??` corrections now use source text when
+each operand is a name, member access, or literal. Compound or otherwise
+non-short operands retain the exact generic wording. The parser scans without
+consuming tokens and requires a complete operand boundary, keeping existing
+syntax and recovery unchanged. New short/long conformance pairs cover all
+three hint families; existing simple cases now expect source-specific text.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/*.zig tools/*.zig`, and
+`git diff --check`.
+
 ## 2026-10-02 — Diagnostic polish item 12: question-name results
 
 Reproduced `func ready?(): Int` checking clean. The checker now rejects a

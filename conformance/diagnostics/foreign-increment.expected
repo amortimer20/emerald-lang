@@ -1,4 +1,4 @@
 diagnostics/foreign-increment.em:2:2: `++` is not an operator in Emerald
   c++
    ^^
-Write `name += 1` to increase a variable by one.
+Write `c += 1` to increase a variable by one.
