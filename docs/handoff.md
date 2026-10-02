@@ -175,13 +175,18 @@ layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
 journal records each milestone, its review, and what was measured; each plan's "Settled while
 building" notes record its decisions. The REPL milestone is merged through PR #30
-(`01125eb`). Current work is diagnostic polish items 7–12 on `codex/diagnostic-polish`.
+(`01125eb`). Current work is diagnostic polish items 1–12 on `codex/diagnostic-polish`,
+in groups A (1–6), B (7–9), and C (10–12), with review between groups.
 The revised item 11 is recorded in 3.3 and section 22: no missing-`?` warning;
 Bool can report an action's success. Casing and orphaned-doc warnings exclude the
 prelude, casing excludes overrides, and `?` names still require Bool everywhere.
-The implementation work remains pending; the `save(): Bool` regression pins the new rule.
+The naming implementation remains pending; the `save(): Bool` regression pins the new rule.
+Group A item 1 adds one `and`/`or` correction for each `&&`/`||`, without changing
+strings, comments, or single-character errors. The remaining parser hints are next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
+- Foreign logical operators `&&` and `||` receive one focused hint suggesting
+  Emerald's `and` and `or`, rather than two character errors.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -239,8 +244,9 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **Diagnostic polish**: items 7–12 are scoped on `codex/diagnostic-polish`; the revised
-  naming policy is recorded, with implementation still to follow.
+- **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; group A
+  item 1 is implemented. Items 2–6 come next, then review before groups B and C.
+  The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 
@@ -441,8 +447,7 @@ not yet discussed:
     `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
   - Operators from other languages get generic parse errors, though `!` already gets a good one
-    ("Write `not` for negation"). Give each a hint: `true && false` and `||` ("this character
-    does not belong here", twice) should suggest `and`/`or`; `c++` and `c--` should suggest
+    ("Write `not` for negation"). Remaining hints: `c++` and `c--` should suggest
     `c += 1`; `true ? 1 : 2` should suggest `if c then a else b`; and `if x = 5 {` ("expected `{`
     ... found =") should suggest `==`.
   - A file reaching a private `_name` declared in another file of the same folder gets

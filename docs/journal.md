@@ -4490,3 +4490,27 @@ No checker/resolver implementation changes are included in this decision
 update. Items 7–12 remain to implement; the website output check belongs to
 the completed group C implementation, not this documentation-only policy
 change plus its regression. Changes are uncommitted on `codex/diagnostic-polish`.
+
+## 2026-10-02 — Diagnostic polish item 1: foreign logical operators
+
+Reproduced `print(true && false)` and `print(true || false)` before changing
+code: each operator produced two generic character errors. The lexer now consumes
+each invalid pair as one token and gives one correction to `and` or `or`.
+This belongs in the lexer because neither character is an Emerald operator;
+strings, comments, and single invalid characters retain their existing behavior.
+The diagnostics conformance expectation was read by hand, and a lexer unit test
+covers diagnostic counts, spans, hints, and unaffected string/comment contents.
+
+The complete gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe
+`zig build test -j1`, native build, documentation examples (24 executed;
+135 linked conformance files), changed-file formatting, `git diff --check`,
+and x86_64 Windows/aarch64 macOS cross-builds with prefixes outside `zig-out`.
+An initial test compile exposed a local name shadowing the file's `testing`
+binding and an unnecessary optional unwrap; both were corrected. The next
+build exhausted the 3.8 GB `/tmp` filesystem, confirmed by `df`; its task-owned
+cache was moved intact into the workspace cache, and the full gate then passed.
+No failed test was retried without identifying and correcting the cause.
+
+The standalone Boolean-naming decision was committed as `3f7d694` and pushed
+before implementation, as requested. Item 2 follows this commit; group A will
+be pushed and checked in CI before review, with groups B and C still pending.
