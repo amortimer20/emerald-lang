@@ -213,6 +213,127 @@ fn text(self: Parser, token: Token) []const u8 {
     return self.source.text[token.span.start..token.span.end];
 }
 
+const HintOperand = struct {
+    span: Source.Span,
+    next_index: usize,
+};
+
+fn skipDocComments(self: *const Parser, start: usize) usize {
+    var index = start;
+    while (index < self.tokens.len and self.tokens[index].kind == .doc_comment) : (index += 1) {}
+    return index;
+}
+
+/// Finds a name, member chain, or literal without parsing or consuming it.
+fn shortHintOperandAt(self: *const Parser, start: usize) ?HintOperand {
+    const first_index = self.skipDocComments(start);
+    if (first_index >= self.tokens.len) return null;
+    const first = self.tokens[first_index];
+    var span = first.span;
+    var next_index = first_index + 1;
+
+    switch (first.kind) {
+        .identifier,
+        .int_literal,
+        .float_literal,
+        .string_literal,
+        .raw_string_literal,
+        .multiline_string_literal,
+        .keyword_true,
+        .keyword_false,
+        .keyword_nothing,
+        => {},
+        .plus, .minus => {
+            const number_index = self.skipDocComments(next_index);
+            if (number_index >= self.tokens.len) return null;
+            const number = self.tokens[number_index];
+            if (number.kind != .int_literal and number.kind != .float_literal) return null;
+            if (!self.onlyWhitespaceBetween(first.span.end, number.span.start)) return null;
+            span.end = number.span.end;
+            next_index = number_index + 1;
+        },
+        else => return null,
+    }
+
+    while (true) {
+        const access_index = self.skipDocComments(next_index);
+        if (access_index >= self.tokens.len) break;
+        const access = self.tokens[access_index];
+        if (access.kind != .dot and access.kind != .question_dot) break;
+
+        const member_index = self.skipDocComments(access_index + 1);
+        if (member_index >= self.tokens.len) break;
+        const member = self.tokens[member_index];
+        if (member.kind != .identifier and member.kind.keyword() == null) break;
+        span.end = member.span.end;
+        next_index = member_index + 1;
+    }
+
+    return .{ .span = span, .next_index = next_index };
+}
+
+fn isShortHintExpression(expression: *const Ast.Expression) bool {
+    return switch (expression.data) {
+        .name,
+        .int_literal,
+        .float_literal,
+        .bool_literal,
+        .nothing_literal,
+        .string_literal,
+        => true,
+        .member => |member| isShortHintExpression(member.base),
+        else => false,
+    };
+}
+
+fn onlyWhitespaceBetween(self: *const Parser, start: u32, end: u32) bool {
+    for (self.source.text[start..end]) |byte| {
+        if (!std.ascii.isWhitespace(byte)) return false;
+    }
+    return true;
+}
+
+fn shortOperandEndsExpression(self: *const Parser, operand: HintOperand) bool {
+    const index = self.skipDocComments(operand.next_index);
+    if (index >= self.tokens.len) return false;
+    return switch (self.tokens[index].kind) {
+        .comma, .right_paren, .right_bracket, .right_brace, .newline, .eof => true,
+        else => false,
+    };
+}
+
+fn incrementHelp(self: *Parser, expression: *const Ast.Expression, operator: Token, increase: bool) Error![]const u8 {
+    if (isShortHintExpression(expression) and self.onlyWhitespaceBetween(expression.span.end, operator.span.start)) {
+        return std.fmt.allocPrint(
+            self.arena,
+            "Write `{s} {s}= 1` to {s} a variable by one.",
+            .{
+                self.source.text[expression.span.start..expression.span.end],
+                if (increase) "+" else "-",
+                if (increase) "increase" else "decrease",
+            },
+        );
+    }
+    return if (increase)
+        "Write `name += 1` to increase a variable by one."
+    else
+        "Write `name -= 1` to decrease a variable by one.";
+}
+
+fn prefixIncrementHelp(self: *Parser) Error![]const u8 {
+    const first_index = self.skipDocComments(self.index);
+    const second_index = self.skipDocComments(first_index + 1);
+    const operand = self.shortHintOperandAt(second_index + 1) orelse return "Write `name += 1` to increase a variable by one.";
+    if (!self.shortOperandEndsExpression(operand) or
+        !self.onlyWhitespaceBetween(self.tokens[second_index].span.end, operand.span.start))
+        return "Write `name += 1` to increase a variable by one.";
+    return std.fmt.allocPrint(
+        self.arena,
+        "Write `{s} += 1` to increase a variable by one.",
+        .{self.source.text[operand.span.start..operand.span.end]},
+    );
+}
+
 /// A name as every later stage sees it: section 3.3 makes canonically
 /// equivalent spellings the same name, so a name not already in NFC is
 /// normalized here, once, where every name passes through.
@@ -2968,16 +3089,52 @@ fn parseExpression(self: *Parser) Error!*const Ast.Expression {
                 spanning(first.span, second.span)
             else
                 Source.Span{ .start = first.span.start - 1, .end = first.span.end };
+            const first_index = self.skipDocComments(self.index);
+            const second_index = self.skipDocComments(first_index + 1);
+            const help = if (second.kind == .question and !joined_name and
+                isShortHintExpression(expression) and self.onlyWhitespaceBetween(expression.span.end, first.span.start))
+            blk: {
+                const fallback = self.shortHintOperandAt(second_index + 1) orelse break :blk null;
+                if (!self.shortOperandEndsExpression(fallback)) break :blk null;
+                break :blk try std.fmt.allocPrint(
+                    self.arena,
+                    "Write `{s}.or({s})` to use a fallback for `nothing`.",
+                    .{
+                        self.source.text[expression.span.start..expression.span.end],
+                        self.source.text[fallback.span.start..fallback.span.end],
+                    },
+                );
+            } else null;
             return self.report(
                 span,
                 "`??` is not an operator in Emerald",
-                "Write `value.or(default)`, as in `value.or(0)`, to use a fallback for `nothing`.",
+                help orelse "Write `value.or(default)`, as in `value.or(0)`, to use a fallback for `nothing`.",
             );
         }
+        const first_index = self.skipDocComments(self.index);
+        const then_value = self.shortHintOperandAt(first_index + 1);
+        const conditional_help = if (isShortHintExpression(expression) and
+            self.onlyWhitespaceBetween(expression.span.end, first.span.start))
+        blk: {
+            const value = then_value orelse break :blk null;
+            const colon_index = self.skipDocComments(value.next_index);
+            if (colon_index >= self.tokens.len or self.tokens[colon_index].kind != .colon) break :blk null;
+            const else_value = self.shortHintOperandAt(colon_index + 1) orelse break :blk null;
+            if (!self.shortOperandEndsExpression(else_value)) break :blk null;
+            break :blk try std.fmt.allocPrint(
+                self.arena,
+                "Write `if {s} then {s} else {s}`.",
+                .{
+                    self.source.text[expression.span.start..expression.span.end],
+                    self.source.text[value.span.start..value.span.end],
+                    self.source.text[else_value.span.start..else_value.span.end],
+                },
+            );
+        } else null;
         return self.report(
             first.span,
             "`? :` is not a conditional operator in Emerald",
-            "Write `if condition then value else other_value`.",
+            conditional_help orelse "Write `if condition then value else other_value`.",
         );
     }
     return expression;
@@ -3167,7 +3324,7 @@ fn parseAdditive(self: *Parser) Error!*const Ast.Expression {
             return self.report(
                 spanning(operator_token.span, self.peek().span),
                 if (operator == .add) "`++` is not an operator in Emerald" else "`--` is not a decrement operator in Emerald",
-                if (operator == .add) "Write `name += 1` to increase a variable by one." else "Write `name -= 1` to decrease a variable by one.",
+                try self.incrementHelp(left, operator_token, operator == .add),
             );
         }
         const right = try self.parseMultiplicative();
@@ -3206,7 +3363,7 @@ fn parseUnary(self: *Parser) Error!*const Ast.Expression {
         return self.report(
             spanning(self.peek().span, self.peekAfterNext().span),
             "`++` is not an operator in Emerald",
-            "Write `name += 1` to increase a variable by one.",
+            try self.prefixIncrementHelp(),
         );
     }
     if (self.match(.minus)) |token| {

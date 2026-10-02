@@ -1932,10 +1932,28 @@ fn reportMissingTraitAdoption(
     const trait = expected.user orelse return false;
     if (actual.kind != .struct_value or actual.optional or user.trait or user.enumeration or !trait.trait) return false;
     if (!try self.structurallySuppliesTrait(user, trait)) return false;
+    var trait_closure: std.ArrayList(*const Type.User) = .empty;
+    try self.collectTraits(trait, &trait_closure);
+    var required_methods: std.ArrayList([]const u8) = .empty;
+    for (trait_closure.items) |required_trait| {
+        const declaration = self.struct_declarations.get(required_trait.name).?;
+        for (declaration.methods) |method| {
+            if (!Resolver.isPrivate(method.name) and method.abstract_span != null) {
+                try required_methods.append(self.arena, method.name);
+            }
+        }
+    }
+    const help = switch (required_methods.items.len) {
+        0 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration.", .{ trait.display_name, user.display_name }),
+        1 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before its `{s}` method.", .{ trait.display_name, user.display_name, required_methods.items[0] }),
+        2 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before its `{s}` and `{s}` methods.", .{ trait.display_name, user.display_name, required_methods.items[0], required_methods.items[1] }),
+        3 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before its `{s}`, `{s}`, and `{s}` methods.", .{ trait.display_name, user.display_name, required_methods.items[0], required_methods.items[1], required_methods.items[2] }),
+        else => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before each of `{s}`'s methods.", .{ trait.display_name, user.display_name, trait.display_name }),
+    };
     try self.diagnostics.append(self.arena, .{
         .message = try std.fmt.allocPrint(self.arena, "`{s}` does not adopt `{s}`", .{ user.display_name, trait.display_name }),
         .span = span,
-        .help = try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration.", .{ trait.display_name, user.display_name }),
+        .help = help,
         .code = code,
         .file = self.file,
     });
@@ -3162,7 +3180,7 @@ fn enclosingLoop(self: *Checker, span: Source.Span, comptime keyword: []const u8
 }
 
 fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
-    try self.checkSnakeCase(declaration.name, declaration.name_span, "variable name");
+    try self.checkSnakeCase(declaration.name, declaration.name_span, if (declaration.mutable) "variable name" else "constant name");
     var declared: Type = .invalid;
     var assigned = true;
 

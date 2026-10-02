@@ -1,0 +1,4 @@
+diagnostics/foreign-increment-long.em:2:9: `++` is not an operator in Emerald
+  items[0]++
+          ^^
+Write `name += 1` to increase a variable by one.

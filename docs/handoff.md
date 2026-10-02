@@ -175,24 +175,13 @@ layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
 journal records each milestone, its review, and what was measured; each plan's "Settled while
 building" notes record its decisions. The REPL milestone is merged through PR #30
-(`01125eb`). Current work is diagnostic polish items 1–12 on `codex/diagnostic-polish`,
-in groups A (1–6), B (7–9), and C (10–12), with review between groups.
-The revised item 11 is recorded in 3.3 and section 22: no missing-`?` warning;
-Bool can report an action's success. Casing and orphaned-doc warnings exclude the
-prelude, casing excludes overrides, and `?` names still require Bool everywhere.
-The naming implementation remains pending; the `save(): Bool` regression pins the new rule.
-Group A items 1–6 add logical-operator, increment/decrement, conditional-value,
-mistaken condition-assignment, and optional-default corrections,
-without changing strings, comments, subtraction, negation, or line continuation.
-One-line lambda `break`/`continue` now receive the existing loop-boundary diagnostic
-instead of parser cascades. Group A is pushed and all seven CI jobs passed at
-`2d92564`. Group B is complete: it identifies the declaring file for an
-unqualified private module name, explains when a structurally matching type
-still needs to adopt a trait, and qualifies nested type names inside their
-enclosing type. Group B is pushed and all seven CI jobs passed at `1809db4`.
-Group C is committed locally through `b067123`: orphaned documentation and
-declaration-casing warnings now land alongside the enforced `?`-return-type
-rule. Push and CI review are next.
+(`01125eb`). Current work is the follow-up diagnostic batch on
+`copilot/diagnostic-followups`. Tasks 1–3 are complete locally. Trait-adoption
+help lists required methods and `@override` in trait order. Foreign-syntax hints
+quote short operands for `++`/`--`, `? :`, and `??`, while compound expressions
+keep the generic help. Casing warnings call `const` bindings constants and keep
+`var` bindings variables. The full local gate passed. Task 4 is a CI report only;
+the branch needs its report, a push, a review PR, and green CI; do not merge.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -206,12 +195,16 @@ rule. Push and CI review are next.
   predicate bodies remain valid; mistaken conditions do not cascade into brace errors.
 - `??` suggests an optional fallback with `.or(...)`, with the same correction
   whether or not spaces surround the mistaken operator.
+- Foreign-operator corrections use short source operands in place for `++`, `--`,
+  `? :`, and `??`; compound operands keep the generic correction.
+- Casing warnings call a `const` binding a constant and a `var` binding a variable.
 - One-line lambda `break`/`continue`, including guarded exits, explain that a
   function cannot exit the caller's loop instead of producing parser/brace cascades.
 - An unqualified reference to a private module name in another file identifies
   that file and explains the privacy boundary, rather than calling the name undefined.
 - A struct or class that supplies every required trait member but omits `with Trait`
-  is told that it does not adopt the trait and shown the declaration-level fix.
+  is told that it does not adopt the trait and shown the declaration-level fix;
+  the follow-up hint also names required methods needing `@override`.
 - A bare nested type name inside its enclosing type is corrected to its required
   qualified spelling, such as `Pizza.Size`.
 - Orphaned `##` documentation comments now warn when a blank line or a
@@ -279,10 +272,10 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; groups A
-  and B are implemented and CI-green through `1809db4`; Group C has passed its
-  full local validation and awaits its push and CI review.
-  The revised naming policy is recorded, with checker implementation still to follow.
+- **Diagnostic follow-ups**: on `copilot/diagnostic-followups`, Tasks 1–3 are
+  committed locally after the full gate. Task 4's report found one Windows Debug
+  test-runner timeout (`emerald-repl`) in CI run `37003741611`; the other failure
+  in the last 30 runs was a distinct interpreter-test crash. Push/PR/CI review remain.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 
