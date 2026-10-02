@@ -4734,6 +4734,22 @@ suites, native build, documentation examples (24 executed and 135 linked
 conformance files), `zig fmt --check src/Checker.zig`, whitespace check, and
 Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
 
+## 2026-10-02 — Diagnostic follow-ups, Task 1: trait adoption hint
+
+The missing-trait-adoption correction now includes the required method
+overrides. One, two, and three required public abstract methods are named in
+order; four or more use the compact “each of `Trait`'s methods” wording. The
+list comes from the trait closure and declaration order. Properties do not
+receive `@override` hints. Four diagnostic cases cover one, two, and four
+methods, plus a one-method case that applies the correction exactly and checks
+without an error. The existing `trait-not-adopted` golden was updated for its
+two one-method cases.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/*.zig tools/*.zig`, and
+`git diff --check`.
+
 ## 2026-10-02 — Diagnostic polish item 12: question-name results
 
 Reproduced `func ready?(): Int` checking clean. The checker now rejects a
