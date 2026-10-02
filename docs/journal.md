@@ -4576,3 +4576,24 @@ Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
 native build `-j1`, doc examples (24 executed, 135 linked conformance files),
 changed-file formatting, whitespace check, and Windows/macOS cross-builds
 outside `zig-out`. No suite failed. Item 5 is next.
+
+## 2026-10-02 — Diagnostic polish item 5: optional fallback hint
+
+Reproduced `x ?? 0`, `x??0`, and a call followed by `??0`: all previously
+suggested a missing closing parenthesis. Each now highlights both question
+marks and suggests `.or(default)`, with `value.or(0)` as a concrete example.
+The new diagnostics expectation was written and read by hand, then compared
+with the built CLI. Existing optional/predicate cases passed unchanged,
+including the separate "a type cannot be optional twice" annotation error.
+
+Judgement: handle both token shapes at the expression boundary rather than
+change identifier lexing. In `x??0`, the first question mark belongs to the
+identifier token; in spaced expressions and after calls both are standalone
+tokens. This keeps predicate names and optional annotations untouched.
+
+Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
+native build `-j1`, doc examples (24 executed, 135 linked conformance files),
+changed-file formatting, whitespace check, and Windows/macOS cross-builds
+outside `zig-out`. The user's connection interruptions did not require a
+restart: the existing build processes completed successfully. No suite failed.
+Item 6 is next, followed by the group A push and CI check before review.

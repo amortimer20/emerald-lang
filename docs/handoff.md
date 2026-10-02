@@ -181,10 +181,10 @@ The revised item 11 is recorded in 3.3 and section 22: no missing-`?` warning;
 Bool can report an action's success. Casing and orphaned-doc warnings exclude the
 prelude, casing excludes overrides, and `?` names still require Bool everywhere.
 The naming implementation remains pending; the `save(): Bool` regression pins the new rule.
-Group A items 1–4 add logical-operator, increment/decrement, conditional-value,
-and mistaken condition-assignment corrections,
+Group A items 1–5 add logical-operator, increment/decrement, conditional-value,
+mistaken condition-assignment, and optional-default corrections,
 without changing strings, comments, subtraction, negation, or line continuation.
-The optional-default `??` hint is next.
+One-line lambda `break`/`continue` diagnostics are next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -196,6 +196,8 @@ The optional-default `??` hint is next.
 - Conditions written with `=` suggest `==`, including grouped conditions,
   guards, inline `if`, `assert`, and subjectless `case` arms. Assignments inside
   predicate bodies remain valid; mistaken conditions do not cascade into brace errors.
+- `??` suggests an optional fallback with `.or(...)`, with the same correction
+  whether or not spaces surround the mistaken operator.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -254,7 +256,7 @@ Open work:
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
 - **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; group A
-  items 1–4 are implemented. Items 5–6 come next, then review before groups B and C.
+  items 1–5 are implemented. Item 6 comes next, then review before groups B and C.
   The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
@@ -459,8 +461,7 @@ not yet discussed:
     "[E1001] `_catalog` is not defined" ("check the spelling"), while the qualified form
     (`Plants._catalog`) already says "`_catalog` is private to the file that declares it". Say
     the same for the unqualified form, naming the declaring file.
-  - `x ?? 0` (the C# and Swift spelling) gets "expected `)` to close this call, found ?"; suggest
-    `.or(0)`. And `break` in a one-line lambda (`[1].each { x => break }`) gives a parse error
+  - `break` in a one-line lambda (`[1].each { x => break }`) gives a parse error
     plus a "this `}` does not close anything" cascade, while the block-bodied form already says
     "`break` can only be used inside a loop".
   - A type with a trait's methods but no `with Trait` gets only "this is Square, but `s` was declared

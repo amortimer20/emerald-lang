@@ -2956,13 +2956,26 @@ fn parseExpression(self: *Parser) Error!*const Ast.Expression {
         );
         _ = try self.parseDisjunction();
     }
-    // This is expression syntax, not a type's optional suffix or a predicate
-    // name. Leave `??` to its own correction rather than call it a ternary.
-    if (self.check(.question) and self.peekAfterNext().kind != .question and
-        !(expression.span.end == self.peek().span.start and self.source.text[expression.span.end - 1] == '?'))
-    {
+    // In `x??0` the lexer includes the first `?` in the identifier. Recognize
+    // both token shapes here, leaving optional type suffixes/predicate names
+    // unchanged and giving `??` a different correction from `? :`.
+    if (self.check(.question)) {
+        const first = self.peek();
+        const second = self.peekAfterNext();
+        const joined_name = expression.span.end == first.span.start and self.source.text[expression.span.end - 1] == '?';
+        if (second.kind == .question or joined_name) {
+            const span = if (second.kind == .question)
+                spanning(first.span, second.span)
+            else
+                Source.Span{ .start = first.span.start - 1, .end = first.span.end };
+            return self.report(
+                span,
+                "`??` is not an operator in Emerald",
+                "Write `value.or(default)`, as in `value.or(0)`, to use a fallback for `nothing`.",
+            );
+        }
         return self.report(
-            self.peek().span,
+            first.span,
             "`? :` is not a conditional operator in Emerald",
             "Write `if condition then value else other_value`.",
         );
