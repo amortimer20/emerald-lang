@@ -197,6 +197,8 @@ pub fn build(b: *std.Build) void {
     const run_http_live = b.addRunArtifact(http_live);
     b.step("http-live", "Manually verify HTTP against public HTTPS hosts").dependOn(&run_http_live.step);
 
+    b.step("test-lsp", "Stall experiment: only the LSP tests").dependOn(&run_lsp_tests.step);
+    b.step("test-repl", "Stall experiment: only the REPL tests").dependOn(&run_repl_tests.step);
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_conformance.step);

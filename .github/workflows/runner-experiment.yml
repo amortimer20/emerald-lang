@@ -1,0 +1,50 @@
+# Temporary (throwaway branch): the test binaries do not hang when run directly (run 37065921721),
+# so does the stall need the build runner's --listen exchange, or several binaries running at once?
+# Repeat Windows Debug runs through the build runner with one binary alone, and the full suite
+# serially (-j1). Nothing is retried, and no timeout is widened.
+name: Windows runner experiment
+
+on:
+  push:
+    branches:
+      - claude/windows-stall-experiment
+  workflow_dispatch:
+
+jobs:
+  repeat:
+    name: ${{ matrix.variant }} ${{ matrix.shard }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { variant: lsp-alone, shard: 1, step: test-lsp, flags: "", runs: 60 }
+          - { variant: lsp-alone, shard: 2, step: test-lsp, flags: "", runs: 60 }
+          - { variant: repl-alone, shard: 1, step: test-repl, flags: "", runs: 40 }
+          - { variant: repl-alone, shard: 2, step: test-repl, flags: "", runs: 40 }
+          - { variant: full-serial, shard: 1, step: test, flags: "-j1", runs: 10 }
+          - { variant: full-serial, shard: 2, step: test, flags: "-j1", runs: 10 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Repeat zig build ${{ matrix.step }} ${{ matrix.flags }}
+        shell: bash
+        run: |
+          pass=0; stall=0; other=0
+          for i in $(seq 1 ${{ matrix.runs }}); do
+            start=$(date +%s)
+            if zig build ${{ matrix.step }} ${{ matrix.flags }} -Doptimize=Debug > iteration.log 2>&1; then
+              pass=$((pass + 1)); result=pass
+            elif grep -q "failed to respond" iteration.log; then
+              stall=$((stall + 1)); result=STALL
+              grep -E "failed to respond|failed command" iteration.log | sed -E 's/--seed=0x[0-9a-f]+//' | cut -c1-200 | head -3
+            else
+              other=$((other + 1)); result=FAIL
+              grep -E "error|panic" iteration.log | cut -c1-200 | head -5
+            fi
+            echo "iteration $i: $result in $(( $(date +%s) - start ))s"
+          done
+          line="${{ matrix.variant }} ${{ matrix.shard }}: $pass passed, $stall stalled, $other other failures"
+          echo "$line" | tee -a "$GITHUB_STEP_SUMMARY"
