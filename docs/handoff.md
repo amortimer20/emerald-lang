@@ -186,7 +186,8 @@ mistaken condition-assignment, and optional-default corrections,
 without changing strings, comments, subtraction, negation, or line continuation.
 One-line lambda `break`/`continue` now receive the existing loop-boundary diagnostic
 instead of parser cascades. Group A is pushed and all seven CI jobs passed at
-`2d92564`; stop for review before starting groups B or C.
+`2d92564`. Group B item 7 now identifies the declaring file for an unqualified
+private module name; items 8–9 remain next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
@@ -202,6 +203,8 @@ instead of parser cascades. Group A is pushed and all seven CI jobs passed at
   whether or not spaces surround the mistaken operator.
 - One-line lambda `break`/`continue`, including guarded exits, explain that a
   function cannot exit the caller's loop instead of producing parser/brace cascades.
+- An unqualified reference to a private module name in another file identifies
+  that file and explains the privacy boundary, rather than calling the name undefined.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -260,7 +263,7 @@ Open work:
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
 - **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; group A
-  items 1–6 are implemented. Stop for review before groups B and C.
+  and group B item 7 are implemented. Items 8–9 come next; group C remains pending.
   The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
@@ -466,10 +469,6 @@ not yet discussed:
   - A name ending in `?` with a non-`Bool` result is accepted, though 3.3 calls it a type error:
     `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
-  - A file reaching a private `_name` declared in another file of the same folder gets
-    "[E1001] `_catalog` is not defined" ("check the spelling"), while the qualified form
-    (`Plants._catalog`) already says "`_catalog` is private to the file that declares it". Say
-    the same for the unqualified form, naming the declaring file.
   - A type with a trait's methods but no `with Trait` gets only "this is Square, but `s` was declared
     as Shape"; say that `Square` doesn't adopt `Shape` and suggest `with Shape`. And a nested type
     written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a

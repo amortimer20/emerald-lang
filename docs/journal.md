@@ -4642,3 +4642,20 @@ The documentation-only follow-up also passed the full local gate: Debug and
 ReleaseSafe tests `-j1`, native build, documentation examples, formatting,
 whitespace check, and both platform cross-builds. CI covers the unchanged
 code at `2d92564`; Markdown-only pushes intentionally do not start a new run.
+
+## 2026-10-02 — Diagnostic polish item 7: private module names
+
+Reproduced a bare `_twice` in a different project file as `[E1001]` "not
+defined", while `Shapes._twice` already recognized the privacy boundary. The
+resolver now consults its declaration-owner facts when an otherwise undefined
+bare private name has exactly one module-level owner, names that file, and
+gives the established public-name correction. The existing project conformance
+case now covers qualified and bare forms; its expectation was read by hand
+against the built binary. The conformance harness strips the leading
+`conformance/` prefix from source paths, so its golden fixture uses that
+normalized path even though a direct CLI invocation prints the full path.
+
+Judgement: only name a file when the private spelling has one owner. Files may
+legitimately reuse private names; picking one declaration in that case would
+turn an honest unknown-name diagnostic into a false correction. This is a
+resolver-only improvement with no visibility or namespace semantic change.
