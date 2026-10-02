@@ -1,0 +1,4 @@
+diagnostics/trait-adoption-partial-many.em:38:18: `Box` does not adopt `Shape`
+  const s: Shape = Box(1)
+                   ^^^^^^
+Add `with Shape` to `Box`'s declaration, and `@override` before each of its methods that `Shape` declares.
