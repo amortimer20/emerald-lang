@@ -4534,3 +4534,22 @@ Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
 native build `-j1`, doc examples (24 executed, 135 linked conformance files),
 changed-file `zig fmt --check`, `git diff --check`, and Windows/macOS
 cross-builds with prefixes outside `zig-out`. No suite failed.
+
+## 2026-10-02 — Diagnostic polish item 3: conditional-value spelling
+
+Reproduced C-style ternaries in a call, a declaration initializer, and a
+nested function body. They previously suggested missing parentheses or a
+statement terminator. Expression parsing now points at `?` and suggests
+`if condition then value else other_value`; all three regressions report
+one relevant correction without a closing-brace cascade. Read the expectation
+and compared every message, source line, and span with the built CLI.
+
+Judgement: recognize the mistake at the expression boundary, not in the
+lexer. Optional type annotations and predicate names remain valid. A doubled
+question mark is left alone for item 5's separate optional-default correction,
+including the unspaced form whose first question mark belongs to a name token.
+
+Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
+native build `-j1`, doc examples (24 executed, 135 linked conformance files),
+changed-file formatting, whitespace check, and Windows/macOS cross-builds
+outside `zig-out`. No suite failed. Item 4 is next.

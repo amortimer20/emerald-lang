@@ -2924,7 +2924,19 @@ fn expectStatementEnd(self: *Parser) Error!void {
 // Expressions, loosest binding first.
 
 fn parseExpression(self: *Parser) Error!*const Ast.Expression {
-    return self.parseDisjunction();
+    const expression = try self.parseDisjunction();
+    // This is expression syntax, not a type's optional suffix or a predicate
+    // name. Leave `??` to its own correction rather than call it a ternary.
+    if (self.check(.question) and self.peekAfterNext().kind != .question and
+        !(expression.span.end == self.peek().span.start and self.source.text[expression.span.end - 1] == '?'))
+    {
+        return self.report(
+            self.peek().span,
+            "`? :` is not a conditional operator in Emerald",
+            "Write `if condition then value else other_value`.",
+        );
+    }
+    return expression;
 }
 
 fn parseIfExpression(self: *Parser) Error!*const Ast.Expression {
