@@ -287,6 +287,16 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
     }
 
     self.index += 1;
+    // These are not tokens in Emerald. Consume the whole foreign operator
+    // so one mistake gets one correction rather than two character errors.
+    if ((c == '&' or c == '|') and self.take(c)) {
+        try self.report(
+            .{ .start = start, .end = self.index },
+            if (c == '&') "`&&` is not an operator in Emerald" else "`||` is not an operator in Emerald",
+            if (c == '&') "Write `and` to require both conditions." else "Write `or` to accept either condition.",
+        );
+        return self.emit(.invalid, start, self.index);
+    }
     const kind: Token.Kind = switch (c) {
         '+' => if (self.take('=')) .plus_equal else .plus,
         '-' => if (self.take('=')) .minus_equal else .minus,
@@ -778,6 +788,17 @@ test "keywords are recognized and other names are not" {
 
 test "a newline after a token that can end an expression terminates the statement" {
     try expectKinds("1\n2\n", &.{ .int_literal, .newline, .int_literal, .newline, .eof });
+}
+
+test "foreign logical operators each get one hint but remain text in strings and comments" {
+    var source = try Source.init(testing.allocator, "test.em", "true && false\ntrue || false\n\"&& ||\"\n# && ||\n");
+    defer source.deinit(testing.allocator);
+    var tokens = try tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), tokens.diagnostics.len);
+    try testing.expectEqualStrings("Write `and` to require both conditions.", tokens.diagnostics[0].help);
+    try testing.expectEqualStrings("Write `or` to accept either condition.", tokens.diagnostics[1].help);
+    for (tokens.diagnostics) |diagnostic| try testing.expectEqual(@as(u32, 2), diagnostic.span.end - diagnostic.span.start);
 }
 
 test "a newline after a binary operator continues the statement" {

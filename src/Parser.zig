@@ -86,6 +86,9 @@ recursion: u32 = 0,
 /// Any bracket or parenthesis clears it, because the body cannot begin inside
 /// one.
 in_control_header: bool = false,
+/// Conditions reject assignment even inside a group. Unlike the header flag,
+/// parentheses keep this set; statement bodies and lambdas clear it.
+in_condition: bool = false,
 /// Where `self` means something: directly inside a constructor or method body
 /// (10.2). A lambda clears it, since a block that captured `self` could let the
 /// value escape before every field is set, or outlive a method that changes it.
@@ -1646,7 +1649,7 @@ fn expectName(self: *Parser, message: []const u8) Error!Token {
 /// Section 6.4: `while condition { body }`.
 fn parseWhile(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseHeaderExpression();
+    const condition = try self.parseHeaderCondition();
     const body = try self.parseBlock();
     return .{
         .span = spanning(keyword.span, body.span),
@@ -1713,7 +1716,7 @@ fn finishSimpleStatement(self: *Parser, statement: Ast.Statement) Error!Ast.Stat
         return statement;
     }
 
-    const condition = try self.parseExpression();
+    const condition = try self.parseCondition();
     return self.finishGuardedStatement(statement, condition);
 }
 
@@ -1974,7 +1977,7 @@ fn parseValueExit(self: *Parser, comptime kind: std.meta.Tag(Ast.Statement.Data)
             const if_keyword = self.advance();
             try self.nest(if_keyword.span);
             defer self.unnest();
-            const condition = try self.parseExpression();
+            const condition = try self.parseCondition();
             if (!self.check(.keyword_then)) {
                 return self.finishGuardedStatement(.{
                     .span = keyword.span,
@@ -1993,7 +1996,7 @@ fn parseValueExit(self: *Parser, comptime kind: std.meta.Tag(Ast.Statement.Data)
 
 fn parseAssert(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseExpression();
+    const condition = try self.parseCondition();
     const message = if (self.match(.comma) != null) try self.parseExpression() else null;
     return self.finishSimpleStatement(.{
         .span = if (message) |m| spanning(keyword.span, m.span) else spanning(keyword.span, condition.span),
@@ -2412,7 +2415,7 @@ fn parseFunctionType(self: *Parser) Error!Ast.TypeExpression {
 
 fn parseIf(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseHeaderExpression();
+    const condition = try self.parseHeaderCondition();
     const then_block = try self.parseBlock();
 
     var otherwise: ?Ast.Else = null;
@@ -2545,7 +2548,7 @@ fn parseCaseArms(self: *Parser, opening: Token, subjectless: bool, parts: *CaseP
         _ = self.advance();
         var alternatives: std.ArrayList(*const Ast.Expression) = .empty;
         while (true) {
-            try alternatives.append(self.arena, try self.parseHeaderExpression());
+            try alternatives.append(self.arena, if (subjectless) try self.parseHeaderCondition() else try self.parseHeaderExpression());
             const comma = self.match(.comma) orelse break;
             if (subjectless) {
                 return self.report(
@@ -2616,7 +2619,24 @@ fn parseHeaderExpression(self: *Parser) Error!*const Ast.Expression {
     return self.parseExpression();
 }
 
+fn parseCondition(self: *Parser) Error!*const Ast.Expression {
+    const saved = self.in_condition;
+    self.in_condition = true;
+    defer self.in_condition = saved;
+    return self.parseExpression();
+}
+
+fn parseHeaderCondition(self: *Parser) Error!*const Ast.Expression {
+    const saved = self.in_control_header;
+    self.in_control_header = true;
+    defer self.in_control_header = saved;
+    return self.parseCondition();
+}
+
 fn parseBlock(self: *Parser) Error!Ast.Block {
+    const saved_condition = self.in_condition;
+    self.in_condition = false;
+    defer self.in_condition = saved_condition;
     self.skipToLeftBrace();
     const opening = self.peek();
     if (opening.kind != .left_brace) {
@@ -2924,14 +2944,50 @@ fn expectStatementEnd(self: *Parser) Error!void {
 // Expressions, loosest binding first.
 
 fn parseExpression(self: *Parser) Error!*const Ast.Expression {
-    return self.parseDisjunction();
+    const expression = try self.parseDisjunction();
+    // Consume the mistaken comparison's right side for recovery, so its block
+    // and closing delimiters still parse. The diagnostic prevents execution.
+    while (self.in_condition and self.check(.equal)) {
+        const written = self.advance();
+        try self.note(
+            written.span,
+            "a condition compares values with `==`, not `=`",
+            "Write `==` to compare values. Put an assignment on its own line.",
+        );
+        _ = try self.parseDisjunction();
+    }
+    // In `x??0` the lexer includes the first `?` in the identifier. Recognize
+    // both token shapes here, leaving optional type suffixes/predicate names
+    // unchanged and giving `??` a different correction from `? :`.
+    if (self.check(.question)) {
+        const first = self.peek();
+        const second = self.peekAfterNext();
+        const joined_name = expression.span.end == first.span.start and self.source.text[expression.span.end - 1] == '?';
+        if (second.kind == .question or joined_name) {
+            const span = if (second.kind == .question)
+                spanning(first.span, second.span)
+            else
+                Source.Span{ .start = first.span.start - 1, .end = first.span.end };
+            return self.report(
+                span,
+                "`??` is not an operator in Emerald",
+                "Write `value.or(default)`, as in `value.or(0)`, to use a fallback for `nothing`.",
+            );
+        }
+        return self.report(
+            first.span,
+            "`? :` is not a conditional operator in Emerald",
+            "Write `if condition then value else other_value`.",
+        );
+    }
+    return expression;
 }
 
 fn parseIfExpression(self: *Parser) Error!*const Ast.Expression {
     const keyword = self.advance();
     try self.nest(keyword.span);
     defer self.unnest();
-    const condition = try self.parseExpression();
+    const condition = try self.parseCondition();
     return self.finishIfExpression(keyword, condition);
 }
 
@@ -3105,6 +3161,15 @@ fn parseAdditive(self: *Parser) Error!*const Ast.Expression {
             else => return left,
         };
         const operator_token = self.advance();
+        if (self.check(operator_token.kind) and operator_token.span.end == self.peek().span.start and
+            (operator == .add or !startsExpression(self.peekAfterNext().kind)))
+        {
+            return self.report(
+                spanning(operator_token.span, self.peek().span),
+                if (operator == .add) "`++` is not an operator in Emerald" else "`--` is not a decrement operator in Emerald",
+                if (operator == .add) "Write `name += 1` to increase a variable by one." else "Write `name -= 1` to decrease a variable by one.",
+            );
+        }
         const right = try self.parseMultiplicative();
         left = try self.node(spanning(left.span, right.span), .{ .binary = .{
             .operator = operator,
@@ -3137,6 +3202,13 @@ fn parseMultiplicative(self: *Parser) Error!*const Ast.Expression {
 }
 
 fn parseUnary(self: *Parser) Error!*const Ast.Expression {
+    if (self.check(.plus) and self.peekAfterNext().kind == .plus and self.peek().span.end == self.peekAfterNext().span.start) {
+        return self.report(
+            spanning(self.peek().span, self.peekAfterNext().span),
+            "`++` is not an operator in Emerald",
+            "Write `name += 1` to increase a variable by one.",
+        );
+    }
     if (self.match(.minus)) |token| {
         if (try self.negativeLiteral(token)) |literal| {
             return self.parsePowerFrom(try self.parsePostfixFrom(literal));
@@ -3153,6 +3225,35 @@ fn parseUnary(self: *Parser) Error!*const Ast.Expression {
         } });
     }
     return self.parsePower();
+}
+
+/// `c--1` is subtraction of a negative value, and `--c` is double negation.
+/// Only a dangling pair can be diagnosed as an attempted decrement: operator
+/// line continuation remains valid when an operand follows on the next line.
+fn startsExpression(kind: Token.Kind) bool {
+    return switch (kind) {
+        .int_literal,
+        .float_literal,
+        .string_literal,
+        .raw_string_literal,
+        .multiline_string_literal,
+        .string_start,
+        .identifier,
+        .keyword_self,
+        .keyword_super,
+        .keyword_true,
+        .keyword_false,
+        .keyword_nothing,
+        .keyword_not,
+        .keyword_if,
+        .keyword_case,
+        .minus,
+        .left_paren,
+        .left_bracket,
+        .left_brace,
+        => true,
+        else => false,
+    };
 }
 
 /// The right operand is a unary expression, not another power. That single
@@ -3658,6 +3759,10 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     try self.nest(opening.span);
     defer self.unnest();
 
+    const saved_condition = self.in_condition;
+    self.in_condition = false;
+    defer self.in_condition = saved_condition;
+
     // The body is a body, whatever the statement around it was doing.
     const saved_header = self.in_control_header;
     self.in_control_header = false;
@@ -3683,6 +3788,12 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     // operator does and the lexer has already dropped the break after it.
     if (!self.brokeLine(header.arrow)) {
         const start = self.peek();
+        // Loop exits are statements, even on the arrow's line. Parse the
+        // ordinary block body so the checker can explain that a lambda cannot
+        // break or continue its caller's loop, without a stray-brace cascade.
+        if (start.kind == .keyword_break or start.kind == .keyword_continue) {
+            return self.finishLambdaBlock(opening, parameters, try self.parseStatement());
+        }
         const first = try self.parseExpression();
         if (self.check(.right_brace)) {
             const closing = self.advance();
@@ -4505,6 +4616,13 @@ fn expectParsesCleanly(source_text: []const u8) !void {
     var parsed = try parse(testing.allocator, &source, tokens.tokens);
     defer parsed.deinit();
     try testing.expectEqual(@as(usize, 0), parsed.diagnostics.len);
+}
+
+test "one-line lambda loop exits parse as statements for the checker" {
+    try expectParsesCleanly("[1].each { x => break }\n");
+    try expectParsesCleanly("[1].each { x => continue }\n");
+    try expectParsesCleanly("[1].each { x => break if x > 0 }\n");
+    try expectParsesCleanly("[1].each { x => continue if x > 0 }\n");
 }
 
 test "Allman brace style parses for if, else, and else if" {

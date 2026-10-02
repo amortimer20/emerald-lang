@@ -1,0 +1,4 @@
+diagnostics/bare-nested-type.em:5:18: `Size` is not a type
+      func size(): Size {
+                   ^^^^
+Write `Pizza.Size` instead.

@@ -1,10 +1,10 @@
-## Tuples: a fixed group of values, each with its own type.
-##
-## A list holds many of one thing. A tuple holds a few things of different
-## kinds, and its shape is part of its type: `(String, Int)` is always a name
-## and a number, in that order.
-##
-## Run it with `emerald run examples/tuples.em`.
+# Tuples: a fixed group of values, each with its own type.
+#
+# A list holds many of one thing. A tuple holds a few things of different
+# kinds, and its shape is part of its type: `(String, Int)` is always a name
+# and a number, in that order.
+#
+# Run it with `emerald run examples/tuples.em`.
 
 ## The most useful thing a tuple does is let a function answer with more than
 ## one value, without inventing a type to carry them.
@@ -43,6 +43,6 @@ print(first, second)
 const (label, (x, y)) = ("corner", (3, 4))
 print(label, x + y)
 
-## Tuples compare position by position, so two that were built separately are
-## equal when their contents are.
+# Tuples compare position by position, so two that were built separately are
+# equal when their contents are.
 print(("a", 1) == ("a", 1))

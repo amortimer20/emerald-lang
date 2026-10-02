@@ -1,0 +1,16 @@
+diagnostics/lambda-loop-exits.em:1:17: `break` can only be used inside a loop
+  [1].each { x => break }
+                  ^^^^^
+A function cannot end the loop that called it. Return a value the caller can check instead.
+diagnostics/lambda-loop-exits.em:2:17: `continue` can only be used inside a loop
+  [1].each { x => continue }
+                  ^^^^^^^^
+A function cannot end the loop that called it. Return a value the caller can check instead.
+diagnostics/lambda-loop-exits.em:4:21: `break` can only be used inside a loop
+      [1].each { x => break if x > 0 }
+                      ^^^^^
+A function cannot end the loop that called it. Return a value the caller can check instead.
+diagnostics/lambda-loop-exits.em:5:21: `continue` can only be used inside a loop
+      [1].each { x => continue if x > 0 }
+                      ^^^^^^^^
+A function cannot end the loop that called it. Return a value the caller can check instead.

@@ -30,8 +30,8 @@ func rename(playlist: Playlist, to: String) {
 rename(mix, "Summer")
 print(same.name)
 
-## Two objects are equal only when they are the same object, even if every field
-## matches.
+# Two objects are equal only when they are the same object, even if every field
+# matches.
 print(mix == same, Playlist("Summer") == Playlist("Summer"))
 
 ## A block written in a method can use `self`, because the object is shared.

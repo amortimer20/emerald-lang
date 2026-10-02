@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-01. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-02. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -10,7 +10,7 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 The Zig rewrite implements the current rewrite-context language surface: control flow,
 functions, optionals, collections, Unicode strings, structs, classes, inheritance, traits,
 enums, typed errors, projects/namespaces, ranges and slicing. The formatter and persistent-session
-REPL are complete on `codex/repl`, pending final review and merge. The language server provides diagnostics
+REPL are complete and merged on main (PR #30). The language server provides diagnostics
 (identical to `emerald check`), symbols,
 format-on-save, hover, go to definition, find references, rename, and completion, but the last
 two are shallow for the built-in types: see "Queued: editor intelligence" below.
@@ -174,11 +174,54 @@ finish before optimizing are done (dates and times, regular expressions, Console
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
 journal records each milestone, its review, and what was measured; each plan's "Settled while
-building" notes record its decisions. All four REPL slices are implemented on `codex/repl`,
-with `origin/main` merged before the final integration gate. The next step is final review
-and merge by the user/Claude after branch CI is green; Codex does not merge to main.
+building" notes record its decisions. The REPL milestone is merged through PR #30
+(`01125eb`). Current work is diagnostic polish items 1–12 on `codex/diagnostic-polish`,
+in groups A (1–6), B (7–9), and C (10–12), with review between groups.
+The revised item 11 is recorded in 3.3 and section 22: no missing-`?` warning;
+Bool can report an action's success. Casing and orphaned-doc warnings exclude the
+prelude, casing excludes overrides, and `?` names still require Bool everywhere.
+The naming implementation remains pending; the `save(): Bool` regression pins the new rule.
+Group A items 1–6 add logical-operator, increment/decrement, conditional-value,
+mistaken condition-assignment, and optional-default corrections,
+without changing strings, comments, subtraction, negation, or line continuation.
+One-line lambda `break`/`continue` now receive the existing loop-boundary diagnostic
+instead of parser cascades. Group A is pushed and all seven CI jobs passed at
+`2d92564`. Group B is complete: it identifies the declaring file for an
+unqualified private module name, explains when a structurally matching type
+still needs to adopt a trait, and qualifies nested type names inside their
+enclosing type. Group B is pushed and all seven CI jobs passed at `1809db4`.
+Group C is committed locally through `b067123`: orphaned documentation and
+declaration-casing warnings now land alongside the enforced `?`-return-type
+rule. Push and CI review are next.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
+- Foreign logical operators `&&` and `||` receive one focused hint suggesting
+  Emerald's `and` and `or`, rather than two character errors.
+- `++` and dangling `--` explain the corresponding `+= 1`/`-= 1` update;
+  subtraction of a negative value and double negation retain their meaning.
+- C-style `condition ? value : other` explains Emerald's
+  `if condition then value else other_value` spelling.
+- Conditions written with `=` suggest `==`, including grouped conditions,
+  guards, inline `if`, `assert`, and subjectless `case` arms. Assignments inside
+  predicate bodies remain valid; mistaken conditions do not cascade into brace errors.
+- `??` suggests an optional fallback with `.or(...)`, with the same correction
+  whether or not spaces surround the mistaken operator.
+- One-line lambda `break`/`continue`, including guarded exits, explain that a
+  function cannot exit the caller's loop instead of producing parser/brace cascades.
+- An unqualified reference to a private module name in another file identifies
+  that file and explains the privacy boundary, rather than calling the name undefined.
+- A struct or class that supplies every required trait member but omits `with Trait`
+  is told that it does not adopt the trait and shown the declaration-level fix.
+- A bare nested type name inside its enclosing type is corrected to its required
+  qualified spelling, such as `Pizza.Size`.
+- Orphaned `##` documentation comments now warn when a blank line or a
+  non-declaration separates them from what they would document.
+- Program declarations now receive non-fatal casing warnings with corrected
+  `snake_case` or `PascalCase` spellings; generated-prelude and `@override`
+  names remain exempt.
+- A callable whose name ends in `?` must return exactly `Bool`, including
+  overridden methods and computed properties; action-style `Bool` results
+  remain valid without the suffix.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -236,23 +279,12 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **The REPL**: all four slices of [`repl-design-plan.md`](repl-design-plan.md) are implemented
-  on `codex/repl`, pending final review/merge. The [language guide](language/repl.md),
-  rewrite-context 18.4 and section 22 now describe the persistent session; the journal records
-  the implementation and slice 2 corrections. Slice 3 (`e03cb64`) passed all seven CI jobs.
-  Main's seven newer commits merged cleanly, preserving File.append's create-if-missing
-  behavior and the editor-intelligence/board/batteries-included/header-block notes.
-  The file-append regression now starts with a missing file on every one of its 50 runs.
-  Nine existing transcript expectations remain unchanged. Full-session checking remains
-  intentional: the approved execution-only assertion passed, and measured ReleaseSafe
-  entry-500 analysis was 13.240 ms (under 100 ms). Line editing/history remain deferred.
-  Final post-merge local gate passed: 546 tests in each of Debug/ReleaseSafe, native build,
-  24 executable doc examples and 134 linked conformance files, formatting/whitespace, and
-  Windows/macOS cross-builds. All nine transcripts matched 50 CLI runs each, and all three
-  new guide examples were verified. Slice 4 is pushed on this branch; final CI is checked
-  before reporting completion. Stop for review; do not merge to main.
+- **Diagnostic polish**: items 1–12 are scoped on `codex/diagnostic-polish`; groups A
+  and B are implemented and CI-green through `1809db4`; Group C has passed its
+  full local validation and awaits its push and CI review.
+  The revised naming policy is recorded, with checker implementation still to follow.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
-- A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
+- A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
@@ -439,32 +471,14 @@ not yet discussed:
 
 ## Active rough edges
 
+- A Windows Debug REPL test runner stopped responding for about a minute in the
+  policy-only CI run at `3f7d694`, before the parser changes. Its cause is not
+  established. The subsequent group A run passed every job, including Windows
+  Debug, but that does not establish a fix. Investigate separately; no failed
+  job was rerun or timeout widened to make it pass.
 - Found while writing the website's language pages (2026-09-30, in 0.6.0), each a spec promise
   the implementation does not keep:
-  - An orphaned `##` documentation comment gets no warning (3.2 says it does):
-    `## This describes nothing.` followed by a blank line and `print("x")` checks clean.
-  - Casing gets no style warning (3.3 says violations are warnings): `var highScore = 10` checks
-    clean, and neither does `func is_ready(): Bool`, whose name lacks the `?` 3.3 expects.
-  - A name ending in `?` with a non-`Bool` result is accepted, though 3.3 calls it a type error:
-    `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
-  - Operators from other languages get generic parse errors, though `!` already gets a good one
-    ("Write `not` for negation"). Give each a hint: `true && false` and `||` ("this character
-    does not belong here", twice) should suggest `and`/`or`; `c++` and `c--` should suggest
-    `c += 1`; `true ? 1 : 2` should suggest `if c then a else b`; and `if x = 5 {` ("expected `{`
-    ... found =") should suggest `==`.
-  - A file reaching a private `_name` declared in another file of the same folder gets
-    "[E1001] `_catalog` is not defined" ("check the spelling"), while the qualified form
-    (`Plants._catalog`) already says "`_catalog` is private to the file that declares it". Say
-    the same for the unqualified form, naming the declaring file.
-  - `x ?? 0` (the C# and Swift spelling) gets "expected `)` to close this call, found ?"; suggest
-    `.or(0)`. And `break` in a one-line lambda (`[1].each { x => break }`) gives a parse error
-    plus a "this `}` does not close anything" cascade, while the block-bodied form already says
-    "`break` can only be used inside a loop".
-  - A type with a trait's methods but no `with Trait` gets only "this is Square, but `s` was declared
-    as Shape"; say that `Square` doesn't adopt `Shape` and suggest `with Shape`. And a nested type
-    written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a
-    type ... declare the struct in this project"; suggest `Pizza.Size`.
 - An idea the user will consider later (2026-10-01; not planned, and nothing changes until they
   decide): let a trailing block in an `if`, `while`, `for`, or `case` header work without the
   parentheses 7.4 requires, as in `if items.any? { item => item > 1 } {`. Every lambda has `=>`, even
@@ -500,6 +514,13 @@ not yet discussed:
 
 
 ## Validation and repository state
+
+Diagnostic-polish group A passed the full local gate before each item commit.
+The final gate passed 548 tests in both Debug and ReleaseSafe, native build,
+24 documentation examples, formatting/whitespace checks, and Windows/macOS
+cross-builds. [CI at `2d92564`](https://github.com/amortimer20/emerald-lang/actions/runs/37020381290)
+passed all seven jobs (Debug/ReleaseSafe on Linux, macOS, Windows, and bounded
+execution fuzz). Groups B and C remain unimplemented; group A is the review boundary.
 
 `main` is the only long-lived branch and has no open pull requests. Work happens on
 `claude/*` and `codex/*` branches, merged by pull request once CI passes; see

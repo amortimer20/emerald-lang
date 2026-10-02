@@ -151,7 +151,8 @@ the end of the file.
 arbitrary run of hashes. Documentation text is Markdown. The initial tag set is
 deliberately empty: parameters, returns, and expected errors are described naturally in
 prose until tooling demonstrates a need for structured tags. An orphaned `##` block
-produces a warning because it does not describe a declaration.
+produces a warning because it does not describe a declaration. Documentation warnings apply
+to program files, not the prelude.
 
 An override or trait implementation uses its own documentation when present. Otherwise,
 documentation tools inherit the text from the overridden declaration or satisfied trait
@@ -173,10 +174,14 @@ The casing rules are settled:
 Violations are style warnings rather than syntax errors. American English is the standard
 library spelling convention: `Color`, `center`, and `initialize`.
 
-Methods returning `Bool` conventionally end in `?`. Omitting the suffix from a Boolean
-function produces a style warning; a name ending in `?` with a non-`Bool` result is a type
-error. The compiler remains capable of describing an external API that cannot follow
-Emerald's convention.
+A method that answers a yes-or-no question ends in `?`, such as `empty?`, and a name
+ending in `?` must give a `Bool`; giving anything else is a type error. A `Bool` result
+does not require the `?`: a function may return one to report that an action succeeded.
+
+Casing warnings apply to program declarations, not the prelude. An `@override` does not
+receive a casing warning: its name comes from the declaration it overrides, which is
+warned about if it belongs to the program. The `?` result rule still applies everywhere,
+including overrides and the prelude.
 
 ```emerald
 func empty?(): Bool {
@@ -4093,6 +4098,7 @@ recorded in their normative sections:
 | Decision | Resolution | Reasoning |
 | --- | --- | --- |
 | JSON's two conversion paths (15.9) | `parse` produces a navigable `Json`; checker-known `encode` and `decode(text, as: Type)` convert a program's known types | An API response and a program's own saved `Score` have opposite information available. One dynamic value type and one static conversion spell the distinction without asking a beginner to build a serialization framework. |
+| Boolean naming (3.3) | A `?` name must return `Bool`, but a `Bool` result does not require `?`; rejected a warning for every Bool function without it | A Bool result can report success rather than answer a question, so the warning would push misleading names such as `save?`. Casing warnings exclude the prelude and overrides, whose names are dictated by their original declarations; the `?` result rule has no such exemption. |
 | REPL replay versus a persistent session (18.4) | Keep one interpreter and earlier syntax nodes, recheck the kept program, and execute only the new entry; remove a raising entry's declarations but keep its completed effects | Replaying input and suppressing old output cannot undo or faithfully repeat files, requests, randomness, clocks, or tasks. Persistent values make each effect happen once without requiring an incremental checker. Failed-entry code that escapes into an earlier binding retains its analysis, and append-only offsets prevent stale span-keyed facts from colliding. |
 | Concurrency model (15.13) | Structured tasks and FIFO channels, without `async`/`await`, public threads, or locks | Ordinary functions can wait without coloring every caller; a beginner learns results and messages rather than shared-memory synchronization. |
 | Task lifetime (15.13) | Only a live `TaskGroup` can start children; its `Tasks.run` joins them all | Detached work would introduce orphan resources and unseen errors. |

@@ -4462,3 +4462,330 @@ error's entry-relative `repl:4:5` location with `score` still 7 afterward.
 
 Slice 4 is committed and pushed separately after the merge. Branch CI is
 checked before reporting completion; no merge to main or tag is performed.
+
+## 2026-10-02 — Diagnostic polish: revised Boolean naming decision
+
+The user dropped item 11's missing-`?` warning entirely. A Bool result can report
+the success of an action, so forcing `save?` would teach a misleading name.
+Rewrite-context 3.3 and the section 22 decision table now record the one-way
+rule: a `?` name must return plain Bool, but returning Bool does not require
+that suffix. Item 12's type error still applies everywhere, overrides and the
+prelude included. Casing warnings exclude the prelude and overrides; warn at
+the original program declaration instead. Orphaned-doc warnings also exclude
+the prelude. These exemptions are recorded with their normative rules.
+
+The branch was clean when the decision arrived. No missing-suffix implementation
+or cases had been added, so there were no `equals`/`ready` warning cases to
+remove. Added `conformance/run/bool-action-name` for `func save(): Bool`, with
+the hand-read expectation `true`, and linked it from the core language guide.
+The handoff no longer calls `is_ready(): Bool` a missing-suffix gap. It also
+reflects that the REPL has merged through PR #30 (`01125eb`), rather than still
+waiting for review; the completed slice history remains above.
+
+Validation on pinned Zig 0.16.0: toolchain check, native `zig build -j1`,
+focused `emerald check` (no problems) and `run` (`true`), Debug
+`zig build test -j1` (546 tests, exit 0), doc-example check (24 executed
+examples and 135 linked conformance files), and `git diff --check` passed.
+No checker/resolver implementation changes are included in this decision
+update. Items 7–12 remain to implement; the website output check belongs to
+the completed group C implementation, not this documentation-only policy
+change plus its regression. Changes are uncommitted on `codex/diagnostic-polish`.
+
+## 2026-10-02 — Diagnostic polish item 1: foreign logical operators
+
+Reproduced `print(true && false)` and `print(true || false)` before changing
+code: each operator produced two generic character errors. The lexer now consumes
+each invalid pair as one token and gives one correction to `and` or `or`.
+This belongs in the lexer because neither character is an Emerald operator;
+strings, comments, and single invalid characters retain their existing behavior.
+The diagnostics conformance expectation was read by hand, and a lexer unit test
+covers diagnostic counts, spans, hints, and unaffected string/comment contents.
+
+The complete gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe
+`zig build test -j1`, native build, documentation examples (24 executed;
+135 linked conformance files), changed-file formatting, `git diff --check`,
+and x86_64 Windows/aarch64 macOS cross-builds with prefixes outside `zig-out`.
+An initial test compile exposed a local name shadowing the file's `testing`
+binding and an unnecessary optional unwrap; both were corrected. The next
+build exhausted the 3.8 GB `/tmp` filesystem, confirmed by `df`; its task-owned
+cache was moved intact into the workspace cache, and the full gate then passed.
+No failed test was retried without identifying and correcting the cause.
+
+The standalone Boolean-naming decision was committed as `3f7d694` and pushed
+before implementation, as requested. Item 2 follows this commit; group A will
+be pushed and checked in CI before review, with groups B and C still pending.
+
+## 2026-10-02 — Diagnostic polish item 2: increment/decrement hints
+
+Reproduced `c++` as "expected an expression, found +" and `c--` as an
+expression missing at EOF. Postfix and prefix `++` now explain `name += 1`;
+a dangling postfix `--` explains `name -= 1`, highlighting the pair itself.
+Three diagnostics cases have hand-read expectations. A runnable regression
+also checks the suggested updates and preserves `c--1`, `--c`, spaced
+subtraction of a negative value, and continuation onto the next line.
+
+Judgement: do not reserve `--` lexically. It already denotes two ordinary
+minus tokens in valid expressions. Diagnose attempted decrement only when
+no operand follows; otherwise preserve subtraction/negation, including
+existing operator line continuation. This is a hint change, not a grammar
+restriction or a new decrement operator.
+
+Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
+native build `-j1`, doc examples (24 executed, 135 linked conformance files),
+changed-file `zig fmt --check`, `git diff --check`, and Windows/macOS
+cross-builds with prefixes outside `zig-out`. No suite failed.
+
+## 2026-10-02 — Diagnostic polish item 3: conditional-value spelling
+
+Reproduced C-style ternaries in a call, a declaration initializer, and a
+nested function body. They previously suggested missing parentheses or a
+statement terminator. Expression parsing now points at `?` and suggests
+`if condition then value else other_value`; all three regressions report
+one relevant correction without a closing-brace cascade. Read the expectation
+and compared every message, source line, and span with the built CLI.
+
+Judgement: recognize the mistake at the expression boundary, not in the
+lexer. Optional type annotations and predicate names remain valid. A doubled
+question mark is left alone for item 5's separate optional-default correction,
+including the unspaced form whose first question mark belongs to a name token.
+
+Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
+native build `-j1`, doc examples (24 executed, 135 linked conformance files),
+changed-file formatting, whitespace check, and Windows/macOS cross-builds
+outside `zig-out`. No suite failed. Item 4 is next.
+
+## 2026-10-02 — Diagnostic polish item 4: assignment in a condition
+
+Reproduced the misleading block, parenthesis, `then`, and terminator errors
+for `=` in conditions before changing code. Conditions now explain `==`
+directly in ordinary and grouped `if`/`while` conditions, inline `if`,
+statement/return guards, `assert`, and subjectless `case` arms. A hand-read
+diagnostics case covers all seven paths; a runnable case checks correct
+comparisons and ordinary assignments, including a captured assignment inside
+an `any?` predicate. The built CLI matched both expectations after the gate.
+
+Judgement: track condition context independently of control headers.
+Parentheses must retain the comparison context, while lambda and statement
+bodies must clear it. Diagnose the equal sign and consume its right-hand
+expression for recovery, so the existing block/delimiter parser stays aligned;
+the parse diagnostic prevents the invalid program from checking or executing.
+Subjectless `when` and `assert` are conditions too, so use the same helper
+rather than leave those with misleading delimiter errors.
+
+Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
+native build `-j1`, doc examples (24 executed, 135 linked conformance files),
+changed-file formatting, whitespace check, and Windows/macOS cross-builds
+outside `zig-out`. No suite failed. Item 5 is next.
+
+## 2026-10-02 — Diagnostic polish item 5: optional fallback hint
+
+Reproduced `x ?? 0`, `x??0`, and a call followed by `??0`: all previously
+suggested a missing closing parenthesis. Each now highlights both question
+marks and suggests `.or(default)`, with `value.or(0)` as a concrete example.
+The new diagnostics expectation was written and read by hand, then compared
+with the built CLI. Existing optional/predicate cases passed unchanged,
+including the separate "a type cannot be optional twice" annotation error.
+
+Judgement: handle both token shapes at the expression boundary rather than
+change identifier lexing. In `x??0`, the first question mark belongs to the
+identifier token; in spaced expressions and after calls both are standalone
+tokens. This keeps predicate names and optional annotations untouched.
+
+Full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests `-j1`,
+native build `-j1`, doc examples (24 executed, 135 linked conformance files),
+changed-file formatting, whitespace check, and Windows/macOS cross-builds
+outside `zig-out`. The user's connection interruptions did not require a
+restart: the existing build processes completed successfully. No suite failed.
+Item 6 is next, followed by the group A push and CI check before review.
+
+## 2026-10-02 — Diagnostic polish item 6: one-line lambda loop exits
+
+Reproduced the parse errors and stray-closing-brace cascades from one-line
+`break`/`continue` lambdas, including guarded exits within an outer loop.
+The parser now treats those keyword-led bodies as ordinary block statements;
+the existing checker explains that a function cannot exit its caller's loop.
+No checker or diagnostic wording change was necessary. The four-error
+conformance expectation was written/read by hand and matched the built CLI.
+A parser unit test verifies all four forms parse cleanly before checking.
+
+Judgement: reuse `parseStatement` and `finishLambdaBlock` only for the two
+requested loop-exit keywords. Do not broaden every one-line lambda statement
+form, add caller-loop control, or change lambda return semantics. Guarded
+exits use the same condition parser introduced by item 4.
+
+The full gate passed on pinned Zig 0.16.0: 548/548 tests in both Debug and
+ReleaseSafe (`-j1`), native build, doc examples (24 executed, 135 linked
+conformance files), `zig fmt --check src/*.zig tools/*.zig`, whitespace check,
+and Windows/macOS cross-builds outside `zig-out`. All six group A items have
+their own commits and completed gates. Push group A, check its seven CI jobs,
+and stop for review before groups B and C; no merge or history rewrite.
+
+## 2026-10-02 — Diagnostic polish group A: CI and review handoff
+
+Pushed the six separate implementation commits through `2d92564` on
+`codex/diagnostic-polish`, following the separately pushed policy commit
+`3f7d694`. [Run 37020381290](https://github.com/amortimer20/emerald-lang/actions/runs/37020381290)
+completed successfully at that exact code revision: all six platform/build
+jobs and bounded execution fuzz passed. Group A is ready for review; groups
+B and C have not started, and the branch is not merged.
+
+The earlier [policy-only run](https://github.com/amortimer20/emerald-lang/actions/runs/37003741611)
+failed Windows Debug because `emerald-repl.exe`'s test runner failed to respond
+for `1m2.63ms`; its other six jobs passed. The log does not establish the
+underlying cause, and the later green run is not evidence that the stall is
+fixed. Recorded it as an active rough edge for separate investigation rather
+than changing REPL code outside this group, rerunning the failed job, or
+increasing its timeout. This follow-up records validation only; it changes
+no source, examples, or expectations.
+
+The documentation-only follow-up also passed the full local gate: Debug and
+ReleaseSafe tests `-j1`, native build, documentation examples, formatting,
+whitespace check, and both platform cross-builds. CI covers the unchanged
+code at `2d92564`; Markdown-only pushes intentionally do not start a new run.
+
+## 2026-10-02 — Diagnostic polish item 7: private module names
+
+Reproduced a bare `_twice` in a different project file as `[E1001]` "not
+defined", while `Shapes._twice` already recognized the privacy boundary. The
+resolver now consults its declaration-owner facts when an otherwise undefined
+bare private name has exactly one module-level owner, names that file, and
+gives the established public-name correction. The existing project conformance
+case now covers qualified and bare forms; its expectation was read by hand
+against the built binary. The conformance harness strips the leading
+`conformance/` prefix from source paths, so its golden fixture uses that
+normalized path even though a direct CLI invocation prints the full path.
+
+Judgement: only name a file when the private spelling has one owner. Files may
+legitimately reuse private names; picking one declaration in that case would
+turn an honest unknown-name diagnostic into a false correction. This is a
+resolver-only improvement with no visibility or namespace semantic change.
+
+## 2026-10-02 — Diagnostic polish item 8: omitted trait adoption
+
+Reproduced a concrete `Square` with the complete public `Shape` contract being
+assigned to `Shape`: it previously received only the generic declaration type
+mismatch. The checker now recognizes this narrow nominal-conformance near miss
+for concrete structs and classes, says that the type does not adopt the trait,
+and points to `with Shape` on the type declaration. The conformance case covers
+both a struct and a class, plus a `Triangle` that lacks the required member and
+therefore deliberately retains the ordinary mismatch.
+
+Judgement: inspect required public trait members with the same signatures,
+property mutability, `Self` substitution, and inherited-member lookup already
+used for declared adoptions. This diagnostic does not make structural typing a
+language feature: absent `with`, the value remains unassignable. Traits with no
+requirements, private members, traits themselves, enums, and incomplete or
+wrong-shaped implementations retain the existing diagnostic, because suggesting
+adoption there would hide the real missing member or imply a vacuous contract.
+
+The focused CLI reproduction and Debug suite passed before the full gate. The
+full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests with `-j1`,
+native build, documentation examples (24 executed, 135 linked conformance
+files), `zig fmt --check src/Checker.zig`, whitespace check, and Windows
+x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+
+## 2026-10-02 — Diagnostic polish item 9: bare nested type names
+
+Reproduced `const size: Size`-style annotations inside an outer type: despite a
+declared `Pizza.Size`, the checker said only that `Size` was not a type. It now
+finds a direct nested type of the innermost containing declaration and suggests
+the required qualified spelling, `Pizza.Size`. The focused diagnostics case was
+written and read by hand against the built binary.
+
+Judgement: use existing declaration spans and nested-type keys in the checker,
+without changing resolution. The hint is offered only for an unqualified name
+inside a type whose direct nested type has that name; unrelated unknown types
+and already-qualified paths retain their established diagnostics. Choosing the
+innermost containing type also extends naturally to nested declarations without
+guessing across unrelated outer scopes.
+
+The focused CLI reproduction and Debug suite passed before the full gate. The
+full gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests with `-j1`,
+native build, documentation examples (24 executed, 135 linked conformance
+files), `zig fmt --check src/Checker.zig`, whitespace check, and Windows
+x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+
+## 2026-10-02 — Diagnostic polish group B: CI and review handoff
+
+Pushed Group B through `1809db4` on `codex/diagnostic-polish`. [Run
+37037868996](https://github.com/amortimer20/emerald-lang/actions/runs/37037868996)
+passed all six platform Debug/ReleaseSafe jobs and the bounded execution fuzz
+job. Group B is ready for review; group C has not started, and the branch has
+not been merged or rebased.
+
+## 2026-10-02 — Diagnostic polish item 10: orphaned documentation comments
+
+Reproduced an orphaned `##` block followed by a blank line and a statement:
+both `emerald check` and `emerald run` previously accepted it without a
+warning. The checker now warns when a documentation block is not at the start
+of a line immediately before a declaration. A focused diagnostics conformance
+case covers a blank line, a following statement, and a valid comment directly
+before a declaration.
+
+Judgement: the parser intentionally discards documentation comments, so the
+checker performs one small post-parse lexer pass to distinguish them from
+ordinary comments and strings without making warnings fatal parser diagnostics.
+It groups adjacent `##` lines into one block and measures source newlines to
+detect blank lines. The generated prelude is explicitly skipped: documentation
+warnings apply only to program files.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/Checker.zig`, whitespace check, and
+Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+
+## 2026-10-02 — Diagnostic polish item 12: question-name results
+
+Reproduced `func ready?(): Int` checking clean. The checker now rejects a
+callable whose name ends in `?` unless its finalized result is exactly `Bool`.
+The diagnostics regression covers a top-level function, inherited override,
+and computed property. The rule applies to the prelude and overrides as well
+as program code; an action-style `Bool` result such as `save(): Bool` remains
+valid without a question mark.
+
+Judgement: validate at signature finalization rather than requiring a written
+return annotation, so inferred results follow the same rule. A computed
+property's getter uses its declared result and is checked; its synthetic setter
+is deliberately skipped because its `Nothing` result is not the property's
+answer.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/Checker.zig`, whitespace check, and
+Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.
+The website's output checker found no Emerald-output changes across every page.
+The `loops` and `optionals` transcripts were rerun with the answers their pages
+show (`hi`/`quit` and `12`); the generic filename finder initially selected the
+`plants/catalog.em` title in the projects page, so that page was rerun as its
+actual paired diagnostic fixture, `projects.em`, and also matched. HTTP
+examples were intentionally skipped without the local fixture.
+
+## 2026-10-02 — Diagnostic polish Group C: ready for CI
+
+Items 10–12 are committed separately through `b067123`: orphaned `##`
+documentation warns, declarations receive the settled casing warnings, and
+question-mark callables require `Bool` results. The website audit found no
+Emerald output changes. The branch is ready to push for the group's CI review.
+Existing example prose before statements was converted from `##` documentation
+to ordinary `#` comments, leaving `##` for declarations, so the documented
+examples remain warning-free.
+
+## 2026-10-02 — Diagnostic polish item 11: declaration casing
+
+Reproduced `var highScore`, `func SayHello`, and `struct point` checking clean.
+The checker now gives each program declaration one non-fatal warning with its
+`snake_case` or `PascalCase` correction. The regression also confirms that a
+method introduced with `@override` does not repeat a warning that belongs to
+the declaration it replaces. `func save(): Bool` remains warning-free, as
+settled by the earlier Boolean-naming decision.
+
+Judgement: casing is checked where the checker registers or visits a
+declaration, rather than by changing the parser. That keeps it advisory,
+covers nested types and type members with their ordinary declarations, and
+skips the generated prelude by namespace. An override's method and parameters
+are omitted because the inherited contract dictates both spellings.
+
+The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
+suites, native build, documentation examples (24 executed and 135 linked
+conformance files), `zig fmt --check src/Checker.zig`, whitespace check, and
+Windows x86_64/macOS aarch64 cross-builds with output outside `zig-out`.

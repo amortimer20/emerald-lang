@@ -16,15 +16,15 @@ struct Money with Textual {
 
 const price = Money(1250)
 
-## `print` and interpolation both display through the method.
+# `print` and interpolation both display through the method.
 print(price)
 print("That will be #{price}.")
 
-## So does every place the value appears, including inside a collection: the
-## trait replaces how the value itself renders, never how a list frames it.
+# So does every place the value appears, including inside a collection: the
+# trait replaces how the value itself renders, never how a list frames it.
 print([Money(399), Money(2075)])
 
-## Calling the method directly is always available, adopted or not.
+# Calling the method directly is always available, adopted or not.
 print(price.to_string())
 
 ## A type that does not adopt the trait shows its fields, which is what you

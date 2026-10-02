@@ -1,0 +1,28 @@
+diagnostics/assignment-in-condition.em:2:6: a condition compares values with `==`, not `=`
+  if x = 5 {
+       ^
+Write `==` to compare values. Put an assignment on its own line.
+diagnostics/assignment-in-condition.em:5:10: a condition compares values with `==`, not `=`
+  while (x = 5) {
+           ^
+Write `==` to compare values. Put an assignment on its own line.
+diagnostics/assignment-in-condition.em:8:20: a condition compares values with `==`, not `=`
+  const label = if x = 5 then "yes" else "no"
+                     ^
+Write `==` to compare values. Put an assignment on its own line.
+diagnostics/assignment-in-condition.em:9:15: a condition compares values with `==`, not `=`
+  print(x) if x = 5
+                ^
+Write `==` to compare values. Put an assignment on its own line.
+diagnostics/assignment-in-condition.em:11:17: a condition compares values with `==`, not `=`
+      return if x = 5
+                  ^
+Write `==` to compare values. Put an assignment on its own line.
+diagnostics/assignment-in-condition.em:13:10: a condition compares values with `==`, not `=`
+  assert x = 5
+           ^
+Write `==` to compare values. Put an assignment on its own line.
+diagnostics/assignment-in-condition.em:15:12: a condition compares values with `==`, not `=`
+      when x = 5 {
+             ^
+Write `==` to compare values. Put an assignment on its own line.
