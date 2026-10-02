@@ -1,0 +1,15 @@
+Emerald REPL. Type `:help` for commands; Ctrl-D exits.
+> > > > 1
+> "ADA"
+> 1.4142135623730951
+> 2
+> hi
+> > > [1, 2]
+> . . > "Hello, Ada!"
+> "[1,2]"
+> []
+> > > > true
+> later
+> true
+> > true
+> 

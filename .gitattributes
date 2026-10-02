@@ -7,3 +7,5 @@
 * text=auto eol=lf
 
 *.svg text eol=lf
+# REPL prompts deliberately end in a space, including the final prompt.
+conformance/repl/*.expected whitespace=-blank-at-eol

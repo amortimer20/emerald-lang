@@ -1,0 +1,26 @@
+var count = 1
+count = "many"
+count
+const name = "Ada"
+const name = "Grace"
+name
+name = "Grace"
+name
+var = 1
+count
+if true {
+    count = 7
+    print("kept")
+    const lost = 10
+    raise RuntimeError("boom")
+}
+count
+lost
+const lost = 20
+lost
+:help
+:reset
+count
+var count = 9
+count
+:quit

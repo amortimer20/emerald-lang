@@ -1,31 +1,6 @@
-//! `emerald repl` (section 18.4): keeps declarations and values across
-//! entries, prints a bare expression's value, and clears with `:reset`.
-//!
-//! The compiler's pipeline (`Resolver.resolve`, `Checker.check`,
-//! `Interpreter.run`) is built as a single-shot, whole-project pass —
-//! `emerald.zig`'s own words: "Resolution, checking and execution each see
-//! the whole project at once." Nothing about module scope, struct type
-//! identity, or heap objects survives past one `Interpreter.run` call today,
-//! and 14.1 lets only one file (`entry = true`) hold executable top-level
-//! statements — every other file is restricted by `Resolver.checkModuleFile`
-//! to declarations only. Threading interpreter/heap state and checker facts
-//! across separate entries would mean real surgery to `Interpreter.run`'s
-//! signature and reconciling `Type.User`'s pointer identity across repeated
-//! `Checker.check` calls, which compares structs by pointer, not name.
-//!
-//! Instead, a REPL session is modeled as **one single, always-growing entry
-//! file**, re-lexed, re-parsed, re-resolved, re-checked, and re-run from
-//! scratch by the completely unmodified `emerald.run` on every accepted
-//! entry. This sidesteps the one-entry-file restriction entirely (there is
-//! only ever one file), and gives every existing binding rule — a name may
-//! not be redeclared, a `const` may not be reassigned, a `var` may — for
-//! free, with no REPL-specific logic anywhere in the compiler. What replay
-//! has to solve on its own, both below: not re-printing old output, and not
-//! re-consuming fresh `input()` on replay. Every language feature that exists
-//! today is observable only through `print`/`input` (no clock, filesystem,
-//! network, or randomness), so this is not an approximation — it is exactly
-//! correct, at the cost of redoing more work per entry than a truly
-//! incremental interpreter would, a cost invisible at typing speed.
+//! A persistent interactive session: accepted syntax is kept, analysis is
+//! replaced atomically, and only the new entry executes. Failed entries keep
+//! completed effects but lose their declarations. Input has one scheduler owner.
 
 const std = @import("std");
 const emerald = @import("emerald");
@@ -33,151 +8,100 @@ const Source = emerald.Source;
 const Diagnostic = emerald.Diagnostic;
 const Lexer = emerald.Lexer;
 const Parser = emerald.Parser;
+const Interpreter = emerald.Interpreter;
 
-/// Everything the session remembers between entries. Only ever mutated by
-/// `commit`/`reset`, so an entry that fails to check or that raises simply
-/// never touches it — section 18.4's "an invalid entry does not partially
-/// mutate the session," extended to a raising one too (see `tryEntry`).
-const Session = struct {
-    text: std.ArrayList(u8) = .empty,
-    /// Bytes of `text`'s captured output already shown to the user.
-    output_len: usize = 0,
-    /// Every byte a successful entry's `input()` has ever consumed, replayed
-    /// at the front of every later attempt so a program that already asked
-    /// its questions does not ask them again.
-    recorded_input: std.ArrayList(u8) = .empty,
-
-    fn deinit(self: *Session, gpa: std.mem.Allocator) void {
-        self.text.deinit(gpa);
-        self.recorded_input.deinit(gpa);
-        self.* = undefined;
-    }
-
-    fn reset(self: *Session, gpa: std.mem.Allocator) void {
-        self.text.clearRetainingCapacity();
-        self.output_len = 0;
-        self.recorded_input.clearRetainingCapacity();
-        _ = gpa;
-    }
+pub const Options = struct {
+    io: std.Io = std.Io.Threaded.global_single_threaded.io(),
+    standard_input: bool = false,
 };
+const stack_size: usize = if (@sizeOf(usize) >= 8) 1024 * 1024 * 1024 else 32 * 1024 * 1024;
+pub const Error = emerald.Error || error{ReadFailed};
 
-/// A `std.Io.Reader` that serves `recorded` first, then falls through to
-/// `live`, appending whatever it reads from `live` onto `newly_read` so the
-/// *next* attempt's replay can include it. Every previously recorded byte
-/// came from a complete `streamDelimiterEnding` line (`input()`'s own read
-/// idiom, `Interpreter.evaluateInput`), so the two never need to interleave
-/// within one read: once `recorded` is exhausted, everything after is live.
-const ReplayReader = struct {
-    interface: std.Io.Reader,
-    recorded: []const u8,
-    recorded_pos: usize = 0,
-    live: *std.Io.Reader,
-    newly_read: *std.ArrayList(u8),
-    gpa: std.mem.Allocator,
-
-    fn init(
-        recorded: []const u8,
-        live: *std.Io.Reader,
-        newly_read: *std.ArrayList(u8),
+/// The prompt and typed input share one reader, including across :reset.
+/// Recursive interpretation stays on the same reserved stack for the session.
+pub fn run(gpa: std.mem.Allocator, input: *std.Io.Reader, out: *std.Io.Writer, color: bool, environment: std.process.Environ, local_zone: emerald.TimeZone.Local, options: Options) Error!u8 {
+    const Work = struct {
         gpa: std.mem.Allocator,
-        buffer: []u8,
-    ) ReplayReader {
-        return .{
-            .interface = .{ .vtable = &.{ .stream = stream }, .buffer = buffer, .seek = 0, .end = 0 },
-            .recorded = recorded,
-            .live = live,
-            .newly_read = newly_read,
-            .gpa = gpa,
-        };
-    }
-
-    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
-        const self: *ReplayReader = @fieldParentPtr("interface", r);
-        if (self.recorded_pos < self.recorded.len) {
-            const chunk = limit.sliceConst(self.recorded[self.recorded_pos..]);
-            try w.writeAll(chunk);
-            self.recorded_pos += chunk.len;
-            return chunk.len;
+        input: *std.Io.Reader,
+        out: *std.Io.Writer,
+        color: bool,
+        environment: std.process.Environ,
+        local_zone: emerald.TimeZone.Local,
+        options: Options,
+        result: Error!u8 = undefined,
+        fn execute(self: *@This()) void {
+            self.result = loop(self.gpa, self.input, self.out, self.color, self.environment, self.local_zone, self.options);
         }
-        // `live` is the one shared reader for the whole session — the
-        // REPL's own prompt-reading uses it too, on later turns as much as
-        // this one. Anything pulled from it here and not immediately handed
-        // to `w` (and recorded) would strand unrecovered bytes in this
-        // call's own throwaway buffer, permanently lost to `live` once this
-        // one attempt's `ReplayReader` goes out of scope — so exactly one
-        // byte is requested at a time, regardless of `limit`, never more
-        // than what this call hands off in full. `live`'s own buffering
-        // (`Interpreter.evaluateInput`'s `peekGreedy`/`toss`, and the
-        // streaming file reader beneath it) already absorbs the real cost of
-        // this, one syscall at a time, not one byte at a time.
-        var scratch: std.Io.Writer.Allocating = .init(self.gpa);
-        defer scratch.deinit();
-        const n = try self.live.stream(&scratch.writer, limit.min(.limited(1)));
-        try w.writeAll(scratch.written());
-        self.newly_read.appendSlice(self.gpa, scratch.written()) catch return error.ReadFailed;
-        return n;
-    }
-};
+    };
+    var work: Work = .{ .gpa = gpa, .input = input, .out = out, .color = color, .environment = environment, .local_zone = local_zone, .options = options };
+    const thread = emerald.Scheduler.ReservedThread.spawn(stack_size, Work.execute, .{&work}) catch return error.StackUnavailable;
+    thread.join();
+    return work.result;
+}
 
-/// Runs the REPL until end of input. `in`/`out` are the one shared,
-/// long-lived stdin/stdout streams for the whole process — both the REPL's
-/// own prompt-reading and every entry's `input()` calls read from the same
-/// underlying stream, so there is exactly one of each for the session.
-/// `color` is the execution's resolved Console styling policy
-/// (rewrite-context 15.6): `main.zig` resolves it the same way it does for
-/// `run`/`test`, since the REPL has no `--color` flag of its own.
-/// `environment` is private host configuration for native libraries such as
-/// `Http`; Emerald code still has no environment-variable API. `local_zone`
-/// is the machine's time zone, resolved the same way too (15.8).
-pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer, color: bool, environment: std.process.Environ, local_zone: emerald.TimeZone.Local) !void {
-    var session: Session = .{};
-    defer session.deinit(gpa);
+fn newRuntime(gpa: std.mem.Allocator, syntax: *emerald.SessionSyntax, input: *std.Io.Reader, out: *std.Io.Writer, color: bool, environment: std.process.Environ, local_zone: emerald.TimeZone.Local, options: Options, reader: *emerald.Scheduler.InputReader) Error!*Interpreter.Session {
+    _ = syntax.append(gpa, "") catch return error.OutOfMemory;
+    const analysis = try gpa.create(emerald.Analysis);
+    errdefer gpa.destroy(analysis);
+    analysis.* = (try emerald.analyzeSession(gpa, syntax)).?;
+    errdefer analysis.deinit(gpa);
+    // Borrow during construction, then transfer ownership only on success.
+    const runtime = try Interpreter.Session.init(gpa, emerald.sessionAnalysis(analysis), out, input, options.io, &.{}, color, options.standard_input, environment, local_zone, Interpreter.StackLimit.here(stack_size));
+    runtime.current = emerald.ownedSessionAnalysis(analysis);
+    runtime.shareInput(reader);
+    return runtime;
+}
 
+fn loop(gpa: std.mem.Allocator, input: *std.Io.Reader, out: *std.Io.Writer, color: bool, environment: std.process.Environ, local_zone: emerald.TimeZone.Local, options: Options) Error!u8 {
+    const reader = if (options.standard_input)
+        emerald.Scheduler.InputReader.standard() catch return error.OutOfMemory
+    else
+        emerald.Scheduler.InputReader.fixed(gpa, input) catch return error.OutOfMemory;
+    defer reader.deinit();
+    var syntax: emerald.SessionSyntax = .{};
+    defer syntax.deinit(gpa);
+    var runtime: ?*Interpreter.Session = try newRuntime(gpa, &syntax, input, out, color, environment, local_zone, options, reader);
+    defer if (runtime) |session| session.deinit();
     try out.writeAll("Emerald REPL. Type `:help` for commands; Ctrl-D exits.\n");
-
     entries: while (true) {
         try out.writeAll("> ");
         try out.flush();
-
         var pending: std.ArrayList(u8) = .empty;
         defer pending.deinit(gpa);
-
         while (true) {
-            const line = (try readLine(gpa, in)) orelse break :entries;
-            defer gpa.free(line);
-
+            const line = try runtime.?.readLine();
+            defer gpa.free(line.bytes);
+            if (line.at_end and line.bytes.len == 0) break :entries;
+            const trimmed = std.mem.trim(u8, line.bytes, " \t\r");
             if (pending.items.len == 0) {
-                const command = std.mem.trim(u8, line, " \t\r");
-                if (std.mem.eql(u8, command, ":help")) {
+                if (std.mem.eql(u8, trimmed, ":quit")) break :entries;
+                if (std.mem.eql(u8, trimmed, ":help")) {
                     try out.writeAll(
                         \\Commands:
                         \\  :help   show these commands
                         \\  :reset  clear the session
                         \\  :quit   leave the REPL
                         \\
+                        \\Names cannot be redeclared; use :reset to start over.
+                        \\An entry that fails to check changes nothing. An entry that raises loses
+                        \\its declarations, but keeps completed assignments, output, and outside effects.
+                        \\
                     );
                     continue :entries;
                 }
-                if (std.mem.eql(u8, command, ":reset")) {
-                    session.reset(gpa);
+                if (std.mem.eql(u8, trimmed, ":reset")) {
+                    runtime.?.deinit();
+                    runtime = null;
+                    syntax.deinit(gpa);
+                    syntax = .{};
+                    runtime = try newRuntime(gpa, &syntax, input, out, color, environment, local_zone, options, reader);
                     try out.writeAll("Session cleared.\n");
                     continue :entries;
                 }
-                if (std.mem.eql(u8, command, ":quit")) break :entries;
             }
-
-            try pending.appendSlice(gpa, line);
+            try pending.appendSlice(gpa, std.mem.trimEnd(u8, line.bytes, "\r"));
             try pending.append(gpa, '\n');
-
-            if (std.mem.trim(u8, pending.items, " \t\r\n").len == 0) {
-                // Nothing but blank lines so far: start over rather than
-                // asking the lexer/parser to classify empty input.
-                pending.clearRetainingCapacity();
-                try out.writeAll("> ");
-                try out.flush();
-                continue;
-            }
-
+            if (std.mem.trim(u8, pending.items, " \t\r\n").len == 0) continue :entries;
             switch (try classifyEntry(gpa, pending.items)) {
                 .incomplete => {
                     try out.writeAll(". ");
@@ -186,58 +110,150 @@ pub fn run(gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer, colo
                 },
                 .invalid => |rendered| {
                     defer gpa.free(rendered);
+                    syntax.retainInvalid(gpa, pending.items) catch return error.OutOfMemory;
                     try out.writeAll(rendered);
-                    try out.flush();
-                    continue :entries;
+                    break;
                 },
-                .complete => |wrap| {
-                    if (wrap) {
-                        const trimmed = std.mem.trim(u8, pending.items, " \t\r\n");
-                        var wrapped: std.ArrayList(u8) = .empty;
-                        defer wrapped.deinit(gpa);
-                        try wrapped.appendSlice(gpa, "print(");
-                        try wrapped.appendSlice(gpa, trimmed);
-                        try wrapped.appendSlice(gpa, ")\n");
-                        try tryEntry(gpa, &session, wrapped.items, in, out, color, environment, local_zone);
-                    } else {
-                        try tryEntry(gpa, &session, pending.items, in, out, color, environment, local_zone);
-                    }
-                    continue :entries;
+                .complete => {},
+            }
+            const candidate = syntax.append(gpa, pending.items) catch return error.OutOfMemory;
+            const start = candidate.statement_start;
+            var renderer: Renderer = .{ .gpa = gpa, .syntax = &syntax, .out = out };
+            const analysis = try gpa.create(emerald.Analysis);
+            const checked = emerald.analyzeSessionWithOptions(gpa, &syntax, .{ .context = &renderer, .unresolved = Renderer.unresolved }) catch |err| {
+                gpa.destroy(analysis);
+                return err;
+            };
+            if (checked == null) {
+                gpa.destroy(analysis);
+                syntax.dropLast();
+                break;
+            }
+            analysis.* = checked.?;
+            var transferred = false;
+            defer if (!transferred) {
+                analysis.deinit(gpa);
+                gpa.destroy(analysis);
+            };
+            renderer.files = analysis.files;
+            try renderer.report(analysis.resolved.diagnostics);
+            try renderer.report(analysis.checked.diagnostics);
+            if (!analysis.ok()) {
+                syntax.dropLast();
+                break;
+            }
+            transferred = true; // install takes ownership before it can fail
+            try runtime.?.install(emerald.ownedSessionAnalysis(analysis), start);
+            switch (try runtime.?.runInteractiveEntry(analysis.programs[0].statements[start..], &analysis.checked.expression_types)) {
+                .complete => {},
+                .failed => |failure| {
+                    try renderer.report(&.{failure});
+                    syntax.dropLast();
+                },
+                .exited => |status| {
+                    try out.flush();
+                    return status;
                 },
             }
+            break;
         }
     }
-
     try out.writeAll("\n");
     try out.flush();
+    return 0;
 }
 
-/// Reads one line, without its terminator, the same way `Interpreter.input`
-/// does. Returns `null` only at a clean end of input with nothing left to
-/// give (matching `evaluateInput`'s `at_end and length == 0`).
-fn readLine(gpa: std.mem.Allocator, in: *std.Io.Reader) !?[]u8 {
-    var line: std.Io.Writer.Allocating = .init(gpa);
-    defer line.deinit();
-    const length = in.streamDelimiterEnding(&line.writer, '\n') catch |err| switch (err) {
-        error.WriteFailed => return error.OutOfMemory,
-        error.ReadFailed => return error.ReadFailed,
-    };
-    const at_end = in.bufferedLen() == 0;
-    if (!at_end) in.toss(1); // the newline
-    if (at_end and length == 0) return null;
-    const bytes = std.mem.trimEnd(u8, line.written(), "\r");
-    return try gpa.dupe(u8, bytes);
-}
+/// Remap each span independently: a trace or related failure can come from a
+/// different entry, including a failed entry whose code escaped. Prelude spans
+/// retain their own source. No diagnostic wording outside the REPL is changed.
+const Renderer = struct {
+    gpa: std.mem.Allocator,
+    syntax: *const emerald.SessionSyntax,
+    out: *std.Io.Writer,
+    files: []const emerald.Project.File = &.{},
+
+    fn unresolved(context: ?*anyopaque, files: []const emerald.Project.File, diagnostics: []const Diagnostic) emerald.Error!void {
+        const self: *Renderer = @ptrCast(@alignCast(context.?));
+        self.files = files;
+        try self.report(diagnostics);
+    }
+
+    fn entryIndex(self: *const Renderer, offset: u32) usize {
+        var low: usize = 0;
+        var high = self.syntax.entries.items.len;
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            if (self.syntax.entries.items[middle].text_start <= offset) low = middle + 1 else high = middle;
+        }
+        return low -| 1;
+    }
+
+    fn remap(self: *const Renderer, arena: std.mem.Allocator, original: Diagnostic) !Diagnostic {
+        var diagnostic = original;
+        if (diagnostic.file == 0) {
+            const index = self.entryIndex(diagnostic.span.start);
+            const offset: u32 = @intCast(self.syntax.entries.items[index].text_start);
+            diagnostic.file = @intCast(self.files.len + index);
+            diagnostic.span = .{ .start = diagnostic.span.start - offset, .end = diagnostic.span.end - offset };
+        }
+        const trace = try arena.dupe(Diagnostic.Frame, diagnostic.trace);
+        for (trace) |*frame| if (frame.file == 0) {
+            const index = self.entryIndex(frame.call_span.start);
+            const offset: u32 = @intCast(self.syntax.entries.items[index].text_start);
+            frame.file = @intCast(self.files.len + index);
+            frame.call_span = .{ .start = frame.call_span.start - offset, .end = frame.call_span.end - offset };
+        };
+        diagnostic.trace = trace;
+        if (diagnostic.related) |related| {
+            const copied = try arena.create(Diagnostic);
+            copied.* = try self.remap(arena, related.*);
+            diagnostic.related = copied;
+        }
+        if (self.topLevelDeclaration(original) and std.mem.endsWith(u8, diagnostic.message, "is already declared")) diagnostic.help = "Declare a different name, or type :reset to start over.";
+        return diagnostic;
+    }
+
+    fn topLevelDeclaration(self: *const Renderer, diagnostic: Diagnostic) bool {
+        if (diagnostic.file != 0) return false;
+        const parsed = self.syntax.entries.items[self.syntax.entries.items.len - 1].parsed.program;
+        for (parsed.using) |declaration| if (declaration.alias.len != 0 and declaration.alias_span.start == diagnostic.span.start) return true;
+        for (parsed.statements) |statement| {
+            const span = switch (statement.data) {
+                .declaration => |declaration| declaration.name_span,
+                .function_declaration => |declaration| declaration.name_span,
+                .struct_declaration => |declaration| declaration.name_span,
+                else => continue,
+            };
+            if (span.start == diagnostic.span.start) return true;
+        }
+        return false;
+    }
+
+    fn report(self: *const Renderer, diagnostics: []const Diagnostic) emerald.Error!void {
+        if (diagnostics.len == 0) return;
+        var arena_state: std.heap.ArenaAllocator = .init(self.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const sources = try arena.alloc(Source, self.files.len + self.syntax.entries.items.len);
+        for (self.files, 0..) |file, index| sources[index] = file.source;
+        for (self.syntax.entries.items, self.files.len..) |entry, index| sources[index] = try Source.init(arena, "repl", entry.source.text[entry.text_start..]);
+        const current = self.syntax.entries.items[self.syntax.entries.items.len - 1].text_start;
+        for (diagnostics) |original| {
+            // Whole-program checking can repeat an earlier warning; show it
+            // only when its entry is submitted, not on every later analysis.
+            if (original.severity == .warning and original.file == 0 and original.span.start < current) continue;
+            const diagnostic = try self.remap(arena, original);
+            try diagnostic.render(sources, self.out);
+        }
+    }
+};
 
 const Classification = union(enum) {
     /// Still missing a closing delimiter or quote; read another line.
     incomplete,
     /// A genuine syntax error, already rendered against the entry's own text.
     invalid: []const u8,
-    /// Ready to try. `true` means this is section 18.4's "a bare expression":
-    /// exactly one expression statement that is not already a call, whose
-    /// value should be displayed by wrapping it in `print(...)` before it is
-    /// tried against the session.
+    /// Ready to execute; true marks a single expression, calls included.
     complete: bool,
 };
 
@@ -246,7 +262,7 @@ const Classification = union(enum) {
 /// string) is a property of the entry's own token/tree shape, independent of
 /// anything declared earlier.
 fn classifyEntry(gpa: std.mem.Allocator, text: []const u8) !Classification {
-    var source = try Source.init(gpa, "<repl>", text);
+    var source = try Source.init(gpa, "repl", text);
     defer source.deinit(gpa);
 
     var tokenized = try Lexer.tokenizeFrom(gpa, &source, 0);
@@ -264,7 +280,7 @@ fn classifyEntry(gpa: std.mem.Allocator, text: []const u8) !Classification {
     }
 
     if (parsed.program.statements.len == 1 and parsed.program.statements[0].interactive_expression) {
-        return .{ .complete = parsed.program.statements[0].data.expression.data != .call };
+        return .{ .complete = true };
     }
     return .{ .complete = false };
 }
@@ -277,70 +293,6 @@ fn renderAgainst(gpa: std.mem.Allocator, source: *const Source, diagnostics: []c
         diagnostic.render(&sources, &out.writer) catch return error.OutOfMemory;
     }
     return out.toOwnedSlice();
-}
-
-/// Tries `entry_text` (already classified as complete, and print-wrapped if
-/// it was a bare expression) appended to the whole session, and commits it
-/// only on success.
-fn tryEntry(
-    gpa: std.mem.Allocator,
-    session: *Session,
-    entry_text: []const u8,
-    live_in: *std.Io.Reader,
-    out: *std.Io.Writer,
-    color: bool,
-    environment: std.process.Environ,
-    local_zone: emerald.TimeZone.Local,
-) !void {
-    var scratch_text: std.ArrayList(u8) = .empty;
-    defer scratch_text.deinit(gpa);
-    try scratch_text.appendSlice(gpa, session.text.items);
-    try scratch_text.appendSlice(gpa, entry_text);
-
-    var source = try Source.init(gpa, "<repl>", scratch_text.items);
-    defer source.deinit(gpa);
-
-    var captured: std.Io.Writer.Allocating = .init(gpa);
-    defer captured.deinit();
-
-    var newly_read: std.ArrayList(u8) = .empty;
-    defer newly_read.deinit(gpa);
-    var reader_buffer: [256]u8 = undefined;
-    var replay = ReplayReader.init(session.recorded_input.items, live_in, &newly_read, gpa, &reader_buffer);
-
-    var report = try emerald.run(gpa, &source, .{ .out = &captured.writer, .in = &replay.interface, .color = color, .environment = environment, .local_zone = local_zone });
-    defer report.deinit();
-
-    const sources = [_]Source{source};
-
-    if (report.diagnostics.len != 0) {
-        for (report.diagnostics) |diagnostic| {
-            diagnostic.render(&sources, out) catch |err| return mapWriterError(err);
-        }
-        try out.flush();
-        return; // `session` is untouched.
-    }
-
-    const new_output = captured.written()[session.output_len..];
-    out.writeAll(new_output) catch |err| return mapWriterError(err);
-
-    if (report.failure) |failure| {
-        failure.render(&sources, out) catch |err| return mapWriterError(err);
-        try out.flush();
-        return; // Discarded deliberately — see this file's header comment.
-    }
-
-    session.text.clearRetainingCapacity();
-    try session.text.appendSlice(gpa, scratch_text.items);
-    session.output_len = captured.written().len;
-    try session.recorded_input.appendSlice(gpa, newly_read.items);
-    try out.flush();
-}
-
-fn mapWriterError(err: std.Io.Writer.Error) error{WriteFailed} {
-    return switch (err) {
-        error.WriteFailed => error.WriteFailed,
-    };
 }
 
 const testing = std.testing;
@@ -357,10 +309,10 @@ fn expectIncomplete(text: []const u8) !void {
     }
 }
 
-fn expectComplete(text: []const u8, wrap: bool) !void {
+fn expectComplete(text: []const u8, expression: bool) !void {
     const gpa = testing.allocator;
     switch (try classifyEntry(gpa, text)) {
-        .complete => |got_wrap| try testing.expectEqual(wrap, got_wrap),
+        .complete => |got_expression| try testing.expectEqual(expression, got_expression),
         .incomplete => return error.TestUnexpectedResult,
         .invalid => |rendered| {
             defer gpa.free(rendered);
@@ -405,12 +357,48 @@ test "an ordinary syntax error is not mistaken for an incomplete entry" {
     try expectInvalid("var = 1\n");
 }
 
-test "a bare non-call expression is complete and marked to be wrapped in print" {
+test "a bare expression is complete and marked for echo" {
     try expectComplete("1 + 2\n", true);
     try expectComplete("x.count\n", true);
 }
 
-test "a call statement is complete and left exactly as written" {
-    try expectComplete("print(1)\n", false);
+test "calls are expressions too; declarations are not" {
+    try expectComplete("print(1)\n", true);
     try expectComplete("var x = 1\n", false);
+}
+
+test "a file append executes once and its effect survives session teardown" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "log.txt", .data = "" });
+    const relative = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/log.txt", .{tmp.sub_path});
+    defer gpa.free(relative);
+    const absolute = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, relative, gpa);
+    defer gpa.free(absolute);
+    // JSON's ASCII escape spelling also safely quotes Windows paths for
+    // Emerald. No host path is spliced into source without escaping.
+    const literal = try std.json.Stringify.valueAlloc(gpa, absolute, .{});
+    defer gpa.free(literal);
+    const transcript = try std.fmt.allocPrint(gpa, "File.append({s}, \"x\")\nprint(1)\nprint(2)\n:quit\n", .{literal});
+    defer gpa.free(transcript);
+    for (0..50) |_| {
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "log.txt", .data = "" });
+        var input: std.Io.Reader = .fixed(transcript);
+        var output: std.Io.Writer.Allocating = .init(gpa);
+        defer output.deinit();
+        try testing.expectEqual(@as(u8, 0), try run(gpa, &input, &output.writer, false, .empty, .utc, .{}));
+        const contents = try tmp.dir.readFileAlloc(testing.io, "log.txt", gpa, .unlimited);
+        defer gpa.free(contents);
+        try testing.expectEqualStrings("x", contents);
+        try testing.expectEqualStrings("Emerald REPL. Type `:help` for commands; Ctrl-D exits.\n> > 1\n> 2\n> \n", output.written());
+    }
+}
+
+test "a program's exit status and preceding output survive the REPL" {
+    var input: std.Io.Reader = .fixed("if true {\n    print(\"bye\")\n    exit(7)\n}\n");
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    try testing.expectEqual(@as(u8, 7), try run(testing.allocator, &input, &output.writer, false, .empty, .utc, .{}));
+    try testing.expectEqualStrings("Emerald REPL. Type `:help` for commands; Ctrl-D exits.\n> . . . bye\n", output.written());
 }

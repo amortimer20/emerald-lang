@@ -4328,3 +4328,95 @@ executable documentation examples and 134 linked conformance files, changed-Zig
 formatting, `git diff --check`, and Windows x86_64/macOS aarch64 cross-builds with
 prefixes outside `zig-out`. The corrective commit is pushed separately; branch
 CI is checked before reporting completion to the user.
+
+## 2026-10-01 — REPL slice 3 timing conflict (partial work, not committed)
+
+The user approved slice 2 at `94705cb` and requested slice 3, adding two supplied
+review probes and replacing the linear origin scan with binary search. Both
+probes are now testing-allocator regressions: the escaped failed-entry lambda
+prints `20`, and failed-entry code returning through a later lambda and struct
+method prints `1070 20`. The origin lookup uses an upper-bound search; its new
+test covers 1,000 ordered entries, their start/end boundaries, gaps, an empty
+index, and another file.
+
+Before replacing the CLI loop, a temporary ReleaseSafe test measured the
+persistent-session path at entries 5 and 500. Each entry declares a new
+`const job_N = { => 1 }`; page allocation and the monotonic clock avoid timing
+the testing allocator's accounting. The timer includes append, analysis,
+installation, and execution, but not constructing the initial session. Only
+the new statement executes. The first build's probe took 5.910/36.881 ms.
+Three further runs of the compiled unit-test artifact, each exiting 0,
+measured totals of 5.858/22.071, 4.153/23.143, and 4.196/21.417 ms.
+Median entry-5/entry-500 totals: 4.196/22.071 ms (5.26x). Execution alone took
+0.004–0.007 ms in the confirming runs. Both review regressions passed on all
+three runs. The temporary printing probe was removed after measurement.
+
+This conflicts with the plan's constant total-entry latency requirement, not
+with its no-replay behavior: checking the full kept program necessarily costs
+more as statements accumulate. Binary-searching origins cannot remove that
+analysis cost, and an incremental checker is explicitly outside the milestone.
+The executor stopped for approval rather than silently changing the timing
+criterion or implementing an incremental checker. The plan and live handoff
+record the blocker. No new command loop/transcripts, commit, push, or slice 3
+CI claim has been made. Toolchain verification passed on pinned Zig 0.16.0;
+the standalone origin-lookup boundary test passed in Debug with the testing
+allocator (1/1), as did changed-Zig formatting and `git diff --check`. The full ReleaseSafe
+build/test gate was interrupted (exit 130) after the timing measurements
+established the blocker; the full final-tree validation gate is not complete.
+
+## 2026-10-01 — REPL slice 3: the persistent command loop
+
+The user approved correcting the conflicting timing criterion: execution stays
+flat, full-session analysis is measured rather than asserted in CI, and entry
+500 must analyze in under 100 ms on this machine. Decision 1 still requires
+full-session rechecking; no incremental checker or cached prelude analysis was
+introduced. Slice 4 remains unstarted, pending the user's slice 3 review.
+
+`Repl.zig` now keeps one interpreter and syntax store instead of replaying the
+program and its recorded input. Only newly submitted statements execute.
+Expressions echo through their original checked AST nodes; strings are quoted,
+`Nothing`-typed calls are silent, and optional results may echo `nothing`.
+`:reset` replaces the interpreter and syntax without replacing the shared
+scheduler-owned reader. Both prompt input and program input, including inside
+`Tasks.run`, use that reader. The process-owned CLI reader is not joined on exit;
+finite testing readers are joined/freed under `std.testing.allocator`.
+
+Diagnostics and trace frames map to their own entry's lines, even across calls
+into failed-entry code. Only top-level redeclarations get the reset hint; prior
+user warnings are not repeated on every recheck. Real-loop testing exposed two
+slice 1/2 omissions: open type bodies lacked the interactive incomplete flag,
+and session programs omitted `using` aliases. Both now work without changing
+file diagnostic wording. Rejected syntax keeps its text and unique offsets,
+but adds no statements or aliases. The two supplied review probes and the
+binary origin-index boundary regression are included.
+
+Nine hand-read transcript expectations cover echo, persistence, errors/reset,
+declaration rollback, escaped code, multiline forms, aliases, EOF, and shared
+input. Every conformance gate checks each transcript 50 times consecutively.
+The actual built CLI also matched all 450 process runs, with no retries. A
+separate testing-allocator regression repeats 50 file-append sessions and
+checks the file after interpreter teardown, proving the effect occurs once.
+
+The execution assertion alternates 31 paired samples at entries 5 and 500,
+excluding analysis. It passed in both Debug and ReleaseSafe. The standalone
+`repl-benchmark` profiles nine warmed ReleaseSafe samples at each prefix; final
+median analysis/resolve/check times in milliseconds were:
+
+| Entry | Analysis | Resolve | Check |
+| --- | --- | --- | --- |
+| 5 | 2.347 | 1.128 | 0.770 |
+| 100 | 3.478 | 1.162 | 1.836 |
+| 500 | 13.240 | 1.568 | 11.107 |
+| 1000 | 34.156 | 2.064 | 31.518 |
+
+Entry 500 is below the approved budget. Checking accounts for about 84% of its
+analysis; resolution grows much less. The prelude's compiled AST is reused,
+but its names, type/trait metadata, and signatures are rebuilt on each entry.
+Bodies reached by kept user code are checked again; unreached bodies stay lazy.
+
+Final validation passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe
+test suites (546 tests each, exit 0), native build, 24 executable documentation
+examples and 134 linked conformance files, changed-Zig formatting,
+`git diff --check`, and Windows x86_64/macOS aarch64 cross-builds using prefixes
+outside `zig-out`. Slice 3 is committed/pushed separately; its branch CI must
+be green before it is reported complete. No merge or tag, and no slice 4 work.

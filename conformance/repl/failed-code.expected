@@ -1,0 +1,12 @@
+Emerald REPL. Type `:help` for commands; Ctrl-D exits.
+> > . . . repl:3:5: RuntimeError: boom
+      raise RuntimeError("boom")
+      ^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.
+> 20
+> > . . . . . . repl:6:5: RuntimeError: boom
+      raise RuntimeError("boom")
+      ^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.
+> . . . > > 1070 20
+> 

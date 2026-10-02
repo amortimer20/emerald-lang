@@ -1,0 +1,21 @@
+var action = { value: Int => value }
+if true {
+    action = { value: Int => value * 10 }
+    raise RuntimeError("boom")
+}
+action(2)
+var apply = { f: func(Int): Int, value: Int => f(value) }
+if true {
+    apply = { f: func(Int): Int, value: Int =>
+        const inner = { x: Int => f(x) + 1 }
+        return inner(value) * 10
+    }
+    raise RuntimeError("boom")
+}
+struct Pair {
+    const a: Int
+    func sum(): Int { return self.a + 100 }
+}
+const twice = { n: Int => Pair(n * 2).sum() }
+print(apply(twice, 3), apply({ n: Int => n }, 1))
+:quit

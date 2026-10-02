@@ -873,6 +873,9 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         self.skipSeparators();
     }
     if (self.check(.eof)) {
+        // Type bodies do not use the expression nesting counter. Their
+        // opening brace still makes an interactive entry incomplete at EOF.
+        if (self.interactive_entry) self.incomplete_at_end = true;
         return self.reportFmt(
             self.peek().span,
             "this {s} body is missing its closing `}}`",
@@ -4423,6 +4426,10 @@ test "only an open interactive construct is incomplete at end" {
         "const xs = [\n",
         "const f = { =>\n",
         "case 1 {\n",
+        "struct Pair {\n",
+        "class Pair {\n",
+        "trait Named {\n",
+        "enum Color {\n",
     };
     for (incomplete_entries) |entry_text| {
         var source = try Source.init(testing.allocator, "test.em", entry_text);

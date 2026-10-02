@@ -1,0 +1,8 @@
+using Tone = Console.Color
+Tone.red == Console.Color.red
+const chosen = Tone.blue
+chosen == Tone.blue
+Console.style("text", foreground: chosen)
+using Missing = DoesNotExist
+chosen == Tone.blue
+:quit

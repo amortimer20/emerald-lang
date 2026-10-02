@@ -174,8 +174,9 @@ finish before optimizing are done (dates and times, regular expressions, Console
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
 journal records each milestone, its review, and what was measured; each plan's "Settled while
-building" notes record its decisions. The current implementation work is REPL slice 2 on
-`codex/repl`; slice 3 rewires the command loop once this persistent interpreter is reviewed.
+building" notes record its decisions. REPL slice 3 is implemented on `codex/repl`: the command
+loop now uses the persistent interpreter. The next step is the user's slice 3 review;
+slice 4 (documentation and integration) must wait for approval.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
@@ -227,9 +228,11 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **The REPL**: its current command loop still replays the whole session on every entry, so side
-  effects (a file append, an `Http` request, `Random`, the clock) repeat. The accepted
-  [`repl-design-plan.md`](repl-design-plan.md)'s first two slices are complete on `codex/repl`:
+- **The REPL**: the accepted [`repl-design-plan.md`](repl-design-plan.md)'s first three slices
+  are implemented on `codex/repl`. The command loop no longer replays earlier entries:
+  completed assignments, output, and outside effects happen once. The greeting, prompts,
+  multiline entry, `:help`, `:reset`, and `:quit` remain. Calls now echo their results,
+  strings are quoted, and `Nothing`-typed statements have no extra echo. In the underlying session,
   tail parsing is structural, and `Interpreter.Session` now preserves one heap/module scope
   while replacing checker facts for each accepted analysis. `SessionSyntax` parses each entry
   once and keeps all submitted source text, including dropped entries, so offsets are never
@@ -239,10 +242,23 @@ Open work:
   lazily checked prelude helpers use their caller's analysis. Testing-allocator regressions
   cover escaped lambdas/nested functions, kept-function calls, span collisions, and an escaped
   trait-backed instance/captured method constructing its old type after its name is reused.
-  The journal records both slice 2 corrections. Local validation passed with pinned Zig 0.16.0
-  and `-j1`: 540 tests in each of Debug/ReleaseSafe, native build, documentation examples,
-  formatting/whitespace, and Windows/macOS cross-builds. Slice 2 awaits review; do not begin
-  slice 3 before approval.
+  The journal records both slice 2 corrections; slice 2 (`94705cb`) is approved. Slice 3 adds
+  the two review probes (`20` and `1070 20`), binary origin lookup, entry-relative diagnostics,
+  and one scheduler-owned input reader shared with program input and retained across reset.
+  Interactive type bodies and file-local `using` aliases are covered too. Nine transcript
+  cases run 50 times each in every conformance gate; another testing-allocator test checks
+  a file append after teardown in 50 sessions. All nine also passed 50 runs each through
+  the actual CLI. Golden files were read by hand.
+  The user approved correcting the timing criterion: execution must stay flat; full-session
+  analysis is measured, not asserted in CI, with a local entry-500 budget of 100 ms.
+  The execution assertion passed in Debug and ReleaseSafe; ReleaseSafe profiling measured
+  entry-500 analysis at 13.240 ms, dominated by checking. The plan records all four prefix
+  measurements and the repeated prelude metadata work; no incremental checker was added.
+  Final local validation passed with pinned Zig 0.16.0 and `-j1`: 546 tests in each of
+  Debug/ReleaseSafe, native build, 24 executable documentation examples and 134 linked
+  conformance files, formatting/whitespace, and Windows x86_64/macOS aarch64 cross-builds.
+  Slice 3's commit is pushed on this branch; its CI result is checked before reporting completion.
+  Stop for review afterward, before slice 4.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
 - A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
 

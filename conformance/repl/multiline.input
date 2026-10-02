@@ -1,0 +1,29 @@
+if true {
+    print("block")
+}
+case 1 {
+    when 1 { print("case") }
+}
+const twice = { n: Int =>
+    return n * 2
+}
+twice(3)
+print(
+    "call")
+const items = [
+    1,
+    2]
+items
+const number = (
+    1 + 2)
+number
+#[
+    block comment
+]#
+print("""
+    multiline string
+    """)
+print("oops
+print('oops
+print("still running")
+:quit

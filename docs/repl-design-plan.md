@@ -88,8 +88,8 @@ file. `"Hello, Ada!"` is quoted because of decision 4; today the REPL echoes a s
 ## Principles
 
 1. **Every entry runs exactly once.** Nothing entered earlier runs again, so side effects happen
-   once, `Random` and the clock behave as in a program, and an entry costs the same late in a
-   session as early.
+   once, `Random` and the clock behave as in a program, and executing an entry costs the same
+   late in a session as early. Full-session analysis grows with the kept program.
 2. **The same language as a file.** A session checks as one program would: the same binding
    rules, types, and diagnostics. The REPL adds no rules of its own beyond what an interactive
    session forces (decision 2).
@@ -302,8 +302,98 @@ commits.
   across entries, a multiline function, each unfinished-input form, a check error and a runtime
   error (and what each keeps), redeclaration, `:reset`, `Tasks.run` in an entry, echoes of calls,
   properties, and nothing-returning calls, and an error position in a late entry.
-- A timing check: entry 500 of a session is no slower than entry 5, within noise.
-- Settled while building: (record here)
+- Execution timing: assert that entry 500's execution time is within noise of entry 5's.
+  Analysis is excluded from this assertion; it is measured, not asserted in CI.
+- In ReleaseSafe, record median analysis times at entries 5, 100, 500, and 1000, including
+  resolve/check breakdown and whether the prelude is redone. Entry 500 must be under 100 ms
+  on the development machine; otherwise stop and report it.
+- Settled while building:
+  - The two review probes supplied against `94705cb` are added as
+    testing-allocator regressions: an escaped failed-entry lambda prints `20`,
+    and failed-entry code calls back into a later lambda/struct method and
+    prints `1070 20`.
+  - `Session.originOf` now uses an upper-bound binary search over the
+    append-only origin offsets. A boundary test covers empty indexes, gaps
+    from entries rejected before installation, exclusive ends, and other files.
+  - Before wiring the new command loop, a temporary ReleaseSafe timing probe
+    exercised the persistent-session path with 500 entries, each declaring
+    `const job_N = { => 1 }`. It timed append/analysis/install separately from
+    running only the new statement, using the page allocator and monotonic
+    clock on Linux x86_64, Zig 0.16.0. Three confirming runs had total entry-5
+    times of 5.858, 4.153, and 4.196 ms; entry-500 times were 22.071, 23.143,
+    and 21.417 ms. Medians: **4.196 ms versus 22.071 ms (5.26x)**.
+    Execution alone was 0.004–0.007 ms; analysis/install dominated the growth.
+    The initial build's run measured 5.910 versus 36.881 ms. The temporary
+    printing probe was removed after measurement, not added to normal CI.
+  - **Plan error corrected with user approval:** full-session rechecking (decision 1)
+    is not constant-cost as statements accumulate. A binary origin lookup
+    cannot make entry 500's total latency equal entry 5's, while an incremental
+    checker is explicitly out of scope. The user approved replacing the total
+    latency assertion with flat execution, measured analysis, and a local
+    100 ms analysis budget at entry 500. This corrects the original criterion
+    rather than changing decision 1 or introducing an incremental checker.
+  - The command loop owns a persistent interpreter and syntax store on one
+    reserved stack, keeping normal recursion limits. Each new analysis is
+    installed before only its new statements run. Initial construction borrows
+    an analysis and transfers ownership on success; later installation owns it
+    immediately, including on allocation failure.
+  - Echo uses the original expression and its checked type, never a generated
+    `print` call. `Nothing`-typed calls execute without an extra echo; optional
+    results that are `nothing` do echo `nothing`. Strings use quoted value
+    display; other values use ordinary `print`/`Textual` display.
+  - One scheduler-owned input reader serves both prompts and program input.
+    The command loop owns it across `:reset`, while each interpreter borrows it.
+    CLI input uses the process-owned reader; transcript tests use a finite
+    fixed reader that is joined and freed under the testing allocator.
+  - Diagnostic spans, trace frames, and related failures are each mapped to
+    their originating entry, including calls from escaped failed-entry code.
+    A resolver-failure callback renders diagnostics before its temporary arena
+    is freed. Earlier user warnings are not printed on every recheck. Only
+    top-level redeclarations receive the REPL reset hint.
+  - Two omissions surfaced while wiring the real command loop: type bodies
+    did not set the interactive incomplete flag, and `SessionSyntax` did not
+    keep `Program.using`. Open struct/class/trait/enum bodies now request
+    continuation without changing file diagnostics. File-local `using` nodes
+    are kept alongside statements and dropped together after a failed entry.
+    Lexical/parse failures also keep their text/offsets, without contributing
+    statements or aliases. Completion detection parses temporary drafts; only
+    the final stored trees are used for all later analyses and execution.
+  - `conformance/repl/` uses `.input`/`.expected` transcripts, checked 50 times
+    consecutively on every platform gate. Goldens were read by hand. Prompt
+    spaces are intentional, so only these expectations opt out of Git's
+    trailing-space warning. A testing-allocator file test repeats 50 sessions
+    and checks the actual append after teardown; output alone cannot prove it.
+  - The CI execution assertion alternates 31 paired samples at entries 5/500,
+    with three executions of a 512-iteration callable-creation loop per sample.
+    It excludes analysis and uses medians with five median absolute deviations
+    plus a 100 microsecond scheduling/clock floor per batch, chosen before
+    validation. Both prefixes have the real origin index and runtime bindings;
+    setup builds their checked programs once rather than timing 500 analyses.
+  - Analysis profiling is reproducible with
+    `zig build repl-benchmark -j1 -Doptimize=ReleaseSafe`. It measures nine
+    warmed samples at each prefix, not a CI timing assertion. Each entry is
+    `const job_N = { => 1 }`; total analysis includes setup and reserved-thread
+    overhead, but not candidate parsing, installation, or old-analysis release.
+    The final ReleaseSafe run on Linux x86_64, Zig 0.16.0, measured:
+
+    | Entry | Analysis median (ms) | Resolve (ms) | Check (ms) |
+    | --- | --- | --- | --- |
+    | 5 | 2.347 | 1.128 | 0.770 |
+    | 100 | 3.478 | 1.162 | 1.836 |
+    | 500 | 13.240 | 1.568 | 11.107 |
+    | 1000 | 34.156 | 2.064 | 31.518 |
+
+    Entry 500 is below the approved 100 ms local budget. Checking accounts for
+    roughly 84% there; resolving grows much less. The prelude AST is compiled
+    once and is never lexed/parsed per entry, but each fresh resolver/checker
+    rebuilds its names, type/trait metadata, and signatures. Prelude bodies
+    reached by kept user code are checked again; unreached bodies remain lazy.
+    No incremental checker or cached prelude analysis was introduced.
+  - Final local validation passed with pinned Zig 0.16.0 and `-j1`: Debug and
+    ReleaseSafe suites (546 tests each), native build, documentation examples,
+    changed-Zig formatting, whitespace checks, and Windows x86_64/macOS
+    aarch64 cross-builds. All nine transcripts also matched 50/50 runs each
+    through the built CLI (450 processes, no retries).
 
 ### Slice 4: Documentation and integration
 

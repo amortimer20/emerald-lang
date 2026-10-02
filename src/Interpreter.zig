@@ -218,6 +218,7 @@ root_task: *Scheduler.TaskState(TaskData),
 scheduler: *Scheduler.Runtime,
 input_gate: Scheduler.Runtime.Gate = .{},
 input_reader: ?*Scheduler.InputReader = null,
+owns_input_reader: bool = true,
 callback_guard: ?*CallbackGuard = null,
 standard_input: bool = false,
 task_records: std.AutoHashMapUnmanaged(i64, *TaskRecord) = .empty,
@@ -623,20 +624,60 @@ pub const Session = struct {
 
     fn originOf(self: *Session, file: u32, span: Source.Span) ?usize {
         if (file != self.entry) return null;
-        for (self.origins.items) |entry| {
-            if (span.start >= entry.entry and span.start < entry.end) return entry.entry;
+        // Entry offsets are append-only, including failed entries. Find the
+        // last origin starting at or before this span instead of scanning the
+        // whole session every time a callable is created.
+        var low: usize = 0;
+        var high = self.origins.items.len;
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            if (self.origins.items[middle].entry <= span.start) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
         }
-        return null;
+        if (low == 0) return null;
+        const origin = self.origins.items[low - 1];
+        return if (span.start < origin.end) origin.entry else null;
     }
 
     /// Runs only this entry after `install`.  A raised entry loses all of its
     /// declarations, but assignments and outside effects before the raise are
     /// intentionally not reversible (18.4's interactive rule).
     pub fn runEntry(self: *Session, statements: []const Ast.Statement) RunError!SessionResult {
+        return self.runEntryWithEcho(statements, null);
+    }
+
+    pub fn runInteractiveEntry(self: *Session, statements: []const Ast.Statement, types: *const Checker.ExpressionTypes) RunError!SessionResult {
+        return self.runEntryWithEcho(statements, types);
+    }
+
+    /// The REPL owns this reader across :reset. Both prompt and program reads
+    /// wait through the same scheduler service; no prefetched line is lost.
+    pub fn shareInput(self: *Session, reader: *Scheduler.InputReader) void {
+        std.debug.assert(self.interpreter.input_reader == null);
+        self.interpreter.input_reader = reader;
+        self.interpreter.owns_input_reader = false;
+    }
+
+    pub fn readLine(self: *Session) (RunError || error{ReadFailed})!struct { bytes: []u8, at_end: bool } {
+        self.interpreter.activateTask(&self.root_task);
+        const line = self.interpreter.inputLine(.{ .start = 0, .end = 0 }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.WriteFailed => return error.WriteFailed,
+            error.ReadFailed => return error.ReadFailed,
+            else => unreachable,
+        };
+        defer self.interpreter.gpa.free(line.bytes);
+        return .{ .bytes = try self.host_allocator.dupe(u8, line.bytes), .at_end = line.at_end };
+    }
+
+    fn runEntryWithEcho(self: *Session, statements: []const Ast.Statement, types: ?*const Checker.ExpressionTypes) RunError!SessionResult {
         const interpreter = &self.interpreter;
         interpreter.task = &self.root_task;
         interpreter.task.state.file = self.entry;
-        interpreter.executeAll(statements) catch |err| switch (err) {
+        interpreter.executeInteractive(statements, types) catch |err| switch (err) {
             error.Raised, error.StepLimit => {
                 const failure = interpreter.task.state.failure.?;
                 const declarations = try Declarations.read(interpreter).snapshot(interpreter.arena);
@@ -743,7 +784,7 @@ pub const Session = struct {
         interpreter.deinitFileWriters();
         interpreter.deinitFileHandles();
         interpreter.literal_texts.deinit(interpreter.gpa);
-        if (interpreter.input_reader) |reader| reader.deinit();
+        if (interpreter.owns_input_reader) if (interpreter.input_reader) |reader| reader.deinit();
         interpreter.deinitTasks();
         interpreter.deinitChannels();
         interpreter.heap.deinit();
@@ -1133,6 +1174,25 @@ fn guardStep(self: *Interpreter, span: Source.Span) Error!void {
 fn executeAll(self: *Interpreter, statements: []const Ast.Statement) Error!void {
     if (self.task.state.scopes.items.len > 0) try self.hoistNestedFunctions(statements);
     for (statements) |statement| try self.execute(statement);
+}
+
+fn executeInteractive(self: *Interpreter, statements: []const Ast.Statement, types: ?*const Checker.ExpressionTypes) Error!void {
+    if (types == null) return self.executeAll(statements);
+    for (statements) |statement| {
+        if (!statement.interactive_expression or types.?.get(statement.data.expression).?.type.kind == .nothing) {
+            try self.execute(statement);
+            continue;
+        }
+        try self.guardStack(statement.span);
+        try self.guardStep(statement.span);
+        const value = try self.evaluate(statement.data.expression);
+        defer self.heap.release(value);
+        var line: std.Io.Writer.Allocating = .init(self.gpa);
+        defer line.deinit();
+        try value.writeThrough(&line.writer, value.kind() == .string, TextualDisplay{ .interpreter = self, .span = statement.span });
+        try line.writer.writeByte('\n');
+        try self.out.writeAll(line.written());
+    }
 }
 
 /// Section 7.1's nested functions, each a closure over the scopes in force as
@@ -7325,7 +7385,7 @@ const InputLine = struct { bytes: []u8, at_end: bool };
 
 fn inputLine(self: *Interpreter, span: Source.Span) (Error || error{ReadFailed})!InputLine {
     const fixed_reader: std.Io.Reader = .fixed("");
-    const scheduled = self.standard_input or (self.task_records.count() != 0 and self.in.vtable == fixed_reader.vtable);
+    const scheduled = self.input_reader != null or self.standard_input or (self.task_records.count() != 0 and self.in.vtable == fixed_reader.vtable);
     if (!scheduled) {
         self.acquireResource(&self.input_gate);
         defer self.releaseResource(&self.input_gate);
@@ -10774,6 +10834,30 @@ fn toFloat(value: Value) f64 {
         .range => unreachable,
         .nothing, .bool, .string, .bytes, .list, .tuple, .map, .closure, .struct_value => unreachable,
     };
+}
+
+test "session origin lookup finds ordered entries and excludes gaps and other files" {
+    const testing = std.testing;
+    // This lookup only needs the entry file and offset index, not a running
+    // interpreter. Include gaps for entries rejected before installation.
+    var session: Session = undefined;
+    session.entry = 0;
+    session.origins = .empty;
+    defer session.origins.deinit(testing.allocator);
+    try testing.expectEqual(@as(?usize, null), session.originOf(0, .{ .start = 0, .end = 0 }));
+    for (0..1000) |index| {
+        const start = 10 + index * 20;
+        try session.origins.append(testing.allocator, .{ .entry = start, .end = start + 10 });
+    }
+    try testing.expectEqual(@as(?usize, null), session.originOf(0, .{ .start = 9, .end = 10 }));
+    for (0..1000) |index| {
+        const start: u32 = @intCast(10 + index * 20);
+        try testing.expectEqual(@as(?usize, start), session.originOf(0, .{ .start = start, .end = start + 1 }));
+        try testing.expectEqual(@as(?usize, start), session.originOf(0, .{ .start = start + 9, .end = start + 10 }));
+        try testing.expectEqual(@as(?usize, null), session.originOf(0, .{ .start = start + 10, .end = start + 11 }));
+        try testing.expectEqual(@as(?usize, null), session.originOf(1, .{ .start = start, .end = start + 1 }));
+    }
+    try testing.expectEqual(@as(?usize, null), session.originOf(0, .{ .start = 30000, .end = 30001 }));
 }
 
 test "a NaN nested in a struct is detected for key rejection" {

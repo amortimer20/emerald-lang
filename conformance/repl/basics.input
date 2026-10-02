@@ -1,0 +1,26 @@
+const name = "Ada"
+var count = 0
+count += 1
+count
+"Ada".upper()
+2.0.square_root()
+[1, 2].count
+print("hi")
+var items = [1]
+items.append(2)
+items
+func greet(who: String): String {
+    return "Hello, #{who}!"
+}
+greet(name)
+Json.encode([1, 2])
+Program.arguments
+var generator = Random(1)
+var control = Random(1)
+const first = generator.next(1..6)
+first == control.next(1..6)
+print("later")
+generator.next(1..6) == control.next(1..6)
+const today = Date.today()
+today == today
+:quit
