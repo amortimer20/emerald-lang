@@ -201,6 +201,8 @@ pub const Environment = struct {
 /// named function sees only the module.
 pub const Closure = struct {
     references: u32 = 1,
+    /// REPL entry owning the code, not the entry that captures or calls it.
+    session_entry: ?usize = null,
     function: Function,
     /// The environments visible where it was written, outermost first. Held,
     /// so they outlive the blocks that created them.

@@ -1,0 +1,18 @@
+Emerald REPL. Type `:help` for commands; Ctrl-D exits.
+> . . block
+> . . case
+> . . > 6
+> . call
+> . . > [1, 2]
+> . > 3
+> . . > . . multiline string
+> repl:1:7: this string is never closed
+  print("oops
+        ^
+Close it with `"` before the line ends.
+> repl:1:7: this string is never closed
+  print('oops
+        ^
+Close it with `'` before the line ends.
+> still running
+> 

@@ -562,7 +562,7 @@ fn executeRepl(gpa: std.mem.Allocator, io: std.Io, environment: std.process.Envi
     defer zone_arena.deinit();
     const local_zone = resolveLocalZone(zone_arena.allocator(), io, environ_map);
 
-    Repl.run(gpa, &in.interface, &out.interface, color, environment, local_zone) catch |err| switch (err) {
+    const status = Repl.run(gpa, &in.interface, &out.interface, color, environment, local_zone, .{ .io = io, .standard_input = true }) catch |err| switch (err) {
         error.OutOfMemory => return internalFailure(io, error.OutOfMemory),
         error.WriteFailed => return internalFailure(io, error.WriteFailed),
         error.ReadFailed => {
@@ -571,7 +571,7 @@ fn executeRepl(gpa: std.mem.Allocator, io: std.Io, environment: std.process.Envi
         },
         error.StackUnavailable => return internalFailure(io, error.StackUnavailable),
     };
-    return @intFromEnum(ExitCode.success);
+    return status;
 }
 
 /// `emerald lsp` (18.5). Owns stdin/stdout for the JSON-RPC protocol itself,

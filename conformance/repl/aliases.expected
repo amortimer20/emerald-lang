@@ -1,0 +1,10 @@
+Emerald REPL. Type `:help` for commands; Ctrl-D exits.
+> > true
+> > true
+> "text"
+> repl:1:17: there is no `DoesNotExist` to use
+  using Missing = DoesNotExist
+                  ^^^^^^^^^^^^
+A namespace comes from a directory: `shapes/` makes `Shapes`. Check the spelling, and that the directory holds a `.em` file.
+> true
+> 

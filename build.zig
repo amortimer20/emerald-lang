@@ -102,7 +102,20 @@ pub fn build(b: *std.Build) void {
         .name = "emerald-repl",
         .root_module = repl_module,
     });
+    conformance_module.addImport("repl", repl_module);
     const run_repl_tests = b.addRunArtifact(repl_tests);
+
+    const repl_benchmark = b.addExecutable(.{
+        .name = "repl-benchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/repl-benchmark.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "emerald", .module = emerald_module }},
+        }),
+    });
+    const run_repl_benchmark = b.addRunArtifact(repl_benchmark);
+    b.step("repl-benchmark", "Measure persistent REPL analysis costs (use ReleaseSafe)").dependOn(&run_repl_benchmark.step);
 
     // `Lsp.zig` is `main.zig`'s sibling too, for the same reason `Repl.zig` is.
     const lsp_module = b.createModule(.{

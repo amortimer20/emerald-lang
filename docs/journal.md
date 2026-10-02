@@ -4217,3 +4217,248 @@ This documentation-only commit passed the full local gate with pinned Zig 0.16.0
 and `-j1`: 531 Debug and 531 ReleaseSafe tests, native build, 24 documentation
 examples with 135 linked conformance files, whitespace, and Windows x86_64/macOS
 aarch64 cross-builds with prefixes outside `zig-out`.
+
+## REPL slice 1: parsing an entry structurally, 2026-10-01
+
+`Lexer.tokenizeFrom` now lexes a source tail from a committed entry boundary,
+retaining source-global token spans. Lexer results explicitly mark an unclosed
+block comment or multiline string at end of input. `Parser.parseEntry` retains
+top-level expression statements (including calls), marks them for later REPL
+echo handling, and explicitly marks an incomplete delimiter, block, `case`, or
+lambda. Ordinary `Parser.parse` and file behavior are unchanged: a non-call
+expression remains a section 5.2 diagnostic.
+
+The REPL classifier now consumes those flags and statement metadata instead of
+matching diagnostics such as "this result is never used" or "never closed".
+An incomplete flag is deliberately structural: an open delimiter is incomplete,
+but `var value =` is an immediate syntax error. The initial tail lexer assumes
+the tail starts after a committed entry's newline, so its delimiter state starts
+clean; the session representation in slice 2/3 preserves that invariant.
+
+Focused lexer and parser tests cover global tail spans, lexical incompleteness,
+open call/list/block/lambda/case forms, a malformed top-level assignment, and
+both pure and call expression statements. Full validation is recorded with the
+slice commit: pinned Zig 0.16.0 with `-j1`, Debug and ReleaseSafe test suites,
+native build, 24 documentation examples with 134 linked conformance files,
+changed-Zig formatting, whitespace, and Windows x86_64/macOS aarch64 cross-builds
+with prefixes outside `zig-out`.
+
+## REPL slice 2: persistent interpreter session
+
+`Interpreter.Session` now owns the REPL's long-lived heap, module scope, native
+resources, scheduler, and root task. Each accepted whole-session analysis is installed before
+any entry executes: all checker/resolver tables are replaced together, then only that entry's
+new declarations are registered and its statements run. `Analysis` consequently owns its
+complete file/program view, and the coming REPL retains every accepted analysis/source so
+runtime values never point into freed syntax trees.
+
+The ordinary one-shot interpreter path remains unchanged. A session uses the scheduler's
+shared allocator from its first entry, rather than trying to change allocation domains if a
+later entry names `Tasks`. A runtime failure removes declarations and module bindings introduced
+by its entry; prior output, assignments, and outside effects intentionally remain. Direct
+testing-allocator coverage exercises a struct value and closure across analysis replacements, a
+type declared after a value using an earlier type, and a raised entry followed by a legal reuse
+of its dropped declaration.
+
+## REPL slice 2 correction: retain syntax nodes, replace facts, 2026-10-01
+
+The initial slice 2 commit `b9e5804` failed locally and in all six platform CI
+jobs. Its test reparsed the entire session for every entry, so a retained closure
+pointed at its original lambda node while the current analysis contained facts
+for a different node. The lookup in `closureCallable` panicked. The previous
+validation claim was wrong: command outputs were printed without the returned
+process-session IDs, and unfinished test runs were treated as successful checks.
+This correction inspects final exit codes and build summaries for every run.
+
+`SessionSyntax` now parses each tail once with slice 1's offset lexer and entry
+parser, retaining the original trees and source snapshots. `analyzeSession`
+resolves/checks a program assembled from those same statements. Tests install
+the replacement analysis and immediately free the previous analysis; old facts
+cannot conceal a missing current-node entry. This also exposed resolver-owned
+name strings in runtime tables and captured methods. Sessions now intern those
+keys in their own arena.
+
+The requested regression calls an earlier lambda, a captured private function,
+and a captured method, and constructs an earlier struct through those values.
+Its function and method bodies create further lambdas, exercising facts inside
+older bodies too. The existing persistence/rollback test now uses the same
+parse-once path. Both use `std.testing.allocator`, with obsolete analyses freed
+before the later calls run. Slice 3 remains unstarted pending review.
+
+Validation completed with pinned Zig 0.16.0 and `-j1`: 537/537 tests in both
+Debug and ReleaseSafe (final command exit status 0), native build, 24 executable
+documentation examples and 134 linked conformance files, changed-Zig formatting,
+`git diff --check`, and Windows x86_64/macOS aarch64 cross-builds with prefixes
+outside `zig-out`. Branch CI must be green before handing this correction back.
+
+## REPL slice 2 correction: code escaping a failed entry, 2026-10-01
+
+Review found another ownership hole: a failed entry can assign its lambda into an
+earlier `var`, and decision 2 preserves that assignment. Dropping its statements
+then replacing its analysis left the lambda with no checker facts. The exact
+`action(2)` regression reproduced the `closureCallable` null-lookup panic under
+Debug before the fix (537/538 tests passed, one crashed).
+
+Session analyses now have stable heap-owned addresses. `ownedSessionAnalysis`
+transfers their ownership to the interpreter: replacement releases obsolete
+successful analyses, while each failed analysis remains until teardown. A failed
+entry also archives its runtime declaration tables, so an escaped instance's
+methods and constructors stay callable after their names disappear or are reused.
+The shared module bindings still preserve assignments and other completed effects.
+
+Closures, nested-function closures, runtime struct descriptors, and callables
+identify their declaring entry by its source offset. Every call selects that
+failed entry's retained view or the current view for kept code, restoring its
+caller afterward. Constructors and defaults follow the same rule, and the view
+travels with the task when the scheduler hands back the baton. Prelude bodies
+need the calling analysis because they are checked lazily; a helper reached
+only by failed-entry code can have no facts in the current analysis.
+
+`SessionSyntax.dropLast` now excludes statements without truncating source text.
+Later entries start after dropped text, keeping span-keyed nested-function facts
+unique. Three new testing-allocator regressions cover the exact `20` result,
+escaped nested functions returning through kept code, the formerly colliding
+nested-function spans, task yields between views, lazy `Console.green` calls,
+and a trait-backed escaped instance/captured method constructing its old type
+after that name is redeclared. Slice 3 remains unstarted pending review.
+
+Final validation completed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe
+test suites passed (540 tests each, final exit statuses 0), native build, all 24
+executable documentation examples and 134 linked conformance files, changed-Zig
+formatting, `git diff --check`, and Windows x86_64/macOS aarch64 cross-builds with
+prefixes outside `zig-out`. The corrective commit is pushed separately; branch
+CI is checked before reporting completion to the user.
+
+## 2026-10-01 — REPL slice 3 timing conflict (partial work, not committed)
+
+The user approved slice 2 at `94705cb` and requested slice 3, adding two supplied
+review probes and replacing the linear origin scan with binary search. Both
+probes are now testing-allocator regressions: the escaped failed-entry lambda
+prints `20`, and failed-entry code returning through a later lambda and struct
+method prints `1070 20`. The origin lookup uses an upper-bound search; its new
+test covers 1,000 ordered entries, their start/end boundaries, gaps, an empty
+index, and another file.
+
+Before replacing the CLI loop, a temporary ReleaseSafe test measured the
+persistent-session path at entries 5 and 500. Each entry declares a new
+`const job_N = { => 1 }`; page allocation and the monotonic clock avoid timing
+the testing allocator's accounting. The timer includes append, analysis,
+installation, and execution, but not constructing the initial session. Only
+the new statement executes. The first build's probe took 5.910/36.881 ms.
+Three further runs of the compiled unit-test artifact, each exiting 0,
+measured totals of 5.858/22.071, 4.153/23.143, and 4.196/21.417 ms.
+Median entry-5/entry-500 totals: 4.196/22.071 ms (5.26x). Execution alone took
+0.004–0.007 ms in the confirming runs. Both review regressions passed on all
+three runs. The temporary printing probe was removed after measurement.
+
+This conflicts with the plan's constant total-entry latency requirement, not
+with its no-replay behavior: checking the full kept program necessarily costs
+more as statements accumulate. Binary-searching origins cannot remove that
+analysis cost, and an incremental checker is explicitly outside the milestone.
+The executor stopped for approval rather than silently changing the timing
+criterion or implementing an incremental checker. The plan and live handoff
+record the blocker. No new command loop/transcripts, commit, push, or slice 3
+CI claim has been made. Toolchain verification passed on pinned Zig 0.16.0;
+the standalone origin-lookup boundary test passed in Debug with the testing
+allocator (1/1), as did changed-Zig formatting and `git diff --check`. The full ReleaseSafe
+build/test gate was interrupted (exit 130) after the timing measurements
+established the blocker; the full final-tree validation gate is not complete.
+
+## 2026-10-01 — REPL slice 3: the persistent command loop
+
+The user approved correcting the conflicting timing criterion: execution stays
+flat, full-session analysis is measured rather than asserted in CI, and entry
+500 must analyze in under 100 ms on this machine. Decision 1 still requires
+full-session rechecking; no incremental checker or cached prelude analysis was
+introduced. Slice 4 remains unstarted, pending the user's slice 3 review.
+
+`Repl.zig` now keeps one interpreter and syntax store instead of replaying the
+program and its recorded input. Only newly submitted statements execute.
+Expressions echo through their original checked AST nodes; strings are quoted,
+`Nothing`-typed calls are silent, and optional results may echo `nothing`.
+`:reset` replaces the interpreter and syntax without replacing the shared
+scheduler-owned reader. Both prompt input and program input, including inside
+`Tasks.run`, use that reader. The process-owned CLI reader is not joined on exit;
+finite testing readers are joined/freed under `std.testing.allocator`.
+
+Diagnostics and trace frames map to their own entry's lines, even across calls
+into failed-entry code. Only top-level redeclarations get the reset hint; prior
+user warnings are not repeated on every recheck. Real-loop testing exposed two
+slice 1/2 omissions: open type bodies lacked the interactive incomplete flag,
+and session programs omitted `using` aliases. Both now work without changing
+file diagnostic wording. Rejected syntax keeps its text and unique offsets,
+but adds no statements or aliases. The two supplied review probes and the
+binary origin-index boundary regression are included.
+
+Nine hand-read transcript expectations cover echo, persistence, errors/reset,
+declaration rollback, escaped code, multiline forms, aliases, EOF, and shared
+input. Every conformance gate checks each transcript 50 times consecutively.
+The actual built CLI also matched all 450 process runs, with no retries. A
+separate testing-allocator regression repeats 50 file-append sessions and
+checks the file after interpreter teardown, proving the effect occurs once.
+
+The execution assertion alternates 31 paired samples at entries 5 and 500,
+excluding analysis. It passed in both Debug and ReleaseSafe. The standalone
+`repl-benchmark` profiles nine warmed ReleaseSafe samples at each prefix; final
+median analysis/resolve/check times in milliseconds were:
+
+| Entry | Analysis | Resolve | Check |
+| --- | --- | --- | --- |
+| 5 | 2.347 | 1.128 | 0.770 |
+| 100 | 3.478 | 1.162 | 1.836 |
+| 500 | 13.240 | 1.568 | 11.107 |
+| 1000 | 34.156 | 2.064 | 31.518 |
+
+Entry 500 is below the approved budget. Checking accounts for about 84% of its
+analysis; resolution grows much less. The prelude's compiled AST is reused,
+but its names, type/trait metadata, and signatures are rebuilt on each entry.
+Bodies reached by kept user code are checked again; unreached bodies stay lazy.
+
+Final validation passed with pinned Zig 0.16.0 and `-j1`: Debug and ReleaseSafe
+test suites (546 tests each, exit 0), native build, 24 executable documentation
+examples and 134 linked conformance files, changed-Zig formatting,
+`git diff --check`, and Windows x86_64/macOS aarch64 cross-builds using prefixes
+outside `zig-out`. Slice 3 is committed/pushed separately; its branch CI must
+be green before it is reported complete. No merge or tag, and no slice 4 work.
+
+## 2026-10-01 — REPL slice 4: documentation and integration with main
+
+Slice 3 (`e03cb64`) passed all seven branch CI jobs before this slice began.
+At the user's request, fetched origin and merged `origin/main` into `codex/repl`
+as `0955c9d`, without rebasing, amending, or force-pushing. All seven main
+commits merged cleanly: File.append's create-if-missing behavior (PR #29),
+the accepted editor-intelligence plan, and the board-target, microcontroller,
+batteries-included, and parenthesis-free-header-block handoff notes remain.
+No conflict resolution or API improvisation was needed.
+
+Added `docs/language/repl.md` and its guide-index entry. It teaches persistence,
+call results and quoted strings, multiline input, redeclaration, reset, shared
+input, and the difference between checking errors and runtime failures.
+Rewrite-context changes are confined to 18.4 and the implementation-decision
+table in section 22: a persistent interpreter replaces replay, while analysis
+still rechecks the whole kept program. The design plan's old replay description
+is explicitly historical. Existing slice history stays in this journal; the
+handoff now has a compact completed-milestone status and new REPL release notes
+beside, not duplicating, main's File.append, CRLF, User-Agent, Console, and tasks
+entries. Final review/merge remains with the user and Claude.
+
+The append demonstration needs no setup file. Its testing-allocator regression
+now resolves the temporary directory's path and starts each of 50 sessions
+with a missing `log.txt`, deleting it only after verifying the result is `x`.
+This exercises creation and no replay together. The nine existing transcript
+inputs/expectations are unchanged, as is main's new `file-append-creates` case.
+Checker.zig and Lsp.zig were not touched.
+
+Post-merge validation passed with pinned Zig 0.16.0 and `-j1`, with final exit
+statuses checked: Debug and ReleaseSafe suites (546 tests each, including
+50 consecutive runs of every transcript in each gate), native build,
+`bash tools/check-doc-examples.sh` (24 executable examples and 134 linked
+conformance files), `zig fmt --check build.zig src/*.zig tools/*.zig`,
+`git diff --check`, and Windows x86_64/macOS aarch64 cross-builds with prefixes
+outside `zig-out`. The built CLI independently matched all nine transcripts
+50/50 each (450 processes, no retries). All three new guide transcripts were
+verified, including the fresh file containing exactly `x` and the runtime
+error's entry-relative `repl:4:5` location with `score` still 7 afterward.
+
+Slice 4 is committed and pushed separately after the merge. Branch CI is
+checked before reporting completion; no merge to main or tag is performed.

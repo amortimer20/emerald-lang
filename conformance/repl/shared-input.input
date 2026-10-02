@@ -1,0 +1,14 @@
+const answer = input("Name? ")
+Ada
+answer
+Tasks.run { tasks =>
+    const name = tasks.start { => input("Task? ") }
+    print(name.result())
+}
+Grace
+print("after task")
+:reset
+input()
+after reset
+print("after reset input")
+:quit
