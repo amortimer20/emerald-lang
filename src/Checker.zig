@@ -1948,7 +1948,7 @@ fn reportMissingTraitAdoption(
         1 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before its `{s}` method.", .{ trait.display_name, user.display_name, override_methods.items[0] }),
         2 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before its `{s}` and `{s}` methods.", .{ trait.display_name, user.display_name, override_methods.items[0], override_methods.items[1] }),
         3 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before its `{s}`, `{s}`, and `{s}` methods.", .{ trait.display_name, user.display_name, override_methods.items[0], override_methods.items[1], override_methods.items[2] }),
-        else => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before each of `{s}`'s methods.", .{ trait.display_name, user.display_name, trait.display_name }),
+        else => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before each of its methods that `{s}` declares.", .{ trait.display_name, user.display_name, trait.display_name }),
     };
     try self.diagnostics.append(self.arena, .{
         .message = try std.fmt.allocPrint(self.arena, "`{s}` does not adopt `{s}`", .{ user.display_name, trait.display_name }),
