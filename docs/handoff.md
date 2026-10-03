@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-02. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-03. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -167,6 +167,16 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
+Editor-intelligence slice 1 is complete locally on `codex/editor-intelligence`, based
+on main `b728612`, and awaits review after push/CI confirmation. The LSP owns its catalog
+once at startup; ordinary execution never loads it. Tests prove bidirectional names,
+exact results, block parameters, default/optional/variadic arities, every empty/excessive
+call boundary, and universal `type_name` placement. The approved checker corrections
+cover List result shapes, Range.step's missing-argument panic, and Math constant calls.
+Name parity added `String.to_bytes` and one universal owner `"*"` entry for `type_name`.
+The plan and journal record the findings and full local gate. Stop here for review;
+slice 2 (completion) requires the user's go-ahead.
+
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
 merged (#24, 2026-09-30). The standard-library slices the user chose to
@@ -178,11 +188,16 @@ building" notes record its decisions. The REPL milestone is merged through PR #3
 (`01125eb`), the diagnostic polish batch through PR #31 (`6476cf7`), and its follow-ups through
 PR #32 (`6bdd5a6`). The Windows Debug test stall below is the open problem.
 
-The unmerged trait-adoption hint follow-up is on
-`copilot/trait-adoption-default-hint`; its focused cases and local full gate are
-recorded in the journal.
+The trait-adoption hint follow-ups are merged through PRs #33 and #35; their
+focused cases and local full gates are recorded in the journal.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
+- `chunks`, `windows`, and `pairs` results are now typed as nested lists and pairs;
+  code that relied on the old wrong type now needs fixing.
+- Calling `Range.step()` without its required argument reports the normal missing-argument
+  diagnostic instead of crashing the checker and the language server.
+- Calling `Math.pi` or `Math.e` with parentheses reports that it is a constant,
+  instead of passing checking and crashing the interpreter.
 - Foreign logical operators `&&` and `||` receive one focused hint suggesting
   Emerald's `and` and `or`, rather than two character errors.
 - `++` and dangling `--` explain the corresponding `+= 1`/`-= 1` update;
@@ -299,12 +314,13 @@ Open work:
     runner handling several test processes on Windows (probably a Zig 0.16.0 bug to report upstream
     with the logs); a clean run points at something conformance does, such as the fixed-name
     directories its programs create in the working directory or the memory its programs use.
-- **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
+- **Editor intelligence**, below. Codex implements the accepted slices; Claude reviews.
 - A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 
-**Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it). The plan is
+**In progress: editor intelligence** (the user's go-ahead, 2026-09-28; Codex implements,
+Claude reviews and handles website parity). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
-recommendations; implementation starts after REPL slice 2 merges. The findings
+recommendations; the REPL prerequisite is merged. Slice 1 is the current review boundary. The findings
 below are the plan's starting point. The
 goal is C#-level IntelliSense in VS Code. Investigation found that the editor already runs the
 current server (`emerald lsp --stdio` from the 0.6.0 install) and that diagnostics match
@@ -592,14 +608,15 @@ not yet discussed:
 
 ## Validation and repository state
 
-Diagnostic-polish group A passed the full local gate before each item commit.
-The final gate passed 548 tests in both Debug and ReleaseSafe, native build,
-24 documentation examples, formatting/whitespace checks, and Windows/macOS
-cross-builds. [CI at `2d92564`](https://github.com/amortimer20/emerald-lang/actions/runs/37020381290)
-passed all seven jobs (Debug/ReleaseSafe on Linux, macOS, Windows, and bounded
-execution fuzz). Groups B and C remain unimplemented; group A is the review boundary.
+Editor-intelligence slice 1 passed the full local gate on pinned Zig 0.16.0:
+Debug and ReleaseSafe `zig build test -j1`, native `zig build -j1`, the documentation
+check (24 examples executed, 135 conformance links), changed-Zig formatting,
+`git diff --check`, and Windows/macOS cross-builds outside zig-out. The website's
+List page passed all 49 examples with no output changes; the extension integration
+suite passed all 9 tests against the built server. Commit/push and branch CI confirmation
+are next. Earlier diagnostic-polish groups A-C and follow-ups are merged, not pending.
 
-`main` is the only long-lived branch and has no open pull requests. Work happens on
+`main` is the only long-lived branch. Work happens on
 `claude/*` and `codex/*` branches, merged by pull request once CI passes; see
 [AGENTS.md](../AGENTS.md) for the workflow.
 

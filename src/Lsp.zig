@@ -169,8 +169,10 @@ const Server = struct {
     /// exception, needed for any feature that has to see beyond one file.
     io: std.Io,
     documents: std.StringHashMapUnmanaged(Document) = .empty,
+    builtins: ?emerald.Builtins.Catalog = null,
 
     fn deinit(self: *Server) void {
+        if (self.builtins) |catalog| catalog.deinit();
         var it = self.documents.iterator();
         while (it.next()) |entry| {
             self.gpa.free(entry.key_ptr.*);
@@ -329,7 +331,7 @@ fn pathToUri(gpa: std.mem.Allocator, path: []const u8) ![]u8 {
 /// Runs until `exit` or a clean end of the input stream (the client closed
 /// its side of stdio).
 pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.Writer) !void {
-    var server: Server = .{ .gpa = gpa, .io = io };
+    var server: Server = .{ .gpa = gpa, .io = io, .builtins = try emerald.Builtins.load(gpa) };
     defer server.deinit();
 
     while (true) {

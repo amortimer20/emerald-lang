@@ -1,7 +1,32 @@
 {
  "version": 1,
- "about": "Every natively typed member of Emerald, for editors and tools. Completion, hover, and signature help read it, and a test in the checker proves it names exactly the members the checker accepts. Each summary is one plain sentence for learners, in the website reference's voice; page is the member's anchor under https://emerald-lang.web.app/docs/.",
+ "about": "Every natively typed member of Emerald, for editors and tools. Completion, hover, and signature help read it, and a test in the checker proves it names exactly the members the checker accepts. Each summary is one plain sentence for learners, in the website reference's voice; page is the member's anchor under https://emerald-lang.web.app/docs/. A universal member has owner \"*\": it belongs to every value, including user-defined types, but not to a type name or namespace.",
  "members": [
+  {
+   "owner": "*",
+   "name": "type_name",
+   "kind": "property",
+   "signatures": [
+    {
+     "result": "String",
+     "summary": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+     "page": "docs/language/inheritance/#asking-what-kind-of-object-it-is"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "to_bytes",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bytes",
+     "summary": "The text's UTF-8 bytes.",
+     "page": "builtins/types/bytes/#making-and-converting"
+    }
+   ]
+  },
   {
    "owner": "Bool",
    "name": "to_string",

@@ -1,0 +1,4 @@
+diagnostics/range-step-missing-argument.em:2:15: `step` takes 1 argument, but this call passes 0
+  print(numbers.step())
+                ^^^^
+Match the number of arguments to what the method needs.

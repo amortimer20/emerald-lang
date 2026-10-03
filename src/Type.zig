@@ -565,7 +565,7 @@ pub const ListMethod = struct {
     mutates: bool,
 
     pub const Operand = enum { element, index, list };
-    pub const Result = enum { nothing, bool, element, list, float };
+    pub const Result = enum { nothing, bool, element, list, lists, pairs, float };
 };
 
 pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
@@ -583,9 +583,9 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "contains?", ListMethod{ .parameters = &.{.element}, .result = .bool, .mutates = false } },
     .{ "empty?", ListMethod{ .parameters = &.{}, .result = .bool, .mutates = false } },
     .{ "chain", ListMethod{ .parameters = &.{.list}, .result = .list, .mutates = false } },
-    .{ "chunks", ListMethod{ .parameters = &.{.index}, .result = .list, .mutates = false } },
-    .{ "windows", ListMethod{ .parameters = &.{.index}, .result = .list, .mutates = false } },
-    .{ "pairs", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
+    .{ "chunks", ListMethod{ .parameters = &.{.index}, .result = .lists, .mutates = false } },
+    .{ "windows", ListMethod{ .parameters = &.{.index}, .result = .lists, .mutates = false } },
+    .{ "pairs", ListMethod{ .parameters = &.{}, .result = .pairs, .mutates = false } },
     .{ "take", ListMethod{ .parameters = &.{.index}, .result = .list, .mutates = false } },
     .{ "drop", ListMethod{ .parameters = &.{.index}, .result = .list, .mutates = false } },
     .{ "reverse", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },

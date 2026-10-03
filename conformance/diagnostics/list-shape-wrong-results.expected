@@ -1,0 +1,12 @@
+diagnostics/list-shape-wrong-results.em:2:27: this is List[List[Int]], but `chunks` was declared as List[Int]
+  const chunks: List[Int] = numbers.chunks(2)
+                            ^^^^^^^^^^^^^^^^^
+A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: List[Float] = [1, 2]`.
+diagnostics/list-shape-wrong-results.em:3:28: this is List[List[Int]], but `windows` was declared as List[Int]
+  const windows: List[Int] = numbers.windows(2)
+                             ^^^^^^^^^^^^^^^^^^
+A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: List[Float] = [1, 2]`.
+diagnostics/list-shape-wrong-results.em:4:26: this is List[(Int, Int)], but `pairs` was declared as List[Int]
+  const pairs: List[Int] = numbers.pairs()
+                           ^^^^^^^^^^^^^^^
+A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: List[Float] = [1, 2]`.

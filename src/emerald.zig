@@ -39,6 +39,7 @@ pub const Regex = @import("Regex.zig");
 pub const Json = @import("Json.zig");
 pub const Http = @import("Http.zig");
 pub const Scheduler = @import("Scheduler.zig");
+pub const Builtins = @import("Builtins.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -946,6 +947,26 @@ fn dupeDiagnostics(arena: std.mem.Allocator, diagnostics: []const Diagnostic) ![
     const copies = try arena.alloc(Diagnostic, diagnostics.len);
     for (diagnostics, copies) |diagnostic, *copy| copy.* = try dupeDiagnostic(arena, diagnostic);
     return copies;
+}
+
+test "every builtin data signature has exactly the checker's result type" {
+    try @import("BuiltinParity.zig").checkResults();
+}
+
+test "builtin data and checker names agree in both directions" {
+    try @import("BuiltinParity.zig").checkNames();
+}
+
+test "builtin data optional default and block arities match the checker" {
+    try @import("BuiltinParity.zig").checkArity();
+}
+
+test "every builtin handles empty and excessive calls without a checker panic" {
+    try @import("BuiltinParity.zig").checkCallBoundaries();
+}
+
+test "the universal builtin property belongs to values not types or namespaces" {
+    try @import("BuiltinParity.zig").checkUniversalPlacement();
 }
 
 test "analyzeProject exposes every expression's type, keyed by expression and its own file" {
