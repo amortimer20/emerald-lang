@@ -252,7 +252,59 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
   before and after, and record both.
 - An LSP test category, `conformance/lsp/`: each case is a document, a request at a marked
   position, and the expected response, run through the real server.
-- Settled while building: (record here)
+- Settled while building (2026-10-03; validation in progress):
+  - Kept the placeholder approach, but added a tool-analysis entry point that retains
+    parsed declarations and resolver facts when its synthetic member fails resolution.
+    It never checks failed resolution or treats that partial analysis as executable.
+    Values and type/namespace paths therefore share one analysis, without changing the
+    parser or resolver. Compiler-token delimiter closing preserves existing suffixes
+    and ignores quoted/commented delimiters; completing inside an existing identifier
+    also preserves its call rather than producing a second one.
+  - `Completion.zig` owns presentation and allocation only. Native names/signatures/
+    summaries come from the catalog; declarations and attached comments come from
+    retained source. Receiver parameters are substituted where known, while a future
+    block's result stays symbolic. Prelude-qualified type spelling is displayed without
+    its implicit namespace; optional markers are included even though annotation spans
+    exclude the final `?` in the AST.
+  - Kept receiver eligibility and changeability in the checker, where the scopes and
+    existing place-resolution rules are available. Changeability facts are computed
+    only for completion analysis; normal checking and execution do not do that work.
+    Completion omits changing methods on frozen/temporary value receivers, incompatible
+    List aggregations/conversions, and private members outside their owning braces.
+    Tuple positions come from the checked tuple type, not a parallel member inventory.
+  - The existing `.or(fallback)` method was absent from slice 1's catalog/inventories.
+    Added owner `Optional` as a receiver category, not a new language type, and extended
+    bidirectional/result/arity tests. The catalog now has 244 members and 247 signatures.
+    Primitive bare names read Type.fromName's shared table; there is no invented `Any`,
+    `Tuple`, or `Optional` named type in completion.
+  - Added 40 framed-server cases, including every original table row. Hover, native
+    definition, and unsupported signature help record their unchanged pre-slice-3/4
+    behavior; completion cases cover all native receiver kinds, const/mutable and
+    element-type restrictions, inheritance/privacy, nested aliases, namespace/type
+    shadowing, optional chaining, source documentation, and preserved editor suffixes.
+    Replies are reviewed JSON, not automatically blessed. Both the conformance runner
+    and the standalone protocol tool run each case 50 times.
+    Unannotated functions use checked return signatures when available, including
+    nested functions. A partial resolver-only analysis displays `(inferred)` rather
+    than guessing `Nothing` when no return annotation or checked result is available.
+  - Main through `6020d13` was merged without discarding its new pre-compiler roadmap.
+    ReleaseSafe completion medians on the largest example project (`examples/ledger/main.em`)
+    were 7.426 ms before and 3.022 ms after for `File.` (15 items both), and 10.153 ms
+    before and 5.244 ms after for a String receiver (0 items before, 38 after), over 25
+    requests after five warmups; startup and document-open diagnostics are excluded.
+  - Source review found five checker-special typed calls whose prelude stubs cannot
+    describe their real signatures: `Json.encode/decode`, `Csv.encode/decode`, and the
+    struct-row `Console.table` form. Added their editor signatures to the shared catalog,
+    checker-adjacent name inventories, and a direct LSP regression. Ordinary result/arity
+    probe generation skips these calls because their shape comes from dedicated checker
+    branches, not the written stub. No language or runtime behavior changed.
+  - Debug and ReleaseSafe `zig build test -j1`, native build, doc examples, formatting,
+    diff check, Windows/macOS cross-builds, and all 40 standalone LSP cases at 50 requests
+    each passed. One VS Code integration run timed out in format-on-save after its other
+    eight tests passed. The user reported seven successful runs from Claude; a subsequent
+    run here completed all nine tests successfully. The timeout was transient, not a
+    completion regression. Slice 2 is ready to commit; slice 3 begins only after its branch
+    CI is green.
 
 ### Slice 3: Hover and documentation
 

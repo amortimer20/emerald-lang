@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "_hidden",
+      "kind": 10,
+      "detail": "_hidden: Int",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "_secret",
+      "kind": 2,
+      "detail": "_secret(): Int",
+      "documentation": null,
+      "insertText": "_secret()",
+      "insertTextFormat": 1
+    }
+  ]
+}

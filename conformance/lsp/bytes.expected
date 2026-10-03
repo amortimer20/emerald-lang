@@ -1,0 +1,46 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "count",
+      "kind": 10,
+      "detail": "count: Int",
+      "documentation": "How many bytes there are.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_hex",
+      "kind": 2,
+      "detail": "to_hex(): String",
+      "documentation": "The bytes written as hexadecimal, two lowercase digits for each byte.",
+      "insertText": "to_hex()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_string",
+      "kind": 2,
+      "detail": "to_string(): String",
+      "documentation": "The bytes read as UTF-8 text.",
+      "insertText": "to_string()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_string_maybe",
+      "kind": 2,
+      "detail": "to_string_maybe(): String?",
+      "documentation": "The bytes read as UTF-8 text, or `nothing` when they are not valid text.",
+      "insertText": "to_string_maybe()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

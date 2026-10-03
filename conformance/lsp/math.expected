@@ -1,0 +1,110 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "arc_cos",
+      "kind": 2,
+      "detail": "arc_cos(value: Float): Float",
+      "documentation": "The angle, in radians, whose cosine is `value`: the inverse of `cos`.",
+      "insertText": "arc_cos($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "arc_sin",
+      "kind": 2,
+      "detail": "arc_sin(value: Float): Float",
+      "documentation": "The angle, in radians, whose sine is `value`: the inverse of `sin`.",
+      "insertText": "arc_sin($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "arc_tan",
+      "kind": 2,
+      "detail": "arc_tan(value: Float): Float",
+      "documentation": "The angle, in radians, whose tangent is `value`: the inverse of `tan`.",
+      "insertText": "arc_tan($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "arc_tan2",
+      "kind": 2,
+      "detail": "arc_tan2(y: Float, x: Float): Float",
+      "documentation": "The angle, in radians, from the positive x-axis to the point (`x`, `y`).",
+      "insertText": "arc_tan2($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "cos",
+      "kind": 2,
+      "detail": "cos(radians: Float): Float",
+      "documentation": "The cosine of an angle in radians.",
+      "insertText": "cos($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "e",
+      "kind": 10,
+      "detail": "e: Float",
+      "documentation": "e, the base of natural logarithms.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "log",
+      "kind": 2,
+      "detail": "log(value: Float, base: Float): Float",
+      "documentation": "The logarithm with any `base`: the power that `base` must be raised to in order to get `value`.",
+      "insertText": "log($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "log10",
+      "kind": 2,
+      "detail": "log10(value: Float): Float",
+      "documentation": "The logarithm with base 10: for a whole power of ten, how many zeros it has.",
+      "insertText": "log10($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "natural_log",
+      "kind": 2,
+      "detail": "natural_log(value: Float): Float",
+      "documentation": "The natural logarithm: the power that e must be raised to in order to get `value`.",
+      "insertText": "natural_log($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "pi",
+      "kind": 10,
+      "detail": "pi: Float",
+      "documentation": "π, the ratio of a circle's circumference to its diameter.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "power",
+      "kind": 2,
+      "detail": "power(base: Float, exponent: Float): Float",
+      "documentation": "`base` raised to `exponent`, always as a `Float`.",
+      "insertText": "power($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "sin",
+      "kind": 2,
+      "detail": "sin(radians: Float): Float",
+      "documentation": "The sine of an angle in radians.",
+      "insertText": "sin($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "tan",
+      "kind": 2,
+      "detail": "tan(radians: Float): Float",
+      "documentation": "The tangent of an angle in radians.",
+      "insertText": "tan($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

@@ -1,0 +1,222 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "all?",
+      "kind": 2,
+      "detail": "all?() { (key: String, value: Int) => Bool }: Bool",
+      "documentation": "Whether the block accepts every entry.",
+      "insertText": "all?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "any?",
+      "kind": 2,
+      "detail": "any?() { (key: String, value: Int) => Bool }: Bool",
+      "documentation": "Whether the block accepts at least one entry.",
+      "insertText": "any?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "contains_key?",
+      "kind": 2,
+      "detail": "contains_key?(key: String): Bool",
+      "documentation": "Whether the dictionary has an entry for `key`.",
+      "insertText": "contains_key?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "contains_value?",
+      "kind": 2,
+      "detail": "contains_value?(value: Int): Bool",
+      "documentation": "Whether any entry has the value `value`.",
+      "insertText": "contains_value?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "count",
+      "kind": 10,
+      "detail": "count: Int",
+      "documentation": "How many entries the dictionary has.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "count_where",
+      "kind": 2,
+      "detail": "count_where() { (key: String, value: Int) => Bool }: Int",
+      "documentation": "How many entries the block accepts.",
+      "insertText": "count_where()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "each",
+      "kind": 2,
+      "detail": "each() { (key: String, value: Int) => ... }: Nothing",
+      "documentation": "Runs the block for each entry, in order.",
+      "insertText": "each()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "each_with_index",
+      "kind": 2,
+      "detail": "each_with_index() { (key: String, value: Int), index: Int => ... }: Nothing",
+      "documentation": "Runs the block for each entry, with its position.",
+      "insertText": "each_with_index()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "empty?",
+      "kind": 2,
+      "detail": "empty?(): Bool",
+      "documentation": "Whether the dictionary has no entries.",
+      "insertText": "empty?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "entries",
+      "kind": 2,
+      "detail": "entries(): List[(String, Int)]",
+      "documentation": "Each entry as a `(key, value)` pair, in order.",
+      "insertText": "entries()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "filter",
+      "kind": 2,
+      "detail": "filter() { (key: String, value: Int) => Bool }: Dict[String, Int]",
+      "documentation": "The entries the block accepts, in order.",
+      "insertText": "filter()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "filter_map",
+      "kind": 2,
+      "detail": "filter_map() { (key: String, value: Int) => U? }: List[U]",
+      "documentation": "What the block gives for each entry, leaving out every `nothing`.",
+      "insertText": "filter_map()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "find",
+      "kind": 2,
+      "detail": "find() { (key: String, value: Int) => Bool }: (String, Int)?",
+      "documentation": "The first entry the block accepts, or `nothing`.",
+      "insertText": "find()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "find_index",
+      "kind": 2,
+      "detail": "find_index() { (key: String, value: Int) => Bool }: Int?",
+      "documentation": "The position of the first entry the block accepts, or `nothing`.",
+      "insertText": "find_index()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "flat_map",
+      "kind": 2,
+      "detail": "flat_map() { (key: String, value: Int) => List[U] }: List[U]",
+      "documentation": "The items of every list the block gives, joined into one list.",
+      "insertText": "flat_map()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "keys",
+      "kind": 2,
+      "detail": "keys(): List[String]",
+      "documentation": "The keys, in order.",
+      "insertText": "keys()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "map",
+      "kind": 2,
+      "detail": "map() { (key: String, value: Int) => U }: List[U]",
+      "documentation": "A list of what the block gives for each entry.",
+      "insertText": "map()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "map_keys",
+      "kind": 2,
+      "detail": "map_keys() { key: String => K2 }: Dict[K2, Int]",
+      "documentation": "Each key changed by the block, with its value unchanged.",
+      "insertText": "map_keys()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "map_values",
+      "kind": 2,
+      "detail": "map_values() { value: Int => V2 }: Dict[String, V2]",
+      "documentation": "Each value changed by the block, with its key unchanged.",
+      "insertText": "map_values()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "merge",
+      "kind": 2,
+      "detail": "merge(other: Dict[String, Int]): Nothing",
+      "documentation": "Adds every entry of `other`.",
+      "insertText": "merge($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "none?",
+      "kind": 2,
+      "detail": "none?() { (key: String, value: Int) => Bool }: Bool",
+      "documentation": "Whether the block accepts no entry.",
+      "insertText": "none?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "one?",
+      "kind": 2,
+      "detail": "one?() { (key: String, value: Int) => Bool }: Bool",
+      "documentation": "Whether the block accepts exactly one entry.",
+      "insertText": "one?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "reject",
+      "kind": 2,
+      "detail": "reject() { (key: String, value: Int) => Bool }: Dict[String, Int]",
+      "documentation": "The entries the block does not accept.",
+      "insertText": "reject()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "remove",
+      "kind": 2,
+      "detail": "remove(key: String): Int?",
+      "documentation": "Removes the entry for `key` and gives back its value, or `nothing` when there was no such entry.",
+      "insertText": "remove($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "reverse_each",
+      "kind": 2,
+      "detail": "reverse_each() { (key: String, value: Int) => ... }: Nothing",
+      "documentation": "Runs the block for each entry, from last to first.",
+      "insertText": "reverse_each()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "values",
+      "kind": 2,
+      "detail": "values(): List[Int]",
+      "documentation": "The values, in order.",
+      "insertText": "values()",
+      "insertTextFormat": 1
+    }
+  ]
+}

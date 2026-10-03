@@ -398,15 +398,14 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     }
 }
 
+pub const builtin_types = std.StaticStringMap(Type).initComptime(.{
+    .{ "Nothing", nothing }, .{ "Bool", @"bool" },  .{ "Int", int },
+    .{ "Float", float },     .{ "String", string }, .{ "Bytes", bytes },
+    .{ "Range", range },
+});
+
 pub fn fromName(text: []const u8) ?Type {
-    if (std.mem.eql(u8, text, "Nothing")) return nothing;
-    if (std.mem.eql(u8, text, "Bool")) return @"bool";
-    if (std.mem.eql(u8, text, "Int")) return int;
-    if (std.mem.eql(u8, text, "Float")) return float;
-    if (std.mem.eql(u8, text, "String")) return string;
-    if (std.mem.eql(u8, text, "Bytes")) return bytes;
-    if (std.mem.eql(u8, text, "Range")) return range;
-    return null;
+    return builtin_types.get(text);
 }
 
 /// Whether arithmetic and ordering apply. An optional number is not one: it may

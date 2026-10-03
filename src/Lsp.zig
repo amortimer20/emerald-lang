@@ -64,6 +64,7 @@
 
 const std = @import("std");
 const emerald = @import("emerald");
+const Completion = @import("Completion.zig");
 const Source = emerald.Source;
 const Lexer = emerald.Lexer;
 const Parser = emerald.Parser;
@@ -353,6 +354,52 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.
         };
         if (should_exit) break;
     }
+}
+
+/// Backend-neutral protocol cases use the real framed-message server, not
+/// completion helpers. Only the selected request's reply enters its golden;
+/// didOpen diagnostics belong to the diagnostics suite.
+pub fn conformanceReply(gpa: std.mem.Allocator, io: std.Io, path: []const u8, marked: []const u8, method: []const u8) ![]u8 {
+    const marker = "/*cursor*/";
+    const at = std.mem.indexOf(u8, marked, marker) orelse return error.MissingCursorMarker;
+    if (std.mem.indexOf(u8, marked[at + marker.len ..], marker) != null) return error.MultipleCursorMarkers;
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(gpa);
+    try text.appendSlice(gpa, marked[0..at]);
+    try text.appendSlice(gpa, marked[at + marker.len ..]);
+    const absolute = try std.fs.path.resolve(gpa, &.{path});
+    defer gpa.free(absolute);
+    const uri = try pathToUri(gpa, absolute);
+    defer gpa.free(uri);
+    var source = try Source.init(gpa, uri, text.items);
+    defer source.deinit(gpa);
+    var requests: std.Io.Writer.Allocating = .init(gpa);
+    defer requests.deinit();
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 0, .method = "initialize", .params = .{} });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .method = "textDocument/didOpen", .params = .{
+        .textDocument = .{ .uri = uri, .languageId = "emerald", .version = 1, .text = text.items },
+    } });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 1, .method = method, .params = .{
+        .textDocument = .{ .uri = uri },
+        .position = lspPosition(&source, @intCast(at)),
+    } });
+    var reader: std.Io.Reader = .fixed(requests.written());
+    var responses: std.Io.Writer.Allocating = .init(gpa);
+    defer responses.deinit();
+    try run(gpa, io, &reader, &responses.writer);
+    reader = .fixed(responses.written());
+    while (try readMessage(gpa, &reader)) |parsed| {
+        defer parsed.deinit();
+        const id = parsed.value.object.get("id") orelse continue;
+        if (id != .integer or id.integer != 1) continue;
+        var answer: std.Io.Writer.Allocating = .init(gpa);
+        errdefer answer.deinit();
+        var json: std.json.Stringify = .{ .writer = &answer.writer, .options = .{ .whitespace = .indent_2 } };
+        try json.write(parsed.value);
+        try answer.writer.writeByte('\n');
+        return try answer.toOwnedSlice();
+    }
+    return error.MissingRequestReply;
 }
 
 // Transport.
@@ -2350,11 +2397,9 @@ fn isValidIdentifier(name: []const u8) bool {
 // The statement is very often still unclosed around the dot (`print(foo.`
 // mid-call is the ordinary case, not the exception), so
 // `appendUnclosedBrackets` also counts `(`, `[`, and `{` from the top of the
-// file to the dot and closes what's still open — a plain character count,
-// blind to string and comment contents, same tradeoff as every other
-// heuristic in this file that reads source text directly rather than
-// through the lexer. Nothing past the completion point is used for
-// anything, so a later imbalance in the *real* file cannot make this worse.
+// patched file and closes what's still open using compiler tokens, not
+// characters inside strings or comments. Existing closing delimiters in
+// the suffix are preserved rather than duplicated.
 //
 // A type-qualified base (`Vector2.` for its type-level members, 10.4) is
 // different: `Resolver.zig` validates it eagerly, so the synthetic unknown
@@ -2366,7 +2411,7 @@ fn isValidIdentifier(name: []const u8) bool {
 // identifier has no broken syntax at all, so its visible module keys are
 // enough to offer useful top-level completions.
 
-const CompletionItem = struct { label: []const u8 };
+const CompletionItem = Completion.Item;
 
 /// A member expression could not spell this — it is not a valid identifier,
 /// so it cannot collide with a real member name — and long enough that a
@@ -2402,14 +2447,20 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     defer patched.deinit(gpa);
     try patched.appendSlice(gpa, text[0 .. dot_offset + 1]);
     try patched.appendSlice(gpa, completion_placeholder);
-    try patched.appendSlice(gpa, "()");
-    try appendUnclosedBrackets(gpa, &patched, text, dot_offset);
-    try patched.appendSlice(gpa, text[cursor_offset..]);
+    var suffix = cursor_offset;
+    while (suffix < text.len and (std.ascii.isAlphanumeric(text[suffix]) or text[suffix] == '_' or text[suffix] == '?' or text[suffix] == '!')) : (suffix += 1) {}
+    var call_start = suffix;
+    while (call_start < text.len and (text[call_start] == ' ' or text[call_start] == '\t')) : (call_start += 1) {}
+    if (call_start == text.len or text[call_start] != '(') try patched.appendSlice(gpa, "()");
+    try patched.appendSlice(gpa, text[suffix..]);
+    // Preserve closers already present after the cursor. Closing the prefix
+    // first duplicates a real `)` or `}` in an otherwise complete document.
+    try appendUnclosedBrackets(gpa, &patched, patched.items, @intCast(patched.items.len));
 
     var loaded = try loadDocument(server, gpa, uri, patched.items);
     defer loaded.deinit(gpa);
 
-    var analysis = try emerald.analyzeProject(gpa, &loaded.project);
+    var analysis = try emerald.analyzeProjectForCompletion(gpa, &loaded.project);
     defer if (analysis) |*found| found.deinit(gpa);
 
     // The base expression's own span still ends exactly at the dot in the
@@ -2419,14 +2470,15 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // gap `definitionAt` works around — so this looks the base up by
     // position rather than by walking to the synthetic call itself).
     var items: std.ArrayList(CompletionItem) = .empty;
-    defer items.deinit(gpa);
+    defer Completion.deinit(gpa, &items);
 
     if (analysis) |*found| {
-        if (findExpressionEndingAt(found, loaded.index, dot_offset)) |base| {
+        const optional_chain = dot_offset > 0 and text[dot_offset - 1] == '?';
+        if (findExpressionEndingAt(found, loaded.index, dot_offset - @as(u32, if (optional_chain) 1 else 0))) |base| {
             if (found.checked.expression_types.get(base)) |base_info| {
-                if (base_info.type.kind == .struct_value and base_info.type.user != null) {
-                    try collectInstanceMembers(gpa, found, base_info.type.user.?.name, &items);
-                }
+                const receiver = if (optional_chain and base_info.type.optional and base_info.type.kind == .struct_value) base_info.type.payload() else base_info.type;
+                const changeable = base_info.changeable and (!optional_chain or (receiver.kind == .struct_value and receiver.user.?.class));
+                try collectValueCompletions(server, gpa, found, receiver, changeable, loaded.index, dot_offset, &items);
             }
         }
     }
@@ -2434,43 +2486,37 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // A type and namespace have no value expression for the checker to type.
     // Resolve their source path directly through the facts instead.
     if (items.items.len == 0) if (pathBeforeDot(text, dot_offset)) |written| {
-        // The value-member patch intentionally contains an unknown member,
-        // which is a resolver error for `Vector2.placeholder()`. Build one
-        // second, resolver-clean view that replaces the entire incomplete
-        // path with an ordinary call. Its facts still include every project
-        // declaration, including the type or namespace we need to inspect.
-        var facts_text: std.ArrayList(u8) = .empty;
-        defer facts_text.deinit(gpa);
-        const path_start = dot_offset - @as(u32, @intCast(written.len));
-        try facts_text.appendSlice(gpa, text[0..path_start]);
-        try facts_text.appendSlice(gpa, "print()");
-        try appendUnclosedBrackets(gpa, &facts_text, text, path_start);
-        try facts_text.appendSlice(gpa, text[cursor_offset..]);
-        var facts_loaded = try loadDocument(server, gpa, uri, facts_text.items);
-        defer facts_loaded.deinit(gpa);
-        var facts_analysis = (try emerald.analyzeProject(gpa, &facts_loaded.project)) orelse {
+        const facts_analysis = if (analysis) |*found| found else {
             try respond(gpa, out, id, empty);
             return;
         };
-        defer facts_analysis.deinit(gpa);
-
-        const key = try completionPathKey(gpa, &facts_analysis, facts_loaded.index, written);
+        const key = try completionPathKey(gpa, facts_analysis, loaded.index, written);
         defer gpa.free(key);
         if (facts_analysis.resolved.facts.declarations.get(key)) |target| {
-            if (findStructDeclarationAt(&facts_analysis, target)) |s| {
+            if (findStructDeclarationAt(facts_analysis, target)) |s| {
                 try collectTypeMembers(gpa, s, &items);
+                if (insideCompletionType(facts_analysis, target, loaded.index, dot_offset)) {
+                    for (s.type_functions) |function| if (Resolver.isPrivate(function.member)) try appendDescribed(gpa, &items, .{ .label = function.member });
+                    for (s.type_fields) |field| if (Resolver.isPrivate(field.name)) try appendDescribed(gpa, &items, .{ .label = field.name });
+                    for (s.types) |nested| if (Resolver.isPrivate(nested.declaration.name)) try appendDescribed(gpa, &items, .{ .label = nested.declaration.name });
+                }
+                try enrichTypeMembers(server, gpa, facts_analysis, target, s, &items);
             } else {
-                try collectNamespaceMembers(gpa, &facts_analysis, key, &items);
+                try collectNamespaceMembers(gpa, facts_analysis, key, &items);
             }
         } else {
-            try collectNamespaceMembers(gpa, &facts_analysis, key, &items);
+            try collectNamespaceMembers(gpa, facts_analysis, key, &items);
+            try collectNativeTypeCompletions(server, gpa, facts_analysis, key, &items);
         }
         // `items` borrows names from this throwaway analysis, so serialize
         // while its arena still owns those names.
+        try enrichNamespaceItems(gpa, facts_analysis, key, &items);
+        std.mem.sort(CompletionItem, items.items, {}, CompletionItem.lessThan);
         try respond(gpa, out, id, items.items);
         return;
     };
 
+    std.mem.sort(CompletionItem, items.items, {}, CompletionItem.lessThan);
     try respond(gpa, out, id, items.items);
 }
 
@@ -2502,7 +2548,7 @@ fn onBareCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, po
     defer analysis.deinit(gpa);
 
     var items: std.ArrayList(CompletionItem) = .empty;
-    defer items.deinit(gpa);
+    defer Completion.deinit(gpa, &items);
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(gpa);
     // `print()` replaces the typed prefix in the throwaway source. Its final
@@ -2524,6 +2570,43 @@ fn onBareCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, po
     }
     for (Resolver.prelude) |name| try addCompletionOnce(gpa, &seen, &items, name);
     try collectNamespaceMembersSeen(gpa, &analysis, "", &seen, &items);
+    for (items.items) |*item| {
+        if (item.lambda_parameter) |parameter| {
+            item.* = try Completion.field(gpa, &analysis.files[loaded.index].source, item.label, parameter.name_span, parameter.annotation, null, null, 6);
+            continue;
+        }
+        if (item.parameter) |parameter| {
+            item.* = try Completion.field(gpa, &analysis.files[loaded.index].source, item.label, parameter.name_span, parameter.annotation, null, null, 6);
+            continue;
+        }
+        if (item.declaration) |statement| {
+            const local_source = &analysis.files[loaded.index].source;
+            switch (statement.data) {
+                .function_declaration => |function| item.* = try describeFunction(gpa, &analysis, loaded.index, function, item.label, 3),
+                .declaration => |declaration| {
+                    const inferred = if (declaration.initializer) |initializer| if (analysis.checked.expression_types.get(initializer)) |info| info.type else null else null;
+                    item.* = try Completion.field(gpa, local_source, item.label, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6);
+                },
+                else => {},
+            }
+            continue;
+        }
+        const key = analysis.resolved.facts.keyFor(loaded.index, item.label);
+        if (key) |found| if (analysis.resolved.facts.declarations.get(found)) |target| {
+            if (try describeModuleItem(gpa, &analysis, target, item.label)) |described| {
+                item.* = described;
+                continue;
+            }
+        };
+        if (server.builtins) |catalog| if (emerald.Builtins.find(catalog.value, null, item.label)) |member| {
+            item.* = try Completion.native(gpa, member, null);
+        };
+    }
+    try addCatalogOwners(server, gpa, &items);
+    for (items.items) |*item| if (item.detail == null) {
+        item.detail = try gpa.dupe(u8, item.label);
+    };
+    std.mem.sort(CompletionItem, items.items, {}, CompletionItem.lessThan);
     try respond(gpa, out, id, items.items);
 }
 
@@ -2636,9 +2719,19 @@ fn collectLocalCandidatesInStatements(
     for (statements) |statement| {
         if (statement.span.start >= cursor) break;
         switch (statement.data) {
-            .declaration => |declaration| try addCompletionOnce(gpa, seen, out, declaration.name),
+            .declaration => |declaration| {
+                if (!seen.contains(declaration.name)) {
+                    try addCompletionOnce(gpa, seen, out, declaration.name);
+                    out.items[out.items.len - 1].declaration = statement;
+                }
+            },
             .destructuring => |destructuring| for (destructuring.pattern.names) |name| try addCompletionOnce(gpa, seen, out, name.text),
-            .function_declaration => |function| try addCompletionOnce(gpa, seen, out, function.name),
+            .function_declaration => |function| {
+                if (!seen.contains(function.name)) {
+                    try addCompletionOnce(gpa, seen, out, function.name);
+                    out.items[out.items.len - 1].declaration = statement;
+                }
+            },
             else => {},
         }
     }
@@ -2653,7 +2746,12 @@ fn collectFunctionLocalCandidates(
     out: *std.ArrayList(CompletionItem),
 ) !void {
     try collectLocalCandidatesInStatements(gpa, function.body.statements, cursor, seen, out);
-    for (function.parameters) |parameter| try addCompletionOnce(gpa, seen, out, parameter.name);
+    for (function.parameters) |parameter| {
+        if (!seen.contains(parameter.name)) {
+            try addCompletionOnce(gpa, seen, out, parameter.name);
+            out.items[out.items.len - 1].parameter = parameter;
+        }
+    }
     if (has_self) try addCompletionOnce(gpa, seen, out, "self");
 }
 
@@ -2665,7 +2763,12 @@ fn collectConstructorLocalCandidates(
     out: *std.ArrayList(CompletionItem),
 ) !void {
     try collectLocalCandidatesInStatements(gpa, constructor.body.statements, cursor, seen, out);
-    for (constructor.parameters) |parameter| try addCompletionOnce(gpa, seen, out, parameter.name);
+    for (constructor.parameters) |parameter| {
+        if (!seen.contains(parameter.name)) {
+            try addCompletionOnce(gpa, seen, out, parameter.name);
+            out.items[out.items.len - 1].parameter = parameter;
+        }
+    }
     try addCompletionOnce(gpa, seen, out, "self");
 }
 
@@ -2700,7 +2803,10 @@ fn collectLambdaCandidatesInExpression(gpa: std.mem.Allocator, expression: *cons
                 if (parameter.pattern) |pattern| {
                     for (pattern.names) |name| try addCompletionOnce(gpa, seen, out, name.text);
                 } else if (!std.mem.eql(u8, parameter.name, "_")) {
-                    try addCompletionOnce(gpa, seen, out, parameter.name);
+                    if (!seen.contains(parameter.name)) {
+                        try addCompletionOnce(gpa, seen, out, parameter.name);
+                        out.items[out.items.len - 1].lambda_parameter = parameter;
+                    }
                 }
             }
             return true;
@@ -2811,26 +2917,29 @@ fn completionPathKey(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, 
 }
 
 /// Appends whatever closes `(`, `[`, and `{` left open between the start of
-/// `text` and `end` — a best-effort, string-only count, blind to string and
-/// comment contents, like every other heuristic here that reads source text
-/// directly. Silently caps at a depth no real program approaches, rather
+/// `text` and `end`. Use the compiler's lexer so delimiters inside strings
+/// and comments cannot close a real block. Silently caps at a depth no real program approaches, rather
 /// than growing without bound on adversarial input.
 fn appendUnclosedBrackets(gpa: std.mem.Allocator, patched: *std.ArrayList(u8), text: []const u8, end: u32) !void {
     var stack: [128]u8 = undefined;
     var depth: usize = 0;
-    for (text[0..end]) |c| {
-        switch (c) {
-            '(', '[', '{' => {
+    var source = try Source.init(gpa, "<completion>", text[0..end]);
+    defer source.deinit(gpa);
+    var tokenized = try emerald.Lexer.tokenize(gpa, &source);
+    defer tokenized.deinit(gpa);
+    for (tokenized.tokens) |token| {
+        switch (token.kind) {
+            .left_paren, .left_bracket, .left_brace => {
                 if (depth < stack.len) {
-                    stack[depth] = switch (c) {
-                        '(' => ')',
-                        '[' => ']',
+                    stack[depth] = switch (token.kind) {
+                        .left_paren => ')',
+                        .left_bracket => ']',
                         else => '}',
                     };
                 }
                 depth += 1;
             },
-            ')', ']', '}' => {
+            .right_paren, .right_bracket, .right_brace => {
                 if (depth > 0) depth -= 1;
             },
             else => {},
@@ -2903,10 +3012,13 @@ fn collectInstanceMembers(gpa: std.mem.Allocator, analysis: *const emerald.Analy
         current_key = analysis.resolved.facts.bases.get(key);
     }
 
-    if (analysis.resolved.facts.adopted.get(type_key)) |traits| {
-        for (traits) |trait_key| {
-            if (analysis.resolved.facts.declarations.get(trait_key)) |target| {
-                if (findStructDeclarationAt(analysis, target)) |s| try addInstanceMembers(s, gpa, &seen, out);
+    current_key = type_key;
+    while (current_key) |key| : (current_key = analysis.resolved.facts.bases.get(key)) {
+        if (analysis.resolved.facts.adopted.get(key)) |traits| {
+            for (traits) |trait_key| {
+                if (analysis.resolved.facts.declarations.get(trait_key)) |target| {
+                    if (findStructDeclarationAt(analysis, target)) |s| try addInstanceMembers(s, gpa, &seen, out);
+                }
             }
         }
     }
@@ -2956,7 +3068,262 @@ fn collectNamespaceMembersSeen(
     }
 }
 
+fn nativeOwner(value: Type) ?[]const u8 {
+    return switch (value.kind) {
+        .string => "String",
+        .bytes => "Bytes",
+        .int => "Int",
+        .float => "Float",
+        .bool => "Bool",
+        .range => "Range",
+        .list => "List",
+        .dictionary => "Dict",
+        .set => "Set",
+        .tuple => "Tuple",
+        .task => "Task",
+        .channel => "Channel",
+        .struct_value => if (std.mem.startsWith(u8, value.user.?.name, Resolver.prelude_namespace ++ ".")) value.user.?.display_name else null,
+        else => null,
+    };
+}
+
+fn appendDescribed(gpa: std.mem.Allocator, items: *std.ArrayList(CompletionItem), item: CompletionItem) !void {
+    errdefer item.deinit(gpa);
+    for (items.items) |existing| if (std.mem.eql(u8, existing.label, item.label)) {
+        item.deinit(gpa);
+        return;
+    };
+    try items.append(gpa, item);
+}
+
+fn collectValueCompletions(server: *Server, gpa: std.mem.Allocator, analysis: *const emerald.Analysis, value: Type, changeable: bool, file: u32, cursor: u32, out: *std.ArrayList(CompletionItem)) !void {
+    if (value.kind == .invalid) return;
+    const owner = if (value.optional) "Optional" else nativeOwner(value);
+    if (!value.optional and value.kind == .tuple) for (value.elements, 0..) |element, index| {
+        const label = try std.fmt.allocPrint(gpa, "{d}", .{index});
+        var item: CompletionItem = .{ .label = label, .kind = 10, .owned_label = true };
+        errdefer item.deinit(gpa);
+        item.detail = try std.fmt.allocPrint(gpa, "{d}: {f}", .{ index, element });
+        try out.append(gpa, item);
+    };
+    if (!value.optional and value.kind == .struct_value) {
+        try collectInstanceMembers(gpa, analysis, value.user.?.name, out);
+        var index: usize = 0;
+        while (index < out.items.len) {
+            const label = out.items[index].label;
+            const method_key = try Resolver.methodKey(gpa, value.user.?.name, label);
+            defer gpa.free(method_key);
+            if (!changeable and analysis.checked.changing_methods.contains(method_key)) {
+                out.orderedRemove(index).deinit(gpa);
+                continue;
+            }
+            if (try describeInstanceMember(gpa, analysis, value.user.?.name, label, file, cursor, 0)) |item| {
+                out.items[index].deinit(gpa);
+                out.items[index] = item;
+                index += 1;
+            } else {
+                out.orderedRemove(index).deinit(gpa);
+            }
+        }
+    }
+    if (server.builtins) |catalog| for (catalog.value.members) |member| {
+        if (member.kind != .method and member.kind != .property) continue;
+        if (!emerald.Builtins.sameOwner(member.owner, "*") and !emerald.Builtins.sameOwner(member.owner, owner)) continue;
+        if (!analysis.checked.acceptsCompletionMember(value, member.name)) continue;
+        if (member.changes and !changeable) continue;
+        try appendDescribed(gpa, out, try Completion.native(gpa, member, value));
+    };
+}
+
+fn isProjectNamespace(analysis: *const emerald.Analysis, key: []const u8) bool {
+    if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".") or std.mem.eql(u8, key, Resolver.prelude_namespace)) return false;
+    for (analysis.files) |file| {
+        if (std.mem.eql(u8, file.namespace, key)) return true;
+        if (std.mem.startsWith(u8, file.namespace, key) and file.namespace.len > key.len and file.namespace[key.len] == '.') return true;
+    }
+    return false;
+}
+
+fn collectNativeTypeCompletions(server: *Server, gpa: std.mem.Allocator, analysis: *const emerald.Analysis, key: []const u8, out: *std.ArrayList(CompletionItem)) !void {
+    if (isProjectNamespace(analysis, key)) return;
+    const owner = if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".")) key[Resolver.prelude_namespace.len + 1 ..] else key;
+    if (server.builtins) |catalog| for (catalog.value.members) |member| {
+        if (member.kind != .type_method and member.kind != .type_property) continue;
+        if (!emerald.Builtins.sameOwner(member.owner, owner)) continue;
+        try appendDescribed(gpa, out, try Completion.native(gpa, member, null));
+    };
+    if (std.mem.eql(u8, key, Resolver.prelude_namespace)) {
+        if (server.builtins) |catalog| for (catalog.value.members) |member| {
+            if (member.owner == null) try appendDescribed(gpa, out, try Completion.native(gpa, member, null));
+        };
+        try addCatalogOwners(server, gpa, out);
+    }
+}
+
+fn addCatalogOwners(server: *Server, gpa: std.mem.Allocator, out: *std.ArrayList(CompletionItem)) !void {
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(gpa);
+    for (out.items) |item| try seen.put(gpa, item.label, {});
+    for (Type.builtin_types.keys()) |name| {
+        if (seen.contains(name)) continue;
+        try addCompletionOnce(gpa, &seen, out, name);
+        out.items[out.items.len - 1].kind = 7;
+    }
+    if (server.builtins) |catalog| for (catalog.value.members) |member| {
+        const name = member.owner orelse continue;
+        // Optional is a catalog receiver category, not a language type name.
+        if (std.mem.eql(u8, name, "*") or std.mem.eql(u8, name, "Optional") or seen.contains(name)) continue;
+        try addCompletionOnce(gpa, &seen, out, name);
+        out.items[out.items.len - 1].kind = if (member.kind == .type_method or member.kind == .type_property) 9 else 7;
+    };
+}
+
+fn typeSpan(s: Ast.StructDeclaration, whole: Source.Span, target: Source.Span) ?Source.Span {
+    if (s.name_span.start == target.start) return whole;
+    for (s.types) |nested| if (typeSpan(nested.declaration, nested.span, target)) |found| return found;
+    return null;
+}
+
+fn insideCompletionType(analysis: *const emerald.Analysis, target: Resolver.Target, file: u32, cursor: u32) bool {
+    if (target.file != file) return false;
+    for (analysis.parsed[file].program.statements) |statement| {
+        if (statement.data != .struct_declaration) continue;
+        if (typeSpan(statement.data.struct_declaration, statement.span, target.span)) |span| return spanContains(span, cursor);
+    }
+    return false;
+}
+
+fn describeInstanceMember(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, key: []const u8, label: []const u8, file: u32, cursor: u32, depth: usize) !?CompletionItem {
+    if (depth > 64) return null;
+    if (analysis.resolved.facts.declarations.get(key)) |target| {
+        if (findStructDeclarationAt(analysis, target)) |s| {
+            if (Resolver.isPrivate(label) and !insideCompletionType(analysis, target, file, cursor)) return null;
+            const source = &analysis.files[target.file].source;
+            for (s.fields) |field| if (std.mem.eql(u8, field.name, label)) return try Completion.field(gpa, source, label, field.name_span, field.annotation, null, null, 5);
+            for (s.properties) |property| if (std.mem.eql(u8, property.name, label)) return try Completion.field(gpa, source, label, property.name_span, property.annotation, null, null, 10);
+            for (s.methods) |method| if (std.mem.eql(u8, method.name, label)) return try describeFunction(gpa, analysis, target.file, method, label, 2);
+        }
+    }
+    if (analysis.resolved.facts.bases.get(key)) |base| {
+        if (try describeInstanceMember(gpa, analysis, base, label, file, cursor, depth + 1)) |item| return item;
+    }
+    if (analysis.resolved.facts.adopted.get(key)) |traits| for (traits) |trait_key| {
+        if (try describeInstanceMember(gpa, analysis, trait_key, label, file, cursor, depth + 1)) |item| return item;
+    };
+    return null;
+}
+
+fn enrichTypeMembers(server: *Server, gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target, s: Ast.StructDeclaration, items: *std.ArrayList(CompletionItem)) !void {
+    const source = &analysis.files[target.file].source;
+    for (items.items) |*item| {
+        for (s.type_functions) |function| if (std.mem.eql(u8, function.member, item.label)) {
+            const described = try describeFunction(gpa, analysis, target.file, function.declaration, item.label, 2);
+            item.deinit(gpa);
+            item.* = described;
+            break;
+        };
+        for (s.type_fields) |field| if (std.mem.eql(u8, field.name, item.label)) {
+            const described = try Completion.field(gpa, source, item.label, field.name_span, field.annotation, field.initializer, null, if (field.enum_value != null) 20 else 10);
+            item.deinit(gpa);
+            item.* = described;
+            break;
+        };
+        for (s.types) |nested| if (std.mem.eql(u8, nested.declaration.name, item.label)) {
+            item.kind = if (nested.declaration.enumeration) 13 else if (nested.declaration.class) 7 else 22;
+            item.detail = try gpa.dupe(u8, item.label);
+            item.documentation = try Completion.documentation(gpa, source, nested.declaration.name_span);
+            break;
+        };
+    }
+    // These type members are declared in the prelude so the resolver can
+    // identify their calls, but their written stub signatures cannot express
+    // the checker's typed `as:`/encodable-value forms. The shared catalog is
+    // the authoritative editor signature for those special calls.
+    if (std.mem.eql(u8, source.path, "prelude.em")) if (server.builtins) |catalog| {
+        for (items.items) |*item| {
+            const member = emerald.Builtins.find(catalog.value, s.name, item.label) orelse continue;
+            if (member.kind != .type_method) continue;
+            item.deinit(gpa);
+            item.* = try Completion.native(gpa, member, null);
+        }
+    };
+}
+
+fn describeFunction(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, function: Ast.FunctionDeclaration, label: []const u8, kind: u8) !CompletionItem {
+    const result: ?Type = result: {
+        if (analysis.resolved.facts.nested_keys.get(.{ .file = file, .start = function.name_span.start })) |key| {
+            if (analysis.checked.signatures.get(key)) |signature| break :result signature.return_type;
+        }
+        var declarations = analysis.resolved.facts.declarations.iterator();
+        while (declarations.next()) |entry| {
+            if (entry.value_ptr.file != file or entry.value_ptr.span.start != function.name_span.start) continue;
+            if (analysis.checked.signatures.get(entry.key_ptr.*)) |signature| break :result signature.return_type;
+        }
+        break :result null;
+    };
+    return Completion.function(gpa, &analysis.files[file].source, function, label, kind, result);
+}
+
+fn describeModuleItem(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target, label: []const u8) !?CompletionItem {
+    const source = &analysis.files[target.file].source;
+    for (analysis.parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .function_declaration => |function| if (function.name_span.start == target.span.start) return try describeFunction(gpa, analysis, target.file, function, label, 3),
+        .declaration => |declaration| if (declaration.name_span.start == target.span.start) {
+            const inferred = if (declaration.initializer) |initializer| if (analysis.checked.expression_types.get(initializer)) |info| info.type else null else null;
+            return try Completion.field(gpa, source, label, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6);
+        },
+        .struct_declaration => |s| if (findStructDeclarationWithin(s, target.span)) |found| {
+            var item: CompletionItem = .{ .label = label, .kind = if (found.enumeration) 13 else if (found.class) 7 else if (found.trait) 8 else 22 };
+            errdefer item.deinit(gpa);
+            item.detail = try gpa.dupe(u8, label);
+            item.documentation = try Completion.documentation(gpa, source, found.name_span);
+            return item;
+        },
+        else => {},
+    };
+    return null;
+}
+
+fn enrichNamespaceItems(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, namespace: []const u8, items: *std.ArrayList(CompletionItem)) !void {
+    for (items.items) |*item| {
+        if (item.detail != null) continue;
+        const key = if (namespace.len == 0) try gpa.dupe(u8, item.label) else try std.fmt.allocPrint(gpa, "{s}.{s}", .{ namespace, item.label });
+        defer gpa.free(key);
+        if (analysis.resolved.facts.declarations.get(key)) |target| {
+            if (try describeModuleItem(gpa, analysis, target, item.label)) |described| {
+                item.* = described;
+                continue;
+            }
+        }
+        item.kind = 9;
+        item.detail = try gpa.dupe(u8, item.label);
+    }
+}
+
 const testing = std.testing;
+
+test "completion keeps failed resolver facts from one analysis without making them executable" {
+    const gpa = testing.allocator;
+    var source = try Source.init(gpa, "main.em", "struct Example {\n    const Example.answer: Int = 42\n}\nExample.unknown()\n");
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+    try testing.expect((try emerald.analyzeProject(gpa, &project)) == null);
+    var analysis = (try emerald.analyzeProjectForCompletion(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(!analysis.ok());
+    try testing.expect(analysis.resolved.facts.declarations.contains("Example"));
+    try testing.expectEqual(@as(usize, 0), analysis.checked.expression_types.count());
+}
+
+test "completion closing delimiters ignore strings and comments" {
+    const gpa = testing.allocator;
+    const text = "func probe() {\n const text = \"([} {\"\n # ) ] }\n print(text.unknown())\n";
+    var closers: std.ArrayList(u8) = .empty;
+    defer closers.deinit(gpa);
+    try appendUnclosedBrackets(gpa, &closers, text, @intCast(text.len));
+    try testing.expectEqualStrings("}", closers.items);
+}
 
 test "a framed message round-trips through reading and writing" {
     const gpa = testing.allocator;
@@ -3864,6 +4231,49 @@ test "completion handler answers type members and a bare visible name" {
         try labels.put(gpa, label.string, {});
     }
     try testing.expect(labels.contains("self"));
+}
+
+test "typed library completion describes the checker-special call shapes" {
+    const gpa = testing.allocator;
+    var server: Server = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+    server.builtins = try emerald.Builtins.load(gpa);
+    const uri = "untitled:typed-library-completion.em";
+
+    const json_decode = try completionDetailFor(gpa, &server, uri, "Json.\n", 5, "decode");
+    defer gpa.free(json_decode);
+    try testing.expectEqualStrings("decode(text: String, as: Type): T", json_decode);
+    const json_encode = try completionDetailFor(gpa, &server, uri, "Json.\n", 5, "encode");
+    defer gpa.free(json_encode);
+    try testing.expectEqualStrings("encode(value: JSON-compatible value, pretty: Bool = false): String", json_encode);
+
+    const csv_decode = try completionDetailFor(gpa, &server, uri, "Csv.\n", 4, "decode");
+    defer gpa.free(csv_decode);
+    try testing.expectEqualStrings("decode(text: String, as: Type, separator: String = \",\"): T", csv_decode);
+    const csv_encode = try completionDetailFor(gpa, &server, uri, "Csv.\n", 4, "encode");
+    defer gpa.free(csv_encode);
+    try testing.expectEqualStrings("encode(records: List[CSV-compatible struct], separator: String = \",\"): String", csv_encode);
+
+    const table = try completionDetailFor(gpa, &server, uri, "Console.\n", 8, "table");
+    defer gpa.free(table);
+    try testing.expectEqualStrings("table(rows: List[List[String]], header: List[String] = []): String\ntable(rows: List[plain struct]): String", table);
+}
+
+fn completionDetailFor(gpa: std.mem.Allocator, server: *Server, uri: []const u8, text: []const u8, character: u32, label: []const u8) ![]u8 {
+    try server.store(uri, text);
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try onCompletion(server, gpa, uri, .{ .line = 0, .character = character }, .{ .integer = 20 }, &out.writer);
+    var reader: std.Io.Reader = .fixed(out.written());
+    var response = (try readMessage(gpa, &reader)).?;
+    defer response.deinit();
+    for (response.value.object.get("result").?.array.items) |item| {
+        const found_label = item.object.get("label").?.string;
+        if (!std.mem.eql(u8, found_label, label)) continue;
+        const detail = item.object.get("detail").?.string;
+        return try gpa.dupe(u8, detail);
+    }
+    return error.CompletionItemNotFound;
 }
 
 test "completion end to end: a broken member access mid-call patches into something the checker can type" {

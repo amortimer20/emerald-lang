@@ -1,0 +1,526 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "all?",
+      "kind": 2,
+      "detail": "all?() { item: Int => Bool }: Bool",
+      "documentation": "Whether the block accepts every item.",
+      "insertText": "all?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "any?",
+      "kind": 2,
+      "detail": "any?() { item: Int => Bool }: Bool",
+      "documentation": "Whether the block accepts at least one item.",
+      "insertText": "any?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "append",
+      "kind": 2,
+      "detail": "append(item: Int): Nothing",
+      "documentation": "Adds `item` at the end.",
+      "insertText": "append($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "associate",
+      "kind": 2,
+      "detail": "associate() { item: Int => (K, V) }: Dict[K, V]",
+      "documentation": "A `Dict` with the key and value the block gives for each item.",
+      "insertText": "associate()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "associate_by",
+      "kind": 2,
+      "detail": "associate_by() { item: Int => K }: Dict[K, Int]",
+      "documentation": "A `Dict` from the key the block gives to each item itself.",
+      "insertText": "associate_by()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "average",
+      "kind": 2,
+      "detail": "average(): Float?",
+      "documentation": "The mean of the items, or `nothing` when the list is empty.",
+      "insertText": "average()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "chain",
+      "kind": 2,
+      "detail": "chain(other: List[Int]): List[Int]",
+      "documentation": "This list's items followed by `other`'s.",
+      "insertText": "chain($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "chunks",
+      "kind": 2,
+      "detail": "chunks(size: Int): List[List[Int]]",
+      "documentation": "The items in pieces of `size`, in order.",
+      "insertText": "chunks($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "clear",
+      "kind": 2,
+      "detail": "clear(): Nothing",
+      "documentation": "Removes every item.",
+      "insertText": "clear()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "contains?",
+      "kind": 2,
+      "detail": "contains?(item: Int): Bool",
+      "documentation": "Whether an item equal to `item` is in the list.",
+      "insertText": "contains?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "count",
+      "kind": 10,
+      "detail": "count: Int",
+      "documentation": "How many items the list has.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "count_where",
+      "kind": 2,
+      "detail": "count_where() { item: Int => Bool }: Int",
+      "documentation": "How many items the block accepts.",
+      "insertText": "count_where()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "drop",
+      "kind": 2,
+      "detail": "drop(count: Int): List[Int]",
+      "documentation": "Everything after the first `count` items.",
+      "insertText": "drop($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "drop_while",
+      "kind": 2,
+      "detail": "drop_while() { item: Int => Bool }: List[Int]",
+      "documentation": "Everything from the first item the block does not accept.",
+      "insertText": "drop_while()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "each",
+      "kind": 2,
+      "detail": "each() { item: Int => ... }: Nothing",
+      "documentation": "Runs the block once for each item, in order.",
+      "insertText": "each()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "each_with_index",
+      "kind": 2,
+      "detail": "each_with_index() { item: Int, index: Int => ... }: Nothing",
+      "documentation": "Runs the block for each item, with its position.",
+      "insertText": "each_with_index()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "empty?",
+      "kind": 2,
+      "detail": "empty?(): Bool",
+      "documentation": "Whether the list has no items.",
+      "insertText": "empty?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "filter",
+      "kind": 2,
+      "detail": "filter() { item: Int => Bool }: List[Int]",
+      "documentation": "The items the block accepts, in order.",
+      "insertText": "filter()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "filter_map",
+      "kind": 2,
+      "detail": "filter_map() { item: Int => U? }: List[U]",
+      "documentation": "What the block gives for each item, leaving out every `nothing`.",
+      "insertText": "filter_map()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "find",
+      "kind": 2,
+      "detail": "find() { item: Int => Bool }: Int?",
+      "documentation": "The first item the block accepts, or `nothing` when it accepts none.",
+      "insertText": "find()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "find_index",
+      "kind": 2,
+      "detail": "find_index() { item: Int => Bool }: Int?",
+      "documentation": "The position of the first item the block accepts, or `nothing` when it accepts none.",
+      "insertText": "find_index()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "first",
+      "kind": 10,
+      "detail": "first: Int?",
+      "documentation": "The first item, or `nothing` when the list is empty.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "flat_map",
+      "kind": 2,
+      "detail": "flat_map() { item: Int => List[U] }: List[U]",
+      "documentation": "The items of every list the block gives, joined into one list.",
+      "insertText": "flat_map()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "frequencies",
+      "kind": 2,
+      "detail": "frequencies(): Dict[Int, Int]",
+      "documentation": "How many times each item appears.",
+      "insertText": "frequencies()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "group_by",
+      "kind": 2,
+      "detail": "group_by() { item: Int => K }: Dict[K, List[Int]]",
+      "documentation": "The items grouped by the key the block gives for each.",
+      "insertText": "group_by()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "insert",
+      "kind": 2,
+      "detail": "insert(index: Int, item: Int): Nothing",
+      "documentation": "Adds `item` at position `index`, moving the items after it along.",
+      "insertText": "insert($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "last",
+      "kind": 10,
+      "detail": "last: Int?",
+      "documentation": "The last item, or `nothing` when the list is empty.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "map",
+      "kind": 2,
+      "detail": "map() { item: Int => U }: List[U]",
+      "documentation": "A list of what the block gives for each item, in order.",
+      "insertText": "map()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "max",
+      "kind": 2,
+      "detail": "max(): Int?",
+      "documentation": "The largest item, or `nothing` when the list is empty.",
+      "insertText": "max()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "max_by",
+      "kind": 2,
+      "detail": "max_by() { item: Int => K }: Int?",
+      "documentation": "The item whose key, from the block, is largest.",
+      "insertText": "max_by()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "min",
+      "kind": 2,
+      "detail": "min(): Int?",
+      "documentation": "The smallest item, or `nothing` when the list is empty.",
+      "insertText": "min()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "min_by",
+      "kind": 2,
+      "detail": "min_by() { item: Int => K }: Int?",
+      "documentation": "The item whose key, from the block, is smallest.",
+      "insertText": "min_by()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "min_max",
+      "kind": 2,
+      "detail": "min_max(): (Int?, Int?)",
+      "documentation": "The smallest and largest items together, found in one pass.",
+      "insertText": "min_max()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "none?",
+      "kind": 2,
+      "detail": "none?() { item: Int => Bool }: Bool",
+      "documentation": "Whether the block accepts no item.",
+      "insertText": "none?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "one?",
+      "kind": 2,
+      "detail": "one?() { item: Int => Bool }: Bool",
+      "documentation": "Whether the block accepts exactly one item.",
+      "insertText": "one?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "pairs",
+      "kind": 2,
+      "detail": "pairs(): List[(Int, Int)]",
+      "documentation": "Each item paired with the one after it.",
+      "insertText": "pairs()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "partition",
+      "kind": 2,
+      "detail": "partition() { item: Int => Bool }: (List[Int], List[Int])",
+      "documentation": "The items the block accepts, and the ones it does not.",
+      "insertText": "partition()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "random",
+      "kind": 2,
+      "detail": "random(): Int?",
+      "documentation": "One item, chosen at random, or `nothing` when the list is empty.",
+      "insertText": "random()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "reduce",
+      "kind": 2,
+      "detail": "reduce(initial: A) { total: A, item: Int => A }: A",
+      "documentation": "Combines the items into one value.",
+      "insertText": "reduce($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "reduce_right",
+      "kind": 2,
+      "detail": "reduce_right(initial: A) { total: A, item: Int => A }: A",
+      "documentation": "Like `reduce`, but from the last item to the first.",
+      "insertText": "reduce_right($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "reject",
+      "kind": 2,
+      "detail": "reject() { item: Int => Bool }: List[Int]",
+      "documentation": "The items the block does not accept.",
+      "insertText": "reject()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "remove",
+      "kind": 2,
+      "detail": "remove(item: Int): Nothing",
+      "documentation": "Removes the first item equal to `item`.",
+      "insertText": "remove($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "remove_all",
+      "kind": 2,
+      "detail": "remove_all(item: Int): Nothing",
+      "documentation": "Removes every item equal to `item`.",
+      "insertText": "remove_all($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "remove_at",
+      "kind": 2,
+      "detail": "remove_at(index: Int): Int",
+      "documentation": "Removes the item at position `index` and gives it back.",
+      "insertText": "remove_at($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "remove_first",
+      "kind": 2,
+      "detail": "remove_first(): Int",
+      "documentation": "Removes the first item and gives it back.",
+      "insertText": "remove_first()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "remove_if",
+      "kind": 2,
+      "detail": "remove_if() { item: Int => Bool }: Nothing",
+      "documentation": "Removes every item the block accepts.",
+      "insertText": "remove_if()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "remove_last",
+      "kind": 2,
+      "detail": "remove_last(): Int",
+      "documentation": "Removes the last item and gives it back.",
+      "insertText": "remove_last()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "reverse",
+      "kind": 2,
+      "detail": "reverse(): List[Int]",
+      "documentation": "The items in the opposite order.",
+      "insertText": "reverse()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "reverse!",
+      "kind": 2,
+      "detail": "reverse!(): Nothing",
+      "documentation": "Reverses the list itself.",
+      "insertText": "reverse!()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "reverse_each",
+      "kind": 2,
+      "detail": "reverse_each() { item: Int => ... }: Nothing",
+      "documentation": "Runs the block for each item, from last to first.",
+      "insertText": "reverse_each()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "shuffle",
+      "kind": 2,
+      "detail": "shuffle(): List[Int]",
+      "documentation": "The items in a random order.",
+      "insertText": "shuffle()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "shuffle!",
+      "kind": 2,
+      "detail": "shuffle!(): Nothing",
+      "documentation": "Puts the list itself in a random order.",
+      "insertText": "shuffle!()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "sort",
+      "kind": 2,
+      "detail": "sort(): List[Int]",
+      "documentation": "The items from smallest to largest.",
+      "insertText": "sort()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "sort!",
+      "kind": 2,
+      "detail": "sort!(): Nothing",
+      "documentation": "Sorts the list itself, smallest first.",
+      "insertText": "sort!()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "sort_by",
+      "kind": 2,
+      "detail": "sort_by() { item: Int => K }: List[Int]",
+      "documentation": "The items, ordered by the key the block gives for each, smallest first.",
+      "insertText": "sort_by()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "sum",
+      "kind": 2,
+      "detail": "sum(): Int",
+      "documentation": "All the items added up.",
+      "insertText": "sum()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "take",
+      "kind": 2,
+      "detail": "take(count: Int): List[Int]",
+      "documentation": "The first `count` items.",
+      "insertText": "take($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "take_while",
+      "kind": 2,
+      "detail": "take_while() { item: Int => Bool }: List[Int]",
+      "documentation": "Items from the start, up to the first one the block does not accept.",
+      "insertText": "take_while()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_set",
+      "kind": 2,
+      "detail": "to_set(): Set[Int]",
+      "documentation": "A `Set` of the items, each once.",
+      "insertText": "to_set()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "unique",
+      "kind": 2,
+      "detail": "unique(): List[Int]",
+      "documentation": "Each item once, keeping the first of each.",
+      "insertText": "unique()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "unique!",
+      "kind": 2,
+      "detail": "unique!(): Nothing",
+      "documentation": "Removes repeated items from the list itself, keeping the first of each.",
+      "insertText": "unique!()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "unique_by",
+      "kind": 2,
+      "detail": "unique_by() { item: Int => K }: List[Int]",
+      "documentation": "The first item for each key the block gives.",
+      "insertText": "unique_by()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "windows",
+      "kind": 2,
+      "detail": "windows(size: Int): List[List[Int]]",
+      "documentation": "Every run of `size` items side by side, one step apart.",
+      "insertText": "windows($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "zip",
+      "kind": 2,
+      "detail": "zip(other: List[U]): List[(Int, U)]",
+      "documentation": "Items paired by position with `other`'s.",
+      "insertText": "zip($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

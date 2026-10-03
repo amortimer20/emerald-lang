@@ -124,7 +124,7 @@ pub const Analysis = struct {
     /// warning never stops checking, so `expression_types` is trustworthy
     /// either way.
     pub fn ok(self: Analysis) bool {
-        return self.checked.ok();
+        return self.resolved.ok() and self.checked.ok();
     }
 
     pub fn deinit(self: *Analysis, gpa: std.mem.Allocator) void {
@@ -155,25 +155,38 @@ pub const Analysis = struct {
 /// diagnostics of its own to show, so it only needs to know whether it has
 /// an answer, not why it does not.
 pub fn analyzeProject(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis {
+    return analyzeProjectForTool(gpa, project, false);
+}
+
+/// Completion's synthetic member can fail resolution for a type or namespace.
+/// Keep the parsed declarations and resolver facts in that case, in this same
+/// pass. Never run the checker against failed resolution: its facts are empty.
+/// Normal analysis still stops at that failure, and parsing is unchanged.
+pub fn analyzeProjectForCompletion(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis {
+    return analyzeProjectForTool(gpa, project, true);
+}
+
+fn analyzeProjectForTool(gpa: std.mem.Allocator, project: *const Project, keep_unresolved: bool) Error!?Analysis {
     const Task = struct {
         gpa: std.mem.Allocator,
         project: *const Project,
+        keep_unresolved: bool,
         result: Error!?Analysis = undefined,
 
         fn go(task: *@This(), available: usize) void {
             _ = available;
-            task.result = analyzeOnce(task.gpa, task.project);
+            task.result = analyzeOnce(task.gpa, task.project, task.keep_unresolved);
         }
     };
 
-    var task: Task = .{ .gpa = gpa, .project = project };
+    var task: Task = .{ .gpa = gpa, .project = project, .keep_unresolved = keep_unresolved };
     const thread = Scheduler.ReservedThread.spawn(stack_size, Task.go, .{ &task, stack_size }) catch
         return error.StackUnavailable;
     thread.join();
     return task.result;
 }
 
-fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis {
+fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project, keep_unresolved: bool) Error!?Analysis {
     for (project.files) |file| {
         if (Source.findInvalidUtf8(file.source.text) != null) return null;
     }
@@ -231,7 +244,7 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis 
     for (parsed, programs) |one, *program| program.* = one.program;
 
     var resolved = try Resolver.resolve(gpa, files, programs, project.enclosing_project);
-    if (!resolved.ok()) {
+    if (!resolved.ok() and !keep_unresolved) {
         resolved.deinit();
         for (parsed) |*one| one.deinit();
         gpa.free(parsed);
@@ -243,7 +256,25 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis 
         return null;
     }
 
-    const checked = try Checker.check(gpa, files, programs, resolved.facts);
+    const checked = if (resolved.ok()) try Checker.checkWithOptions(gpa, files, programs, resolved.facts, .{ .completion = keep_unresolved }) else Checker.Checked{
+        .arena_state = .init(gpa),
+        .diagnostics = &.{},
+        .prelude_reached = null,
+        .signatures = .empty,
+        .literal_types = .empty,
+        .expression_types = .empty,
+        .structs = .empty,
+        .changing_methods = .empty,
+        .method_calls = .empty,
+        .operator_calls = .empty,
+        .operator_assignments = .empty,
+        .json_encodes = .empty,
+        .json_decodes = .empty,
+        .super_members = .empty,
+        .type_tests = .empty,
+        .type_names = .empty,
+        .trait_calls = .empty,
+    };
     return .{
         .prelude_source = prelude_source,
         .files = files,

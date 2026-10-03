@@ -1,7 +1,20 @@
 {
  "version": 1,
- "about": "Every natively typed member of Emerald, for editors and tools. Completion, hover, and signature help read it, and a test in the checker proves it names exactly the members the checker accepts. Each summary is one plain sentence for learners, in the website reference's voice; page is the member's anchor under https://emerald-lang.web.app/docs/. A universal member has owner \"*\": it belongs to every value, including user-defined types, but not to a type name or namespace.",
+ "about": "Editor-facing signatures and descriptions for built-in members and special typed library calls. Completion, hover, and signature help read this data. Checker parity tests cover ordinary members, while the special typed calls are listed beside their checker paths. Each summary is one plain sentence for learners, in the website reference's voice; page is the member's anchor under https://emerald-lang.web.app/docs/. A universal member has owner \"*\": it belongs to every value, including user-defined types, but not to a type name or namespace. Owner \"Optional\" describes members of an optional receiver, not a named type in the language.",
  "members": [
+  {
+   "owner": "Optional",
+   "name": "or",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [{ "name": "fallback", "type": "T" }],
+     "result": "T",
+     "summary": "The value if it is there, and the fallback if it is nothing.",
+     "page": "language/optionals/#or-give-a-fallback"
+    }
+   ]
+  },
   {
    "owner": "*",
    "name": "type_name",
@@ -11,6 +24,99 @@
      "result": "String",
      "summary": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
      "page": "docs/language/inheritance/#asking-what-kind-of-object-it-is"
+    }
+   ]
+  },
+  {
+   "owner": "Console",
+   "name": "table",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "rows", "type": "List[List[String]]" },
+      { "name": "header", "type": "List[String]", "default": "[]" }
+     ],
+     "result": "String",
+     "summary": "Draws text rows as a table with box characters.",
+     "page": "library/console/#tables"
+    },
+    {
+     "parameters": [
+      { "name": "rows", "type": "List[plain struct]" }
+     ],
+     "result": "String",
+     "summary": "Draws a list of plain structs as a table, using their public fields as columns.",
+     "page": "library/console/#tables"
+    }
+   ]
+  },
+  {
+   "owner": "Csv",
+   "name": "decode",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "text", "type": "String" },
+      { "name": "as", "type": "Type" },
+      { "name": "separator", "type": "String", "default": "\",\"" }
+     ],
+     "result": "T",
+     "summary": "Reads CSV text into the type named after `as:`.",
+     "raises": true,
+     "page": "library/csv/#csvdecodetext-string-as-type-separator-string---type"
+    }
+   ]
+  },
+  {
+   "owner": "Csv",
+   "name": "encode",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "records", "type": "List[CSV-compatible struct]" },
+      { "name": "separator", "type": "String", "default": "\",\"" }
+     ],
+     "result": "String",
+     "summary": "Writes a list of plain structs as CSV text.",
+     "raises": true,
+     "page": "library/csv/#csvencoderecords-separator-string---string"
+    }
+   ]
+  },
+  {
+   "owner": "Json",
+   "name": "decode",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "text", "type": "String" },
+      { "name": "as", "type": "Type" }
+     ],
+     "result": "T",
+     "summary": "Reads JSON text into the type named after `as:`.",
+     "raises": true,
+     "page": "library/json/#jsondecodetext-string-as-type-type"
+    }
+   ]
+  },
+  {
+   "owner": "Json",
+   "name": "encode",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "value", "type": "JSON-compatible value" },
+      { "name": "pretty", "type": "Bool", "default": "false" }
+     ],
+     "result": "String",
+     "summary": "Writes a JSON-compatible value as JSON text.",
+     "raises": true,
+     "page": "library/json/#jsonencodevalue-pretty-bool--string"
     }
    ]
   },

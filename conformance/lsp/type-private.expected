@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "answer",
+      "kind": 2,
+      "detail": "answer(): Int",
+      "documentation": null,
+      "insertText": "answer()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "visible",
+      "kind": 10,
+      "detail": "visible: Int",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

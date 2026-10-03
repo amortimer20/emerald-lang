@@ -1,0 +1,166 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "abs",
+      "kind": 2,
+      "detail": "abs(): Int",
+      "documentation": "The distance from zero: the number without its sign.",
+      "insertText": "abs()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "between?",
+      "kind": 2,
+      "detail": "between?(minimum: Int, maximum: Int): Bool",
+      "documentation": "Whether the number is from `minimum` to `maximum`, including both.",
+      "insertText": "between?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "clamp",
+      "kind": 2,
+      "detail": "clamp(minimum: Int, maximum: Int): Int",
+      "documentation": "The number, kept within `minimum` to `maximum`.",
+      "insertText": "clamp($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "digits",
+      "kind": 2,
+      "detail": "digits(): List[Int]",
+      "documentation": "The number's decimal digits, from left to right.",
+      "insertText": "digits()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "down_to",
+      "kind": 2,
+      "detail": "down_to(target: Int): Range\ndown_to(target: Int) { value: Int => ... }: Nothing",
+      "documentation": "A `Range` from this number down to `target`, including both.",
+      "insertText": "down_to($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "even?",
+      "kind": 2,
+      "detail": "even?(): Bool",
+      "documentation": "Whether the number is even.",
+      "insertText": "even?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "factorial",
+      "kind": 2,
+      "detail": "factorial(): Int",
+      "documentation": "The product of every whole number from 1 up to this one.",
+      "insertText": "factorial()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "format",
+      "kind": 2,
+      "detail": "format(group_digits: Bool = false): String",
+      "documentation": "The number as text, with a comma between every three digits when `group_digits` is `true`.",
+      "insertText": "format($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "gcd",
+      "kind": 2,
+      "detail": "gcd(other: Int): Int",
+      "documentation": "The greatest common divisor: the largest number that divides both this number and `other` evenly.",
+      "insertText": "gcd($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "lcm",
+      "kind": 2,
+      "detail": "lcm(other: Int): Int",
+      "documentation": "The least common multiple: the smallest positive number that both this number and `other` divide evenly.",
+      "insertText": "lcm($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "multiple_of?",
+      "kind": 2,
+      "detail": "multiple_of?(divisor: Int): Bool",
+      "documentation": "Whether the number divides evenly by `divisor`, leaving nothing over.",
+      "insertText": "multiple_of?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "negative?",
+      "kind": 2,
+      "detail": "negative?(): Bool",
+      "documentation": "Whether the number is less than zero.",
+      "insertText": "negative?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "odd?",
+      "kind": 2,
+      "detail": "odd?(): Bool",
+      "documentation": "Whether the number is odd.",
+      "insertText": "odd?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "positive?",
+      "kind": 2,
+      "detail": "positive?(): Bool",
+      "documentation": "Whether the number is greater than zero.",
+      "insertText": "positive?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "times",
+      "kind": 2,
+      "detail": "times() { index: Int => ... }: Nothing",
+      "documentation": "Runs the block this many times, passing it `0`, then `1`, and so on, up to one less than the number.",
+      "insertText": "times()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_float",
+      "kind": 2,
+      "detail": "to_float(): Float",
+      "documentation": "The same number as a `Float`.",
+      "insertText": "to_float()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_string",
+      "kind": 2,
+      "detail": "to_string(base: Int = 10): String",
+      "documentation": "The number as text, exactly as `print` shows it.",
+      "insertText": "to_string($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "up_to",
+      "kind": 2,
+      "detail": "up_to(target: Int): Range\nup_to(target: Int) { value: Int => ... }: Nothing",
+      "documentation": "A `Range` from this number up to `target`, including both.",
+      "insertText": "up_to($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "zero?",
+      "kind": 2,
+      "detail": "zero?(): Bool",
+      "documentation": "Whether the number is zero.",
+      "insertText": "zero?()",
+      "insertTextFormat": 1
+    }
+  ]
+}

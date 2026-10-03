@@ -107,6 +107,26 @@ pub const Checked = struct {
         return !Diagnostic.anyErrors(self.diagnostics);
     }
 
+    /// Receiver-only restrictions for editor completion. Argument and block
+    /// types are checked when written; do not propose a method whose receiver
+    /// can never satisfy its existing contract.
+    pub fn acceptsCompletionMember(self: Checked, receiver: Type, name: []const u8) bool {
+        if (receiver.kind != .list) return true;
+        const element = receiver.element.?.*;
+        if (std.mem.eql(u8, name, "sum") or std.mem.eql(u8, name, "average")) return numericListElement(element);
+        const equatable_type = if (self.structs.get(Resolver.preludeKey("Equatable"))) |t| t.user else null;
+        const hashable = if (self.structs.get(Resolver.preludeKey("Hashable"))) |t| t.user else null;
+        if (std.mem.eql(u8, name, "frequencies") or std.mem.eql(u8, name, "to_set")) return element.eligibleKey(equatable_type, hashable);
+        if (std.mem.eql(u8, name, "to_dictionary")) return dictionaryListElement(element) and element.elements[0].eligibleKey(equatable_type, hashable);
+        if (std.mem.eql(u8, name, "sort") or std.mem.eql(u8, name, "sort!") or std.mem.eql(u8, name, "min") or std.mem.eql(u8, name, "max") or std.mem.eql(u8, name, "min_max")) {
+            if (element.optional) return false;
+            if (element.kind == .int or element.kind == .float or element.kind == .string) return true;
+            const ordered = self.structs.get(Resolver.preludeKey("Ordered")) orelse return false;
+            return element.kind == .struct_value and element.user.?.conformsTo(ordered.user.?);
+        }
+        return true;
+    }
+
     pub fn deinit(self: *Checked) void {
         self.arena_state.deinit();
         self.* = undefined;
@@ -146,7 +166,7 @@ pub const LiteralTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 /// An expression's type together with which of the project's files it came
 /// from (`Diagnostic.file`'s indexing) — needed because a byte offset alone
 /// is ambiguous across files: each `Source`'s spans start over at 0.
-pub const ExpressionType = struct { file: u32, type: Type };
+pub const ExpressionType = struct { file: u32, type: Type, changeable: bool = false };
 pub const ExpressionTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, ExpressionType);
 pub const Structs = std.StringHashMapUnmanaged(Type);
 pub const MethodCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
@@ -297,6 +317,7 @@ literal_types: LiteralTypes = .empty,
 /// literal), this covers every expression kind, for the language server's
 /// hover (18.5) to answer "what is this" for whatever the cursor is on.
 expression_types: ExpressionTypes = .empty,
+completion: bool = false,
 /// Field metadata is completed for every struct before recursive key
 /// eligibility is judged, so declaration order cannot change the answer.
 resolving_struct_fields: bool = false,
@@ -391,6 +412,7 @@ pub const Options = struct {
     /// Check every prelude body, reached or not, as the tests do so that a
     /// mistake in a body no program reaches is still found.
     whole_prelude: bool = false,
+    completion: bool = false,
 };
 
 pub fn check(
@@ -421,7 +443,7 @@ pub fn checkWithOptions(
     const module = try arena.create(Scope);
     module.* = .empty;
 
-    var checker: Checker = .{ .arena = arena, .prelude = prelude, .module = module, .facts = facts, .files = files };
+    var checker: Checker = .{ .arena = arena, .prelude = prelude, .module = module, .facts = facts, .files = files, .completion = options.completion };
     // The prelude joins every analysis as the last file (`emerald.analyze`).
     const prelude_file: ?usize = for (files, 0..) |file, index| {
         if (std.mem.eql(u8, file.namespace, Resolver.prelude_namespace)) break index;
@@ -6020,7 +6042,8 @@ fn markAllAssigned(self: *Checker) void {
 /// few kinds `literal_types` already tracked for the interpreter's sake.
 fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
     const result = try self.typeOfUnrecorded(expression);
-    try self.expression_types.put(self.arena, expression, .{ .file = self.file, .type = result });
+    const changeable = if (self.completion) try self.completionChangeable(expression, result) else false;
+    try self.expression_types.put(self.arena, expression, .{ .file = self.file, .type = result, .changeable = changeable });
     try self.reachType(result);
     return result;
 }
@@ -7450,7 +7473,7 @@ fn typeOfMethodCall(
     // element before either belongs in Emerald's public surface.
     if (std.mem.eql(u8, member.name, "sum")) {
         if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
-        if (element.kind == .int or element.kind == .float) return element;
+        if (numericListElement(element)) return element;
         try self.report(
             member.name_span,
             "`sum` needs a List of Ints or Floats, but this is {f}",
@@ -7465,7 +7488,7 @@ fn typeOfMethodCall(
     // its fractional part. Its one missing answer is the average of no items.
     if (std.mem.eql(u8, member.name, "average")) {
         if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
-        if (element.kind == .int or element.kind == .float) return Type.float.optionalOf();
+        if (numericListElement(element)) return Type.float.optionalOf();
         try self.report(
             member.name_span,
             "`average` needs a List of Ints or Floats, but this is {f}",
@@ -7674,6 +7697,17 @@ fn requirePresent(
 
 /// Section 4.5's `or`: the value if it is there, and the fallback if it is not.
 /// The result is never optional, which is what makes it the way out.
+pub const optional_methods = [_][]const u8{"or"};
+
+/// These public calls have source declarations for resolver identity, but
+/// their useful parameter/result shapes are special-cased below because the
+/// language has no written generic type parameter for `as:` or encodable
+/// values. Keep the editor catalog's corresponding signatures tied to these
+/// checker-owned names.
+pub const typed_json_methods = [_][]const u8{ "encode", "decode" };
+pub const typed_csv_methods = [_][]const u8{ "encode", "decode" };
+pub const typed_console_methods = [_][]const u8{"table"};
+
 fn typeOfOr(
     self: *Checker,
     expression: *const Ast.Expression,
@@ -8051,6 +8085,14 @@ fn typeOfAssociate(self: *Checker, call: Ast.Expression.Call, member: Ast.Expres
     return Type.dictionaryOf(self.arena, key, value);
 }
 
+fn numericListElement(element: Type) bool {
+    return element.kind == .int or element.kind == .float;
+}
+
+fn dictionaryListElement(element: Type) bool {
+    return element.kind == .tuple and element.elements.len == 2;
+}
+
 /// Section 8.6's `to_dictionary`: a List already holding `(key, value)`
 /// tuples becomes a Dictionary directly, with no block to say how. The result
 /// type is recorded for the interpreter, which cannot otherwise recover a
@@ -8064,7 +8106,7 @@ fn typeOfToDictionary(
 ) Error!Type {
     _ = try self.requireArity(member, call.arguments, 0, 0);
     const element = base.element.?.*;
-    if (element.kind != .tuple or element.elements.len != 2) {
+    if (!dictionaryListElement(element)) {
         try self.report(
             member.name_span,
             "`to_dictionary` needs a List of two-element tuples, but this is {f}",
@@ -8490,6 +8532,37 @@ fn requireChangeablePath(self: *Checker, base: *const Ast.Expression) Error!?*co
         return null;
     }
     return root;
+}
+
+/// An editor fact, computed while the checker still owns the binding scopes.
+/// Resolve the same place as an actual changing call, quietly: asking what
+/// can be called must not add a diagnostic to the program.
+fn completionChangeable(self: *Checker, expression: *const Ast.Expression, value: Type) Error!bool {
+    if (isClass(value)) return true;
+    switch (expression.data) {
+        .name, .member, .index => {},
+        else => return false,
+    }
+    const reported = self.diagnostics.items.len;
+    defer self.diagnostics.shrinkRetainingCapacity(reported);
+    const place = try self.resolvePlace(expression);
+    const root = switch (place) {
+        .reported => return false,
+        .root => |root| root,
+        .typed => |typed| blk: {
+            if (typed.frozen != null) return false;
+            if (typed.reference) return true;
+            break :blk typed.root;
+        },
+    };
+    if (root.data == .name) {
+        const binding = self.find(root.data.name) orelse return false;
+        return binding.mutability == .variable;
+    }
+    if (self.facts.qualified.get(root)) |key| {
+        if (self.type_fields.contains(key)) return self.module.get(key).?.mutability == .variable;
+    }
+    return false;
 }
 
 /// Section 4.3 and 7.1: a method that changes its receiver cannot be called on

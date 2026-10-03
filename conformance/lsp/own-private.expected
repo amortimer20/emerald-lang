@@ -1,0 +1,38 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "_secret",
+      "kind": 2,
+      "detail": "_secret(): Int",
+      "documentation": null,
+      "insertText": "_secret()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "_value",
+      "kind": 5,
+      "detail": "_value: Int",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "probe",
+      "kind": 2,
+      "detail": "probe(): Nothing",
+      "documentation": null,
+      "insertText": "probe()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

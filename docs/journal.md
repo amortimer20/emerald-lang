@@ -4979,3 +4979,34 @@ Implementation commit eebe5e7 was pushed on codex/editor-intelligence. CI run
 execution fuzz passed. No job was rerun. The handoff and plan now record the green
 result rather than leaving commit/push/CI pending. Stopped for slice 1 review;
 completion and later slices have not started.
+
+## 2026-10-03: Editor intelligence slice 2 — completion validation in progress
+
+Completion covers value members, type and namespace members, built-in types and
+namespaces among bare names, privacy, receiver changeability, and method insertion
+snippets. The slice-1 catalog omitted `Optional.or`, which the checker already accepted;
+it is now included and checked. Source review also found five special typed prelude calls
+whose stubs did not match the checker's shapes: `Json.encode/decode`, `Csv.encode/decode`,
+and struct-row `Console.table`. Their editor signatures now come from the catalog, with a
+regression through the real LSP handler. Their dedicated checker paths are listed beside
+those paths, while ordinary signature result/arity probes continue to cover the fixed-shape
+members.
+
+ReleaseSafe completion medians against the largest example project were 7.426 ms before
+and 3.022 ms after for `File.` (15 items both), and 10.153 ms before and 5.244 ms after
+for a String receiver (0 items before, 38 after), each over 25 requests after five warmups.
+Debug and ReleaseSafe test suites, native build, documentation examples, formatting,
+whitespace, Windows/macOS cross-builds, and all 40 real-protocol LSP cases repeated 50
+times passed. The sibling VS Code integration suite had 8 passing tests and one format-on-save
+timeout. Direct formatting protocol probes against both baseline and current server returned
+the same correct edit, but the UI-level failure remains unexplained. No commit or push has
+been made; slice 2 awaits resolution of that required integration failure, and slice 3 has
+not started.
+
+## 2026-10-03: Editor intelligence slice 2 — integration follow-up
+
+The user reported seven successful VS Code integration runs after the one timeout above.
+Codex then ran the suite once more and observed all 9 tests pass, including
+`formats a document via the format-on-save provider` (VS Code 1.140.0). The timeout was
+transient; no extension change was needed. Completion's local gates and timing are green,
+and slice 2 is ready to commit and push. Slice 3 awaits the pushed branch's green CI.

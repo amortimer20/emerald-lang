@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "infinity",
+      "kind": 10,
+      "detail": "infinity: Float",
+      "documentation": "A value larger than every other `Float`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "nan",
+      "kind": 10,
+      "detail": "nan: Float",
+      "documentation": "\"Not a number\", the result of a calculation with no meaningful answer.",
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

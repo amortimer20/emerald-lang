@@ -1,0 +1,30 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "answer",
+      "kind": 2,
+      "detail": "answer(): Int",
+      "documentation": null,
+      "insertText": "answer()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "value",
+      "kind": 5,
+      "detail": "value: Int",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

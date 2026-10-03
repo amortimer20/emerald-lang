@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "arguments",
+      "kind": 10,
+      "detail": "arguments: List[String]",
+      "documentation": "The words written after `--` when the program was started, in order.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "sleep",
+      "kind": 2,
+      "detail": "sleep(duration: Duration): Nothing",
+      "documentation": "Pauses the program for `duration`, then carries on.",
+      "insertText": "sleep($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

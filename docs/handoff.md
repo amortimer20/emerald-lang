@@ -12,8 +12,9 @@ functions, optionals, collections, Unicode strings, structs, classes, inheritanc
 enums, typed errors, projects/namespaces, ranges and slicing. The formatter and persistent-session
 REPL are complete and merged on main (PR #30). The language server provides diagnostics
 (identical to `emerald check`), symbols,
-format-on-save, hover, go to definition, find references, rename, and completion, but the last
-two are shallow for the built-in types: see "Queued: editor intelligence" below.
+format-on-save, hover, go to definition, find references, rename, and completion.
+Editor-intelligence slice 2 adds native completion on its branch; hover and signature help
+remain the next slices. See "In progress: editor intelligence" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
 name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
@@ -167,16 +168,27 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Editor-intelligence slice 1 is complete on `codex/editor-intelligence`, based
-on main `b728612`, committed as `eebe5e7`, pushed, and green in all seven CI jobs.
-It awaits review. The LSP owns its catalog
-once at startup; ordinary execution never loads it. Tests prove bidirectional names,
-exact results, block parameters, default/optional/variadic arities, every empty/excessive
-call boundary, and universal `type_name` placement. The approved checker corrections
-cover List result shapes, Range.step's missing-argument panic, and Math constant calls.
-Name parity added `String.to_bytes` and one universal owner `"*"` entry for `type_name`.
-The plan and journal record the findings and full local gate. Stop here for review;
-slice 2 (completion) requires the user's go-ahead.
+Editor-intelligence slice 1 is reviewed and merged through PR #37. Slice 2 (completion)
+is implemented on `codex/editor-intelligence`, after merging main through `6020d13`, and
+is ready to commit and push. The required VS Code integration suite passed all 9 tests on
+the latest run; an earlier one-off formatter timeout did not recur.
+Native members use the startup-loaded catalog; declared members use their source signatures
+and `##` comments. Completion uses one project analysis, respects private/type-level and
+changing-receiver boundaries, includes native types and namespaces among bare names,
+and inserts method parentheses with a parameter cursor stop. The catalog also corrects
+signatures for the checker's special typed calls: `Json.encode/decode`, `Csv.encode/decode`,
+and both `Console.table` row shapes. It now has 249 members and 253 signatures. All 40
+real-protocol LSP cases passed 50 requests through the built binary; Debug and ReleaseSafe
+suites passed, as did native build, documentation examples, formatting, whitespace, and
+Windows/macOS cross-builds. ReleaseSafe completion medians on `examples/ledger/main.em` were
+7.426 ms before and 3.022 ms after for `File.` (15 items both), and 10.153 ms before and
+5.244 ms after for a String receiver (0 items before, 38 after), over 25 requests after warmup.
+
+The extension integration suite in `../emerald-vscode` passed all 9 tests against this build.
+An earlier run had one transient formatter timeout after its other eight tests passed; the
+user reported seven successful runs from Claude, and this run passed the formatting test too.
+No extension files were changed. Slice 3 (hover and documentation) may start after slice 2's
+commit is pushed and branch CI is green.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -193,6 +205,8 @@ The trait-adoption hint follow-ups are merged through PRs #33 and #35; their
 focused cases and local full gates are recorded in the journal.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
+- Editor completion offers native and declared members with signatures, summaries, and
+  method parentheses; bare names include the native types, `Math`, and `Program`.
 - `chunks`, `windows`, and `pairs` results are now typed as nested lists and pairs;
   code that relied on the old wrong type now needs fixing.
 - Calling `Range.step()` without its required argument reports the normal missing-argument
@@ -321,34 +335,25 @@ Open work:
 **In progress: editor intelligence** (the user's go-ahead, 2026-09-28; Codex implements,
 Claude reviews and handles website parity). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
-recommendations; the REPL prerequisite is merged. Slice 1 is the current review boundary. The findings
-below are the plan's starting point. The
-goal is C#-level IntelliSense in VS Code. Investigation found that the editor already runs the
-current server (`emerald lsp --stdio` from the 0.6.0 install) and that diagnostics match
-`emerald check` exactly on every example, but completion and hover are shallow:
-- Member completion (`Lsp.zig` `onCompletion`) handles only user- and prelude-declared types.
-  `"abc".`, `[1, 2].`, `5.`, and `Math.` offer nothing, while `Date(...)` and `Json.` offer
-  their members. `String`, `List`, `Dict`, `Set`, `Int`, `Float`, `Bool`, `Range`, `Bytes`,
-  and `Tuple` have their methods written into the checker as name checks, and `Math` and
-  `Program` are native namespaces with no declarations. `Math`, `Program`, and the built-in
-  type names are also missing from bare-name completion.
+recommendations; the REPL prerequisite and slice 1 are merged. Slice 2 is being validated.
+The goal is C#-level IntelliSense in VS Code. Completion now reads native descriptions
+from `src/builtins.json` and declarations from the compiler's analysis. The remaining gaps are:
 - Hover shows only an expression's type (`Float` for `Math.sin(1)`), never a signature or
   description, and go to definition on `Math.sin` finds nothing.
-- Completion patches the text with a fake `placeholder()` call and re-analyzes the whole
-  project, twice, instead of analyzing unfinished code directly.
+- Completion still patches unfinished source with a placeholder, as the accepted plan
+  requires, but performs one analysis rather than two. Error-tolerant parsing is not part
+  of this milestone.
 - The extension's grammar highlights only `print`, `write`, `input`, and `input_maybe` as
   built-in functions (not `random` or `exit`), and the extension never says which `emerald`
   binary it started.
 - The user reports red "not defined" errors in the editor that could not be reproduced; an
   example (the message and its line) is still needed.
 
-The proposed path, in order: (1) declare the built-in members as data (name, signature,
-summary) that completion, hover, the checker's "did you mean" hints, and a drift test all read,
-and from which the website reference and an `llms.txt` can be generated; (2) documentation in
-completion and hover, and definitions for built-ins; (3) error-tolerant analysis in place of
-the placeholder patch; (4) signature help and quick fixes from the diagnostics' hints;
-(5) an LSP conformance suite; (6) extension polish (show the binary and version, warn on a
-mismatch, complete the grammar). To probe the server by hand, speak JSON-RPC over stdio to
+The accepted remaining slices are hover/documentation and catalog-backed hints, signature
+help, structured quick fixes, and extension polish (binary/version visibility and grammar).
+Claude handles website parity after slice 3. Native go to definition stays empty: a native
+has no Emerald declaration, and its documentation link belongs in hover instead.
+To probe the server by hand, speak JSON-RPC over stdio to
 `emerald lsp`: `initialize`, `initialized`, `textDocument/didOpen`, then `completion`,
 `hover`, or `definition` with a position.
 
