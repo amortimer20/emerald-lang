@@ -487,10 +487,16 @@ command line 4,400, the language server 3,900, the resolver 2,900, the heap 1,70
 formatter, regex, lexer, JSON, scheduler, HTTP, and time zones), plus the small Zig tools (the
 Unicode table generator, the fuzzer, the prelude AST tool). The 14,000 lines of generated Unicode
 tables cost nothing: the generator emits C instead. `prelude.em` and the Python scripts stay. Expect
-roughly 60,000 to 90,000 lines of C. An open question for the compiler plan, since it can halve the
-port: if the compiler emits C, `emerald run` and the REPL could compile in memory with libtcc
-instead of interpreting, so the interpreter is replaced rather than ported; the browser playground
-would then need its own answer, because TinyCC cannot target WebAssembly. Order: after the
+roughly 60,000 to 90,000 lines of C. The interpreter is replaced, not ported (Claude's
+recommendation 2026-10-03, to settle in the plan): the compiler lowers the checked tree to an
+Emerald IR (explicit control flow, reference counting, and runtime checks), optimizes what clang
+cannot (cancelling reference-count pairs, impossible copy-on-write copies), and emits C with
+`#line` directives for the bundled clang, linked against a C runtime library (heap, collections,
+scheduler, natives, the compiled prelude). `emerald run` compiles at `-O0` with a cache. A small IR
+interpreter in C (perhaps 3,000 to 5,000 lines, sharing that runtime) serves the browser playground
+(clang does not fit in a page), the REPL, and machines without a working C compiler; the
+conformance suite runs every case on both backends. The Zig interpreter is deleted after the
+switch. Order: after the
 pre-compiler phase, once the language has settled (porting a moving target doubles every language
 change); in verified stages that are each useful alone (generated tables, lexer and parser, checker,
 code generation and runtime, then the language server, formatter, and REPL); with the Zig version
