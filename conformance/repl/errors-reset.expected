@@ -1,0 +1,47 @@
+Emerald REPL. Type `:help` for commands; Ctrl-D exits.
+> > repl:1:9: this is String, but `count` holds Int
+  count = "many"
+          ^^^^^^
+Assign a value of the declared type, or convert it first.
+> 1
+> > repl:1:7: `name` is already declared
+  const name = "Grace"
+        ^^^^
+Declare a different name, or type :reset to start over.
+> "Ada"
+> repl:1:1: `name` cannot be reassigned
+  name = "Grace"
+  ^^^^
+It was declared with `const`. Use `var` if the value needs to change.
+> "Ada"
+> repl:1:5: expected a name after `var`, found =
+  var = 1
+      ^
+A declaration introduces one name, as in `var score = 0`.
+> 1
+> . . . . . kept
+repl:5:5: RuntimeError: boom
+      raise RuntimeError("boom")
+      ^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.
+> 7
+> repl:1:1: `lost` is not defined
+  lost
+  ^^^^
+Check the spelling, or declare it before this line.
+> > 20
+> Commands:
+  :help   show these commands
+  :reset  clear the session
+  :quit   leave the REPL
+
+Names cannot be redeclared; use :reset to start over.
+An entry that fails to check changes nothing. An entry that raises loses
+its declarations, but keeps completed assignments, output, and outside effects.
+> Session cleared.
+> repl:1:1: `count` is not defined
+  count
+  ^^^^^
+Check the spelling, or declare it before this line.
+> > 9
+> 

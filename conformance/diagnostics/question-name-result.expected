@@ -1,0 +1,16 @@
+diagnostics/question-name-result.em:1:6: `ready?` ends in `?`, so it must return Bool, but it returns Int
+  func ready?(): Int {
+       ^^^^^^
+Change its result to `Bool`, or remove `?` if it does not answer a yes-or-no question.
+diagnostics/question-name-result.em:6:10: `available?` ends in `?`, so it must return Bool, but it returns String
+      func available?(): String {
+           ^^^^^^^^^^
+Change its result to `Bool`, or remove `?` if it does not answer a yes-or-no question.
+diagnostics/question-name-result.em:13:10: `available?` ends in `?`, so it must return Bool, but it returns String
+      func available?(): String {
+           ^^^^^^^^^^
+Change its result to `Bool`, or remove `?` if it does not answer a yes-or-no question.
+diagnostics/question-name-result.em:19:11: `enabled?` ends in `?`, so it must return Bool, but it returns String
+      const enabled?: String {
+            ^^^^^^^^
+Change its result to `Bool`, or remove `?` if it does not answer a yes-or-no question.

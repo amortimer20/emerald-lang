@@ -1,0 +1,4 @@
+diagnostics/foreign-decrement-short.em:2:6: `--` is not a decrement operator in Emerald
+  count--
+       ^^
+Write `count -= 1` to decrease a variable by one.

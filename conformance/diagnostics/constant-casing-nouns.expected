@@ -1,0 +1,8 @@
+diagnostics/constant-casing-nouns.em:1:7: warning: constant name `MaxScore` should use snake_case
+  const MaxScore = 3
+        ^^^^^^^^
+Rename it to `max_score`.
+diagnostics/constant-casing-nouns.em:2:5: warning: variable name `HighScore` should use snake_case
+  var HighScore = 3
+      ^^^^^^^^^
+Rename it to `high_score`.

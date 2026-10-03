@@ -31,6 +31,9 @@ pub const Parsed = struct {
     arena_state: std.heap.ArenaAllocator,
     program: Ast.Program,
     diagnostics: []const Diagnostic,
+    /// An interactive entry stopped at the end of a construct that can be
+    /// continued on another line. Ordinary file parsing never sets this.
+    incomplete_at_end: bool = false,
 
     pub fn ok(self: Parsed) bool {
         return self.diagnostics.len == 0;
@@ -47,6 +50,8 @@ source: *const Source,
 tokens: []const Token,
 index: usize = 0,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
+interactive_entry: bool = false,
+incomplete_at_end: bool = false,
 /// Whether statements here are a file's own, which a struct declaration must
 /// be. Set false for the duration of any block body.
 at_top_level: bool = true,
@@ -81,6 +86,9 @@ recursion: u32 = 0,
 /// Any bracket or parenthesis clears it, because the body cannot begin inside
 /// one.
 in_control_header: bool = false,
+/// Conditions reject assignment even inside a group. Unlike the header flag,
+/// parentheses keep this set; statement bodies and lambdas clear it.
+in_condition: bool = false,
 /// Where `self` means something: directly inside a constructor or method body
 /// (10.2). A lambda clears it, since a block that captured `self` could let the
 /// value escape before every field is set, or outlive a method that changes it.
@@ -108,11 +116,22 @@ pub const max_expression_depth = 10_000;
 const Error = error{ParseFailed} || std.mem.Allocator.Error;
 
 pub fn parse(gpa: std.mem.Allocator, source: *const Source, tokens: []const Token) !Parsed {
+    return parseWithMode(gpa, source, tokens, false);
+}
+
+/// Parses one interactive entry from tail tokens of an existing source. It
+/// retains expression statements (calls included) so the REPL can echo their
+/// checked values; ordinary files keep section 5.2's unused-expression error.
+pub fn parseEntry(gpa: std.mem.Allocator, source: *const Source, tokens: []const Token) !Parsed {
+    return parseWithMode(gpa, source, tokens, true);
+}
+
+fn parseWithMode(gpa: std.mem.Allocator, source: *const Source, tokens: []const Token, interactive_entry: bool) !Parsed {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var parser: Parser = .{ .arena = arena, .source = source, .tokens = tokens };
+    var parser: Parser = .{ .arena = arena, .source = source, .tokens = tokens, .interactive_entry = interactive_entry };
 
     var statements: std.ArrayList(Ast.Statement) = .empty;
     var using: std.ArrayList(Ast.Using) = .empty;
@@ -152,6 +171,7 @@ pub fn parse(gpa: std.mem.Allocator, source: *const Source, tokens: []const Toke
         .arena_state = arena_state,
         .program = .{ .statements = owned_statements, .using = owned_using },
         .diagnostics = owned_diagnostics,
+        .incomplete_at_end = parser.incomplete_at_end,
     };
 }
 
@@ -191,6 +211,127 @@ fn match(self: *Parser, kind: Token.Kind) ?Token {
 
 fn text(self: Parser, token: Token) []const u8 {
     return self.source.text[token.span.start..token.span.end];
+}
+
+const HintOperand = struct {
+    span: Source.Span,
+    next_index: usize,
+};
+
+fn skipDocComments(self: *const Parser, start: usize) usize {
+    var index = start;
+    while (index < self.tokens.len and self.tokens[index].kind == .doc_comment) : (index += 1) {}
+    return index;
+}
+
+/// Finds a name, member chain, or literal without parsing or consuming it.
+fn shortHintOperandAt(self: *const Parser, start: usize) ?HintOperand {
+    const first_index = self.skipDocComments(start);
+    if (first_index >= self.tokens.len) return null;
+    const first = self.tokens[first_index];
+    var span = first.span;
+    var next_index = first_index + 1;
+
+    switch (first.kind) {
+        .identifier,
+        .int_literal,
+        .float_literal,
+        .string_literal,
+        .raw_string_literal,
+        .multiline_string_literal,
+        .keyword_true,
+        .keyword_false,
+        .keyword_nothing,
+        => {},
+        .plus, .minus => {
+            const number_index = self.skipDocComments(next_index);
+            if (number_index >= self.tokens.len) return null;
+            const number = self.tokens[number_index];
+            if (number.kind != .int_literal and number.kind != .float_literal) return null;
+            if (!self.onlyWhitespaceBetween(first.span.end, number.span.start)) return null;
+            span.end = number.span.end;
+            next_index = number_index + 1;
+        },
+        else => return null,
+    }
+
+    while (true) {
+        const access_index = self.skipDocComments(next_index);
+        if (access_index >= self.tokens.len) break;
+        const access = self.tokens[access_index];
+        if (access.kind != .dot and access.kind != .question_dot) break;
+
+        const member_index = self.skipDocComments(access_index + 1);
+        if (member_index >= self.tokens.len) break;
+        const member = self.tokens[member_index];
+        if (member.kind != .identifier and member.kind.keyword() == null) break;
+        span.end = member.span.end;
+        next_index = member_index + 1;
+    }
+
+    return .{ .span = span, .next_index = next_index };
+}
+
+fn isShortHintExpression(expression: *const Ast.Expression) bool {
+    return switch (expression.data) {
+        .name,
+        .int_literal,
+        .float_literal,
+        .bool_literal,
+        .nothing_literal,
+        .string_literal,
+        => true,
+        .member => |member| isShortHintExpression(member.base),
+        else => false,
+    };
+}
+
+fn onlyWhitespaceBetween(self: *const Parser, start: u32, end: u32) bool {
+    for (self.source.text[start..end]) |byte| {
+        if (!std.ascii.isWhitespace(byte)) return false;
+    }
+    return true;
+}
+
+fn shortOperandEndsExpression(self: *const Parser, operand: HintOperand) bool {
+    const index = self.skipDocComments(operand.next_index);
+    if (index >= self.tokens.len) return false;
+    return switch (self.tokens[index].kind) {
+        .comma, .right_paren, .right_bracket, .right_brace, .newline, .eof => true,
+        else => false,
+    };
+}
+
+fn incrementHelp(self: *Parser, expression: *const Ast.Expression, operator: Token, increase: bool) Error![]const u8 {
+    if (isShortHintExpression(expression) and self.onlyWhitespaceBetween(expression.span.end, operator.span.start)) {
+        return std.fmt.allocPrint(
+            self.arena,
+            "Write `{s} {s}= 1` to {s} a variable by one.",
+            .{
+                self.source.text[expression.span.start..expression.span.end],
+                if (increase) "+" else "-",
+                if (increase) "increase" else "decrease",
+            },
+        );
+    }
+    return if (increase)
+        "Write `name += 1` to increase a variable by one."
+    else
+        "Write `name -= 1` to decrease a variable by one.";
+}
+
+fn prefixIncrementHelp(self: *Parser) Error![]const u8 {
+    const first_index = self.skipDocComments(self.index);
+    const second_index = self.skipDocComments(first_index + 1);
+    const operand = self.shortHintOperandAt(second_index + 1) orelse return "Write `name += 1` to increase a variable by one.";
+    if (!self.shortOperandEndsExpression(operand) or
+        !self.onlyWhitespaceBetween(self.tokens[second_index].span.end, operand.span.start))
+        return "Write `name += 1` to increase a variable by one.";
+    return std.fmt.allocPrint(
+        self.arena,
+        "Write `{s} += 1` to increase a variable by one.",
+        .{self.source.text[operand.span.start..operand.span.end]},
+    );
 }
 
 /// A name as every later stage sees it: section 3.3 makes canonically
@@ -287,6 +428,11 @@ fn skipToNextStatement(self: *Parser, context: enum { file, body }) void {
 }
 
 fn report(self: *Parser, span: Source.Span, message: []const u8, help: []const u8) Error {
+    // A parser diagnostic at EOF while a delimiter is open is an incomplete
+    // interactive entry, not a conclusion reverse-engineered from the
+    // diagnostic text. A malformed top-level statement such as `value =`
+    // keeps this false and is reported immediately.
+    if (self.interactive_entry and self.check(.eof) and self.nesting > 0) self.incomplete_at_end = true;
     try self.note(span, message, help);
     return error.ParseFailed;
 }
@@ -851,6 +997,9 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
         self.skipSeparators();
     }
     if (self.check(.eof)) {
+        // Type bodies do not use the expression nesting counter. Their
+        // opening brace still makes an interactive entry incomplete at EOF.
+        if (self.interactive_entry) self.incomplete_at_end = true;
         return self.reportFmt(
             self.peek().span,
             "this {s} body is missing its closing `}}`",
@@ -1621,7 +1770,7 @@ fn expectName(self: *Parser, message: []const u8) Error!Token {
 /// Section 6.4: `while condition { body }`.
 fn parseWhile(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseHeaderExpression();
+    const condition = try self.parseHeaderCondition();
     const body = try self.parseBlock();
     return .{
         .span = spanning(keyword.span, body.span),
@@ -1688,7 +1837,7 @@ fn finishSimpleStatement(self: *Parser, statement: Ast.Statement) Error!Ast.Stat
         return statement;
     }
 
-    const condition = try self.parseExpression();
+    const condition = try self.parseCondition();
     return self.finishGuardedStatement(statement, condition);
 }
 
@@ -1949,7 +2098,7 @@ fn parseValueExit(self: *Parser, comptime kind: std.meta.Tag(Ast.Statement.Data)
             const if_keyword = self.advance();
             try self.nest(if_keyword.span);
             defer self.unnest();
-            const condition = try self.parseExpression();
+            const condition = try self.parseCondition();
             if (!self.check(.keyword_then)) {
                 return self.finishGuardedStatement(.{
                     .span = keyword.span,
@@ -1968,7 +2117,7 @@ fn parseValueExit(self: *Parser, comptime kind: std.meta.Tag(Ast.Statement.Data)
 
 fn parseAssert(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseExpression();
+    const condition = try self.parseCondition();
     const message = if (self.match(.comma) != null) try self.parseExpression() else null;
     return self.finishSimpleStatement(.{
         .span = if (message) |m| spanning(keyword.span, m.span) else spanning(keyword.span, condition.span),
@@ -2387,7 +2536,7 @@ fn parseFunctionType(self: *Parser) Error!Ast.TypeExpression {
 
 fn parseIf(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
-    const condition = try self.parseHeaderExpression();
+    const condition = try self.parseHeaderCondition();
     const then_block = try self.parseBlock();
 
     var otherwise: ?Ast.Else = null;
@@ -2520,7 +2669,7 @@ fn parseCaseArms(self: *Parser, opening: Token, subjectless: bool, parts: *CaseP
         _ = self.advance();
         var alternatives: std.ArrayList(*const Ast.Expression) = .empty;
         while (true) {
-            try alternatives.append(self.arena, try self.parseHeaderExpression());
+            try alternatives.append(self.arena, if (subjectless) try self.parseHeaderCondition() else try self.parseHeaderExpression());
             const comma = self.match(.comma) orelse break;
             if (subjectless) {
                 return self.report(
@@ -2591,7 +2740,24 @@ fn parseHeaderExpression(self: *Parser) Error!*const Ast.Expression {
     return self.parseExpression();
 }
 
+fn parseCondition(self: *Parser) Error!*const Ast.Expression {
+    const saved = self.in_condition;
+    self.in_condition = true;
+    defer self.in_condition = saved;
+    return self.parseExpression();
+}
+
+fn parseHeaderCondition(self: *Parser) Error!*const Ast.Expression {
+    const saved = self.in_control_header;
+    self.in_control_header = true;
+    defer self.in_control_header = saved;
+    return self.parseCondition();
+}
+
 fn parseBlock(self: *Parser) Error!Ast.Block {
+    const saved_condition = self.in_condition;
+    self.in_condition = false;
+    defer self.in_condition = saved_condition;
     self.skipToLeftBrace();
     const opening = self.peek();
     if (opening.kind != .left_brace) {
@@ -2867,7 +3033,7 @@ fn finishExpressionStatement(self: *Parser, expression: *const Ast.Expression) E
     // Section 5.2: a call may discard its result, but a pure expression whose
     // result is unused is a mistake, and the diagnostic should suggest the
     // update the writer probably meant.
-    if (expression.data != .call) {
+    if (expression.data != .call and !(self.interactive_entry and self.at_top_level)) {
         return self.report(
             expression.span,
             "this result is never used",
@@ -2875,7 +3041,9 @@ fn finishExpressionStatement(self: *Parser, expression: *const Ast.Expression) E
         );
     }
 
-    return self.finishSimpleStatement(.{ .span = expression.span, .data = .{ .expression = expression } });
+    var statement = try self.finishSimpleStatement(.{ .span = expression.span, .data = .{ .expression = expression } });
+    statement.interactive_expression = self.interactive_entry and self.at_top_level;
+    return statement;
 }
 
 /// A statement ends at a newline, at the end of the file, or just before the
@@ -2897,14 +3065,86 @@ fn expectStatementEnd(self: *Parser) Error!void {
 // Expressions, loosest binding first.
 
 fn parseExpression(self: *Parser) Error!*const Ast.Expression {
-    return self.parseDisjunction();
+    const expression = try self.parseDisjunction();
+    // Consume the mistaken comparison's right side for recovery, so its block
+    // and closing delimiters still parse. The diagnostic prevents execution.
+    while (self.in_condition and self.check(.equal)) {
+        const written = self.advance();
+        try self.note(
+            written.span,
+            "a condition compares values with `==`, not `=`",
+            "Write `==` to compare values. Put an assignment on its own line.",
+        );
+        _ = try self.parseDisjunction();
+    }
+    // In `x??0` the lexer includes the first `?` in the identifier. Recognize
+    // both token shapes here, leaving optional type suffixes/predicate names
+    // unchanged and giving `??` a different correction from `? :`.
+    if (self.check(.question)) {
+        const first = self.peek();
+        const second = self.peekAfterNext();
+        const joined_name = expression.span.end == first.span.start and self.source.text[expression.span.end - 1] == '?';
+        if (second.kind == .question or joined_name) {
+            const span = if (second.kind == .question)
+                spanning(first.span, second.span)
+            else
+                Source.Span{ .start = first.span.start - 1, .end = first.span.end };
+            const first_index = self.skipDocComments(self.index);
+            const second_index = self.skipDocComments(first_index + 1);
+            const help = if (second.kind == .question and !joined_name and
+                isShortHintExpression(expression) and self.onlyWhitespaceBetween(expression.span.end, first.span.start))
+            blk: {
+                const fallback = self.shortHintOperandAt(second_index + 1) orelse break :blk null;
+                if (!self.shortOperandEndsExpression(fallback)) break :blk null;
+                break :blk try std.fmt.allocPrint(
+                    self.arena,
+                    "Write `{s}.or({s})` to use a fallback for `nothing`.",
+                    .{
+                        self.source.text[expression.span.start..expression.span.end],
+                        self.source.text[fallback.span.start..fallback.span.end],
+                    },
+                );
+            } else null;
+            return self.report(
+                span,
+                "`??` is not an operator in Emerald",
+                help orelse "Write `value.or(default)`, as in `value.or(0)`, to use a fallback for `nothing`.",
+            );
+        }
+        const first_index = self.skipDocComments(self.index);
+        const then_value = self.shortHintOperandAt(first_index + 1);
+        const conditional_help = if (isShortHintExpression(expression) and
+            self.onlyWhitespaceBetween(expression.span.end, first.span.start))
+        blk: {
+            const value = then_value orelse break :blk null;
+            const colon_index = self.skipDocComments(value.next_index);
+            if (colon_index >= self.tokens.len or self.tokens[colon_index].kind != .colon) break :blk null;
+            const else_value = self.shortHintOperandAt(colon_index + 1) orelse break :blk null;
+            if (!self.shortOperandEndsExpression(else_value)) break :blk null;
+            break :blk try std.fmt.allocPrint(
+                self.arena,
+                "Write `if {s} then {s} else {s}`.",
+                .{
+                    self.source.text[expression.span.start..expression.span.end],
+                    self.source.text[value.span.start..value.span.end],
+                    self.source.text[else_value.span.start..else_value.span.end],
+                },
+            );
+        } else null;
+        return self.report(
+            first.span,
+            "`? :` is not a conditional operator in Emerald",
+            conditional_help orelse "Write `if condition then value else other_value`.",
+        );
+    }
+    return expression;
 }
 
 fn parseIfExpression(self: *Parser) Error!*const Ast.Expression {
     const keyword = self.advance();
     try self.nest(keyword.span);
     defer self.unnest();
-    const condition = try self.parseExpression();
+    const condition = try self.parseCondition();
     return self.finishIfExpression(keyword, condition);
 }
 
@@ -3078,6 +3318,15 @@ fn parseAdditive(self: *Parser) Error!*const Ast.Expression {
             else => return left,
         };
         const operator_token = self.advance();
+        if (self.check(operator_token.kind) and operator_token.span.end == self.peek().span.start and
+            (operator == .add or !startsExpression(self.peekAfterNext().kind)))
+        {
+            return self.report(
+                spanning(operator_token.span, self.peek().span),
+                if (operator == .add) "`++` is not an operator in Emerald" else "`--` is not a decrement operator in Emerald",
+                try self.incrementHelp(left, operator_token, operator == .add),
+            );
+        }
         const right = try self.parseMultiplicative();
         left = try self.node(spanning(left.span, right.span), .{ .binary = .{
             .operator = operator,
@@ -3110,6 +3359,13 @@ fn parseMultiplicative(self: *Parser) Error!*const Ast.Expression {
 }
 
 fn parseUnary(self: *Parser) Error!*const Ast.Expression {
+    if (self.check(.plus) and self.peekAfterNext().kind == .plus and self.peek().span.end == self.peekAfterNext().span.start) {
+        return self.report(
+            spanning(self.peek().span, self.peekAfterNext().span),
+            "`++` is not an operator in Emerald",
+            try self.prefixIncrementHelp(),
+        );
+    }
     if (self.match(.minus)) |token| {
         if (try self.negativeLiteral(token)) |literal| {
             return self.parsePowerFrom(try self.parsePostfixFrom(literal));
@@ -3126,6 +3382,35 @@ fn parseUnary(self: *Parser) Error!*const Ast.Expression {
         } });
     }
     return self.parsePower();
+}
+
+/// `c--1` is subtraction of a negative value, and `--c` is double negation.
+/// Only a dangling pair can be diagnosed as an attempted decrement: operator
+/// line continuation remains valid when an operand follows on the next line.
+fn startsExpression(kind: Token.Kind) bool {
+    return switch (kind) {
+        .int_literal,
+        .float_literal,
+        .string_literal,
+        .raw_string_literal,
+        .multiline_string_literal,
+        .string_start,
+        .identifier,
+        .keyword_self,
+        .keyword_super,
+        .keyword_true,
+        .keyword_false,
+        .keyword_nothing,
+        .keyword_not,
+        .keyword_if,
+        .keyword_case,
+        .minus,
+        .left_paren,
+        .left_bracket,
+        .left_brace,
+        => true,
+        else => false,
+    };
 }
 
 /// The right operand is a unary expression, not another power. That single
@@ -3631,6 +3916,10 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     try self.nest(opening.span);
     defer self.unnest();
 
+    const saved_condition = self.in_condition;
+    self.in_condition = false;
+    defer self.in_condition = saved_condition;
+
     // The body is a body, whatever the statement around it was doing.
     const saved_header = self.in_control_header;
     self.in_control_header = false;
@@ -3656,6 +3945,12 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     // operator does and the lexer has already dropped the break after it.
     if (!self.brokeLine(header.arrow)) {
         const start = self.peek();
+        // Loop exits are statements, even on the arrow's line. Parse the
+        // ordinary block body so the checker can explain that a lambda cannot
+        // break or continue its caller's loop, without a stray-brace cascade.
+        if (start.kind == .keyword_break or start.kind == .keyword_continue) {
+            return self.finishLambdaBlock(opening, parameters, try self.parseStatement());
+        }
         const first = try self.parseExpression();
         if (self.check(.right_brace)) {
             const closing = self.advance();
@@ -4365,6 +4660,65 @@ test "parser reports malformed declarations without crashing" {
     try testing.expect(parsed.diagnostics.len > 0);
 }
 
+test "an interactive tail preserves its source spans and marks expression statements" {
+    const source_text = "const earlier = 1\n1 + 2\n";
+    var source = try Source.init(testing.allocator, "test.em", source_text);
+    defer source.deinit(testing.allocator);
+    const start: u32 = @intCast(std.mem.indexOf(u8, source_text, "1 + 2").?);
+    var tokens = try Lexer.tokenizeFrom(testing.allocator, &source, start);
+    defer tokens.deinit(testing.allocator);
+    var parsed = try parseEntry(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+
+    try testing.expectEqual(@as(usize, 0), parsed.diagnostics.len);
+    try testing.expect(!parsed.incomplete_at_end);
+    try testing.expectEqual(@as(usize, 1), parsed.program.statements.len);
+    const statement = parsed.program.statements[0];
+    try testing.expect(statement.interactive_expression);
+    try testing.expectEqual(start, statement.span.start);
+
+    var call_source = try Source.init(testing.allocator, "test.em", "print(1)\n");
+    defer call_source.deinit(testing.allocator);
+    var call_tokens = try Lexer.tokenize(testing.allocator, &call_source);
+    defer call_tokens.deinit(testing.allocator);
+    var call = try parseEntry(testing.allocator, &call_source, call_tokens.tokens);
+    defer call.deinit();
+    try testing.expect(call.program.statements[0].interactive_expression);
+    try testing.expect(call.program.statements[0].data.expression.data == .call);
+}
+
+test "only an open interactive construct is incomplete at end" {
+    const incomplete_entries = [_][]const u8{
+        "func f() {\n",
+        "print(\n",
+        "const xs = [\n",
+        "const f = { =>\n",
+        "case 1 {\n",
+        "struct Pair {\n",
+        "class Pair {\n",
+        "trait Named {\n",
+        "enum Color {\n",
+    };
+    for (incomplete_entries) |entry_text| {
+        var source = try Source.init(testing.allocator, "test.em", entry_text);
+        defer source.deinit(testing.allocator);
+        var tokens = try Lexer.tokenize(testing.allocator, &source);
+        defer tokens.deinit(testing.allocator);
+        var parsed = try parseEntry(testing.allocator, &source, tokens.tokens);
+        defer parsed.deinit();
+        try testing.expect(parsed.incomplete_at_end);
+    }
+
+    var source = try Source.init(testing.allocator, "test.em", "var value =\n");
+    defer source.deinit(testing.allocator);
+    var tokens = try Lexer.tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+    var parsed = try parseEntry(testing.allocator, &source, tokens.tokens);
+    defer parsed.deinit();
+    try testing.expect(!parsed.incomplete_at_end);
+    try testing.expect(parsed.diagnostics.len > 0);
+}
+
 test "parser resumes after a malformed declaration inside a block" {
     var source = try Source.init(testing.allocator, "test.em", "if true {\nfunc bad(1,\nprint(1)\n}\nvar ok = 2\n");
     defer source.deinit(testing.allocator);
@@ -4419,6 +4773,13 @@ fn expectParsesCleanly(source_text: []const u8) !void {
     var parsed = try parse(testing.allocator, &source, tokens.tokens);
     defer parsed.deinit();
     try testing.expectEqual(@as(usize, 0), parsed.diagnostics.len);
+}
+
+test "one-line lambda loop exits parse as statements for the checker" {
+    try expectParsesCleanly("[1].each { x => break }\n");
+    try expectParsesCleanly("[1].each { x => continue }\n");
+    try expectParsesCleanly("[1].each { x => break if x > 0 }\n");
+    try expectParsesCleanly("[1].each { x => continue if x > 0 }\n");
 }
 
 test "Allman brace style parses for if, else, and else if" {

@@ -218,6 +218,7 @@ root_task: *Scheduler.TaskState(TaskData),
 scheduler: *Scheduler.Runtime,
 input_gate: Scheduler.Runtime.Gate = .{},
 input_reader: ?*Scheduler.InputReader = null,
+owns_input_reader: bool = true,
 callback_guard: ?*CallbackGuard = null,
 standard_input: bool = false,
 task_records: std.AutoHashMapUnmanaged(i64, *TaskRecord) = .empty,
@@ -288,6 +289,10 @@ scopes: std.ArrayList(*Environment) = .empty,
 spare_scopes: std.ArrayList(*Environment) = .empty,
 
 functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
+/// A persistent session must own resolver-produced names stored in runtime
+/// tables or closures: the next analysis frees the resolver's arena.
+session_keys: ?std.StringHashMapUnmanaged(void) = null,
+session: ?*Session = null,
 /// Struct types, keyed program-wide and carrying their short source name for
 /// display.
 structs: std.StringHashMapUnmanaged(*const Value.StructType) = .empty,
@@ -299,6 +304,10 @@ constructors: std.StringHashMapUnmanaged(Constructor) = .empty,
 /// Every struct's declaration and what calling its generated constructor
 /// matches arguments against, by the same keys.
 struct_infos: std.StringHashMapUnmanaged(StructInfo) = .empty,
+/// Struct layouts from the current whole-session analysis. Runtime values use
+/// the descriptors above, but registering declarations from a later REPL
+/// entry needs the checker-proved fields for that entry's original tree.
+checked_structs: *const Checker.Structs,
 /// What the checker proved about each function, including return types it
 /// inferred, which are needed to widen results the way it allowed.
 signatures: *const Type.Signatures,
@@ -340,6 +349,457 @@ literal_types: *const Checker.LiteralTypes,
 /// every new holder of a list retains it, and every holder that ends releases
 /// it.
 heap: Heap,
+
+/// A checked view of the append-only REPL program. The current analysis lives
+/// until replacement; the owner keeps parsed entries and their source text
+/// until the session ends. Runtime tables own synthesized resolver names.
+pub const SessionAnalysis = struct {
+    /// Session-wide source offset of this entry. A release callback transfers
+    /// analysis ownership to Session; borrowed views must outlive the session.
+    entry: usize = 0,
+    owner: ?*anyopaque = null,
+    release: ?*const fn (*anyopaque, std.mem.Allocator) void = null,
+    files: []const Project.File,
+    programs: []const Ast.Program,
+    checked_structs: *const Checker.Structs,
+    signatures: *const Type.Signatures,
+    literal_types: *const Checker.LiteralTypes,
+    changing_methods: *const Resolver.NameSet,
+    method_calls: *const Checker.MethodCalls,
+    operator_calls: *const Checker.OperatorCalls,
+    operator_assignments: *const Checker.OperatorAssignments,
+    json_encodes: *const Checker.JsonEncodes,
+    json_decodes: *const Checker.JsonDecodes,
+    super_members: *const Checker.MethodCalls,
+    prelude_reached: ?*const Resolver.NameSet,
+    type_tests: *const Checker.TypeTests,
+    type_names: *const Checker.LiteralTypes,
+    trait_calls: *const Checker.MethodCalls,
+    facts: Resolver.Facts,
+};
+
+/// The result of executing one accepted interactive entry.  A diagnostic is
+/// owned by the session arena and stays renderable until reset or shutdown.
+pub const SessionResult = union(enum) {
+    complete,
+    failed: Diagnostic,
+    exited: u8,
+};
+
+/// One long-lived interactive execution.  It deliberately owns the scheduler
+/// allocator even before an entry names `Tasks`: a later entry may do so, and
+/// changing an allocator beneath values or closures already in the heap would
+/// violate their ownership invariant.
+pub const Session = struct {
+    const Declarations = struct {
+        functions: @FieldType(Interpreter, "functions"),
+        structs: @FieldType(Interpreter, "structs"),
+        constructors: @FieldType(Interpreter, "constructors"),
+        struct_infos: @FieldType(Interpreter, "struct_infos"),
+        trait_infos: @FieldType(Interpreter, "trait_infos"),
+        overrides: @FieldType(Interpreter, "overrides"),
+        type_setups: @FieldType(Interpreter, "type_setups"),
+
+        fn read(interpreter: *Interpreter) Declarations {
+            var result: Declarations = undefined;
+            inline for (std.meta.fields(Declarations)) |field| @field(result, field.name) = @field(interpreter, field.name);
+            return result;
+        }
+
+        fn install(self: Declarations, interpreter: *Interpreter) void {
+            inline for (std.meta.fields(Declarations)) |field| @field(interpreter, field.name) = @field(self, field.name);
+        }
+
+        fn snapshot(self: Declarations, arena: std.mem.Allocator) !Declarations {
+            var result: Declarations = undefined;
+            inline for (std.meta.fields(Declarations)) |field| @field(result, field.name) = try @field(self, field.name).clone(arena);
+            // Rollback can release a failed type initializer's error. Its
+            // archived view is another holder, just like the active table.
+            var setups = result.type_setups.valueIterator();
+            while (setups.next()) |setup| if (setup.failed_value) |value| {
+                _ = Heap.retain(value);
+            };
+            return result;
+        }
+    };
+
+    const Failed = struct { analysis: SessionAnalysis, declarations: Declarations };
+    const Origin = struct { entry: usize, end: usize };
+    current: SessionAnalysis = undefined,
+    current_failed: bool = false,
+    current_declarations: Declarations = undefined,
+    failed: std.AutoHashMapUnmanaged(usize, Failed) = .empty,
+    origins: std.ArrayList(Origin) = .empty,
+    active: ?usize = null,
+    host_allocator: std.mem.Allocator,
+    shared_allocator: *Scheduler.SharedAllocator,
+    arena_state: std.heap.ArenaAllocator,
+    module_states: []ModuleState,
+    module_failed_values: []?Value,
+    module_failed_diagnostics: []?Diagnostic,
+    root_job: Scheduler.Runtime.Job = undefined,
+    scheduler: Scheduler.Runtime,
+    root_task: Scheduler.TaskState(TaskData),
+    interpreter: Interpreter,
+    entry: u32,
+    installed: bool = false,
+
+    pub fn init(
+        host_allocator: std.mem.Allocator,
+        analysis: SessionAnalysis,
+        out: *std.Io.Writer,
+        in: *std.Io.Reader,
+        io: std.Io,
+        arguments: []const []const u8,
+        color: bool,
+        standard_input: bool,
+        process_environment: std.process.Environ,
+        local_zone: TimeZone.Local,
+        stack: StackLimit,
+    ) RunError!*Session {
+        const self = try host_allocator.create(Session);
+        errdefer host_allocator.destroy(self);
+
+        const shared_allocator = try host_allocator.create(Scheduler.SharedAllocator);
+        errdefer host_allocator.destroy(shared_allocator);
+        shared_allocator.* = .{ .child = host_allocator, .io = io };
+        errdefer shared_allocator.deinit();
+        const gpa = shared_allocator.allocator();
+
+        var arena_state: std.heap.ArenaAllocator = .init(gpa);
+        errdefer arena_state.deinit();
+        const module_states = try gpa.alloc(ModuleState, analysis.files.len);
+        errdefer gpa.free(module_states);
+        const module_failed_values = try gpa.alloc(?Value, analysis.files.len);
+        errdefer gpa.free(module_failed_values);
+        const module_failed_diagnostics = try gpa.alloc(?Diagnostic, analysis.files.len);
+        errdefer gpa.free(module_failed_diagnostics);
+        @memset(module_failed_values, null);
+        @memset(module_failed_diagnostics, null);
+
+        var entry: u32 = 0;
+        for (analysis.files, module_states, 0..) |file, *state, index| {
+            state.* = if (file.entry) .done else .pending;
+            if (file.entry) entry = @intCast(index);
+        }
+
+        self.* = .{
+            .host_allocator = host_allocator,
+            .shared_allocator = shared_allocator,
+            .arena_state = arena_state,
+            .module_states = module_states,
+            .module_failed_values = module_failed_values,
+            .module_failed_diagnostics = module_failed_diagnostics,
+            .scheduler = undefined,
+            .root_task = undefined,
+            .interpreter = undefined,
+            .entry = entry,
+        };
+        self.scheduler = Scheduler.Runtime.init(io, &self.root_job);
+        self.root_task = .{ .state = .{
+            .file = entry,
+            .stack = stack,
+            .job = &self.root_job,
+        } };
+        self.interpreter = .{
+            .session = self,
+            .arena = self.arena_state.allocator(),
+            .gpa = gpa,
+            .files = analysis.files,
+            .programs = analysis.programs,
+            .module_states = module_states,
+            .module_failed_values = module_failed_values,
+            .module_failed_diagnostics = module_failed_diagnostics,
+            .task = &self.root_task,
+            .root_task = &self.root_task,
+            .scheduler = &self.scheduler,
+            .facts = analysis.facts,
+            .out = out,
+            .in = in,
+            .io = io,
+            .color = color,
+            .standard_input = standard_input,
+            .environment = process_environment,
+            .local_zone = local_zone,
+            .arguments = arguments,
+            .checked_structs = analysis.checked_structs,
+            .signatures = analysis.signatures,
+            .changing_methods = analysis.changing_methods,
+            .method_calls = analysis.method_calls,
+            .operator_calls = analysis.operator_calls,
+            .operator_assignments = analysis.operator_assignments,
+            .json_encodes = analysis.json_encodes,
+            .json_decodes = analysis.json_decodes,
+            .super_members = analysis.super_members,
+            .prelude_reached = analysis.prelude_reached,
+            .type_tests = analysis.type_tests,
+            .type_names = analysis.type_names,
+            .trait_calls = analysis.trait_calls,
+            .literal_types = analysis.literal_types,
+            .heap = .init(gpa),
+            .session_keys = .empty,
+        };
+        errdefer self.deinit();
+        try self.install(analysis, 0);
+        return self;
+    }
+
+    /// Replaces every checker/resolver table as one operation before any user
+    /// code can run, then registers only declarations introduced at `start`.
+    /// Existing runtime descriptors remain the identity of earlier values.
+    pub fn install(self: *Session, analysis: SessionAnalysis, start: usize) RunError!void {
+        std.debug.assert(analysis.files.len == self.module_states.len);
+        const interpreter = &self.interpreter;
+        const previous = if (self.installed and !self.current_failed) self.current else null;
+        if (self.installed) {
+            self.activate(null);
+        }
+        self.current = analysis;
+        self.current_failed = false;
+        self.applyAnalysis(analysis);
+        if (previous) |obsolete| self.releaseAnalysis(obsolete);
+        try self.origins.append(interpreter.arena, .{ .entry = analysis.entry, .end = analysis.files[self.entry].source.text.len });
+
+        for (analysis.programs, 0..) |program, index| {
+            const is_entry = index == self.entry;
+            if (self.installed and !is_entry) continue;
+            const statements = if (is_entry and self.installed) program.statements[start..] else program.statements;
+            interpreter.task.state.file = @intCast(index);
+            try self.registerDeclarations(statements);
+        }
+        interpreter.task.state.file = self.entry;
+        try self.inheritNewTypes();
+        var nested = interpreter.facts.nested_functions.iterator();
+        while (nested.next()) |item| {
+            const key = try interpreter.runtimeKey(item.key_ptr.*);
+            const registered = try interpreter.functions.getOrPut(interpreter.arena, key);
+            if (!registered.found_existing) registered.value_ptr.* = item.value_ptr.*;
+        }
+        self.installed = true;
+    }
+
+    fn releaseAnalysis(self: *Session, analysis: SessionAnalysis) void {
+        if (analysis.release) |release| release(analysis.owner.?, self.host_allocator);
+    }
+
+    fn applyAnalysis(self: *Session, analysis: SessionAnalysis) void {
+        self.interpreter.files = analysis.files;
+        self.interpreter.programs = analysis.programs;
+        self.interpreter.checked_structs = analysis.checked_structs;
+        self.interpreter.signatures = analysis.signatures;
+        self.interpreter.literal_types = analysis.literal_types;
+        self.interpreter.changing_methods = analysis.changing_methods;
+        self.interpreter.method_calls = analysis.method_calls;
+        self.interpreter.operator_calls = analysis.operator_calls;
+        self.interpreter.operator_assignments = analysis.operator_assignments;
+        self.interpreter.json_encodes = analysis.json_encodes;
+        self.interpreter.json_decodes = analysis.json_decodes;
+        self.interpreter.super_members = analysis.super_members;
+        self.interpreter.prelude_reached = analysis.prelude_reached;
+        self.interpreter.type_tests = analysis.type_tests;
+        self.interpreter.type_names = analysis.type_names;
+        self.interpreter.trait_calls = analysis.trait_calls;
+        self.interpreter.facts = analysis.facts;
+    }
+
+    /// Only failed origins select an old view. Kept code always uses the newest
+    /// analysis, including a kept function called from inside failed-entry code.
+    fn activate(self: *Session, origin: ?usize) void {
+        const target = if (origin) |entry| if (self.failed.contains(entry)) origin else null else null;
+        self.interpreter.task.state.session_context = target;
+        if (self.active == target) return;
+        if (self.active) |entry| {
+            self.failed.getPtr(entry).?.declarations = Declarations.read(&self.interpreter);
+        } else self.current_declarations = Declarations.read(&self.interpreter);
+        self.active = target;
+        if (target) |entry| {
+            const retained = self.failed.get(entry).?;
+            self.applyAnalysis(retained.analysis);
+            retained.declarations.install(&self.interpreter);
+        } else {
+            self.applyAnalysis(self.current);
+            self.current_declarations.install(&self.interpreter);
+        }
+    }
+
+    fn originOf(self: *Session, file: u32, span: Source.Span) ?usize {
+        if (file != self.entry) return null;
+        // Entry offsets are append-only, including failed entries. Find the
+        // last origin starting at or before this span instead of scanning the
+        // whole session every time a callable is created.
+        var low: usize = 0;
+        var high = self.origins.items.len;
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            if (self.origins.items[middle].entry <= span.start) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        if (low == 0) return null;
+        const origin = self.origins.items[low - 1];
+        return if (span.start < origin.end) origin.entry else null;
+    }
+
+    /// Runs only this entry after `install`.  A raised entry loses all of its
+    /// declarations, but assignments and outside effects before the raise are
+    /// intentionally not reversible (18.4's interactive rule).
+    pub fn runEntry(self: *Session, statements: []const Ast.Statement) RunError!SessionResult {
+        return self.runEntryWithEcho(statements, null);
+    }
+
+    pub fn runInteractiveEntry(self: *Session, statements: []const Ast.Statement, types: *const Checker.ExpressionTypes) RunError!SessionResult {
+        return self.runEntryWithEcho(statements, types);
+    }
+
+    /// The REPL owns this reader across :reset. Both prompt and program reads
+    /// wait through the same scheduler service; no prefetched line is lost.
+    pub fn shareInput(self: *Session, reader: *Scheduler.InputReader) void {
+        std.debug.assert(self.interpreter.input_reader == null);
+        self.interpreter.input_reader = reader;
+        self.interpreter.owns_input_reader = false;
+    }
+
+    pub fn readLine(self: *Session) (RunError || error{ReadFailed})!struct { bytes: []u8, at_end: bool } {
+        self.interpreter.activateTask(&self.root_task);
+        const line = self.interpreter.inputLine(.{ .start = 0, .end = 0 }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.WriteFailed => return error.WriteFailed,
+            error.ReadFailed => return error.ReadFailed,
+            else => unreachable,
+        };
+        defer self.interpreter.gpa.free(line.bytes);
+        return .{ .bytes = try self.host_allocator.dupe(u8, line.bytes), .at_end = line.at_end };
+    }
+
+    fn runEntryWithEcho(self: *Session, statements: []const Ast.Statement, types: ?*const Checker.ExpressionTypes) RunError!SessionResult {
+        const interpreter = &self.interpreter;
+        interpreter.task = &self.root_task;
+        interpreter.task.state.file = self.entry;
+        interpreter.executeInteractive(statements, types) catch |err| switch (err) {
+            error.Raised, error.StepLimit => {
+                const failure = interpreter.task.state.failure.?;
+                const declarations = try Declarations.read(interpreter).snapshot(interpreter.arena);
+                try self.failed.put(interpreter.arena, self.current.entry, .{ .analysis = self.current, .declarations = declarations });
+                self.current_failed = true;
+                self.rollbackDeclarations(statements);
+                if (interpreter.task.state.raised_value) |value| interpreter.heap.release(value);
+                interpreter.task.state.raised_value = null;
+                interpreter.task.state.failure = null;
+                return .{ .failed = failure };
+            },
+            error.Returned => {
+                if (interpreter.task.state.return_value) |value| interpreter.heap.release(value);
+                interpreter.task.state.return_value = null;
+                return .complete;
+            },
+            error.Exited => return .{ .exited = interpreter.task.state.exit_code orelse 0 },
+            error.Broke, error.Continued => unreachable,
+            else => |other| return other,
+        };
+        return .complete;
+    }
+
+    fn registerDeclarations(self: *Session, statements: []const Ast.Statement) RunError!void {
+        const interpreter = &self.interpreter;
+        for (statements) |statement| {
+            switch (statement.data) {
+                .struct_declaration => |declaration| try interpreter.registerStruct(interpreter.checked_structs, declaration, interpreter.keyOf(declaration.name)),
+                .function_declaration => |function| try interpreter.functions.put(interpreter.arena, try interpreter.runtimeKey(interpreter.keyOf(function.name)), function),
+                else => {},
+            }
+        }
+    }
+
+    fn inheritNewTypes(self: *Session) RunError!void {
+        var bases: std.StringHashMapUnmanaged(void) = .empty;
+        var infos = self.interpreter.struct_infos.valueIterator();
+        while (infos.next()) |info| if (info.base) |base| try bases.put(self.interpreter.arena, base, {});
+        var finished: std.StringHashMapUnmanaged(void) = .empty;
+        var keys = self.interpreter.struct_infos.keyIterator();
+        while (keys.next()) |key| try self.interpreter.inherit(key.*, &bases, &finished);
+    }
+
+    fn rollbackDeclarations(self: *Session, statements: []const Ast.Statement) void {
+        for (statements) |statement| switch (statement.data) {
+            .declaration => |declaration| self.removeModuleBinding(declaration.name),
+            .destructuring => |declaration| for (declaration.pattern.names) |name| self.removeModuleBinding(name.text),
+            .function_declaration => |function| _ = self.interpreter.functions.remove(self.interpreter.keyOf(function.name)),
+            .struct_declaration => |declaration| self.removeStruct(declaration, self.interpreter.keyOf(declaration.name)),
+            else => {},
+        };
+    }
+
+    fn removeModuleBinding(self: *Session, name: []const u8) void {
+        if (self.interpreter.module.fetchRemove(self.interpreter.keyOf(name))) |entry| {
+            if (entry.value.value) |value| self.interpreter.heap.release(value);
+        }
+    }
+
+    fn removeStruct(self: *Session, declaration: Ast.StructDeclaration, key: []const u8) void {
+        for (declaration.types) |nested| {
+            const nested_key = Resolver.methodKey(self.interpreter.arena, key, nested.declaration.name) catch return;
+            self.removeStruct(nested.declaration, nested_key);
+        }
+        for (declaration.properties) |property| {
+            const getter = Resolver.methodKey(self.interpreter.arena, key, property.name) catch return;
+            _ = self.interpreter.functions.remove(getter);
+            if (property.setter != null) {
+                const setter = Resolver.setterKey(self.interpreter.arena, key, property.name) catch return;
+                _ = self.interpreter.functions.remove(setter);
+            }
+        }
+        for (declaration.methods) |method| {
+            const method_key = Resolver.methodKey(self.interpreter.arena, key, method.name) catch return;
+            _ = self.interpreter.functions.remove(method_key);
+            _ = self.interpreter.overrides.remove(method_key);
+        }
+        for (declaration.type_functions) |function| {
+            const member_key = Resolver.methodKey(self.interpreter.arena, key, function.member) catch return;
+            _ = self.interpreter.functions.remove(member_key);
+        }
+        _ = self.interpreter.structs.remove(key);
+        if (self.interpreter.type_setups.fetchRemove(key)) |setup| {
+            if (setup.value.failed_value) |value| self.interpreter.heap.release(value);
+        }
+        _ = self.interpreter.constructors.remove(key);
+        _ = self.interpreter.struct_infos.remove(key);
+        _ = self.interpreter.trait_infos.remove(key);
+    }
+
+    pub fn deinit(self: *Session) void {
+        const interpreter = &self.interpreter;
+        if (self.root_task.state.return_value) |value| interpreter.heap.release(value);
+        if (self.root_task.state.raised_value) |value| interpreter.heap.release(value);
+        self.root_task.state.scopes.deinit(interpreter.gpa);
+        self.root_task.state.call_stack.deinit(interpreter.gpa);
+        self.root_task.state.taken_fields.deinit(interpreter.gpa);
+        for (self.root_task.state.spare_scopes.items) |environment| {
+            environment.bindings.deinit(interpreter.gpa);
+            interpreter.gpa.destroy(environment);
+        }
+        self.root_task.state.spare_scopes.deinit(interpreter.gpa);
+        interpreter.deinitHttpClient();
+        interpreter.deinitFileWriters();
+        interpreter.deinitFileHandles();
+        interpreter.literal_texts.deinit(interpreter.gpa);
+        if (interpreter.owns_input_reader) if (interpreter.input_reader) |reader| reader.deinit();
+        interpreter.deinitTasks();
+        interpreter.deinitChannels();
+        interpreter.heap.deinit();
+        if (!self.current_failed) self.releaseAnalysis(self.current);
+        var retained = self.failed.valueIterator();
+        while (retained.next()) |entry| self.releaseAnalysis(entry.analysis);
+        interpreter.gpa.free(self.module_states);
+        interpreter.gpa.free(self.module_failed_values);
+        interpreter.gpa.free(self.module_failed_diagnostics);
+        self.arena_state.deinit();
+        self.shared_allocator.deinit();
+        self.host_allocator.destroy(self.shared_allocator);
+        self.host_allocator.destroy(self);
+    }
+};
 
 pub fn run(
     host_allocator: std.mem.Allocator,
@@ -427,6 +887,7 @@ pub fn run(
         .environment = process_environment,
         .local_zone = local_zone,
         .arguments = arguments,
+        .checked_structs = checked_structs,
         .signatures = signatures,
         .changing_methods = changing_methods,
         .method_calls = method_calls,
@@ -715,6 +1176,25 @@ fn executeAll(self: *Interpreter, statements: []const Ast.Statement) Error!void 
     for (statements) |statement| try self.execute(statement);
 }
 
+fn executeInteractive(self: *Interpreter, statements: []const Ast.Statement, types: ?*const Checker.ExpressionTypes) Error!void {
+    if (types == null) return self.executeAll(statements);
+    for (statements) |statement| {
+        if (!statement.interactive_expression or types.?.get(statement.data.expression).?.type.kind == .nothing) {
+            try self.execute(statement);
+            continue;
+        }
+        try self.guardStack(statement.span);
+        try self.guardStep(statement.span);
+        const value = try self.evaluate(statement.data.expression);
+        defer self.heap.release(value);
+        var line: std.Io.Writer.Allocating = .init(self.gpa);
+        defer line.deinit();
+        try value.writeThrough(&line.writer, value.kind() == .string, TextualDisplay{ .interpreter = self, .span = statement.span });
+        try line.writer.writeByte('\n');
+        try self.out.writeAll(line.written());
+    }
+}
+
 /// Section 7.1's nested functions, each a closure over the scopes in force as
 /// the block begins, so it can be called anywhere in the block and sees what
 /// the block declares, as a lambda would.
@@ -722,9 +1202,10 @@ fn hoistNestedFunctions(self: *Interpreter, statements: []const Ast.Statement) E
     for (statements) |statement| {
         if (statement.data != .function_declaration) continue;
         const function = statement.data.function_declaration;
-        const key = self.facts.nested_keys.get(.{ .file = self.task.state.file, .start = function.name_span.start }).?;
+        const key = try self.runtimeKey(self.facts.nested_keys.get(.{ .file = self.task.state.file, .start = function.name_span.start }).?);
         const captured = try self.gpa.dupe(*Environment, self.task.state.scopes.items);
         const closure = try self.heap.createClosure(.{ .named = key }, captured, self.task.state.file);
+        closure.session_entry = self.codeOrigin(self.task.state.file, function.name_span);
         const current = &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings;
         current.put(self.gpa, function.name, .{ .kind = .closure, .value = .{ .data = .{ .closure = closure } } }) catch |err| {
             self.heap.release(.{ .data = .{ .closure = closure } });
@@ -763,7 +1244,7 @@ fn unpackInto(self: *Interpreter, pattern: Ast.Pattern, value: Value, how: Unpac
             },
             .declare, .bind_loop => {
                 const in_block = self.task.state.scopes.items.len > 0;
-                const key = if (in_block) name.text else self.keyOf(name.text);
+                const key = if (in_block) name.text else try self.runtimeKey(self.keyOf(name.text));
                 const current = if (in_block)
                     &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings
                 else
@@ -842,7 +1323,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
 
             const in_block = self.task.state.scopes.items.len > 0;
             const current = if (in_block) &self.task.state.scopes.items[self.task.state.scopes.items.len - 1].bindings else &self.module;
-            const name = if (in_block) declaration.name else self.keyOf(declaration.name);
+            const name = if (in_block) declaration.name else try self.runtimeKey(self.keyOf(declaration.name));
             try current.put(if (in_block) self.gpa else self.arena, name, .{
                 .kind = kind,
                 .value = if (initial) |value| widen(value, kind) else null,
@@ -1160,7 +1641,7 @@ fn assignThroughSuper(self: *Interpreter, assignment: Ast.Assignment, setter: []
         defer self.heap.release(right);
         break :blk try self.applyBinary(assignment.target_span, operation, current, right, self.operatorAssignment(assignment));
     } else try self.evaluate(assignment.value);
-    var callable = self.namedCallable(setter);
+    var callable = self.methodCallable(setter, object);
     callable.self_value = Heap.retain(object);
     const arguments = [_]Value{value};
     self.heap.release(try self.invoke(assignment.target_span, callable, &arguments));
@@ -1302,6 +1783,7 @@ fn evaluateCallbackReceiver(self: *Interpreter, base: *const Ast.Expression, gua
 
 /// State that belongs to the task currently holding the scheduler baton.
 const TaskData = struct {
+    session_context: ?usize = null,
     job: ?*Scheduler.Runtime.Job = null,
     file: u32 = 0,
     scopes: std.ArrayList(*Environment) = .empty,
@@ -1440,7 +1922,7 @@ fn storeInObject(self: *Interpreter, span: Source.Span, in_object: InObject, val
         self.heap.release(value);
         return err;
     };
-    var callable = self.namedCallable(property.setter.?);
+    var callable = self.methodCallable(property.setter.?, owner);
     const arguments = [_]Value{value};
     if (instance.descriptor.class) {
         callable.self_value = owner;
@@ -1460,7 +1942,7 @@ fn fieldPosition(instance: *const Heap.StructValue, name: []const u8) ?usize {
 /// Section 10.3's getter, run on a value that only lends itself to the call.
 fn readProperty(self: *Interpreter, span: Source.Span, receiver: Value, name: []const u8) Error!Value {
     const property = try self.propertyOf(span, receiver.data.struct_value, name);
-    var callable = self.namedCallable(property.getter);
+    var callable = self.methodCallable(property.getter, receiver);
     callable.self_value = Heap.retain(receiver);
     return self.invoke(span, callable, &.{});
 }
@@ -1577,7 +2059,7 @@ fn storeProperty(self: *Interpreter, span: Source.Span, slot: *Value, name: []co
     const receiver = slot.*;
     slot.* = Value.nothing;
     var changed: Value = Value.nothing;
-    var callable = self.namedCallable(property.setter.?);
+    var callable = self.methodCallable(property.setter.?, receiver);
     callable.self_value = receiver;
     callable.self_out = &changed;
     const arguments = [_]Value{value};
@@ -1902,7 +2384,8 @@ fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
 
 /// One type's runtime descriptor and functions, then its nested types'
 /// (14.3), each under its own key.
-fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, declaration: Ast.StructDeclaration, type_key: []const u8) std.mem.Allocator.Error!void {
+fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, declaration: Ast.StructDeclaration, written_key: []const u8) std.mem.Allocator.Error!void {
+    const type_key = try self.runtimeKey(written_key);
     for (declaration.types) |nested| {
         try self.registerStruct(checked_structs, nested.declaration, try Resolver.methodKey(self.arena, type_key, nested.declaration.name));
     }
@@ -1924,7 +2407,7 @@ fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, d
         runtime.* = .{ .name = property.name, .getter = getter, .setter = setter };
     }
     const adopted = try self.arena.alloc([]const u8, checked.user.?.traits.len);
-    for (checked.user.?.traits, adopted) |trait, *trait_key| trait_key.* = trait.name;
+    for (checked.user.?.traits, adopted) |trait, *trait_key| trait_key.* = try self.runtimeKey(trait.name);
     // Section 11.1: a trait is never built, so it has no
     // descriptor; its defaults are functions like any method.
     if (declaration.trait) {
@@ -1949,6 +2432,7 @@ fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, d
         if (field.enum_value != null) try values.append(self.arena, field.name);
     }
     descriptor.* = .{
+        .session_entry = self.codeOrigin(self.task.state.file, declaration.name_span),
         .values = values.items,
         .name = type_key,
         .display_name = checked.user.?.display_name,
@@ -2008,7 +2492,7 @@ fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, d
             .field_names = field_names,
             .has_default = has_default,
             .any_default = any_default,
-            .base = if (checked.user.?.base) |base| base.name else null,
+            .base = if (checked.user.?.base) |base| try self.runtimeKey(base.name) else null,
             .traits = adopted,
             .offset = checked.user.?.inherited,
             .defaults_frame = try std.fmt.allocPrint(
@@ -2054,6 +2538,14 @@ fn kindOf(checked: Type) Value.Kind {
 /// resolver worked it out for the file being executed. A local is its own key.
 fn keyOf(self: *Interpreter, name: []const u8) []const u8 {
     return self.facts.keyFor(self.task.state.file, name) orelse name;
+}
+
+fn runtimeKey(self: *Interpreter, key: []const u8) std.mem.Allocator.Error![]const u8 {
+    const keys = if (self.session_keys) |*keys| keys else return key;
+    if (keys.getKey(key)) |owned| return owned;
+    const owned = try self.arena.dupe(u8, key);
+    try keys.put(self.arena, owned, {});
+    return owned;
 }
 
 /// Resolves the same namespace alias at the front of a written type that the
@@ -2421,9 +2913,9 @@ fn evaluateLambda(self: *Interpreter, expression: *const Ast.Expression) Error!V
     const captured = try self.gpa.dupe(*Environment, self.task.state.scopes.items);
     // A block can be passed to another file and called there, so it remembers
     // where it was written: that is what its bare module-level names mean.
-    return .{ .data = .{
-        .closure = try self.heap.createClosure(.{ .lambda = expression }, captured, self.task.state.file),
-    } };
+    const closure = try self.heap.createClosure(.{ .lambda = expression }, captured, self.task.state.file);
+    closure.session_entry = self.codeOrigin(self.task.state.file, expression.span);
+    return .{ .data = .{ .closure = closure } };
 }
 
 /// A name read for its value, whether it was written bare or qualified.
@@ -2455,8 +2947,11 @@ fn evaluateName(
 /// Section 7.5's captured named function, which captures nothing: a named
 /// function's body can only see the module, which is always visible.
 fn evaluateFunctionValue(self: *Interpreter, name: []const u8) Error!Value {
+    const key = try self.runtimeKey(name);
     const captured = try self.gpa.alloc(*Environment, 0);
-    return .{ .data = .{ .closure = try self.heap.createClosure(.{ .named = name }, captured, self.task.state.file) } };
+    const closure = try self.heap.createClosure(.{ .named = key }, captured, self.task.state.file);
+    closure.session_entry = self.codeOrigin(self.facts.owner.get(key) orelse self.task.state.file, self.functions.get(key).?.name_span);
+    return .{ .data = .{ .closure = closure } };
 }
 
 /// Section 7.5's captured method: a closure holding its own copy of the
@@ -2466,7 +2961,7 @@ fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: [
     // Section 10.7: the version the object's own class runs, decided now.
     // Taking it runs nothing, so whether that class's part is built yet is
     // checked when the method is called.
-    const version = if (isSuper(member.base)) key else if (versionOf(receiver, key)) |method| method.key else key;
+    const version = try self.runtimeKey(if (isSuper(member.base)) key else if (versionOf(receiver, key)) |method| method.key else key);
     const captured = self.gpa.alloc(*Environment, 0) catch |err| {
         self.heap.release(receiver);
         return err;
@@ -2476,6 +2971,7 @@ fn evaluateMethodValue(self: *Interpreter, member: Ast.Expression.Member, key: [
         return err;
     };
     closure.receiver = receiver;
+    closure.session_entry = self.methodCallable(version, receiver).session_entry;
     return .{ .data = .{ .closure = closure } };
 }
 
@@ -2644,7 +3140,7 @@ const TextualDisplay = struct {
 fn callTextual(self: *Interpreter, span: Source.Span, value: Value) Error!Value {
     const method = value.data.struct_value.descriptor.methods.?.get("to_string").?;
     try self.requireVersionBuilt(span, value, method.key, method);
-    var callable = self.namedCallable(method.key);
+    var callable = self.methodCallable(method.key, value);
     callable.self_value = Heap.retain(value);
     return self.invoke(span, callable, &.{});
 }
@@ -2691,7 +3187,7 @@ fn equatable(self: *Interpreter, span: Source.Span) EquatableDispatch {
 fn callHash(self: *Interpreter, span: Source.Span, value: Value) Error!Value {
     const method = value.data.struct_value.descriptor.methods.?.get("hash").?;
     try self.requireVersionBuilt(span, value, method.key, method);
-    var callable = self.namedCallable(method.key);
+    var callable = self.methodCallable(method.key, value);
     callable.self_value = Heap.retain(value);
     return self.invoke(span, callable, &.{});
 }
@@ -3133,9 +3629,8 @@ fn applyBinary(
 /// their declared method directly; classes pass through the same virtual
 /// dispatch that an ordinary `value.method()` call uses.
 fn callAnnotatedOperator(self: *Interpreter, span: Source.Span, key: []const u8, left: Value, right: Value) Error!Value {
-    var callable = self.namedCallable(key);
     const version = try self.dispatch(span, left, key);
-    if (version.ptr != key.ptr) callable = self.namedCallable(version);
+    var callable = self.methodCallable(version, left);
     callable.self_value = Heap.retain(left);
     return self.invoke(span, callable, &.{Heap.retain(right)});
 }
@@ -3148,7 +3643,7 @@ fn callOperator(self: *Interpreter, span: Source.Span, name: []const u8, left: V
     const object = left.data.struct_value;
     const method = object.descriptor.methods.?.get(name).?;
     if (method.depth > object.built) return self.raiseUnbuilt(span, name, method.owner, object.descriptor.display_name);
-    var callable = self.namedCallable(method.key);
+    var callable = self.methodCallable(method.key, left);
     callable.self_value = Heap.retain(left);
     return self.invoke(span, callable, &.{Heap.retain(right)});
 }
@@ -3306,7 +3801,7 @@ fn evaluateCallInner(
             try self.cancellationPoint(expression.span);
             const task = self.task;
             self.scheduler.yield(task.state.job.?);
-            self.task = task;
+            self.activateTask(task);
             try self.cancellationPoint(expression.span);
             return .nothing;
         }
@@ -3562,7 +4057,7 @@ fn taskMain(context: *anyopaque, job: *Scheduler.Runtime.Job) void {
     const self = task.interpreter;
     task.state.state.job = job;
     task.state.state.stack = StackLimit.here(Scheduler.Runtime.stack_size);
-    self.task = &task.state;
+    self.activateTask(&task.state);
     const closure = task.block.data.closure;
     const result = self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{});
     if (result) |value| task.result = value else |err| task.ended = err;
@@ -3584,11 +4079,11 @@ fn awaitTask(self: *Interpreter, span: Source.Span, task: *TaskRecord, for_resul
     parent.state.job.?.wait_site = .{ .file = parent.state.file, .start = span.start };
     defer parent.state.job.?.wait_site = null;
     if (!self.scheduler.waitFor(parent.state.job.?, &task.job)) {
-        self.task = parent;
+        self.activateTask(parent);
         try self.cancellationPoint(span);
         return self.raiseDeadlock(span);
     }
-    self.task = parent;
+    self.activateTask(parent);
     if (for_result) self.prepareTaskResult(task);
     try self.cancellationPoint(span);
     self.scheduler.join(&task.job);
@@ -3632,7 +4127,7 @@ fn callTaskMethod(self: *Interpreter, span: Source.Span, key: []const u8, member
         parent.state.job.?.wait_site = .{ .file = parent.state.file, .start = span.start };
         defer parent.state.job.?.wait_site = null;
         const result = self.scheduler.waitForUntil(parent.state.job.?, &task.job, deadline);
-        self.task = parent;
+        self.activateTask(parent);
         try self.cancellationPoint(span);
         return switch (result) {
             .finished => .initBool(true),
@@ -3744,7 +4239,7 @@ fn blocking(self: *Interpreter, comptime operation: anytype, args: std.meta.Args
     self.scheduler.beginExternal(task.state.job.?);
     const result = @call(.auto, operation, args);
     self.scheduler.endExternal(task.state.job.?);
-    self.task = task;
+    self.activateTask(task);
     task.state.external_completed = true;
     return result;
 }
@@ -3752,7 +4247,7 @@ fn blocking(self: *Interpreter, comptime operation: anytype, args: std.meta.Args
 fn acquireResource(self: *Interpreter, gate: *Scheduler.Runtime.Gate) void {
     const task = self.task;
     self.scheduler.acquire(task.state.job.?, gate);
-    self.task = task;
+    self.activateTask(task);
 }
 
 fn releaseResource(self: *Interpreter, gate: *Scheduler.Runtime.Gate) void {
@@ -3892,7 +4387,7 @@ fn waitChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, s
     task.state.job.?.wait_site = .{ .file = task.state.file, .start = span.start };
     defer task.state.job.?.wait_site = null;
     const progressed = self.scheduler.parkChannel(task.state.job.?, .{ .id = channel.id, .sending = sending });
-    self.task = task;
+    self.activateTask(task);
     try self.cancellationPoint(span);
     if (!progressed) return self.raiseDeadlock(span);
 }
@@ -4245,7 +4740,12 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
     }
     if (std.mem.eql(u8, suffix, "File::append")) {
         const path = values[0].data.string.bytes;
-        const old = self.blocking(std.Io.Dir.readFileAlloc, .{ cwd, io, path, self.gpa, .unlimited }) catch return self.raiseFilePath(span, path, "append to");
+        // Like C#'s File.AppendAllText and Python's and Ruby's append modes, a missing file is created;
+        // a missing folder still fails when the file is written below.
+        const old = self.blocking(std.Io.Dir.readFileAlloc, .{ cwd, io, path, self.gpa, .unlimited }) catch |err| switch (err) {
+            error.FileNotFound => try self.gpa.alloc(u8, 0),
+            else => return self.raiseFilePath(span, path, "append to"),
+        };
         defer self.gpa.free(old);
         if (!std.unicode.utf8ValidateSlice(old)) return self.raiseFilePath(span, path, "append UTF-8 text to");
         const combined = std.mem.concat(self.gpa, u8, &.{ old, values[1].data.string.bytes }) catch return error.OutOfMemory;
@@ -6400,7 +6900,7 @@ fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) E
         self.scheduler.prepareTimers() catch return self.raise(span, "the task scheduler could not wait for time", "Try starting fewer tasks at once.");
         const task = self.task;
         self.scheduler.sleepUntil(task.state.job.?, deadline);
-        self.task = task;
+        self.activateTask(task);
         try self.cancellationPoint(span);
         return .nothing;
     }
@@ -6483,6 +6983,7 @@ fn constructStruct(
 
     var built: Value = Value.nothing;
     const result = self.invoke(call_span, .{
+        .session_entry = self.codeOrigin(self.facts.owner.get(key) orelse self.task.state.file, info.declaration.name_span),
         .name = constructor.frame_name,
         .named = false,
         .file = self.facts.owner.get(key) orelse self.task.state.file,
@@ -6556,6 +7057,7 @@ fn buildPart(
         }
         var built: Value = Value.nothing;
         const result = self.invoke(call_span, .{
+            .session_entry = self.codeOrigin(self.facts.owner.get(key) orelse self.task.state.file, info.declaration.name_span),
             .name = constructor.frame_name,
             .named = false,
             .file = self.facts.owner.get(key) orelse self.task.state.file,
@@ -6714,8 +7216,11 @@ fn runFieldDefaults(
     instance: Value,
     which: []const bool,
 ) Error!Value {
-    self.requireChecked(key);
     const info = self.struct_infos.get(key).?;
+    const previous = self.sessionContext();
+    self.selectSession(self.codeOrigin(self.facts.owner.get(key) orelse self.task.state.file, info.declaration.name_span));
+    defer self.selectSession(previous);
+    self.requireChecked(key);
     const outer_scopes = self.task.state.scopes;
     self.task.state.scopes = .empty;
     defer {
@@ -6885,7 +7390,7 @@ const InputLine = struct { bytes: []u8, at_end: bool };
 
 fn inputLine(self: *Interpreter, span: Source.Span) (Error || error{ReadFailed})!InputLine {
     const fixed_reader: std.Io.Reader = .fixed("");
-    const scheduled = self.standard_input or (self.task_records.count() != 0 and self.in.vtable == fixed_reader.vtable);
+    const scheduled = self.input_reader != null or self.standard_input or (self.task_records.count() != 0 and self.in.vtable == fixed_reader.vtable);
     if (!scheduled) {
         self.acquireResource(&self.input_gate);
         defer self.releaseResource(&self.input_gate);
@@ -6905,7 +7410,7 @@ fn inputLine(self: *Interpreter, span: Source.Span) (Error || error{ReadFailed})
         if (try input.take(self.gpa, input_job)) |line| return .{ .bytes = line.bytes, .at_end = line.at_end };
         const task = self.task;
         try self.scheduler.waitInput(task.state.job.?, input);
-        self.task = task;
+        self.activateTask(task);
         try self.cancellationPoint(span);
     }
 }
@@ -6988,6 +7493,7 @@ const Constructor = struct {
 };
 
 const Callable = struct {
+    session_entry: ?usize = null,
     /// What a stack trace calls it.
     name: []const u8,
     /// A lambda's parameters as written, so section 8.6's `(name, age)` can be
@@ -7023,6 +7529,7 @@ const Callable = struct {
     /// when it is not the one its body was: an override uses the defaults of
     /// the declaration it replaces (7.3).
     defaults_file: ?u32 = null,
+    defaults_entry: ?usize = null,
 
     const Body = union(enum) {
         statements: []const Ast.Statement,
@@ -7063,13 +7570,53 @@ fn callFunction(
     return self.invoke(call_span, callable, bound.values);
 }
 
+fn sessionContext(self: *Interpreter) ?usize {
+    return if (self.session) |session| session.active else null;
+}
+
+fn selectSession(self: *Interpreter, origin: ?usize) void {
+    if (self.session) |session| session.activate(origin);
+}
+
+fn codeOrigin(self: *Interpreter, file: u32, span: Source.Span) ?usize {
+    const session = self.session orelse return null;
+    // Prelude bodies are checked lazily in the calling entry's analysis. A
+    // failed entry may be their only reaching caller; selecting the current
+    // view would lose those facts. User declarations instead own a source span.
+    if (file != session.entry) return session.active orelse session.current.entry;
+    return session.originOf(file, span);
+}
+
+fn methodCallable(self: *Interpreter, key: []const u8, receiver: Value) Callable {
+    const previous = self.sessionContext();
+    if (receiver.data == .struct_value) {
+        const descriptor = receiver.data.struct_value.descriptor;
+        if (!std.mem.startsWith(u8, descriptor.name, Resolver.prelude_namespace ++ ".")) self.selectSession(descriptor.session_entry);
+    }
+    defer self.selectSession(previous);
+    return self.namedCallable(key);
+}
+
+/// Restore the session view as well as the task when the baton returns.
+fn activateTask(self: *Interpreter, task: *Scheduler.TaskState(TaskData)) void {
+    self.task = task;
+    self.selectSession(task.state.session_context);
+}
+
 fn namedCallable(self: *Interpreter, key: []const u8) Callable {
+    const previous = self.sessionContext();
+    defer self.selectSession(previous);
+    const declared = self.functions.get(key).?;
+    const file = self.facts.owner.get(key) orelse self.task.state.file;
+    const origin = self.codeOrigin(file, declared.name_span);
+    self.selectSession(origin);
     self.requireChecked(key);
     const declaration = self.functions.get(key).?;
     // Section 7.3: an override uses the defaults of the declaration it
     // replaces, which are written with that declaration's parameters.
     if (self.overrides.get(key)) |original| {
         return .{
+            .session_entry = origin,
             .name = declaration.name,
             .file = self.facts.owner.get(key) orelse self.task.state.file,
             .signature = self.signatures.get(key).?,
@@ -7077,11 +7624,13 @@ fn namedCallable(self: *Interpreter, key: []const u8) Callable {
             .captured = &.{},
             .written = self.functions.get(original).?.parameters,
             .defaults_file = self.facts.owner.get(original) orelse self.task.state.file,
+            .defaults_entry = self.codeOrigin(self.facts.owner.get(original) orelse self.task.state.file, self.functions.get(original).?.name_span),
         };
     }
     return .{
         // The name as it was written, not the key: a stack trace should read
         // the way the file reads.
+        .session_entry = origin,
         .name = declaration.name,
         .file = self.facts.owner.get(key) orelse self.task.state.file,
         .signature = self.signatures.get(key).?,
@@ -7138,7 +7687,13 @@ fn invokeClosure(
             return err;
         };
     };
-    if (!self.changing_methods.contains(key)) {
+    const changing = blk: {
+        const previous = self.sessionContext();
+        self.selectSession(callable.session_entry);
+        defer self.selectSession(previous);
+        break :blk self.changing_methods.contains(key);
+    };
+    if (!changing) {
         callable.self_value = Heap.retain(closure.receiver);
         return self.invoke(call_span, callable, arguments);
     }
@@ -7164,6 +7719,9 @@ fn invokeClosure(
 }
 
 fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
+    const previous = self.sessionContext();
+    self.selectSession(closure.session_entry);
+    defer self.selectSession(previous);
     return switch (closure.function) {
         .named => |name| blk: {
             // A nested function (7.1) sees the scopes it was created in; a
@@ -7174,6 +7732,7 @@ fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
         },
         .method => |name| self.namedCallable(name),
         .lambda => |expression| .{
+            .session_entry = closure.session_entry,
             .name = "a block",
             .named = false,
             .file = closure.file,
@@ -7198,6 +7757,9 @@ fn invoke(
     callable: Callable,
     arguments: []const Value,
 ) Error!Value {
+    const previous = self.sessionContext();
+    self.selectSession(callable.session_entry);
+    defer self.selectSession(previous);
     if (self.task.state.call_stack.items.len >= max_call_depth) {
         for (arguments) |argument| self.heap.release(argument);
         if (callable.self_value) |instance| {
@@ -7277,6 +7839,9 @@ fn invoke(
     // followed by omitted defaults in parameter order." A default sees the
     // parameters before it, which are already bound.
     if (callable.omitted) |omitted| {
+        const body_context = self.sessionContext();
+        if (callable.defaults_file != null) self.selectSession(callable.defaults_entry);
+        defer self.selectSession(body_context);
         if (callable.defaults_file) |file| self.task.state.file = file;
         defer self.task.state.file = callable.file;
         for (omitted, callable.written, callable.signature.parameters) |left, parameter, parameter_type| {
@@ -9001,7 +9566,7 @@ fn callStructMethod(
                 self.heap.release(receiver);
                 return err;
             };
-            if (version.ptr != key.ptr) callable = self.namedCallable(version);
+            callable = self.methodCallable(version, receiver);
         }
         const bound = self.evaluateBoundParameters(call, callable.written) catch |err| {
             self.heap.release(receiver);
@@ -9026,7 +9591,7 @@ fn callStructMethod(
         const receiver = try self.elementValue(path.root.span, &root, path.steps);
         defer self.heap.release(receiver);
         const version = try self.dispatch(expression.span, receiver, key);
-        if (version.ptr != key.ptr) callable = self.namedCallable(version);
+        callable = self.methodCallable(version, receiver);
     }
     const bound = try self.evaluateBoundParameters(call, callable.written);
     defer self.gpa.free(bound.values);
@@ -10274,6 +10839,30 @@ fn toFloat(value: Value) f64 {
         .range => unreachable,
         .nothing, .bool, .string, .bytes, .list, .tuple, .map, .closure, .struct_value => unreachable,
     };
+}
+
+test "session origin lookup finds ordered entries and excludes gaps and other files" {
+    const testing = std.testing;
+    // This lookup only needs the entry file and offset index, not a running
+    // interpreter. Include gaps for entries rejected before installation.
+    var session: Session = undefined;
+    session.entry = 0;
+    session.origins = .empty;
+    defer session.origins.deinit(testing.allocator);
+    try testing.expectEqual(@as(?usize, null), session.originOf(0, .{ .start = 0, .end = 0 }));
+    for (0..1000) |index| {
+        const start = 10 + index * 20;
+        try session.origins.append(testing.allocator, .{ .entry = start, .end = start + 10 });
+    }
+    try testing.expectEqual(@as(?usize, null), session.originOf(0, .{ .start = 9, .end = 10 }));
+    for (0..1000) |index| {
+        const start: u32 = @intCast(10 + index * 20);
+        try testing.expectEqual(@as(?usize, start), session.originOf(0, .{ .start = start, .end = start + 1 }));
+        try testing.expectEqual(@as(?usize, start), session.originOf(0, .{ .start = start + 9, .end = start + 10 }));
+        try testing.expectEqual(@as(?usize, null), session.originOf(0, .{ .start = start + 10, .end = start + 11 }));
+        try testing.expectEqual(@as(?usize, null), session.originOf(1, .{ .start = start, .end = start + 1 }));
+    }
+    try testing.expectEqual(@as(?usize, null), session.originOf(0, .{ .start = 30000, .end = 30001 }));
 }
 
 test "a NaN nested in a struct is detected for key rejection" {

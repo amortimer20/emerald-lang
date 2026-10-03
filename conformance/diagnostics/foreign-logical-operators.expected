@@ -1,0 +1,8 @@
+diagnostics/foreign-logical-operators.em:1:12: `&&` is not an operator in Emerald
+  print(true && false)
+             ^^
+Write `and` to require both conditions.
+diagnostics/foreign-logical-operators.em:2:12: `||` is not an operator in Emerald
+  print(true || false)
+             ^^
+Write `or` to accept either condition.

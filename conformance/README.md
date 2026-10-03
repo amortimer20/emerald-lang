@@ -22,11 +22,17 @@ project files, to catch formatting that breaks valid syntax. No cases are exclud
 | `local-zone/` | The program runs with `TimeZone.local` set to `EST5EDT`, the United States' Eastern rules, so changes of clocks are the same everywhere. |
 | `runtime-errors/` | The program runs, then fails with exactly its `.expected` file. |
 | `format/` | `emerald format` produces exactly its `.expected` file, and formatting that output again changes nothing. |
+| `repl/` | A `.input` session produces exactly its `.expected` transcript, on 50 consecutive runs. |
 
 A case is usually one `.em` file. A directory holding a `main.em` is one case too — a
 whole project, per section 14.1 of the rewrite context — and the files inside it are not
 cases of their own. Its `.expected` sits beside the directory rather than inside it, so
 `run/project/` is judged by `run/project.expected`.
+
+REPL cases are `.input` files, not `.em` programs. Their expectations contain
+the greeting, prompts, output, and diagnostics, without echoing the typed input.
+They are compared byte-for-byte on 50 consecutive runs. The final prompt's space
+is meaningful; `.gitattributes` exempts only these golden files from trailing-space checks.
 
 Cases run in sorted order, and every case runs even after one fails, so a single run
 reports the whole picture.

@@ -1,4 +1,4 @@
-## Try it: emerald run examples/encoding.em
+# Try it: emerald run examples/encoding.em
 
 const encoded = Base64.encode("Ada Lovelace".to_bytes())
 print(encoded)

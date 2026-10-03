@@ -1,0 +1,12 @@
+var count = 0
+func fail(): Int {
+    count += 1
+    print("kept")
+    raise RuntimeError("boom")
+}
+const lost = fail()
+count
+lost
+const lost = 20
+lost
+:quit

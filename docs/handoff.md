@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-01. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-02. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -9,8 +9,9 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 
 The Zig rewrite implements the current rewrite-context language surface: control flow,
 functions, optionals, collections, Unicode strings, structs, classes, inheritance, traits,
-enums, typed errors, projects/namespaces, ranges and slicing. The formatter and REPL are
-complete. The language server provides diagnostics (identical to `emerald check`), symbols,
+enums, typed errors, projects/namespaces, ranges and slicing. The formatter and persistent-session
+REPL are complete and merged on main (PR #30). The language server provides diagnostics
+(identical to `emerald check`), symbols,
 format-on-save, hover, go to definition, find references, rename, and completion, but the last
 two are shallow for the built-in types: see "Queued: editor intelligence" below.
 
@@ -173,9 +174,47 @@ finish before optimizing are done (dates and times, regular expressions, Console
 layout and prompts, JSON, HTTP, CSV, Base64 and hashing), startup performance is finished (a
 ReleaseSafe `print(1)` took 9.9 ms and takes 3.5 ms), and Emerald 0.6.0 is released. The
 journal records each milestone, its review, and what was measured; each plan's "Settled while
-building" notes record its decisions.
+building" notes record its decisions. The REPL milestone is merged through PR #30
+(`01125eb`), the diagnostic polish batch through PR #31 (`6476cf7`), and its follow-ups through
+PR #32 (`6bdd5a6`). The Windows Debug test stall below is the open problem.
+
+The unmerged trait-adoption hint follow-up is on
+`copilot/trait-adoption-default-hint`; its focused cases and local full gate are
+recorded in the journal.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
+- Foreign logical operators `&&` and `||` receive one focused hint suggesting
+  Emerald's `and` and `or`, rather than two character errors.
+- `++` and dangling `--` explain the corresponding `+= 1`/`-= 1` update;
+  subtraction of a negative value and double negation retain their meaning.
+- C-style `condition ? value : other` explains Emerald's
+  `if condition then value else other_value` spelling.
+- Conditions written with `=` suggest `==`, including grouped conditions,
+  guards, inline `if`, `assert`, and subjectless `case` arms. Assignments inside
+  predicate bodies remain valid; mistaken conditions do not cascade into brace errors.
+- `??` suggests an optional fallback with `.or(...)`, with the same correction
+  whether or not spaces surround the mistaken operator.
+- Foreign-operator corrections use short source operands in place for `++`, `--`,
+  `? :`, and `??`; compound operands keep the generic correction.
+- Casing warnings call a `const` binding a constant and a `var` binding a variable.
+- One-line lambda `break`/`continue`, including guarded exits, explain that a
+  function cannot exit the caller's loop instead of producing parser/brace cascades.
+- An unqualified reference to a private module name in another file identifies
+  that file and explains the privacy boundary, rather than calling the name undefined.
+- A struct that supplies every required trait member but omits `with Trait` is
+  told that it does not adopt the trait and shown the declaration-level fix.
+  The follow-up lists each public trait method the struct defines, in trait order;
+  default methods are included only when the struct replaces them.
+- A bare nested type name inside its enclosing type is corrected to its required
+  qualified spelling, such as `Pizza.Size`.
+- Orphaned `##` documentation comments now warn when a blank line or a
+  non-declaration separates them from what they would document.
+- Program declarations now receive non-fatal casing warnings with corrected
+  `snake_case` or `PascalCase` spellings; generated-prelude and `@override`
+  names remain exempt.
+- A callable whose name ends in `?` must return exactly `Bool`, including
+  overridden methods and computed properties; action-style `Bool` results
+  remain valid without the suffix.
 - Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
   `choose_many`).
 - `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
@@ -216,8 +255,16 @@ building" notes record its decisions.
   changeable; ordinary `each`/`reduce` snapshot semantics are unchanged.
 - `File.read_lines` and `FileHandle.read_line` now remove CRLF's carriage return,
   matching `String.lines`; empty files and blank final lines split correctly.
+- `File.append` creates a missing file, as C#, Python, and Ruby do (it raised `FileError` before).
 - HTTP now sends Emerald's own `User-Agent`, or the program's, instead of Zig's (the second
   header was ignored before).
+- The REPL keeps one interpreter and executes each entry once, so files, requests, randomness,
+  clocks, and tasks are no longer replayed. Calls now echo results and strings echo quoted;
+  `print` and other `Nothing`-typed statements have no extra result.
+- REPL diagnostics point within their originating entry. Parse/check errors run nothing;
+  runtime errors remove the entry's declarations but keep completed assignments and outside
+  effects. `:help` explains this, and redeclaration errors suggest a different name or `:reset`.
+  Prompt input and program input share one reader, including across reset.
 
 Open work:
 - **The website** is published (2026-10-01): the whole reference, with every example's output
@@ -225,11 +272,35 @@ Open work:
   in `emerald-website`. The Console layout and prompts and the whole Tasks section were written
   against main, so they describe 0.7.0 ahead of its release. After this merge, add pages for the new
   `RecursionError`, and note the list-callback rule and CRLF handling in the List and File pages.
-- **The REPL**: it replays the whole session on every entry, so side effects (a file append, an
-  `Http` request, `Random`, the clock) repeat. [`repl-design-plan.md`](repl-design-plan.md) is
-  accepted with all eight recommendations; Codex implements it next, now the bug-fix batch is merged.
+- **Intermittent Windows Debug test stall (worked around in CI; cause still open).** The Zig test
+  runner on Windows Debug stops responding for about a minute ("test runner failed to respond
+  for 1m...") while test binaries run. Seen in CI at `3f7d694` (run 37003741611, `emerald-repl`) and
+  `4035a57` (run 37055293101, `emerald-test`): about 2 of 20 Windows Debug jobs since 2026-10-01,
+  against 0 of 38 before. **What the experiments showed** (throwaway branch
+  `claude/windows-stall-experiment`; delete it when finished), all on Windows Debug, nothing
+  retried and no timeout widened:
+  - The Windows stack-reservation change (item 15) is not the cause: repeated runs stalled in 29 of
+    60 iterations as merged and 32 of 60 with the interpreter's threads back on `std.Thread.spawn`
+    (run 37057757591). Repetition raises the rate to about one in two.
+  - Failures are always the same message, in three binaries (`emerald-repl` 28, `emerald-lsp` 19,
+    `emerald-test` 14; never `emerald-conformance`). It is a hang, not a slow test: on Linux
+    `emerald-lsp` runs all 35 tests in 1 second and `emerald-repl` all 9 in 6.
+  - It is not in Emerald's code on its own: the `emerald-lsp` and `emerald-repl` binaries run
+    directly 320 times, with default stdin and with stdin held open by a pipe, never hung (run
+    37065921721). So the scheduler's stdin reader is cleared.
+  - It needs the test binaries to run at once: through the build runner, `zig build test-lsp` alone
+    (120 runs) and `test-repl` alone (80) never stalled, and the full suite with `-j1` (20 runs) never
+    stalled, against 61 of 120 for the normal parallel run (run 37066707311).
+  - **Workaround in `ci.yml`:** the Windows Debug job runs `zig build test -j1`. Serial runs took
+    66 to 155 seconds, the same as parallel, so it costs nothing. Remove the flag once the cause is
+    fixed. Windows ReleaseSafe has not stalled in this evidence and is unchanged.
+  - **Next, to find the cause:** run the parallel suite without `emerald-conformance` (a step
+    for unit, REPL, and LSP only), and with `-j2`. A stall without conformance points at the
+    runner handling several test processes on Windows (probably a Zig 0.16.0 bug to report upstream
+    with the logs); a clean run points at something conformance does, such as the fixed-name
+    directories its programs create in the working directory or the memory its programs use.
 - **Editor intelligence**, below. Claude builds it, after the user's weekly usage resets.
-- A 0.7.0 release once the REPL is done and a QA iteration (roadmap item 2) has run.
+- A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
 
 **Queued: editor intelligence** (the user's go-ahead, 2026-09-28; Claude builds it). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
@@ -327,6 +398,83 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   made by compiling the same small subset (functions, structs, lists, a closure) with both,
   running its conformance cases, and comparing binary size, startup, debugging, and how much
   runtime code each needs.
+- **Unity and Godot come before microcontrollers (the user's preference, 2026-10-02).** The user
+  would rather Emerald work with Unity than with the Raspberry Pi Pico, because Emerald reads more
+  easily than C# and Unity is where students make games. This weights the backend choice toward
+  .NET, whose assemblies Unity and Godot (which supports .NET) load: a precompiled DLL in a Unity
+  project's Assets, or generated C# source, with an editor importer that rebuilds `.em` files on
+  save. The compiler is the easy part. Language questions it raises, none designed: a 32-bit
+  `Float32` (Unity's `float`, against Emerald's 64-bit `Float`); calling .NET libraries from Emerald,
+  including generic calls such as `GetComponent<T>()` (needs the generics design) and the attributes
+  Unity relies on (`[SerializeField]`; Emerald's annotations are a closed set); mapping
+  `snake_case` to Unity's `PascalCase`; Unity's fake null (a destroyed object equals `null`) against
+  `nothing`; and narrowing 64-bit `Int` and UTF-8 strings at the boundary. Emerald's tasks (one runs
+  at a time) suit Unity's main-thread rule and could map onto coroutines. Costs: nearly every Unity
+  tutorial is C#, and Unity changed its pricing terms abruptly in 2023 (Godot is the hedge on the
+  same backend). Cheap first check, before any compiler: hand-write the C# Emerald would emit,
+  including a `MonoBehaviour`, and build it under IL2CPP. Details here come from memory of
+  Unity's behavior and need verifying. Unity's value is that it gives "simple game
+  development" (the batteries-included goal) without Emerald building an engine.
+  Microcontrollers drop behind this; they stay a goal, and the board target below (a VM written
+  in Zig, or C output) still needs no .NET, so the two can share one front end.
+- **Microcontrollers are a goal (the user, 2026-10-01): Emerald should eventually run on boards
+  such as the Raspberry Pi Pico** (RP2040: two Cortex-M0+ cores, 264 KB of RAM, 2 MB of flash, no
+  floating-point unit; Pico 2's RP2350: Cortex-M33 or RISC-V cores, 520 KB, 4 MB). This is a
+  requirement for the backend prototypes, and it cuts against both leading candidates: Cranelift
+  generates code for x86-64, AArch64, s390x, and 64-bit RISC-V, not 32-bit ARM or 32-bit RISC-V,
+  and .NET's own runtime does not target microcontrollers (.NET nanoFramework is a separate,
+  partial runtime). Paths that do reach the Pico: LLVM (Rust and Zig both use it for these
+  chips), emitting C and building it with the board's toolchain, or a small bytecode VM written in
+  Zig and run on the board, as MicroPython does. The user chose MicroPython's shape (2026-10-01): a
+  runtime flashed onto the board once, then programs and a REPL over USB, rather than Arduino's
+  build-and-flash firmware. Claude's proposal, to settle when this is planned: one language and
+  one repository with a second target ("MicroEmerald"), not a separate implementation, because
+  MicroPython's separate implementation is why it drifts from Python. The lexer, parser, checker,
+  diagnostics, and the backend-neutral conformance cases are shared; the board gets a small VM
+  written in Zig and a board profile of the library. Unlike MicroPython, checking happens on the
+  computer, since the checker is too large for the board's RAM: `emerald board run file.em`
+  checks, shows any errors as usual, and sends bytecode, and the REPL runs on the computer and
+  sends each entry. Per-board pin maps and drivers could live in their own packages. A second, later board mode
+  (the user asked, 2026-10-01): compile ahead of time to native firmware, as C and Rust do, for
+  projects that need speed or memory. Emerald's static types make this far more effective than
+  for Python (`a + b` on two `Int`s is one instruction); it is typically 10 to 100 times faster
+  than a bytecode VM and uses much less RAM, and links only the runtime pieces a program uses. It
+  costs the on-board REPL (each change is build and flash). Proposed order: the VM first for
+  learning, native second from the same front end. If the desktop backend emits C or uses LLVM,
+  the native board target comes nearly free, so add "can it make Pico firmware?" to the backend
+  prototypes' questions.
+  Either needs a board profile of the language: no files, HTTP, time zones, or OS threads (tasks
+  would need a scheduler without OS threads), a pin, timer, and bus library instead, and a check
+  on what a 64-bit `Int` and `Float` cost on a chip with no floating-point hardware. The
+  interpreter's heap (reference counts for prompt freeing and copy-on-write, plus a mark-and-sweep
+  collector for cycles, `Heap.zig`) is small, but its collector and tables need sizing for 264 KB
+  of RAM. A cheap first
+  measurement when this is planned: build the current interpreter ReleaseSmall without its
+  tables (time zones, Unicode, regex) and see how far it is from 2 MB.
+- **Guardrail for any .NET, Unity, or Godot work (the user, 2026-10-02).** The first Emerald was a
+  C#/.NET prototype that turned into a "Frankenstein" because .NET-driven suggestions were accepted
+  one by one (interop annotations such as `@export` and `@mirrors`, overloading, and more) and the
+  direction was never corrected; the user gave up on .NET and restarted in Zig with a clear picture of
+  the language. Spec principle 1.5 is the lesson: the implementation host adapts to Emerald, never
+  the reverse. So: (1) Unity changes nothing in the language; a feature is added only if it would be
+  added without Unity, through a design plan on its own merits (a `Float32` might qualify; Unity-only
+  attributes would not). (2) The integration lives outside the core: a target, a C# runtime
+  library, and a Unity package with its own bindings, so the same program still runs on the
+  interpreter. (3) The Zig implementation and `conformance/` stay the authority; a .NET target passes
+  the same cases unchanged. The cheapest shape that respects this is generating C# source from the
+  Zig front end plus a runtime library in C#, not porting the compiler.
+  Unity is optional: if it ever needs a language change that fails the test above, or stops being
+  worth its upkeep, drop it. "It's not worth ruining Emerald over" (the user). Because nothing in the
+  core depends on it, dropping it deletes only the target, library, and package.
+- **Memory management is not a reason to move to .NET (checked 2026-10-02).** The Zig interpreter
+  already has garbage collection: reference counts plus a mark-and-sweep collector for cycles
+  (spec 19.5, `Heap.zig`). The counts are not only about memory: they are how value semantics stays
+  cheap, since a list is a shared buffer copied only when a mutation finds another holder (8.1). .NET
+  has no reference counts, so a runtime on .NET would have to solve value semantics another way
+  (copy on assignment, persistent collections, or a compiler analysis of ownership). Earlier notes
+  here that call .NET's garbage collector something Cranelift would make Emerald write itself
+  still hold for a *compiled* backend, which has no collector today; they do not apply to the
+  interpreter.
 - **The conformance suite is the contract.** A replacement backend is acceptable only if it
   passes the same `conformance/` files unchanged (19.6, 23). Keep every case backend-neutral:
   no dependence on interpreter internals, thread identity, exact timing, or exact recursion
@@ -384,32 +532,35 @@ not yet discussed:
 
 ## Active rough edges
 
+- A Windows Debug REPL test runner stopped responding for about a minute in the
+  policy-only CI run at `3f7d694`, before the parser changes. Its cause is not
+  established. The subsequent group A run passed every job, including Windows
+  Debug, but that does not establish a fix. Investigate separately; no failed
+  job was rerun or timeout widened to make it pass.
 - Found while writing the website's language pages (2026-09-30, in 0.6.0), each a spec promise
   the implementation does not keep:
-  - An orphaned `##` documentation comment gets no warning (3.2 says it does):
-    `## This describes nothing.` followed by a blank line and `print("x")` checks clean.
-  - Casing gets no style warning (3.3 says violations are warnings): `var highScore = 10` checks
-    clean, and neither does `func is_ready(): Bool`, whose name lacks the `?` 3.3 expects.
-  - A name ending in `?` with a non-`Bool` result is accepted, though 3.3 calls it a type error:
-    `func ready?(): Int { return 1 }` checks clean.
   - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
-  - Operators from other languages get generic parse errors, though `!` already gets a good one
-    ("Write `not` for negation"). Give each a hint: `true && false` and `||` ("this character
-    does not belong here", twice) should suggest `and`/`or`; `c++` and `c--` should suggest
-    `c += 1`; `true ? 1 : 2` should suggest `if c then a else b`; and `if x = 5 {` ("expected `{`
-    ... found =") should suggest `==`.
-  - A file reaching a private `_name` declared in another file of the same folder gets
-    "[E1001] `_catalog` is not defined" ("check the spelling"), while the qualified form
-    (`Plants._catalog`) already says "`_catalog` is private to the file that declares it". Say
-    the same for the unqualified form, naming the declaring file.
-  - `x ?? 0` (the C# and Swift spelling) gets "expected `)` to close this call, found ?"; suggest
-    `.or(0)`. And `break` in a one-line lambda (`[1].each { x => break }`) gives a parse error
-    plus a "this `}` does not close anything" cascade, while the block-bodied form already says
-    "`break` can only be used inside a loop".
-  - A type with a trait's methods but no `with Trait` gets only "this is Square, but `s` was declared
-    as Shape"; say that `Square` doesn't adopt `Shape` and suggest `with Shape`. And a nested type
-    written bare inside its outer type (`const size: Size` inside `Pizza`) gets "`Size` is not a
-    type ... declare the struct in this project"; suggest `Pizza.Size`.
+- An idea the user will consider later (2026-10-01; not planned, and nothing changes until they
+  decide): let a trailing block in an `if`, `while`, `for`, or `case` header work without the
+  parentheses 7.4 requires, as in `if items.any? { item => item > 1 } {`. Every lambda has `=>`, even
+  with no parameters, and a body never starts with parameters followed by `=>`, so a short
+  lookahead after the `{` tells a block argument from the body. Parentheses would stay allowed.
+- **Language ideas for after 1.0's basics (the user, 2026-10-02; not planned, nothing designed):**
+  enums that carry data, user-defined generic types and functions, and user-defined iterables
+  (all deferred by the spec; see 11.3). Built-in `List[T]`, `Dict`, `Set`, `Task[T]`, and
+  `Channel[T]` already cover most classroom needs, so none is urgent; of the three, enums with data
+  would help most (exhaustive `case` over variants) and are the cheaper design. **The user's
+  requirement for generics: they must be clean, easy to read, and easy to work with, and must not
+  make the language messy.** Rules to hold a design plan to: no variance and no wildcards (a
+  `Channel[Int]` is already not a `Channel[Float]`); constraints only through existing traits
+  (`Ordered`, `Equatable`, `Hashable`, `Textual`, and the program's own), perhaps spelled with
+  `with`; check a generic once at its definition against its constraints, never per use, so errors
+  name `T` in plain words and say what to add; no higher-kinded types, associated types,
+  specialization, or overloading; type arguments inferred where possible and otherwise written once
+  on the declaration (`const names: Stack[String] = Stack()`, as for `Channel`). Before building,
+  write about ten realistic programs in the proposed syntax (stack, linked list, pair, binary tree,
+  cache, queue) and read them cold, then try it with students. How generics compile (reified, as on
+  .NET, or monomorphized, as with Cranelift or C) depends on the backend choice.
 - Feature ideas from the language pages (not spec gaps): an enum has no list of its values
   (`Light.values`) and no way to turn text into a value (`"red"` into `Light.red`). Both are common
   needs, such as a menu of choices or reading a saved setting.
@@ -440,6 +591,13 @@ not yet discussed:
 
 
 ## Validation and repository state
+
+Diagnostic-polish group A passed the full local gate before each item commit.
+The final gate passed 548 tests in both Debug and ReleaseSafe, native build,
+24 documentation examples, formatting/whitespace checks, and Windows/macOS
+cross-builds. [CI at `2d92564`](https://github.com/amortimer20/emerald-lang/actions/runs/37020381290)
+passed all seven jobs (Debug/ReleaseSafe on Linux, macOS, Windows, and bounded
+execution fuzz). Groups B and C remain unimplemented; group A is the review boundary.
 
 `main` is the only long-lived branch and has no open pull requests. Work happens on
 `claude/*` and `codex/*` branches, merged by pull request once CI passes; see

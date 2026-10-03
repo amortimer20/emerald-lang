@@ -1,0 +1,12 @@
+diagnostics/foreign-ternary.em:1:12: `? :` is not a conditional operator in Emerald
+  print(true ? 1 : 2)
+             ^
+Write `if true then 1 else 2`.
+diagnostics/foreign-ternary.em:2:21: `? :` is not a conditional operator in Emerald
+  const label = false ? "yes" : "no"
+                      ^
+Write `if false then "yes" else "no"`.
+diagnostics/foreign-ternary.em:4:16: `? :` is not a conditional operator in Emerald
+      print(true ? 3 : 4)
+                 ^
+Write `if true then 3 else 4`.

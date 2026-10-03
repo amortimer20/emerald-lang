@@ -151,7 +151,8 @@ the end of the file.
 arbitrary run of hashes. Documentation text is Markdown. The initial tag set is
 deliberately empty: parameters, returns, and expected errors are described naturally in
 prose until tooling demonstrates a need for structured tags. An orphaned `##` block
-produces a warning because it does not describe a declaration.
+produces a warning because it does not describe a declaration. Documentation warnings apply
+to program files, not the prelude.
 
 An override or trait implementation uses its own documentation when present. Otherwise,
 documentation tools inherit the text from the overridden declaration or satisfied trait
@@ -173,10 +174,14 @@ The casing rules are settled:
 Violations are style warnings rather than syntax errors. American English is the standard
 library spelling convention: `Color`, `center`, and `initialize`.
 
-Methods returning `Bool` conventionally end in `?`. Omitting the suffix from a Boolean
-function produces a style warning; a name ending in `?` with a non-`Bool` result is a type
-error. The compiler remains capable of describing an external API that cannot follow
-Emerald's convention.
+A method that answers a yes-or-no question ends in `?`, such as `empty?`, and a name
+ending in `?` must give a `Bool`; giving anything else is a type error. A `Bool` result
+does not require the `?`: a function may return one to report that an action succeeded.
+
+Casing warnings apply to program declarations, not the prelude. An `@override` does not
+receive a casing warning: its name comes from the declaration it overrides, which is
+warned about if it belongs to the program. The `?` result rule still applies everywhere,
+including overrides and the prelude.
 
 ```emerald
 func empty?(): Bool {
@@ -2865,7 +2870,10 @@ after normal completion, return, or error. `read`, `read_lines`, `write`, `write
 newline after every line. `Path.absolute` is the one Path operation that consults the
 filesystem.
 
-Every operation other than the two predicates raises `FileError` for missing paths, access
+`File.write`, `File.write_binary`, `File.write_lines`, `File.append`, and `File.create` create a
+missing file (append starts from empty, as C#'s `File.AppendAllText` and Python's and Ruby's append
+modes do); none creates a missing directory.
+Every other operation except the two predicates raises `FileError` for missing paths, access
 failures, invalid UTF-8, and failed writes; reading a closed FileHandle also raises
 `FileError`. `Bytes` is immutable raw binary data: `Bytes.from_list(List[Int])` builds values
 from 0 through 255, `String.to_bytes()` converts valid text, and `Bytes.to_string()`/`to_string_maybe()`
@@ -3692,13 +3700,31 @@ Settled by the first implementation slice, and binding on any future backend tha
 
 ### 18.4 REPL
 
-`emerald repl` keeps declarations and values across entries. A bare expression prints its
-value; a statement follows normal statement behavior. Multiline input continues while a
-delimiter or declaration body remains incomplete.
+`emerald repl` keeps one interpreter and its values across entries. Each accepted entry runs
+once: earlier entries are checked again but never executed again, so a file append, a request,
+or a random draw is not repeated. The parser keeps earlier syntax nodes and identifies
+unfinished input structurally, not by diagnostic wording. Multiline input continues while a
+delimiter, declaration body, multiline string, or block comment remains incomplete.
+
+Every top-level expression statement, calls included, echoes its value unless its checked
+type is `Nothing`. Strings are echoed quoted; other values display as with `print`.
+Declarations and assignments have no extra echo, and `print("hi")` prints `hi` only once.
+An optional expression whose value is `nothing` still echoes `nothing`. Prompt input and
+program `input` share one scheduler-owned reader, including across `:reset`.
 
 The REPL keeps ordinary binding rules: a `var` may be reassigned, while a name may not be
 redeclared and a `const` may not be replaced. `:help` lists its three commands, `:reset`
-clears the session, and `:quit` exits. An invalid entry does not partially mutate the session.
+clears the session, and `:quit` exits. Redeclaration diagnostics suggest a different name or
+`:reset`. Diagnostic locations are relative to the entry they describe (`repl:1:9`), including
+trace frames that refer to an earlier entry.
+
+An entry that fails to parse or check runs nothing and leaves earlier bindings unchanged.
+An entry that raises while running loses its declarations, but completed assignments,
+output, and outside effects remain. Code assigned into earlier bindings before the error
+remains callable; its retained syntax and analysis live until reset or exit. Submitted text
+keeps unique offsets even after an entry is dropped. `:reset` starts a new interpreter and
+session; it does not undo a file write or a request. Line editing, history, and additional
+commands remain outside this slice.
 
 ### 18.5 Language server
 
@@ -4072,6 +4098,8 @@ recorded in their normative sections:
 | Decision | Resolution | Reasoning |
 | --- | --- | --- |
 | JSON's two conversion paths (15.9) | `parse` produces a navigable `Json`; checker-known `encode` and `decode(text, as: Type)` convert a program's known types | An API response and a program's own saved `Score` have opposite information available. One dynamic value type and one static conversion spell the distinction without asking a beginner to build a serialization framework. |
+| Boolean naming (3.3) | A `?` name must return `Bool`, but a `Bool` result does not require `?`; rejected a warning for every Bool function without it | A Bool result can report success rather than answer a question, so the warning would push misleading names such as `save?`. Casing warnings exclude the prelude and overrides, whose names are dictated by their original declarations; the `?` result rule has no such exemption. |
+| REPL replay versus a persistent session (18.4) | Keep one interpreter and earlier syntax nodes, recheck the kept program, and execute only the new entry; remove a raising entry's declarations but keep its completed effects | Replaying input and suppressing old output cannot undo or faithfully repeat files, requests, randomness, clocks, or tasks. Persistent values make each effect happen once without requiring an incremental checker. Failed-entry code that escapes into an earlier binding retains its analysis, and append-only offsets prevent stale span-keyed facts from colliding. |
 | Concurrency model (15.13) | Structured tasks and FIFO channels, without `async`/`await`, public threads, or locks | Ordinary functions can wait without coloring every caller; a beginner learns results and messages rather than shared-memory synchronization. |
 | Task lifetime (15.13) | Only a live `TaskGroup` can start children; its `Tasks.run` joins them all | Detached work would introduce orphan resources and unseen errors. |
 | Scheduling (15.13) | One task runs Emerald code until a wait or yield; readiness is FIFO, timers follow deadlines, I/O follows arrival | Visible handoffs keep the heap non-atomic and computation reproducible without pretending host completion order is fixed. |

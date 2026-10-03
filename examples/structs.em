@@ -1,9 +1,9 @@
-## Structs: a named group of fields, and the value you build from them.
-##
-## A struct is a value type. Assigning one or passing it along gives the other
-## side its own copy, so a change on one side never shows up on the other.
-##
-## Run it with `emerald run examples/structs.em`.
+# Structs: a named group of fields, and the value you build from them.
+#
+# A struct is a value type. Assigning one or passing it along gives the other
+# side its own copy, so a change on one side never shows up on the other.
+#
+# Run it with `emerald run examples/structs.em`.
 
 ## Every field says whether it can change. Without a constructor of its own, a
 ## struct is built by passing one value per field, in the order they are
@@ -95,11 +95,11 @@ const mark_later = tally.mark
 mark_later("third")
 print(tally.summary())
 
-## A field can be changed through as long a path as it takes, and a list in a
-## field changes in place like any other.
+# A field can be changed through as long a path as it takes, and a list in a
+# field changes in place like any other.
 trip.stops[1].y = 8
 trip.stops.append(Point(0, 8))
 print(trip.stops)
 
-## `finish` was copied into the trip, so the trip's changes stay there.
+# `finish` was copied into the trip, so the trip's changes stay there.
 print(finish)

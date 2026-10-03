@@ -1490,6 +1490,22 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
         );
     }
 
+    // A private module name deliberately does not appear in another file's
+    // key map. The owner facts still identify its source file, so explain the
+    // privacy boundary instead of treating a likely cross-file reference as a
+    // spelling mistake. Several files may share a private spelling; then no
+    // one file is a sound correction and the ordinary undefined-name error
+    // remains more honest.
+    if (self.privateFileFor(name)) |owner| {
+        return self.reportWithHelpFmt(
+            span,
+            "`{s}` is private to `{s}`",
+            .{ name, self.files[owner].source.path },
+            "A module-level name starting with `_` cannot be reached from another file. Remove the underscore to make it public.",
+            .{},
+        );
+    }
+
     // Declared, but in another directory, so it needs its namespace.
     if (self.elsewhere.get(name)) |namespace| {
         return self.report(
@@ -1525,6 +1541,22 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
     }
 
     try self.reportCoded(span, .unknown_name, "`{s}` is not defined", .{name}, help);
+}
+
+/// The one file declaring a private module-level spelling, if it is
+/// unambiguous. Private names deliberately do not collide across files.
+fn privateFileFor(self: *Resolver, name: []const u8) ?u32 {
+    var result: ?u32 = null;
+    var owners = self.facts.owner.iterator();
+    while (owners.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const separator = std.mem.lastIndexOf(u8, key, private_separator) orelse continue;
+        if (!std.mem.eql(u8, key[separator + private_separator.len ..], name)) continue;
+        const file = entry.value_ptr.*;
+        if (result) |earlier| if (earlier != file) return null;
+        result = file;
+    }
+    return result;
 }
 
 const EnclosingType = struct { type_key: []const u8, has_self: bool };

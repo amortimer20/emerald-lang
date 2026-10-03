@@ -1,0 +1,14 @@
+Emerald REPL. Type `:help` for commands; Ctrl-D exits.
+> > . . . . > kept
+repl:4:5: RuntimeError: boom
+      raise RuntimeError("boom")
+      ^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.
+in `fail`, called at repl:1:14
+> 1
+> repl:1:1: `lost` is not defined
+  lost
+  ^^^^
+Check the spelling, or declare it before this line.
+> > 20
+> 

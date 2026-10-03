@@ -39,6 +39,10 @@ brace_depths: std.ArrayList(u32) = .empty,
 /// makes leading blank lines disappear the same way interior ones do.
 previous: Token.Kind = .newline,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
+/// An interactive entry ended while a construct that may span lines was
+/// still open. This is structural state, rather than a conclusion drawn from
+/// a diagnostic's wording, so the REPL can ask for another line safely.
+incomplete_at_end: bool = false,
 /// Strings whose `#{` has been read but not yet their closing `}`,
 /// innermost last. A `}` that closes one resumes scanning that string.
 interpolations: std.ArrayList(Interpolation) = .empty,
@@ -70,6 +74,7 @@ pub fn deinit(self: *Lexer) void {
 pub const Tokenized = struct {
     tokens: []const Token,
     diagnostics: []const Diagnostic,
+    incomplete_at_end: bool = false,
 
     pub fn deinit(self: *Tokenized, gpa: std.mem.Allocator) void {
         gpa.free(self.tokens);
@@ -79,7 +84,16 @@ pub const Tokenized = struct {
 };
 
 pub fn tokenize(gpa: std.mem.Allocator, source: *const Source) !Tokenized {
+    return tokenizeFrom(gpa, source, 0);
+}
+
+/// Tokenizes the tail beginning at `start`. Its token spans remain offsets
+/// into the complete source, which lets an append-only REPL retain older
+/// syntax nodes without translating their locations.
+pub fn tokenizeFrom(gpa: std.mem.Allocator, source: *const Source, start: u32) !Tokenized {
+    std.debug.assert(start <= source.text.len);
     var lexer: Lexer = .init(gpa, source);
+    lexer.index = start;
     defer lexer.deinit();
 
     var tokens: std.ArrayList(Token) = .empty;
@@ -94,6 +108,7 @@ pub fn tokenize(gpa: std.mem.Allocator, source: *const Source) !Tokenized {
     return .{
         .tokens = try tokens.toOwnedSlice(gpa),
         .diagnostics = try lexer.diagnostics.toOwnedSlice(gpa),
+        .incomplete_at_end = lexer.incomplete_at_end,
     };
 }
 
@@ -253,6 +268,7 @@ fn skipBlockComment(self: *Lexer) std.mem.Allocator.Error!void {
         "this block comment is never closed",
         "Close it with `]#`.",
     );
+    self.incomplete_at_end = true;
 }
 
 // Tokens.
@@ -271,6 +287,16 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
     }
 
     self.index += 1;
+    // These are not tokens in Emerald. Consume the whole foreign operator
+    // so one mistake gets one correction rather than two character errors.
+    if ((c == '&' or c == '|') and self.take(c)) {
+        try self.report(
+            .{ .start = start, .end = self.index },
+            if (c == '&') "`&&` is not an operator in Emerald" else "`||` is not an operator in Emerald",
+            if (c == '&') "Write `and` to require both conditions." else "Write `or` to accept either condition.",
+        );
+        return self.emit(.invalid, start, self.index);
+    }
     const kind: Token.Kind = switch (c) {
         '+' => if (self.take('=')) .plus_equal else .plus,
         '-' => if (self.take('=')) .minus_equal else .minus,
@@ -583,6 +609,7 @@ fn scanString(self: *Lexer, start: u32, multiline: bool, resuming: bool) std.mem
         const open = self.interpolations.items[self.interpolations.items.len - 1];
         self.group_depth -|= @intCast(self.interpolations.items.len);
         self.interpolations.clearRetainingCapacity();
+        if (open.multiline) self.incomplete_at_end = true;
         try self.report(
             .{ .start = open.opening, .end = open.opening + 2 },
             "this `#{` is never closed",
@@ -672,6 +699,7 @@ fn unterminated(
     start: u32,
     delimiter: []const u8,
 ) std.mem.Allocator.Error!Token {
+    if (delimiter.len == 3 and self.atEnd()) self.incomplete_at_end = true;
     try self.report(
         .{ .start = start, .end = start + @as(u32, @intCast(delimiter.len)) },
         "this string is never closed",
@@ -760,6 +788,17 @@ test "keywords are recognized and other names are not" {
 
 test "a newline after a token that can end an expression terminates the statement" {
     try expectKinds("1\n2\n", &.{ .int_literal, .newline, .int_literal, .newline, .eof });
+}
+
+test "foreign logical operators each get one hint but remain text in strings and comments" {
+    var source = try Source.init(testing.allocator, "test.em", "true && false\ntrue || false\n\"&& ||\"\n# && ||\n");
+    defer source.deinit(testing.allocator);
+    var tokens = try tokenize(testing.allocator, &source);
+    defer tokens.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), tokens.diagnostics.len);
+    try testing.expectEqualStrings("Write `and` to require both conditions.", tokens.diagnostics[0].help);
+    try testing.expectEqualStrings("Write `or` to accept either condition.", tokens.diagnostics[1].help);
+    for (tokens.diagnostics) |diagnostic| try testing.expectEqual(@as(u32, 2), diagnostic.span.end - diagnostic.span.start);
 }
 
 test "a newline after a binary operator continues the statement" {
@@ -1005,6 +1044,37 @@ test "an unclosed block comment is reported at its opening" {
     const span = result.diagnostics[0].span;
     try testing.expectEqualStrings("#[", source.text[span.start..span.end]);
     try testing.expectEqual(@as(u32, 2), source.location(span.start).line);
+}
+
+test "a tail keeps global spans and reports only multiline constructs as incomplete" {
+    const text = "const earlier = 1\n1 + 2\n";
+    var source = try Source.init(testing.allocator, "test.em", text);
+    defer source.deinit(testing.allocator);
+
+    const start: u32 = @intCast(std.mem.indexOf(u8, text, "1 + 2").?);
+    var tail = try tokenizeFrom(testing.allocator, &source, start);
+    defer tail.deinit(testing.allocator);
+    try testing.expectEqual(start, tail.tokens[0].span.start);
+    try testing.expectEqual(@as(u32, @intCast(text.len)), tail.tokens[tail.tokens.len - 1].span.start);
+    try testing.expect(!tail.incomplete_at_end);
+
+    var block_comment = try Source.init(testing.allocator, "test.em", "#[ still open");
+    defer block_comment.deinit(testing.allocator);
+    var block_tokens = try tokenize(testing.allocator, &block_comment);
+    defer block_tokens.deinit(testing.allocator);
+    try testing.expect(block_tokens.incomplete_at_end);
+
+    var multiline = try Source.init(testing.allocator, "test.em", "\"\"\" still open");
+    defer multiline.deinit(testing.allocator);
+    var multiline_tokens = try tokenize(testing.allocator, &multiline);
+    defer multiline_tokens.deinit(testing.allocator);
+    try testing.expect(multiline_tokens.incomplete_at_end);
+
+    var single_line = try Source.init(testing.allocator, "test.em", "\"still open");
+    defer single_line.deinit(testing.allocator);
+    var single_line_tokens = try tokenize(testing.allocator, &single_line);
+    defer single_line_tokens.deinit(testing.allocator);
+    try testing.expect(!single_line_tokens.incomplete_at_end);
 }
 
 test "a semicolon is rejected with an explanation rather than accepted quietly" {

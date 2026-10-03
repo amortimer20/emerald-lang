@@ -12,6 +12,7 @@ them.
 | [Objects and traits](objects-and-traits.md) | Structs, classes, enums, properties, and traits | Drafted |
 | [Errors, tests, and projects](errors-tests-and-projects.md) | `try`, `@test`, modules, and command-line workflow | Drafted |
 | [Diagnostics](diagnostics.md) | Reading compiler problems and using `emerald explain` | Drafted |
+| [Trying code in the REPL](repl.md) | Interactive entries, results, errors, and reset | Drafted |
 
 The [standard-library reference](../library/) is complementary: use this guide to learn the
 ideas, then use the reference to look up exact operations.

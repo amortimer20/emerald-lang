@@ -42,6 +42,10 @@ pub const Block = struct {
 pub const Statement = struct {
     span: Source.Span,
     data: Data,
+    /// An expression submitted as one interactive entry. File parsing still
+    /// rejects unused non-call expressions; the REPL uses this marker with
+    /// the checker's type to decide whether to echo the resulting value.
+    interactive_expression: bool = false,
 
     pub const Data = union(enum) {
         /// An expression evaluated for its effect. Section 5.2 allows this only

@@ -43,6 +43,8 @@ pub const Data = union(Kind) {
 };
 
 pub const StructType = struct {
+    /// The declaring REPL entry, retained if its code escapes a failed entry.
+    session_entry: ?usize = null,
     /// Program-wide identity used for hashing and runtime lookup.
     name: []const u8,
     /// The declaration spelling used when displaying a value. A private

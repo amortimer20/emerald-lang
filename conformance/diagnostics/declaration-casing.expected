@@ -1,0 +1,16 @@
+diagnostics/declaration-casing.em:1:5: warning: variable name `highScore` should use snake_case
+  var highScore = 10
+      ^^^^^^^^^
+Rename it to `high_score`.
+diagnostics/declaration-casing.em:3:6: warning: function name `SayHello` should use snake_case
+  func SayHello() {
+       ^^^^^^^^
+Rename it to `say_hello`.
+diagnostics/declaration-casing.em:7:8: warning: type name `point` should use PascalCase
+  struct point {
+         ^^^^^
+Rename it to `Point`.
+diagnostics/declaration-casing.em:11:10: warning: method `DoThing` should use snake_case
+      func DoThing() {
+           ^^^^^^^
+Rename it to `do_thing`.

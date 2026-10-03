@@ -35,6 +35,7 @@ const std = @import("std");
 const build_options = @import("build_options");
 
 const emerald = @import("emerald");
+const Repl = @import("repl");
 const Source = emerald.Source;
 
 const testing = std.testing;
@@ -75,7 +76,9 @@ fn collectCases(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir) ![]Case {
 
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.path, ".em")) continue;
+        const is_repl = std.mem.startsWith(u8, entry.path, "repl/") or std.mem.startsWith(u8, entry.path, "repl\\");
+        const suffix: []const u8 = if (is_repl) ".input" else ".em";
+        if (!std.mem.endsWith(u8, entry.path, suffix)) continue;
 
         const path = try gpa.dupe(u8, entry.path);
         defer gpa.free(path);
@@ -97,7 +100,7 @@ fn collectCases(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir) ![]Case {
         try cases.append(gpa, .{
             .relative_path = try gpa.dupe(u8, path),
             .entry_path = try gpa.dupe(u8, path),
-            .stem = try gpa.dupe(u8, path[0 .. path.len - ".em".len]),
+            .stem = try gpa.dupe(u8, path[0 .. path.len - suffix.len]),
         });
     }
 
@@ -134,6 +137,7 @@ const Kind = enum {
     local_zone,
     runtime_errors,
     format,
+    repl,
 
     fn fromPath(relative_path: []const u8) ?Kind {
         const separator = std.mem.indexOfScalar(u8, relative_path, '/') orelse return null;
@@ -146,6 +150,7 @@ const Kind = enum {
         if (std.mem.eql(u8, directory, "local-zone")) return .local_zone;
         if (std.mem.eql(u8, directory, "runtime-errors")) return .runtime_errors;
         if (std.mem.eql(u8, directory, "format")) return .format;
+        if (std.mem.eql(u8, directory, "repl")) return .repl;
         return null;
     }
 };
@@ -373,6 +378,21 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
         return 1;
     };
 
+    if (kind == .repl) {
+        const input = try root.readFileAlloc(io, case.entry_path, gpa, .limited(Source.max_bytes));
+        defer gpa.free(input);
+        // Each transcript must be identical on 50 consecutive executions,
+        // including on CI's real platform schedulers. Never retry a mismatch.
+        for (0..50) |_| {
+            var reader: std.Io.Reader = .fixed(input);
+            var output: std.Io.Writer.Allocating = .init(gpa);
+            defer output.deinit();
+            if (try Repl.run(gpa, &reader, &output.writer, false, .empty, .utc, .{}) != 0) return 1;
+            if (try compareWithExpected(gpa, io, root, case, output.written()) != 0) return 1;
+        }
+        return 0;
+    }
+
     // The display paths are the relative ones, so expectations stay
     // machine-independent. A project case loads every file beside its entry.
     var project = try emerald.Project.loadIn(gpa, io, root, case.entry_path);
@@ -426,6 +446,7 @@ fn produce(
 ) !?[]u8 {
     const entry = &project.files[project.entry].source;
     switch (kind) {
+        .repl => unreachable, // transcript cases bypass project loading
         .lexical => {
             var tokenized = try emerald.Lexer.tokenize(gpa, entry);
             defer tokenized.deinit(gpa);

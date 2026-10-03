@@ -1,0 +1,12 @@
+diagnostics/trait-not-adopted.em:11:18: `Square` does not adopt `Shape`
+  const s: Shape = Square()
+                   ^^^^^^^^
+Add `with Shape` to `Square`'s declaration, and `@override` before its `area` method.
+diagnostics/trait-not-adopted.em:19:18: `Circle` does not adopt `Shape`
+  const c: Shape = Circle()
+                   ^^^^^^^^
+Add `with Shape` to `Circle`'s declaration, and `@override` before its `area` method.
+diagnostics/trait-not-adopted.em:24:18: this is Triangle, but `t` was declared as Shape
+  const t: Shape = Triangle()
+                   ^^^^^^^^^^
+Give the declaration the type of its value, or convert the value to match.

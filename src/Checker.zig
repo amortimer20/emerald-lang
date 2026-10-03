@@ -35,10 +35,12 @@
 const std = @import("std");
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
+const Lexer = @import("Lexer.zig");
 const Project = @import("Project.zig");
 const Regex = @import("Regex.zig");
 const Resolver = @import("Resolver.zig");
 const Source = @import("Source.zig");
+const Token = @import("Token.zig");
 const Type = @import("Type.zig");
 const unicode = @import("unicode.zig");
 const call_arguments = @import("arguments.zig");
@@ -427,6 +429,7 @@ pub fn checkWithOptions(
     if (prelude_file) |index| checker.prelude_path = files[index].source.path;
     try checker.scopes.append(arena, prelude);
     try checker.scopes.append(arena, module);
+    try checker.checkDocumentationWarnings(gpa);
     var struct_sites: std.ArrayList(StructSite) = .empty;
 
     // Hoisted, as in the resolver. The resolver has rejected duplicate names,
@@ -595,6 +598,184 @@ pub fn checkWithOptions(
         .type_names = checker.type_names,
         .trait_calls = checker.trait_calls,
     };
+}
+
+/// Section 3.2's documentation warning is checked after ordinary lexing and
+/// parsing have succeeded. The parser intentionally keeps documentation out of
+/// its tree, so this small token pass keeps a warning non-fatal while using the
+/// lexer to distinguish comment text from strings and ordinary comments. The
+/// generated prelude is not a program file and therefore never warns.
+fn checkDocumentationWarnings(self: *Checker, gpa: std.mem.Allocator) Error!void {
+    for (self.files, 0..) |file, index| {
+        if (std.mem.eql(u8, file.namespace, Resolver.prelude_namespace)) continue;
+        var tokenized = try Lexer.tokenize(gpa, &file.source);
+        defer tokenized.deinit(gpa);
+        // The normal frontend stops before checking lexical failures. Keeping
+        // that boundary here avoids repeating a lexical problem in a direct
+        // checker test.
+        if (tokenized.diagnostics.len != 0) continue;
+        self.file = @intCast(index);
+
+        var at: usize = 0;
+        while (at < tokenized.tokens.len) : (at += 1) {
+            const first = tokenized.tokens[at];
+            if (first.kind != .doc_comment) continue;
+
+            var last = at;
+            var next = at + 1;
+            while (next < tokenized.tokens.len) {
+                while (next < tokenized.tokens.len and tokenized.tokens[next].kind == .newline) next += 1;
+                if (next == tokenized.tokens.len or tokenized.tokens[next].kind != .doc_comment or
+                    lineBreakCount(file.source.text[tokenized.tokens[last].span.end..tokenized.tokens[next].span.start]) != 1) break;
+                last = next;
+                next += 1;
+            }
+            at = last;
+
+            while (next < tokenized.tokens.len and tokenized.tokens[next].kind == .newline) next += 1;
+            const follows_declaration = next < tokenized.tokens.len and
+                lineBreakCount(file.source.text[tokenized.tokens[last].span.end..tokenized.tokens[next].span.start]) == 1 and
+                documentationDeclarationStarts(tokenized.tokens, next);
+            if (documentationStartsLine(file.source.text, first.span.start) and follows_declaration) continue;
+            try self.reportWarning(
+                first.span,
+                "this documentation comment does not describe a declaration",
+                .{},
+                "Write it immediately before the declaration it describes, with no blank line between them.",
+            );
+        }
+    }
+}
+
+fn lineBreakCount(text: []const u8) usize {
+    var count: usize = 0;
+    for (text) |byte| {
+        if (byte == '\n') count += 1;
+    }
+    return count;
+}
+
+fn documentationStartsLine(text: []const u8, start: u32) bool {
+    const before = text[0..start];
+    const line = if (std.mem.lastIndexOfScalar(u8, before, '\n')) |newline| before[newline + 1 ..] else before;
+    return std.mem.trim(u8, line, " \t\r").len == 0;
+}
+
+/// A documentation block can lead ordinary declarations and an annotated one.
+/// The parser itself gives an annotation its precise diagnostics; this only
+/// answers whether a declaration follows well enough to avoid an orphan warning.
+fn documentationDeclarationStarts(tokens: []const Token, start: usize) bool {
+    var at = start;
+    while (at < tokens.len and tokens[at].kind == .at) {
+        at += 1;
+        if (at == tokens.len or tokens[at].kind != .identifier) return false;
+        at += 1;
+        if (at < tokens.len and tokens[at].kind == .left_paren) {
+            var depth: usize = 0;
+            while (at < tokens.len) : (at += 1) switch (tokens[at].kind) {
+                .left_paren => depth += 1,
+                .right_paren => {
+                    depth -= 1;
+                    if (depth == 0) {
+                        at += 1;
+                        break;
+                    }
+                },
+                .eof => return false,
+                else => {},
+            };
+            if (depth != 0) return false;
+        }
+        while (at < tokens.len and tokens[at].kind == .newline) at += 1;
+    }
+    if (at == tokens.len) return false;
+    return switch (tokens[at].kind) {
+        .keyword_class,
+        .keyword_const,
+        .keyword_constructor,
+        .keyword_enum,
+        .keyword_func,
+        .keyword_struct,
+        .keyword_trait,
+        .keyword_using,
+        .keyword_var,
+        => true,
+        else => false,
+    };
+}
+
+/// Section 3.3's naming conventions are warnings about declarations written by
+/// a program. Prelude names and override names are inherited contracts, not a
+/// program's own naming choices, so neither receives a warning here.
+fn namingWarningsApply(self: *const Checker) bool {
+    return !std.mem.eql(u8, self.files[@intCast(self.file)].namespace, Resolver.prelude_namespace);
+}
+
+fn checkSnakeCase(self: *Checker, name: []const u8, span: Source.Span, what: []const u8) Error!void {
+    if (!self.namingWarningsApply() or isSnakeCase(name)) return;
+    const suggested = try snakeCase(self.arena, name);
+    try self.reportWarning(
+        span,
+        "{s} `{s}` should use snake_case",
+        .{ what, name },
+        try std.fmt.allocPrint(self.arena, "Rename it to `{s}`.", .{suggested}),
+    );
+}
+
+fn checkPascalCase(self: *Checker, name: []const u8, span: Source.Span) Error!void {
+    if (!self.namingWarningsApply() or isPascalCase(name)) return;
+    const suggested = try pascalCase(self.arena, name);
+    try self.reportWarning(
+        span,
+        "type name `{s}` should use PascalCase",
+        .{name},
+        try std.fmt.allocPrint(self.arena, "Rename it to `{s}`.", .{suggested}),
+    );
+}
+
+fn checkFunctionCasing(self: *Checker, function: Ast.FunctionDeclaration) Error!void {
+    if (function.override_span != null) return;
+    try self.checkSnakeCase(function.name, function.name_span, "function name");
+    try self.checkParameterCasing(function.parameters);
+}
+
+fn checkParameterCasing(self: *Checker, parameters: []const Ast.Parameter) Error!void {
+    for (parameters) |parameter| try self.checkSnakeCase(parameter.name, parameter.name_span, "parameter");
+}
+
+fn isSnakeCase(name: []const u8) bool {
+    for (name) |byte| if (std.ascii.isUpper(byte)) return false;
+    return true;
+}
+
+fn snakeCase(arena: std.mem.Allocator, name: []const u8) Error![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    for (name, 0..) |byte, index| {
+        if (std.ascii.isUpper(byte)) {
+            if (index != 0 and result.items.len != 0 and result.items[result.items.len - 1] != '_') try result.append(arena, '_');
+            try result.append(arena, std.ascii.toLower(byte));
+        } else try result.append(arena, byte);
+    }
+    return result.items;
+}
+
+fn isPascalCase(name: []const u8) bool {
+    const first = std.mem.trimStart(u8, name, "_");
+    return first.len != 0 and std.ascii.isUpper(first[0]) and std.mem.indexOfScalar(u8, first, '_') == null;
+}
+
+fn pascalCase(arena: std.mem.Allocator, name: []const u8) Error![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    var capitalize = true;
+    for (name) |byte| {
+        if (byte == '_') {
+            capitalize = true;
+            continue;
+        }
+        try result.append(arena, if (capitalize) std.ascii.toUpper(byte) else byte);
+        capitalize = false;
+    }
+    return result.items;
 }
 
 /// Marks the prelude declaration `key` belongs to as reached, so its bodies are
@@ -961,6 +1142,7 @@ fn registerStruct(
     display_name: []const u8,
     span: Source.Span,
 ) Error!void {
+    try self.checkPascalCase(declaration.name, declaration.name_span);
     try struct_sites.append(self.arena, .{ .file = self.file, .declaration = declaration, .key = key });
     const user = try self.arena.create(Type.User);
     user.* = .{ .name = key, .display_name = display_name, .class = declaration.class, .trait = declaration.trait, .enumeration = declaration.enumeration };
@@ -1057,6 +1239,12 @@ fn checkStructDeclaration(self: *Checker, key: []const u8, declaration: Ast.Stru
     // of them. They are compared in the order they are written, so the one
     // reported is always the later one.
     const members = try self.membersOf(declaration);
+    for (members) |member| {
+        if (member.override_span == null) try self.checkSnakeCase(member.name, member.span, member.noun());
+    }
+    for (declaration.methods) |method| if (method.override_span == null) try self.checkParameterCasing(method.parameters);
+    for (declaration.type_functions) |function| try self.checkParameterCasing(function.declaration.parameters);
+    if (declaration.constructor) |constructor| try self.checkParameterCasing(constructor.parameters);
 
     var seen: std.StringHashMapUnmanaged(Member) = .empty;
     for (members) |member| {
@@ -1689,6 +1877,89 @@ fn checkTraits(self: *Checker, declaration: Ast.StructDeclaration, user: *const 
     }
 }
 
+/// A type can happen to supply every requirement of a trait without adopting
+/// it. Emerald stays nominal: that is still not assignable as the trait, but
+/// recognizing the close miss lets the diagnostic point at the missing `with`
+/// instead of suggesting an unrelated conversion.
+fn structurallySuppliesTrait(self: *Checker, user: *const Type.User, trait: *const Type.User) Error!bool {
+    var traits: std.ArrayList(*const Type.User) = .empty;
+    try self.collectTraits(trait, &traits);
+    var required_any = false;
+    for (traits.items) |required_trait| {
+        const declaration = self.struct_declarations.get(required_trait.name).?;
+        for (declaration.properties) |property| {
+            if (Resolver.isPrivate(property.name) or property.getter.abstract_span == null) continue;
+            required_any = true;
+            const supplied = try self.declaredMember(user, property.name, true) orelse return false;
+            if (supplied.kind != .field and supplied.kind != .property) return false;
+            const key = try Resolver.methodKey(self.arena, required_trait.name, property.name);
+            const expected = (try self.signatureFor(key)).return_type;
+            const actual: Type, const writable: bool = switch (supplied.kind) {
+                .field => blk: {
+                    const field = user.field(property.name).?.value;
+                    break :blk .{ field.type, field.mutable };
+                },
+                .property => .{ (try self.signatureFor(supplied.key.?)).return_type, self.properties.get(supplied.key.?) orelse false },
+                else => unreachable,
+            };
+            if (!actual.same(expected) or (property.mutable and !writable)) return false;
+        }
+        for (declaration.methods) |method| {
+            if (Resolver.isPrivate(method.name) or method.abstract_span == null) continue;
+            required_any = true;
+            const supplied = try self.declaredMember(user, method.name, true) orelse return false;
+            if (supplied.kind != .method) return false;
+            const key = try Resolver.methodKey(self.arena, required_trait.name, method.name);
+            const expected = try self.signatureOn(try self.signatureFor(key), Type.structOf(user));
+            if (!try self.sameSignature(try self.signatureFor(supplied.key.?), expected)) return false;
+        }
+    }
+    return required_any;
+}
+
+/// Reports the nominal-trait mistake only for a concrete type that already
+/// supplies every required public member. Types that are missing or mismatch a
+/// requirement retain the ordinary type-mismatch diagnostic, which is more
+/// useful for fixing their actual problem.
+fn reportMissingTraitAdoption(
+    self: *Checker,
+    span: Source.Span,
+    actual: Type,
+    expected: Type,
+    code: ?Diagnostic.Code,
+) Error!bool {
+    const user = actual.user orelse return false;
+    const trait = expected.user orelse return false;
+    if (actual.kind != .struct_value or actual.optional or user.trait or user.enumeration or !trait.trait) return false;
+    if (!try self.structurallySuppliesTrait(user, trait)) return false;
+    var trait_closure: std.ArrayList(*const Type.User) = .empty;
+    try self.collectTraits(trait, &trait_closure);
+    var override_methods: std.ArrayList([]const u8) = .empty;
+    for (trait_closure.items) |required_trait| {
+        const declaration = self.struct_declarations.get(required_trait.name).?;
+        for (declaration.methods) |method| {
+            if (Resolver.isPrivate(method.name)) continue;
+            const supplied = try self.declaredMember(user, method.name, false) orelse continue;
+            if (supplied.kind == .method) try override_methods.append(self.arena, method.name);
+        }
+    }
+    const help = switch (override_methods.items.len) {
+        0 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration.", .{ trait.display_name, user.display_name }),
+        1 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before its `{s}` method.", .{ trait.display_name, user.display_name, override_methods.items[0] }),
+        2 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before its `{s}` and `{s}` methods.", .{ trait.display_name, user.display_name, override_methods.items[0], override_methods.items[1] }),
+        3 => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before its `{s}`, `{s}`, and `{s}` methods.", .{ trait.display_name, user.display_name, override_methods.items[0], override_methods.items[1], override_methods.items[2] }),
+        else => try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}`'s declaration, and `@override` before each of its methods that `{s}` declares.", .{ trait.display_name, user.display_name, trait.display_name }),
+    };
+    try self.diagnostics.append(self.arena, .{
+        .message = try std.fmt.allocPrint(self.arena, "`{s}` does not adopt `{s}`", .{ user.display_name, trait.display_name }),
+        .span = span,
+        .help = help,
+        .code = code,
+        .file = self.file,
+    });
+    return true;
+}
+
 /// Whether two traits' members of one name and kind can be supplied by one
 /// member: the same method shape, or properties of the same type, where a
 /// writable one subsumes a read-only one (11.2).
@@ -2024,6 +2295,26 @@ fn typeKeyOf(self: *Checker, name: []const u8) Error![]const u8 {
     return whole;
 }
 
+/// A bare type name inside another type's braces may be a nested type that is
+/// visible only through its enclosing type. Find the innermost such type so an
+/// unknown-type diagnostic can show the spelling section 14.3 requires.
+fn nestedTypeAt(self: *Checker, name: []const u8, span: Source.Span) Error!?[]const u8 {
+    var result: ?struct { key: []const u8, span: Source.Span } = null;
+    var types = self.type_spans.iterator();
+    while (types.next()) |entry| {
+        const owner = self.facts.owner.get(entry.key_ptr.*) orelse continue;
+        const enclosing = entry.value_ptr.*;
+        if (owner != self.file or span.start < enclosing.start or span.end > enclosing.end) continue;
+        const nested = try Resolver.methodKey(self.arena, entry.key_ptr.*, name);
+        if (!self.structs.contains(nested)) continue;
+        if (result) |found| {
+            if (enclosing.len() >= found.span.len()) continue;
+        }
+        result = .{ .key = nested, .span = enclosing };
+    }
+    return if (result) |found| try Resolver.displayKey(self.arena, found.key) else null;
+}
+
 /// A written type name's key before any nesting: a name the file sees, or a
 /// namespace-qualified one, following a namespace alias at its front.
 fn writtenTypeKey(self: *Checker, name: []const u8) Error![]const u8 {
@@ -2309,8 +2600,11 @@ fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
         // A program function is checked after the top level; see the module
         // comment. A nested one is checked where it is written, unless a use
         // above it needed it first.
-        .function_declaration => |function| if (self.nestedKey(function)) |key| {
-            if (self.nested.contains(key)) try self.ensureBodyChecked(key);
+        .function_declaration => |function| {
+            try self.checkFunctionCasing(function);
+            if (self.nestedKey(function)) |key| {
+                if (self.nested.contains(key)) try self.ensureBodyChecked(key);
+            }
         },
         .struct_declaration => {},
         .return_statement => |return_statement| try self.checkReturn(return_statement),
@@ -2886,6 +3180,7 @@ fn enclosingLoop(self: *Checker, span: Source.Span, comptime keyword: []const u8
 }
 
 fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
+    try self.checkSnakeCase(declaration.name, declaration.name_span, if (declaration.mutable) "variable name" else "constant name");
     var declared: Type = .invalid;
     var assigned = true;
 
@@ -2898,13 +3193,15 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
         const actual = try self.typeOfExpected(initializer, expected);
         if (declaration.annotation != null) {
             if (!actual.assignableTo(declared)) {
-                try self.reportCoded(
-                    initializer.span,
-                    .type_mismatch,
-                    "this is {f}, but `{s}` was declared as {f}",
-                    .{ actual, declaration.name, declared },
-                    mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
-                );
+                if (!try self.reportMissingTraitAdoption(initializer.span, actual, declared, .type_mismatch)) {
+                    try self.reportCoded(
+                        initializer.span,
+                        .type_mismatch,
+                        "this is {f}, but `{s}` was declared as {f}",
+                        .{ actual, declaration.name, declared },
+                        mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
+                    );
+                }
             }
         } else {
             // Section 4.1 infers the local's type from its initializer.
@@ -3755,8 +4052,25 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
         try self.checkAllPathsReturn(declaration, signature.return_type);
     }
 
+    if (!std.mem.endsWith(u8, key, Resolver.setter_suffix)) {
+        try self.checkQuestionResult(declaration.name, declaration.name_span, signature.return_type);
+    }
     try self.signatures.put(self.arena, key, signature);
     return signature;
+}
+
+/// Section 3.3: `?` promises that a callable answers a yes-or-no question.
+/// This lives beside signature construction so it covers written and inferred
+/// results alike, including an override, while a property's synthetic setter
+/// does not mistake its `Nothing` result for the property's result.
+fn checkQuestionResult(self: *Checker, name: []const u8, span: Source.Span, result: Type) Error!void {
+    if (!std.mem.endsWith(u8, name, "?") or result.kind == .invalid or (result.kind == .bool and !result.optional)) return;
+    try self.report(
+        span,
+        "`{s}` ends in `?`, so it must return Bool, but it returns {f}",
+        .{ name, result },
+        "Change its result to `Bool`, or remove `?` if it does not answer a yes-or-no question.",
+    );
 }
 
 /// What `Self` means in the signature of the function `key`: the type, for a
@@ -5376,6 +5690,16 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         if (try self.reportPrivateNestedPath(key, annotation.span)) return .invalid;
         return user_type;
     }
+    if (std.mem.indexOfScalar(u8, annotation.name, '.') == null) if (try self.nestedTypeAt(annotation.name, annotation.span)) |nested| {
+        try self.reportWithHelp(
+            annotation.span,
+            "`{s}` is not a type",
+            .{annotation.name},
+            "Write `{s}` instead.",
+            .{nested},
+        );
+        return .invalid;
+    };
     try self.report(
         annotation.span,
         "`{s}` is not a type",

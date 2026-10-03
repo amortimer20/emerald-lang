@@ -1,4 +1,4 @@
-## Try it: emerald run examples/tasks.em
+# Try it: emerald run examples/tasks.em
 
 # Print results in the order wanted, not from inside the tasks.
 Tasks.run { tasks =>

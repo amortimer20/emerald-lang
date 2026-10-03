@@ -110,6 +110,11 @@ program instead — see [Errors, tests, and projects](errors-tests-and-projects.
 
 ## Functions and blocks
 
+Use a `?` name for a yes-or-no question, such as `empty?`. A `?` name must return
+`Bool`, but returning `Bool` does not require `?`: `save(): Bool` can report whether
+an action succeeded without being named as a question. See
+[`conformance/run/bool-action-name.em`](../../conformance/run/bool-action-name.em).
+
 `func` declares a named function with a colon-introduced return type; a
 function with no `return`ed value has return type `Nothing` and may omit it.
 Parameters are read-only, and a collection or struct parameter is the
