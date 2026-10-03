@@ -835,7 +835,7 @@ const Hover = struct {
 };
 
 const MarkupContent = struct {
-    kind: []const u8 = "plaintext",
+    kind: []const u8 = "markdown",
     value: []const u8,
 };
 
@@ -857,18 +857,158 @@ fn onHover(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: P
     const source = &loaded.project.files[loaded.index].source;
     const offset = offsetFromPosition(source, position);
     const found = expressionAt(&analysis, loaded.index, offset) orelse {
+        if (try definitionAt(gpa, &analysis, loaded.index, offset)) |target| {
+            if (try describeTarget(gpa, &analysis, target)) |item| {
+                defer item.deinit(gpa);
+                const contents = try renderDeclarationHover(gpa, item);
+                defer gpa.free(contents);
+                try respond(gpa, out, id, Hover{
+                    .contents = .{ .value = contents },
+                    .range = lspRange(source, target.span),
+                });
+                return;
+            }
+        }
         try respond(gpa, out, id, null);
         return;
     };
 
-    var text: std.Io.Writer.Allocating = .init(gpa);
-    defer text.deinit();
-    try text.writer.print("{f}", .{found.type});
+    const contents = try hoverContents(server, gpa, &analysis, loaded.index, offset, found);
+    defer gpa.free(contents);
 
     try respond(gpa, out, id, Hover{
-        .contents = .{ .value = text.written() },
+        .contents = .{ .value = contents },
         .range = lspRange(source, found.span),
     });
+}
+
+fn hoverContents(
+    server: *Server,
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    file: u32,
+    offset: u32,
+    found: Found,
+) ![]const u8 {
+    if (server.builtins) |catalog| if (hoverNativeMember(analysis, file, offset, found)) |lookup| {
+        const member = emerald.Builtins.find(catalog.value, lookup.owner, lookup.name) orelse
+            emerald.Builtins.find(catalog.value, "*", lookup.name);
+        if (member) |built_in| {
+            const item = try Completion.native(gpa, built_in, lookup.receiver);
+            defer item.deinit(gpa);
+            return try renderNativeHover(gpa, item.detail.?, built_in, lookup.owner);
+        }
+    };
+
+    if (try definitionAt(gpa, analysis, file, offset)) |target| {
+        if (try describeTarget(gpa, analysis, target)) |item| {
+            defer item.deinit(gpa);
+            return try renderDeclarationHover(gpa, item);
+        }
+    }
+
+    var text: std.Io.Writer.Allocating = .init(gpa);
+    defer text.deinit();
+    try text.writer.print("`{f}`", .{found.type});
+    return try gpa.dupe(u8, text.written());
+}
+
+const NativeHoverLookup = struct {
+    owner: ?[]const u8,
+    name: []const u8,
+    receiver: ?Type = null,
+};
+
+fn hoverNativeMember(analysis: *const emerald.Analysis, file: u32, offset: u32, found: Found) ?NativeHoverLookup {
+    const expression = found.expression;
+    const callee: *const Ast.Expression = if (expression.data == .call) expression.data.call.callee else expression;
+    if (callee.data == .name) {
+        const name = callee.data.name;
+        // A prelude function call's resolver target also identifies it, while
+        // an unqualified local function must keep its own source description.
+        if (analysis.resolved.facts.expression_targets.get(callee)) |target| {
+            if (target.file < analysis.files.len and std.mem.eql(u8, analysis.files[target.file].namespace, Resolver.prelude_namespace)) {
+                return .{ .owner = null, .name = name };
+            }
+        }
+        return null;
+    }
+    if (callee.data != .member) return null;
+    const member = callee.data.member;
+    if (offset < member.name_span.start or offset > member.name_span.end) return null;
+
+    // A project module or a program-owned type can shadow a built-in namespace.
+    // Use catalog presentation only when the resolver selected the prelude.
+    if (analysis.resolved.facts.qualified.get(callee)) |key| {
+        if (analysis.resolved.facts.declarations.get(key)) |target| {
+            if (target.file >= analysis.files.len or !std.mem.eql(u8, analysis.files[target.file].namespace, Resolver.prelude_namespace)) return null;
+        }
+    }
+
+    if (analysis.checked.expression_types.get(member.base)) |info| {
+        const base = if (info.type.optional) info.type.payload() else info.type;
+        if (std.mem.eql(u8, member.name, "type_name")) return .{ .owner = "*", .name = member.name, .receiver = base };
+        const owner: ?[]const u8 = switch (base.kind) {
+            .string => "String",
+            .list => "List",
+            .dictionary => "Dict",
+            .set => "Set",
+            .int => "Int",
+            .float => "Float",
+            .bool => "Bool",
+            .range => "Range",
+            .bytes => "Bytes",
+            .tuple => "Tuple",
+            .task => "Task",
+            .channel => "Channel",
+            .struct_value => null,
+            else => null,
+        };
+        if (owner) |native_owner| return .{ .owner = native_owner, .name = member.name, .receiver = base };
+    }
+
+    const written_owner = expressionPath(analysis, file, member.base) orelse return null;
+    const owner = if (std.mem.startsWith(u8, written_owner, Resolver.prelude_namespace ++ ".")) written_owner[Resolver.prelude_namespace.len + 1 ..] else written_owner;
+    // The prefix must be a single catalog owner. User namespaces and values
+    // that lack a checked expression type are not native declarations.
+    if (std.mem.indexOfScalar(u8, owner, '.') != null) return null;
+    return .{ .owner = owner, .name = member.name };
+}
+
+fn expressionPath(analysis: *const emerald.Analysis, file: u32, expression: *const Ast.Expression) ?[]const u8 {
+    return switch (expression.data) {
+        .name => |name| name,
+        .member => analysis.files[file].source.text[expression.span.start..expression.span.end],
+        else => null,
+    };
+}
+
+fn renderNativeHover(gpa: std.mem.Allocator, detail: []const u8, member: emerald.Builtins.Member, owner: ?[]const u8) ![]const u8 {
+    var text: std.Io.Writer.Allocating = .init(gpa);
+    defer text.deinit();
+    try text.writer.writeAll("```emerald\n");
+    if (owner) |namespace| if (!std.mem.eql(u8, namespace, "*")) try text.writer.print("{s}.", .{namespace});
+    try text.writer.writeAll(detail);
+    try text.writer.writeAll("\n```\n\n");
+    try text.writer.writeAll(member.signatures[0].summary);
+    if (member.signatures[0].raises) try text.writer.writeAll("\n\nMay raise an error.");
+    try text.writer.print("\n\n[Read more](https://emerald-lang.web.app/docs/{s})", .{member.signatures[0].page});
+    return try gpa.dupe(u8, text.written());
+}
+
+fn renderDeclarationHover(gpa: std.mem.Allocator, item: CompletionItem) ![]const u8 {
+    var text: std.Io.Writer.Allocating = .init(gpa);
+    defer text.deinit();
+    try text.writer.writeAll("```emerald\n");
+    try text.writer.writeAll(item.detail orelse item.label);
+    try text.writer.writeAll("\n```");
+    if (item.documentation) |documentation| {
+        if (documentation.len != 0) {
+            try text.writer.writeAll("\n\n");
+            try text.writer.writeAll(documentation);
+        }
+    }
+    return try gpa.dupe(u8, text.written());
 }
 
 const Found = struct { span: Source.Span, type: Type, expression: *const Ast.Expression };
@@ -3281,6 +3421,55 @@ fn describeModuleItem(gpa: std.mem.Allocator, analysis: *const emerald.Analysis,
         },
         else => {},
     };
+    return null;
+}
+
+fn describeTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target) !?CompletionItem {
+    if (target.file >= analysis.parsed.len) return null;
+    const source = &analysis.files[target.file].source;
+    for (analysis.parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .function_declaration => |function| if (function.name_span.start == target.span.start)
+            return try describeFunction(gpa, analysis, target.file, function, function.name, 3),
+        .declaration => |declaration| if (declaration.name_span.start == target.span.start) {
+            const inferred = if (declaration.initializer) |initializer| if (analysis.checked.expression_types.get(initializer)) |info| info.type else null else null;
+            return try Completion.field(gpa, source, declaration.name, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6);
+        },
+        .struct_declaration => |declaration| {
+            if (declaration.name_span.start == target.span.start) {
+                var item: CompletionItem = .{ .label = declaration.name, .kind = if (declaration.enumeration) 13 else if (declaration.class) 7 else if (declaration.trait) 8 else 22 };
+                item.documentation = try Completion.documentation(gpa, source, declaration.name_span);
+                return item;
+            }
+            if (try describeStructTarget(gpa, analysis, target.file, declaration, target.span.start)) |item| return item;
+        },
+        else => {},
+    };
+    return null;
+}
+
+fn describeStructTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, declaration: Ast.StructDeclaration, start: u32) !?CompletionItem {
+    const source = &analysis.files[file].source;
+    for (declaration.methods) |method| if (method.name_span.start == start) return try describeFunction(gpa, analysis, file, method, method.name, 2);
+    for (declaration.properties) |property| if (property.name_span.start == start) {
+        return try Completion.field(gpa, source, property.name, property.name_span, property.annotation, null, null, 10);
+    };
+    for (declaration.fields) |field| if (field.name_span.start == start) {
+        return try Completion.field(gpa, source, field.name, field.name_span, field.annotation, null, null, 5);
+    };
+    for (declaration.type_functions) |function| if (function.member_span.start == start) {
+        return try describeFunction(gpa, analysis, file, function.declaration, function.declaration.name, 2);
+    };
+    for (declaration.type_fields) |field| if (field.name_span.start == start) {
+        return try Completion.field(gpa, source, field.name, field.name_span, field.annotation, field.initializer, null, 10);
+    };
+    for (declaration.types) |nested| {
+        if (nested.declaration.name_span.start == start) {
+            var item: CompletionItem = .{ .label = nested.declaration.name, .kind = if (nested.declaration.enumeration) 13 else if (nested.declaration.class) 7 else 22 };
+            item.documentation = try Completion.documentation(gpa, source, nested.declaration.name_span);
+            return item;
+        }
+        if (try describeStructTarget(gpa, analysis, file, nested.declaration, start)) |item| return item;
+    }
     return null;
 }
 

@@ -4,7 +4,7 @@
   "result": {
     "contents": {
       "kind": "markdown",
-      "value": "```emerald\nString.upper(): String\n```\n\nThe text in capital letters.\n\n[Read more](https://emerald-lang.web.app/docs/builtins/types/string/#upper)"
+      "value": "```emerald\nprint(values: Any...): Nothing\n```\n\nShows each value, separated by a space, then ends the line.\n\n[Read more](https://emerald-lang.web.app/docs/builtins/functions/print/#print)"
     },
     "range": {
       "start": {
@@ -13,7 +13,7 @@
       },
       "end": {
         "line": 0,
-        "character": 13
+        "character": 8
       }
     }
   }

@@ -4,7 +4,7 @@
   "result": {
     "contents": {
       "kind": "markdown",
-      "value": "```emerald\nString.upper(): String\n```\n\nThe text in capital letters.\n\n[Read more](https://emerald-lang.web.app/docs/builtins/types/string/#upper)"
+      "value": "```emerald\nMath.sin(radians: Float): Float\n```\n\nThe sine of an angle in radians.\n\n[Read more](https://emerald-lang.web.app/docs/library/program/math/#sin)"
     },
     "range": {
       "start": {

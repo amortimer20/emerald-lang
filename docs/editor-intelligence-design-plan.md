@@ -252,7 +252,7 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
   before and after, and record both.
 - An LSP test category, `conformance/lsp/`: each case is a document, a request at a marked
   position, and the expected response, run through the real server.
-- Settled while building (2026-10-03; validation in progress):
+- Settled while building (2026-10-03; completed):
   - Kept the placeholder approach, but added a tool-analysis entry point that retains
     parsed declarations and resolver facts when its synthetic member fails resolution.
     It never checks failed resolution or treats that partial analysis as executable.
@@ -303,15 +303,48 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     each passed. One VS Code integration run timed out in format-on-save after its other
     eight tests passed. The user reported seven successful runs from Claude; a subsequent
     run here completed all nine tests successfully. The timeout was transient, not a
-    completion regression. Slice 2 is ready to commit; slice 3 begins only after its branch
-    CI is green.
+    completion regression. Slice 2 was committed as `3868394`, pushed, and branch CI
+    passed all seven jobs in run `37147012161`. At the next slice boundary, main's three
+    documentation-only roadmap commits were merged without conflict in `49eef58`;
+    slice 3 works from that merged state.
 
 ### Slice 3: Hover and documentation
 
 - Hover shows a signature, the summary, what it can raise, and for built-ins a link to the
   website's member anchor (decision 6). For a declaration with a `##` comment, the comment.
 - The checker's "did you mean" hints read the data's names, so a new member never needs adding twice.
-- Settled while building: (record here)
+- Settled while building (2026-10-03):
+  - Hover replies use Markdown: a fenced Emerald signature, the learner-facing summary,
+    and a website link for members represented in the catalog. Catalog entries marked
+    `raises` add the neutral note “May raise an error.” because the catalog records only
+    whether a failure is possible, not a checked error type. Prelude declarations outside
+    the catalog use their `##` text and source signature; Emerald has no raises effect
+    on source declarations, so hover does not infer one from implementation details.
+  - For catalog entries, the catalog is preferred to its prelude stub so typed-special
+    signatures and docs stay aligned with completion. User/project declarations use the
+    resolver-selected source target, including a method's own `##` comment and inferred
+    return type. Hover on the declaration name itself is supported as well as on a use.
+    Native members still have no go-to-definition target.
+  - Checker synonym corrections retain their curated cross-language aliases, but a
+    method/property correction is offered only if its target name exists in the catalog;
+    dictionary indexing corrections (`[key]` and `[key] =`) remain syntax-based. The
+    generic native-member help now samples the first eight accepted names from the
+    catalog and points to that type's reference, avoiding a long diagnostic while
+    requiring no second hand-maintained member list. The catalog is parsed lazily on an
+    unknown native member, so ordinary checks do not decode it.
+  - Added Markdown hover coverage for an instance method, a raising Bytes conversion,
+    a namespace function, a prelude function, a program function both at its use and
+    declaration, and universal `type_name` on native and user-defined values. All 48
+    real-protocol LSP cases pass 50 requests each; existing native
+    definition remains empty. No language/runtime behavior changed.
+  - The pinned-toolchain full gate passed: Debug and ReleaseSafe `zig build test -j1`,
+    `zig build -j1`, documentation examples, changed-file formatting, whitespace, and
+    Windows/macOS cross-builds. The VS Code suite first timed out in format-on-save after
+    eight passes. Three runs in this environment timed out at that same test. Direct
+    `textDocument/formatting` requests returned the expected `const x = 1` edit for both
+    file and untitled URIs. The user reports Claude ran the suite successfully seven times.
+    The downloaded VS Code logs an unavailable `native-keymap` module. No extension files
+    changed. Commit, push, and CI are pending.
 
 ### Slice 4: Signature help
 

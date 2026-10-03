@@ -5010,3 +5010,31 @@ Codex then ran the suite once more and observed all 9 tests pass, including
 `formats a document via the format-on-save provider` (VS Code 1.140.0). The timeout was
 transient; no extension change was needed. Completion's local gates and timing are green,
 and slice 2 is ready to commit and push. Slice 3 awaits the pushed branch's green CI.
+
+## 2026-10-03: Editor intelligence slice 2 — commit, CI, and main sync
+
+Completion was committed as `3868394` and pushed on `codex/editor-intelligence`. CI run
+`37147012161` passed all seven jobs. At slice 3's start, main had three new documentation-only
+roadmap commits; they merged cleanly in `49eef58`, preserving the roadmap notes. No source or
+conformance conflicts arose.
+
+## 2026-10-03: Editor intelligence slice 3 — hover and documentation
+
+Hover now uses catalog-backed signatures, summaries, possible-raise notes, and website links
+for catalog members; prelude and program declarations use their source signatures and attached
+`##` comments. It works on a declaration name as well as a use. Native members still have no
+go-to-definition target. The checker validates cross-language correction targets against the
+catalog and samples the first eight catalog member names in generic native-member help, pointing
+to the corresponding reference. It parses the catalog only after an unknown native member, so
+successful everyday checks avoid that cost.
+
+All 48 standalone real-protocol LSP cases returned identical replies over 50 requests each.
+The Debug and ReleaseSafe `zig build test -j1` suites, native build, documentation examples (24
+executed and 135 linked conformance files confirmed), changed-file formatting, whitespace check,
+and Windows/macOS cross-builds passed on Zig 0.16.0. The VS Code integration suite timed out in
+format-on-save in three attempts; each run passed the other eight tests. Direct
+`textDocument/formatting` requests returned the expected full-document edit for both file and
+untitled URIs. The user reports Claude ran the suite successfully seven times. The downloaded
+VS Code build logged a missing `native-keymap` module and other environment warnings. No
+extension files changed. Commit, push, and branch CI confirmation remain to be recorded after
+this entry's local gate.

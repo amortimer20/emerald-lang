@@ -13,8 +13,8 @@ enums, typed errors, projects/namespaces, ranges and slicing. The formatter and 
 REPL are complete and merged on main (PR #30). The language server provides diagnostics
 (identical to `emerald check`), symbols,
 format-on-save, hover, go to definition, find references, rename, and completion.
-Editor-intelligence slice 2 adds native completion on its branch; hover and signature help
-remain the next slices. See "In progress: editor intelligence" below.
+Editor-intelligence slice 2 adds catalog-backed completion, and slice 3 (hover and
+documentation) is in progress on `codex/editor-intelligence`. See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
 name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
@@ -168,27 +168,27 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Editor-intelligence slice 1 is reviewed and merged through PR #37. Slice 2 (completion)
-is implemented on `codex/editor-intelligence`, after merging main through `6020d13`, and
-is ready to commit and push. The required VS Code integration suite passed all 9 tests on
-the latest run; an earlier one-off formatter timeout did not recur.
-Native members use the startup-loaded catalog; declared members use their source signatures
-and `##` comments. Completion uses one project analysis, respects private/type-level and
-changing-receiver boundaries, includes native types and namespaces among bare names,
-and inserts method parentheses with a parameter cursor stop. The catalog also corrects
-signatures for the checker's special typed calls: `Json.encode/decode`, `Csv.encode/decode`,
-and both `Console.table` row shapes. It now has 249 members and 253 signatures. All 40
-real-protocol LSP cases passed 50 requests through the built binary; Debug and ReleaseSafe
-suites passed, as did native build, documentation examples, formatting, whitespace, and
-Windows/macOS cross-builds. ReleaseSafe completion medians on `examples/ledger/main.em` were
-7.426 ms before and 3.022 ms after for `File.` (15 items both), and 10.153 ms before and
-5.244 ms after for a String receiver (0 items before, 38 after), over 25 requests after warmup.
+Editor-intelligence slice 1 is reviewed and merged through PR #37. Slice 2 (completion) is
+committed as `3868394`, pushed on `codex/editor-intelligence`, and its CI run
+`37147012161` passed all seven jobs. Main's three roadmap documentation commits were merged
+without conflict at `49eef58` before slice 3. Completion serves native members from the
+startup-loaded catalog and declarations from source, uses one analysis, respects privacy and
+receiver constraints, includes built-in names, and inserts method parentheses. Its catalog
+also records checker-special signatures for JSON, CSV, and Console.table. The catalog has
+249 members and 253 signatures. ReleaseSafe completion medians on `examples/ledger/main.em`
+were 7.426 ms before and 3.022 ms after for `File.` and 10.153 ms before and 5.244 ms after
+for a String receiver. The VS Code integration suite passed all 9 tests; no extension files
+changed.
 
-The extension integration suite in `../emerald-vscode` passed all 9 tests against this build.
-An earlier run had one transient formatter timeout after its other eight tests passed; the
-user reported seven successful runs from Claude, and this run passed the formatting test too.
-No extension files were changed. Slice 3 (hover and documentation) may start after slice 2's
-commit is pushed and branch CI is green.
+Slice 3 adds Markdown hovers from catalog signatures/summaries/raise flags and prelude or
+program `##` comments, and moves native-member help samples to the catalog. All 48 protocol
+cases returned identical replies 50 times. On Zig 0.16.0, Debug and ReleaseSafe test builds,
+`zig build -j1`, doc examples, formatting, whitespace, and Windows/macOS cross-builds passed.
+The VS Code integration test timed out only in format-on-save in three attempts here (the other
+eight tests passed each time); direct formatting requests to the same built server returned the
+expected edit for both file and untitled documents. The user reports seven successful runs from
+Claude. No extension files changed. Slice 3's commit, push, and branch CI confirmation remain
+pending.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -205,6 +205,8 @@ The trait-adoption hint follow-ups are merged through PRs #33 and #35; their
 focused cases and local full gates are recorded in the journal.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
+- LSP hover shows built-in signatures and descriptions with reference links, and shows
+  attached `##` comments on program declarations.
 - Editor completion offers native and declared members with signatures, summaries, and
   method parentheses; bare names include the native types, `Math`, and `Program`.
 - `chunks`, `windows`, and `pairs` results are now typed as nested lists and pairs;

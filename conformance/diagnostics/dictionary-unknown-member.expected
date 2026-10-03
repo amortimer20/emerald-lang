@@ -1,4 +1,4 @@
 diagnostics/dictionary-unknown-member.em:2:16: Dict[String, Int] has no method `shout`
   print(["a": 1].shout())
                  ^^^^^
-A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.
+Known Dict members include `type_name`, `count`, `empty?`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, and others; see the Dict reference for the full list.

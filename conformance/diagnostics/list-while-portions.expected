@@ -9,4 +9,4 @@ Write the block after the method, as in `numbers.drop_while { number => print(nu
 diagnostics/list-while-portions.em:3:13: Dict[String, Int] has no method `take_while`
   ["Ada": 12].take_while { (name, age) => true }
               ^^^^^^^^^^
-A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.
+Known Dict members include `type_name`, `count`, `empty?`, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, and others; see the Dict reference for the full list.

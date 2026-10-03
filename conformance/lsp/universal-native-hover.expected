@@ -1,0 +1,20 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "contents": {
+      "kind": "markdown",
+      "value": "```emerald\ntype_name: String\n```\n\nThe name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.\n\n[Read more](https://emerald-lang.web.app/docs/docs/language/inheritance/#asking-what-kind-of-object-it-is)"
+    },
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 6
+      },
+      "end": {
+        "line": 0,
+        "character": 21
+      }
+    }
+  }
+}

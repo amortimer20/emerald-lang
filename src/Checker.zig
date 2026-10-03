@@ -34,6 +34,7 @@
 
 const std = @import("std");
 const Ast = @import("Ast.zig");
+const Builtins = @import("Builtins.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Lexer = @import("Lexer.zig");
 const Project = @import("Project.zig");
@@ -210,6 +211,9 @@ view_sizes: [2]usize = .{ std.math.maxInt(usize), std.math.maxInt(usize) },
 diagnostics: std.ArrayList(Diagnostic) = .empty,
 
 facts: Resolver.Facts,
+/// Parsed only when an unknown native member needs its learner-facing list.
+/// Ordinary checks do not pay to decode the editor catalog.
+builtin_catalog: ?Builtins.Data = null,
 declarations: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// User-defined structs, keyed by the same resolved names as module bindings.
 structs: Structs = .empty,
@@ -8984,7 +8988,7 @@ fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
 /// A member that does not exist, with the Emerald name for what the writer
 /// probably meant when they reached for another language's.
 fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member, comptime what: []const u8) Error!void {
-    const suggestion: ?[]const u8 = switch (base.kind) {
+    const candidate: ?[]const u8 = switch (base.kind) {
         .list => familiarListName(member.name),
         .string => familiarStringName(member.name),
         .dictionary, .set => familiarMapName(member.name, base.kind == .set),
@@ -8992,6 +8996,10 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         .float => familiarFloatName(member.name),
         else => null,
     };
+    const suggestion = if (candidate) |name|
+        if (std.mem.startsWith(u8, name, "[") or try self.catalogHasInstanceMember(base, name)) name else null
+    else
+        null;
     if (suggestion) |name| {
         return self.reportWithHelpCoded(
             member.name_span,
@@ -9002,21 +9010,73 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
             .{name},
         );
     }
+    const catalog_help = try self.catalogMemberHelp(base);
     try self.reportCoded(
         member.name_span,
         .unknown_member,
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
-        switch (base.kind) {
-            .list => "A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.",
-            .dictionary => "A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.",
-            .set => "A set has `count`, and methods including `contains?`, `add`, `remove`, `union`, `intersection`, `difference`, `subset?`, `filter`, `each`, and `map`; the Set reference lists them all.",
-            .string => "A String has `count`, `empty?`, `blank?`, `chars`, `code_points`, `bytes`, `upper`, `lower`, `capitalize`, `trim`, `trim_start`, `trim_end`, `contains?`, `starts_with?`, `ends_with?`, `index_of`, `substring`, `split`, `lines`, `partition`, `replace`, `insert_at`, `remove_prefix`, `remove_suffix`, `reverse`, `repeat`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `to_int`, `to_int_or`, `to_int_maybe`, `to_float`, `to_float_or`, and `to_float_maybe`.",
-            .int => "An Int has `times`, `up_to`, `down_to`, `even?`, `odd?`, `multiple_of?`, `zero?`, `positive?`, `negative?`, `abs`, `clamp`, `between?`, `to_string`, `format`, `digits`, `gcd`, `lcm`, `factorial`, and `to_float`.",
-            .float => "A Float has `round`, `floor`, `ceil`, `truncate`, `round_to`, `format`, `to_string`, `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `square_root`, `to_radians`, `to_degrees`, `finite?`, `infinite?`, `nan?`, and `to_int`.",
-            else => "Check the spelling, or what kind of value this is.",
-        },
+        catalog_help orelse "Check the spelling, or what kind of value this is.",
     );
+}
+
+fn instanceCatalogOwner(base: Type) ?[]const u8 {
+    return switch (base.kind) {
+        .list => "List",
+        .dictionary => "Dict",
+        .set => "Set",
+        .string => "String",
+        .int => "Int",
+        .float => "Float",
+        else => null,
+    };
+}
+
+fn catalog(self: *Checker) Error!Builtins.Data {
+    if (self.builtin_catalog) |data| return data;
+    const parsed = Builtins.load(self.arena) catch return error.OutOfMemory;
+    self.builtin_catalog = parsed.value;
+    return parsed.value;
+}
+
+fn catalogHasInstanceMember(self: *Checker, base: Type, name: []const u8) Error!bool {
+    const owner = instanceCatalogOwner(base) orelse return false;
+    const data = try self.catalog();
+    const member = Builtins.find(data, owner, name) orelse return false;
+    return member.kind == .method or member.kind == .property;
+}
+
+fn catalogMemberHelp(self: *Checker, base: Type) Error!?[]const u8 {
+    const owner = instanceCatalogOwner(base) orelse return null;
+    const data = try self.catalog();
+    var help: std.ArrayList(u8) = .empty;
+    try help.appendSlice(self.arena, "Known ");
+    try help.appendSlice(self.arena, owner);
+    try help.appendSlice(self.arena, " members include ");
+    var first = true;
+    var shown: usize = 0;
+    var omitted = false;
+    for (data.members) |entry| {
+        const universal = Builtins.sameOwner(entry.owner, "*");
+        if (!universal and !Builtins.sameOwner(entry.owner, owner)) continue;
+        if (entry.kind != .method and entry.kind != .property) continue;
+        if (shown == 8) {
+            omitted = true;
+            break;
+        }
+        if (!first) try help.appendSlice(self.arena, ", ");
+        try help.append(self.arena, '`');
+        try help.appendSlice(self.arena, entry.name);
+        try help.append(self.arena, '`');
+        first = false;
+        shown += 1;
+    }
+    if (first) return null;
+    if (omitted) try help.appendSlice(self.arena, ", and others");
+    try help.appendSlice(self.arena, "; see the ");
+    try help.appendSlice(self.arena, owner);
+    try help.appendSlice(self.arena, " reference for the full list.");
+    return help.items;
 }
 
 /// Common spellings from other languages for Emerald's integer methods.

@@ -1,0 +1,20 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "contents": {
+      "kind": "markdown",
+      "value": "```emerald\nadd_one(value: Int): Int\n```\n\nAdds one to `value`."
+    },
+    "range": {
+      "start": {
+        "line": 1,
+        "character": 5
+      },
+      "end": {
+        "line": 1,
+        "character": 12
+      }
+    }
+  }
+}

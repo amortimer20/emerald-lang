@@ -1,4 +1,4 @@
 diagnostics/string-unknown-member.em:2:17: String has no method `shout`
   print("Emerald".shout())
                   ^^^^^
-A String has `count`, `empty?`, `blank?`, `chars`, `code_points`, `bytes`, `upper`, `lower`, `capitalize`, `trim`, `trim_start`, `trim_end`, `contains?`, `starts_with?`, `ends_with?`, `index_of`, `substring`, `split`, `lines`, `partition`, `replace`, `insert_at`, `remove_prefix`, `remove_suffix`, `reverse`, `repeat`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `to_int`, `to_int_or`, `to_int_maybe`, `to_float`, `to_float_or`, and `to_float_maybe`.
+Known String members include `type_name`, `to_bytes`, `count`, `empty?`, `blank?`, `chars`, `code_points`, `bytes`, and others; see the String reference for the full list.
