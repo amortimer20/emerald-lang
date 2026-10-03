@@ -356,10 +356,17 @@ Before each release, refresh the time-zone data with `python3 tools/update-tzdat
 `src/tzdata/README.md`). `Tui`, `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than
 on the roadmap.
 
-## Roadmap order (agreed 2026-09-30, QA iteration added 2026-10-01)
+## Roadmap order (agreed 2026-09-30; QA iteration added 2026-10-01; pre-compiler phase 2026-10-03)
 
-1. The current queue: the REPL milestone and editor intelligence (the bug-fix batch is merged).
-2. **A QA iteration** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
+The test for what belongs before the compiler: it is backend-neutral, it is cheaper before the
+compiler than after (a language feature added later is built twice, in the interpreter and the
+compiler), or the compiler depends on it.
+
+### In flight
+
+1. **Editor intelligence**: slice 1 merged (PR #37); slices 2-6 by Codex on
+   `codex/editor-intelligence`, slice 7 (website parity) by Claude.
+2. **A QA iteration, then the 0.7.0 release** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
    use, before more is built on top. The user's first finding: Console tables render poorly on the
    website's Console page (borders short, vertical lines broken between rows). The terminal
    output is fine (checked by the user, 2026-10-01); only the website is wrong. A first attempt on
@@ -378,18 +385,65 @@ on the roadmap.
    website's pages are checked against a real build by `scripts/check-outputs.py` in
    `emerald-website`; rerun it against the build under test. Scope the pass with the user when it
    starts, and finish it before the 0.7.0 release.
-3. **Choose the backend** by prototype (below). Moved ahead of the other big features because
-   multicore and the 1.0 compiler both depend on it.
-4. **Networking** (sockets and an HTTP server, the base for a web framework). Backend-neutral at the
-   API and conformance level, and tasks already give each connection its own task, so it can run
-   in parallel with the backend prototypes.
-5. **The package manager** (`emerald.toml` manifest, versions, resolution, fetching, how `import`
-   finds a package). Backend-agnostic, since packages are Emerald source; weigh NuGet interop if
-   .NET wins.
-6. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
-   or per-worker heaps and a thread-safe collector, most of which .NET would give for free and
-   Cranelift would make Emerald write itself. Its language rules are already settled (tasks share
-   no `var`; values only cross), with two gaps recorded in the concurrency plan.
+### Pre-compiler phase (the user, 2026-10-03)
+
+3. **Design plans for the language surface the compiler must implement**, decided by the user
+   before any compiler work: enums that carry data, and clean generics (the rules under "Language
+   ideas for after 1.0's basics" in "Active rough edges"). Plans and decisions first;
+   implementation can follow in this phase or be scheduled, but the compiler is designed against
+   them (generics, for instance, decide whether code is copied per type or keeps types at run time).
+   Also settle the parked small syntax ideas (the parenthesis-free header block) and **a
+   deprecation story**: there is no `@deprecated`, and 1.0's compatibility promise needs a way to
+   warn about and retire things.
+4. **Networking and web development** (the user wants to build web applications in Emerald): sockets
+   and an HTTP server, then routing, URL and query parsing, HTML escaping, static files, perhaps
+   templates. Tasks already give each connection its own task. Early decisions: how a server is
+   configured (programs cannot read environment variables, by design, but a port and secrets come
+   from somewhere), and whether the web framework is standard library or a package.
+5. **The package manager**, optional in this phase (`emerald.toml` manifest, versions, resolution,
+   fetching, how `import` finds a package). Backend-neutral, since packages are Emerald source; a web
+   framework is the natural first package. Big enough to move after the compiler if needed. (Any
+   NuGet interop, if .NET wins, is subject to the .NET guardrail below: it may not change the
+   language.)
+6. **A browser playground**: a WebAssembly build of today's interpreter, so students on school
+   machines and Chromebooks can try Emerald without installing anything.
+7. **A benchmark suite**: about a dozen representative programs with recorded interpreter
+   timings, the baseline that shows whether the compiler is faster and catches it getting slower.
+8. **The real cause of the Windows Debug CI stall** (see "Intermittent Windows Debug test stall"),
+   so CI is trustworthy when the compiler starts depending on it.
+9. **A whole-codebase review, last in the phase**, so its findings hold and it strengthens the
+   conformance suite that is the compiler's contract. Method agreed 2026-10-03: a finding counts only
+   as a failing test or reproducing program, never "this looks wrong"; first measure (kcov
+   coverage on Linux, and a list of spec rules with no conformance case); then parallel agents in
+   their own worktrees, each owning one area with its own method (memory and lifetimes under the
+   testing allocator; no panics on mutated and half-typed input; spec rules without tests; tasks and
+   cancellation under repetition; cross-platform determinism; standard-library differential tests
+   against Python or Go; error-message quality against a corpus of real student mistakes; what ties
+   the language to the interpreter), report-first and time-boxed; one triage owner (Claude) who
+   dedupes, ranks, and re-runs each reproduction; then fix batches with one commit per item, as the
+   19-item batch was run. Skip style nits, the generated Unicode and time-zone tables, interpreter
+   performance work, and rewriting working code.
+10. **A classroom pilot**, whenever the user has a class: students using Emerald show what to change
+    while the language can still change cheaply. Exercises and a starter curriculum go with it.
+
+Suggested order: 1-2; then 3 and 4 in parallel (3 needs the user's decisions); then 6, 7, 8,
+optionally 5; 9 last. 10 whenever a class allows.
+
+### The compiler
+
+11. **Choose the backend by prototype** (below), then build the compiler for 1.0. The prototypes
+    answer, in order: can it host Unity and Godot, can it reach a microcontroller, can it reach
+    WebAssembly.
+
+### After the compiler
+
+12. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
+    or per-worker heaps and a thread-safe collector, most of which .NET would give for free and
+    Cranelift would make Emerald write itself. Its language rules are already settled (tasks share
+    no `var`; values only cross), with two gaps recorded in the concurrency plan.
+13. **Unity and Godot, then microcontrollers**, as described below, under the .NET guardrail.
+    Also not before the compiler: a debugger and interpreter performance work, which the compiler
+    would replace.
 
 ## Longer term: the native compiler
 
@@ -515,7 +569,7 @@ channels, HTTP client, JSON and CSV. Open questions for when this is planned, ra
 not yet discussed:
 - **What ships in the standard library and what is a package.** The package manager (roadmap item
   5) decides whether graphics, games, and GUI are built in or installable, and keeps the core small.
-- **The backend choice (roadmap item 3) shapes the rest.** Graphics, windows, and input come from
+- **The backend choice (roadmap item 11) shapes the rest.** Graphics, windows, and input come from
   the platform: the chosen backend decides which native libraries are easy to reach (.NET has GUI
   and graphics toolkits; Cranelift would mean binding to C libraries such as SDL), and whether
   Emerald runs the same on Windows, macOS, and Linux.
