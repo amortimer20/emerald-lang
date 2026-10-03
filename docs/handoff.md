@@ -461,7 +461,8 @@ toolchain (as Nim, Vala, and the first C++ did) reaches native code, the Pico, W
 Godot (whose GDExtension interface is a C API) at once, and could use Zig's bundled clang (`zig cc`)
 or TinyCC as the C compiler shipped with Emerald; writing a native code generator is far larger.
 **Guardrails for a compiler in C** (Claude's proposal 2026-10-03, to settle in the plan): build with
-Zig's toolchain (`zig cc`/`build.zig`, keeping one-machine cross-builds and the release pipeline);
+Zig's toolchain as a C compiler (`zig cc`, keeping one-machine cross-builds and the release
+pipeline; `build.zig` only until the goal below replaces it);
 C17 with strict warnings as errors (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wvla
 -Wimplicit-fallthrough`, no VLAs); arenas per phase for every compiler structure, with `malloc`
 and `free` only inside one allocator module; length-carrying string slices and growable buffers
@@ -475,6 +476,26 @@ clang-tidy, the clang static analyzer, and GCC `-fanalyzer` in CI; `clang-format
 conformance suite unchanged and a differential run over every conformance program and website
 example matches its output. Emitted C for student programs keeps Emerald's runtime checks (index,
 overflow, optional) by construction, since the language requires them.
+
+**Goal (the user, 2026-10-03): one implementation language.** In the long run every hand-written
+Zig file is replaced by C, so no Zig source remains. "Homogeneous" means only that: third-party C
+libraries (BearSSL or mbedTLS for HTTPS, never a hand-written TLS; zlib or miniz for the time-zone
+data) are fine, and so is `zig cc` as a C compiler driver for cross-builds, though `build.zig` itself
+becomes a Makefile or CMake (plain clang or GCC also works). Scope on 2026-10-03: about 52,000
+hand-written lines in `src` (the checker 11,500, the interpreter 10,900, the parser 4,900, the
+command line 4,400, the language server 3,900, the resolver 2,900, the heap 1,700, then the
+formatter, regex, lexer, JSON, scheduler, HTTP, and time zones), plus the small Zig tools (the
+Unicode table generator, the fuzzer, the prelude AST tool). The 14,000 lines of generated Unicode
+tables cost nothing: the generator emits C instead. `prelude.em` and the Python scripts stay. Expect
+roughly 60,000 to 90,000 lines of C. An open question for the compiler plan, since it can halve the
+port: if the compiler emits C, `emerald run` and the REPL could compile in memory with libtcc
+instead of interpreting, so the interpreter is replaced rather than ported; the browser playground
+would then need its own answer, because TinyCC cannot target WebAssembly. Order: after the
+pre-compiler phase, once the language has settled (porting a moving target doubles every language
+change); in verified stages that are each useful alone (generated tables, lexer and parser, checker,
+code generation and runtime, then the language server, formatter, and REPL); with the Zig version
+shipping until the C version passes the conformance suite and the differential run above, then a
+switch in one release.
 
 Directions discussed on 2026-09-30 (superseded as the implementation language, kept for their
 reasoning):
