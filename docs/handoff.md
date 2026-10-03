@@ -398,6 +398,25 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   made by compiling the same small subset (functions, structs, lists, a closure) with both,
   running its conformance cases, and comparing binary size, startup, debugging, and how much
   runtime code each needs.
+- **Unity and Godot come before microcontrollers (the user's preference, 2026-10-02).** The user
+  would rather Emerald work with Unity than with the Raspberry Pi Pico, because Emerald reads more
+  easily than C# and Unity is where students make games. This weights the backend choice toward
+  .NET, whose assemblies Unity and Godot (which supports .NET) load: a precompiled DLL in a Unity
+  project's Assets, or generated C# source, with an editor importer that rebuilds `.em` files on
+  save. The compiler is the easy part. Language questions it raises, none designed: a 32-bit
+  `Float32` (Unity's `float`, against Emerald's 64-bit `Float`); calling .NET libraries from Emerald,
+  including generic calls such as `GetComponent<T>()` (needs the generics design) and the attributes
+  Unity relies on (`[SerializeField]`; Emerald's annotations are a closed set); mapping
+  `snake_case` to Unity's `PascalCase`; Unity's fake null (a destroyed object equals `null`) against
+  `nothing`; and narrowing 64-bit `Int` and UTF-8 strings at the boundary. Emerald's tasks (one runs
+  at a time) suit Unity's main-thread rule and could map onto coroutines. Costs: nearly every Unity
+  tutorial is C#, and Unity changed its pricing terms abruptly in 2023 (Godot is the hedge on the
+  same backend). Cheap first check, before any compiler: hand-write the C# Emerald would emit,
+  including a `MonoBehaviour`, and build it under IL2CPP. Details here come from memory of
+  Unity's behavior and need verifying. Unity's value is that it gives "simple game
+  development" (the batteries-included goal) without Emerald building an engine.
+  Microcontrollers drop behind this; they stay a goal, and the board target below (a VM written
+  in Zig, or C output) still needs no .NET, so the two can share one front end.
 - **Microcontrollers are a goal (the user, 2026-10-01): Emerald should eventually run on boards
   such as the Raspberry Pi Pico** (RP2040: two Cortex-M0+ cores, 264 KB of RAM, 2 MB of flash, no
   floating-point unit; Pico 2's RP2350: Cortex-M33 or RISC-V cores, 520 KB, 4 MB). This is a
