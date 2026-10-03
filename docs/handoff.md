@@ -183,14 +183,15 @@ changed.
 
 Slice 3 adds Markdown hovers from catalog signatures/summaries/raise flags and prelude or
 program `##` comments, catalog-backed synonym validation, and website links for prelude
-types and their members. All 48 protocol
-cases returned identical replies 50 times. On Zig 0.16.0, Debug and ReleaseSafe test builds,
+types and their members. All 51 protocol cases returned identical replies 50 times. On Zig
+0.16.0, Debug and ReleaseSafe test builds,
 `zig build -j1`, doc examples, formatting, whitespace, and Windows/macOS cross-builds passed.
 The VS Code integration test timed out only in format-on-save in three attempts here (the other
 eight tests passed each time); direct formatting requests to the same built server returned the
 expected edit for both file and untitled documents. The user reports seven successful runs from
-Claude. emerald-vscode PR #3 changes format-on-save to apply edits by document URI; rerun
-the integration suite after it merges. Slice 3 is committed as `8fac992`, pushed, and CI run
+Claude. emerald-vscode PR #3 (`597d066`) changes format-on-save to apply edits by document
+URI; its integration suite passed all 9 tests against this server after the merge. Slice 3
+is committed as `8fac992`, pushed, and CI run
 `37153243148` passed all seven jobs. Claude handles website parity slice 7; do not start slice 4
 until the user reviews these corrections and reports the website check.
 
@@ -745,8 +746,8 @@ The slice-3 review corrections restore learner-oriented unknown-member hints wit
 catalog-backed regression check and add website links for prelude library types and
 members. Debug and ReleaseSafe `zig build test -j1` passed 558/558 tests each; all 51
 LSP protocol cases returned identical replies 50 times. Native build, doc examples,
-formatting, whitespace, and Windows/macOS cross-builds passed. Rerun the VS Code
-integration suite after emerald-vscode PR #3 merges its URI-based format-on-save fix.
+formatting, whitespace, and Windows/macOS cross-builds passed. After emerald-vscode PR #3
+merged as `597d066`, the VS Code integration suite passed all 9 tests against this server.
 [CI for `052ebda`](https://github.com/amortimer20/emerald-lang/actions/runs/37161858942)
 passed all seven jobs. The corrections are pushed on `codex/editor-intelligence`; the next
 step remains review and Claude's website parity slice before slice 4.

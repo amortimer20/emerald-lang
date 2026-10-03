@@ -355,7 +355,8 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     passed all seven jobs. The integration UI timeout remains recorded as an environment/test
     harness discrepancy, not a server-formatting failure; the requested slice did not change
     formatting or the extension. emerald-vscode PR #3 changes that test to apply edits by
-    document URI; rerun `npm run test:integration` after it merges.
+    document URI. After PR #3 merged as `597d066`, the integration suite passed all 9 tests
+    against the pushed Emerald server.
   - Review correction: restored the learner-oriented List, Dict, and Set help, and replaced
     the stale exhaustive String, Int, and Float lists with useful samples. The backticked
     member names are checked against the catalog in a unit test; dictionary `[key]` is the
@@ -367,9 +368,9 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
   - Correction validation: Debug and ReleaseSafe `zig build test -j1` each passed 558/558
     tests; all 51 real-protocol LSP cases returned identical replies 50 times. The native
     build, documentation examples, formatting, whitespace, and Windows/macOS cross-builds
-    passed. The VS Code integration suite is intentionally pending emerald-vscode PR #3;
-    rerun it after that change merges. The correction was committed as `052ebda`, pushed,
-    and CI run `37161858942` passed all seven jobs.
+    passed. After emerald-vscode PR #3 merged, `npm run test:integration` passed all 9 tests
+    against this server. The correction was committed as `052ebda`, pushed, and CI run
+    `37161858942` passed all seven jobs.
 
 ### Slice 4: Signature help
 
