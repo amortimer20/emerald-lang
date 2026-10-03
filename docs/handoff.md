@@ -432,7 +432,7 @@ optionally 5; 9 last. 10 whenever a class allows.
 ### The compiler
 
 11. **Choose the backend by prototype** (below), then build the compiler for 1.0. The prototypes
-    answer, in order: can it host Unity and Godot, can it reach a microcontroller, can it reach
+    answer, in order: can it reach Godot (GDExtension is a C API), can it reach a microcontroller, can it reach
     WebAssembly.
 
 ### After the compiler
@@ -441,14 +441,43 @@ optionally 5; 9 last. 10 whenever a class allows.
     or per-worker heaps and a thread-safe collector, most of which .NET would give for free and
     Cranelift would make Emerald write itself. Its language rules are already settled (tasks share
     no `var`; values only cross), with two gaps recorded in the concurrency plan.
-13. **Unity and Godot, then microcontrollers**, as described below, under the .NET guardrail.
+13. **Godot, then microcontrollers** (Unity deprioritized by the user, 2026-10-03), as described below;
+    the host guardrail applies to every integration.
     Also not before the compiler: a debugger and interpreter performance work, which the compiler
     would replace.
 
 ## Longer term: the native compiler
 
 The user wants a real compiler for Emerald 1.0; the interpreter is a means to that end. No
-compiler design exists yet. Directions discussed on 2026-09-30, to weigh when that plan starts:
+compiler design exists yet.
+
+**Decided (the user, 2026-10-03): the compiler is written in C.** The user's reasons: they want to
+be good at C, and plan other software in C and assembly (retro Nintendo games); they have no Rust
+ambitions; they are warming to Godot for games and have deprioritized Unity, which would overshadow
+web development and their other plans for Emerald. This supersedes the Rust-on-Cranelift and .NET
+directions below as the implementation language; they stay recorded for their reasoning. Still
+open, for the compiler plan: the compiler's **target**. Emitting C and building it with a C
+toolchain (as Nim, Vala, and the first C++ did) reaches native code, the Pico, WebAssembly, and
+Godot (whose GDExtension interface is a C API) at once, and could use Zig's bundled clang (`zig cc`)
+or TinyCC as the C compiler shipped with Emerald; writing a native code generator is far larger.
+**Guardrails for a compiler in C** (Claude's proposal 2026-10-03, to settle in the plan): build with
+Zig's toolchain (`zig cc`/`build.zig`, keeping one-machine cross-builds and the release pipeline);
+C17 with strict warnings as errors (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wvla
+-Wimplicit-fallthrough`, no VLAs); arenas per phase for every compiler structure, with `malloc`
+and `free` only inside one allocator module; length-carrying string slices and growable buffers
+instead of NUL-terminated strings, with `strcpy`, `strcat`, `sprintf`, and `gets` banned by
+`#pragma GCC poison` and a CI check; checked accessors for every array in Debug; explicit result
+codes, no `setjmp`/`longjmp`; written ownership conventions (`create`/`destroy`, `init`/`deinit`,
+borrowed versus owned in names); AddressSanitizer, UndefinedBehaviorSanitizer, and LeakSanitizer
+on every Debug test run in CI; fuzzing the lexer, parser, and checker from the conformance corpus;
+clang-tidy, the clang static analyzer, and GCC `-fanalyzer` in CI; `clang-format` checked like
+`zig fmt`. The Zig implementation stays the reference until the C compiler passes the whole
+conformance suite unchanged and a differential run over every conformance program and website
+example matches its output. Emitted C for student programs keeps Emerald's runtime checks (index,
+overflow, optional) by construction, since the language requires them.
+
+Directions discussed on 2026-09-30 (superseded as the implementation language, kept for their
+reasoning):
 
 - **Write the compiler in Rust, on Cranelift, rather than porting the Zig interpreter.** The
   user asked about porting everything to Rust. A port would stop all language work for months,
@@ -469,7 +498,10 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   made by compiling the same small subset (functions, structs, lists, a closure) with both,
   running its conformance cases, and comparing binary size, startup, debugging, and how much
   runtime code each needs.
-- **Unity and Godot come before microcontrollers (the user's preference, 2026-10-02).** The user
+- **Superseded 2026-10-03: the user has deprioritized Unity and is warming to Godot**, and the compiler
+  is written in C (above), so a C target, not .NET, is the likely route to Godot. The reasoning below
+  is kept, and the host guardrail that follows still applies to any integration.
+  **Unity and Godot come before microcontrollers (the user's preference, 2026-10-02).** The user
   would rather Emerald work with Unity than with the Raspberry Pi Pico, because Emerald reads more
   easily than C# and Unity is where students make games. This weights the backend choice toward
   .NET, whose assemblies Unity and Godot (which supports .NET) load: a precompiled DLL in a Unity
