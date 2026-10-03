@@ -445,10 +445,21 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   prototypes' questions.
   Either needs a board profile of the language: no files, HTTP, time zones, or OS threads (tasks
   would need a scheduler without OS threads), a pin, timer, and bus library instead, and a check
-  on what a 64-bit `Int` and `Float` cost on a chip with no floating-point hardware. Emerald's
-  reference counting, with no tracing collector, already suits small memory. A cheap first
+  on what a 64-bit `Int` and `Float` cost on a chip with no floating-point hardware. The
+  interpreter's heap (reference counts for prompt freeing and copy-on-write, plus a mark-and-sweep
+  collector for cycles, `Heap.zig`) is small, but its collector and tables need sizing for 264 KB
+  of RAM. A cheap first
   measurement when this is planned: build the current interpreter ReleaseSmall without its
   tables (time zones, Unicode, regex) and see how far it is from 2 MB.
+- **Memory management is not a reason to move to .NET (checked 2026-10-02).** The Zig interpreter
+  already has garbage collection: reference counts plus a mark-and-sweep collector for cycles
+  (spec 19.5, `Heap.zig`). The counts are not only about memory: they are how value semantics stays
+  cheap, since a list is a shared buffer copied only when a mutation finds another holder (8.1). .NET
+  has no reference counts, so a runtime on .NET would have to solve value semantics another way
+  (copy on assignment, persistent collections, or a compiler analysis of ownership). Earlier notes
+  here that call .NET's garbage collector something Cranelift would make Emerald write itself
+  still hold for a *compiled* backend, which has no collector today; they do not apply to the
+  interpreter.
 - **The conformance suite is the contract.** A replacement backend is acceptable only if it
   passes the same `conformance/` files unchanged (19.6, 23). Keep every case backend-neutral:
   no dependence on interpreter internals, thread identity, exact timing, or exact recursion
