@@ -1,4 +1,4 @@
 diagnostics/list-unknown-member.em:2:14: List[Int] has no method `shout`
   print([1, 2].shout())
                ^^^^^
-Known List members include `type_name`, `count`, `empty?`, `first`, `last`, `append`, `insert`, `remove`, and others; see the List reference for the full list.
+A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.

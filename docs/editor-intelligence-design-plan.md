@@ -328,10 +328,17 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
   - Checker synonym corrections retain their curated cross-language aliases, but a
     method/property correction is offered only if its target name exists in the catalog;
     dictionary indexing corrections (`[key]` and `[key] =`) remain syntax-based. The
-    generic native-member help now samples the first eight accepted names from the
-    catalog and points to that type's reference, avoiding a long diagnostic while
-    requiring no second hand-maintained member list. The catalog is parsed lazily on an
-    unknown native member, so ordinary checks do not decode it.
+    learner-oriented unknown-member help is hand-written for List, Dict, Set, String, Int,
+    and Float. List and dictionary-indexing guidance stays explicit, while String, Int, and
+    Float sample about ten useful names and point to their references. A checker test
+    extracts every backticked member and confirms it exists in the catalog; universal
+    `type_name` is intentionally omitted. The catalog remains the authority for synonym
+    suggestions.
+  - Prelude-declared library types and their members link through a top-level `type_pages`
+    map in `src/builtins.json`; member links strip a trailing `?` or `!` for the website
+    anchor. File and Path hover cases cover these links. Prelude declarations do not carry
+    machine-readable raises metadata, so a possible-raise note for them is follow-up work,
+    not part of this correction.
   - Added Markdown hover coverage for an instance method, a raising Bytes conversion,
     a namespace function, a prelude function, a program function both at its use and
     declaration, and universal `type_name` on native and user-defined values. All 48
@@ -347,7 +354,21 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     changed. Slice 3 was committed as `8fac992`, pushed, and CI run `37153243148`
     passed all seven jobs. The integration UI timeout remains recorded as an environment/test
     harness discrepancy, not a server-formatting failure; the requested slice did not change
-    formatting or the extension.
+    formatting or the extension. emerald-vscode PR #3 changes that test to apply edits by
+    document URI; rerun `npm run test:integration` after it merges.
+  - Review correction: restored the learner-oriented List, Dict, and Set help, and replaced
+    the stale exhaustive String, Int, and Float lists with useful samples. The backticked
+    member names are checked against the catalog in a unit test; dictionary `[key]` is the
+    one intentional syntax example rather than a member. Added type-page routes for the
+    prelude library surface, with `?`/`!` removed only from member anchors; File and Path
+    protocol cases cover the links. A possible-raise note for prelude members remains a
+    follow-up because these declarations do not carry raises metadata. Corrected the handoff
+    and journal attribution for website parity: slice 7 belongs to Claude.
+  - Correction validation: Debug and ReleaseSafe `zig build test -j1` each passed 558/558
+    tests; all 51 real-protocol LSP cases returned identical replies 50 times. The native
+    build, documentation examples, formatting, whitespace, and Windows/macOS cross-builds
+    passed. The VS Code integration suite is intentionally pending emerald-vscode PR #3;
+    rerun it after that change merges.
 
 ### Slice 4: Signature help
 

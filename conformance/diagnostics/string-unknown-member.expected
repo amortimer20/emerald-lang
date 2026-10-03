@@ -1,4 +1,4 @@
 diagnostics/string-unknown-member.em:2:17: String has no method `shout`
   print("Emerald".shout())
                   ^^^^^
-Known String members include `type_name`, `to_bytes`, `count`, `empty?`, `blank?`, `chars`, `code_points`, `bytes`, and others; see the String reference for the full list.
+A String has `count`, and methods including `empty?`, `chars`, `upper`, `lower`, `trim`, `contains?`, `substring`, `split`, `lines`, `replace`, and `to_bytes`; the String reference lists them all.

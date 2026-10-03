@@ -14,7 +14,7 @@ REPL are complete and merged on main (PR #30). The language server provides diag
 (identical to `emerald check`), symbols,
 format-on-save, hover, go to definition, find references, rename, and completion.
 Editor-intelligence slices 2 and 3 (catalog-backed completion, hover, and documentation) are
-committed on `codex/editor-intelligence`; slice 3 CI is green. The user will handle website
+committed on `codex/editor-intelligence`; slice 3 CI is green. Claude handles website
 parity (slice 7) before slice 4. See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
@@ -182,15 +182,17 @@ for a String receiver. The VS Code integration suite passed all 9 tests; no exte
 changed.
 
 Slice 3 adds Markdown hovers from catalog signatures/summaries/raise flags and prelude or
-program `##` comments, and moves native-member help samples to the catalog. All 48 protocol
+program `##` comments, catalog-backed synonym validation, and website links for prelude
+types and their members. All 48 protocol
 cases returned identical replies 50 times. On Zig 0.16.0, Debug and ReleaseSafe test builds,
 `zig build -j1`, doc examples, formatting, whitespace, and Windows/macOS cross-builds passed.
 The VS Code integration test timed out only in format-on-save in three attempts here (the other
 eight tests passed each time); direct formatting requests to the same built server returned the
 expected edit for both file and untitled documents. The user reports seven successful runs from
-Claude. No extension files changed. Slice 3 is committed as `8fac992`, pushed, and CI run
-`37153243148` passed all seven jobs. The next action is the user's website parity slice 7; do not
-start slice 4 until the user reviews slice 3 and reports the website check.
+Claude. emerald-vscode PR #3 changes format-on-save to apply edits by document URI; rerun
+the integration suite after it merges. Slice 3 is committed as `8fac992`, pushed, and CI run
+`37153243148` passed all seven jobs. Claude handles website parity slice 7; do not start slice 4
+until the user reviews these corrections and reports the website check.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -339,11 +341,12 @@ Open work:
 **In progress: editor intelligence** (the user's go-ahead, 2026-09-28; Codex implements,
 Claude reviews and handles website parity). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
-recommendations; the REPL prerequisite and slice 1 are merged. Slice 2 is being validated.
+recommendations; the REPL prerequisite and slice 1 are merged. Slices 2 and 3 are committed
+and pushed; slice 3's CI is green.
 The goal is C#-level IntelliSense in VS Code. Completion now reads native descriptions
 from `src/builtins.json` and declarations from the compiler's analysis. The remaining gaps are:
-- Hover shows only an expression's type (`Float` for `Math.sin(1)`), never a signature or
-  description, and go to definition on `Math.sin` finds nothing.
+- Signature help for built-ins and source declarations, and structured quick fixes for
+  single-replacement diagnostics, remain to be implemented.
 - Completion still patches unfinished source with a placeholder, as the accepted plan
   requires, but performs one analysis rather than two. Error-tolerant parsing is not part
   of this milestone.
@@ -353,8 +356,8 @@ from `src/builtins.json` and declarations from the compiler's analysis. The rema
 - The user reports red "not defined" errors in the editor that could not be reproduced; an
   example (the message and its line) is still needed.
 
-The accepted remaining slices are hover/documentation and catalog-backed hints, signature
-help, structured quick fixes, and extension polish (binary/version visibility and grammar).
+The accepted remaining slices are signature help, structured quick fixes, and extension polish
+(binary/version visibility and grammar).
 Claude handles website parity after slice 3. Native go to definition stays empty: a native
 has no Emerald declaration, and its documentation link belongs in hover instead.
 To probe the server by hand, speak JSON-RPC over stdio to
@@ -737,6 +740,13 @@ check (24 examples executed, 135 conformance links), changed-Zig formatting,
 `git diff --check`, and Windows/macOS cross-builds outside zig-out. The website's
 List page passed all 49 examples with no output changes; the extension integration
 suite passed all 9 tests against the built server.
+
+The slice-3 review corrections restore learner-oriented unknown-member hints with a
+catalog-backed regression check and add website links for prelude library types and
+members. Debug and ReleaseSafe `zig build test -j1` passed 558/558 tests each; all 51
+LSP protocol cases returned identical replies 50 times. Native build, doc examples,
+formatting, whitespace, and Windows/macOS cross-builds passed. Rerun the VS Code
+integration suite after emerald-vscode PR #3 merges its URI-based format-on-save fix.
 [CI for `eebe5e7`](https://github.com/amortimer20/emerald-lang/actions/runs/37128949445)
 passed all seven jobs: Debug/ReleaseSafe on Linux, macOS, and Windows, plus bounded
 execution fuzzing. Slice 1 is stopped for review. Earlier diagnostic-polish groups A-C

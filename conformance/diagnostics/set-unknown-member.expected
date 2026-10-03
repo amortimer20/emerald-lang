@@ -1,4 +1,4 @@
 diagnostics/set-unknown-member.em:3:14: Set[String] has no method `shout`
   print(colors.shout())
                ^^^^^
-Known Set members include `type_name`, `count`, `empty?`, `contains?`, `add`, `remove`, `union`, `intersection`, and others; see the Set reference for the full list.
+A set has `count`, and methods including `contains?`, `add`, `remove`, `union`, `intersection`, `difference`, `subset?`, `filter`, `each`, and `map`; the Set reference lists them all.

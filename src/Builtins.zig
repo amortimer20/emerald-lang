@@ -31,6 +31,7 @@ pub const Member = struct {
 pub const Data = struct {
     version: u32,
     about: []const u8,
+    type_pages: std.json.Value = .null,
     members: []const Member,
 };
 
@@ -50,6 +51,16 @@ pub fn find(data: Data, owner: ?[]const u8, name: []const u8) ?Member {
         if (sameOwner(member.owner, owner) and std.mem.eql(u8, member.name, name)) return member;
     }
     return null;
+}
+
+pub fn pageForType(data: Data, name: []const u8) ?[]const u8 {
+    return switch (data.type_pages) {
+        .object => |pages| if (pages.get(name)) |value| switch (value) {
+            .string => |page| page,
+            else => null,
+        } else null,
+        else => null,
+    };
 }
 
 pub fn sameOwner(left: ?[]const u8, right: ?[]const u8) bool {

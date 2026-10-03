@@ -9010,14 +9010,25 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
             .{name},
         );
     }
-    const catalog_help = try self.catalogMemberHelp(base);
     try self.reportCoded(
         member.name_span,
         .unknown_member,
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
-        catalog_help orelse "Check the spelling, or what kind of value this is.",
+        unknownMemberHelp(base) orelse "Check the spelling, or what kind of value this is.",
     );
+}
+
+fn unknownMemberHelp(base: Type) ?[]const u8 {
+    return switch (base.kind) {
+        .list => "A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.",
+        .dictionary => "A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.",
+        .set => "A set has `count`, and methods including `contains?`, `add`, `remove`, `union`, `intersection`, `difference`, `subset?`, `filter`, `each`, and `map`; the Set reference lists them all.",
+        .string => "A String has `count`, and methods including `empty?`, `chars`, `upper`, `lower`, `trim`, `contains?`, `substring`, `split`, `lines`, `replace`, and `to_bytes`; the String reference lists them all.",
+        .int => "An Int has methods including `times`, `even?`, `abs`, `clamp`, `to_string`, `format`, `digits`, `gcd`, `factorial`, and `to_float`; the Int reference lists them all.",
+        .float => "A Float has methods including `round`, `floor`, `ceil`, `format`, `to_string`, `abs`, `clamp`, `between?`, `square_root`, and `to_int`; the Float reference lists them all.",
+        else => null,
+    };
 }
 
 fn instanceCatalogOwner(base: Type) ?[]const u8 {
@@ -9046,37 +9057,33 @@ fn catalogHasInstanceMember(self: *Checker, base: Type, name: []const u8) Error!
     return member.kind == .method or member.kind == .property;
 }
 
-fn catalogMemberHelp(self: *Checker, base: Type) Error!?[]const u8 {
-    const owner = instanceCatalogOwner(base) orelse return null;
-    const data = try self.catalog();
-    var help: std.ArrayList(u8) = .empty;
-    try help.appendSlice(self.arena, "Known ");
-    try help.appendSlice(self.arena, owner);
-    try help.appendSlice(self.arena, " members include ");
-    var first = true;
-    var shown: usize = 0;
-    var omitted = false;
-    for (data.members) |entry| {
-        const universal = Builtins.sameOwner(entry.owner, "*");
-        if (!universal and !Builtins.sameOwner(entry.owner, owner)) continue;
-        if (entry.kind != .method and entry.kind != .property) continue;
-        if (shown == 8) {
-            omitted = true;
-            break;
+test "unknown-member help only names cataloged members" {
+    const parsed_catalog = try Builtins.load(std.testing.allocator);
+    defer parsed_catalog.deinit();
+
+    const samples = [_]struct { owner: []const u8, text: []const u8 }{
+        .{ .owner = "List", .text = unknownMemberHelp(.{ .kind = .list }).? },
+        .{ .owner = "Dict", .text = unknownMemberHelp(.{ .kind = .dictionary }).? },
+        .{ .owner = "Set", .text = unknownMemberHelp(.{ .kind = .set }).? },
+        .{ .owner = "String", .text = unknownMemberHelp(.{ .kind = .string }).? },
+        .{ .owner = "Int", .text = unknownMemberHelp(.{ .kind = .int }).? },
+        .{ .owner = "Float", .text = unknownMemberHelp(.{ .kind = .float }).? },
+    };
+
+    for (samples) |sample| {
+        var cursor: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, sample.text, cursor, '`')) |open| {
+            const close = std.mem.indexOfScalarPos(u8, sample.text, open + 1, '`') orelse return error.TestUnexpectedResult;
+            const name = sample.text[open + 1 .. close];
+            // `[key]` is dictionary syntax, not a catalog member.
+            if (!std.mem.eql(u8, name, "[key]") and Builtins.find(parsed_catalog.value, sample.owner, name) == null) {
+                std.debug.print("unknown-member help lists `{s}`, absent from {s} catalog\n", .{ name, sample.owner });
+                return error.TestUnexpectedResult;
+            }
+            try std.testing.expect(!std.mem.eql(u8, name, "type_name"));
+            cursor = close + 1;
         }
-        if (!first) try help.appendSlice(self.arena, ", ");
-        try help.append(self.arena, '`');
-        try help.appendSlice(self.arena, entry.name);
-        try help.append(self.arena, '`');
-        first = false;
-        shown += 1;
     }
-    if (first) return null;
-    if (omitted) try help.appendSlice(self.arena, ", and others");
-    try help.appendSlice(self.arena, "; see the ");
-    try help.appendSlice(self.arena, owner);
-    try help.appendSlice(self.arena, " reference for the full list.");
-    return help.items;
 }
 
 /// Common spellings from other languages for Emerald's integer methods.

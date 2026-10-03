@@ -5046,4 +5046,24 @@ Slice 3 was committed as `8fac992` and pushed to `codex/editor-intelligence`. CI
 execution fuzz). The VS Code integration suite's format-on-save UI timeout remains noted above;
 the server's formatting request returned the expected edit for both file and untitled URIs, and
 the user reports seven successful runs from Claude. No extension changes were needed. Stop here
-for review; the user handles website parity slice 7 before slice 4.
+for review; Claude handles website parity slice 7 before slice 4.
+
+## 2026-10-03: Editor intelligence slice 3 — review corrections
+
+Restored the hand-written unknown-member guidance for List, Dict, and Set, including the
+dictionary `[key]` cue. String, Int, and Float now list about ten useful members each rather
+than preserving stale exhaustive samples. A checker unit test validates every backticked
+member name against its owner in `builtins.json` and prevents `type_name` from returning.
+Catalog validation of synonym suggestions remains in place.
+
+Added a `type_pages` table to the catalog for prelude library declarations and their nested
+types. Hovering a prelude declaration or member now links to that type's reference page;
+member anchors drop a trailing `?` or `!`. File and Path hover protocol cases verify it. A
+possible-raise hover note for prelude declarations is explicitly follow-up work because the
+prelude has no raises metadata. Corrected the website-parity ownership note to say Claude.
+
+The Debug and ReleaseSafe full test gates passed 558/558 tests each. All 51 LSP protocol cases
+returned identical replies over 50 runs; `zig build -j1`, the documentation-example check,
+formatting, whitespace, and Windows/macOS cross-builds passed. The VS Code integration suite
+is pending emerald-vscode PR #3, which changes format-on-save to apply edits by document URI;
+rerun it after the PR merges. Commit, push, and branch CI confirmation remain pending.

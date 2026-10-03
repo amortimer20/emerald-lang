@@ -17,7 +17,7 @@ Pass a number.
 diagnostics/float-methods.em:5:5: Float has no method `unknown`
   1.0.unknown()
       ^^^^^^^
-Known Float members include `type_name`, `round`, `floor`, `ceil`, `truncate`, `round_to`, `format`, `to_string`, and others; see the Float reference for the full list.
+A Float has methods including `round`, `floor`, `ceil`, `format`, `to_string`, `abs`, `clamp`, `between?`, `square_root`, and `to_int`; the Float reference lists them all.
 diagnostics/float-methods.em:6:11: `finite?` is a method, so it needs parentheses
   print(1.0.finite?)
             ^^^^^^^

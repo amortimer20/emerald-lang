@@ -860,7 +860,9 @@ fn onHover(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: P
         if (try definitionAt(gpa, &analysis, loaded.index, offset)) |target| {
             if (try describeTarget(gpa, &analysis, target)) |item| {
                 defer item.deinit(gpa);
-                const contents = try renderDeclarationHover(gpa, item);
+                const link = if (server.builtins) |catalog| try preludeLibraryLink(gpa, &analysis, target, catalog.value) else null;
+                defer if (link) |value| gpa.free(value);
+                const contents = try renderDeclarationHover(gpa, item, link);
                 defer gpa.free(contents);
                 try respond(gpa, out, id, Hover{
                     .contents = .{ .value = contents },
@@ -903,7 +905,9 @@ fn hoverContents(
     if (try definitionAt(gpa, analysis, file, offset)) |target| {
         if (try describeTarget(gpa, analysis, target)) |item| {
             defer item.deinit(gpa);
-            return try renderDeclarationHover(gpa, item);
+            const link = if (server.builtins) |catalog| try preludeLibraryLink(gpa, analysis, target, catalog.value) else null;
+            defer if (link) |value| gpa.free(value);
+            return try renderDeclarationHover(gpa, item, link);
         }
     }
 
@@ -996,7 +1000,7 @@ fn renderNativeHover(gpa: std.mem.Allocator, detail: []const u8, member: emerald
     return try gpa.dupe(u8, text.written());
 }
 
-fn renderDeclarationHover(gpa: std.mem.Allocator, item: CompletionItem) ![]const u8 {
+fn renderDeclarationHover(gpa: std.mem.Allocator, item: CompletionItem, link: ?[]const u8) ![]const u8 {
     var text: std.Io.Writer.Allocating = .init(gpa);
     defer text.deinit();
     try text.writer.writeAll("```emerald\n");
@@ -1008,7 +1012,60 @@ fn renderDeclarationHover(gpa: std.mem.Allocator, item: CompletionItem) ![]const
             try text.writer.writeAll(documentation);
         }
     }
+    if (link) |url| try text.writer.print("\n\n[Read more]({s})", .{url});
     return try gpa.dupe(u8, text.written());
+}
+
+fn preludeLibraryLink(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target, catalog: emerald.Builtins.Data) !?[]const u8 {
+    if (target.file >= analysis.files.len or !std.mem.eql(u8, analysis.files[target.file].source.path, "prelude.em")) return null;
+    const statements = analysis.parsed[target.file].program.statements;
+    for (statements) |statement| switch (statement.data) {
+        .struct_declaration => |declaration| if (try preludeTypeLinkInDeclaration(gpa, declaration, "", target.span.start, catalog)) |url| return url,
+        else => {},
+    };
+    return null;
+}
+
+fn preludeTypeLinkInDeclaration(
+    gpa: std.mem.Allocator,
+    declaration: Ast.StructDeclaration,
+    parent: []const u8,
+    target_start: u32,
+    catalog: emerald.Builtins.Data,
+) anyerror!?[]const u8 {
+    const full_name = if (parent.len == 0)
+        try gpa.dupe(u8, declaration.name)
+    else
+        try std.fmt.allocPrint(gpa, "{s}.{s}", .{ parent, declaration.name });
+    defer gpa.free(full_name);
+
+    const page = emerald.Builtins.pageForType(catalog, full_name) orelse "";
+    if (declaration.name_span.start == target_start and page.len != 0) {
+        return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}", .{page});
+    }
+
+    inline for (.{ declaration.methods, declaration.properties, declaration.fields }) |members| {
+        for (members) |member| {
+            if (member.name_span.start != target_start or page.len == 0) continue;
+            const name = member.name;
+            const anchor_name = if (name.len > 0 and (name[name.len - 1] == '?' or name[name.len - 1] == '!')) name[0 .. name.len - 1] else name;
+            return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}#{s}", .{ page, anchor_name });
+        }
+    }
+    for (declaration.type_functions) |member| {
+        if (member.member_span.start != target_start or page.len == 0) continue;
+        const name = member.member;
+        const anchor_name = if (name.len > 0 and (name[name.len - 1] == '?' or name[name.len - 1] == '!')) name[0 .. name.len - 1] else name;
+        return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}#{s}", .{ page, anchor_name });
+    }
+    for (declaration.type_fields) |member| {
+        if (member.name_span.start != target_start or page.len == 0) continue;
+        return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}#{s}", .{ page, member.name });
+    }
+    for (declaration.types) |nested| {
+        if (try preludeTypeLinkInDeclaration(gpa, nested.declaration, full_name, target_start, catalog)) |url| return url;
+    }
+    return null;
 }
 
 const Found = struct { span: Source.Span, type: Type, expression: *const Ast.Expression };

@@ -17,7 +17,7 @@ Pass a whole number.
 diagnostics/int-methods.em:5:3: Int has no method `unknown`
   1.unknown()
     ^^^^^^^
-Known Int members include `type_name`, `times`, `up_to`, `down_to`, `even?`, `odd?`, `multiple_of?`, `zero?`, and others; see the Int reference for the full list.
+An Int has methods including `times`, `even?`, `abs`, `clamp`, `to_string`, `format`, `digits`, `gcd`, `factorial`, and `to_float`; the Int reference lists them all.
 diagnostics/int-methods.em:6:9: `even?` is a method, so it needs parentheses
   print(1.even?)
           ^^^^^
