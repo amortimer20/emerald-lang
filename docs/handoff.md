@@ -310,6 +310,8 @@ Open work:
   - **Workaround in `ci.yml`:** the Windows Debug job runs `zig build test -j1`. Serial runs took
     66 to 155 seconds, the same as parallel, so it costs nothing. Remove the flag once the cause is
     fixed. Windows ReleaseSafe has not stalled in this evidence and is unchanged.
+  - **First, upgrade to Zig 0.17** (roadmap item 8): it replaces the build runner, so rerun the
+    parallel Windows Debug suite on 0.17 before investigating further; the stall may not survive.
   - **Next, to find the cause:** run the parallel suite without `emerald-conformance` (a step
     for unit, REPL, and LSP only), and with `-j2`. A stall without conformance points at the
     runner handling several test processes on Windows (probably a Zig 0.16.0 bug to report upstream
@@ -409,9 +411,21 @@ compiler), or the compiler depends on it.
    machines and Chromebooks can try Emerald without installing anything.
 7. **A benchmark suite**: about a dozen representative programs with recorded interpreter
    timings, the baseline that shows whether the compiler is faster and catches it getting slower.
-8. **The real cause of the Windows Debug CI stall** (see "Intermittent Windows Debug test stall"),
+8. **Upgrade to Zig 0.17, once 0.17.1 is out** (the user, 2026-10-03). 0.17.0 has known regressions,
+   one in `Run` steps, which the build uses heavily. 0.17 also replaces the build runner, which the
+   Windows stall happens under, so upgrade before investigating the stall. Scope counted on
+   origin/main: about 240 `allocPrint` calls (moved to `Allocator.print()`), 8 `@bitCast` uses to
+   review by hand (it now reinterprets logical bits; the one real risk), 30 deprecated
+   `@intFromEnum`/`@enumFromInt`, `build.zig` (the configurer/maker split, `addPassthruArgs()` for
+   the 4 `b.args` forwards, `Fmt` step paths), 4 `ArrayList.getLast` renames, 1 `errdefer` capture,
+   4 `std.meta.field*` uses, and whether CI, fuzz, and release still accept `-Doptimize=ReleaseSafe`
+   (the mode names became `debug`, `safe`, `fast`, `small`). Open question for the user before the
+   switch: 0.17 requires macOS 15 or later, which drops Macs that cannot run it (roughly pre-2018);
+   if older classroom Macs matter, releases could stay on 0.16 longer. 0.17's WebAssembly backend
+   passes all behavior tests, which helps the playground (item 6).
+9. **The real cause of the Windows Debug CI stall** (see "Intermittent Windows Debug test stall"),
    so CI is trustworthy when the compiler starts depending on it.
-9. **A whole-codebase review, last in the phase**, so its findings hold and it strengthens the
+10. **A whole-codebase review, last in the phase**, so its findings hold and it strengthens the
    conformance suite that is the compiler's contract. Method agreed 2026-10-03: a finding counts only
    as a failing test or reproducing program, never "this looks wrong"; first measure (kcov
    coverage on Linux, and a list of spec rules with no conformance case); then parallel agents in
@@ -423,25 +437,25 @@ compiler), or the compiler depends on it.
    dedupes, ranks, and re-runs each reproduction; then fix batches with one commit per item, as the
    19-item batch was run. Skip style nits, the generated Unicode and time-zone tables, interpreter
    performance work, and rewriting working code.
-10. **A classroom pilot**, whenever the user has a class: students using Emerald show what to change
+11. **A classroom pilot**, whenever the user has a class: students using Emerald show what to change
     while the language can still change cheaply. Exercises and a starter curriculum go with it.
 
-Suggested order: 1-2; then 3 and 4 in parallel (3 needs the user's decisions); then 6, 7, 8,
-optionally 5; 9 last. 10 whenever a class allows.
+Suggested order: 1-2; then 3 and 4 in parallel (3 needs the user's decisions); then 8 before 9,
+and 6 and 7, optionally 5; 10 last. 11 whenever a class allows.
 
 ### The compiler
 
-11. **Choose the backend by prototype** (below), then build the compiler for 1.0. The prototypes
+12. **Choose the backend by prototype** (below), then build the compiler for 1.0. The prototypes
     answer, in order: can it reach Godot (GDExtension is a C API), can it reach a microcontroller, can it reach
     WebAssembly.
 
 ### After the compiler
 
-12. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
+13. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
     or per-worker heaps and a thread-safe collector, most of which .NET would give for free and
     Cranelift would make Emerald write itself. Its language rules are already settled (tasks share
     no `var`; values only cross), with two gaps recorded in the concurrency plan.
-13. **Godot, then microcontrollers** (Unity deprioritized by the user, 2026-10-03), as described below;
+14. **Godot, then microcontrollers** (Unity deprioritized by the user, 2026-10-03), as described below;
     the host guardrail applies to every integration.
     Also not before the compiler: a debugger and interpreter performance work, which the compiler
     would replace.
@@ -627,7 +641,7 @@ channels, HTTP client, JSON and CSV. Open questions for when this is planned, ra
 not yet discussed:
 - **What ships in the standard library and what is a package.** The package manager (roadmap item
   5) decides whether graphics, games, and GUI are built in or installable, and keeps the core small.
-- **The backend choice (roadmap item 11) shapes the rest.** Graphics, windows, and input come from
+- **The backend choice (roadmap item 12) shapes the rest.** Graphics, windows, and input come from
   the platform: the chosen backend decides which native libraries are easy to reach (.NET has GUI
   and graphics toolkits; Cranelift would mean binding to C libraries such as SDL), and whether
   Emerald runs the same on Windows, macOS, and Linux.
