@@ -368,7 +368,8 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     tests; all 51 real-protocol LSP cases returned identical replies 50 times. The native
     build, documentation examples, formatting, whitespace, and Windows/macOS cross-builds
     passed. The VS Code integration suite is intentionally pending emerald-vscode PR #3;
-    rerun it after that change merges.
+    rerun it after that change merges. The correction was committed as `052ebda`, pushed,
+    and CI run `37161858942` passed all seven jobs.
 
 ### Slice 4: Signature help
 

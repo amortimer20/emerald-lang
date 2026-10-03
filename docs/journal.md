@@ -5066,4 +5066,5 @@ The Debug and ReleaseSafe full test gates passed 558/558 tests each. All 51 LSP 
 returned identical replies over 50 runs; `zig build -j1`, the documentation-example check,
 formatting, whitespace, and Windows/macOS cross-builds passed. The VS Code integration suite
 is pending emerald-vscode PR #3, which changes format-on-save to apply edits by document URI;
-rerun it after the PR merges. Commit, push, and branch CI confirmation remain pending.
+rerun it after the PR merges. The correction was committed as `052ebda` and pushed to
+`codex/editor-intelligence`; CI run `37161858942` passed all seven jobs.

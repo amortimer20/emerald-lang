@@ -747,6 +747,9 @@ members. Debug and ReleaseSafe `zig build test -j1` passed 558/558 tests each; a
 LSP protocol cases returned identical replies 50 times. Native build, doc examples,
 formatting, whitespace, and Windows/macOS cross-builds passed. Rerun the VS Code
 integration suite after emerald-vscode PR #3 merges its URI-based format-on-save fix.
+[CI for `052ebda`](https://github.com/amortimer20/emerald-lang/actions/runs/37161858942)
+passed all seven jobs. The corrections are pushed on `codex/editor-intelligence`; the next
+step remains review and Claude's website parity slice before slice 4.
 [CI for `eebe5e7`](https://github.com/amortimer20/emerald-lang/actions/runs/37128949445)
 passed all seven jobs: Debug/ReleaseSafe on Linux, macOS, and Windows, plus bounded
 execution fuzzing. Slice 1 is stopped for review. Earlier diagnostic-polish groups A-C
