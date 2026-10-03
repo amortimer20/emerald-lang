@@ -4844,3 +4844,138 @@ and applying the suggested adoption and overrides exactly.
 The full pinned-Zig 0.16.0 gate passed with `-j1`: Debug and ReleaseSafe test
 suites, native build, documentation examples (24 executed and 135 linked
 conformance files), `zig fmt --check src/*.zig tools/*.zig`, and `git diff --check`.
+
+## 2026-10-03: Editor-intelligence slice 1 stopped on a checker mismatch
+
+Started `codex/editor-intelligence` from the latest main (`b728612`), then fetched
+and merged `origin/main` (already current). Read the accepted plan, handoff, AGENTS,
+rewrite-context 18.5, and recent history. The pinned Zig 0.16.0 toolchain check and
+`zig build -j1` completed successfully.
+
+Verifying the member data against the actual checker found that three list methods
+have incorrect checker results, not incorrect data. With `var items = [1, 2, 3]`,
+these declarations each receive E2001 saying the expression is `List[Int]`:
+
+```emerald
+const chunks: List[List[Int]] = items.chunks(2)
+const windows: List[List[Int]] = items.windows(2)
+const pairs: List[(Int, Int)] = items.pairs()
+```
+
+Unannotated execution prints `[[1, 2], [3]]`, `[[1, 2], [2, 3]]`, and
+`[(1, 2), (2, 3)]`, respectively. `src/builtins.json`, `docs/library/list.md`, and
+the interpreter agree on those nested result shapes. `Type.list_methods` marks
+all three `.result = .list`; the generic checker return path constructs only
+`List[T]`. Per the user's explicit slice-1 rule, stopped without changing the
+checker or data and asked for approval to correct it before proceeding.
+The full gate and extension integration suite were not run; slice 1 is not complete.
+
+## 2026-10-03: Editor result parity, approved List fixes, and an arity crash
+
+After user approval, added a checker-backed result test before correcting the List
+types. It generates programs from every catalog signature, compares inferred results
+exactly (not merely assignability), and uses distinct generic substitutions to expose
+incorrect collection transformations. The completed pre-fix test found exactly three
+result mismatches: chunks, windows, pairs. No other catalog result mismatched.
+
+`ListMethod.Result` now distinguishes nested lists and lists of pairs from ordinary
+lists. New run and diagnostics cases cover all three correct result shapes and the
+wrong `List[Int]` annotations formerly accepted, including nested indexing, tuple
+positions, String elements, and empty results. Read both expected files by hand and
+confirmed the run output and diagnostics against the native build.
+
+Added a catalog loader owned once by the LSP server, without loading it during ordinary
+program startup. Added checker-adjacent inventories for branch-handled names, plus
+bidirectional name and arity tests. Positive probes include omitted optional/default
+parameters, variadic arguments, and inferred callback parameter/result types. Negative
+probes check arity bounds and missing required blocks. Name parity found the data
+missing String.to_bytes; added it, referencing the website's existing Bytes conversion
+section. The catalog now has 242 members and 245 signatures. The separate universal
+type_name property was also absent and needs clarification before declaring exact
+name parity, particularly for Tuple; no exception has been approved.
+
+The negative arity test uncovered another real checker bug: Range.step() disregards
+requireArity's false result and indexes call.arguments[0] on an empty slice. Debug
+validation aborted in that test; a separate minimal check probe also exited 134:
+
+```emerald
+const numbers = 1..3
+print(numbers.step())
+```
+
+Stopped for approval under the brief rather than silently broadening the fixes or
+omitting the failing probe. The pinned toolchain check and native zig build -j1 passed.
+The website's check-examples.py on the List page passed 49 examples with 0 mismatches
+and no changed output. Full validation is not green; ReleaseSafe, doc-example gate,
+cross-builds, extension integration, commit/push, and CI remain pending.
+
+## 2026-10-03: Universal member and exhaustive call boundaries
+
+The user approved the Range.step guard and a single universal type_name catalog entry
+with owner "*", rather than one per owner. Added the supplied summary and website path,
+and documented "universal" in the data's about field. The catalog now has 243 members
+and 246 signatures. The result drift test expands this entry across every native value
+owner and user struct/class/enum/tuple values. Additional tests cover callable, optional,
+and nothing values, and reject the property on type names and namespaces.
+
+Range.step now returns invalid after requireArity reports the missing argument, rather
+than indexing an empty slice. Its conformance regression retains the standard missing-
+argument diagnostic; read the expected output by hand. A separate catalog-driven
+test checks every member with zero and excessive arguments. Zero-arity/defaulted and
+variadic calls remain valid; required-argument/block and property-call failures must
+produce diagnostics. After the Range fix, the sweep completed with no further crashes.
+It exposed four missing diagnostics instead: Math.pi() and Math.e(), each with zero
+or one argument, are silently accepted. Requested approval for the existing Float
+constant-call wording, without altering that behavior or excluding these probes.
+
+Focused name, result, arity, and universal-placement tests passed; the complete boundary
+test fails on those four Math cases only. Native zig build -j1, documentation examples
+(24 executed and 135 conformance links), formatting/whitespace checks, Windows/macOS
+cross-builds with separate prefixes, and the List website page (49 unchanged examples)
+passed. npm run test:integration completed with 9 passing tests in real VS Code 1.140.0
+against the branch's server; the extension checkout stayed clean. Full Debug/ReleaseSafe
+validation, commit/push, and CI are pending; no slice 2 work was started.
+
+## 2026-10-03: Editor intelligence slice 1 — Math constant-call correction
+
+The user approved the last boundary finding: Math.pi() passed checking on main and
+then treated a Float as a closure at runtime. Both Math constant keys now enter the
+existing Float constant-call diagnostic branch for every argument count. No new
+wording or interpreter workaround was introduced. The diagnostics regression covers
+Math.pi(), Math.pi(1), and Math.e(); its expected output was read by hand.
+
+The exhaustive boundary sweep checks every catalog member, not only methods. Thus
+Float.infinity/nan, Math.pi/e, and Program.arguments are all called with zero and
+excessive arguments and must produce diagnostics. After the approved corrections,
+the full Debug suite passes, including the boundary sweep; no additional crashes or
+silent acceptance were found. The List website page still has 49 examples with zero
+mismatches, and the real VS Code integration suite passes all 9 tests. Final remaining
+gate results are recorded below when complete. No slice 2 implementation was started.
+
+## 2026-10-03: Editor intelligence slice 1 — final local gate
+
+Passed on pinned Zig 0.16.0: Debug zig build test -j1; ReleaseSafe zig build test -j1
+-Doptimize=ReleaseSafe; native zig build -j1; bash tools/check-doc-examples.sh (24
+examples executed, 135 conformance links); zig fmt --check on the six changed Zig
+files; git diff --check; x86_64-windows and aarch64-macos cross-builds, both -j1 and
+with --prefix outside zig-out. The website List page passed all 49 examples unchanged.
+npm run test:integration finished with 9 passing tests against the branch's native
+server; no tracked extension files changed. VS Code emitted environment/keymap warnings
+but every test and its process exited successfully.
+
+The final data contains 243 members and 246 signatures. The only data corrections
+were String.to_bytes and the approved universal type_name entry. The result audit
+found exactly the three approved List shape bugs; the exhaustive call-boundary sweep
+found the approved Range and Math defects and no others. The small checker inventories
+live beside the branches they enumerate; typing rules remain in the checker, and the
+catalog is parsed once by the LSP only. No completion, hover, or later-slice feature
+was implemented. Commit/push and CI confirmation follow this local gate; stop for
+slice 1 review, without starting slice 2.
+
+## 2026-10-03: Editor intelligence slice 1 — CI confirmation
+
+Implementation commit eebe5e7 was pushed on codex/editor-intelligence. CI run
+37128949445 completed successfully: all six platform/optimization jobs and bounded
+execution fuzz passed. No job was rerun. The handoff and plan now record the green
+result rather than leaving commit/push/CI pending. Stopped for slice 1 review;
+completion and later slices have not started.

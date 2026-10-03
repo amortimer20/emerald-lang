@@ -1,0 +1,12 @@
+diagnostics/math-constants-called.em:1:7: `Math.pi` is a constant, so it takes no parentheses
+  print(Math.pi())
+        ^^^^^^^
+Remove `()` and use the Float value directly.
+diagnostics/math-constants-called.em:2:7: `Math.pi` is a constant, so it takes no parentheses
+  print(Math.pi(1))
+        ^^^^^^^
+Remove `()` and use the Float value directly.
+diagnostics/math-constants-called.em:3:7: `Math.e` is a constant, so it takes no parentheses
+  print(Math.e())
+        ^^^^^^
+Remove `()` and use the Float value directly.

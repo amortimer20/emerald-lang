@@ -7131,6 +7131,21 @@ fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: T
 }
 
 /// A method call such as `scores.append(10)`.
+/// Names with contextual blocks or results, handled by the branches below
+/// rather than Type.list_methods. The editor drift test enumerates this list.
+pub const list_branch_methods = [_][]const u8{
+    "to_set",       "each",          "each_with_index", "reverse_each", "map",      "filter",     "reject",
+    "partition",    "group_by",      "frequencies",     "zip",          "flat_map", "filter_map", "reduce",
+    "reduce_right", "min_by",        "max_by",          "min_max",      "sort_by",  "unique_by",  "associate",
+    "associate_by", "to_dictionary", "take_while",      "drop_while",   "any?",     "all?",       "none?",
+    "one?",         "count_where",   "find",            "find_index",
+};
+pub const list_properties = [_][]const u8{ "count", "first", "last" };
+pub const task_methods = [_][]const u8{ "wait", "result", "done?", "cancel" };
+pub const channel_methods = [_][]const u8{ "send", "receive", "close" };
+pub const random_methods = [_][]const u8{ "next", "choose", "shuffle!" };
+pub const task_group_methods = [_][]const u8{"start"};
+
 fn typeOfMethodCall(
     self: *Checker,
     expression: *const Ast.Expression,
@@ -7578,6 +7593,8 @@ fn typeOfMethodCall(
         .bool => .bool,
         .element => element,
         .list => try Type.listOf(self.arena, element),
+        .lists => try Type.listOf(self.arena, try Type.listOf(self.arena, element)),
+        .pairs => try Type.listOf(self.arena, try Type.tupleOf(self.arena, &.{ element, element })),
         .float => .float,
     };
 }
@@ -8069,6 +8086,22 @@ fn typeOfToDictionary(
 /// without saying what it must produce.
 /// Section 8.5's essential vocabulary for a dictionary and a set. The rest of
 /// section 8.6 arrives with the standard-library slice.
+/// The dictionary and set branches intentionally have different vocabularies;
+/// Type.map_methods is a routing union, not either owner's accepted surface.
+pub const map_block_methods = [_][]const u8{
+    "each",        "each_with_index", "reverse_each", "map",  "filter", "reject",
+    "flat_map",    "filter_map",      "any?",         "all?", "none?",  "one?",
+    "count_where", "find",            "find_index",
+};
+pub const dictionary_methods = [_][]const u8{
+    "map_keys", "map_values", "empty?", "contains_key?", "contains_value?",
+    "remove",   "keys",       "values", "entries",       "merge",
+};
+pub const set_methods = [_][]const u8{
+    "empty?",               "contains?", "remove",    "union",     "intersection", "difference",
+    "symmetric_difference", "subset?",   "superset?", "disjoint?", "add",
+};
+
 fn typeOfMapMethod(
     self: *Checker,
     expression: *const Ast.Expression,
@@ -8607,6 +8640,8 @@ fn requireIndexedBlock(
 }
 
 /// Section 6.4's Range methods.
+pub const range_methods = [_][]const u8{ "empty?", "step", "reverse", "to_list" };
+
 fn typeOfRangeMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
     if (std.mem.eql(u8, member.name, "count")) {
         try self.report(
@@ -8623,7 +8658,7 @@ fn typeOfRangeMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expr
         return .bool;
     }
     if (std.mem.eql(u8, member.name, "step")) {
-        _ = try self.requireArity(member, call.arguments, 1, 1);
+        if (!try self.requireArity(member, call.arguments, 1, 1)) return .invalid;
         const actual = try self.typeOf(call.arguments[0]);
         if (actual.kind == .invalid) return .invalid;
         if (!actual.assignableTo(.int)) {
@@ -8651,6 +8686,8 @@ fn typeOfRangeMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expr
 }
 
 /// Section 9.2's string methods. None changes the string, which is immutable.
+pub const string_branch_methods = [_][]const u8{"to_bytes"};
+
 fn typeOfStringMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
     if (std.mem.eql(u8, member.name, "to_bytes")) {
         _ = try self.requireArity(member, call.arguments, 0, 0);
@@ -8703,6 +8740,8 @@ fn typeOfStringMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Exp
     return if (method.maybe) result.optionalOf() else result;
 }
 
+pub const bytes_methods = [_][]const u8{ "to_string", "to_string_maybe", "to_hex" };
+
 fn typeOfBytesMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
     if (std.mem.eql(u8, member.name, "to_string") or std.mem.eql(u8, member.name, "to_string_maybe")) {
         _ = try self.requireArity(member, call.arguments, 0, 0);
@@ -8719,6 +8758,8 @@ fn typeOfBytesMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expr
 
 /// Section 9.3's integer methods. Their arguments are deliberately all `Int`:
 /// widening one to `Float` would change what an integer-only operation means.
+pub const int_branch_methods = [_][]const u8{ "to_string", "format", "times", "up_to", "down_to" };
+
 fn typeOfIntMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
     // Section 15.5: `base` and `group_digits` are named and defaulted, unlike
     // every other Int method's plain positional arguments, so they bypass
@@ -8774,6 +8815,8 @@ fn typeOfIntMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expres
 
 /// Section 9.3's floating-point methods. Float operands use the same
 /// `Int`-to-`Float` widening as every other expected Float position.
+pub const float_branch_methods = [_][]const u8{"format"};
+
 fn typeOfFloatMethod(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member) Error!Type {
     // Section 15.5: `format` takes two named, defaulted arguments, unlike
     // every other Float method's plain positional arguments.
@@ -9872,7 +9915,9 @@ fn typeOfCall(
         return .float;
     }
     if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
-        std.mem.eql(u8, reference.key, Resolver.float_nan_key))
+        std.mem.eql(u8, reference.key, Resolver.float_nan_key) or
+        std.mem.eql(u8, reference.key, Resolver.math_pi_key) or
+        std.mem.eql(u8, reference.key, Resolver.math_e_key))
     {
         try self.report(
             call.callee.span,

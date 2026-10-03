@@ -1,8 +1,8 @@
 # Editor intelligence: design and implementation plan
 
-Status: accepted, 2026-10-01. The user accepted all ten recommendations. Claude builds it. Implementation
-starts after the REPL work's slice 2 is merged, since both touch the compiler's front end; until
-then only this plan changes.
+Status: accepted, 2026-10-01. The user accepted all ten recommendations. Codex implements
+slices 1-6, one at a time; Claude reviews and handles website parity in slice 7. The REPL
+is merged, so its former implementation prerequisite is satisfied.
 
 The goal is the editing experience a student gets in C#: type a dot and see everything the value
 can do, with what each thing takes and gives back and one plain sentence about it; hover over a
@@ -174,6 +174,70 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
   - Comparing the prelude's parameter names with the website found `File.write` and
     `File.append` documented with `text` where the declaration says `contents`, so
     `File.write(path, text: ...)` from the page was refused. The website now says `contents`.
+  - Slice 1 implementation started on `codex/editor-intelligence` from main `b728612`
+    (2026-10-03), but stopped at a verified checker mismatch, as the brief requires.
+    `List.chunks` and `List.windows` produce `List[List[T]]`, and `List.pairs` produces
+    `List[(T, T)]`; the data, reference, and interpreter agree. The checker instead gives
+    all three `List[T]`: their `Type.list_methods` entries use `.result = .list`, and
+    `typeOfMethodCall`'s generic result path wraps the original element type once.
+    A freshly built binary rejects correctly annotated results for all three, while
+    unannotated calls print the nested lists and tuple pairs. No checker or data change
+    was made; approval to correct the checker is needed before the drift test can pass.
+  - The user approved the three result corrections and regressions. Before changing
+    their types, the completed result test compared every catalog signature's inferred
+    result, with distinct substitutions for generic input/output types. Its only real
+    result mismatches were `List.chunks`, `List.windows`, and `List.pairs`. The table now
+    distinguishes list, nested-list, and pair-list results. Run and diagnostics cases
+    cover correct uses and formerly accepted wrong annotations for each method.
+  - The loader is owned once by the LSP server; ordinary execution never loads the
+    catalog. Name inventories for special branches sit beside those branches. Tests
+    check names in both directions, inferred block parameter types, optional/default
+    omissions, variadic calls, required blocks, and rejected arity boundaries.
+  - Name parity found a missing `String.to_bytes` data entry, now added with a plain
+    summary and a link to the existing Bytes conversion section. The original 241/244
+    totals above are historical; the catalog now contains 242 members/245 signatures.
+    The universal `type_name` property is also absent from the original catalog;
+    its treatment needs clarification, especially for Tuple, which otherwise has no
+    named members. No universal-property exception has been declared settled.
+  - Arity-boundary testing exposed a separate checker crash: `Range.step()` ignores
+    `requireArity`'s false result and reads absent `call.arguments[0]`. A minimal real
+    `emerald check` probe also aborts. Stopped for approval rather than fixing this
+    outside the approved result-type corrections or excluding it from the test.
+    Pinned toolchain and native build passed; the website List page passed all 49
+    examples unchanged. Debug validation is not green (the arity test crashes).
+    Remaining gate, extension integration, commit, push, and CI are still pending.
+  - The user approved the Range crash fix and the universal-property representation.
+    `Range.step` now stops after a failed arity check, preserving the existing diagnostic
+    wording; `range-step-missing-argument` is its regression. `type_name` has one entry
+    with owner `"*"`, a universal note in `about`, and the exact website path the user
+    supplied. Its result is checked on every native value owner, plus struct, class,
+    enum, tuple, callable, optional, and `nothing`; types and namespaces are rejected.
+    The catalog now contains 243 members and 246 signatures.
+  - Added a separate exhaustive boundary test: every catalog member is checked with
+    zero arguments and one more than its largest ordinary parameter list. Valid
+    zero-arity/default/variadic calls are required to remain valid; calling a property
+    requires a diagnostic. Required blocks are omitted in this test, while the drift
+    tests separately exercise valid blocks and inferred block parameter types.
+    After the Range fix, the complete sweep found no additional crashes, but four
+    missing diagnostics: `Math.pi()`/`Math.e()`, with zero or one argument, are silently
+    accepted despite being constants. Requested approval to use the existing Float
+    constant-call diagnostic; did not hide these failures or change that behavior yet.
+  - The user approved the Math correction. Both resolved Math constant keys now use
+    the existing Float constant-call branch, regardless of argument count. This
+    prevents a checked call from reaching the interpreter as though a Float were a
+    closure. `math-constants-called` checks `Math.pi()`, `Math.pi(1)`, and `Math.e()`
+    with the exact approved wording; its expected output was read by hand.
+    The boundary test calls every property in the catalog, including all type-level
+    constants (`Float.infinity`, `Float.nan`, `Math.pi`, `Math.e`, `Program.arguments`),
+    with zero and excessive arguments. No owner-specific exemption is made.
+  - Final validation passed on pinned Zig 0.16.0: Debug and ReleaseSafe
+    `zig build test -j1`, native `zig build -j1`, documentation examples (24 executed,
+    135 conformance links), changed-Zig formatting, whitespace checks, and Windows
+    and macOS cross-builds with separate prefixes. The List website page passed all
+    49 examples unchanged; VS Code integration passed all 9 tests against this server.
+    Slice 1 was committed as `eebe5e7` and pushed. CI run `37128949445` passed all seven
+    jobs (Linux/macOS/Windows Debug and ReleaseSafe, plus bounded execution fuzzing).
+    Stopped for slice 1 review; no slice 2 work started.
 
 ### Slice 2: Completion
 
