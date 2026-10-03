@@ -235,8 +235,9 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     135 conformance links), changed-Zig formatting, whitespace checks, and Windows
     and macOS cross-builds with separate prefixes. The List website page passed all
     49 examples unchanged; VS Code integration passed all 9 tests against this server.
-    Slice 1 is ready for review; push/CI confirmation follows the commit. No slice 2
-    work started.
+    Slice 1 was committed as `eebe5e7` and pushed. CI run `37128949445` passed all seven
+    jobs (Linux/macOS/Windows Debug and ReleaseSafe, plus bounded execution fuzzing).
+    Stopped for slice 1 review; no slice 2 work started.
 
 ### Slice 2: Completion
 

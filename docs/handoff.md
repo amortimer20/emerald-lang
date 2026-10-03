@@ -167,8 +167,9 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Editor-intelligence slice 1 is complete locally on `codex/editor-intelligence`, based
-on main `b728612`, and awaits review after push/CI confirmation. The LSP owns its catalog
+Editor-intelligence slice 1 is complete on `codex/editor-intelligence`, based
+on main `b728612`, committed as `eebe5e7`, pushed, and green in all seven CI jobs.
+It awaits review. The LSP owns its catalog
 once at startup; ordinary execution never loads it. Tests prove bidirectional names,
 exact results, block parameters, default/optional/variadic arities, every empty/excessive
 call boundary, and universal `type_name` placement. The approved checker corrections
@@ -613,8 +614,11 @@ Debug and ReleaseSafe `zig build test -j1`, native `zig build -j1`, the document
 check (24 examples executed, 135 conformance links), changed-Zig formatting,
 `git diff --check`, and Windows/macOS cross-builds outside zig-out. The website's
 List page passed all 49 examples with no output changes; the extension integration
-suite passed all 9 tests against the built server. Commit/push and branch CI confirmation
-are next. Earlier diagnostic-polish groups A-C and follow-ups are merged, not pending.
+suite passed all 9 tests against the built server.
+[CI for `eebe5e7`](https://github.com/amortimer20/emerald-lang/actions/runs/37128949445)
+passed all seven jobs: Debug/ReleaseSafe on Linux, macOS, and Windows, plus bounded
+execution fuzzing. Slice 1 is stopped for review. Earlier diagnostic-polish groups A-C
+and follow-ups are merged, not pending.
 
 `main` is the only long-lived branch. Work happens on
 `claude/*` and `codex/*` branches, merged by pull request once CI passes; see
