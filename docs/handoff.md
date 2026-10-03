@@ -463,6 +463,9 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   interpreter. (3) The Zig implementation and `conformance/` stay the authority; a .NET target passes
   the same cases unchanged. The cheapest shape that respects this is generating C# source from the
   Zig front end plus a runtime library in C#, not porting the compiler.
+  Unity is optional: if it ever needs a language change that fails the test above, or stops being
+  worth its upkeep, drop it. "It's not worth ruining Emerald over" (the user). Because nothing in the
+  core depends on it, dropping it deletes only the target, library, and package.
 - **Memory management is not a reason to move to .NET (checked 2026-10-02).** The Zig interpreter
   already has garbage collection: reference counts plus a mark-and-sweep collector for cycles
   (spec 19.5, `Heap.zig`). The counts are not only about memory: they are how value semantics stays
