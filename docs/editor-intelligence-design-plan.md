@@ -344,7 +344,10 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     `textDocument/formatting` requests returned the expected `const x = 1` edit for both
     file and untitled URIs. The user reports Claude ran the suite successfully seven times.
     The downloaded VS Code logs an unavailable `native-keymap` module. No extension files
-    changed. Commit, push, and CI are pending.
+    changed. Slice 3 was committed as `8fac992`, pushed, and CI run `37153243148`
+    passed all seven jobs. The integration UI timeout remains recorded as an environment/test
+    harness discrepancy, not a server-formatting failure; the requested slice did not change
+    formatting or the extension.
 
 ### Slice 4: Signature help
 

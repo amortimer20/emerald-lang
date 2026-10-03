@@ -13,8 +13,9 @@ enums, typed errors, projects/namespaces, ranges and slicing. The formatter and 
 REPL are complete and merged on main (PR #30). The language server provides diagnostics
 (identical to `emerald check`), symbols,
 format-on-save, hover, go to definition, find references, rename, and completion.
-Editor-intelligence slice 2 adds catalog-backed completion, and slice 3 (hover and
-documentation) is in progress on `codex/editor-intelligence`. See "Next step" below.
+Editor-intelligence slices 2 and 3 (catalog-backed completion, hover, and documentation) are
+committed on `codex/editor-intelligence`; slice 3 CI is green. The user will handle website
+parity (slice 7) before slice 4. See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
 name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
@@ -187,8 +188,9 @@ cases returned identical replies 50 times. On Zig 0.16.0, Debug and ReleaseSafe 
 The VS Code integration test timed out only in format-on-save in three attempts here (the other
 eight tests passed each time); direct formatting requests to the same built server returned the
 expected edit for both file and untitled documents. The user reports seven successful runs from
-Claude. No extension files changed. Slice 3's commit, push, and branch CI confirmation remain
-pending.
+Claude. No extension files changed. Slice 3 is committed as `8fac992`, pushed, and CI run
+`37153243148` passed all seven jobs. The next action is the user's website parity slice 7; do not
+start slice 4 until the user reviews slice 3 and reports the website check.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
