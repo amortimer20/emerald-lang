@@ -451,6 +451,18 @@ compiler design exists yet. Directions discussed on 2026-09-30, to weigh when th
   of RAM. A cheap first
   measurement when this is planned: build the current interpreter ReleaseSmall without its
   tables (time zones, Unicode, regex) and see how far it is from 2 MB.
+- **Guardrail for any .NET, Unity, or Godot work (the user, 2026-10-02).** The first Emerald was a
+  C#/.NET prototype that turned into a "Frankenstein" because .NET-driven suggestions were accepted
+  one by one (interop annotations such as `@export` and `@mirrors`, overloading, and more) and the
+  direction was never corrected; the user gave up on .NET and restarted in Zig with a clear picture of
+  the language. Spec principle 1.5 is the lesson: the implementation host adapts to Emerald, never
+  the reverse. So: (1) Unity changes nothing in the language; a feature is added only if it would be
+  added without Unity, through a design plan on its own merits (a `Float32` might qualify; Unity-only
+  attributes would not). (2) The integration lives outside the core: a target, a C# runtime
+  library, and a Unity package with its own bindings, so the same program still runs on the
+  interpreter. (3) The Zig implementation and `conformance/` stay the authority; a .NET target passes
+  the same cases unchanged. The cheapest shape that respects this is generating C# source from the
+  Zig front end plus a runtime library in C#, not porting the compiler.
 - **Memory management is not a reason to move to .NET (checked 2026-10-02).** The Zig interpreter
   already has garbage collection: reference counts plus a mark-and-sweep collector for cycles
   (spec 19.5, `Heap.zig`). The counts are not only about memory: they are how value semantics stays
