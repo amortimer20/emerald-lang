@@ -173,9 +173,12 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 Editor intelligence is reviewed and merged: language-server slices 1–5 through PR #38,
 extension slice 6 through emerald-vscode PR #4, and website parity through its checker.
-The current QA batch is on `codex/qa-bug-batch`: correct Console table row diagnostics,
-then suppress dependent errors after an invalid Channel annotation. Stop for review after
-the full gate and a pull request; do not begin another milestone.
+The QA batch on `codex/qa-bug-batch` corrects Console table row diagnostics and suppresses
+dependent errors after an invalid Channel annotation. Stop for review after the full gate
+and a pull request; do not begin another milestone.
+Both fixes passed Debug and ReleaseSafe tests, native and Windows/macOS cross-builds,
+documentation examples, formatting, whitespace, and website catalog parity. The new
+task-item Channel case also passed 50 identical runs. Branch CI is checked separately.
 The website Console page still describes the header as the first row; Claude should update
 that reference to name the header separately and number data rows from 1.
 
@@ -194,6 +197,8 @@ The trait-adoption hint follow-ups are merged through PRs #33 and #35; their
 focused cases and local full gates are recorded in the journal.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
+- Invalid optional Channel item annotations report their original error only, rather than
+  adding a misleading missing-message-type error at `Channel()`.
 - Console table diagnostics name the header separately, number data rows from 1, and
   use singular `cell` for one cell.
 - LSP hover shows built-in signatures and descriptions with reference links, and shows
@@ -381,9 +386,8 @@ compiler), or the compiler depends on it.
    unknown: get a screenshot or the browser and font from the user, and check line height, the
    font actually in use, and Expressive Code's own styles. Deferred by the user to this iteration.
    Also carry in the rough edges recorded under
-   "Active rough edges" and the diagnostics that still need hints, plus two found while
-   writing the Tasks page: `Channel[Int?]` reports a redundant "needs a message type" error
-   after the correct one. Console table header/data-row numbering is corrected in the QA batch. The
+   "Active rough edges" and the diagnostics that still need hints. Console table header/data-row
+   numbering and the redundant invalid-Channel annotation diagnostic are corrected in the QA batch. The
    website's pages are checked against a real build by `scripts/check-outputs.py` in
    `emerald-website`; rerun it against the build under test. Scope the pass with the user when it
    starts, and finish it before the 0.7.0 release.

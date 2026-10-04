@@ -1,0 +1,12 @@
+diagnostics/channel-invalid-initializer.em:1:25: a channel's items can't be optional
+  const optional: Channel[Int?] = Channel()
+                          ^^^
+Wrap the value in a struct.
+diagnostics/channel-invalid-initializer.em:2:30: a channel's items can't be optional
+  const optional_list: Channel[List[Int]?] = Channel(capacity: 1)
+                               ^^^^^^^^^
+Wrap the value in a struct.
+diagnostics/channel-invalid-initializer.em:3:24: `Missing` is not a type
+  const unknown: Channel[Missing] = Channel()
+                         ^^^^^^^
+Check the spelling or declare the struct in this project.

@@ -5203,3 +5203,22 @@ Validation passed: pinned Zig 0.16.0 toolchain check; Debug and ReleaseSafe `zig
 native build; Windows x86_64 and macOS aarch64 cross-builds (prefixes outside zig-out);
 documentation examples (24 executed, 135 linked conformance cases); `zig fmt --check src/*.zig`;
 `git diff --check`; website catalog parity (249 members, 253 signatures, 26 pages, 0 problems).
+
+## 2026-10-04: QA item 2 — suppress dependent Channel inference errors
+
+Reproduced on freshly built main: `const c: Channel[Int?] = Channel()` reported both
+the optional-item error and a missing-message-type error. `Channel[List[Int]?]` has the same
+cause. Channel construction now respects an invalid expected type as already reported,
+after still checking the constructor's arguments; it does not invent a second context error.
+
+Investigated the other suggested annotation shapes. `Channel[Task[Int]]` is valid on main
+and remains valid; a new run case sends a task handle, receives it, and reads its result.
+An undefined item type already reports only its own type-name error, and the diagnostics
+case preserves that behavior alongside both optional forms. Read both expected files manually.
+The task run case passed 50 consecutive executions, each printing exactly `7`.
+
+Validation passed: Debug and ReleaseSafe `zig build test -j1`; native build; Windows x86_64
+and macOS aarch64 cross-builds with external prefixes; documentation examples (24 executed,
+135 linked conformance cases); changed Zig formatting; `git diff --check`; website catalog
+parity (249 members, 253 signatures, 26 pages, 0 problems). All builds used pinned Zig 0.16.0
+and `-j1`. Both QA changes are ready for branch CI and review; no merge authorized.
