@@ -15,8 +15,8 @@ REPL are complete and merged on main (PR #30). The language server provides diag
 format-on-save, hover, go to definition, find references, rename, and completion.
 The language server also provides signature help for native and declared functions, methods,
 and constructors. Editor-intelligence slices 2 through 4 are implemented on
-`codex/editor-intelligence`; slice 4 review corrections are implemented and locally validated,
-with branch CI pending for the correction commit. Quick fixes
+`codex/editor-intelligence`; signature-help review corrections are committed as `832280c`, and
+CI run `37176337549` passed all seven jobs. Quick fixes
 (slice 5) are next after review. See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
@@ -183,8 +183,9 @@ cover empty arguments after commas and dotted type-function/nested-constructor l
 focused cases and all 72 protocol cases returned identical replies 50 times each. Debug and
 ReleaseSafe tests, the native build, documentation examples, formatting, whitespace, Windows and
 macOS cross-builds, the 9-test VS Code integration suite, and website parity (249 members, 253
-signatures, 26 pages, 0 problems) passed locally. Commit and push the correction, verify branch
-CI, then stop for review; slice 5 (quick fixes) begins only after approval.
+signatures, 26 pages, 0 problems) passed locally. Correction commit `832280c` is pushed and CI
+run `37176337549` passed all seven jobs. Stop for review; slice 5 (quick fixes) begins only after
+approval.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is

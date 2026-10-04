@@ -5094,27 +5094,6 @@ Commit `83256c4` was pushed to `codex/editor-intelligence`; CI run `37164236982`
 jobs, including Debug and ReleaseSafe on Ubuntu, macOS, and Windows. The local HTTP-suite limitation
 remains an environment-specific validation note, not a CI failure.
 
-## 2026-10-04 — Signature-help review corrections
-
-Signature help now inserts a private placeholder at the cursor when it follows a comma and the
-remainder of the call contains only whitespace before `)` or EOF. That keeps an empty active
-argument parseable, including immediately after the comma and on a blank line. Protocol cases
-cover the open/closed call, no-space comma, built-in method, generated constructor, post-named
-argument, and multiline argument forms.
-
-Signature labels use Emerald's dotted spelling for native type methods, prelude type functions,
-and nested constructors. Nested type resolver keys also contain `::`, so constructor recognition
-now relies on the resolved struct declaration. Source annotations/defaults are read from the
-declaration's own file; this preserves `Http.get`'s defaults when the request is in another file.
-Further cases cover `File.write`, `Path.join`, `Math.sin`, `Http.Response` in the `Http.get`
-result, and a user-defined nested constructor.
-
-All 72 LSP protocol cases returned identical replies 50 times each. On pinned Zig 0.16.0, Debug
-and ReleaseSafe test suites, native build, documentation examples, changed-Zig formatting,
-whitespace, Windows/macOS cross-builds, the 9-test VS Code integration suite, and the website
-parity check passed; parity reported 249 members, 253 signatures, 26 pages, and zero problems.
-The correction commit's branch CI result is pending.
-
 ## 2026-10-03: Editor intelligence slice 4 — signature help
 
 Added `textDocument/signatureHelp`, advertised for `(` and `,`. The request builds one checked
@@ -5136,3 +5115,25 @@ suite, and the emerald-website built-in parity check all passed. The website che
 catalog members, 253 signatures, 26 pages, and zero problems. Commit `d002068` was pushed to
 `codex/editor-intelligence`; CI run `37172527412` passed all seven jobs, including Debug and
 ReleaseSafe on Ubuntu, macOS, and Windows.
+
+## 2026-10-04 — Signature-help review corrections
+
+Signature help now inserts a private placeholder at the cursor when it follows a comma and the
+remainder of the call contains only whitespace before `)` or EOF. That keeps an empty active
+argument parseable, including immediately after the comma and on a blank line. Protocol cases
+cover the open/closed call, no-space comma, built-in method, generated constructor, post-named
+argument, and multiline argument forms.
+
+Signature labels use Emerald's dotted spelling for native type methods, prelude type functions,
+and nested constructors. Nested type resolver keys also contain `::`, so constructor recognition
+now relies on the resolved struct declaration. Source annotations/defaults are read from the
+declaration's own file; this preserves `Http.get`'s defaults when the request is in another file.
+Further cases cover `File.write`, `Path.join`, `Math.sin`, `Http.Response` in the `Http.get`
+result, and a user-defined nested constructor.
+
+All 72 LSP protocol cases returned identical replies 50 times each. On pinned Zig 0.16.0, Debug
+and ReleaseSafe test suites, native build, documentation examples, changed-Zig formatting,
+whitespace, Windows/macOS cross-builds, the 9-test VS Code integration suite, and the website
+parity check passed; parity reported 249 members, 253 signatures, 26 pages, and zero problems.
+Commit `832280c` was pushed to `codex/editor-intelligence`; CI run `37176337549` passed all seven
+jobs, including Debug and ReleaseSafe on Ubuntu, macOS, and Windows.
