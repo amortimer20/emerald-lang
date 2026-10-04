@@ -1,0 +1,54 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "count",
+      "kind": 10,
+      "detail": "count: Int",
+      "documentation": "How many numbers the range has.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "empty?",
+      "kind": 2,
+      "detail": "empty?(): Bool",
+      "documentation": "Whether the range has no numbers at all.",
+      "insertText": "empty?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "reverse",
+      "kind": 2,
+      "detail": "reverse(): Range",
+      "documentation": "The same numbers in the opposite order.",
+      "insertText": "reverse()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "step",
+      "kind": 2,
+      "detail": "step(distance: Int): Range",
+      "documentation": "A range that visits every `distance`-th number, in the same direction.",
+      "insertText": "step($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "to_list",
+      "kind": 2,
+      "detail": "to_list(): List[Int]",
+      "documentation": "Every number the range visits, in order, as a `List`.",
+      "insertText": "to_list()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

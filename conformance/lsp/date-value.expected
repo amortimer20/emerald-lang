@@ -1,0 +1,142 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "add",
+      "kind": 2,
+      "detail": "add(years: Int = 0, months: Int = 0, weeks: Int = 0, days: Int = 0): Self",
+      "documentation": "A later date.",
+      "insertText": "add($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "at",
+      "kind": 2,
+      "detail": "at(time: Time): DateTime",
+      "documentation": "This date at a time of day, as a `DateTime`.",
+      "insertText": "at($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "compare",
+      "kind": 2,
+      "detail": "compare(other: Self): Int",
+      "documentation": null,
+      "insertText": "compare($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "day",
+      "kind": 5,
+      "detail": "day: Int",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "day_of_year",
+      "kind": 10,
+      "detail": "day_of_year: Int",
+      "documentation": "1 for 1 January, counting up to 365, or 366 in a leap year.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "days_in_month",
+      "kind": 10,
+      "detail": "days_in_month: Int",
+      "documentation": "How many days the date's month has: 28, 29, 30, or 31.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "days_until",
+      "kind": 2,
+      "detail": "days_until(other: Self): Int",
+      "documentation": "The number of days from this date to `other`, negative when `other` is earlier.",
+      "insertText": "days_until($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "leap_year?",
+      "kind": 2,
+      "detail": "leap_year?(): Bool",
+      "documentation": "Whether the date's year has a 29 February: every fourth year, except century years that aren't divisible by 400.",
+      "insertText": "leap_year?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "month",
+      "kind": 5,
+      "detail": "month: Int",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "month_name",
+      "kind": 10,
+      "detail": "month_name: String",
+      "documentation": "The month's English name, for building text.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "months_until",
+      "kind": 2,
+      "detail": "months_until(other: Self): Int",
+      "documentation": "Whole months from this date to `other`: the most months that `add(months:)` can move this date without going past it.",
+      "insertText": "months_until($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "subtract",
+      "kind": 2,
+      "detail": "subtract(years: Int = 0, months: Int = 0, weeks: Int = 0, days: Int = 0): Self",
+      "documentation": "An earlier date: `add` with every amount made negative.",
+      "insertText": "subtract($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "to_string",
+      "kind": 2,
+      "detail": "to_string(): String",
+      "documentation": null,
+      "insertText": "to_string()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "weekday",
+      "kind": 10,
+      "detail": "weekday: Weekday",
+      "documentation": "The day of the week, as a `Weekday`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "year",
+      "kind": 5,
+      "detail": "year: Int",
+      "documentation": "The parts of the date as whole numbers: `year`, `month` (1 to 12), and `day` (1 to 31).",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "years_until",
+      "kind": 2,
+      "detail": "years_until(other: Self): Int",
+      "documentation": "Whole years from this date to `other`, so `born.years_until(Date.today())` is an age.",
+      "insertText": "years_until($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

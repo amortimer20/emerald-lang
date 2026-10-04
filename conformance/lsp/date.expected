@@ -1,0 +1,30 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "parse",
+      "kind": 2,
+      "detail": "parse(text: String): Date",
+      "documentation": "Reads a date written as `YYYY-MM-DD`, ignoring spaces around it.",
+      "insertText": "parse($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "parse_maybe",
+      "kind": 2,
+      "detail": "parse_maybe(text: String): Date?",
+      "documentation": "Like `parse`, but gives `nothing` instead of raising an error.",
+      "insertText": "parse_maybe($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "today",
+      "kind": 2,
+      "detail": "today(zone: TimeZone = TimeZone.local): Date",
+      "documentation": "Today's date, in `zone`, which is the computer's own zone unless you say otherwise.",
+      "insertText": "today($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

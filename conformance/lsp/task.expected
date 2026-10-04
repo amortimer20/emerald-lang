@@ -1,0 +1,46 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "cancel",
+      "kind": 2,
+      "detail": "cancel(): Nothing",
+      "documentation": "Asks the task to stop.",
+      "insertText": "cancel()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "done?",
+      "kind": 2,
+      "detail": "done?(): Bool",
+      "documentation": "Whether the task has finished, without waiting to find out.",
+      "insertText": "done?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "result",
+      "kind": 2,
+      "detail": "result(): Int",
+      "documentation": "Waits for the task to finish, and gives what its block returned.",
+      "insertText": "result()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "wait",
+      "kind": 2,
+      "detail": "wait(timeout: Duration): Bool",
+      "documentation": "Waits for the task to finish, but for no longer than `timeout`.",
+      "insertText": "wait($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

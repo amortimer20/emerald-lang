@@ -1,0 +1,134 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "black",
+      "kind": 20,
+      "detail": "black: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "blue",
+      "kind": 20,
+      "detail": "blue: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "bright_black",
+      "kind": 20,
+      "detail": "bright_black: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "bright_blue",
+      "kind": 20,
+      "detail": "bright_blue: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "bright_cyan",
+      "kind": 20,
+      "detail": "bright_cyan: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "bright_green",
+      "kind": 20,
+      "detail": "bright_green: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "bright_magenta",
+      "kind": 20,
+      "detail": "bright_magenta: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "bright_red",
+      "kind": 20,
+      "detail": "bright_red: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "bright_white",
+      "kind": 20,
+      "detail": "bright_white: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "bright_yellow",
+      "kind": 20,
+      "detail": "bright_yellow: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "cyan",
+      "kind": 20,
+      "detail": "cyan: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "green",
+      "kind": 20,
+      "detail": "green: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "magenta",
+      "kind": 20,
+      "detail": "magenta: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "red",
+      "kind": 20,
+      "detail": "red: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "white",
+      "kind": 20,
+      "detail": "white: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "yellow",
+      "kind": 20,
+      "detail": "yellow: Color",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

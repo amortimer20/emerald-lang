@@ -1,0 +1,26 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "signatures": [
+      {
+        "label": "add(first: Int, second: Int = 2, third: Int = 3): Int",
+        "documentation": null,
+        "parameters": [
+          {
+            "label": "first: Int"
+          },
+          {
+            "label": "second: Int = 2"
+          },
+          {
+            "label": "third: Int = 3"
+          }
+        ],
+        "activeParameter": 2
+      }
+    ],
+    "activeSignature": 0,
+    "activeParameter": 2
+  }
+}

@@ -1,0 +1,230 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "add",
+      "kind": 2,
+      "detail": "add(value: String): Nothing",
+      "documentation": "Adds `value`.",
+      "insertText": "add($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "all?",
+      "kind": 2,
+      "detail": "all?() { value: String => Bool }: Bool",
+      "documentation": "Whether the block accepts every value.",
+      "insertText": "all?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "any?",
+      "kind": 2,
+      "detail": "any?() { value: String => Bool }: Bool",
+      "documentation": "Whether the block accepts at least one value.",
+      "insertText": "any?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "contains?",
+      "kind": 2,
+      "detail": "contains?(value: String): Bool",
+      "documentation": "Whether `value` is in the set.",
+      "insertText": "contains?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "count",
+      "kind": 10,
+      "detail": "count: Int",
+      "documentation": "How many values the set has.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "count_where",
+      "kind": 2,
+      "detail": "count_where() { value: String => Bool }: Int",
+      "documentation": "How many values the block accepts.",
+      "insertText": "count_where()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "difference",
+      "kind": 2,
+      "detail": "difference(other: Set[String]): Set[String]",
+      "documentation": "The values in this set that are not in `other`.",
+      "insertText": "difference($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "disjoint?",
+      "kind": 2,
+      "detail": "disjoint?(other: Set[String]): Bool",
+      "documentation": "Whether the two sets have no values in common.",
+      "insertText": "disjoint?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "each",
+      "kind": 2,
+      "detail": "each() { value: String => ... }: Nothing",
+      "documentation": "Runs the block for each value, in order.",
+      "insertText": "each()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "each_with_index",
+      "kind": 2,
+      "detail": "each_with_index() { value: String, index: Int => ... }: Nothing",
+      "documentation": "Runs the block for each value, with its position in order.",
+      "insertText": "each_with_index()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "empty?",
+      "kind": 2,
+      "detail": "empty?(): Bool",
+      "documentation": "Whether the set has no values.",
+      "insertText": "empty?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "filter",
+      "kind": 2,
+      "detail": "filter() { value: String => Bool }: Set[String]",
+      "documentation": "The values the block accepts.",
+      "insertText": "filter()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "filter_map",
+      "kind": 2,
+      "detail": "filter_map() { value: String => U? }: List[U]",
+      "documentation": "What the block gives for each value, leaving out every `nothing`.",
+      "insertText": "filter_map()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "find",
+      "kind": 2,
+      "detail": "find() { value: String => Bool }: String?",
+      "documentation": "The first value the block accepts, or `nothing`.",
+      "insertText": "find()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "find_index",
+      "kind": 2,
+      "detail": "find_index() { value: String => Bool }: Int?",
+      "documentation": "The position of the first value the block accepts, or `nothing`.",
+      "insertText": "find_index()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "flat_map",
+      "kind": 2,
+      "detail": "flat_map() { value: String => List[U] }: List[U]",
+      "documentation": "The items of every list the block gives, joined into one list.",
+      "insertText": "flat_map()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "intersection",
+      "kind": 2,
+      "detail": "intersection(other: Set[String]): Set[String]",
+      "documentation": "The values in both sets.",
+      "insertText": "intersection($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "map",
+      "kind": 2,
+      "detail": "map() { value: String => U }: List[U]",
+      "documentation": "A list of what the block gives for each value.",
+      "insertText": "map()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "none?",
+      "kind": 2,
+      "detail": "none?() { value: String => Bool }: Bool",
+      "documentation": "Whether the block accepts no value.",
+      "insertText": "none?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "one?",
+      "kind": 2,
+      "detail": "one?() { value: String => Bool }: Bool",
+      "documentation": "Whether the block accepts exactly one value.",
+      "insertText": "one?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "reject",
+      "kind": 2,
+      "detail": "reject() { value: String => Bool }: Set[String]",
+      "documentation": "The values the block does not accept.",
+      "insertText": "reject()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "remove",
+      "kind": 2,
+      "detail": "remove(value: String): Nothing",
+      "documentation": "Removes `value`.",
+      "insertText": "remove($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "reverse_each",
+      "kind": 2,
+      "detail": "reverse_each() { value: String => ... }: Nothing",
+      "documentation": "Runs the block for each value, from last to first.",
+      "insertText": "reverse_each()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "subset?",
+      "kind": 2,
+      "detail": "subset?(other: Set[String]): Bool",
+      "documentation": "Whether every value in this set is also in `other`.",
+      "insertText": "subset?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "superset?",
+      "kind": 2,
+      "detail": "superset?(other: Set[String]): Bool",
+      "documentation": "Whether this set has every value in `other`.",
+      "insertText": "superset?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "symmetric_difference",
+      "kind": 2,
+      "detail": "symmetric_difference(other: Set[String]): Set[String]",
+      "documentation": "The values in exactly one of the two sets.",
+      "insertText": "symmetric_difference($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "union",
+      "kind": 2,
+      "detail": "union(other: Set[String]): Set[String]",
+      "documentation": "Every value in either set.",
+      "insertText": "union($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

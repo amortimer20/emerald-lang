@@ -1,0 +1,38 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "choose",
+      "kind": 2,
+      "detail": "choose(list: List[T]): T?",
+      "documentation": "One item from `list`, or `nothing` when the list is empty.",
+      "insertText": "choose($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "next",
+      "kind": 2,
+      "detail": "next(range: Range): Int",
+      "documentation": "One whole number from `range`, as the built-in `random(range)` chooses, but repeatably.",
+      "insertText": "next($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "shuffle!",
+      "kind": 2,
+      "detail": "shuffle!(list: List[T]): Nothing",
+      "documentation": "Puts the items of `list` in a random order, changing the list itself.",
+      "insertText": "shuffle!($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

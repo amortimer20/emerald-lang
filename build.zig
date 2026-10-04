@@ -129,6 +129,7 @@ pub fn build(b: *std.Build) void {
         .root_module = lsp_module,
     });
     const run_lsp_tests = b.addRunArtifact(lsp_tests);
+    conformance_module.addImport("lsp", lsp_module);
 
     // `zig build unicode-conformance -- <database directory>` checks all of
     // Unicode's NormalizationTest.txt, which is too large to commit. Part of

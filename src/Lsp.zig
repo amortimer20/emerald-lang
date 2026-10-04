@@ -64,10 +64,12 @@
 
 const std = @import("std");
 const emerald = @import("emerald");
+const Completion = @import("Completion.zig");
 const Source = emerald.Source;
 const Lexer = emerald.Lexer;
 const Parser = emerald.Parser;
 const Ast = emerald.Ast;
+const Token = emerald.Token;
 const Formatter = emerald.Formatter;
 const unicode = emerald.unicode;
 const Project = emerald.Project;
@@ -80,7 +82,28 @@ const Resolver = emerald.Resolver;
 const Position = struct { line: u32, character: u32 };
 const Range = struct { start: Position, end: Position };
 const Location = struct { uri: []const u8, range: Range };
-const LspDiagnostic = struct { range: Range, severity: u32, message: []const u8 };
+const DiagnosticData = struct { replacement: TextEdit, oldText: []const u8, revision: u64 };
+const LspDiagnostic = struct {
+    range: Range,
+    severity: u32,
+    message: []const u8,
+    data: ?DiagnosticData = null,
+
+    pub fn jsonStringify(self: LspDiagnostic, json: *std.json.Stringify) !void {
+        try json.beginObject();
+        try json.objectField("range");
+        try json.write(self.range);
+        try json.objectField("severity");
+        try json.write(self.severity);
+        try json.objectField("message");
+        try json.write(self.message);
+        if (self.data) |data| {
+            try json.objectField("data");
+            try json.write(data);
+        }
+        try json.endObject();
+    }
+};
 const DocumentSymbol = struct {
     name: []const u8,
     kind: u32,
@@ -89,6 +112,18 @@ const DocumentSymbol = struct {
     children: []const DocumentSymbol = &.{},
 };
 const TextEdit = struct { range: Range, newText: []const u8 };
+const SignatureParameterInformation = struct { label: []const u8 };
+const SignatureInformation = struct {
+    label: []const u8,
+    documentation: ?[]const u8 = null,
+    parameters: []const SignatureParameterInformation,
+    activeParameter: ?u32 = null,
+};
+const SignatureHelp = struct {
+    signatures: []const SignatureInformation,
+    activeSignature: u32 = 0,
+    activeParameter: ?u32 = null,
+};
 
 /// LSP `SymbolKind` values this slice actually uses (the full enum has 26;
 /// only the ones Emerald's declarations map onto are named here).
@@ -155,6 +190,7 @@ fn offsetFromPosition(source: *const Source, position: Position) u32 {
 
 const Document = struct {
     text: std.ArrayList(u8) = .empty,
+    revision: u64 = 0,
 
     fn deinit(self: *Document, gpa: std.mem.Allocator) void {
         self.text.deinit(gpa);
@@ -170,6 +206,7 @@ const Server = struct {
     io: std.Io,
     documents: std.StringHashMapUnmanaged(Document) = .empty,
     builtins: ?emerald.Builtins.Catalog = null,
+    revision: u64 = 0,
 
     fn deinit(self: *Server) void {
         if (self.builtins) |catalog| catalog.deinit();
@@ -194,6 +231,8 @@ const Server = struct {
             gop.value_ptr.text.clearRetainingCapacity();
         }
         try gop.value_ptr.text.appendSlice(self.gpa, text);
+        self.revision += 1;
+        gop.value_ptr.revision = self.revision;
     }
 
     fn forget(self: *Server, uri: []const u8) void {
@@ -333,7 +372,10 @@ fn pathToUri(gpa: std.mem.Allocator, path: []const u8) ![]u8 {
 pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.Writer) !void {
     var server: Server = .{ .gpa = gpa, .io = io, .builtins = try emerald.Builtins.load(gpa) };
     defer server.deinit();
+    try runMessages(&server, gpa, in, out);
+}
 
+fn runMessages(server: *Server, gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer) !void {
     while (true) {
         var parsed = readMessage(gpa, in) catch |err| switch (err) {
             // The body was read in full regardless, so the stream is still
@@ -345,13 +387,95 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.
         } orelse break;
         defer parsed.deinit();
 
-        const should_exit = handle(&server, gpa, parsed.value, out) catch |err| switch (err) {
+        const should_exit = handle(server, gpa, parsed.value, out) catch |err| switch (err) {
             error.OutOfMemory, error.WriteFailed => |e| return e,
             // A malformed or unexpected message is not fatal to the session;
             // whatever request it was simply goes unanswered.
             else => false,
         };
         if (should_exit) break;
+    }
+}
+
+/// Backend-neutral protocol cases use the real framed-message server, not
+/// completion helpers. Code actions forward the server's own didOpen diagnostics.
+pub fn conformanceReply(gpa: std.mem.Allocator, io: std.Io, path: []const u8, marked: []const u8, method: []const u8) ![]u8 {
+    const marker = "/*cursor*/";
+    const at = std.mem.indexOf(u8, marked, marker) orelse return error.MissingCursorMarker;
+    if (std.mem.indexOf(u8, marked[at + marker.len ..], marker) != null) return error.MultipleCursorMarkers;
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(gpa);
+    try text.appendSlice(gpa, marked[0..at]);
+    try text.appendSlice(gpa, marked[at + marker.len ..]);
+    const absolute = try std.fs.path.resolve(gpa, &.{path});
+    defer gpa.free(absolute);
+    const uri = try pathToUri(gpa, absolute);
+    defer gpa.free(uri);
+    var source = try Source.init(gpa, uri, text.items);
+    defer source.deinit(gpa);
+    var requests: std.Io.Writer.Allocating = .init(gpa);
+    defer requests.deinit();
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 0, .method = "initialize", .params = .{} });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .method = "textDocument/didOpen", .params = .{
+        .textDocument = .{ .uri = uri, .languageId = "emerald", .version = 1, .text = text.items },
+    } });
+    var reader: std.Io.Reader = .fixed(requests.written());
+    var responses: std.Io.Writer.Allocating = .init(gpa);
+    defer responses.deinit();
+    var server: Server = .{ .gpa = gpa, .io = io, .builtins = try emerald.Builtins.load(gpa) };
+    defer server.deinit();
+    try runMessages(&server, gpa, &reader, &responses.writer);
+    reader = .fixed(responses.written());
+    var initialized = (try readMessage(gpa, &reader)).?;
+    defer initialized.deinit();
+    var published = (try readMessage(gpa, &reader)).?;
+    defer published.deinit();
+    requests.clearRetainingCapacity();
+    const position = lspPosition(&source, @intCast(at));
+    if (std.mem.eql(u8, method, "textDocument/codeAction")) {
+        try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 1, .method = method, .params = .{
+            .textDocument = .{ .uri = uri },
+            .range = Range{ .start = position, .end = position },
+            .context = .{ .diagnostics = published.value.object.get("params").?.object.get("diagnostics").? },
+        } });
+    } else {
+        try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 1, .method = method, .params = .{
+            .textDocument = .{ .uri = uri },
+            .position = position,
+        } });
+    }
+    responses.clearRetainingCapacity();
+    reader = .fixed(requests.written());
+    try runMessages(&server, gpa, &reader, &responses.writer);
+    reader = .fixed(responses.written());
+    while (try readMessage(gpa, &reader)) |value| {
+        var parsed = value;
+        defer parsed.deinit();
+        const id = parsed.value.object.get("id") orelse continue;
+        if (id != .integer or id.integer != 1) continue;
+        normalizeConformanceUri(&parsed.value, uri);
+        var answer: std.Io.Writer.Allocating = .init(gpa);
+        errdefer answer.deinit();
+        var json: std.json.Stringify = .{ .writer = &answer.writer, .options = .{ .whitespace = .indent_2 } };
+        try json.write(parsed.value);
+        try answer.writer.writeByte('\n');
+        return try answer.toOwnedSlice();
+    }
+    return error.MissingRequestReply;
+}
+
+/// Workspace edits include absolute document URIs. Normalize only this case's
+/// URI so protocol expectations remain portable across machines and platforms.
+fn normalizeConformanceUri(value: *std.json.Value, uri: []const u8) void {
+    switch (value.*) {
+        .string => |text| if (std.mem.eql(u8, text, uri)) {
+            value.* = .{ .string = "file:///document.em" };
+        },
+        .array => |*array| for (array.items) |*item| normalizeConformanceUri(item, uri),
+        .object => |*object| {
+            for (object.values()) |*item| normalizeConformanceUri(item, uri);
+        },
+        else => {},
     }
 }
 
@@ -454,6 +578,8 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
                 .referencesProvider = true,
                 .renameProvider = .{ .prepareProvider = true },
                 .completionProvider = .{ .triggerCharacters = &[_][]const u8{"."} },
+                .signatureHelpProvider = .{ .triggerCharacters = &[_][]const u8{ "(", "," } },
+                .codeActionProvider = .{ .codeActionKinds = &[_][]const u8{"quickfix"} },
             },
         });
         return false;
@@ -552,6 +678,19 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
         if (id) |request_id| try onCompletion(server, gpa, uri, position, request_id, out);
         return false;
     }
+    if (std.mem.eql(u8, method, "textDocument/signatureHelp")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        const position = try positionField(params);
+        if (id) |request_id| try onSignatureHelp(server, gpa, uri, position, request_id, out);
+        return false;
+    }
+    if (std.mem.eql(u8, method, "textDocument/codeAction")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        if (id) |request_id| try onCodeAction(server, gpa, uri, params.?, request_id, out);
+        return false;
+    }
 
     // Anything else, and `$/cancelRequest`: a well-formed "not found" for a
     // request, silently ignored for a notification — never a crash or a
@@ -636,12 +775,231 @@ fn publishDiagnostics(server: *Server, gpa: std.mem.Allocator, uri: []const u8, 
             // LSP's `DiagnosticSeverity`: 1 is Error, 2 is Warning.
             .severity = if (diagnostic.severity == .warning) 2 else 1,
             .message = diagnostic.message,
+            .data = if (diagnostic.replacement) |replacement| .{
+                .replacement = .{ .range = lspRange(source, replacement.span), .newText = replacement.text },
+                .oldText = source.text[replacement.span.start..replacement.span.end],
+                .revision = document.revision,
+            } else null,
         });
     }
     try notify(gpa, out, "textDocument/publishDiagnostics", .{
         .uri = uri,
         .diagnostics = diagnostics.items,
     });
+}
+
+// Quick fixes.
+
+const DocumentEdit = struct {
+    textDocument: struct { uri: []const u8, version: ?i64 = null },
+    edits: []const TextEdit,
+};
+const CodeAction = struct {
+    title: []const u8,
+    kind: []const u8 = "quickfix",
+    diagnostics: []const std.json.Value,
+    isPreferred: bool = true,
+    edit: struct { documentChanges: []const DocumentEdit },
+};
+
+fn rangeField(container: std.json.Value, name: []const u8) !Range {
+    const range = try objectField(container, name);
+    return .{
+        .start = try positionFieldNamed(range, "start"),
+        .end = try positionFieldNamed(range, "end"),
+    };
+}
+
+fn positionFieldNamed(container: std.json.Value, name: []const u8) !Position {
+    const position = try objectField(container, name);
+    return .{
+        .line = std.math.cast(u32, try intField(position, "line")) orelse return error.InvalidParams,
+        .character = std.math.cast(u32, try intField(position, "character")) orelse return error.InvalidParams,
+    };
+}
+
+fn positionsEqual(a: Position, b: Position) bool {
+    return a.line == b.line and a.character == b.character;
+}
+
+/// A diagnostic may have been published before the latest keystroke. Require
+/// an exact UTF-16 range and unchanged original text before returning its edit.
+fn exactRange(source: *const Source, range: Range) ?Source.Span {
+    if (range.start.line >= source.line_starts.len or range.end.line >= source.line_starts.len) return null;
+    const start = offsetFromPosition(source, range.start);
+    const end = offsetFromPosition(source, range.end);
+    if (start > end or !positionsEqual(range.start, lspPosition(source, start)) or
+        !positionsEqual(range.end, lspPosition(source, end))) return null;
+    return .{ .start = start, .end = end };
+}
+
+fn onCodeAction(server: *Server, gpa: std.mem.Allocator, uri: []const u8, params: std.json.Value, id: std.json.Value, out: *std.Io.Writer) !void {
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, @as([]const CodeAction, &.{}));
+        return;
+    };
+    const context = try objectField(params, "context");
+    if (context.object.get("only")) |only| {
+        if (only != .array) return error.InvalidParams;
+        var includes_quickfix = false;
+        for (only.array.items) |kind| {
+            if (kind == .string and (kind.string.len == 0 or std.mem.eql(u8, kind.string, "quickfix"))) includes_quickfix = true;
+        }
+        if (!includes_quickfix) {
+            try respond(gpa, out, id, @as([]const CodeAction, &.{}));
+            return;
+        }
+    }
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const source = try Source.init(arena, uri, document.text.items);
+    const requested = exactRange(&source, try rangeField(params, "range")) orelse {
+        try respond(gpa, out, id, @as([]const CodeAction, &.{}));
+        return;
+    };
+    var actions: std.ArrayList(CodeAction) = .empty;
+    for ((try arrayField(context, "diagnostics")).items) |diagnostic| {
+        const data = objectField(diagnostic, "data") catch continue;
+        const revision = std.math.cast(u64, intField(data, "revision") catch continue) orelse continue;
+        if (revision != document.revision) continue;
+        const replacement = objectField(data, "replacement") catch continue;
+        const range = rangeField(replacement, "range") catch continue;
+        const span = exactRange(&source, range) orelse continue;
+        const old_text = stringField(data, "oldText") catch continue;
+        const new_text = stringField(replacement, "newText") catch continue;
+        if (span.start == span.end or !std.mem.eql(u8, source.text[span.start..span.end], old_text)) continue;
+        const overlaps = if (requested.start == requested.end)
+            requested.start >= span.start and requested.start <= span.end
+        else
+            requested.start < span.end and span.start < requested.end;
+        if (!overlaps) continue;
+        const edits = try arena.dupe(TextEdit, &.{.{ .range = range, .newText = new_text }});
+        try actions.append(arena, .{
+            .title = try std.fmt.allocPrint(arena, "Replace with `{s}`", .{new_text}),
+            .diagnostics = try arena.dupe(std.json.Value, &.{diagnostic}),
+            .edit = .{ .documentChanges = try arena.dupe(DocumentEdit, &.{.{
+                .textDocument = .{ .uri = uri },
+                .edits = edits,
+            }}) },
+        });
+    }
+    try respond(gpa, out, id, actions.items);
+}
+
+test "compiler quick fixes produce programs that check, including UTF-16 and name edits" {
+    const gpa = testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const directory = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(directory);
+    const path = try std.fs.path.join(gpa, &.{ directory, "quickfix-test.em" });
+    defer gpa.free(path);
+    const examples = [_][]const u8{
+        "var xs = [1, 2]\nxs./*cursor*/push(3)\n",
+        "print(\"hello\"./*cursor*/length)\n",
+        "print(\"hello\"./*cursor*/uppercase())\n",
+        "var xs = [1, 2].to_set()\nxs./*cursor*/insert(3)\n",
+        "const xs = [\"key\": 1]\nprint(xs./*cursor*/has_key?(\"key\"))\n",
+        "const n = 2\nprint(n./*cursor*/is_even())\n",
+        "const n = 2.0\nprint(n./*cursor*/is_finite())\n",
+        "var xs = [1, 2]\nprint(\"😀\", xs./*cursor*/push(3))\n",
+        "class Score {\n    const value: Int\n    func show() {\n        print(/*cursor*/this.value)\n    }\n}\nScore(3).show()\n",
+        "class A {\n    func f() {}\n}\nclass B extends A {\n    @over/*cursor*/ide\n    func f() {}\n}\n",
+    };
+    for (examples) |marked| {
+        const reply = try conformanceReply(gpa, io, path, marked, "textDocument/codeAction");
+        defer gpa.free(reply);
+        const parsed = try std.json.parseFromSlice(std.json.Value, gpa, reply, .{});
+        defer parsed.deinit();
+        const actions = parsed.value.object.get("result").?.array.items;
+        try testing.expectEqual(@as(usize, 1), actions.len);
+        const document_edit = actions[0].object.get("edit").?.object.get("documentChanges").?.array.items[0];
+        const edit = document_edit.object.get("edits").?.array.items[0];
+        const cursor = std.mem.indexOf(u8, marked, "/*cursor*/").?;
+        const text = try std.mem.concat(gpa, u8, &.{ marked[0..cursor], marked[cursor + "/*cursor*/".len ..] });
+        defer gpa.free(text);
+        var source = try Source.init(gpa, "quickfix-test.em", text);
+        defer source.deinit(gpa);
+        const span = exactRange(&source, try rangeField(edit, "range")).?;
+        const fixed = try std.mem.concat(gpa, u8, &.{ text[0..span.start], try stringField(edit, "newText"), text[span.end..] });
+        defer gpa.free(fixed);
+        var fixed_source = try Source.init(gpa, "quickfix-test.em", fixed);
+        defer fixed_source.deinit(gpa);
+        var report = try emerald.check(gpa, &fixed_source);
+        defer report.deinit();
+        try testing.expect(!emerald.Diagnostic.anyErrors(report.diagnostics));
+    }
+}
+
+fn testCodeAction(server: *Server, uri: []const u8, diagnostics: std.json.Value, range: Range, only: []const []const u8) !std.json.Parsed(std.json.Value) {
+    const gpa = testing.allocator;
+    const encoded = try std.json.Stringify.valueAlloc(gpa, .{
+        .range = range,
+        .context = .{ .diagnostics = diagnostics, .only = only },
+    }, .{});
+    defer gpa.free(encoded);
+    const params = try std.json.parseFromSlice(std.json.Value, gpa, encoded, .{});
+    defer params.deinit();
+    var output: std.Io.Writer.Allocating = .init(gpa);
+    defer output.deinit();
+    try onCodeAction(server, gpa, uri, params.value, .{ .integer = 1 }, &output.writer);
+    var reader: std.Io.Reader = .fixed(output.written());
+    return (try readMessage(gpa, &reader)).?;
+}
+
+test "code actions use structured data and reject stale, unrelated, or malformed edits" {
+    const gpa = testing.allocator;
+    const uri = "untitled:quickfix.em";
+    const text = "var xs = [1]\nxs.push(2)\n";
+    var server: Server = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+    try server.store(uri, text);
+    var output: std.Io.Writer.Allocating = .init(gpa);
+    defer output.deinit();
+    try publishDiagnostics(&server, gpa, uri, &output.writer);
+    var reader: std.Io.Reader = .fixed(output.written());
+    var published = (try readMessage(gpa, &reader)).?;
+    defer published.deinit();
+    const diagnostics = published.value.object.get("params").?.object.get("diagnostics").?;
+    const diagnostic = &diagnostics.array.items[0];
+    diagnostic.object.getPtr("message").?.* = .{ .string = "opaque prose with no suggested name" };
+    const range: Range = .{ .start = .{ .line = 1, .character = 3 }, .end = .{ .line = 1, .character = 3 } };
+    var accepted = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer accepted.deinit();
+    try testing.expectEqualStrings("Replace with `append`", accepted.value.object.get("result").?.array.items[0].object.get("title").?.string);
+
+    var unrelated = try testCodeAction(&server, uri, diagnostics, .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 3 } }, &.{"quickfix"});
+    defer unrelated.deinit();
+    try testing.expectEqual(@as(usize, 0), unrelated.value.object.get("result").?.array.items.len);
+    var filtered = try testCodeAction(&server, uri, diagnostics, range, &.{"refactor"});
+    defer filtered.deinit();
+    try testing.expectEqual(@as(usize, 0), filtered.value.object.get("result").?.array.items.len);
+
+    try server.store(uri, "var xs = [1]\nxs.pull(2)\n");
+    var stale = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer stale.deinit();
+    try testing.expectEqual(@as(usize, 0), stale.value.object.get("result").?.array.items.len);
+    try server.store(uri, text);
+    var unchanged_token = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer unchanged_token.deinit();
+    try testing.expectEqual(@as(usize, 0), unchanged_token.value.object.get("result").?.array.items.len);
+    const data = diagnostic.object.getPtr("data").?;
+    data.object.getPtr("revision").?.* = .{ .integer = @intCast(server.documents.get(uri).?.revision) };
+    data.object.getPtr("oldText").?.* = .{ .string = "pull" };
+    var wrong_text = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer wrong_text.deinit();
+    try testing.expectEqual(@as(usize, 0), wrong_text.value.object.get("result").?.array.items.len);
+    data.object.getPtr("oldText").?.* = .{ .string = "push" };
+    const replacement = data.object.getPtr("replacement").?;
+    const end = replacement.object.getPtr("range").?.object.getPtr("end").?;
+    end.object.getPtr("character").?.* = .{ .integer = 999 };
+    var malformed = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer malformed.deinit();
+    try testing.expectEqual(@as(usize, 0), malformed.value.object.get("result").?.array.items.len);
+    _ = diagnostic.object.swapRemove("data");
+    var without_data = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer without_data.deinit();
+    try testing.expectEqual(@as(usize, 0), without_data.value.object.get("result").?.array.items.len);
 }
 
 // Document symbols.
@@ -788,7 +1146,7 @@ const Hover = struct {
 };
 
 const MarkupContent = struct {
-    kind: []const u8 = "plaintext",
+    kind: []const u8 = "markdown",
     value: []const u8,
 };
 
@@ -810,18 +1168,219 @@ fn onHover(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: P
     const source = &loaded.project.files[loaded.index].source;
     const offset = offsetFromPosition(source, position);
     const found = expressionAt(&analysis, loaded.index, offset) orelse {
+        if (try definitionAt(gpa, &analysis, loaded.index, offset)) |target| {
+            if (try describeTarget(gpa, &analysis, target)) |item| {
+                defer item.deinit(gpa);
+                const link = if (server.builtins) |catalog| try preludeLibraryLink(gpa, &analysis, target, catalog.value) else null;
+                defer if (link) |value| gpa.free(value);
+                const contents = try renderDeclarationHover(gpa, item, link);
+                defer gpa.free(contents);
+                try respond(gpa, out, id, Hover{
+                    .contents = .{ .value = contents },
+                    .range = lspRange(source, target.span),
+                });
+                return;
+            }
+        }
         try respond(gpa, out, id, null);
         return;
     };
 
-    var text: std.Io.Writer.Allocating = .init(gpa);
-    defer text.deinit();
-    try text.writer.print("{f}", .{found.type});
+    const contents = try hoverContents(server, gpa, &analysis, loaded.index, offset, found);
+    defer gpa.free(contents);
 
     try respond(gpa, out, id, Hover{
-        .contents = .{ .value = text.written() },
+        .contents = .{ .value = contents },
         .range = lspRange(source, found.span),
     });
+}
+
+fn hoverContents(
+    server: *Server,
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    file: u32,
+    offset: u32,
+    found: Found,
+) ![]const u8 {
+    if (server.builtins) |catalog| if (hoverNativeMember(analysis, file, offset, found)) |lookup| {
+        const member = emerald.Builtins.find(catalog.value, lookup.owner, lookup.name) orelse
+            emerald.Builtins.find(catalog.value, "*", lookup.name);
+        if (member) |built_in| {
+            const item = try Completion.native(gpa, built_in, lookup.receiver);
+            defer item.deinit(gpa);
+            return try renderNativeHover(gpa, item.detail.?, built_in, lookup.owner);
+        }
+    };
+
+    if (try definitionAt(gpa, analysis, file, offset)) |target| {
+        if (try describeTarget(gpa, analysis, target)) |item| {
+            defer item.deinit(gpa);
+            const link = if (server.builtins) |catalog| try preludeLibraryLink(gpa, analysis, target, catalog.value) else null;
+            defer if (link) |value| gpa.free(value);
+            return try renderDeclarationHover(gpa, item, link);
+        }
+    }
+
+    var text: std.Io.Writer.Allocating = .init(gpa);
+    defer text.deinit();
+    try text.writer.print("`{f}`", .{found.type});
+    return try gpa.dupe(u8, text.written());
+}
+
+const NativeHoverLookup = struct {
+    owner: ?[]const u8,
+    name: []const u8,
+    receiver: ?Type = null,
+};
+
+fn hoverNativeMember(analysis: *const emerald.Analysis, file: u32, offset: u32, found: Found) ?NativeHoverLookup {
+    const expression = found.expression;
+    const callee: *const Ast.Expression = if (expression.data == .call) expression.data.call.callee else expression;
+    if (callee.data == .name) {
+        const name = callee.data.name;
+        // A prelude function call's resolver target also identifies it, while
+        // an unqualified local function must keep its own source description.
+        if (analysis.resolved.facts.expression_targets.get(callee)) |target| {
+            if (target.file < analysis.files.len and std.mem.eql(u8, analysis.files[target.file].namespace, Resolver.prelude_namespace)) {
+                return .{ .owner = null, .name = name };
+            }
+        }
+        return null;
+    }
+    if (callee.data != .member) return null;
+    const member = callee.data.member;
+    if (offset < member.name_span.start or offset > member.name_span.end) return null;
+
+    // A project module or a program-owned type can shadow a built-in namespace.
+    // Use catalog presentation only when the resolver selected the prelude.
+    if (analysis.resolved.facts.qualified.get(callee)) |key| {
+        if (analysis.resolved.facts.declarations.get(key)) |target| {
+            if (target.file >= analysis.files.len or !std.mem.eql(u8, analysis.files[target.file].namespace, Resolver.prelude_namespace)) return null;
+        }
+    }
+
+    if (analysis.checked.expression_types.get(member.base)) |info| {
+        const base = if (info.type.optional) info.type.payload() else info.type;
+        if (std.mem.eql(u8, member.name, "type_name")) return .{ .owner = "*", .name = member.name, .receiver = base };
+        const owner: ?[]const u8 = switch (base.kind) {
+            .string => "String",
+            .list => "List",
+            .dictionary => "Dict",
+            .set => "Set",
+            .int => "Int",
+            .float => "Float",
+            .bool => "Bool",
+            .range => "Range",
+            .bytes => "Bytes",
+            .tuple => "Tuple",
+            .task => "Task",
+            .channel => "Channel",
+            .struct_value => null,
+            else => null,
+        };
+        if (owner) |native_owner| return .{ .owner = native_owner, .name = member.name, .receiver = base };
+    }
+
+    const written_owner = expressionPath(analysis, file, member.base) orelse return null;
+    const owner = if (std.mem.startsWith(u8, written_owner, Resolver.prelude_namespace ++ ".")) written_owner[Resolver.prelude_namespace.len + 1 ..] else written_owner;
+    // The prefix must be a single catalog owner. User namespaces and values
+    // that lack a checked expression type are not native declarations.
+    if (std.mem.indexOfScalar(u8, owner, '.') != null) return null;
+    return .{ .owner = owner, .name = member.name };
+}
+
+fn expressionPath(analysis: *const emerald.Analysis, file: u32, expression: *const Ast.Expression) ?[]const u8 {
+    return switch (expression.data) {
+        .name => |name| name,
+        .member => analysis.files[file].source.text[expression.span.start..expression.span.end],
+        else => null,
+    };
+}
+
+fn renderNativeHover(gpa: std.mem.Allocator, detail: []const u8, member: emerald.Builtins.Member, owner: ?[]const u8) ![]const u8 {
+    var text: std.Io.Writer.Allocating = .init(gpa);
+    defer text.deinit();
+    try text.writer.writeAll("```emerald\n");
+    if (owner) |namespace| if (!std.mem.eql(u8, namespace, "*")) try text.writer.print("{s}.", .{namespace});
+    try text.writer.writeAll(detail);
+    try text.writer.writeAll("\n```\n\n");
+    try text.writer.writeAll(member.signatures[0].summary);
+    if (member.signatures[0].raises) try text.writer.writeAll("\n\nMay raise an error.");
+    try text.writer.print("\n\n[Read more](https://emerald-lang.web.app/docs/{s})", .{member.signatures[0].page});
+    return try gpa.dupe(u8, text.written());
+}
+
+fn renderDeclarationHover(gpa: std.mem.Allocator, item: CompletionItem, link: ?[]const u8) ![]const u8 {
+    var text: std.Io.Writer.Allocating = .init(gpa);
+    defer text.deinit();
+    try text.writer.writeAll("```emerald\n");
+    try text.writer.writeAll(item.detail orelse item.label);
+    try text.writer.writeAll("\n```");
+    if (item.documentation) |documentation| {
+        if (documentation.len != 0) {
+            try text.writer.writeAll("\n\n");
+            try text.writer.writeAll(documentation);
+        }
+    }
+    if (link) |url| try text.writer.print("\n\n[Read more]({s})", .{url});
+    return try gpa.dupe(u8, text.written());
+}
+
+fn preludeLibraryLink(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target, catalog: emerald.Builtins.Data) !?[]const u8 {
+    if (target.file >= analysis.files.len or !std.mem.eql(u8, analysis.files[target.file].source.path, "prelude.em")) return null;
+    const statements = analysis.parsed[target.file].program.statements;
+    for (statements) |statement| switch (statement.data) {
+        .struct_declaration => |declaration| if (try preludeTypeLinkInDeclaration(gpa, declaration, "", target.span.start, catalog)) |url| return url,
+        else => {},
+    };
+    return null;
+}
+
+/// A prelude member's website link; the website's parity check proves each
+/// anchor exists.
+fn memberLink(gpa: std.mem.Allocator, catalog: emerald.Builtins.Data, page: []const u8, type_name: []const u8, name: []const u8) ![]const u8 {
+    const key = try std.fmt.allocPrint(gpa, "{s}.{s}", .{ type_name, name });
+    defer gpa.free(key);
+    return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}#{s}", .{ page, emerald.Builtins.anchorForMember(catalog, key) });
+}
+
+fn preludeTypeLinkInDeclaration(
+    gpa: std.mem.Allocator,
+    declaration: Ast.StructDeclaration,
+    parent: []const u8,
+    target_start: u32,
+    catalog: emerald.Builtins.Data,
+) anyerror!?[]const u8 {
+    const full_name = if (parent.len == 0)
+        try gpa.dupe(u8, declaration.name)
+    else
+        try std.fmt.allocPrint(gpa, "{s}.{s}", .{ parent, declaration.name });
+    defer gpa.free(full_name);
+
+    const page = emerald.Builtins.pageForType(catalog, full_name) orelse "";
+    if (declaration.name_span.start == target_start and page.len != 0) {
+        return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}", .{page});
+    }
+
+    inline for (.{ declaration.methods, declaration.properties, declaration.fields }) |members| {
+        for (members) |member| {
+            if (member.name_span.start != target_start or page.len == 0) continue;
+            return try memberLink(gpa, catalog, page, full_name, member.name);
+        }
+    }
+    for (declaration.type_functions) |member| {
+        if (member.member_span.start != target_start or page.len == 0) continue;
+        return try memberLink(gpa, catalog, page, full_name, member.member);
+    }
+    for (declaration.type_fields) |member| {
+        if (member.name_span.start != target_start or page.len == 0) continue;
+        return try memberLink(gpa, catalog, page, full_name, member.name);
+    }
+    for (declaration.types) |nested| {
+        if (try preludeTypeLinkInDeclaration(gpa, nested.declaration, full_name, target_start, catalog)) |url| return url;
+    }
+    return null;
 }
 
 const Found = struct { span: Source.Span, type: Type, expression: *const Ast.Expression };
@@ -2350,11 +2909,9 @@ fn isValidIdentifier(name: []const u8) bool {
 // The statement is very often still unclosed around the dot (`print(foo.`
 // mid-call is the ordinary case, not the exception), so
 // `appendUnclosedBrackets` also counts `(`, `[`, and `{` from the top of the
-// file to the dot and closes what's still open — a plain character count,
-// blind to string and comment contents, same tradeoff as every other
-// heuristic in this file that reads source text directly rather than
-// through the lexer. Nothing past the completion point is used for
-// anything, so a later imbalance in the *real* file cannot make this worse.
+// patched file and closes what's still open using compiler tokens, not
+// characters inside strings or comments. Existing closing delimiters in
+// the suffix are preserved rather than duplicated.
 //
 // A type-qualified base (`Vector2.` for its type-level members, 10.4) is
 // different: `Resolver.zig` validates it eagerly, so the synthetic unknown
@@ -2366,7 +2923,7 @@ fn isValidIdentifier(name: []const u8) bool {
 // identifier has no broken syntax at all, so its visible module keys are
 // enough to offer useful top-level completions.
 
-const CompletionItem = struct { label: []const u8 };
+const CompletionItem = Completion.Item;
 
 /// A member expression could not spell this — it is not a valid identifier,
 /// so it cannot collide with a real member name — and long enough that a
@@ -2402,14 +2959,20 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     defer patched.deinit(gpa);
     try patched.appendSlice(gpa, text[0 .. dot_offset + 1]);
     try patched.appendSlice(gpa, completion_placeholder);
-    try patched.appendSlice(gpa, "()");
-    try appendUnclosedBrackets(gpa, &patched, text, dot_offset);
-    try patched.appendSlice(gpa, text[cursor_offset..]);
+    var suffix = cursor_offset;
+    while (suffix < text.len and (std.ascii.isAlphanumeric(text[suffix]) or text[suffix] == '_' or text[suffix] == '?' or text[suffix] == '!')) : (suffix += 1) {}
+    var call_start = suffix;
+    while (call_start < text.len and (text[call_start] == ' ' or text[call_start] == '\t')) : (call_start += 1) {}
+    if (call_start == text.len or text[call_start] != '(') try patched.appendSlice(gpa, "()");
+    try patched.appendSlice(gpa, text[suffix..]);
+    // Preserve closers already present after the cursor. Closing the prefix
+    // first duplicates a real `)` or `}` in an otherwise complete document.
+    try appendUnclosedBrackets(gpa, &patched, patched.items, @intCast(patched.items.len));
 
     var loaded = try loadDocument(server, gpa, uri, patched.items);
     defer loaded.deinit(gpa);
 
-    var analysis = try emerald.analyzeProject(gpa, &loaded.project);
+    var analysis = try emerald.analyzeProjectForCompletion(gpa, &loaded.project);
     defer if (analysis) |*found| found.deinit(gpa);
 
     // The base expression's own span still ends exactly at the dot in the
@@ -2419,14 +2982,15 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // gap `definitionAt` works around — so this looks the base up by
     // position rather than by walking to the synthetic call itself).
     var items: std.ArrayList(CompletionItem) = .empty;
-    defer items.deinit(gpa);
+    defer Completion.deinit(gpa, &items);
 
     if (analysis) |*found| {
-        if (findExpressionEndingAt(found, loaded.index, dot_offset)) |base| {
+        const optional_chain = dot_offset > 0 and text[dot_offset - 1] == '?';
+        if (findExpressionEndingAt(found, loaded.index, dot_offset - @as(u32, if (optional_chain) 1 else 0))) |base| {
             if (found.checked.expression_types.get(base)) |base_info| {
-                if (base_info.type.kind == .struct_value and base_info.type.user != null) {
-                    try collectInstanceMembers(gpa, found, base_info.type.user.?.name, &items);
-                }
+                const receiver = if (optional_chain and base_info.type.optional and base_info.type.kind == .struct_value) base_info.type.payload() else base_info.type;
+                const changeable = base_info.changeable and (!optional_chain or (receiver.kind == .struct_value and receiver.user.?.class));
+                try collectValueCompletions(server, gpa, found, receiver, changeable, loaded.index, dot_offset, &items);
             }
         }
     }
@@ -2434,44 +2998,513 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // A type and namespace have no value expression for the checker to type.
     // Resolve their source path directly through the facts instead.
     if (items.items.len == 0) if (pathBeforeDot(text, dot_offset)) |written| {
-        // The value-member patch intentionally contains an unknown member,
-        // which is a resolver error for `Vector2.placeholder()`. Build one
-        // second, resolver-clean view that replaces the entire incomplete
-        // path with an ordinary call. Its facts still include every project
-        // declaration, including the type or namespace we need to inspect.
-        var facts_text: std.ArrayList(u8) = .empty;
-        defer facts_text.deinit(gpa);
-        const path_start = dot_offset - @as(u32, @intCast(written.len));
-        try facts_text.appendSlice(gpa, text[0..path_start]);
-        try facts_text.appendSlice(gpa, "print()");
-        try appendUnclosedBrackets(gpa, &facts_text, text, path_start);
-        try facts_text.appendSlice(gpa, text[cursor_offset..]);
-        var facts_loaded = try loadDocument(server, gpa, uri, facts_text.items);
-        defer facts_loaded.deinit(gpa);
-        var facts_analysis = (try emerald.analyzeProject(gpa, &facts_loaded.project)) orelse {
+        const facts_analysis = if (analysis) |*found| found else {
             try respond(gpa, out, id, empty);
             return;
         };
-        defer facts_analysis.deinit(gpa);
-
-        const key = try completionPathKey(gpa, &facts_analysis, facts_loaded.index, written);
+        const key = try completionPathKey(gpa, facts_analysis, loaded.index, written);
         defer gpa.free(key);
         if (facts_analysis.resolved.facts.declarations.get(key)) |target| {
-            if (findStructDeclarationAt(&facts_analysis, target)) |s| {
+            if (findStructDeclarationAt(facts_analysis, target)) |s| {
                 try collectTypeMembers(gpa, s, &items);
+                if (insideCompletionType(facts_analysis, target, loaded.index, dot_offset)) {
+                    for (s.type_functions) |function| if (Resolver.isPrivate(function.member)) try appendDescribed(gpa, &items, .{ .label = function.member });
+                    for (s.type_fields) |field| if (Resolver.isPrivate(field.name)) try appendDescribed(gpa, &items, .{ .label = field.name });
+                    for (s.types) |nested| if (Resolver.isPrivate(nested.declaration.name)) try appendDescribed(gpa, &items, .{ .label = nested.declaration.name });
+                }
+                try enrichTypeMembers(server, gpa, facts_analysis, target, s, &items);
             } else {
-                try collectNamespaceMembers(gpa, &facts_analysis, key, &items);
+                try collectNamespaceMembers(gpa, facts_analysis, key, &items);
             }
         } else {
-            try collectNamespaceMembers(gpa, &facts_analysis, key, &items);
+            try collectNamespaceMembers(gpa, facts_analysis, key, &items);
+            try collectNativeTypeCompletions(server, gpa, facts_analysis, key, &items);
         }
         // `items` borrows names from this throwaway analysis, so serialize
         // while its arena still owns those names.
+        try enrichNamespaceItems(gpa, facts_analysis, key, &items);
+        std.mem.sort(CompletionItem, items.items, {}, CompletionItem.lessThan);
         try respond(gpa, out, id, items.items);
         return;
     };
 
+    std.mem.sort(CompletionItem, items.items, {}, CompletionItem.lessThan);
     try respond(gpa, out, id, items.items);
+}
+
+/// Signature help uses the same single checked project as hover/completion.
+/// Closing delimiters only in this throwaway source lets the ordinary parser
+/// retain the call AST while a student is between `(` and `)`; it does not
+/// change the parser's error-tolerant behavior or the user's document.
+fn onSignatureHelp(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, id: std.json.Value, out: *std.Io.Writer) !void {
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const original = document.text.items;
+    var source = try Source.init(arena, uri, original);
+    defer source.deinit(arena);
+    const cursor = offsetFromPosition(&source, position);
+
+    var patched: std.ArrayList(u8) = .empty;
+    defer patched.deinit(arena);
+    try appendSignatureSource(arena, &patched, original, cursor);
+    try appendUnclosedBrackets(arena, &patched, original, @intCast(original.len));
+    var loaded = try loadDocument(server, arena, uri, patched.items);
+    defer loaded.deinit(arena);
+    var analysis = (try emerald.analyzeProject(arena, &loaded.project)) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    defer analysis.deinit(arena);
+
+    var selected: ?*const Ast.Expression = null;
+    var iterator = analysis.checked.expression_types.iterator();
+    while (iterator.next()) |entry| {
+        if (entry.value_ptr.file != loaded.index) continue;
+        const expression = entry.key_ptr.*;
+        if (expression.data != .call or !spanContains(expression.span, cursor)) continue;
+        if (selected == null or expression.span.len() < selected.?.span.len()) selected = expression;
+    }
+    const expression = selected orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    const call = expression.data.call;
+    const key = try callSignatureKey(gpa, &analysis, loaded.index, call.callee);
+
+    const source_for_file = &analysis.files[loaded.index].source;
+    const open = openParenAfter(source_for_file.text, call.callee.span.end, expression.span.end) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    const active = activeArgument(source_for_file.text, open + 1, cursor);
+
+    var signatures: std.ArrayList(SignatureInformation) = .empty;
+    defer signatures.deinit(arena);
+
+    if (server.builtins) |catalog| {
+        const member = if (key) |found| catalogMemberForKey(catalog.value, found) else nativeCatalogMember(&analysis, loaded.index, call.callee, catalog.value);
+        if (member) |found| {
+            for (found.signatures) |signature| {
+                const info = try catalogSignature(arena, found, signature, catalogActiveParameter(signature, active));
+                try signatures.append(arena, info);
+            }
+        }
+    }
+
+    if (signatures.items.len == 0) {
+        if (key) |resolved_key| {
+            const target = analysis.resolved.facts.declarations.get(resolved_key);
+            const declaration = if (target) |found| findFunctionDeclaration(analysis.parsed, found) else null;
+            const constructor = if (target) |found| findConstructor(analysis.parsed, found) else null;
+            const type_declaration = if (target) |found| findStructDeclarationAt(&analysis, found) else null;
+            const definition_source = if (target) |found|
+                if (found.file < analysis.files.len) &analysis.files[found.file].source else source_for_file
+            else
+                source_for_file;
+            // Nested types use `::` in their resolver key too, so the AST
+            // declaration—not a separator check—distinguishes them from methods.
+            const is_constructor = type_declaration != null;
+            const is_type_function = analysis.resolved.facts.type_members.contains(resolved_key);
+            if (is_constructor and type_declaration.?.constructor == null) {
+                const name = signatureCallName(source_for_file, call.callee);
+                const generated = try generatedConstructorSignature(arena, definition_source, type_declaration.?, name, active.index);
+                try signatures.append(arena, generated);
+            } else if (analysis.checked.signatures.get(resolved_key)) |signature| {
+                const label = if (is_constructor or is_type_function)
+                    signatureCallName(source_for_file, call.callee)
+                else if (declaration) |function|
+                    function.name
+                else
+                    resolved_key[(std.mem.lastIndexOfScalar(u8, resolved_key, '.') orelse 0) + 1 ..];
+                const params = try sourceSignature(arena, definition_source, label, signature, declaration, constructor, type_declaration, sourceActiveParameter(signature, active), is_constructor);
+                try signatures.append(arena, params);
+            }
+        }
+    }
+
+    if (signatures.items.len == 0) {
+        try respond(gpa, out, id, null);
+        return;
+    }
+    const active_signature = chooseActiveSignature(signatures.items, active);
+    try respond(gpa, out, id, SignatureHelp{
+        .signatures = signatures.items,
+        .activeSignature = active_signature,
+        .activeParameter = signatures.items[active_signature].activeParameter,
+    });
+}
+
+fn signatureCallName(source: *const Source, callee: *const Ast.Expression) []const u8 {
+    const written = source.text[callee.span.start..callee.span.end];
+    const visible = if (std.mem.startsWith(u8, written, Resolver.prelude_namespace ++ "."))
+        written[Resolver.prelude_namespace.len + 1 ..]
+    else
+        written;
+    return visible;
+}
+
+fn chooseActiveSignature(signatures: []const SignatureInformation, active: ActiveArgument) u32 {
+    if (active.name) |name| {
+        for (signatures, 0..) |signature, signature_index| {
+            for (signature.parameters) |parameter| {
+                if (std.mem.startsWith(u8, parameter.label, name) and parameter.label.len > name.len and parameter.label[name.len] == ':') return @intCast(signature_index);
+            }
+        }
+    }
+    for (signatures, 0..) |signature, index| if (active.index < signature.parameters.len) return @intCast(index);
+    return @intCast(signatures.len - 1);
+}
+
+/// Keep the request to one analysis, even while the student has typed only a
+/// prefix of an argument name. Replacing that one unresolved identifier with
+/// a same-width literal preserves every source offset and leaves named labels
+/// and nested calls intact.
+fn appendSignatureSource(gpa: std.mem.Allocator, out: *std.ArrayList(u8), text: []const u8, cursor: u32) !void {
+    var source = try Source.init(gpa, "<signature-help>", text);
+    defer source.deinit(gpa);
+    var tokenized = try Lexer.tokenize(gpa, &source);
+    defer tokenized.deinit(gpa);
+    var replacement: ?Source.Span = null;
+    for (tokenized.tokens, 0..) |token, index| {
+        if (token.kind != .identifier or cursor < token.span.start or cursor > token.span.end) continue;
+        var previous = index;
+        while (previous > 0) {
+            previous -= 1;
+            if (tokenized.tokens[previous].kind == .newline) continue;
+            if (tokenized.tokens[previous].kind == .dot or tokenized.tokens[previous].kind == .question_dot) break;
+            previous = index;
+            break;
+        }
+        if (previous < index and (tokenized.tokens[previous].kind == .dot or tokenized.tokens[previous].kind == .question_dot)) break;
+        var next = index + 1;
+        while (next < tokenized.tokens.len and tokenized.tokens[next].kind == .newline) : (next += 1) {}
+        // An identifier followed by `:` is a named parameter; followed by `(`,
+        // it is a nested call. Both must stay as written.
+        if (next < tokenized.tokens.len and (tokenized.tokens[next].kind == .colon or tokenized.tokens[next].kind == .left_paren)) break;
+        replacement = token.span;
+        break;
+    }
+    if (replacement) |span| {
+        const start: usize = @intCast(span.start);
+        const end: usize = @intCast(span.end);
+        try out.appendSlice(gpa, text[0..start]);
+        try out.append(gpa, '0');
+        if (end > start + 1) try out.appendNTimes(gpa, ' ', end - start - 1);
+        try out.appendSlice(gpa, text[end..]);
+    } else if (emptyArgumentAfterComma(text, tokenized.tokens, cursor)) {
+        const offset: usize = @intCast(cursor);
+        try out.appendSlice(gpa, text[0..offset]);
+        try out.append(gpa, '0');
+        try out.appendSlice(gpa, text[offset..]);
+    } else {
+        try out.appendSlice(gpa, text);
+    }
+}
+
+fn emptyArgumentAfterComma(text: []const u8, tokens: []const Token, cursor: u32) bool {
+    var previous: ?Token = null;
+    var next: ?Token = null;
+    for (tokens) |token| {
+        if (token.kind == .eof) {
+            if (token.span.start >= cursor and next == null) next = token;
+            continue;
+        }
+        if (token.span.end <= cursor and token.kind != .newline) {
+            previous = token;
+        } else if (token.span.start >= cursor and token.kind != .newline) {
+            next = token;
+            break;
+        }
+    }
+    const before = previous orelse return false;
+    const after = next orelse return false;
+    if (before.kind != .comma or (after.kind != .right_paren and after.kind != .eof)) return false;
+    const before_end: usize = @intCast(before.span.end);
+    const after_start: usize = @intCast(after.span.start);
+    const position: usize = @intCast(cursor);
+    if (before_end > position or after_start < position) return false;
+    for (text[before_end..position]) |char| if (!std.ascii.isWhitespace(char)) return false;
+    for (text[position..after_start]) |char| if (!std.ascii.isWhitespace(char)) return false;
+    return true;
+}
+
+const ActiveArgument = struct { index: u32, name: ?[]const u8 };
+
+/// The source-level call key is the checker's decision, never a fresh guess
+/// from the spelling. That keeps shadowing, inheritance, and namespace aliases
+/// consistent with normal type checking.
+fn callSignatureKey(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, callee: *const Ast.Expression) !?[]const u8 {
+    if (analysis.checked.method_calls.get(callee)) |key| return key;
+    if (analysis.resolved.facts.qualified.get(callee)) |key| return key;
+    if (callee.data == .name) {
+        if (analysis.resolved.facts.expression_targets.get(callee)) |target| return keyForTarget(analysis, target);
+        if (analysis.resolved.facts.keyFor(file, callee.data.name)) |key| return key;
+    }
+    if (callee.data == .member) if (try memberDefinition(gpa, analysis, file, callee)) |target| return keyForTarget(analysis, target);
+    return null;
+}
+
+fn keyForTarget(analysis: *const emerald.Analysis, target: Resolver.Target) ?[]const u8 {
+    var declarations = analysis.resolved.facts.declarations.iterator();
+    while (declarations.next()) |entry| if (targetEql(entry.value_ptr.*, target)) return entry.key_ptr.*;
+    return null;
+}
+
+fn nativeCatalogMember(analysis: *const emerald.Analysis, file: u32, callee: *const Ast.Expression, data: emerald.Builtins.Data) ?emerald.Builtins.Member {
+    if (callee.data != .member) return null;
+    const member = callee.data.member;
+    if (analysis.checked.expression_types.get(member.base)) |info| {
+        const base = if (info.type.optional) info.type.payload() else info.type;
+        const owner: ?[]const u8 = switch (base.kind) {
+            .string => "String",
+            .list => "List",
+            .dictionary => "Dict",
+            .set => "Set",
+            .int => "Int",
+            .float => "Float",
+            .bool => "Bool",
+            .range => "Range",
+            .bytes => "Bytes",
+            .tuple => "Tuple",
+            .task => "Task",
+            .channel => "Channel",
+            .struct_value => if (std.mem.startsWith(u8, base.user.?.name, Resolver.prelude_namespace ++ ".")) base.user.?.name[Resolver.prelude_namespace.len + 1 ..] else null,
+            else => null,
+        };
+        if (owner) |name| return emerald.Builtins.find(data, name, member.name);
+    }
+    const written = expressionPath(analysis, file, member.base) orelse return null;
+    const owner = if (std.mem.startsWith(u8, written, Resolver.prelude_namespace ++ ".")) written[Resolver.prelude_namespace.len + 1 ..] else written;
+    if (std.mem.indexOfScalar(u8, owner, '.') != null) return null;
+    return emerald.Builtins.find(data, owner, member.name);
+}
+
+fn catalogActiveParameter(signature: emerald.Builtins.Signature, active: ActiveArgument) u32 {
+    if (active.name) |name| for (signature.parameters, 0..) |parameter, index| {
+        if (std.mem.eql(u8, name, parameter.name)) return @intCast(index);
+    };
+    return active.index;
+}
+
+fn sourceActiveParameter(signature: Type.Signature, active: ActiveArgument) u32 {
+    if (active.name) |name| for (signature.parameter_names, 0..) |parameter, index| {
+        if (std.mem.eql(u8, name, parameter)) return @intCast(index);
+    };
+    return active.index;
+}
+
+fn catalogMemberForKey(data: emerald.Builtins.Data, key: []const u8) ?emerald.Builtins.Member {
+    if (std.mem.lastIndexOf(u8, key, Resolver.method_separator)) |separator| {
+        const prefix = key[0..separator];
+        const owner = prefix[(std.mem.lastIndexOfScalar(u8, prefix, '.') orelse return null) + 1 ..];
+        return emerald.Builtins.find(data, owner, key[separator + Resolver.method_separator.len ..]);
+    }
+    if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".")) {
+        const visible = key[Resolver.prelude_namespace.len + 1 ..];
+        if (std.mem.lastIndexOfScalar(u8, visible, '.')) |separator| {
+            if (emerald.Builtins.find(data, visible[0..separator], visible[separator + 1 ..])) |member| return member;
+        }
+        return emerald.Builtins.find(data, null, visible);
+    }
+    if (std.mem.lastIndexOfScalar(u8, key, '.')) |separator|
+        if (emerald.Builtins.find(data, key[0..separator], key[separator + 1 ..])) |member| return member;
+    return null;
+}
+
+fn catalogSignature(gpa: std.mem.Allocator, member: emerald.Builtins.Member, signature: emerald.Builtins.Signature, active: u32) !SignatureInformation {
+    var label: std.Io.Writer.Allocating = .init(gpa);
+    defer label.deinit();
+    if (member.kind == .type_method) if (member.owner) |owner| try label.writer.print("{s}.", .{owner});
+    try label.writer.writeAll(member.name);
+    try label.writer.writeByte('(');
+    const parameters = try gpa.alloc(SignatureParameterInformation, signature.parameters.len);
+    errdefer gpa.free(parameters);
+    for (signature.parameters, 0..) |parameter, index| {
+        if (index != 0) try label.writer.writeAll(", ");
+        var parameter_label: std.Io.Writer.Allocating = .init(gpa);
+        defer parameter_label.deinit();
+        try parameter_label.writer.print("{s}: {s}", .{ parameter.name, parameter.type });
+        if (parameter.default) |default| try parameter_label.writer.print(" = {s}", .{default}) else if (parameter.optional) try parameter_label.writer.writeAll(" (optional)");
+        if (parameter.variadic) try parameter_label.writer.writeAll("...");
+        parameters[index] = .{ .label = try gpa.dupe(u8, parameter_label.written()) };
+        try label.writer.writeAll(parameter_label.written());
+    }
+    try label.writer.writeByte(')');
+    if (signature.block) |block| try label.writer.print(" {{ {s} }}", .{block});
+    try label.writer.print(": {s}", .{signature.result});
+    const documentation = try gpa.dupe(u8, signature.summary);
+    return .{ .label = try gpa.dupe(u8, label.written()), .documentation = documentation, .parameters = parameters, .activeParameter = if (parameters.len == 0) null else @min(active, @as(u32, @intCast(parameters.len - 1))) };
+}
+
+fn sourceSignature(
+    gpa: std.mem.Allocator,
+    source: *const Source,
+    name: []const u8,
+    signature: Type.Signature,
+    declaration: ?Ast.FunctionDeclaration,
+    constructor: ?Ast.StructDeclaration.Constructor,
+    type_declaration: ?Ast.StructDeclaration,
+    active: u32,
+    is_constructor: bool,
+) !SignatureInformation {
+    const written_params: []const Ast.Parameter = if (constructor) |value| value.parameters else if (declaration) |value| value.parameters else if (type_declaration) |value| if (value.constructor) |custom| custom.parameters else &.{} else &.{};
+    const generated_fields = if (is_constructor and constructor == null and type_declaration != null) type_declaration.?.fields else &[_]Ast.StructDeclaration.Field{};
+    const count = signature.parameters.len;
+    const parameters = try gpa.alloc(SignatureParameterInformation, count);
+    errdefer gpa.free(parameters);
+    var label: std.Io.Writer.Allocating = .init(gpa);
+    defer label.deinit();
+    try label.writer.print("{s}(", .{name});
+    for (0..count) |index| {
+        if (index != 0) try label.writer.writeAll(", ");
+        const parameter_name = if (index < signature.parameter_names.len) signature.parameter_names[index] else "value";
+        const type_text = if (index < written_params.len)
+            source.text[written_params[index].annotation.span.start..writtenTypeEnd(written_params[index].annotation)]
+        else if (index < generated_fields.len)
+            source.text[generated_fields[index].annotation.span.start..writtenTypeEnd(generated_fields[index].annotation)]
+        else
+            try renderedType(gpa, signature.parameters[index]);
+        var parameter_label: std.Io.Writer.Allocating = .init(gpa);
+        defer parameter_label.deinit();
+        try parameter_label.writer.print("{s}: {s}", .{ parameter_name, type_text });
+        const default = if (index < written_params.len) written_params[index].default else if (index < generated_fields.len) generated_fields[index].default else null;
+        if (default) |value| try parameter_label.writer.print(" = {s}", .{source.text[value.span.start..value.span.end]});
+        parameters[index] = .{ .label = try gpa.dupe(u8, parameter_label.written()) };
+        try label.writer.writeAll(parameter_label.written());
+    }
+    try label.writer.writeByte(')');
+    if (!is_constructor) {
+        const result = if (declaration) |function| if (function.return_annotation) |annotation|
+            source.text[annotation.span.start..writtenTypeEnd(annotation)]
+        else
+            try renderedType(gpa, signature.return_type) else try renderedType(gpa, signature.return_type);
+        try label.writer.print(": {s}", .{result});
+    } else {
+        try label.writer.print(": {s}", .{name});
+    }
+    return .{ .label = try gpa.dupe(u8, label.written()), .parameters = parameters, .activeParameter = if (count == 0) null else @min(active, @as(u32, @intCast(count - 1))) };
+}
+
+fn generatedConstructorSignature(gpa: std.mem.Allocator, source: *const Source, declaration: Ast.StructDeclaration, name: []const u8, active: u32) !SignatureInformation {
+    const parameters = try gpa.alloc(SignatureParameterInformation, declaration.fields.len);
+    errdefer gpa.free(parameters);
+    var label: std.Io.Writer.Allocating = .init(gpa);
+    defer label.deinit();
+    try label.writer.print("{s}(", .{name});
+    for (declaration.fields, 0..) |field, index| {
+        if (index != 0) try label.writer.writeAll(", ");
+        var param: std.Io.Writer.Allocating = .init(gpa);
+        defer param.deinit();
+        const type_text = source.text[field.annotation.span.start..writtenTypeEnd(field.annotation)];
+        try param.writer.print("{s}: {s}", .{ field.name, type_text });
+        if (field.default) |value| try param.writer.print(" = {s}", .{source.text[value.span.start..value.span.end]});
+        parameters[index] = .{ .label = try gpa.dupe(u8, param.written()) };
+        try label.writer.writeAll(param.written());
+    }
+    try label.writer.print("): {s}", .{name});
+    return .{ .label = try gpa.dupe(u8, label.written()), .parameters = parameters, .activeParameter = if (parameters.len == 0) null else @min(active, @as(u32, @intCast(parameters.len - 1))) };
+}
+
+fn renderedType(gpa: std.mem.Allocator, value: Type) ![]const u8 {
+    var writer: std.Io.Writer.Allocating = .init(gpa);
+    defer writer.deinit();
+    try writer.writer.print("{f}", .{value});
+    return try gpa.dupe(u8, writer.written());
+}
+
+fn writtenTypeEnd(expression: Ast.TypeExpression) u32 {
+    return if (expression.question_span) |question| question.end else expression.span.end;
+}
+
+fn findFunctionDeclaration(parsed: []const Parser.Parsed, target: Resolver.Target) ?Ast.FunctionDeclaration {
+    if (target.file >= parsed.len) return null;
+    for (parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .function_declaration => |function| if (function.name_span.start == target.span.start) return function,
+        .struct_declaration => |declaration| if (findFunctionWithin(declaration, target.span.start)) |function| return function,
+        else => {},
+    };
+    return null;
+}
+
+fn findFunctionWithin(declaration: Ast.StructDeclaration, start: u32) ?Ast.FunctionDeclaration {
+    for (declaration.methods) |function| if (function.name_span.start == start) return function;
+    for (declaration.type_functions) |function| if (function.member_span.start == start or function.declaration.name_span.start == start) return function.declaration;
+    for (declaration.properties) |property| {
+        if (property.getter.name_span.start == start) return property.getter;
+        if (property.setter) |setter| if (setter.name_span.start == start) return setter;
+    }
+    for (declaration.types) |nested| if (findFunctionWithin(nested.declaration, start)) |function| return function;
+    return null;
+}
+
+fn findConstructor(parsed: []const Parser.Parsed, target: Resolver.Target) ?Ast.StructDeclaration.Constructor {
+    if (target.file >= parsed.len) return null;
+    for (parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .struct_declaration => |declaration| if (findStructWithinSpan(declaration, target.span.start)) |found| return found.constructor,
+        else => {},
+    };
+    return null;
+}
+
+fn findStructWithinSpan(declaration: Ast.StructDeclaration, start: u32) ?Ast.StructDeclaration {
+    if (declaration.name_span.start == start) return declaration;
+    for (declaration.types) |nested| if (findStructWithinSpan(nested.declaration, start)) |found| return found;
+    return null;
+}
+
+fn openParenAfter(text: []const u8, start: u32, end: u32) ?u32 {
+    var index: usize = @intCast(start);
+    const limit: usize = @min(end, @as(usize, @intCast(text.len)));
+    while (index < limit and std.ascii.isWhitespace(text[index])) : (index += 1) {}
+    if (index < limit and text[index] == '(') return @intCast(index);
+    return null;
+}
+
+/// Count commas only at this call's top level and recognize a named active
+/// argument (`fill:`) without treating commas in nested calls or strings as
+/// parameter separators.
+fn activeArgument(text: []const u8, start: u32, cursor: u32) ActiveArgument {
+    const end: usize = @min(cursor, @as(usize, @intCast(text.len)));
+    var index: usize = @intCast(start);
+    var commas: u32 = 0;
+    var nesting: u32 = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    var segment: usize = index;
+    while (index < end) : (index += 1) {
+        const char = text[index];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (char == '\\' and quote == '"') {
+                escaped = true;
+            } else if (char == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (char == '"' or char == '\'') {
+            quote = char;
+        } else if (char == '(' or char == '[' or char == '{') {
+            nesting += 1;
+        } else if ((char == ')' or char == ']' or char == '}') and nesting > 0) {
+            nesting -= 1;
+        } else if (char == ',' and nesting == 0) {
+            commas += 1;
+            segment = index + 1;
+        }
+    }
+    const current = std.mem.trim(u8, text[segment..end], " \t\r\n");
+    if (std.mem.indexOfScalar(u8, current, ':')) |colon| {
+        const name = std.mem.trim(u8, current[0..colon], " \t");
+        if (name.len != 0 and std.ascii.isAlphabetic(name[0])) return .{ .index = commas, .name = name };
+    }
+    return .{ .index = commas, .name = null };
 }
 
 /// Completes names visible at a bare identifier. Resolver facts provide the
@@ -2502,7 +3535,7 @@ fn onBareCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, po
     defer analysis.deinit(gpa);
 
     var items: std.ArrayList(CompletionItem) = .empty;
-    defer items.deinit(gpa);
+    defer Completion.deinit(gpa, &items);
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(gpa);
     // `print()` replaces the typed prefix in the throwaway source. Its final
@@ -2524,6 +3557,43 @@ fn onBareCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, po
     }
     for (Resolver.prelude) |name| try addCompletionOnce(gpa, &seen, &items, name);
     try collectNamespaceMembersSeen(gpa, &analysis, "", &seen, &items);
+    for (items.items) |*item| {
+        if (item.lambda_parameter) |parameter| {
+            item.* = try Completion.field(gpa, &analysis.files[loaded.index].source, item.label, parameter.name_span, parameter.annotation, null, null, 6);
+            continue;
+        }
+        if (item.parameter) |parameter| {
+            item.* = try Completion.field(gpa, &analysis.files[loaded.index].source, item.label, parameter.name_span, parameter.annotation, null, null, 6);
+            continue;
+        }
+        if (item.declaration) |statement| {
+            const local_source = &analysis.files[loaded.index].source;
+            switch (statement.data) {
+                .function_declaration => |function| item.* = try describeFunction(gpa, &analysis, loaded.index, function, item.label, 3),
+                .declaration => |declaration| {
+                    const inferred = if (declaration.initializer) |initializer| if (analysis.checked.expression_types.get(initializer)) |info| info.type else null else null;
+                    item.* = try Completion.field(gpa, local_source, item.label, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6);
+                },
+                else => {},
+            }
+            continue;
+        }
+        const key = analysis.resolved.facts.keyFor(loaded.index, item.label);
+        if (key) |found| if (analysis.resolved.facts.declarations.get(found)) |target| {
+            if (try describeModuleItem(gpa, &analysis, target, item.label)) |described| {
+                item.* = described;
+                continue;
+            }
+        };
+        if (server.builtins) |catalog| if (emerald.Builtins.find(catalog.value, null, item.label)) |member| {
+            item.* = try Completion.native(gpa, member, null);
+        };
+    }
+    try addCatalogOwners(server, gpa, &items);
+    for (items.items) |*item| if (item.detail == null) {
+        item.detail = try gpa.dupe(u8, item.label);
+    };
+    std.mem.sort(CompletionItem, items.items, {}, CompletionItem.lessThan);
     try respond(gpa, out, id, items.items);
 }
 
@@ -2636,9 +3706,19 @@ fn collectLocalCandidatesInStatements(
     for (statements) |statement| {
         if (statement.span.start >= cursor) break;
         switch (statement.data) {
-            .declaration => |declaration| try addCompletionOnce(gpa, seen, out, declaration.name),
+            .declaration => |declaration| {
+                if (!seen.contains(declaration.name)) {
+                    try addCompletionOnce(gpa, seen, out, declaration.name);
+                    out.items[out.items.len - 1].declaration = statement;
+                }
+            },
             .destructuring => |destructuring| for (destructuring.pattern.names) |name| try addCompletionOnce(gpa, seen, out, name.text),
-            .function_declaration => |function| try addCompletionOnce(gpa, seen, out, function.name),
+            .function_declaration => |function| {
+                if (!seen.contains(function.name)) {
+                    try addCompletionOnce(gpa, seen, out, function.name);
+                    out.items[out.items.len - 1].declaration = statement;
+                }
+            },
             else => {},
         }
     }
@@ -2653,7 +3733,12 @@ fn collectFunctionLocalCandidates(
     out: *std.ArrayList(CompletionItem),
 ) !void {
     try collectLocalCandidatesInStatements(gpa, function.body.statements, cursor, seen, out);
-    for (function.parameters) |parameter| try addCompletionOnce(gpa, seen, out, parameter.name);
+    for (function.parameters) |parameter| {
+        if (!seen.contains(parameter.name)) {
+            try addCompletionOnce(gpa, seen, out, parameter.name);
+            out.items[out.items.len - 1].parameter = parameter;
+        }
+    }
     if (has_self) try addCompletionOnce(gpa, seen, out, "self");
 }
 
@@ -2665,7 +3750,12 @@ fn collectConstructorLocalCandidates(
     out: *std.ArrayList(CompletionItem),
 ) !void {
     try collectLocalCandidatesInStatements(gpa, constructor.body.statements, cursor, seen, out);
-    for (constructor.parameters) |parameter| try addCompletionOnce(gpa, seen, out, parameter.name);
+    for (constructor.parameters) |parameter| {
+        if (!seen.contains(parameter.name)) {
+            try addCompletionOnce(gpa, seen, out, parameter.name);
+            out.items[out.items.len - 1].parameter = parameter;
+        }
+    }
     try addCompletionOnce(gpa, seen, out, "self");
 }
 
@@ -2700,7 +3790,10 @@ fn collectLambdaCandidatesInExpression(gpa: std.mem.Allocator, expression: *cons
                 if (parameter.pattern) |pattern| {
                     for (pattern.names) |name| try addCompletionOnce(gpa, seen, out, name.text);
                 } else if (!std.mem.eql(u8, parameter.name, "_")) {
-                    try addCompletionOnce(gpa, seen, out, parameter.name);
+                    if (!seen.contains(parameter.name)) {
+                        try addCompletionOnce(gpa, seen, out, parameter.name);
+                        out.items[out.items.len - 1].lambda_parameter = parameter;
+                    }
                 }
             }
             return true;
@@ -2811,26 +3904,29 @@ fn completionPathKey(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, 
 }
 
 /// Appends whatever closes `(`, `[`, and `{` left open between the start of
-/// `text` and `end` — a best-effort, string-only count, blind to string and
-/// comment contents, like every other heuristic here that reads source text
-/// directly. Silently caps at a depth no real program approaches, rather
+/// `text` and `end`. Use the compiler's lexer so delimiters inside strings
+/// and comments cannot close a real block. Silently caps at a depth no real program approaches, rather
 /// than growing without bound on adversarial input.
 fn appendUnclosedBrackets(gpa: std.mem.Allocator, patched: *std.ArrayList(u8), text: []const u8, end: u32) !void {
     var stack: [128]u8 = undefined;
     var depth: usize = 0;
-    for (text[0..end]) |c| {
-        switch (c) {
-            '(', '[', '{' => {
+    var source = try Source.init(gpa, "<completion>", text[0..end]);
+    defer source.deinit(gpa);
+    var tokenized = try emerald.Lexer.tokenize(gpa, &source);
+    defer tokenized.deinit(gpa);
+    for (tokenized.tokens) |token| {
+        switch (token.kind) {
+            .left_paren, .left_bracket, .left_brace => {
                 if (depth < stack.len) {
-                    stack[depth] = switch (c) {
-                        '(' => ')',
-                        '[' => ']',
+                    stack[depth] = switch (token.kind) {
+                        .left_paren => ')',
+                        .left_bracket => ']',
                         else => '}',
                     };
                 }
                 depth += 1;
             },
-            ')', ']', '}' => {
+            .right_paren, .right_bracket, .right_brace => {
                 if (depth > 0) depth -= 1;
             },
             else => {},
@@ -2903,10 +3999,13 @@ fn collectInstanceMembers(gpa: std.mem.Allocator, analysis: *const emerald.Analy
         current_key = analysis.resolved.facts.bases.get(key);
     }
 
-    if (analysis.resolved.facts.adopted.get(type_key)) |traits| {
-        for (traits) |trait_key| {
-            if (analysis.resolved.facts.declarations.get(trait_key)) |target| {
-                if (findStructDeclarationAt(analysis, target)) |s| try addInstanceMembers(s, gpa, &seen, out);
+    current_key = type_key;
+    while (current_key) |key| : (current_key = analysis.resolved.facts.bases.get(key)) {
+        if (analysis.resolved.facts.adopted.get(key)) |traits| {
+            for (traits) |trait_key| {
+                if (analysis.resolved.facts.declarations.get(trait_key)) |target| {
+                    if (findStructDeclarationAt(analysis, target)) |s| try addInstanceMembers(s, gpa, &seen, out);
+                }
             }
         }
     }
@@ -2956,7 +4055,311 @@ fn collectNamespaceMembersSeen(
     }
 }
 
+fn nativeOwner(value: Type) ?[]const u8 {
+    return switch (value.kind) {
+        .string => "String",
+        .bytes => "Bytes",
+        .int => "Int",
+        .float => "Float",
+        .bool => "Bool",
+        .range => "Range",
+        .list => "List",
+        .dictionary => "Dict",
+        .set => "Set",
+        .tuple => "Tuple",
+        .task => "Task",
+        .channel => "Channel",
+        .struct_value => if (std.mem.startsWith(u8, value.user.?.name, Resolver.prelude_namespace ++ ".")) value.user.?.display_name else null,
+        else => null,
+    };
+}
+
+fn appendDescribed(gpa: std.mem.Allocator, items: *std.ArrayList(CompletionItem), item: CompletionItem) !void {
+    errdefer item.deinit(gpa);
+    for (items.items) |existing| if (std.mem.eql(u8, existing.label, item.label)) {
+        item.deinit(gpa);
+        return;
+    };
+    try items.append(gpa, item);
+}
+
+fn collectValueCompletions(server: *Server, gpa: std.mem.Allocator, analysis: *const emerald.Analysis, value: Type, changeable: bool, file: u32, cursor: u32, out: *std.ArrayList(CompletionItem)) !void {
+    if (value.kind == .invalid) return;
+    const owner = if (value.optional) "Optional" else nativeOwner(value);
+    if (!value.optional and value.kind == .tuple) for (value.elements, 0..) |element, index| {
+        const label = try std.fmt.allocPrint(gpa, "{d}", .{index});
+        var item: CompletionItem = .{ .label = label, .kind = 10, .owned_label = true };
+        errdefer item.deinit(gpa);
+        item.detail = try std.fmt.allocPrint(gpa, "{d}: {f}", .{ index, element });
+        try out.append(gpa, item);
+    };
+    if (!value.optional and value.kind == .struct_value) {
+        try collectInstanceMembers(gpa, analysis, value.user.?.name, out);
+        var index: usize = 0;
+        while (index < out.items.len) {
+            const label = out.items[index].label;
+            const method_key = try Resolver.methodKey(gpa, value.user.?.name, label);
+            defer gpa.free(method_key);
+            if (!changeable and analysis.checked.changing_methods.contains(method_key)) {
+                out.orderedRemove(index).deinit(gpa);
+                continue;
+            }
+            if (try describeInstanceMember(gpa, analysis, value.user.?.name, label, file, cursor, 0)) |item| {
+                out.items[index].deinit(gpa);
+                out.items[index] = item;
+                index += 1;
+            } else {
+                out.orderedRemove(index).deinit(gpa);
+            }
+        }
+    }
+    if (server.builtins) |catalog| for (catalog.value.members) |member| {
+        if (member.kind != .method and member.kind != .property) continue;
+        if (!emerald.Builtins.sameOwner(member.owner, "*") and !emerald.Builtins.sameOwner(member.owner, owner)) continue;
+        if (!analysis.checked.acceptsCompletionMember(value, member.name)) continue;
+        if (member.changes and !changeable) continue;
+        try appendDescribed(gpa, out, try Completion.native(gpa, member, value));
+    };
+}
+
+fn isProjectNamespace(analysis: *const emerald.Analysis, key: []const u8) bool {
+    if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".") or std.mem.eql(u8, key, Resolver.prelude_namespace)) return false;
+    for (analysis.files) |file| {
+        if (std.mem.eql(u8, file.namespace, key)) return true;
+        if (std.mem.startsWith(u8, file.namespace, key) and file.namespace.len > key.len and file.namespace[key.len] == '.') return true;
+    }
+    return false;
+}
+
+fn collectNativeTypeCompletions(server: *Server, gpa: std.mem.Allocator, analysis: *const emerald.Analysis, key: []const u8, out: *std.ArrayList(CompletionItem)) !void {
+    if (isProjectNamespace(analysis, key)) return;
+    const owner = if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".")) key[Resolver.prelude_namespace.len + 1 ..] else key;
+    if (server.builtins) |catalog| for (catalog.value.members) |member| {
+        if (member.kind != .type_method and member.kind != .type_property) continue;
+        if (!emerald.Builtins.sameOwner(member.owner, owner)) continue;
+        try appendDescribed(gpa, out, try Completion.native(gpa, member, null));
+    };
+    if (std.mem.eql(u8, key, Resolver.prelude_namespace)) {
+        if (server.builtins) |catalog| for (catalog.value.members) |member| {
+            if (member.owner == null) try appendDescribed(gpa, out, try Completion.native(gpa, member, null));
+        };
+        try addCatalogOwners(server, gpa, out);
+    }
+}
+
+fn addCatalogOwners(server: *Server, gpa: std.mem.Allocator, out: *std.ArrayList(CompletionItem)) !void {
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(gpa);
+    for (out.items) |item| try seen.put(gpa, item.label, {});
+    for (Type.builtin_types.keys()) |name| {
+        if (seen.contains(name)) continue;
+        try addCompletionOnce(gpa, &seen, out, name);
+        out.items[out.items.len - 1].kind = 7;
+    }
+    if (server.builtins) |catalog| for (catalog.value.members) |member| {
+        const name = member.owner orelse continue;
+        // Optional is a catalog receiver category, not a language type name.
+        if (std.mem.eql(u8, name, "*") or std.mem.eql(u8, name, "Optional") or seen.contains(name)) continue;
+        try addCompletionOnce(gpa, &seen, out, name);
+        out.items[out.items.len - 1].kind = if (member.kind == .type_method or member.kind == .type_property) 9 else 7;
+    };
+}
+
+fn typeSpan(s: Ast.StructDeclaration, whole: Source.Span, target: Source.Span) ?Source.Span {
+    if (s.name_span.start == target.start) return whole;
+    for (s.types) |nested| if (typeSpan(nested.declaration, nested.span, target)) |found| return found;
+    return null;
+}
+
+fn insideCompletionType(analysis: *const emerald.Analysis, target: Resolver.Target, file: u32, cursor: u32) bool {
+    if (target.file != file) return false;
+    for (analysis.parsed[file].program.statements) |statement| {
+        if (statement.data != .struct_declaration) continue;
+        if (typeSpan(statement.data.struct_declaration, statement.span, target.span)) |span| return spanContains(span, cursor);
+    }
+    return false;
+}
+
+fn describeInstanceMember(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, key: []const u8, label: []const u8, file: u32, cursor: u32, depth: usize) !?CompletionItem {
+    if (depth > 64) return null;
+    if (analysis.resolved.facts.declarations.get(key)) |target| {
+        if (findStructDeclarationAt(analysis, target)) |s| {
+            if (Resolver.isPrivate(label) and !insideCompletionType(analysis, target, file, cursor)) return null;
+            const source = &analysis.files[target.file].source;
+            for (s.fields) |field| if (std.mem.eql(u8, field.name, label)) return try Completion.field(gpa, source, label, field.name_span, field.annotation, null, null, 5);
+            for (s.properties) |property| if (std.mem.eql(u8, property.name, label)) return try Completion.field(gpa, source, label, property.name_span, property.annotation, null, null, 10);
+            for (s.methods) |method| if (std.mem.eql(u8, method.name, label)) return try describeFunction(gpa, analysis, target.file, method, label, 2);
+        }
+    }
+    if (analysis.resolved.facts.bases.get(key)) |base| {
+        if (try describeInstanceMember(gpa, analysis, base, label, file, cursor, depth + 1)) |item| return item;
+    }
+    if (analysis.resolved.facts.adopted.get(key)) |traits| for (traits) |trait_key| {
+        if (try describeInstanceMember(gpa, analysis, trait_key, label, file, cursor, depth + 1)) |item| return item;
+    };
+    return null;
+}
+
+fn enrichTypeMembers(server: *Server, gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target, s: Ast.StructDeclaration, items: *std.ArrayList(CompletionItem)) !void {
+    const source = &analysis.files[target.file].source;
+    for (items.items) |*item| {
+        for (s.type_functions) |function| if (std.mem.eql(u8, function.member, item.label)) {
+            const described = try describeFunction(gpa, analysis, target.file, function.declaration, item.label, 2);
+            item.deinit(gpa);
+            item.* = described;
+            break;
+        };
+        for (s.type_fields) |field| if (std.mem.eql(u8, field.name, item.label)) {
+            const described = try Completion.field(gpa, source, item.label, field.name_span, field.annotation, field.initializer, null, if (field.enum_value != null) 20 else 10);
+            item.deinit(gpa);
+            item.* = described;
+            break;
+        };
+        for (s.types) |nested| if (std.mem.eql(u8, nested.declaration.name, item.label)) {
+            item.kind = if (nested.declaration.enumeration) 13 else if (nested.declaration.class) 7 else 22;
+            item.detail = try gpa.dupe(u8, item.label);
+            item.documentation = try Completion.documentation(gpa, source, nested.declaration.name_span);
+            break;
+        };
+    }
+    // These type members are declared in the prelude so the resolver can
+    // identify their calls, but their written stub signatures cannot express
+    // the checker's typed `as:`/encodable-value forms. The shared catalog is
+    // the authoritative editor signature for those special calls.
+    if (std.mem.eql(u8, source.path, "prelude.em")) if (server.builtins) |catalog| {
+        for (items.items) |*item| {
+            const member = emerald.Builtins.find(catalog.value, s.name, item.label) orelse continue;
+            if (member.kind != .type_method) continue;
+            item.deinit(gpa);
+            item.* = try Completion.native(gpa, member, null);
+        }
+    };
+}
+
+fn describeFunction(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, function: Ast.FunctionDeclaration, label: []const u8, kind: u8) !CompletionItem {
+    const result: ?Type = result: {
+        if (analysis.resolved.facts.nested_keys.get(.{ .file = file, .start = function.name_span.start })) |key| {
+            if (analysis.checked.signatures.get(key)) |signature| break :result signature.return_type;
+        }
+        var declarations = analysis.resolved.facts.declarations.iterator();
+        while (declarations.next()) |entry| {
+            if (entry.value_ptr.file != file or entry.value_ptr.span.start != function.name_span.start) continue;
+            if (analysis.checked.signatures.get(entry.key_ptr.*)) |signature| break :result signature.return_type;
+        }
+        break :result null;
+    };
+    return Completion.function(gpa, &analysis.files[file].source, function, label, kind, result);
+}
+
+fn describeModuleItem(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target, label: []const u8) !?CompletionItem {
+    const source = &analysis.files[target.file].source;
+    for (analysis.parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .function_declaration => |function| if (function.name_span.start == target.span.start) return try describeFunction(gpa, analysis, target.file, function, label, 3),
+        .declaration => |declaration| if (declaration.name_span.start == target.span.start) {
+            const inferred = if (declaration.initializer) |initializer| if (analysis.checked.expression_types.get(initializer)) |info| info.type else null else null;
+            return try Completion.field(gpa, source, label, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6);
+        },
+        .struct_declaration => |s| if (findStructDeclarationWithin(s, target.span)) |found| {
+            var item: CompletionItem = .{ .label = label, .kind = if (found.enumeration) 13 else if (found.class) 7 else if (found.trait) 8 else 22 };
+            errdefer item.deinit(gpa);
+            item.detail = try gpa.dupe(u8, label);
+            item.documentation = try Completion.documentation(gpa, source, found.name_span);
+            return item;
+        },
+        else => {},
+    };
+    return null;
+}
+
+fn describeTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target) !?CompletionItem {
+    if (target.file >= analysis.parsed.len) return null;
+    const source = &analysis.files[target.file].source;
+    for (analysis.parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .function_declaration => |function| if (function.name_span.start == target.span.start)
+            return try describeFunction(gpa, analysis, target.file, function, function.name, 3),
+        .declaration => |declaration| if (declaration.name_span.start == target.span.start) {
+            const inferred = if (declaration.initializer) |initializer| if (analysis.checked.expression_types.get(initializer)) |info| info.type else null else null;
+            return try Completion.field(gpa, source, declaration.name, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6);
+        },
+        .struct_declaration => |declaration| {
+            if (declaration.name_span.start == target.span.start) {
+                var item: CompletionItem = .{ .label = declaration.name, .kind = if (declaration.enumeration) 13 else if (declaration.class) 7 else if (declaration.trait) 8 else 22 };
+                item.documentation = try Completion.documentation(gpa, source, declaration.name_span);
+                return item;
+            }
+            if (try describeStructTarget(gpa, analysis, target.file, declaration, target.span.start)) |item| return item;
+        },
+        else => {},
+    };
+    return null;
+}
+
+fn describeStructTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, declaration: Ast.StructDeclaration, start: u32) !?CompletionItem {
+    const source = &analysis.files[file].source;
+    for (declaration.methods) |method| if (method.name_span.start == start) return try describeFunction(gpa, analysis, file, method, method.name, 2);
+    for (declaration.properties) |property| if (property.name_span.start == start) {
+        return try Completion.field(gpa, source, property.name, property.name_span, property.annotation, null, null, 10);
+    };
+    for (declaration.fields) |field| if (field.name_span.start == start) {
+        return try Completion.field(gpa, source, field.name, field.name_span, field.annotation, null, null, 5);
+    };
+    for (declaration.type_functions) |function| if (function.member_span.start == start) {
+        return try describeFunction(gpa, analysis, file, function.declaration, function.declaration.name, 2);
+    };
+    for (declaration.type_fields) |field| if (field.name_span.start == start) {
+        return try Completion.field(gpa, source, field.name, field.name_span, field.annotation, field.initializer, null, 10);
+    };
+    for (declaration.types) |nested| {
+        if (nested.declaration.name_span.start == start) {
+            var item: CompletionItem = .{ .label = nested.declaration.name, .kind = if (nested.declaration.enumeration) 13 else if (nested.declaration.class) 7 else 22 };
+            item.documentation = try Completion.documentation(gpa, source, nested.declaration.name_span);
+            return item;
+        }
+        if (try describeStructTarget(gpa, analysis, file, nested.declaration, start)) |item| return item;
+    }
+    return null;
+}
+
+fn enrichNamespaceItems(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, namespace: []const u8, items: *std.ArrayList(CompletionItem)) !void {
+    for (items.items) |*item| {
+        if (item.detail != null) continue;
+        const key = if (namespace.len == 0) try gpa.dupe(u8, item.label) else try std.fmt.allocPrint(gpa, "{s}.{s}", .{ namespace, item.label });
+        defer gpa.free(key);
+        if (analysis.resolved.facts.declarations.get(key)) |target| {
+            if (try describeModuleItem(gpa, analysis, target, item.label)) |described| {
+                item.* = described;
+                continue;
+            }
+        }
+        item.kind = 9;
+        item.detail = try gpa.dupe(u8, item.label);
+    }
+}
+
 const testing = std.testing;
+
+test "completion keeps failed resolver facts from one analysis without making them executable" {
+    const gpa = testing.allocator;
+    var source = try Source.init(gpa, "main.em", "struct Example {\n    const Example.answer: Int = 42\n}\nExample.unknown()\n");
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+    try testing.expect((try emerald.analyzeProject(gpa, &project)) == null);
+    var analysis = (try emerald.analyzeProjectForCompletion(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(!analysis.ok());
+    try testing.expect(analysis.resolved.facts.declarations.contains("Example"));
+    try testing.expectEqual(@as(usize, 0), analysis.checked.expression_types.count());
+}
+
+test "completion closing delimiters ignore strings and comments" {
+    const gpa = testing.allocator;
+    const text = "func probe() {\n const text = \"([} {\"\n # ) ] }\n print(text.unknown())\n";
+    var closers: std.ArrayList(u8) = .empty;
+    defer closers.deinit(gpa);
+    try appendUnclosedBrackets(gpa, &closers, text, @intCast(text.len));
+    try testing.expectEqualStrings("}", closers.items);
+}
 
 test "a framed message round-trips through reading and writing" {
     const gpa = testing.allocator;
@@ -3864,6 +5267,49 @@ test "completion handler answers type members and a bare visible name" {
         try labels.put(gpa, label.string, {});
     }
     try testing.expect(labels.contains("self"));
+}
+
+test "typed library completion describes the checker-special call shapes" {
+    const gpa = testing.allocator;
+    var server: Server = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+    server.builtins = try emerald.Builtins.load(gpa);
+    const uri = "untitled:typed-library-completion.em";
+
+    const json_decode = try completionDetailFor(gpa, &server, uri, "Json.\n", 5, "decode");
+    defer gpa.free(json_decode);
+    try testing.expectEqualStrings("decode(text: String, as: Type): T", json_decode);
+    const json_encode = try completionDetailFor(gpa, &server, uri, "Json.\n", 5, "encode");
+    defer gpa.free(json_encode);
+    try testing.expectEqualStrings("encode(value: JSON-compatible value, pretty: Bool = false): String", json_encode);
+
+    const csv_decode = try completionDetailFor(gpa, &server, uri, "Csv.\n", 4, "decode");
+    defer gpa.free(csv_decode);
+    try testing.expectEqualStrings("decode(text: String, as: Type, separator: String = \",\"): T", csv_decode);
+    const csv_encode = try completionDetailFor(gpa, &server, uri, "Csv.\n", 4, "encode");
+    defer gpa.free(csv_encode);
+    try testing.expectEqualStrings("encode(records: List[CSV-compatible struct], separator: String = \",\"): String", csv_encode);
+
+    const table = try completionDetailFor(gpa, &server, uri, "Console.\n", 8, "table");
+    defer gpa.free(table);
+    try testing.expectEqualStrings("table(rows: List[List[String]], header: List[String] = []): String\ntable(rows: List[plain struct]): String", table);
+}
+
+fn completionDetailFor(gpa: std.mem.Allocator, server: *Server, uri: []const u8, text: []const u8, character: u32, label: []const u8) ![]u8 {
+    try server.store(uri, text);
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try onCompletion(server, gpa, uri, .{ .line = 0, .character = character }, .{ .integer = 20 }, &out.writer);
+    var reader: std.Io.Reader = .fixed(out.written());
+    var response = (try readMessage(gpa, &reader)).?;
+    defer response.deinit();
+    for (response.value.object.get("result").?.array.items) |item| {
+        const found_label = item.object.get("label").?.string;
+        if (!std.mem.eql(u8, found_label, label)) continue;
+        const detail = item.object.get("detail").?.string;
+        return try gpa.dupe(u8, detail);
+    }
+    return error.CompletionItemNotFound;
 }
 
 test "completion end to end: a broken member access mid-call patches into something the checker can type" {

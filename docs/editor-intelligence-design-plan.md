@@ -252,27 +252,204 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
   before and after, and record both.
 - An LSP test category, `conformance/lsp/`: each case is a document, a request at a marked
   position, and the expected response, run through the real server.
-- Settled while building: (record here)
+- Settled while building (2026-10-03; completed):
+  - Kept the placeholder approach, but added a tool-analysis entry point that retains
+    parsed declarations and resolver facts when its synthetic member fails resolution.
+    It never checks failed resolution or treats that partial analysis as executable.
+    Values and type/namespace paths therefore share one analysis, without changing the
+    parser or resolver. Compiler-token delimiter closing preserves existing suffixes
+    and ignores quoted/commented delimiters; completing inside an existing identifier
+    also preserves its call rather than producing a second one.
+  - `Completion.zig` owns presentation and allocation only. Native names/signatures/
+    summaries come from the catalog; declarations and attached comments come from
+    retained source. Receiver parameters are substituted where known, while a future
+    block's result stays symbolic. Prelude-qualified type spelling is displayed without
+    its implicit namespace; optional markers are included even though annotation spans
+    exclude the final `?` in the AST.
+  - Kept receiver eligibility and changeability in the checker, where the scopes and
+    existing place-resolution rules are available. Changeability facts are computed
+    only for completion analysis; normal checking and execution do not do that work.
+    Completion omits changing methods on frozen/temporary value receivers, incompatible
+    List aggregations/conversions, and private members outside their owning braces.
+    Tuple positions come from the checked tuple type, not a parallel member inventory.
+  - The existing `.or(fallback)` method was absent from slice 1's catalog/inventories.
+    Added owner `Optional` as a receiver category, not a new language type, and extended
+    bidirectional/result/arity tests. The catalog now has 244 members and 247 signatures.
+    Primitive bare names read Type.fromName's shared table; there is no invented `Any`,
+    `Tuple`, or `Optional` named type in completion.
+  - Added 40 framed-server cases, including every original table row. Hover, native
+    definition, and unsupported signature help record their unchanged pre-slice-3/4
+    behavior; completion cases cover all native receiver kinds, const/mutable and
+    element-type restrictions, inheritance/privacy, nested aliases, namespace/type
+    shadowing, optional chaining, source documentation, and preserved editor suffixes.
+    Replies are reviewed JSON, not automatically blessed. Both the conformance runner
+    and the standalone protocol tool run each case 50 times.
+    Unannotated functions use checked return signatures when available, including
+    nested functions. A partial resolver-only analysis displays `(inferred)` rather
+    than guessing `Nothing` when no return annotation or checked result is available.
+  - Main through `6020d13` was merged without discarding its new pre-compiler roadmap.
+    ReleaseSafe completion medians on the largest example project (`examples/ledger/main.em`)
+    were 7.426 ms before and 3.022 ms after for `File.` (15 items both), and 10.153 ms
+    before and 5.244 ms after for a String receiver (0 items before, 38 after), over 25
+    requests after five warmups; startup and document-open diagnostics are excluded.
+  - Source review found five checker-special typed calls whose prelude stubs cannot
+    describe their real signatures: `Json.encode/decode`, `Csv.encode/decode`, and the
+    struct-row `Console.table` form. Added their editor signatures to the shared catalog,
+    checker-adjacent name inventories, and a direct LSP regression. Ordinary result/arity
+    probe generation skips these calls because their shape comes from dedicated checker
+    branches, not the written stub. No language or runtime behavior changed.
+  - Debug and ReleaseSafe `zig build test -j1`, native build, doc examples, formatting,
+    diff check, Windows/macOS cross-builds, and all 40 standalone LSP cases at 50 requests
+    each passed. One VS Code integration run timed out in format-on-save after its other
+    eight tests passed. The user reported seven successful runs from Claude; a subsequent
+    run here completed all nine tests successfully. The timeout was transient, not a
+    completion regression. Slice 2 was committed as `3868394`, pushed, and branch CI
+    passed all seven jobs in run `37147012161`. At the next slice boundary, main's three
+    documentation-only roadmap commits were merged without conflict in `49eef58`;
+    slice 3 works from that merged state.
 
 ### Slice 3: Hover and documentation
 
 - Hover shows a signature, the summary, what it can raise, and for built-ins a link to the
   website's member anchor (decision 6). For a declaration with a `##` comment, the comment.
 - The checker's "did you mean" hints read the data's names, so a new member never needs adding twice.
-- Settled while building: (record here)
+- Settled while building (2026-10-03):
+  - Hover replies use Markdown: a fenced Emerald signature, the learner-facing summary,
+    and a website link for members represented in the catalog. Catalog entries marked
+    `raises` add the neutral note “May raise an error.” because the catalog records only
+    whether a failure is possible, not a checked error type. Prelude declarations outside
+    the catalog use their `##` text and source signature; Emerald has no raises effect
+    on source declarations, so hover does not infer one from implementation details.
+  - For catalog entries, the catalog is preferred to its prelude stub so typed-special
+    signatures and docs stay aligned with completion. User/project declarations use the
+    resolver-selected source target, including a method's own `##` comment and inferred
+    return type. Hover on the declaration name itself is supported as well as on a use.
+    Native members still have no go-to-definition target.
+  - Checker synonym corrections retain their curated cross-language aliases, but a
+    method/property correction is offered only if its target name exists in the catalog;
+    dictionary indexing corrections (`[key]` and `[key] =`) remain syntax-based. The
+    learner-oriented unknown-member help is hand-written for List, Dict, Set, String, Int,
+    and Float. List and dictionary-indexing guidance stays explicit, while String, Int, and
+    Float sample about ten useful names and point to their references. A checker test
+    extracts every backticked member and confirms it exists in the catalog; universal
+    `type_name` is intentionally omitted. The catalog remains the authority for synonym
+    suggestions.
+  - Prelude-declared library types and their members link through a top-level `type_pages`
+    map in `src/builtins.json`; member links strip a trailing `?` or `!` for the website
+    anchor. File and Path hover cases cover these links. Prelude declarations do not carry
+    machine-readable raises metadata, so a possible-raise note for them is follow-up work,
+    not part of this correction.
+  - Added Markdown hover coverage for an instance method, a raising Bytes conversion,
+    a namespace function, a prelude function, a program function both at its use and
+    declaration, and universal `type_name` on native and user-defined values. All 48
+    real-protocol LSP cases pass 50 requests each; existing native
+    definition remains empty. No language/runtime behavior changed.
+  - The pinned-toolchain full gate passed: Debug and ReleaseSafe `zig build test -j1`,
+    `zig build -j1`, documentation examples, changed-file formatting, whitespace, and
+    Windows/macOS cross-builds. The VS Code suite first timed out in format-on-save after
+    eight passes. Three runs in this environment timed out at that same test. Direct
+    `textDocument/formatting` requests returned the expected `const x = 1` edit for both
+    file and untitled URIs. The user reports Claude ran the suite successfully seven times.
+    The downloaded VS Code logs an unavailable `native-keymap` module. No extension files
+    changed. Slice 3 was committed as `8fac992`, pushed, and CI run `37153243148`
+    passed all seven jobs. The integration UI timeout remains recorded as an environment/test
+    harness discrepancy, not a server-formatting failure; the requested slice did not change
+    formatting or the extension. emerald-vscode PR #3 changes that test to apply edits by
+    document URI. After PR #3 merged as `597d066`, the integration suite passed all 9 tests
+    against the pushed Emerald server.
+  - Review correction: restored the learner-oriented List, Dict, and Set help, and replaced
+    the stale exhaustive String, Int, and Float lists with useful samples. The backticked
+    member names are checked against the catalog in a unit test; dictionary `[key]` is the
+    one intentional syntax example rather than a member. Added type-page routes for the
+    prelude library surface, with `?`/`!` removed only from member anchors; File and Path
+    protocol cases cover the links. A possible-raise note for prelude members remains a
+    follow-up because these declarations do not carry raises metadata. Corrected the handoff
+    and journal attribution for website parity: slice 7 belongs to Claude.
+  - Correction validation: Debug and ReleaseSafe `zig build test -j1` each passed 558/558
+    tests; all 51 real-protocol LSP cases returned identical replies 50 times. The native
+    build, documentation examples, formatting, whitespace, and Windows/macOS cross-builds
+    passed. After emerald-vscode PR #3 merged, `npm run test:integration` passed all 9 tests
+    against this server. The correction was committed as `052ebda`, pushed, and CI run
+    `37161858942` passed all seven jobs.
+  - Prelude member anchors (Claude, during slice 7): the website's parity check, extended to
+    the anchors hover generates for prelude members, found 61 that land on no `<Member>`
+    entry: members documented inside a grouped entry (Date's `year`, `month`, and `day` under
+    `#parts`), under an operator's entry (`Duration.add` under `#plus`), or under an id renamed
+    to avoid a clash (`Json.null?` is `#null-1`). `builtins.json` gained `member_anchors`,
+    exceptions keyed `Type.member`, and `Builtins.anchorForMember` applies them before the
+    name rule. The parity check fails on an anchor that does not exist and on an exception
+    that names no public prelude member, so a page regrouping its entries is caught. Added a
+    grouped-member hover case.
 
 ### Slice 4: Signature help
 
 - `textDocument/signatureHelp` (decision 7), triggered by `(` and `,`: the callee's parameters with
   the active one marked, defaults shown, and named arguments matched by name. Built-ins, the
   student's own functions and methods, and constructors.
-- Settled while building: (record here)
+- Settled while building (2026-10-03):
+  - Reused the request's single checked `Analysis`: its resolved call/member facts identify source
+    functions and methods, and the built-in catalog supplies native signatures and summaries.
+    No checker changes or second analysis were needed. A temporary same-width replacement for an
+    unfinished argument identifier keeps one analysis viable without changing any source offsets;
+    the request also closes open delimiters in its private source copy so a just-opened call parses.
+  - Generated constructors have no stored `Type.Signature` in the checker, so their parameter
+    labels come directly from the type's field declarations; custom constructors use the checked
+    signature and source defaults. Both forms are covered. When catalog overloads exist, the active
+    signature follows a named parameter when present, otherwise the active positional index, while
+    all overloads remain visible.
+  - LSP cases cover an unfinished native call and identifier, a named native argument, a native
+    overload at both positions, a user function and method with a default, and generated and custom
+    constructors. The real-server protocol runner checks their exact JSON replies 50 times each.
+  - Review correction (2026-10-04): after a comma, if only whitespace remains up to `)` or EOF,
+    insert a placeholder at the cursor in the private source so the parser retains the call and
+    its checked signature. This covers same-line and multiline empty arguments without changing
+    earlier offsets. Display names use Emerald's dotted spelling: catalog type methods qualify
+    with their owner, while prelude and user type functions and constructors use the written call
+    path with the implicit `Emerald.` prefix omitted. A nested type can also contain `::` in its
+    resolver key, so constructor detection uses its resolved struct declaration. Parameter source
+    spans/defaults are read from that declaration's file, which preserves prelude defaults such as
+    those on `Http.get`.
 
 ### Slice 5: Quick fixes
 
 - `textDocument/codeAction` for diagnostics that suggest one exact replacement (decision 8). The
   diagnostic carries the replacement as data, so the editor never parses message text.
-- Settled while building: (record here)
+- Settled while building (2026-10-04):
+  - Added one optional exact replacement (source span and text) to a compiler diagnostic.
+    Existing catalog-validated member synonyms supply it when renaming preserves the
+    property's or method's form; the resolver's existing `this` → `self` correction
+    supplies a name edit too. No new typo heuristic or diagnostic wording was introduced.
+    Unknown names with no exact candidate, indexing hints, and method/property shape
+    changes remain help-only: renaming `length()` to `count()` would still be invalid.
+  - Published diagnostics carry the edit in `data`, with the original text and a server
+    document revision. `textDocument/codeAction` consumes only that structured data, checks
+    the revision, exact UTF-16 range, original text, requested range, and `context.only`,
+    and returns `quickfix` workspace edits. It performs no new analysis. Revision checks
+    reject a stale edit even if the old token is still at the same position.
+    Each action is titled `Replace with` followed by the corrected name, marked preferred
+    because the diagnostic supplies one candidate, and carries an ordinary `documentChanges`
+    edit rather than a command or a separate code-action resolution step.
+  - Protocol fixtures forward the real didOpen diagnostics to codeAction on the same
+    framed server session. The edited document URI is normalized in expectations to
+    `file:///document.em` so the tests are portable. Thirteen cases cover all six synonym
+    owners, a name correction, Unicode positions, request-range filtering, and help-only
+    diagnostics. Allocator-backed tests apply the fixes and check the resulting programs;
+    separate tests change diagnostic prose and verify stale/malformed/filtered data handling.
+  - The full local gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests
+    (561/561 each), native build, documentation examples (24 executed, 135 conformance
+    links), changed-Zig formatting, whitespace checks, and Windows/macOS cross-builds
+    outside zig-out. All 85 LSP protocol cases returned identical replies 50 times each;
+    the VS Code integration suite passed all nine tests against the built server.
+    Website parity reported 249 members, 253 signatures, 26 pages, and zero problems.
+    Slice 5 was committed as `8160fa5` and pushed to `codex/editor-intelligence`;
+    CI run `37218063872` passed all seven jobs. Stopped for review before slice 6.
+  - Review follow-up (Claude, 2026-10-04): the parser's misspelled-annotation diagnostic
+    (`@overide`, "Did you mean `@override`?") is the compiler's only "Did you mean" suggestion and
+    carried no replacement. It now attaches one over the annotation word, leaving the `@`, so the
+    action reads ``Replace with `override` ``. Added `quickfix-annotation` and an allocator-backed
+    check that the corrected program has no errors. All 86 protocol cases matched 50 times, the
+    extension's 10 integration tests passed three times against this build, and parity reported
+    zero problems.
 
 ### Slice 6: The extension (emerald-vscode)
 
@@ -287,7 +464,28 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
 - The parity check (decision 3), run with the other page checks.
 - If the summaries changed any wording, carry it back to the pages' "At a glance" lines so the
   editor and the site say the same thing.
-- Settled while building: (record here)
+- Settled while building (2026-10-03):
+  - The website check is `scripts/check-builtin-parity.py`, run from `emerald-website` with
+    `EMERALD_LANG` pointing at this checkout. Member links on reference pages must target the
+    matching `<Member>` id; language pages without `<Member>` entries use heading ids instead.
+    Constructor entries are skipped, and "At a glance" wording is not compared because those
+    rows group multiple members under one phrase.
+  - The first run found the seven stale catalog destinations identified in review: universal
+    `type_name`, both `Console.table` signatures, `Csv.decode`/`encode`, `Json.decode`/`encode`,
+    and `String.to_bytes`. Corrected them to the canonical member anchors. The parity check then
+    reported 249 catalog members, 253 signatures, 26 pages, and zero problems.
+  - Also checked all 45 `type_pages` routes, which the member parity script does not inspect.
+    Seven were stale: `Bytes` and the six error types pointed at nonexistent library pages.
+    Updated them to their built-in reference pages; all 45 now resolve in the website content.
+    No summary wording changed, so no "At a glance" edits were needed.
+  - Validation: the native build and doc-example check passed, as did `zig fmt --check`,
+    `git diff --check`, and 50-repeat runs of both changed `type_name` hover cases. The website
+    parity and type-page checks passed. Local `zig build test -j1` did not finish: the sandboxed
+    attempt could not bind the HTTP test server, and a direct run outside the sandbox remained at
+    the conformance suite's HTTP cases until its 90-second timeout. Treat the full test gate as
+    unverified locally; the catalog and golden-file tests are covered by the targeted LSP runs.
+    Pushed commit `83256c4`; CI run `37164236982` passed all seven jobs, including Debug and
+    ReleaseSafe on Windows, macOS, and Ubuntu.
 
 ## Validation
 
@@ -295,8 +493,11 @@ Slices 1 to 5, on the pinned Zig 0.16.0 with `-j1`: Debug and ReleaseSafe `zig b
 build`, `tools/check-doc-examples.sh`, `zig fmt --check` on changed files, `git diff --check`, and
 the Windows and macOS cross-builds; plus the extension's integration suite (`npm run
 test:integration` in emerald-vscode), which drives a real VS Code against the built server. Slice
-2 onward also runs `conformance/lsp/`. Slice 6 runs the extension's `npm test`, `npm run package`,
-and the integration suite; slice 7 the website's page checks and build.
+2 onward also runs `conformance/lsp/`. Slices 2 to 6 also run
+`EMERALD_LANG=<checkout> python3 scripts/check-builtin-parity.py` from `emerald-website`, so
+catalog and prelude-page links stay valid as later editor work lands. Slice 6 runs the extension's
+`npm test`, `npm run package`, and the integration suite; slice 7 the website's page checks,
+builtin parity check, and build.
 
 ## Open questions
 

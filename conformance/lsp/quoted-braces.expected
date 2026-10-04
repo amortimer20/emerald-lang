@@ -1,0 +1,310 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "blank?",
+      "kind": 2,
+      "detail": "blank?(): Bool",
+      "documentation": "Whether the text is empty or has only spaces, tabs, and line breaks.",
+      "insertText": "blank?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "bytes",
+      "kind": 2,
+      "detail": "bytes(): List[Int]",
+      "documentation": "The text's UTF-8 bytes, each from 0 to 255.",
+      "insertText": "bytes()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "capitalize",
+      "kind": 2,
+      "detail": "capitalize(): String",
+      "documentation": "The text with its first character in capitals.",
+      "insertText": "capitalize()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "chars",
+      "kind": 2,
+      "detail": "chars(): List[String]",
+      "documentation": "Each character, in order, as a list of one-character strings.",
+      "insertText": "chars()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "code_points",
+      "kind": 2,
+      "detail": "code_points(): List[Int]",
+      "documentation": "The Unicode number of each code point the text is stored as.",
+      "insertText": "code_points()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "collapse_repeats",
+      "kind": 2,
+      "detail": "collapse_repeats(): String",
+      "documentation": "The text with every run of the same character shortened to one.",
+      "insertText": "collapse_repeats()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "contains?",
+      "kind": 2,
+      "detail": "contains?(text: String): Bool",
+      "documentation": "Whether `text` appears anywhere in the text.",
+      "insertText": "contains?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "count",
+      "kind": 10,
+      "detail": "count: Int",
+      "documentation": "How many characters the text has.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "empty?",
+      "kind": 2,
+      "detail": "empty?(): Bool",
+      "documentation": "Whether the text has no characters at all.",
+      "insertText": "empty?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "ends_with?",
+      "kind": 2,
+      "detail": "ends_with?(text: String): Bool",
+      "documentation": "Whether the text ends with `text`.",
+      "insertText": "ends_with?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "index_of",
+      "kind": 2,
+      "detail": "index_of(text: String): Int?",
+      "documentation": "Where `text` first appears, counting characters from 0, or `nothing` when it does not appear.",
+      "insertText": "index_of($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "insert_at",
+      "kind": 2,
+      "detail": "insert_at(index: Int, text: String): String",
+      "documentation": "The text with `text` added before the character at `index`.",
+      "insertText": "insert_at($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "lines",
+      "kind": 2,
+      "detail": "lines(): List[String]",
+      "documentation": "Each line, without its line break.",
+      "insertText": "lines()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "lower",
+      "kind": 2,
+      "detail": "lower(): String",
+      "documentation": "The text in small letters.",
+      "insertText": "lower()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "pad_center",
+      "kind": 2,
+      "detail": "pad_center(width: Int, fill: String = \" \"): String",
+      "documentation": "The text with `fill` added on both sides until it is `width` characters long.",
+      "insertText": "pad_center($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "pad_end",
+      "kind": 2,
+      "detail": "pad_end(width: Int, fill: String = \" \"): String",
+      "documentation": "The text with `fill` added at its end until it is `width` characters long.",
+      "insertText": "pad_end($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "pad_start",
+      "kind": 2,
+      "detail": "pad_start(width: Int, fill: String = \" \"): String",
+      "documentation": "The text with `fill` added at its start until it is `width` characters long.",
+      "insertText": "pad_start($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "partition",
+      "kind": 2,
+      "detail": "partition(separator: String): (String, String, String)",
+      "documentation": "The text before the first `separator`, the separator itself, and the text after it.",
+      "insertText": "partition($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "remove_prefix",
+      "kind": 2,
+      "detail": "remove_prefix(text: String): String",
+      "documentation": "The text without `text` at its start.",
+      "insertText": "remove_prefix($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "remove_suffix",
+      "kind": 2,
+      "detail": "remove_suffix(text: String): String",
+      "documentation": "The text without `text` at its end.",
+      "insertText": "remove_suffix($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "repeat",
+      "kind": 2,
+      "detail": "repeat(times: Int): String",
+      "documentation": "The text, `times` times over.",
+      "insertText": "repeat($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "replace",
+      "kind": 2,
+      "detail": "replace(old: String, new: String): String",
+      "documentation": "The text with every `old` replaced by `new`.",
+      "insertText": "replace($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "reverse",
+      "kind": 2,
+      "detail": "reverse(): String",
+      "documentation": "The characters in the opposite order.",
+      "insertText": "reverse()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "split",
+      "kind": 2,
+      "detail": "split(separator: String): List[String]",
+      "documentation": "The pieces of text between each `separator`, in order.",
+      "insertText": "split($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "starts_with?",
+      "kind": 2,
+      "detail": "starts_with?(text: String): Bool",
+      "documentation": "Whether the text begins with `text`.",
+      "insertText": "starts_with?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "substring",
+      "kind": 2,
+      "detail": "substring(start: Int): String\nsubstring(start: Int, count: Int): String",
+      "documentation": "The text from position `start` to the end.",
+      "insertText": "substring($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "to_bytes",
+      "kind": 2,
+      "detail": "to_bytes(): Bytes",
+      "documentation": "The text's UTF-8 bytes.",
+      "insertText": "to_bytes()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_float",
+      "kind": 2,
+      "detail": "to_float(): Float",
+      "documentation": "The number the text spells, which may have a decimal point or an exponent, such as `\"3.75\"` or `\"1e3\"`.",
+      "insertText": "to_float()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_float_maybe",
+      "kind": 2,
+      "detail": "to_float_maybe(): Float?",
+      "documentation": "The number the text spells, or `nothing` when it is not one.",
+      "insertText": "to_float_maybe()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_float_or",
+      "kind": 2,
+      "detail": "to_float_or(fallback: Float): Float",
+      "documentation": "The number the text spells, or `fallback` when it is not one.",
+      "insertText": "to_float_or($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "to_int",
+      "kind": 2,
+      "detail": "to_int(): Int",
+      "documentation": "The whole number the text spells, such as `\"42\"` or `\"-7\"`.",
+      "insertText": "to_int()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_int_maybe",
+      "kind": 2,
+      "detail": "to_int_maybe(): Int?",
+      "documentation": "The whole number the text spells, or `nothing` when it is not one.",
+      "insertText": "to_int_maybe()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_int_or",
+      "kind": 2,
+      "detail": "to_int_or(fallback: Int): Int",
+      "documentation": "The whole number the text spells, or `fallback` when it is not one.",
+      "insertText": "to_int_or($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "trim",
+      "kind": 2,
+      "detail": "trim(): String",
+      "documentation": "The text without spaces, tabs, or line breaks at either end.",
+      "insertText": "trim()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "trim_end",
+      "kind": 2,
+      "detail": "trim_end(): String",
+      "documentation": "The text without spaces at its end.",
+      "insertText": "trim_end()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "trim_start",
+      "kind": 2,
+      "detail": "trim_start(): String",
+      "documentation": "The text without spaces at its start.",
+      "insertText": "trim_start()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "upper",
+      "kind": 2,
+      "detail": "upper(): String",
+      "documentation": "The text in capital letters.",
+      "insertText": "upper()",
+      "insertTextFormat": 1
+    }
+  ]
+}

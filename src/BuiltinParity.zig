@@ -73,12 +73,12 @@ fn receiver(member: Builtins.Member) []const u8 {
     const owner = member.owner orelse return "";
     if (member.kind == .type_method or member.kind == .type_property) return owner;
     const fixtures = std.StaticStringMap([]const u8).initComptime(.{
-        .{ "String", "text" },       .{ "List", "items" },      .{ "Dict", "entries" },
-        .{ "Set", "values" },        .{ "Int", "number" },      .{ "Float", "decimal" },
-        .{ "Bool", "flag" },         .{ "Range", "span" },      .{ "Bytes", "bytes" },
-        .{ "Random", "randomizer" }, .{ "Task", "task" },       .{ "TaskGroup", "tasks" },
-        .{ "Channel", "channel" },   .{ "Tuple", "pair" },      .{ "ProbeStruct", "point" },
-        .{ "ProbeClass", "object" }, .{ "ProbeEnum", "shade" },
+        .{ "String", "text" },       .{ "List", "items" },        .{ "Dict", "entries" },
+        .{ "Set", "values" },        .{ "Int", "number" },        .{ "Float", "decimal" },
+        .{ "Bool", "flag" },         .{ "Range", "span" },        .{ "Bytes", "bytes" },
+        .{ "Random", "randomizer" }, .{ "Task", "task" },         .{ "TaskGroup", "tasks" },
+        .{ "Channel", "channel" },   .{ "Tuple", "pair" },        .{ "ProbeStruct", "point" },
+        .{ "Optional", "maybe" },    .{ "ProbeClass", "object" }, .{ "ProbeEnum", "shade" },
     });
     return fixtures.get(owner) orelse owner;
 }
@@ -148,6 +148,7 @@ fn appendProbe(builder: *Builder, member: Builtins.Member, signature: Builtins.S
             "var flag = true\nvar span = 1..3\nvar bytes = text.to_bytes()\n" ++
             "var randomizer = Random(1)\nvar channel: Channel[Int] = Channel()\n",
     );
+    try builder.add("const maybe: Int? = maybe_int()\n");
     try builder.add("const pair = (1, \"a\")\nconst point = ProbeStruct(1)\nconst object = ProbeClass(1)\nconst shade = ProbeEnum.red\n");
     // to_dictionary is defined only for a list of pairs.
     if (std.mem.eql(u8, member.name, "to_dictionary")) try builder.add("var pairs = [(\"a\", 2.5)]\n");
@@ -200,6 +201,7 @@ pub fn checkResults() !void {
     var builder: Builder = .{ .arena = arena_state.allocator() };
     try builder.add(helpers);
     for (catalog.value.members) |member| {
+        if (isSpecialTypedCall(member)) continue;
         if (Builtins.sameOwner(member.owner, "*")) {
             for (value_owners) |owner| {
                 var specialized = member;
@@ -290,6 +292,10 @@ pub fn checkNames() !void {
     // Tables are authoritative where they exist; branch lists live beside
     // their checker branches, not here or in the language server.
     const inventories = [_]Names{
+        .{ .owner = "Optional", .kind = .method, .names = &Checker.optional_methods },
+        .{ .owner = "Json", .kind = .type_method, .names = &Checker.typed_json_methods },
+        .{ .owner = "Csv", .kind = .type_method, .names = &Checker.typed_csv_methods },
+        .{ .owner = "Console", .kind = .type_method, .names = &Checker.typed_console_methods },
         .{ .owner = "*", .kind = .property, .names = &.{"type_name"} },
         .{ .owner = "String", .kind = .method, .names = Type.string_methods.keys() },
         .{ .owner = "String", .kind = .method, .names = &Checker.string_branch_methods },
@@ -364,6 +370,7 @@ pub fn checkArity() !void {
     var builder: Builder = .{ .arena = arena_state.allocator() };
     try builder.add(helpers);
     for (catalog.value.members) |member| {
+        if (isSpecialTypedCall(member)) continue;
         if (member.kind == .property or member.kind == .type_property or member.kind == .statement) continue;
         for (member.signatures, 0..) |signature, index| {
             var already_tested = false;
@@ -433,6 +440,7 @@ pub fn checkCallBoundaries() !void {
     defer catalog.deinit();
     var mismatches: usize = 0;
     for (catalog.value.members) |member| {
+        if (isSpecialTypedCall(member)) continue;
         if (Builtins.sameOwner(member.owner, "*")) {
             for (value_owners) |owner| {
                 var specialized = member;
@@ -442,6 +450,13 @@ pub fn checkCallBoundaries() !void {
         } else mismatches += try checkMemberBoundaries(member);
     }
     try std.testing.expectEqual(@as(usize, 0), mismatches);
+}
+
+fn isSpecialTypedCall(member: Builtins.Member) bool {
+    const owner = member.owner orelse return false;
+    return (Builtins.sameOwner(owner, "Json") and (std.mem.eql(u8, member.name, "encode") or std.mem.eql(u8, member.name, "decode"))) or
+        (Builtins.sameOwner(owner, "Csv") and (std.mem.eql(u8, member.name, "encode") or std.mem.eql(u8, member.name, "decode"))) or
+        (Builtins.sameOwner(owner, "Console") and std.mem.eql(u8, member.name, "table"));
 }
 
 fn checkMemberBoundaries(member: Builtins.Member) !usize {

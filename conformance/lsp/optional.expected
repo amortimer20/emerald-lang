@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "or",
+      "kind": 2,
+      "detail": "or(fallback: Int): Int",
+      "documentation": "The value if it is there, and the fallback if it is nothing.",
+      "insertText": "or($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

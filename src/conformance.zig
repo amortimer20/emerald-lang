@@ -36,6 +36,7 @@ const build_options = @import("build_options");
 
 const emerald = @import("emerald");
 const Repl = @import("repl");
+const Lsp = @import("lsp");
 const Source = emerald.Source;
 
 const testing = std.testing;
@@ -138,6 +139,7 @@ const Kind = enum {
     runtime_errors,
     format,
     repl,
+    lsp,
 
     fn fromPath(relative_path: []const u8) ?Kind {
         const separator = std.mem.indexOfScalar(u8, relative_path, '/') orelse return null;
@@ -151,6 +153,7 @@ const Kind = enum {
         if (std.mem.eql(u8, directory, "runtime-errors")) return .runtime_errors;
         if (std.mem.eql(u8, directory, "format")) return .format;
         if (std.mem.eql(u8, directory, "repl")) return .repl;
+        if (std.mem.eql(u8, directory, "lsp")) return .lsp;
         return null;
     }
 };
@@ -393,6 +396,26 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
         return 0;
     }
 
+    if (kind == .lsp) {
+        const marked = try root.readFileAlloc(io, case.entry_path, gpa, .limited(Source.max_bytes));
+        defer gpa.free(marked);
+        const request_path = try std.fmt.allocPrint(gpa, "{s}.request", .{case.stem});
+        defer gpa.free(request_path);
+        const request = root.readFileAlloc(io, request_path, gpa, .limited(4096)) catch |err| switch (err) {
+            error.FileNotFound => try gpa.dupe(u8, "textDocument/completion"),
+            else => return err,
+        };
+        defer gpa.free(request);
+        const path = try std.fs.path.join(gpa, &.{ build_options.conformance_dir, case.entry_path });
+        defer gpa.free(path);
+        for (0..50) |_| {
+            const reply = try Lsp.conformanceReply(gpa, io, path, marked, std.mem.trim(u8, request, " \t\r\n"));
+            defer gpa.free(reply);
+            if (try compareWithExpected(gpa, io, root, case, reply) != 0) return 1;
+        }
+        return 0;
+    }
+
     // The display paths are the relative ones, so expectations stay
     // machine-independent. A project case loads every file beside its entry.
     var project = try emerald.Project.loadIn(gpa, io, root, case.entry_path);
@@ -446,7 +469,7 @@ fn produce(
 ) !?[]u8 {
     const entry = &project.files[project.entry].source;
     switch (kind) {
-        .repl => unreachable, // transcript cases bypass project loading
+        .repl, .lsp => unreachable, // protocol/transcript cases bypass project loading
         .lexical => {
             var tokenized = try emerald.Lexer.tokenize(gpa, entry);
             defer tokenized.deinit(gpa);

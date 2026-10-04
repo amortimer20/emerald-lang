@@ -34,6 +34,7 @@
 
 const std = @import("std");
 const Ast = @import("Ast.zig");
+const Builtins = @import("Builtins.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Lexer = @import("Lexer.zig");
 const Project = @import("Project.zig");
@@ -107,6 +108,26 @@ pub const Checked = struct {
         return !Diagnostic.anyErrors(self.diagnostics);
     }
 
+    /// Receiver-only restrictions for editor completion. Argument and block
+    /// types are checked when written; do not propose a method whose receiver
+    /// can never satisfy its existing contract.
+    pub fn acceptsCompletionMember(self: Checked, receiver: Type, name: []const u8) bool {
+        if (receiver.kind != .list) return true;
+        const element = receiver.element.?.*;
+        if (std.mem.eql(u8, name, "sum") or std.mem.eql(u8, name, "average")) return numericListElement(element);
+        const equatable_type = if (self.structs.get(Resolver.preludeKey("Equatable"))) |t| t.user else null;
+        const hashable = if (self.structs.get(Resolver.preludeKey("Hashable"))) |t| t.user else null;
+        if (std.mem.eql(u8, name, "frequencies") or std.mem.eql(u8, name, "to_set")) return element.eligibleKey(equatable_type, hashable);
+        if (std.mem.eql(u8, name, "to_dictionary")) return dictionaryListElement(element) and element.elements[0].eligibleKey(equatable_type, hashable);
+        if (std.mem.eql(u8, name, "sort") or std.mem.eql(u8, name, "sort!") or std.mem.eql(u8, name, "min") or std.mem.eql(u8, name, "max") or std.mem.eql(u8, name, "min_max")) {
+            if (element.optional) return false;
+            if (element.kind == .int or element.kind == .float or element.kind == .string) return true;
+            const ordered = self.structs.get(Resolver.preludeKey("Ordered")) orelse return false;
+            return element.kind == .struct_value and element.user.?.conformsTo(ordered.user.?);
+        }
+        return true;
+    }
+
     pub fn deinit(self: *Checked) void {
         self.arena_state.deinit();
         self.* = undefined;
@@ -146,7 +167,7 @@ pub const LiteralTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 /// An expression's type together with which of the project's files it came
 /// from (`Diagnostic.file`'s indexing) — needed because a byte offset alone
 /// is ambiguous across files: each `Source`'s spans start over at 0.
-pub const ExpressionType = struct { file: u32, type: Type };
+pub const ExpressionType = struct { file: u32, type: Type, changeable: bool = false };
 pub const ExpressionTypes = std.AutoHashMapUnmanaged(*const Ast.Expression, ExpressionType);
 pub const Structs = std.StringHashMapUnmanaged(Type);
 pub const MethodCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8);
@@ -190,6 +211,9 @@ view_sizes: [2]usize = .{ std.math.maxInt(usize), std.math.maxInt(usize) },
 diagnostics: std.ArrayList(Diagnostic) = .empty,
 
 facts: Resolver.Facts,
+/// Parsed only when an unknown native member needs its learner-facing list.
+/// Ordinary checks do not pay to decode the editor catalog.
+builtin_catalog: ?Builtins.Data = null,
 declarations: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// User-defined structs, keyed by the same resolved names as module bindings.
 structs: Structs = .empty,
@@ -297,6 +321,7 @@ literal_types: LiteralTypes = .empty,
 /// literal), this covers every expression kind, for the language server's
 /// hover (18.5) to answer "what is this" for whatever the cursor is on.
 expression_types: ExpressionTypes = .empty,
+completion: bool = false,
 /// Field metadata is completed for every struct before recursive key
 /// eligibility is judged, so declaration order cannot change the answer.
 resolving_struct_fields: bool = false,
@@ -391,6 +416,7 @@ pub const Options = struct {
     /// Check every prelude body, reached or not, as the tests do so that a
     /// mistake in a body no program reaches is still found.
     whole_prelude: bool = false,
+    completion: bool = false,
 };
 
 pub fn check(
@@ -421,7 +447,7 @@ pub fn checkWithOptions(
     const module = try arena.create(Scope);
     module.* = .empty;
 
-    var checker: Checker = .{ .arena = arena, .prelude = prelude, .module = module, .facts = facts, .files = files };
+    var checker: Checker = .{ .arena = arena, .prelude = prelude, .module = module, .facts = facts, .files = files, .completion = options.completion };
     // The prelude joins every analysis as the last file (`emerald.analyze`).
     const prelude_file: ?usize = for (files, 0..) |file, index| {
         if (std.mem.eql(u8, file.namespace, Resolver.prelude_namespace)) break index;
@@ -6020,7 +6046,8 @@ fn markAllAssigned(self: *Checker) void {
 /// few kinds `literal_types` already tracked for the interpreter's sake.
 fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
     const result = try self.typeOfUnrecorded(expression);
-    try self.expression_types.put(self.arena, expression, .{ .file = self.file, .type = result });
+    const changeable = if (self.completion) try self.completionChangeable(expression, result) else false;
+    try self.expression_types.put(self.arena, expression, .{ .file = self.file, .type = result, .changeable = changeable });
     try self.reachType(result);
     return result;
 }
@@ -7450,7 +7477,7 @@ fn typeOfMethodCall(
     // element before either belongs in Emerald's public surface.
     if (std.mem.eql(u8, member.name, "sum")) {
         if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
-        if (element.kind == .int or element.kind == .float) return element;
+        if (numericListElement(element)) return element;
         try self.report(
             member.name_span,
             "`sum` needs a List of Ints or Floats, but this is {f}",
@@ -7465,7 +7492,7 @@ fn typeOfMethodCall(
     // its fractional part. Its one missing answer is the average of no items.
     if (std.mem.eql(u8, member.name, "average")) {
         if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
-        if (element.kind == .int or element.kind == .float) return Type.float.optionalOf();
+        if (numericListElement(element)) return Type.float.optionalOf();
         try self.report(
             member.name_span,
             "`average` needs a List of Ints or Floats, but this is {f}",
@@ -7674,6 +7701,17 @@ fn requirePresent(
 
 /// Section 4.5's `or`: the value if it is there, and the fallback if it is not.
 /// The result is never optional, which is what makes it the way out.
+pub const optional_methods = [_][]const u8{"or"};
+
+/// These public calls have source declarations for resolver identity, but
+/// their useful parameter/result shapes are special-cased below because the
+/// language has no written generic type parameter for `as:` or encodable
+/// values. Keep the editor catalog's corresponding signatures tied to these
+/// checker-owned names.
+pub const typed_json_methods = [_][]const u8{ "encode", "decode" };
+pub const typed_csv_methods = [_][]const u8{ "encode", "decode" };
+pub const typed_console_methods = [_][]const u8{"table"};
+
 fn typeOfOr(
     self: *Checker,
     expression: *const Ast.Expression,
@@ -8051,6 +8089,14 @@ fn typeOfAssociate(self: *Checker, call: Ast.Expression.Call, member: Ast.Expres
     return Type.dictionaryOf(self.arena, key, value);
 }
 
+fn numericListElement(element: Type) bool {
+    return element.kind == .int or element.kind == .float;
+}
+
+fn dictionaryListElement(element: Type) bool {
+    return element.kind == .tuple and element.elements.len == 2;
+}
+
 /// Section 8.6's `to_dictionary`: a List already holding `(key, value)`
 /// tuples becomes a Dictionary directly, with no block to say how. The result
 /// type is recorded for the interpreter, which cannot otherwise recover a
@@ -8064,7 +8110,7 @@ fn typeOfToDictionary(
 ) Error!Type {
     _ = try self.requireArity(member, call.arguments, 0, 0);
     const element = base.element.?.*;
-    if (element.kind != .tuple or element.elements.len != 2) {
+    if (!dictionaryListElement(element)) {
         try self.report(
             member.name_span,
             "`to_dictionary` needs a List of two-element tuples, but this is {f}",
@@ -8492,6 +8538,37 @@ fn requireChangeablePath(self: *Checker, base: *const Ast.Expression) Error!?*co
     return root;
 }
 
+/// An editor fact, computed while the checker still owns the binding scopes.
+/// Resolve the same place as an actual changing call, quietly: asking what
+/// can be called must not add a diagnostic to the program.
+fn completionChangeable(self: *Checker, expression: *const Ast.Expression, value: Type) Error!bool {
+    if (isClass(value)) return true;
+    switch (expression.data) {
+        .name, .member, .index => {},
+        else => return false,
+    }
+    const reported = self.diagnostics.items.len;
+    defer self.diagnostics.shrinkRetainingCapacity(reported);
+    const place = try self.resolvePlace(expression);
+    const root = switch (place) {
+        .reported => return false,
+        .root => |root| root,
+        .typed => |typed| blk: {
+            if (typed.frozen != null) return false;
+            if (typed.reference) return true;
+            break :blk typed.root;
+        },
+    };
+    if (root.data == .name) {
+        const binding = self.find(root.data.name) orelse return false;
+        return binding.mutability == .variable;
+    }
+    if (self.facts.qualified.get(root)) |key| {
+        if (self.type_fields.contains(key)) return self.module.get(key).?.mutability == .variable;
+    }
+    return false;
+}
+
 /// Section 4.3 and 7.1: a method that changes its receiver cannot be called on
 /// a `const`, a parameter, a loop variable, or a temporary.
 fn requireMutableReceiver(self: *Checker, member: Ast.Expression.Member, name: []const u8) Error!void {
@@ -8911,7 +8988,7 @@ fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
 /// A member that does not exist, with the Emerald name for what the writer
 /// probably meant when they reached for another language's.
 fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member, comptime what: []const u8) Error!void {
-    const suggestion: ?[]const u8 = switch (base.kind) {
+    const candidate: ?[]const u8 = switch (base.kind) {
         .list => familiarListName(member.name),
         .string => familiarStringName(member.name),
         .dictionary, .set => familiarMapName(member.name, base.kind == .set),
@@ -8919,8 +8996,12 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         .float => familiarFloatName(member.name),
         else => null,
     };
+    const suggestion = if (candidate) |name|
+        if (std.mem.startsWith(u8, name, "[") or try self.catalogHasInstanceMember(base, name)) name else null
+    else
+        null;
     if (suggestion) |name| {
-        return self.reportWithHelpCoded(
+        try self.reportWithHelpCoded(
             member.name_span,
             .unknown_member,
             "{f} has no " ++ what ++ " `{s}`",
@@ -8928,22 +9009,95 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
             "Emerald calls this `{s}`.",
             .{name},
         );
+        // Renaming alone must preserve whether this is a property or a call.
+        // Indexing hints and changes such as length() -> count need structural
+        // edits; this slice offers only exact name replacements.
+        const owner = instanceCatalogOwner(base) orelse return;
+        const target = Builtins.find(try self.catalog(), owner, name) orelse return;
+        if ((std.mem.eql(u8, what, "method") and target.kind == .method) or
+            (std.mem.eql(u8, what, "property") and target.kind == .property))
+        {
+            self.diagnostics.items[self.diagnostics.items.len - 1].replacement = .{
+                .span = member.name_span,
+                .text = name,
+            };
+        }
+        return;
     }
     try self.reportCoded(
         member.name_span,
         .unknown_member,
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
-        switch (base.kind) {
-            .list => "A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.",
-            .dictionary => "A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.",
-            .set => "A set has `count`, and methods including `contains?`, `add`, `remove`, `union`, `intersection`, `difference`, `subset?`, `filter`, `each`, and `map`; the Set reference lists them all.",
-            .string => "A String has `count`, `empty?`, `blank?`, `chars`, `code_points`, `bytes`, `upper`, `lower`, `capitalize`, `trim`, `trim_start`, `trim_end`, `contains?`, `starts_with?`, `ends_with?`, `index_of`, `substring`, `split`, `lines`, `partition`, `replace`, `insert_at`, `remove_prefix`, `remove_suffix`, `reverse`, `repeat`, `collapse_repeats`, `pad_start`, `pad_end`, `pad_center`, `to_int`, `to_int_or`, `to_int_maybe`, `to_float`, `to_float_or`, and `to_float_maybe`.",
-            .int => "An Int has `times`, `up_to`, `down_to`, `even?`, `odd?`, `multiple_of?`, `zero?`, `positive?`, `negative?`, `abs`, `clamp`, `between?`, `to_string`, `format`, `digits`, `gcd`, `lcm`, `factorial`, and `to_float`.",
-            .float => "A Float has `round`, `floor`, `ceil`, `truncate`, `round_to`, `format`, `to_string`, `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `square_root`, `to_radians`, `to_degrees`, `finite?`, `infinite?`, `nan?`, and `to_int`.",
-            else => "Check the spelling, or what kind of value this is.",
-        },
+        unknownMemberHelp(base) orelse "Check the spelling, or what kind of value this is.",
     );
+}
+
+fn unknownMemberHelp(base: Type) ?[]const u8 {
+    return switch (base.kind) {
+        .list => "A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.",
+        .dictionary => "A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.",
+        .set => "A set has `count`, and methods including `contains?`, `add`, `remove`, `union`, `intersection`, `difference`, `subset?`, `filter`, `each`, and `map`; the Set reference lists them all.",
+        .string => "A String has `count`, and methods including `empty?`, `chars`, `upper`, `lower`, `trim`, `contains?`, `substring`, `split`, `lines`, `replace`, and `to_bytes`; the String reference lists them all.",
+        .int => "An Int has methods including `times`, `even?`, `abs`, `clamp`, `to_string`, `format`, `digits`, `gcd`, `factorial`, and `to_float`; the Int reference lists them all.",
+        .float => "A Float has methods including `round`, `floor`, `ceil`, `format`, `to_string`, `abs`, `clamp`, `between?`, `square_root`, and `to_int`; the Float reference lists them all.",
+        else => null,
+    };
+}
+
+fn instanceCatalogOwner(base: Type) ?[]const u8 {
+    return switch (base.kind) {
+        .list => "List",
+        .dictionary => "Dict",
+        .set => "Set",
+        .string => "String",
+        .int => "Int",
+        .float => "Float",
+        else => null,
+    };
+}
+
+fn catalog(self: *Checker) Error!Builtins.Data {
+    if (self.builtin_catalog) |data| return data;
+    const parsed = Builtins.load(self.arena) catch return error.OutOfMemory;
+    self.builtin_catalog = parsed.value;
+    return parsed.value;
+}
+
+fn catalogHasInstanceMember(self: *Checker, base: Type, name: []const u8) Error!bool {
+    const owner = instanceCatalogOwner(base) orelse return false;
+    const data = try self.catalog();
+    const member = Builtins.find(data, owner, name) orelse return false;
+    return member.kind == .method or member.kind == .property;
+}
+
+test "unknown-member help only names cataloged members" {
+    const parsed_catalog = try Builtins.load(std.testing.allocator);
+    defer parsed_catalog.deinit();
+
+    const samples = [_]struct { owner: []const u8, text: []const u8 }{
+        .{ .owner = "List", .text = unknownMemberHelp(.{ .kind = .list }).? },
+        .{ .owner = "Dict", .text = unknownMemberHelp(.{ .kind = .dictionary }).? },
+        .{ .owner = "Set", .text = unknownMemberHelp(.{ .kind = .set }).? },
+        .{ .owner = "String", .text = unknownMemberHelp(.{ .kind = .string }).? },
+        .{ .owner = "Int", .text = unknownMemberHelp(.{ .kind = .int }).? },
+        .{ .owner = "Float", .text = unknownMemberHelp(.{ .kind = .float }).? },
+    };
+
+    for (samples) |sample| {
+        var cursor: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, sample.text, cursor, '`')) |open| {
+            const close = std.mem.indexOfScalarPos(u8, sample.text, open + 1, '`') orelse return error.TestUnexpectedResult;
+            const name = sample.text[open + 1 .. close];
+            // `[key]` is dictionary syntax, not a catalog member.
+            if (!std.mem.eql(u8, name, "[key]") and Builtins.find(parsed_catalog.value, sample.owner, name) == null) {
+                std.debug.print("unknown-member help lists `{s}`, absent from {s} catalog\n", .{ name, sample.owner });
+                return error.TestUnexpectedResult;
+            }
+            try std.testing.expect(!std.mem.eql(u8, name, "type_name"));
+            cursor = close + 1;
+        }
+    }
 }
 
 /// Common spellings from other languages for Emerald's integer methods.

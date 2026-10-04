@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "signatures": [
+      {
+        "label": "pad_start(width: Int, fill: String = \" \"): String",
+        "documentation": "The text with `fill` added at its start until it is `width` characters long.",
+        "parameters": [
+          {
+            "label": "width: Int"
+          },
+          {
+            "label": "fill: String = \" \""
+          }
+        ],
+        "activeParameter": 1
+      }
+    ],
+    "activeSignature": 0,
+    "activeParameter": 1
+  }
+}

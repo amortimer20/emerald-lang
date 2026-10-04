@@ -1482,12 +1482,14 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
         }
     }
     if (std.mem.eql(u8, name, "this") and self.enclosingType() != null and self.enclosingType().?.has_self) {
-        return self.report(
+        try self.report(
             span,
             "Emerald calls the current value `self`",
             .{},
             "Write `self` instead of `this`.",
         );
+        self.diagnostics.items[self.diagnostics.items.len - 1].replacement = .{ .span = span, .text = "self" };
+        return;
     }
 
     // A private module name deliberately does not appear in another file's

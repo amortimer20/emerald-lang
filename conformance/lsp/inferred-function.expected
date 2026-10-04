@@ -1,0 +1,518 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "AssertionError",
+      "kind": 7,
+      "detail": "AssertionError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Base64",
+      "kind": 7,
+      "detail": "Base64",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Bool",
+      "kind": 7,
+      "detail": "Bool",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Bytes",
+      "kind": 7,
+      "detail": "Bytes",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "CancelledError",
+      "kind": 7,
+      "detail": "CancelledError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Channel",
+      "kind": 7,
+      "detail": "Channel",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Console",
+      "kind": 7,
+      "detail": "Console",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Csv",
+      "kind": 7,
+      "detail": "Csv",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "CsvError",
+      "kind": 7,
+      "detail": "CsvError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Date",
+      "kind": 22,
+      "detail": "Date",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "DateTime",
+      "kind": 22,
+      "detail": "DateTime",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "DateTimeError",
+      "kind": 7,
+      "detail": "DateTimeError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "DeadlockError",
+      "kind": 7,
+      "detail": "DeadlockError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Dict",
+      "kind": 7,
+      "detail": "Dict",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Digest",
+      "kind": 7,
+      "detail": "Digest",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Directory",
+      "kind": 7,
+      "detail": "Directory",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Duration",
+      "kind": 22,
+      "detail": "Duration",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "EncodingError",
+      "kind": 7,
+      "detail": "EncodingError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Equatable",
+      "kind": 8,
+      "detail": "Equatable",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Error",
+      "kind": 7,
+      "detail": "Error",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "File",
+      "kind": 7,
+      "detail": "File",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "FileError",
+      "kind": 7,
+      "detail": "FileError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "FileHandle",
+      "kind": 7,
+      "detail": "FileHandle",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "FileWriter",
+      "kind": 7,
+      "detail": "FileWriter",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Float",
+      "kind": 7,
+      "detail": "Float",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Hashable",
+      "kind": 8,
+      "detail": "Hashable",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Http",
+      "kind": 7,
+      "detail": "Http",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "HttpError",
+      "kind": 7,
+      "detail": "HttpError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "InputError",
+      "kind": 7,
+      "detail": "InputError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Instant",
+      "kind": 22,
+      "detail": "Instant",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Int",
+      "kind": 7,
+      "detail": "Int",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Json",
+      "kind": 22,
+      "detail": "Json",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "JsonError",
+      "kind": 7,
+      "detail": "JsonError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "List",
+      "kind": 7,
+      "detail": "List",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Math",
+      "kind": 9,
+      "detail": "Math",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Nothing",
+      "kind": 7,
+      "detail": "Nothing",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Ordered",
+      "kind": 8,
+      "detail": "Ordered",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Path",
+      "kind": 7,
+      "detail": "Path",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Program",
+      "kind": 9,
+      "detail": "Program",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Random",
+      "kind": 7,
+      "detail": "Random",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Range",
+      "kind": 7,
+      "detail": "Range",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "RecursionError",
+      "kind": 7,
+      "detail": "RecursionError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Regex",
+      "kind": 22,
+      "detail": "Regex",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "RegexError",
+      "kind": 7,
+      "detail": "RegexError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "RuntimeError",
+      "kind": 7,
+      "detail": "RuntimeError",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Set",
+      "kind": 7,
+      "detail": "Set",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Stopwatch",
+      "kind": 7,
+      "detail": "Stopwatch",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "String",
+      "kind": 7,
+      "detail": "String",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Task",
+      "kind": 7,
+      "detail": "Task",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "TaskGroup",
+      "kind": 7,
+      "detail": "TaskGroup",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Tasks",
+      "kind": 7,
+      "detail": "Tasks",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Textual",
+      "kind": 8,
+      "detail": "Textual",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Time",
+      "kind": 22,
+      "detail": "Time",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "TimeZone",
+      "kind": 22,
+      "detail": "TimeZone",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "Weekday",
+      "kind": 13,
+      "detail": "Weekday",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "answer",
+      "kind": 3,
+      "detail": "answer(): Int",
+      "documentation": null,
+      "insertText": "answer()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "exit",
+      "kind": 3,
+      "detail": "exit(code: Int = 0): Nothing",
+      "documentation": "Ends the program at once, with the status `code`; `0` means it finished normally.",
+      "insertText": "exit($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "greeting",
+      "kind": 3,
+      "detail": "greeting(): String",
+      "documentation": null,
+      "insertText": "greeting()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "input",
+      "kind": 3,
+      "detail": "input(prompt: String = \"\"): String",
+      "documentation": "Shows `prompt`, then gives back the line the person types, without its line break.",
+      "insertText": "input($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "input_maybe",
+      "kind": 3,
+      "detail": "input_maybe(prompt: String = \"\"): String?",
+      "documentation": "Like `input`, but gives `nothing` when the input has ended, instead of raising an error.",
+      "insertText": "input_maybe($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "print",
+      "kind": 3,
+      "detail": "print(values: Any...): Nothing",
+      "documentation": "Shows each value, separated by a space, then ends the line.",
+      "insertText": "print($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "probe",
+      "kind": 3,
+      "detail": "probe(): Nothing",
+      "documentation": null,
+      "insertText": "probe()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "random",
+      "kind": 3,
+      "detail": "random(range: Range): Int",
+      "documentation": "A whole number chosen at random from `range`, every number in it equally likely.",
+      "insertText": "random($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "write",
+      "kind": 3,
+      "detail": "write(values: Any...): Nothing",
+      "documentation": "Shows each value, separated by a space, exactly as `print` does, but does not end the line.",
+      "insertText": "write($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

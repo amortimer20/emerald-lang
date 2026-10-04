@@ -4979,3 +4979,208 @@ Implementation commit eebe5e7 was pushed on codex/editor-intelligence. CI run
 execution fuzz passed. No job was rerun. The handoff and plan now record the green
 result rather than leaving commit/push/CI pending. Stopped for slice 1 review;
 completion and later slices have not started.
+
+## 2026-10-03: Editor intelligence slice 2 — completion validation in progress
+
+Completion covers value members, type and namespace members, built-in types and
+namespaces among bare names, privacy, receiver changeability, and method insertion
+snippets. The slice-1 catalog omitted `Optional.or`, which the checker already accepted;
+it is now included and checked. Source review also found five special typed prelude calls
+whose stubs did not match the checker's shapes: `Json.encode/decode`, `Csv.encode/decode`,
+and struct-row `Console.table`. Their editor signatures now come from the catalog, with a
+regression through the real LSP handler. Their dedicated checker paths are listed beside
+those paths, while ordinary signature result/arity probes continue to cover the fixed-shape
+members.
+
+ReleaseSafe completion medians against the largest example project were 7.426 ms before
+and 3.022 ms after for `File.` (15 items both), and 10.153 ms before and 5.244 ms after
+for a String receiver (0 items before, 38 after), each over 25 requests after five warmups.
+Debug and ReleaseSafe test suites, native build, documentation examples, formatting,
+whitespace, Windows/macOS cross-builds, and all 40 real-protocol LSP cases repeated 50
+times passed. The sibling VS Code integration suite had 8 passing tests and one format-on-save
+timeout. Direct formatting protocol probes against both baseline and current server returned
+the same correct edit, but the UI-level failure remains unexplained. No commit or push has
+been made; slice 2 awaits resolution of that required integration failure, and slice 3 has
+not started.
+
+## 2026-10-03: Editor intelligence slice 2 — integration follow-up
+
+The user reported seven successful VS Code integration runs after the one timeout above.
+Codex then ran the suite once more and observed all 9 tests pass, including
+`formats a document via the format-on-save provider` (VS Code 1.140.0). The timeout was
+transient; no extension change was needed. Completion's local gates and timing are green,
+and slice 2 is ready to commit and push. Slice 3 awaits the pushed branch's green CI.
+
+## 2026-10-03: Editor intelligence slice 2 — commit, CI, and main sync
+
+Completion was committed as `3868394` and pushed on `codex/editor-intelligence`. CI run
+`37147012161` passed all seven jobs. At slice 3's start, main had three new documentation-only
+roadmap commits; they merged cleanly in `49eef58`, preserving the roadmap notes. No source or
+conformance conflicts arose.
+
+## 2026-10-03: Editor intelligence slice 3 — hover and documentation
+
+Hover now uses catalog-backed signatures, summaries, possible-raise notes, and website links
+for catalog members; prelude and program declarations use their source signatures and attached
+`##` comments. It works on a declaration name as well as a use. Native members still have no
+go-to-definition target. The checker validates cross-language correction targets against the
+catalog and samples the first eight catalog member names in generic native-member help, pointing
+to the corresponding reference. It parses the catalog only after an unknown native member, so
+successful everyday checks avoid that cost.
+
+All 48 standalone real-protocol LSP cases returned identical replies over 50 requests each.
+The Debug and ReleaseSafe `zig build test -j1` suites, native build, documentation examples (24
+executed and 135 linked conformance files confirmed), changed-file formatting, whitespace check,
+and Windows/macOS cross-builds passed on Zig 0.16.0. The VS Code integration suite timed out in
+format-on-save in three attempts; each run passed the other eight tests. Direct
+`textDocument/formatting` requests returned the expected full-document edit for both file and
+untitled URIs. The user reports Claude ran the suite successfully seven times. The downloaded
+VS Code build logged a missing `native-keymap` module and other environment warnings. No
+extension files changed. Commit, push, and branch CI confirmation remain to be recorded after
+this entry's local gate.
+
+## 2026-10-03: Editor intelligence slice 3 — CI
+
+Slice 3 was committed as `8fac992` and pushed to `codex/editor-intelligence`. CI run
+`37153243148` passed all seven jobs (Ubuntu, macOS, Windows Debug/ReleaseSafe and bounded
+execution fuzz). The VS Code integration suite's format-on-save UI timeout remains noted above;
+the server's formatting request returned the expected edit for both file and untitled URIs, and
+the user reports seven successful runs from Claude. No extension changes were needed. Stop here
+for review; Claude handles website parity slice 7 before slice 4.
+
+## 2026-10-03: Editor intelligence slice 3 — review corrections
+
+Restored the hand-written unknown-member guidance for List, Dict, and Set, including the
+dictionary `[key]` cue. String, Int, and Float now list about ten useful members each rather
+than preserving stale exhaustive samples. A checker unit test validates every backticked
+member name against its owner in `builtins.json` and prevents `type_name` from returning.
+Catalog validation of synonym suggestions remains in place.
+
+Added a `type_pages` table to the catalog for prelude library declarations and their nested
+types. Hovering a prelude declaration or member now links to that type's reference page;
+member anchors drop a trailing `?` or `!`. File and Path hover protocol cases verify it. A
+possible-raise hover note for prelude declarations is explicitly follow-up work because the
+prelude has no raises metadata. Corrected the website-parity ownership note to say Claude.
+
+The Debug and ReleaseSafe full test gates passed 558/558 tests each. All 51 LSP protocol cases
+returned identical replies over 50 runs; `zig build -j1`, the documentation-example check,
+formatting, whitespace, and Windows/macOS cross-builds passed. After emerald-vscode PR #3
+merged as `597d066`, the integration suite passed all 9 tests, including format-on-save,
+against this server. The correction was committed as `052ebda` and pushed to
+`codex/editor-intelligence`; CI run `37161858942` passed all seven jobs.
+
+## 2026-10-03: Editor intelligence website parity follow-up
+
+Against emerald-website main at `7cd37cd`, the initial `scripts/check-builtin-parity.py` run
+identified seven stale catalog destinations (nine diagnostics because `Console.table` has two
+signatures). Corrected the universal `type_name`, both `Console.table` entries, `Csv.decode` and
+`Csv.encode`, `Json.decode` and `Json.encode`, and `String.to_bytes` to their canonical member
+anchors. The next parity run reported 249 members, 253 signatures, 26 linked pages, and zero
+problems.
+
+The parity script only checks member-page relationships, so the 45 `type_pages` routes were also
+checked against website content directly. Seven stale routes were found: `Bytes` and the six error
+types. They now point to their built-in reference pages, and all 45 routes resolve. The plan now
+records slice 7 as settled and requires the parity check during slices 2–6. No summaries changed.
+
+The native build and doc-example check passed, along with formatting, whitespace validation, and
+50 identical replies each for the two changed `type_name` hover cases. The member parity check
+reported zero problems and all 45 type-page routes resolved. The full local test command did not
+finish: the sandboxed run could not bind the HTTP test server, and a direct run remained in the
+conformance suite until a 90-second timeout. Full Debug/ReleaseSafe test completion remains
+unverified locally; the pushed commit's CI result is recorded below.
+
+Commit `83256c4` was pushed to `codex/editor-intelligence`; CI run `37164236982` passed all seven
+jobs, including Debug and ReleaseSafe on Ubuntu, macOS, and Windows. The local HTTP-suite limitation
+remains an environment-specific validation note, not a CI failure.
+
+## 2026-10-03: Editor intelligence slice 4 — signature help
+
+Added `textDocument/signatureHelp`, advertised for `(` and `,`. The request builds one checked
+analysis and uses its resolved call facts for source declarations, while `builtins.json` provides
+native signatures and summaries. Help covers functions, methods, generated field constructors,
+and custom constructors; it includes defaults, recognizes named active parameters, and keeps
+native overloads visible while selecting the active signature by the current argument.
+
+The parser has no incomplete-call recovery, so the LSP closes open delimiters only in a private
+source copy. An unfinished bare argument identifier is replaced with a same-width literal so the
+single analysis succeeds without shifting offsets. Generated constructors do not have a stored
+checker signature, so their labels come from the source fields; custom constructors use the
+checked signature. These implementation constraints and choices are recorded in slice 4 of the
+plan. Nine focused LSP cases and all 60 protocol cases returned identical replies 50 times each.
+
+On pinned Zig 0.16.0, Debug and ReleaseSafe test suites, `zig build -j1`, documentation examples,
+formatting, whitespace validation, Windows/macOS cross-builds, the 10-test VS Code integration
+suite, and the emerald-website built-in parity check all passed. The website check reported 249
+catalog members, 253 signatures, 26 pages, and zero problems. Commit `d002068` was pushed to
+`codex/editor-intelligence`; CI run `37172527412` passed all seven jobs, including Debug and
+ReleaseSafe on Ubuntu, macOS, and Windows.
+
+## 2026-10-04 — Signature-help review corrections
+
+Signature help now inserts a private placeholder at the cursor when it follows a comma and the
+remainder of the call contains only whitespace before `)` or EOF. That keeps an empty active
+argument parseable, including immediately after the comma and on a blank line. Protocol cases
+cover the open/closed call, no-space comma, built-in method, generated constructor, post-named
+argument, and multiline argument forms.
+
+Signature labels use Emerald's dotted spelling for native type methods, prelude type functions,
+and nested constructors. Nested type resolver keys also contain `::`, so constructor recognition
+now relies on the resolved struct declaration. Source annotations/defaults are read from the
+declaration's own file; this preserves `Http.get`'s defaults when the request is in another file.
+Further cases cover `File.write`, `Path.join`, `Math.sin`, `Http.Response` in the `Http.get`
+result, and a user-defined nested constructor.
+
+All 72 LSP protocol cases returned identical replies 50 times each. On pinned Zig 0.16.0, Debug
+and ReleaseSafe test suites, native build, documentation examples, changed-Zig formatting,
+whitespace, Windows/macOS cross-builds, the 9-test VS Code integration suite, and the website
+parity check passed; parity reported 249 members, 253 signatures, 26 pages, and zero problems.
+Commit `832280c` was pushed to `codex/editor-intelligence`; CI run `37176337549` passed all seven
+jobs, including Debug and ReleaseSafe on Ubuntu, macOS, and Windows.
+
+## 2026-10-04: Editor intelligence slice 5 — quick fixes
+
+Added `textDocument/codeAction` for existing exact name corrections. The checker attaches a
+replacement span and text to its catalog-validated member-synonym diagnostics, while the
+resolver supplies the existing `this` → `self` edit. Neither diagnostic prose nor language
+behavior changed. Indexing guidance and changes between method and property syntax remain
+hints because substituting the name alone would not implement the correction.
+
+Published diagnostics carry structured `data` with the edit, original text, and document
+revision. Code actions read that data without another analysis and validate the revision,
+UTF-16 coordinates, original text, requested range, and kind filter. The revision prevents
+a stale suggestion from applying even when the token still occupies its original position.
+The response uses ordinary `quickfix` workspace edits and includes the originating diagnostic.
+
+Thirteen new protocol cases forward the real server's didOpen diagnostics. They cover List,
+String, Dict, Set, Int, and Float synonyms; the name correction; Unicode positions; a request
+selecting only one of two diagnostics; and hints without an applicable edit. Workspace-edit
+URIs are normalized only in test expectations. Allocator-backed tests apply each correction
+and check the resulting program, change message prose independently of its data, and exercise
+stale, malformed, missing, and filtered metadata. Every new expected file was read by hand.
+
+The first sandboxed test command was denied a loopback socket for the existing HTTP tests;
+the full gates completed outside that restriction. On pinned Zig 0.16.0, Debug and ReleaseSafe
+each passed 561/561 tests. The native build, documentation check (24 examples executed and 135
+conformance links), changed-Zig formatting, whitespace checks, and Windows/macOS cross-builds
+outside zig-out passed. All 85 standalone LSP cases returned identical replies 50 times each,
+and the VS Code integration suite passed all nine tests against this server. Website parity
+reported 249 members, 253 signatures, 26 pages, and zero problems. Commit and branch CI follow.
+
+## 2026-10-04: Editor intelligence slice 5 — CI
+
+Committed slice 5 as `8160fa5` and pushed it to `codex/editor-intelligence`. CI run
+`37218063872` passed all seven jobs: bounded execution fuzzing and Debug/ReleaseSafe tests
+on Ubuntu, macOS, and Windows. The local gate and all 85 protocol cases at 50 requests each
+are recorded above. Stop for review; slice 6 (extension polish) begins only after approval.
+
+## 2026-10-04: Editor intelligence slice 5 — review follow-up
+
+Claude reviewed slice 5 with 14 real quick-fix requests: member synonyms, `this` → `self`, a
+`has_key` → `contains_key?` fix, UTF-16 ranges with an emoji earlier on the same line, and the
+deliberately help-only cases (`length()` and a misspelled variable). The one gap was the
+parser's misspelled-annotation suggestion, the compiler's only remaining "Did you mean", which
+carried no replacement. The replacement now covers the annotation word, so `@overide` becomes
+`@override`. Debug and ReleaseSafe `zig build test -j1` passed, all 86 protocol cases matched 50
+times, the extension's 10 integration tests passed three times against this build (the 9 recorded
+earlier predate emerald-vscode PR #4), and the website parity check reported zero problems.

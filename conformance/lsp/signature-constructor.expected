@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "signatures": [
+      {
+        "label": "Point(x: Int, label: String = \"origin\"): Point",
+        "documentation": null,
+        "parameters": [
+          {
+            "label": "x: Int"
+          },
+          {
+            "label": "label: String = \"origin\""
+          }
+        ],
+        "activeParameter": 0
+      }
+    ],
+    "activeSignature": 0,
+    "activeParameter": 0
+  }
+}

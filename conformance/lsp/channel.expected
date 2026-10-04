@@ -1,0 +1,38 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "close",
+      "kind": 2,
+      "detail": "close(): Nothing",
+      "documentation": "Says that nothing more will be sent.",
+      "insertText": "close()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "receive",
+      "kind": 2,
+      "detail": "receive(): Int?",
+      "documentation": "Takes the next message, waiting for one if there is none yet.",
+      "insertText": "receive()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "send",
+      "kind": 2,
+      "detail": "send(value: Int): Nothing",
+      "documentation": "Puts a value into the channel.",
+      "insertText": "send($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "signatures": [
+      {
+        "label": "substring(start: Int): String",
+        "documentation": "The text from position `start` to the end.",
+        "parameters": [
+          {
+            "label": "start: Int"
+          }
+        ],
+        "activeParameter": 0
+      },
+      {
+        "label": "substring(start: Int, count: Int): String",
+        "documentation": "`count` characters, beginning at position `start`.",
+        "parameters": [
+          {
+            "label": "start: Int"
+          },
+          {
+            "label": "count: Int"
+          }
+        ],
+        "activeParameter": 1
+      }
+    ],
+    "activeSignature": 1,
+    "activeParameter": 1
+  }
+}

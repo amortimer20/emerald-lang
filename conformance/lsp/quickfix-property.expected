@@ -1,0 +1,69 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "title": "Replace with `count`",
+      "kind": "quickfix",
+      "diagnostics": [
+        {
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 11
+            },
+            "end": {
+              "line": 1,
+              "character": 17
+            }
+          },
+          "severity": 1,
+          "message": "String has no property `length`",
+          "data": {
+            "replacement": {
+              "range": {
+                "start": {
+                  "line": 1,
+                  "character": 11
+                },
+                "end": {
+                  "line": 1,
+                  "character": 17
+                }
+              },
+              "newText": "count"
+            },
+            "oldText": "length",
+            "revision": 1
+          }
+        }
+      ],
+      "isPreferred": true,
+      "edit": {
+        "documentChanges": [
+          {
+            "textDocument": {
+              "uri": "file:///document.em",
+              "version": null
+            },
+            "edits": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 11
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 17
+                  }
+                },
+                "newText": "count"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

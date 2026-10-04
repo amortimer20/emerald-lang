@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "sin",
+      "kind": 3,
+      "detail": "sin(value: Int): Int",
+      "documentation": "The project defines its own sine.",
+      "insertText": "sin($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

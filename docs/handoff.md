@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-03. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-04. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -12,8 +12,12 @@ functions, optionals, collections, Unicode strings, structs, classes, inheritanc
 enums, typed errors, projects/namespaces, ranges and slicing. The formatter and persistent-session
 REPL are complete and merged on main (PR #30). The language server provides diagnostics
 (identical to `emerald check`), symbols,
-format-on-save, hover, go to definition, find references, rename, and completion, but the last
-two are shallow for the built-in types: see "Queued: editor intelligence" below.
+format-on-save, hover, go to definition, find references, rename, and completion.
+The language server also provides signature help for native and declared functions, methods,
+and constructors, and structured quick fixes for exact name corrections. Editor-intelligence
+slices 2 through 5 are reviewed. Slice 5 is `8160fa5` on `codex/editor-intelligence`, plus
+Claude's follow-up attaching the annotation-typo replacement (`@overide` → `@override`).
+See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
 name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
@@ -143,7 +147,7 @@ the wanted order or sending through a channel. The probe and implementation find
 in the plan and journal, not repeated here. The full reference is
 [`library/tasks.md`](library/tasks.md), with a runnable `examples/tasks.em` tour.
 Rewrite-context 15.13 records the settled design. Formatter/LSP tests cover task blocks
-and generic type names/elements; built-in member completion remains queued below.
+and generic type names/elements; built-in member completion is implemented as described below.
 The review-correction gate passed Debug and ReleaseSafe tests, native build, documentation
 examples (24 executed, 126 linked conformance cases), formatting, whitespace, Windows/macOS
 cross-builds, and the standalone Windows ReleaseSafe scheduler probe cross-build. All 33
@@ -167,16 +171,21 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Editor-intelligence slice 1 is complete on `codex/editor-intelligence`, based
-on main `b728612`, committed as `eebe5e7`, pushed, and green in all seven CI jobs.
-It awaits review. The LSP owns its catalog
-once at startup; ordinary execution never loads it. Tests prove bidirectional names,
-exact results, block parameters, default/optional/variadic arities, every empty/excessive
-call boundary, and universal `type_name` placement. The approved checker corrections
-cover List result shapes, Range.step's missing-argument panic, and Math constant calls.
-Name parity added `String.to_bytes` and one universal owner `"*"` entry for `type_name`.
-The plan and journal record the findings and full local gate. Stop here for review;
-slice 2 (completion) requires the user's go-ahead.
+Editor-intelligence slices 1–4 are reviewed. Claude's `eec0c98` adds per-member prelude hover
+anchors, and the branch includes current `main` through merge `f3bbb98`. Website parity is
+settled: `scripts/check-builtin-parity.py` reports 0 problems against 249 catalog members,
+253 signatures, and 26 pages.
+
+Slice 5 adds `textDocument/codeAction` for existing exact name corrections, including the
+parser's one "Did you mean" suggestion, a misspelled annotation. Diagnostics carry
+the compiler's replacement as structured `data`; actions check the document revision, original
+text, UTF-16 edit range, requested range, and kind filter without a new analysis. Thirteen new
+protocol cases cover the six member-synonym owners, `this` → `self`, Unicode positions,
+range filtering, and help-only diagnostics. Allocator-backed tests apply the edits and check
+the corrected programs, and test stale/malformed diagnostic data independently of message prose.
+The full local gate passed (see validation below). Commit `8160fa5` is pushed and CI run
+`37218063872` passed all seven jobs. Stop for review;
+slice 6 (extension polish) begins only after approval.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -193,6 +202,14 @@ The trait-adoption hint follow-ups are merged through PRs #33 and #35; their
 focused cases and local full gates are recorded in the journal.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
+- LSP hover shows built-in signatures and descriptions with reference links, and shows
+  attached `##` comments on program declarations.
+- Editor completion offers native and declared members with signatures, summaries, and
+  method parentheses; bare names include the native types, `Math`, and `Program`.
+- LSP signature help shows active parameters, named/default arguments, overloads, and
+  generated or custom constructors while a call is being written.
+- LSP quick fixes apply exact name corrections, such as `push` → `append`, `this` → `self`, and
+  `@overide` → `@override`, using compiler-supplied diagnostic data.
 - `chunks`, `windows`, and `pairs` results are now typed as nested lists and pairs;
   code that relied on the old wrong type now needs fixing.
 - Calling `Range.step()` without its required argument reports the normal missing-argument
@@ -323,34 +340,23 @@ Open work:
 **In progress: editor intelligence** (the user's go-ahead, 2026-09-28; Codex implements,
 Claude reviews and handles website parity). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
-recommendations; the REPL prerequisite is merged. Slice 1 is the current review boundary. The findings
-below are the plan's starting point. The
-goal is C#-level IntelliSense in VS Code. Investigation found that the editor already runs the
-current server (`emerald lsp --stdio` from the 0.6.0 install) and that diagnostics match
-`emerald check` exactly on every example, but completion and hover are shallow:
-- Member completion (`Lsp.zig` `onCompletion`) handles only user- and prelude-declared types.
-  `"abc".`, `[1, 2].`, `5.`, and `Math.` offer nothing, while `Date(...)` and `Json.` offer
-  their members. `String`, `List`, `Dict`, `Set`, `Int`, `Float`, `Bool`, `Range`, `Bytes`,
-  and `Tuple` have their methods written into the checker as name checks, and `Math` and
-  `Program` are native namespaces with no declarations. `Math`, `Program`, and the built-in
-  type names are also missing from bare-name completion.
-- Hover shows only an expression's type (`Float` for `Math.sin(1)`), never a signature or
-  description, and go to definition on `Math.sin` finds nothing.
-- Completion patches the text with a fake `placeholder()` call and re-analyzes the whole
-  project, twice, instead of analyzing unfinished code directly.
-- The extension's grammar highlights only `print`, `write`, `input`, and `input_maybe` as
-  built-in functions (not `random` or `exit`), and the extension never says which `emerald`
-  binary it started.
+recommendations; the REPL prerequisite and slice 1 are merged. Slices 2–4 are reviewed and
+their CI is green; slice 5 is reviewed. Claude's review added the annotation quick fix.
+The goal is C#-level IntelliSense in VS Code. Completion now reads native descriptions
+from `src/builtins.json` and declarations from the compiler's analysis. The remaining gaps are:
+- Completion still patches unfinished source with a placeholder, as the accepted plan
+  requires, but performs one analysis rather than two. Error-tolerant parsing is not part
+  of this milestone.
 - The user reports red "not defined" errors in the editor that could not be reproduced; an
   example (the message and its line) is still needed.
 
-The proposed path, in order: (1) declare the built-in members as data (name, signature,
-summary) that completion, hover, the checker's "did you mean" hints, and a drift test all read,
-and from which the website reference and an `llms.txt` can be generated; (2) documentation in
-completion and hover, and definitions for built-ins; (3) error-tolerant analysis in place of
-the placeholder patch; (4) signature help and quick fixes from the diagnostics' hints;
-(5) an LSP conformance suite; (6) extension polish (show the binary and version, warn on a
-mismatch, complete the grammar). To probe the server by hand, speak JSON-RPC over stdio to
+Slice 6's extension work is merged (emerald-vscode PR #4: the binary and version in the output
+channel and status bar, and `support.class.builtin.emerald` for the library classes, with the
+website's themes colouring it). What remains is the 0.3.0 release notes, which the user publishes.
+Claude completed website parity after slice 3, and it is checked in later gates.
+Native go to definition stays empty: a native
+has no Emerald declaration, and its documentation link belongs in hover instead.
+To probe the server by hand, speak JSON-RPC over stdio to
 `emerald lsp`: `initialize`, `initialized`, `textDocument/didOpen`, then `completion`,
 `hover`, or `definition` with a position.
 
@@ -680,9 +686,6 @@ not yet discussed:
   established. The subsequent group A run passed every job, including Windows
   Debug, but that does not establish a fix. Investigate separately; no failed
   job was rerun or timeout widened to make it pass.
-- Found while writing the website's language pages (2026-09-30, in 0.6.0), each a spec promise
-  the implementation does not keep:
-  - Hover shows only a type, never a declaration's `##` documentation (for the editor work).
 - An idea the user will consider later (2026-10-01; not planned, and nothing changes until they
   decide): let a trailing block in an `if`, `while`, `for`, or `case` header work without the
   parentheses 7.4 requires, as in `if items.any? { item => item > 1 } {`. Every lambda has `=>`, even
@@ -735,16 +738,19 @@ not yet discussed:
 
 ## Validation and repository state
 
-Editor-intelligence slice 1 passed the full local gate on pinned Zig 0.16.0:
-Debug and ReleaseSafe `zig build test -j1`, native `zig build -j1`, the documentation
-check (24 examples executed, 135 conformance links), changed-Zig formatting,
-`git diff --check`, and Windows/macOS cross-builds outside zig-out. The website's
-List page passed all 49 examples with no output changes; the extension integration
-suite passed all 9 tests against the built server.
-[CI for `eebe5e7`](https://github.com/amortimer20/emerald-lang/actions/runs/37128949445)
-passed all seven jobs: Debug/ReleaseSafe on Linux, macOS, and Windows, plus bounded
-execution fuzzing. Slice 1 is stopped for review. Earlier diagnostic-polish groups A-C
-and follow-ups are merged, not pending.
+Editor-intelligence slice 5 passed the full local gate on pinned Zig 0.16.0:
+Debug and ReleaseSafe `zig build test -j1` each passed 561/561 tests, native
+`zig build -j1`, documentation examples (24 executed, 135 conformance links),
+changed-Zig formatting, `git diff --check`, and Windows/macOS cross-builds outside
+zig-out. All 85 LSP protocol cases returned identical replies 50 times each;
+the VS Code integration suite passed all nine tests against the built server.
+Website parity reported 249 members, 253 signatures, 26 pages, and zero problems.
+The initial sandboxed test attempt could not bind the HTTP test server; the full
+gates completed outside that restriction. Commit `8160fa5` is pushed and
+[CI run `37218063872`](https://github.com/amortimer20/emerald-lang/actions/runs/37218063872)
+passed all seven jobs: Linux/macOS/Windows Debug and ReleaseSafe, plus bounded execution
+fuzzing. Slice 5 is stopped for review. Earlier slices and their validation history are
+recorded in the journal.
 
 `main` is the only long-lived branch. Work happens on
 `claude/*` and `codex/*` branches, merged by pull request once CI passes; see

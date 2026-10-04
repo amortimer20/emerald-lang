@@ -1,0 +1,174 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "abs",
+      "kind": 2,
+      "detail": "abs(): Float",
+      "documentation": "The distance from zero: the value without its sign.",
+      "insertText": "abs()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "between?",
+      "kind": 2,
+      "detail": "between?(minimum: Float, maximum: Float): Bool",
+      "documentation": "Whether the value is from `minimum` to `maximum`, including both.",
+      "insertText": "between?($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "ceil",
+      "kind": 2,
+      "detail": "ceil(): Int",
+      "documentation": "The nearest whole number at or above the value.",
+      "insertText": "ceil()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "clamp",
+      "kind": 2,
+      "detail": "clamp(minimum: Float, maximum: Float): Float",
+      "documentation": "The value, kept within `minimum` to `maximum`.",
+      "insertText": "clamp($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "finite?",
+      "kind": 2,
+      "detail": "finite?(): Bool",
+      "documentation": "Whether the value is an ordinary number: neither infinity nor not a number.",
+      "insertText": "finite?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "floor",
+      "kind": 2,
+      "detail": "floor(): Int",
+      "documentation": "The nearest whole number at or below the value.",
+      "insertText": "floor()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "format",
+      "kind": 2,
+      "detail": "format(decimal_places: Int? = nothing, group_digits: Bool = false): String",
+      "documentation": "The value as text, with a set number of `decimal_places` and, optionally, commas between groups of digits.",
+      "insertText": "format($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "infinite?",
+      "kind": 2,
+      "detail": "infinite?(): Bool",
+      "documentation": "Whether the value is infinity or negative infinity.",
+      "insertText": "infinite?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "nan?",
+      "kind": 2,
+      "detail": "nan?(): Bool",
+      "documentation": "Whether the value is not a number.",
+      "insertText": "nan?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "negative?",
+      "kind": 2,
+      "detail": "negative?(): Bool",
+      "documentation": "Whether the value is less than zero.",
+      "insertText": "negative?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "positive?",
+      "kind": 2,
+      "detail": "positive?(): Bool",
+      "documentation": "Whether the value is greater than zero.",
+      "insertText": "positive?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "round",
+      "kind": 2,
+      "detail": "round(): Int",
+      "documentation": "The nearest whole number.",
+      "insertText": "round()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "round_to",
+      "kind": 2,
+      "detail": "round_to(places: Int): Float",
+      "documentation": "The value rounded to `places` decimal places.",
+      "insertText": "round_to($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "square_root",
+      "kind": 2,
+      "detail": "square_root(): Float",
+      "documentation": "The square root of the value.",
+      "insertText": "square_root()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_degrees",
+      "kind": 2,
+      "detail": "to_degrees(): Float",
+      "documentation": "An angle in radians, converted to degrees.",
+      "insertText": "to_degrees()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_int",
+      "kind": 2,
+      "detail": "to_int(): Int",
+      "documentation": "The value as an `Int`, with the fraction dropped.",
+      "insertText": "to_int()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_radians",
+      "kind": 2,
+      "detail": "to_radians(): Float",
+      "documentation": "An angle in degrees, converted to radians.",
+      "insertText": "to_radians()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "to_string",
+      "kind": 2,
+      "detail": "to_string(): String",
+      "documentation": "The value as text, exactly as `print` shows it.",
+      "insertText": "to_string()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "truncate",
+      "kind": 2,
+      "detail": "truncate(): Int",
+      "documentation": "The whole-number part, with the fraction dropped.",
+      "insertText": "truncate()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "zero?",
+      "kind": 2,
+      "detail": "zero?(): Bool",
+      "documentation": "Whether the value is zero.",
+      "insertText": "zero?()",
+      "insertTextFormat": 1
+    }
+  ]
+}

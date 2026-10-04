@@ -1,0 +1,32 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "signatures": [
+      {
+        "label": "Http.get(url: String, query: Dict[String, String] = [], headers: Dict[String, String] = [], timeout: Emerald.Duration = Emerald.Duration(seconds: 30), strict: Bool = true): Emerald.Http.Response",
+        "documentation": null,
+        "parameters": [
+          {
+            "label": "url: String"
+          },
+          {
+            "label": "query: Dict[String, String] = []"
+          },
+          {
+            "label": "headers: Dict[String, String] = []"
+          },
+          {
+            "label": "timeout: Emerald.Duration = Emerald.Duration(seconds: 30)"
+          },
+          {
+            "label": "strict: Bool = true"
+          }
+        ],
+        "activeParameter": 0
+      }
+    ],
+    "activeSignature": 0,
+    "activeParameter": 0
+  }
+}

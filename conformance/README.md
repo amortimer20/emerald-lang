@@ -23,6 +23,7 @@ project files, to catch formatting that breaks valid syntax. No cases are exclud
 | `runtime-errors/` | The program runs, then fails with exactly its `.expected` file. |
 | `format/` | `emerald format` produces exactly its `.expected` file, and formatting that output again changes nothing. |
 | `repl/` | A `.input` session produces exactly its `.expected` transcript, on 50 consecutive runs. |
+| `lsp/` | A marked document produces exactly the selected framed LSP reply, on 50 consecutive runs. |
 
 A case is usually one `.em` file. A directory holding a `main.em` is one case too — a
 whole project, per section 14.1 of the rewrite context — and the files inside it are not
@@ -33,6 +34,16 @@ REPL cases are `.input` files, not `.em` programs. Their expectations contain
 the greeting, prompts, output, and diagnostics, without echoing the typed input.
 They are compared byte-for-byte on 50 consecutive runs. The final prompt's space
 is meaningful; `.gitattributes` exempts only these golden files from trailing-space checks.
+
+LSP documents mark one request position with `/*cursor*/`, which is removed before
+`didOpen`. The server receives real framed `initialize`, `didOpen`, and request messages.
+The request is `textDocument/completion` unless a `.request` file names another method.
+For `textDocument/codeAction`, the request forwards the actual didOpen diagnostics
+in its context and uses an empty range at the marker. Its full reply is pretty-printed
+JSON in `.expected`; incidental didOpen diagnostics are not otherwise part of that reply.
+The case's absolute URI in workspace edits is normalized to `file:///document.em`.
+A directory with `main.em` is a project case, as above.
+Every case runs 50 consecutive times, including under CI's testing allocator.
 
 Cases run in sorted order, and every case runs even after one fails, so a single run
 reports the whole picture.

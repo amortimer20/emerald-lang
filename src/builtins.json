@@ -1,7 +1,130 @@
 {
  "version": 1,
- "about": "Every natively typed member of Emerald, for editors and tools. Completion, hover, and signature help read it, and a test in the checker proves it names exactly the members the checker accepts. Each summary is one plain sentence for learners, in the website reference's voice; page is the member's anchor under https://emerald-lang.web.app/docs/. A universal member has owner \"*\": it belongs to every value, including user-defined types, but not to a type name or namespace.",
+ "about": "Editor-facing signatures and descriptions for built-in members and special typed library calls. Completion, hover, and signature help read this data. Checker parity tests cover ordinary members, while the special typed calls are listed beside their checker paths. Each summary is one plain sentence for learners, in the website reference's voice; page is the member's anchor under https://emerald-lang.web.app/docs/. type_pages maps prelude-declared library types to their website page paths under https://emerald-lang.web.app/, so hover can link a declaration or one of its members. A universal member has owner \"*\": it belongs to every value, including user-defined types, but not to a type name or namespace. Owner \"Optional\" describes members of an optional receiver, not a named type in the language.",
+ "type_pages": {
+  "AssertionError": "docs/builtins/errors/assertionerror",
+  "Base64": "docs/library/encoding/base64/",
+  "Bytes": "docs/builtins/types/bytes",
+  "CancelledError": "docs/library/tasks/cancellederror/",
+  "Channel": "docs/library/tasks/channel/",
+  "Console": "docs/library/console/console/",
+  "Console.Color": "docs/library/console/console-color/",
+  "Csv": "docs/library/csv/csv/",
+  "CsvError": "docs/library/csv/csverror/",
+  "Date": "docs/library/dates-and-times/date/",
+  "DateTime": "docs/library/dates-and-times/datetime/",
+  "DateTimeError": "docs/library/dates-and-times/datetimeerror/",
+  "DeadlockError": "docs/library/tasks/deadlockerror/",
+  "Digest": "docs/library/encoding/digest/",
+  "Directory": "docs/library/files/directory/",
+  "Duration": "docs/library/dates-and-times/duration/",
+  "EncodingError": "docs/builtins/errors/encodingerror",
+  "Error": "docs/builtins/errors/error",
+  "File": "docs/library/files/file/",
+  "FileError": "docs/library/files/fileerror/",
+  "FileHandle": "docs/library/files/filehandle/",
+  "FileWriter": "docs/library/files/filewriter/",
+  "Http": "docs/library/http/http/",
+  "Http.Response": "docs/library/http/http-response/",
+  "HttpError": "docs/library/http/httperror/",
+  "Instant": "docs/library/dates-and-times/instant/",
+  "InputError": "docs/builtins/errors/inputerror",
+  "Json": "docs/library/json/json/",
+  "Json.Kind": "docs/library/json/json-kind/",
+  "JsonError": "docs/library/json/jsonerror/",
+  "Path": "docs/library/files/path/",
+  "Program": "docs/library/program/program/",
+  "Random": "docs/library/program/random/",
+  "RecursionError": "docs/builtins/errors/recursionerror",
+  "Regex": "docs/library/regex/regex/",
+  "Regex.Match": "docs/library/regex/regex-match/",
+  "RegexError": "docs/library/regex/regexerror/",
+  "RuntimeError": "docs/builtins/errors/runtimeerror",
+  "Stopwatch": "docs/library/dates-and-times/stopwatch/",
+  "Task": "docs/library/tasks/task/",
+  "TaskGroup": "docs/library/tasks/taskgroup/",
+  "Tasks": "docs/library/tasks/tasks/",
+  "Time": "docs/library/dates-and-times/time/",
+  "TimeZone": "docs/library/dates-and-times/timezone/",
+  "Weekday": "docs/library/dates-and-times/weekday/"
+ },
+ "member_anchors": {
+  "Console.black": "colors",
+  "Console.blue": "colors",
+  "Console.bold": "styles",
+  "Console.cyan": "colors",
+  "Console.dim": "styles",
+  "Console.green": "colors",
+  "Console.italic": "styles",
+  "Console.magenta": "colors",
+  "Console.red": "colors",
+  "Console.underline": "styles",
+  "Console.white": "colors",
+  "Console.yellow": "colors",
+  "Date.day": "parts",
+  "Date.month": "parts",
+  "Date.year": "parts",
+  "DateTime.date": "halves",
+  "DateTime.day": "parts",
+  "DateTime.hour": "parts",
+  "DateTime.minute": "parts",
+  "DateTime.month": "parts",
+  "DateTime.nanosecond": "parts",
+  "DateTime.second": "parts",
+  "DateTime.time": "halves",
+  "DateTime.weekday": "parts",
+  "DateTime.year": "parts",
+  "Duration.add": "plus",
+  "Duration.divided_by": "times",
+  "Duration.negative?": "abs",
+  "Duration.ratio_to": "ratio",
+  "Duration.subtract": "plus",
+  "Duration.total_days": "total",
+  "Duration.total_hours": "total",
+  "Duration.total_milliseconds": "total",
+  "Duration.total_minutes": "total",
+  "Duration.total_seconds": "total",
+  "Duration.whole_days": "whole",
+  "Duration.whole_hours": "whole",
+  "Duration.whole_microseconds": "whole",
+  "Duration.whole_milliseconds": "whole",
+  "Duration.whole_minutes": "whole",
+  "Duration.whole_nanoseconds": "whole",
+  "Duration.whole_seconds": "whole",
+  "Duration.zero?": "abs",
+  "Http.Response.reason": "status",
+  "Http.patch": "post",
+  "Http.put": "post",
+  "Instant.after": "plus",
+  "Instant.before": "plus",
+  "Instant.since": "minus",
+  "Instant.unix_milliseconds": "unix_seconds",
+  "Json.null?": "null-1",
+  "Path.absolute?": "absolute-1",
+  "Regex.Match.end": "text",
+  "Regex.Match.start": "text",
+  "Regex.ignore_case": "properties",
+  "Regex.multiline": "properties",
+  "Regex.pattern": "properties",
+  "Time.hour": "parts",
+  "Time.minute": "parts",
+  "Time.nanosecond": "parts",
+  "Time.second": "parts"
+ },
  "members": [
+  {
+   "owner": "Optional",
+   "name": "or",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [{ "name": "fallback", "type": "T" }],
+     "result": "T",
+     "summary": "The value if it is there, and the fallback if it is nothing.",
+     "page": "language/optionals/#or-give-a-fallback"
+    }
+   ]
+  },
   {
    "owner": "*",
    "name": "type_name",
@@ -10,7 +133,100 @@
     {
      "result": "String",
      "summary": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
-     "page": "docs/language/inheritance/#asking-what-kind-of-object-it-is"
+     "page": "language/inheritance/#asking-what-kind-of-object-it-is"
+    }
+   ]
+  },
+  {
+   "owner": "Console",
+   "name": "table",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "rows", "type": "List[List[String]]" },
+      { "name": "header", "type": "List[String]", "default": "[]" }
+     ],
+     "result": "String",
+     "summary": "Draws text rows as a table with box characters.",
+     "page": "library/console/console/#table"
+    },
+    {
+     "parameters": [
+      { "name": "rows", "type": "List[plain struct]" }
+     ],
+     "result": "String",
+     "summary": "Draws a list of plain structs as a table, using their public fields as columns.",
+     "page": "library/console/console/#table"
+    }
+   ]
+  },
+  {
+   "owner": "Csv",
+   "name": "decode",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "text", "type": "String" },
+      { "name": "as", "type": "Type" },
+      { "name": "separator", "type": "String", "default": "\",\"" }
+     ],
+     "result": "T",
+     "summary": "Reads CSV text into the type named after `as:`.",
+     "raises": true,
+     "page": "library/csv/csv/#decode"
+    }
+   ]
+  },
+  {
+   "owner": "Csv",
+   "name": "encode",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "records", "type": "List[CSV-compatible struct]" },
+      { "name": "separator", "type": "String", "default": "\",\"" }
+     ],
+     "result": "String",
+     "summary": "Writes a list of plain structs as CSV text.",
+     "raises": true,
+     "page": "library/csv/csv/#encode"
+    }
+   ]
+  },
+  {
+   "owner": "Json",
+   "name": "decode",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "text", "type": "String" },
+      { "name": "as", "type": "Type" }
+     ],
+     "result": "T",
+     "summary": "Reads JSON text into the type named after `as:`.",
+     "raises": true,
+     "page": "library/json/json/#decode"
+    }
+   ]
+  },
+  {
+   "owner": "Json",
+   "name": "encode",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      { "name": "value", "type": "JSON-compatible value" },
+      { "name": "pretty", "type": "Bool", "default": "false" }
+     ],
+     "result": "String",
+     "summary": "Writes a JSON-compatible value as JSON text.",
+     "raises": true,
+     "page": "library/json/json/#encode"
     }
    ]
   },
@@ -23,7 +239,7 @@
      "parameters": [],
      "result": "Bytes",
      "summary": "The text's UTF-8 bytes.",
-     "page": "builtins/types/bytes/#making-and-converting"
+     "page": "builtins/types/string/#to_bytes"
     }
    ]
   },

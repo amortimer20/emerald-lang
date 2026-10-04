@@ -1,0 +1,20 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "contents": {
+      "kind": "markdown",
+      "value": "```emerald\nBytes.from_hex(text: String): Bytes\n```\n\nBytes read from hexadecimal digits, two for each byte, in upper or lower case.\n\nMay raise an error.\n\n[Read more](https://emerald-lang.web.app/docs/builtins/types/bytes/#from_hex)"
+    },
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 0
+      },
+      "end": {
+        "line": 0,
+        "character": 20
+      }
+    }
+  }
+}
