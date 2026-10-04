@@ -173,14 +173,12 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 Editor intelligence is reviewed and merged: language-server slices 1–5 through PR #38,
 extension slice 6 through emerald-vscode PR #4, and website parity through its checker.
-The QA batch on `codex/qa-bug-batch` corrects Console table row diagnostics and suppresses
-dependent errors after an invalid Channel annotation. Stop for review after the full gate
-and a pull request; do not begin another milestone.
-Both fixes passed Debug and ReleaseSafe tests, native and Windows/macOS cross-builds,
-documentation examples, formatting, whitespace, and website catalog parity. The new
-task-item Channel case also passed 50 identical runs. Branch CI is checked separately.
-The website Console page still describes the header as the first row; Claude should update
-that reference to name the header separately and number data rows from 1.
+The first QA batch is merged (PR #39, `076e871`): Console table errors name "the header"
+and number data rows from 1, and an invalid Channel annotation no longer adds a dependent
+"needs a message type" error. Claude updated the website's Console page to match (`17aae66`).
+Extension 0.3.0 is merged in emerald-vscode (PR #5) and unpublished; the user publishes it after
+Emerald 0.7.0 is released. Next: scope the rest of the QA iteration with the user (item 2),
+then release 0.7.0 (including the install page, which still points at 0.6.0).
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -372,22 +370,18 @@ compiler), or the compiler depends on it.
 
 ### In flight
 
-1. **Editor intelligence**: slice 1 merged (PR #37); slices 2-6 by Codex on
-   `codex/editor-intelligence`, slice 7 (website parity) by Claude.
+1. **Editor intelligence**: done. The language server's slices 1-5 are merged (PRs #37 and #38),
+   the extension's slice 6 is merged in emerald-vscode (PRs #4 and #5, 0.3.0 unpublished), and
+   slice 7 (website parity) is Claude's `scripts/check-builtin-parity.py` in `emerald-website`.
 2. **A QA iteration, then the 0.7.0 release** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
-   use, before more is built on top. The user's first finding: Console tables render poorly on the
-   website's Console page (borders short, vertical lines broken between rows). The terminal
-   output is fine (checked by the user, 2026-10-01); only the website is wrong. A first attempt on
-   2026-10-01 did not fix it for the user: it self-hosted the full JetBrains Mono (Google's copy
-   leaves out the box-drawing characters U+2500 to U+257F, so browsers used a mismatched
-   fallback font), set the font's own line height (1.32) on blocks with box characters
-   (`src/plugins/box-art.mjs`, `reference.css`), and made the "At a glance" tables share one width.
-   In a headless Chromium the boxes joined up, so the cause on the user's machine is still
-   unknown: get a screenshot or the browser and font from the user, and check line height, the
-   font actually in use, and Expressive Code's own styles. Deferred by the user to this iteration.
+   use, before more is built on top. The user's first finding, Console tables rendering poorly on
+   the website's Console page (borders short, vertical lines broken between rows; the terminal was
+   always fine), is fixed: it self-hosts the full JetBrains Mono (Google's copy omits the
+   box-drawing characters U+2500 to U+257F), sets the font's own line height (1.32) on blocks with
+   box characters (`src/plugins/box-art.mjs`, `reference.css`), and gives the "At a glance" tables
+   one width. The user verified it in Edge and Firefox on 2026-10-04.
    Also carry in the rough edges recorded under
-   "Active rough edges" and the diagnostics that still need hints. Console table header/data-row
-   numbering and the redundant invalid-Channel annotation diagnostic are corrected in the QA batch. The
+   "Active rough edges" and the diagnostics that still need hints. The
    website's pages are checked against a real build by `scripts/check-outputs.py` in
    `emerald-website`; rerun it against the build under test. Scope the pass with the user when it
    starts, and finish it before the 0.7.0 release.
@@ -679,6 +673,12 @@ not yet discussed:
 
 ## Active rough edges
 
+- The unit test "entry 500 execution stays within measurement noise of entry 5"
+  (`src/emerald.zig`) failed once in CI on Ubuntu Debug (PR #39, 2026-10-04), by 27 microseconds:
+  early 16.59 ms, late 17.12 ms, noise allowance 0.50 ms. Nothing in that PR touched it, and a
+  rerun of the same commit passed. Its allowance (five times the median deviation plus 100
+  microseconds) is too tight for a shared runner; make it retry, or widen the floor, rather than
+  rerunning jobs.
 - A Windows Debug REPL test runner stopped responding for about a minute in the
   policy-only CI run at `3f7d694`, before the parser changes. Its cause is not
   established. The subsequent group A run passed every job, including Windows
