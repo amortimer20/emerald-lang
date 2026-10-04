@@ -15,8 +15,9 @@ REPL are complete and merged on main (PR #30). The language server provides diag
 format-on-save, hover, go to definition, find references, rename, and completion.
 The language server also provides signature help for native and declared functions, methods,
 and constructors, and structured quick fixes for exact name corrections. Editor-intelligence
-slices 2 through 4 are reviewed; slice 5 is implemented and fully validated locally on
-`codex/editor-intelligence`, with its commit/push and CI confirmation pending. See "Next step" below.
+slices 2 through 4 are reviewed; slice 5 is committed and pushed as `8160fa5` on
+`codex/editor-intelligence`. Its full local gate and all seven CI jobs passed; it is ready
+for review. See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
 name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
@@ -181,7 +182,8 @@ text, UTF-16 edit range, requested range, and kind filter without a new analysis
 protocol cases cover the six member-synonym owners, `this` → `self`, Unicode positions,
 range filtering, and help-only diagnostics. Allocator-backed tests apply the edits and check
 the corrected programs, and test stale/malformed diagnostic data independently of message prose.
-The full local gate passed (see validation below). Commit and push, confirm CI, and stop for review;
+The full local gate passed (see validation below). Commit `8160fa5` is pushed and CI run
+`37218063872` passed all seven jobs. Stop for review;
 slice 6 (extension polish) begins only after approval.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
@@ -338,7 +340,7 @@ Open work:
 Claude reviews and handles website parity). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
 recommendations; the REPL prerequisite and slice 1 are merged. Slices 2–4 are reviewed and
-their CI is green; slice 5 passed its full local gate and awaits commit/push and CI.
+their CI is green; slice 5 is pushed with a full local gate and green CI, awaiting review.
 The goal is C#-level IntelliSense in VS Code. Completion now reads native descriptions
 from `src/builtins.json` and declarations from the compiler's analysis. The remaining gaps are:
 - Completion still patches unfinished source with a placeholder, as the accepted plan
@@ -744,8 +746,11 @@ zig-out. All 85 LSP protocol cases returned identical replies 50 times each;
 the VS Code integration suite passed all nine tests against the built server.
 Website parity reported 249 members, 253 signatures, 26 pages, and zero problems.
 The initial sandboxed test attempt could not bind the HTTP test server; the full
-gates completed outside that restriction. Slice 5's commit/push and branch CI are
-pending. Earlier slices and their validation history are recorded in the journal.
+gates completed outside that restriction. Commit `8160fa5` is pushed and
+[CI run `37218063872`](https://github.com/amortimer20/emerald-lang/actions/runs/37218063872)
+passed all seven jobs: Linux/macOS/Windows Debug and ReleaseSafe, plus bounded execution
+fuzzing. Slice 5 is stopped for review. Earlier slices and their validation history are
+recorded in the journal.
 
 `main` is the only long-lived branch. Work happens on
 `claude/*` and `codex/*` branches, merged by pull request once CI passes; see

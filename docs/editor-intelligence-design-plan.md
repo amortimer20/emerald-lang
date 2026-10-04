@@ -441,7 +441,8 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     outside zig-out. All 85 LSP protocol cases returned identical replies 50 times each;
     the VS Code integration suite passed all nine tests against the built server.
     Website parity reported 249 members, 253 signatures, 26 pages, and zero problems.
-    Branch CI is pending the slice commit and push.
+    Slice 5 was committed as `8160fa5` and pushed to `codex/editor-intelligence`;
+    CI run `37218063872` passed all seven jobs. Stopped for review before slice 6.
 
 ### Slice 6: The extension (emerald-vscode)
 

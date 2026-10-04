@@ -5166,3 +5166,10 @@ conformance links), changed-Zig formatting, whitespace checks, and Windows/macOS
 outside zig-out passed. All 85 standalone LSP cases returned identical replies 50 times each,
 and the VS Code integration suite passed all nine tests against this server. Website parity
 reported 249 members, 253 signatures, 26 pages, and zero problems. Commit and branch CI follow.
+
+## 2026-10-04: Editor intelligence slice 5 — CI
+
+Committed slice 5 as `8160fa5` and pushed it to `codex/editor-intelligence`. CI run
+`37218063872` passed all seven jobs: bounded execution fuzzing and Debug/ReleaseSafe tests
+on Ubuntu, macOS, and Windows. The local gate and all 85 protocol cases at 50 requests each
+are recorded above. Stop for review; slice 6 (extension polish) begins only after approval.
