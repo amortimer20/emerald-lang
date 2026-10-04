@@ -398,8 +398,13 @@ compiler), or the compiler depends on it.
    - [ ] A2 (Codex) Editor crash sweep: send hover, completion, and signature help at every
      position of every file in `examples/`; fail on a crash, a hang, or a reply over about 100 ms.
    - [ ] A3 (Codex) A longer fuzz campaign (about a million inputs; CI runs a bounded one).
-   - [ ] A4 (Claude) Compare speed with 0.6.0: startup (`print(1)` was 3.5 ms), the REPL and task
-     benchmarks.
+   - [x] A4 (Claude, 2026-10-04) Compare speed with 0.6.0: startup (`print(1)` was 3.5 ms), the REPL
+     and task benchmarks. Result: startup is about 3% slower (3.58 to 3.71 ms; +0.13 ms and about
+     40 page faults on every program, probably the prelude's growth); task scaling is linear
+     (10.49x time for 10x tasks, flat memory); REPL analysis is about 0.3 ms slower at early
+     entries and within 1.5% at 500 and 1000. Tasks and the REPL have no 0.6.0 baseline, so they
+     are compared with the journal's recorded numbers. Nothing needs action; details in the
+     journal.
    - [ ] A5 (Codex) Find the cause of the flaky "entry 500 ... entry 5" timing test (see "Active
      rough edges"), without rerunning it until it passes or widening its margin.
    - [x] A6 (Claude, 2026-10-04) Link check across the site, the docs, and the READMEs. Result: 13,951

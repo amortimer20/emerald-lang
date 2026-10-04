@@ -5222,3 +5222,39 @@ and macOS aarch64 cross-builds with external prefixes; documentation examples (2
 135 linked conformance cases); changed Zig formatting; `git diff --check`; website catalog
 parity (249 members, 253 signatures, 26 pages, 0 problems). All builds used pinned Zig 0.16.0
 and `-j1`. Both QA changes are ready for branch CI and review; no merge authorized.
+
+## 2026-10-04: QA item A4 — speed against 0.6.0
+
+Claude measured main (`72a5ffc`, built ReleaseSafe with `-Dcpu=baseline`, as releases are) against
+the 0.6.0 release binary, on Linux 6.18 under WSL2 with 8 CPUs and a load average of 0.25.
+`tools/startup-benchmark.py --runs 60`, alternating the two binaries (median wall time):
+
+| Program | 0.6.0 | main | main / 0.6.0 |
+| --- | --- | --- | --- |
+| `print(1)` | 3.58 ms | 3.71 ms | 103.6% |
+| structs (language only) | 4.16 ms | 4.29 ms | 102.9% |
+| dates | 5.10 ms | 5.24 ms | 102.8% |
+| regex | 5.54 ms | 5.66 ms | 102.3% |
+| json | 4.57 ms | 4.68 ms | 102.4% |
+
+Startup costs about 0.13 ms more and about 40 more page faults on every program, so it is a
+fixed per-launch cost, not one library's. The likeliest cause is the prelude, which grew from
+2,020 to 2,514 lines (181 of them `##` comments) for the editor's documentation; this was not
+isolated by experiment. The binary grew from 20.7 MB to 22.8 MB (the embedded editor catalog and
+the new language-server code). Nothing here needs action before 0.7.0.
+
+0.6.0 has no `Tasks` and no REPL, so those have no 0.6.0 baseline. `tools/task-scaling.py`:
+2,000 tasks 0.37 s and 20,000 tasks 3.88 s (10.49x time for 10x the tasks), peak memory flat at
+7.54 MiB. `zig build repl-benchmark` against the table recorded with the REPL milestone
+(analysis, in ms):
+
+| Entry | Recorded | Now |
+| --- | --- | --- |
+| 5 | 2.347 | 2.634 |
+| 100 | 3.478 | 3.839 |
+| 500 | 13.240 | 13.406 |
+| 1000 | 34.156 | 34.669 |
+
+The early entries are about 0.3 ms (10%) slower, mostly resolution (1.128 to 1.223 ms), which is
+the same prelude growth rebuilt per entry; the large entries are within 1.5%.
+
