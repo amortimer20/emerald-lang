@@ -402,7 +402,13 @@ compiler), or the compiler depends on it.
      benchmarks.
    - [ ] A5 (Codex) Find the cause of the flaky "entry 500 ... entry 5" timing test (see "Active
      rough edges"), without rerunning it until it passes or widening its margin.
-   - [ ] A6 (Claude) Link check across the site, the docs, and the READMEs.
+   - [x] A6 (Claude, 2026-10-04) Link check across the site, the docs, and the READMEs. Result: 13,951
+     internal links and anchors on 110 built pages and 329 relative links in the three repos'
+     markdown files are all intact, and the 32 external URLs are reachable (the only non-200s are
+     bare Google Fonts preconnect hosts). The site check is kept as `scripts/check-links.py` in
+     `emerald-website`; run it after `npm run build`. Observation for the user: `public/mockups/`
+     (four landing-page theme mockups, kept on purpose) is live at `/mockups/` and loads Google
+     Fonts, unlike the self-hosted site.
 
    *Hands-on (the user).*
    - [ ] B1 Install the release candidate as a student would on Windows (and a Mac if possible):
