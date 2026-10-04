@@ -5112,5 +5112,6 @@ plan. Nine focused LSP cases and all 60 protocol cases returned identical replie
 On pinned Zig 0.16.0, Debug and ReleaseSafe test suites, `zig build -j1`, documentation examples,
 formatting, whitespace validation, Windows/macOS cross-builds, the 10-test VS Code integration
 suite, and the emerald-website built-in parity check all passed. The website check reported 249
-catalog members, 253 signatures, 26 pages, and zero problems. The slice commit and branch CI
-result are recorded in the follow-up below.
+catalog members, 253 signatures, 26 pages, and zero problems. Commit `d002068` was pushed to
+`codex/editor-intelligence`; CI run `37172527412` passed all seven jobs, including Debug and
+ReleaseSafe on Ubuntu, macOS, and Windows.

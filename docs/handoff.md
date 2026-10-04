@@ -15,7 +15,8 @@ REPL are complete and merged on main (PR #30). The language server provides diag
 format-on-save, hover, go to definition, find references, rename, and completion.
 The language server also provides signature help for native and declared functions, methods,
 and constructors. Editor-intelligence slices 2 through 4 are implemented on
-`codex/editor-intelligence`; slice 4 is committed and its branch CI is pending. Quick fixes
+`codex/editor-intelligence`; slice 4 is committed and branch CI run `37172527412` passed all
+seven jobs. Quick fixes
 (slice 5) are next after review. See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
@@ -182,8 +183,8 @@ and all 60 protocol cases returned identical replies 50 times each. Debug and Re
 suites passed (the local HTTP fixture required running outside the sandbox for loopback binding),
 as did `zig build -j1`, the 159-link documentation check, `zig fmt --check src/Lsp.zig`,
 `git diff --check`, Windows and macOS cross-builds, the 10-test VS Code integration suite, and
-website parity. The slice is committed and pushed; check branch CI, then stop for review. Slice 5
-(quick fixes) begins only after approval.
+website parity. Slice 4 is committed as `d002068`, pushed, and CI run `37172527412` passed all
+seven jobs. Stop for review; slice 5 (quick fixes) begins only after approval.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
