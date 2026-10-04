@@ -15,9 +15,9 @@ REPL are complete and merged on main (PR #30). The language server provides diag
 format-on-save, hover, go to definition, find references, rename, and completion.
 The language server also provides signature help for native and declared functions, methods,
 and constructors, and structured quick fixes for exact name corrections. Editor-intelligence
-slices 2 through 5 are reviewed. Slice 5 is `8160fa5` on `codex/editor-intelligence`, plus
-Claude's follow-up attaching the annotation-typo replacement (`@overide` → `@override`).
-See "Next step" below.
+slices 2 through 5 are reviewed and merged to main (PR #38, `8fbe376`), including Claude's
+follow-up attaching the annotation-typo replacement (`@overide` → `@override`). Slice 6's
+extension work is merged in emerald-vscode (PR #4). See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
 name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
@@ -341,7 +341,8 @@ Open work:
 Claude reviews and handles website parity). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
 recommendations; the REPL prerequisite and slice 1 are merged. Slices 2–4 are reviewed and
-their CI is green; slice 5 is reviewed. Claude's review added the annotation quick fix.
+their CI is green; slice 5 is reviewed, and all four are merged (PR #38). Claude's review added
+the annotation quick fix.
 The goal is C#-level IntelliSense in VS Code. Completion now reads native descriptions
 from `src/builtins.json` and declarations from the compiler's analysis. The remaining gaps are:
 - Completion still patches unfinished source with a placeholder, as the accepted plan
