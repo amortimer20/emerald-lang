@@ -5257,4 +5257,3 @@ the new language-server code). Nothing here needs action before 0.7.0.
 
 The early entries are about 0.3 ms (10%) slower, mostly resolution (1.128 to 1.223 ms), which is
 the same prelude growth rebuilt per entry; the large entries are within 1.5%.
-
