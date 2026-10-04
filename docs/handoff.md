@@ -337,6 +337,8 @@ Open work:
   - **Workaround in `ci.yml`:** the Windows Debug job runs `zig build test -j1`. Serial runs took
     66 to 155 seconds, the same as parallel, so it costs nothing. Remove the flag once the cause is
     fixed. Windows ReleaseSafe has not stalled in this evidence and is unchanged.
+  - **First, upgrade to Zig 0.17** (roadmap item 8): it replaces the build runner, so rerun the
+    parallel Windows Debug suite on 0.17 before investigating further; the stall may not survive.
   - **Next, to find the cause:** run the parallel suite without `emerald-conformance` (a step
     for unit, REPL, and LSP only), and with `-j2`. A stall without conformance points at the
     runner handling several test processes on Windows (probably a Zig 0.16.0 bug to report upstream
@@ -428,9 +430,21 @@ compiler), or the compiler depends on it.
    machines and Chromebooks can try Emerald without installing anything.
 7. **A benchmark suite**: about a dozen representative programs with recorded interpreter
    timings, the baseline that shows whether the compiler is faster and catches it getting slower.
-8. **The real cause of the Windows Debug CI stall** (see "Intermittent Windows Debug test stall"),
+8. **Upgrade to Zig 0.17, once 0.17.1 is out** (the user, 2026-10-03). 0.17.0 has known regressions,
+   one in `Run` steps, which the build uses heavily. 0.17 also replaces the build runner, which the
+   Windows stall happens under, so upgrade before investigating the stall. Scope counted on
+   origin/main: about 240 `allocPrint` calls (moved to `Allocator.print()`), 8 `@bitCast` uses to
+   review by hand (it now reinterprets logical bits; the one real risk), 30 deprecated
+   `@intFromEnum`/`@enumFromInt`, `build.zig` (the configurer/maker split, `addPassthruArgs()` for
+   the 4 `b.args` forwards, `Fmt` step paths), 4 `ArrayList.getLast` renames, 1 `errdefer` capture,
+   4 `std.meta.field*` uses, and whether CI, fuzz, and release still accept `-Doptimize=ReleaseSafe`
+   (the mode names became `debug`, `safe`, `fast`, `small`). Open question for the user before the
+   switch: 0.17 requires macOS 15 or later, which drops Macs that cannot run it (roughly pre-2018);
+   if older classroom Macs matter, releases could stay on 0.16 longer. 0.17's WebAssembly backend
+   passes all behavior tests, which helps the playground (item 6).
+9. **The real cause of the Windows Debug CI stall** (see "Intermittent Windows Debug test stall"),
    so CI is trustworthy when the compiler starts depending on it.
-9. **A whole-codebase review, last in the phase**, so its findings hold and it strengthens the
+10. **A whole-codebase review, last in the phase**, so its findings hold and it strengthens the
    conformance suite that is the compiler's contract. Method agreed 2026-10-03: a finding counts only
    as a failing test or reproducing program, never "this looks wrong"; first measure (kcov
    coverage on Linux, and a list of spec rules with no conformance case); then parallel agents in
@@ -442,25 +456,25 @@ compiler), or the compiler depends on it.
    dedupes, ranks, and re-runs each reproduction; then fix batches with one commit per item, as the
    19-item batch was run. Skip style nits, the generated Unicode and time-zone tables, interpreter
    performance work, and rewriting working code.
-10. **A classroom pilot**, whenever the user has a class: students using Emerald show what to change
+11. **A classroom pilot**, whenever the user has a class: students using Emerald show what to change
     while the language can still change cheaply. Exercises and a starter curriculum go with it.
 
-Suggested order: 1-2; then 3 and 4 in parallel (3 needs the user's decisions); then 6, 7, 8,
-optionally 5; 9 last. 10 whenever a class allows.
+Suggested order: 1-2; then 3 and 4 in parallel (3 needs the user's decisions); then 8 before 9,
+and 6 and 7, optionally 5; 10 last. 11 whenever a class allows.
 
 ### The compiler
 
-11. **Choose the backend by prototype** (below), then build the compiler for 1.0. The prototypes
+12. **Choose the backend by prototype** (below), then build the compiler for 1.0. The prototypes
     answer, in order: can it reach Godot (GDExtension is a C API), can it reach a microcontroller, can it reach
     WebAssembly.
 
 ### After the compiler
 
-12. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
+13. **Multicore**, on the chosen backend. It waits because the interpreter would need atomic counts
     or per-worker heaps and a thread-safe collector, most of which .NET would give for free and
     Cranelift would make Emerald write itself. Its language rules are already settled (tasks share
     no `var`; values only cross), with two gaps recorded in the concurrency plan.
-13. **Godot, then microcontrollers** (Unity deprioritized by the user, 2026-10-03), as described below;
+14. **Godot, then microcontrollers** (Unity deprioritized by the user, 2026-10-03), as described below;
     the host guardrail applies to every integration.
     Also not before the compiler: a debugger and interpreter performance work, which the compiler
     would replace.
@@ -470,59 +484,58 @@ optionally 5; 9 last. 10 whenever a class allows.
 The user wants a real compiler for Emerald 1.0; the interpreter is a means to that end. No
 compiler design exists yet.
 
-**Decided (the user, 2026-10-03): the compiler is written in C.** The user's reasons: they want to
-be good at C, and plan other software in C and assembly (retro Nintendo games); they have no Rust
-ambitions; they are warming to Godot for games and have deprioritized Unity, which would overshadow
-web development and their other plans for Emerald. This supersedes the Rust-on-Cranelift and .NET
-directions below as the implementation language; they stay recorded for their reasoning. Still
-open, for the compiler plan: the compiler's **target**. Emitting C and building it with a C
-toolchain (as Nim, Vala, and the first C++ did) reaches native code, the Pico, WebAssembly, and
-Godot (whose GDExtension interface is a C API) at once, and could use Zig's bundled clang (`zig cc`)
-or TinyCC as the C compiler shipped with Emerald; writing a native code generator is far larger.
-**Guardrails for a compiler in C** (Claude's proposal 2026-10-03, to settle in the plan): build with
-Zig's toolchain as a C compiler (`zig cc`, keeping one-machine cross-builds and the release
-pipeline; `build.zig` only until the goal below replaces it);
-C17 with strict warnings as errors (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wvla
--Wimplicit-fallthrough`, no VLAs); arenas per phase for every compiler structure, with `malloc`
-and `free` only inside one allocator module; length-carrying string slices and growable buffers
-instead of NUL-terminated strings, with `strcpy`, `strcat`, `sprintf`, and `gets` banned by
-`#pragma GCC poison` and a CI check; checked accessors for every array in Debug; explicit result
-codes, no `setjmp`/`longjmp`; written ownership conventions (`create`/`destroy`, `init`/`deinit`,
-borrowed versus owned in names); AddressSanitizer, UndefinedBehaviorSanitizer, and LeakSanitizer
-on every Debug test run in CI; fuzzing the lexer, parser, and checker from the conformance corpus;
-clang-tidy, the clang static analyzer, and GCC `-fanalyzer` in CI; `clang-format` checked like
-`zig fmt`. The Zig implementation stays the reference until the C compiler passes the whole
-conformance suite unchanged and a differential run over every conformance program and website
-example matches its output. Emitted C for student programs keeps Emerald's runtime checks (index,
-overflow, optional) by construction, since the language requires them.
+**Decided (the user, 2026-10-03, revised the same day): the compiler is written in Rust.** The
+user first chose C (they want to be good at C and plan retro Nintendo games in C and assembly),
+then settled on Rust once it was clear that agents will write most of the compiler. The user's
+goal is to write *Emerald* by hand, which the implementation language does not touch; what it
+does decide is how far code the user does not read line by line can be trusted, and Rust's
+compiler rejects memory errors, unhandled cases, and data races before anything runs, where C
+would leave them to sanitizers. The user's C practice goes into their own retro projects. The user
+is warming to Godot for games and has deprioritized Unity, which would overshadow web development
+and their other plans. This supersedes C and .NET as the implementation language; don't reopen it
+without the user. Still open, for the compiler plan: the compiler's **target**. Emitting C and
+building it with a bundled clang (as Nim, Vala, and the first C++ did) reaches native code, the
+Pico, WebAssembly, and Godot (whose GDExtension interface is a C API) at once; Cranelift, native to
+Rust, compiles faster but reaches neither the Pico nor WebAssembly; writing a native code generator
+is far larger. **Guardrails for the Rust implementation** (Claude's proposal 2026-10-03, to settle
+in the plan): stable Rust pinned in `rust-toolchain.toml`; `#![forbid(unsafe_code)]` in every crate
+except the runtime's heap and its C interface, where each `unsafe` block carries a `// SAFETY:`
+comment and the tests run under Miri; `cargo clippy -- -D warnings` and `cargo fmt --check` in CI;
+no `unwrap` or `expect` on anything user input reaches (Clippy's `unwrap_used`), so malformed
+programs produce diagnostics, never panics; `cargo-fuzz` over the lexer, parser, and checker,
+seeded from the conformance corpus. The Zig implementation stays the reference until the Rust
+compiler passes the whole conformance suite unchanged and a differential run over every
+conformance program and website example matches its output. Emitted code for student programs
+keeps Emerald's runtime checks (index, overflow, optional) by construction, since the language
+requires them.
 
 **Goal (the user, 2026-10-03): one implementation language.** In the long run every hand-written
-Zig file is replaced by C, so no Zig source remains. "Homogeneous" means only that: third-party C
-libraries (BearSSL or mbedTLS for HTTPS, never a hand-written TLS; zlib or miniz for the time-zone
-data) are fine, and so is `zig cc` as a C compiler driver for cross-builds, though `build.zig` itself
-becomes a Makefile or CMake (plain clang or GCC also works). Scope on 2026-10-03: about 52,000
-hand-written lines in `src` (the checker 11,500, the interpreter 10,900, the parser 4,900, the
-command line 4,400, the language server 3,900, the resolver 2,900, the heap 1,700, then the
-formatter, regex, lexer, JSON, scheduler, HTTP, and time zones), plus the small Zig tools (the
-Unicode table generator, the fuzzer, the prelude AST tool). The 14,000 lines of generated Unicode
-tables cost nothing: the generator emits C instead. `prelude.em` and the Python scripts stay. Expect
-roughly 60,000 to 90,000 lines of C. The interpreter is replaced, not ported (Claude's
-recommendation 2026-10-03, to settle in the plan): the compiler lowers the checked tree to an
-Emerald IR (explicit control flow, reference counting, and runtime checks), optimizes what clang
-cannot (cancelling reference-count pairs, impossible copy-on-write copies), and emits C with
-`#line` directives for the bundled clang, linked against a C runtime library (heap, collections,
-scheduler, natives, the compiled prelude). `emerald run` compiles at `-O0` with a cache. A small IR
-interpreter in C (perhaps 3,000 to 5,000 lines, sharing that runtime) serves the browser playground
-(clang does not fit in a page), the REPL, and machines without a working C compiler; the
-conformance suite runs every case on both backends. The Zig interpreter is deleted after the
-switch. Order: after the
-pre-compiler phase, once the language has settled (porting a moving target doubles every language
-change); in verified stages that are each useful alone (generated tables, lexer and parser, checker,
-code generation and runtime, then the language server, formatter, and REPL); with the Zig version
-shipping until the C version passes the conformance suite and the differential run above, then a
-switch in one release.
+Zig file is replaced by Rust, so no Zig source remains. Libraries from crates.io are fine: rustls for
+HTTPS (never a hand-written TLS), miniz_oxide for the time-zone data. Cargo replaces `build.zig`.
+The bundled clang that compiles emitted C is a shipped tool, not implementation source. Scope on
+2026-10-03: about 52,000 hand-written lines in `src` (the checker 11,500, the interpreter 10,900,
+the parser 4,900, the command line 4,400, the language server 3,900, the resolver 2,900, the heap
+1,700, then the formatter, regex, lexer, JSON, scheduler, HTTP, and time zones), plus the small Zig
+tools (the Unicode table generator, the fuzzer, the prelude AST tool). The 14,000 lines of generated
+Unicode tables cost nothing: the generator emits Rust instead. `prelude.em` and the Python scripts
+stay. The interpreter is replaced, not ported (Claude's recommendation 2026-10-03, to settle in the
+plan): the compiler lowers the checked tree to an Emerald IR (explicit control flow, reference
+counting, and runtime checks), optimizes what clang cannot (cancelling reference-count pairs,
+impossible copy-on-write copies), and, if the target is C, emits C with `#line` directives for the
+bundled clang, linked against the runtime library (heap, collections, scheduler, natives, the
+compiled prelude). The runtime is written in Rust behind a C interface (`extern "C"`, its core
+`no_std` so it can reach the Pico) and shipped prebuilt as a static library for each target, and it
+is designed for multicore from the start. `emerald run` compiles at `-O0` with a cache. A small IR
+interpreter in Rust (perhaps 3,000 to 5,000 lines, sharing that runtime) serves the browser
+playground (clang does not fit in a page), the REPL, and machines without a working C compiler; the
+conformance suite runs every case on both backends. The Zig interpreter is deleted after the switch.
+Order: after the pre-compiler phase, once the language has settled (porting a moving target doubles
+every language change); in verified stages that are each useful alone (generated tables, lexer and
+parser, checker, code generation and runtime, then the language server, formatter, and REPL); with
+the Zig version shipping until the Rust version passes the conformance suite and the differential
+run above, then a switch in one release.
 
-Directions discussed on 2026-09-30 (superseded as the implementation language, kept for their
+Directions discussed on 2026-09-30 (Rust is now decided; .NET is superseded; kept for their
 reasoning):
 
 - **Write the compiler in Rust, on Cranelift, rather than porting the Zig interpreter.** The
@@ -545,7 +558,7 @@ reasoning):
   running its conformance cases, and comparing binary size, startup, debugging, and how much
   runtime code each needs.
 - **Superseded 2026-10-03: the user has deprioritized Unity and is warming to Godot**, and the compiler
-  is written in C (above), so a C target, not .NET, is the likely route to Godot. The reasoning below
+  is written in Rust, likely emitting C (above), so a C target, not .NET, is the likely route to Godot. The reasoning below
   is kept, and the host guardrail that follows still applies to any integration.
   **Unity and Godot come before microcontrollers (the user's preference, 2026-10-02).** The user
   would rather Emerald work with Unity than with the Raspberry Pi Pico, because Emerald reads more
@@ -647,7 +660,7 @@ channels, HTTP client, JSON and CSV. Open questions for when this is planned, ra
 not yet discussed:
 - **What ships in the standard library and what is a package.** The package manager (roadmap item
   5) decides whether graphics, games, and GUI are built in or installable, and keeps the core small.
-- **The backend choice (roadmap item 11) shapes the rest.** Graphics, windows, and input come from
+- **The backend choice (roadmap item 12) shapes the rest.** Graphics, windows, and input come from
   the platform: the chosen backend decides which native libraries are easy to reach (.NET has GUI
   and graphics toolkits; Cranelift would mean binding to C libraries such as SDL), and whether
   Emerald runs the same on Windows, macOS, and Linux.
