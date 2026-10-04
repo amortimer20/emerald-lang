@@ -5088,4 +5088,8 @@ The native build and doc-example check passed, along with formatting, whitespace
 reported zero problems and all 45 type-page routes resolved. The full local test command did not
 finish: the sandboxed run could not bind the HTTP test server, and a direct run remained in the
 conformance suite until a 90-second timeout. Full Debug/ReleaseSafe test completion remains
-unverified locally and is left for CI.
+unverified locally; the pushed commit's CI result is recorded below.
+
+Commit `83256c4` was pushed to `codex/editor-intelligence`; CI run `37164236982` passed all seven
+jobs, including Debug and ReleaseSafe on Ubuntu, macOS, and Windows. The local HTTP-suite limitation
+remains an environment-specific validation note, not a CI failure.

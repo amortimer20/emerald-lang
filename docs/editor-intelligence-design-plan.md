@@ -417,7 +417,9 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     parity and type-page checks passed. Local `zig build test -j1` did not finish: the sandboxed
     attempt could not bind the HTTP test server, and a direct run outside the sandbox remained at
     the conformance suite's HTTP cases until its 90-second timeout. Treat the full test gate as
-    unverified here; the catalog and golden-file tests are covered by the targeted LSP runs.
+    unverified locally; the catalog and golden-file tests are covered by the targeted LSP runs.
+    Pushed commit `83256c4`; CI run `37164236982` passed all seven jobs, including Debug and
+    ReleaseSafe on Windows, macOS, and Ubuntu.
 
 ## Validation
 

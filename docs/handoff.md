@@ -198,7 +198,8 @@ is the next implementation slice, pending the user's review of these corrections
 passed the native build, documentation examples, formatting/whitespace checks, and 50-repeat runs
 of both changed hover cases. The full local test suite did not finish because its HTTP conformance
 server could not bind in the sandbox and the direct retry stalled at that suite for 90 seconds;
-Debug/ReleaseSafe test completion remains to be confirmed by CI.
+CI run `37164236982` for commit `83256c4` passed all seven jobs, including Debug and ReleaseSafe
+on Windows, macOS, and Ubuntu.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
