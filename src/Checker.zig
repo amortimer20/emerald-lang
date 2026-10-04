@@ -10261,10 +10261,15 @@ fn typeOfChannelCall(self: *Checker, expression: *const Ast.Expression, call: As
         .has_default = &.{true},
         .arity_help = "Give `Channel` an optional Int capacity, as in `Channel(capacity: 3)`.",
     });
-    if (expected) |wanted| if (wanted.kind == .channel) {
-        try self.literal_types.put(self.arena, expression, wanted.payload());
-        return wanted.payload();
-    };
+    if (expected) |wanted| {
+        // An invalid written annotation has already explained the problem.
+        // It is not missing context; do not add a dependent inference error.
+        if (wanted.kind == .invalid) return .invalid;
+        if (wanted.kind == .channel) {
+            try self.literal_types.put(self.arena, expression, wanted.payload());
+            return wanted.payload();
+        }
+    }
     try self.report(expression.span, "this channel needs a message type", .{}, "Write an annotation, as in `const numbers: Channel[Int] = Channel(capacity: 3)`.");
     return .invalid;
 }

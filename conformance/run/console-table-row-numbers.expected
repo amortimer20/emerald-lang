@@ -1,0 +1,6 @@
+the header has 1 cell, but row 1 has 2 cells
+the header has 2 cells, but row 1 has 1 cell
+row 2 has 2 cells, but row 1 has 1 cell
+row 2 has 1 cell, but row 1 has 2 cells
+row 1, column 1 contains a line break
+the header, column 1 contains a line break

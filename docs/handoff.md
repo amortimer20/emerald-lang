@@ -171,21 +171,16 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Editor-intelligence slices 1–4 are reviewed. Claude's `eec0c98` adds per-member prelude hover
-anchors, and the branch includes current `main` through merge `f3bbb98`. Website parity is
-settled: `scripts/check-builtin-parity.py` reports 0 problems against 249 catalog members,
-253 signatures, and 26 pages.
-
-Slice 5 adds `textDocument/codeAction` for existing exact name corrections, including the
-parser's one "Did you mean" suggestion, a misspelled annotation. Diagnostics carry
-the compiler's replacement as structured `data`; actions check the document revision, original
-text, UTF-16 edit range, requested range, and kind filter without a new analysis. Thirteen new
-protocol cases cover the six member-synonym owners, `this` → `self`, Unicode positions,
-range filtering, and help-only diagnostics. Allocator-backed tests apply the edits and check
-the corrected programs, and test stale/malformed diagnostic data independently of message prose.
-The full local gate passed (see validation below). Commit `8160fa5` is pushed and CI run
-`37218063872` passed all seven jobs. Stop for review;
-slice 6 (extension polish) begins only after approval.
+Editor intelligence is reviewed and merged: language-server slices 1–5 through PR #38,
+extension slice 6 through emerald-vscode PR #4, and website parity through its checker.
+The QA batch on `codex/qa-bug-batch` corrects Console table row diagnostics and suppresses
+dependent errors after an invalid Channel annotation. Stop for review after the full gate
+and a pull request; do not begin another milestone.
+Both fixes passed Debug and ReleaseSafe tests, native and Windows/macOS cross-builds,
+documentation examples, formatting, whitespace, and website catalog parity. The new
+task-item Channel case also passed 50 identical runs. Branch CI is checked separately.
+The website Console page still describes the header as the first row; Claude should update
+that reference to name the header separately and number data rows from 1.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -202,6 +197,10 @@ The trait-adoption hint follow-ups are merged through PRs #33 and #35; their
 focused cases and local full gates are recorded in the journal.
 
 **Since 0.6.0, for the 0.7.0 release notes:**
+- Invalid optional Channel item annotations report their original error only, rather than
+  adding a misleading missing-message-type error at `Channel()`.
+- Console table diagnostics name the header separately, number data rows from 1, and
+  use singular `cell` for one cell.
 - LSP hover shows built-in signatures and descriptions with reference links, and shows
   attached `##` comments on program declarations.
 - Editor completion offers native and declared members with signatures, summaries, and
@@ -387,10 +386,8 @@ compiler), or the compiler depends on it.
    unknown: get a screenshot or the browser and font from the user, and check line height, the
    font actually in use, and Expressive Code's own styles. Deferred by the user to this iteration.
    Also carry in the rough edges recorded under
-   "Active rough edges" and the diagnostics that still need hints, plus two found while
-   writing the Console and Tasks pages: a `Console.table` whose `header:` has a different width than
-   its rows reports the header as "row 1" ("row 2 has 2 cells, but row 1 has 1"), and
-   `Channel[Int?]` reports a redundant "needs a message type" error after the correct one. The
+   "Active rough edges" and the diagnostics that still need hints. Console table header/data-row
+   numbering and the redundant invalid-Channel annotation diagnostic are corrected in the QA batch. The
    website's pages are checked against a real build by `scripts/check-outputs.py` in
    `emerald-website`; rerun it against the build under test. Scope the pass with the user when it
    starts, and finish it before the 0.7.0 release.

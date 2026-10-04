@@ -341,7 +341,7 @@ class Console {
             column = 0
             while column < columns {
                 if header[column].contains?("\n") or header[column].contains?("\r") {
-                    raise RuntimeError("row 1, column #{column + 1} contains a line break")
+                    raise RuntimeError("the header, column #{column + 1} contains a line break")
                 }
                 widths[column] = Emerald.Console._width(header[column])
                 column += 1
@@ -350,9 +350,14 @@ class Console {
         var row_index = 0
         while row_index < rows.count {
             const row = rows[row_index]
-            const number = row_index + 1 + (if header.count > 0 then 1 else 0)
+            const number = row_index + 1
             if row.count != columns {
-                raise RuntimeError("row #{number} has #{row.count} cells, but row 1 has #{columns}")
+                const row_cells = if row.count == 1 then "cell" else "cells"
+                const reference_cells = if columns == 1 then "cell" else "cells"
+                if header.count > 0 {
+                    raise RuntimeError("the header has #{columns} #{reference_cells}, but row #{number} has #{row.count} #{row_cells}")
+                }
+                raise RuntimeError("row #{number} has #{row.count} #{row_cells}, but row 1 has #{columns} #{reference_cells}")
             }
             column = 0
             while column < columns {

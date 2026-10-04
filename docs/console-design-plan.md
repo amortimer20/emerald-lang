@@ -136,7 +136,9 @@ Console.choose_many(question: String, options: List[String]): List[String]
 - `rows` is either a `List[List[String]]` or a `List` of a plain struct (decision 2).
   - **Text rows** are shown as given, left-aligned. `header:` adds a header row with a rule
     under it. Every row, and the header when there is one, must have the same number of cells;
-    otherwise it raises a `RuntimeError` naming the row: `row 3 has 2 cells, but row 1 has 3`.
+    otherwise it raises a `RuntimeError` naming the data row (numbered from 1):
+    `row 3 has 2 cells, but row 1 has 3 cells`. A header is named separately:
+    `the header has 1 cell, but row 1 has 2 cells`.
   - **Struct rows** take their header from the public field names, in declaration order, as
     `Csv.encode` does. `Int` and `Float` columns are right-aligned, and everything else is
     left-aligned. A value is shown as `print` would show it, and `nothing` is an empty cell.
