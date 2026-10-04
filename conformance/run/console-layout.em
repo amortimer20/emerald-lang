@@ -14,7 +14,7 @@ try {
     Console.table([["a", "b"], ["c"]])
 }
 catch error: RuntimeError {
-    assert error.message == "row 2 has 1 cells, but row 1 has 2"
+    assert error.message == "row 2 has 1 cell, but row 1 has 2 cells"
 }
 try {
     Console.table([["a\nb"]])

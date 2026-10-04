@@ -104,7 +104,9 @@ configure and the reader on the other end interprets the escapes itself.
 Text rows are shown left-aligned. Each cell has one space of padding, and borders use Unicode
 box-drawing characters. `header:` adds a header and a rule below it. Every row must have the
 same number of cells, and cells cannot contain line breaks; malformed rows raise a
-`RuntimeError` naming their row and column. Width is measured in terminal columns, so CJK
+`RuntimeError` naming their row and column. Data rows are numbered from 1; a header is
+named separately, as in `the header has 1 cell, but row 1 has 2 cells`.
+Width is measured in terminal columns, so CJK
 characters and emoji occupy two columns while styling occupies none. Tabs and other control
 characters occupy no columns, so replace a tab with spaces before laying out text that has one. An empty list returns an
 empty string, or just the header when one is supplied.

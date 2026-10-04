@@ -5184,3 +5184,22 @@ carried no replacement. The replacement now covers the annotation word, so `@ove
 `@override`. Debug and ReleaseSafe `zig build test -j1` passed, all 86 protocol cases matched 50
 times, the extension's 10 integration tests passed three times against this build (the 9 recorded
 earlier predate emerald-vscode PR #4), and the website parity check reported zero problems.
+
+## 2026-10-04: QA item 1 — Console table row diagnostics
+
+Started `codex/qa-bug-batch` from main `83bb9d3`, after PR #38 merged editor intelligence;
+deleted the merged remote editor-intelligence branch. Reproduced the header mismatch on
+the freshly built main: `Console.table([["a", "b"], ["c", "d"]], header: ["x"])`
+reported `row 2 has 2 cells, but row 1 has 1`.
+
+The header is now named separately and data rows start at 1, including line-break diagnostics.
+Cell counts use singular/plural correctly. A focused run case covers both directions of header
+and data-row mismatches and header/data line breaks; its six output lines were read manually.
+The existing layout assertion and the Console plan/reference now agree. The website Console
+page explicitly describes the old numbering; its owner Claude should update that prose.
+Replaced the stale handoff next step with the merged editor milestone and this QA batch.
+
+Validation passed: pinned Zig 0.16.0 toolchain check; Debug and ReleaseSafe `zig build test -j1`;
+native build; Windows x86_64 and macOS aarch64 cross-builds (prefixes outside zig-out);
+documentation examples (24 executed, 135 linked conformance cases); `zig fmt --check src/*.zig`;
+`git diff --check`; website catalog parity (249 members, 253 signatures, 26 pages, 0 problems).
